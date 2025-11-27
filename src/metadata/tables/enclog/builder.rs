@@ -263,17 +263,13 @@ impl EncLogBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let token_value = self
-            .token_value
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Token value is required for EncLog".to_string(),
-            })?;
+        let token_value = self.token_value.ok_or_else(|| {
+            Error::ModificationInvalid("Token value is required for EncLog".to_string())
+        })?;
 
-        let func_code = self
-            .func_code
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Function code is required for EncLog".to_string(),
-            })?;
+        let func_code = self.func_code.ok_or_else(|| {
+            Error::ModificationInvalid("Function code is required for EncLog".to_string())
+        })?;
 
         let next_rid = context.next_rid(TableId::EncLog);
         let token = Token::new(((TableId::EncLog as u32) << 24) | next_rid);
@@ -408,10 +404,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Token value is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -426,10 +422,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Function code is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

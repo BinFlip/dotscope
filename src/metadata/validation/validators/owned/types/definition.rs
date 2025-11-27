@@ -44,7 +44,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Type definition structure violations (empty names, invalid tokens, null characters)
 //! - Type attribute consistency failures (invalid visibility, layout, or semantics attributes)
 //! - Type flavor inconsistencies (interface flavor without interface flag, invalid base types)
@@ -136,45 +136,41 @@ impl OwnedTypeDefinitionValidator {
             .try_for_each(|type_entry| -> Result<()> {
                 // Validate type name is not empty (except for special cases)
                 if type_entry.name.is_empty() && type_entry.namespace != "<Module>" {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: {
                             let token_value = type_entry.token.value();
                             format!("Type with token 0x{token_value:08X} has empty name")
                         },
-                        source: None,
                     });
                 }
 
                 // Validate type token is valid
                 if type_entry.token.value() == 0 {
                     let type_name = &type_entry.name;
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Type '{type_name}' has invalid token (0)"),
-                        source: None,
                     });
                 }
 
                 // Validate type name doesn't contain invalid characters
                 if type_entry.name.contains('\0') {
                     let type_name = &type_entry.name;
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Type '{type_name}' contains null character in name"),
-                        source: None,
                     });
                 }
 
                 // Validate namespace doesn't contain invalid characters
                 if type_entry.namespace.contains('\0') {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: {
                             let type_name = &type_entry.name;
                             format!("Type '{type_name}' contains null character in namespace")
                         },
-                        source: None,
                     });
                 }
 
@@ -198,13 +194,12 @@ impl OwnedTypeDefinitionValidator {
                     || type_entry.name == "<Module>"; // Global module type
 
                     if !is_compiler_generated {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: {
                                 let type_name = &type_entry.name;
                                 format!("Type '{type_name}' has malformed special name pattern")
                             },
-                            source: None,
                         });
                     }
                 }
@@ -224,52 +219,48 @@ impl OwnedTypeDefinitionValidator {
             // Validate visibility attributes
             let visibility = flags & TypeAttributes::VISIBILITY_MASK;
             if !Self::is_valid_visibility_attribute(visibility) {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
                         format!("Type '{type_name}' has invalid visibility attribute: 0x{visibility:02X}")
                     },
-                    source: None,
                 });
             }
 
             // Validate layout attributes
             let layout = flags & TypeAttributes::LAYOUT_MASK;
             if !Self::is_valid_layout_attribute(layout) {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
                         format!("Type '{type_name}' has invalid layout attribute: 0x{layout:02X}")
                     },
-                    source: None,
                 });
             }
 
             // Validate class semantics attributes
             let class_semantics = flags & TypeAttributes::CLASS_SEMANTICS_MASK;
             if !Self::is_valid_class_semantics_attribute(class_semantics) {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
                         format!("Type '{type_name}' has invalid class semantics attribute: 0x{class_semantics:02X}")
                     },
-                    source: None,
                 });
             }
 
             // Validate string format attributes
             let string_format = flags & TypeAttributes::STRING_FORMAT_MASK;
             if !Self::is_valid_string_format_attribute(string_format) {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
                         format!("Type '{type_name}' has invalid string format attribute: 0x{string_format:02X}")
                     },
-                    source: None,
                 });
             }
 
@@ -284,26 +275,24 @@ impl OwnedTypeDefinitionValidator {
             if flags & TypeAttributes::INTERFACE != 0 {
                 // Interfaces must be abstract
                 if flags & TypeAttributes::ABSTRACT == 0 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: {
                             let type_name = &type_entry.name;
                             format!("Interface '{type_name}' must be abstract")
                         },
-                        source: None,
                     });
                 }
 
                 // Interfaces cannot be sealed
                 if flags & 0x0000_0100 != 0 {
                     // SEALED
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: {
                             let type_name = &type_entry.name;
                             format!("Interface '{type_name}' cannot be sealed")
                         },
-                        source: None,
                     });
                 }
             }
@@ -323,7 +312,7 @@ impl OwnedTypeDefinitionValidator {
 
             // Validate interface flavor consistency
             if *flavor == CilFlavor::Interface && flags & TypeAttributes::INTERFACE == 0 {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
@@ -331,19 +320,17 @@ impl OwnedTypeDefinitionValidator {
                             "Type '{type_name}' has Interface flavor but missing Interface flag"
                         )
                     },
-                    source: None,
                 });
             }
 
             // Validate that interfaces don't have conflicting flavors
             if flags & TypeAttributes::INTERFACE != 0 && !matches!(flavor, CilFlavor::Interface) {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: {
                         let type_name = &type_entry.name;
                         format!("Interface type '{type_name}' has inconsistent flavor: {flavor:?}")
                     },
-                    source: None,
                 });
             }
 
@@ -359,13 +346,12 @@ impl OwnedTypeDefinitionValidator {
                         // Object is allowed for primitives
                         // Allow some flexibility for special cases
                         if !type_entry.namespace.starts_with("System") {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: {
                                     let type_name = &type_entry.name;
                                     format!("Value type '{type_name}' has unexpected base type: {base_fullname}")
                                 },
-                                source: None,
                             });
                         }
                     }
@@ -402,13 +388,12 @@ impl OwnedTypeDefinitionValidator {
                 {
                     // Allow some flexibility for legitimate special names
                     if !type_entry.namespace.starts_with("System") {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: {
                                 let type_name = &type_entry.name;
                                 format!("Type '{type_name}' has SpecialName flag but doesn't follow special naming pattern")
                             },
-                            source: None,
                         });
                     }
                 }
@@ -420,13 +405,12 @@ impl OwnedTypeDefinitionValidator {
                 // RTSpecialName requires SpecialName
                 if flags & 0x0000_0400 == 0 {
                     // SPECIAL_NAME
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: {
                             let type_name = &type_entry.name;
                             format!("Type '{type_name}' has RTSpecialName but not SpecialName")
                         },
-                        source: None,
                     });
                 }
             }
@@ -536,7 +520,7 @@ mod tests {
         owned_validator_test(
             owned_type_definition_validator_file_factory,
             "OwnedTypeDefinitionValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

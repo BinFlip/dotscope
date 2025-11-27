@@ -101,7 +101,7 @@ use crate::{
 ///         }
 ///         Ok(())
 ///     }
-///     
+///
 ///     fn name(&self) -> &'static str {
 ///         "MyRawValidator"
 ///     }
@@ -126,7 +126,7 @@ pub trait RawValidator: Send + Sync {
     /// # Errors
     ///
     /// Should return validation-specific errors from the [`crate::Error`] enum,
-    /// such as `ValidationRawValidatorFailed` or domain-specific validation errors.
+    /// such as `ValidationRawFailed` or domain-specific validation errors.
     fn validate_raw(&self, context: &RawValidationContext) -> Result<()>;
 
     /// Returns the name of this validator for error reporting and logging.
@@ -181,16 +181,16 @@ pub trait RawValidator: Send + Sync {
 ///     fn validate_owned(&self, context: &OwnedValidationContext) -> Result<()> {
 ///         let object = context.object();
 ///         let types = object.types();
-///         
+///
 ///         // Validate type system consistency
 ///         for type_entry in types.all_types() {
 ///             // Perform validation on each type
 ///             let _name = &type_entry.name;
 ///         }
-///         
+///
 ///         Ok(())
 ///     }
-///     
+///
 ///     fn name(&self) -> &'static str {
 ///         "MyOwnedValidator"
 ///     }
@@ -215,7 +215,7 @@ pub trait OwnedValidator: Send + Sync {
     /// # Errors
     ///
     /// Should return validation-specific errors from the [`crate::Error`] enum,
-    /// such as `ValidationOwnedValidatorFailed` or domain-specific validation errors.
+    /// such as `ValidationOwnedFailed` or domain-specific validation errors.
     fn validate_owned(&self, context: &OwnedValidationContext) -> Result<()>;
 
     /// Returns the name of this validator for error reporting and logging.

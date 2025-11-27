@@ -43,7 +43,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationRawFailed`] for:
 //! - Broken referential integrity after modifications (orphaned fields/methods)
 //! - Invalid heap state after changes (excessive additions, size violations)
 //! - RID sequence violations or gaps (sparse sequences, conflicting RIDs)
@@ -82,7 +82,7 @@ use crate::{
             traits::RawValidator,
         },
     },
-    Result,
+    Error, Result,
 };
 use rustc_hash::{FxHashMap, FxHashSet};
 use std::collections::HashMap;
@@ -136,11 +136,11 @@ impl RawChangeIntegrityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All table modifications maintain integrity
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Table integrity violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Table integrity violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - RID sequences have gaps or conflicts after modifications (conflicting inserts)
     /// - Table modifications create inconsistent final states (next_rid inconsistencies)
     /// - Modified tables violate ECMA-335 structural requirements (sparse sequences)
@@ -245,11 +245,11 @@ impl RawChangeIntegrityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All heap modifications maintain integrity
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Heap integrity violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Heap integrity violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - String heap additions exceed reasonable size limits (>100,000 additions)
     /// - Blob heap additions exceed reasonable size limits (>50,000 additions)
     /// - GUID heap additions exceed reasonable size limits (>10,000 additions)
@@ -301,11 +301,11 @@ impl RawChangeIntegrityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All cross-table references maintain integrity
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Reference integrity violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Reference integrity violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Cross-table references point to deleted rows (orphaned references)
     /// - Token references become invalid after modifications
     /// - Critical relationships are broken by changes (TypeDef-Field, TypeDef-Method)
@@ -389,11 +389,11 @@ impl RawChangeIntegrityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - No structural conflicts detected in operations
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Structural issues found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Structural issues found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Operations are not chronologically ordered (indicates data corruption)
     /// - Excessive operation clustering (>10,000 ops) suggests systemic issues
     /// - Operation sequences create impossible logical states
@@ -446,17 +446,17 @@ impl RawChangeIntegrityValidator {
     /// # Arguments
     ///
     /// * `typedef_rids` - Set of TypeDef RIDs that exist after modifications
-    /// * `field_rids` - Set of Field RIDs that exist after modifications  
+    /// * `field_rids` - Set of Field RIDs that exist after modifications
     /// * `table_changes` - Map of all table modifications for accessing TypeDef data
     ///
     /// # Returns
     ///
     /// * `Ok(())` - All field ownership ranges are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Field ownership violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Field ownership violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - TypeDef field_list points to deleted fields
     /// - Field ownership ranges overlap or are inconsistent
     /// - Orphaned fields exist (fields not owned by any TypeDef)
@@ -503,12 +503,9 @@ impl RawChangeIntegrityValidator {
             TableModifications::Replaced(rows) => {
                 // For replaced tables, we have all TypeDef data
                 for (i, row_data) in rows.iter().enumerate() {
-                    let rid = u32::try_from(i + 1).map_err(|_| {
-                        crate::Error::ValidationRawValidatorFailed {
-                            validator: "integrity".to_string(),
-                            message: "Table row index exceeds u32 range".to_string(),
-                            source: None,
-                        }
+                    let rid = u32::try_from(i + 1).map_err(|_| Error::ValidationRawFailed {
+                        validator: "integrity".to_string(),
+                        message: "Table row index exceeds u32 range".to_string(),
                     })?;
                     if typedef_rids.contains(&rid) {
                         if let TableDataOwned::TypeDef(typedef_row) = row_data {
@@ -598,11 +595,11 @@ impl RawValidator for RawChangeIntegrityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All assembly changes maintain integrity and consistency
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Integrity violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Integrity violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] for:
+    /// Returns [`crate::Error::ValidationRawFailed`] for:
     /// - Broken referential integrity after modifications
     /// - Invalid heap state after changes
     /// - Conflicting operations that create inconsistent state
@@ -672,14 +669,14 @@ mod tests {
     /// This test creates corrupted AssemblyChanges structures directly and validates
     /// that the validator properly detects all types of integrity violations including:
     /// - RID conflicts and sequence gaps
-    /// - Critical table violations  
+    /// - Critical table violations
     /// - Heap size limit violations
     /// - Reference integrity violations
     /// - Operation chronology violations
     #[test]
     fn test_raw_change_integrity_validator_direct_corruption() -> Result<()> {
         let Some(clean_testfile) = get_testfile_wb() else {
-            return Err(Error::Error("WindowsBase.dll not available".to_string()));
+            return Err(Error::Other("WindowsBase.dll not available".to_string()));
         };
 
         let view = CilAssemblyView::from_path(&clean_testfile)?;
@@ -999,7 +996,7 @@ mod tests {
         };
 
         let Some(clean_testfile) = get_testfile_wb() else {
-            return Err(Error::Error("WindowsBase.dll not available".to_string()));
+            return Err(Error::Other("WindowsBase.dll not available".to_string()));
         };
 
         let view = CilAssemblyView::from_path(&clean_testfile)?;

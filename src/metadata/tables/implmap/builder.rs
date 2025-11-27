@@ -296,28 +296,22 @@ impl ImplMapBuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let member_forwarded =
-            self.member_forwarded
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "member_forwarded field is required".to_string(),
-                })?;
+        let member_forwarded = self.member_forwarded.ok_or_else(|| {
+            Error::ModificationInvalid("member_forwarded field is required".to_string())
+        })?;
 
-        let import_name = self
-            .import_name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "import_name field is required".to_string(),
-            })?;
+        let import_name = self.import_name.ok_or_else(|| {
+            Error::ModificationInvalid("import_name field is required".to_string())
+        })?;
 
-        let import_scope =
-            self.import_scope
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "import_scope field is required".to_string(),
-                })?;
+        let import_scope = self.import_scope.ok_or_else(|| {
+            Error::ModificationInvalid("import_scope field is required".to_string())
+        })?;
 
         if !matches!(member_forwarded.tag, TableId::Field | TableId::MethodDef) {
-            return Err(Error::ModificationInvalidOperation {
-                details: "MemberForwarded must reference Field or MethodDef table".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "MemberForwarded must reference Field or MethodDef table".to_string(),
+            ));
         }
 
         let import_name_index = context.string_add(&import_name)?;

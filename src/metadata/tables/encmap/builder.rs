@@ -176,11 +176,9 @@ impl EncMapBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let original_token =
-            self.original_token
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Original token is required for EncMap".to_string(),
-                })?;
+        let original_token = self.original_token.ok_or_else(|| {
+            Error::ModificationInvalid("Original token is required for EncMap".to_string())
+        })?;
 
         let next_rid = context.next_rid(TableId::EncMap);
         let token = Token::new(((TableId::EncMap as u32) << 24) | next_rid);
@@ -292,10 +290,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Original token is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

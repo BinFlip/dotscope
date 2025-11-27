@@ -36,7 +36,7 @@ pub fn owned_type_constraint_validator_file_factory() -> Result<Vec<TestAssembly
     let mut assemblies = Vec::new();
 
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
 
     // 1. Clean assembly - should pass all constraint validation
@@ -51,7 +51,7 @@ pub fn owned_type_constraint_validator_file_factory() -> Result<Vec<TestAssembly
             ));
         }
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create assembly with conflicting variance: {e}"
             )));
         }
@@ -66,7 +66,7 @@ pub fn owned_type_constraint_validator_file_factory() -> Result<Vec<TestAssembly
             ));
         }
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create assembly with conflicting constraints: {e}"
             )));
         }
@@ -81,7 +81,7 @@ pub fn owned_type_constraint_validator_file_factory() -> Result<Vec<TestAssembly
             ));
         }
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create assembly with broken constraint reference: {e}"
             )));
         }
@@ -96,7 +96,7 @@ pub fn owned_type_constraint_validator_file_factory() -> Result<Vec<TestAssembly
             ));
         }
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create assembly with empty constraint name: {e}"
             )));
         }
@@ -111,7 +111,7 @@ pub fn owned_type_constraint_validator_file_factory() -> Result<Vec<TestAssembly
             ));
         }
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create assembly with fake interface implementation: {e}"
             )));
         }
@@ -127,7 +127,7 @@ pub fn owned_type_constraint_validator_file_factory() -> Result<Vec<TestAssembly
 /// When loaded by CilObject, this should trigger validation failure in the owned validator.
 fn create_assembly_with_conflicting_variance() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -160,7 +160,7 @@ fn create_assembly_with_conflicting_variance() -> Result<NamedTempFile> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)
@@ -174,7 +174,7 @@ fn create_assembly_with_conflicting_variance() -> Result<NamedTempFile> {
 /// trigger validation failure in the owned validator.
 fn create_assembly_with_conflicting_constraints() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -207,7 +207,7 @@ fn create_assembly_with_conflicting_constraints() -> Result<NamedTempFile> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)
@@ -221,7 +221,7 @@ fn create_assembly_with_conflicting_constraints() -> Result<NamedTempFile> {
 /// that trigger validation failure in the owned validator.
 fn create_assembly_with_broken_constraint_reference() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -263,7 +263,7 @@ fn create_assembly_with_broken_constraint_reference() -> Result<NamedTempFile> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)
@@ -275,7 +275,7 @@ fn create_assembly_with_broken_constraint_reference() -> Result<NamedTempFile> {
 /// simulating unresolved constraints that should trigger validation failure.
 fn create_assembly_with_empty_constraint_name() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -324,7 +324,7 @@ fn create_assembly_with_empty_constraint_name() -> Result<NamedTempFile> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)
@@ -337,7 +337,7 @@ fn create_assembly_with_empty_constraint_name() -> Result<NamedTempFile> {
 /// failure when the owned validator checks interface implementation constraints.
 fn create_assembly_with_fake_interface_implementation() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -372,7 +372,7 @@ fn create_assembly_with_fake_interface_implementation() -> Result<NamedTempFile>
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)

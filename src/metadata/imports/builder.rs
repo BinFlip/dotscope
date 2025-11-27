@@ -4,7 +4,7 @@
 //! with a fluent API. The builder follows the established dotscope pattern of not holding
 //! references to BuilderContext and instead taking it as a parameter to the build() method.
 
-use crate::{cilassembly::BuilderContext, Error, Result};
+use crate::{cilassembly::BuilderContext, malformed_error, Result};
 
 /// Builder for creating native PE import tables.
 ///
@@ -68,15 +68,15 @@ impl NativeImportsBuilder {
     /// `Ok(())` if the name is valid, `Err` with a description if invalid.
     fn validate_dll_name(name: &str) -> Result<()> {
         if name.is_empty() {
-            return Err(Error::Error("DLL name cannot be empty".to_string()));
+            return Err(malformed_error!("DLL name cannot be empty"));
         }
         if name.contains('\0') {
-            return Err(Error::Error("DLL name contains null character".to_string()));
+            return Err(malformed_error!("DLL name contains null character"));
         }
 
         if name.contains('/') || name.contains('\\') {
-            return Err(Error::Error(
-                "DLL name contains path separators - use filename only".to_string(),
+            return Err(malformed_error!(
+                "DLL name contains path separators - use filename only"
             ));
         }
         Ok(())
@@ -91,12 +91,10 @@ impl NativeImportsBuilder {
     /// `Ok(())` if the name is valid, `Err` with a description if invalid.
     fn validate_function_name(name: &str) -> Result<()> {
         if name.is_empty() {
-            return Err(Error::Error("Function name cannot be empty".to_string()));
+            return Err(malformed_error!("Function name cannot be empty"));
         }
         if name.contains('\0') {
-            return Err(Error::Error(
-                "Function name contains null character".to_string(),
-            ));
+            return Err(malformed_error!("Function name contains null character"));
         }
         Ok(())
     }
@@ -219,7 +217,7 @@ impl NativeImportsBuilder {
         Self::validate_dll_name(&dll_name)?;
 
         if ordinal == 0 {
-            return Err(Error::Error("Ordinal cannot be 0".to_string()));
+            return Err(malformed_error!("Ordinal cannot be 0"));
         }
 
         // Ensure DLL is added

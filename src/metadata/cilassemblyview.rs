@@ -113,6 +113,7 @@ use std::{path::Path, sync::Arc};
 use crate::{
     cilassembly::CilAssembly,
     file::File,
+    malformed_error,
     metadata::{
         cor20header::Cor20Header,
         identity::{AssemblyIdentity, AssemblyVersion, Identity, ProcessorArchitecture},
@@ -335,7 +336,7 @@ impl CilAssemblyView {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::FileError`] if the file cannot be read.
+    /// Returns [`crate::Error::Io`] if the file cannot be read.
     /// Returns [`crate::Error::NotSupported`] if the file is not a .NET assembly.
     /// Returns [`crate::Error::OutOfBounds`] if the file data is corrupted.
     ///
@@ -379,7 +380,7 @@ impl CilAssemblyView {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::FileError`] if the file cannot be read.
+    /// Returns [`crate::Error::Io`] if the file cannot be read.
     /// Returns [`crate::Error::NotSupported`] if the file is not a .NET assembly.
     /// Returns [`crate::Error::OutOfBounds`] if the file data is corrupted.
     /// Returns validation errors if validation checks fail.
@@ -923,9 +924,8 @@ impl CilAssemblyView {
             }
         }
 
-        Err(Error::Error(
+        Err(malformed_error!(
             "Assembly table (0x20) is missing or empty - cannot extract assembly identity"
-                .to_string(),
         ))
     }
 }

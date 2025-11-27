@@ -265,29 +265,23 @@ impl AssemblyRefOSBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let os_platform_id =
-            self.os_platform_id
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "OS platform identifier is required for AssemblyRefOS".to_string(),
-                })?;
+        let os_platform_id = self.os_platform_id.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "OS platform identifier is required for AssemblyRefOS".to_string(),
+            )
+        })?;
 
-        let os_major_version =
-            self.os_major_version
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "OS major version is required for AssemblyRefOS".to_string(),
-                })?;
+        let os_major_version = self.os_major_version.ok_or_else(|| {
+            Error::ModificationInvalid("OS major version is required for AssemblyRefOS".to_string())
+        })?;
 
-        let os_minor_version =
-            self.os_minor_version
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "OS minor version is required for AssemblyRefOS".to_string(),
-                })?;
+        let os_minor_version = self.os_minor_version.ok_or_else(|| {
+            Error::ModificationInvalid("OS minor version is required for AssemblyRefOS".to_string())
+        })?;
 
-        let assembly_ref =
-            self.assembly_ref
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "AssemblyRef RID is required for AssemblyRefOS".to_string(),
-                })?;
+        let assembly_ref = self.assembly_ref.ok_or_else(|| {
+            Error::ModificationInvalid("AssemblyRef RID is required for AssemblyRefOS".to_string())
+        })?;
 
         let next_rid = context.next_rid(TableId::AssemblyRefOS);
         let token_value = ((TableId::AssemblyRefOS as u32) << 24) | next_rid;
@@ -410,10 +404,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("OS platform identifier is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -430,10 +424,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("OS major version is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -450,10 +444,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("OS minor version is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -470,10 +464,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("AssemblyRef RID is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

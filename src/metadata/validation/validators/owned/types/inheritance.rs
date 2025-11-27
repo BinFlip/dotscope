@@ -48,7 +48,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Inheritance hierarchy consistency violations (circular inheritance dependencies)
 //! - Base type accessibility failures (inheritance from sealed types, inaccessible base types)
 //! - Interface implementation violations (implementing non-interfaces, accessibility issues)
@@ -191,13 +191,13 @@ impl OwnedInheritanceValidator {
         depth: usize,
     ) -> Result<()> {
         if depth > context.config().max_nesting_depth {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Inheritance chain depth exceeds maximum nesting depth limit of {} for type '{}'",
                     context.config().max_nesting_depth, type_entry.name
                 ),
-                source: None,
+
             });
         }
 
@@ -205,12 +205,11 @@ impl OwnedInheritanceValidator {
 
         if visiting.contains(&token) {
             let type_name = &type_entry.name;
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular inheritance dependency detected involving type '{type_name}'"
                 ),
-                source: None,
             });
         }
 
@@ -268,13 +267,12 @@ impl OwnedInheritanceValidator {
                         && !is_pointer_relationship
                         && !is_array_relationship
                     {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' cannot inherit from sealed type '{}'",
                                 type_entry.name, base_type.name
                             ),
-                            source: None,
                         });
                     }
                 }
@@ -295,13 +293,13 @@ impl OwnedInheritanceValidator {
                         && !is_self_reference
                         && !is_generic_self_reference
                     {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' cannot inherit from interface '{}' (use interface implementation instead)",
                                 type_entry.name, base_type.name
                             ),
-                            source: None,
+
                         });
                     }
                 }
@@ -321,13 +319,12 @@ impl OwnedInheritanceValidator {
                     && !is_pointer_relationship
                     && !Self::is_accessible_inheritance(derived_visibility, base_visibility)
                 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' cannot inherit from less accessible base type '{}'",
                             type_entry.name, base_type.name
                         ),
-                        source: None,
                     });
                 }
 
@@ -372,13 +369,12 @@ impl OwnedInheritanceValidator {
                         if interface_type.flags & TypeAttributes::INTERFACE == 0
                             && !is_system_interface
                         {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Type '{}' tries to implement non-interface type '{}'",
                                     type_entry.name, interface_type.name
                                 ),
-                                source: None,
                             });
                         }
 
@@ -393,13 +389,12 @@ impl OwnedInheritanceValidator {
                                 interface_visibility,
                             )
                         {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Type '{}' cannot implement less accessible interface '{}'",
                                     type_entry.name, interface_type.name
                                 ),
-                                source: None,
                             });
                         }
                     }
@@ -428,10 +423,9 @@ impl OwnedInheritanceValidator {
                 let flags = type_entry.flags;
 
                 if flags & TypeAttributes::ABSTRACT == 0 && flags & TypeAttributes::INTERFACE != 0 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Interface '{}' must be abstract", type_entry.name),
-                        source: None,
                     });
                 }
 
@@ -459,35 +453,35 @@ impl OwnedInheritanceValidator {
                 if base_type.fullname() == "System.Object" {
                     Ok(())
                 } else {
-                    Err(Error::ValidationOwnedValidatorFailed {
+                    Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Value type '{}' has incompatible base type flavor",
                             derived_type.name
                         ),
-                        source: None,
+
                     })
                 }
             }
             (CilFlavor::Interface, _) => {
-                Err(crate::Error::ValidationOwnedValidatorFailed {
+                Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Interface '{}' cannot inherit from non-interface type '{}'",
                         derived_type.name, base_type.name
                     ),
-                    source: None,
+
                 })
             }
 
             _ => {
-                Err(crate::Error::ValidationOwnedValidatorFailed {
+                Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Type '{}' has incompatible inheritance flavor relationship with base type '{}'",
                         derived_type.name, base_type.name
                     ),
-                    source: None,
+
                 })
             }
         }
@@ -707,11 +701,11 @@ impl OwnedInheritanceValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All method inheritance relationships are valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Method inheritance violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Method inheritance violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Concrete types contain abstract methods (violates ECMA-335 requirements)
     /// - Virtual method overrides have incompatible signatures (parameter count mismatches)
     /// - Final methods are being overridden (violates sealing constraints)
@@ -750,11 +744,11 @@ impl OwnedInheritanceValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All basic method override rules are satisfied
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Method override violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Method override violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Concrete types contain abstract methods (ECMA-335 violation)
     /// - Virtual method override validation fails for any method pair
     ///
@@ -787,13 +781,12 @@ impl OwnedInheritanceValidator {
                 if method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
                     && derived_type.flags & TypeAttributes::ABSTRACT == 0
                 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Concrete type '{}' cannot have abstract method '{}'",
                             derived_type.name, method.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -818,11 +811,11 @@ impl OwnedInheritanceValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All virtual method override rules are satisfied
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Virtual method override violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Virtual method override violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Method override parameter count differs from base method (signature incompatibility)
     /// - Attempting to override a final method (sealing violation)
     ///
@@ -934,13 +927,12 @@ impl OwnedInheritanceValidator {
         base_type: &CilTypeRc,
     ) -> Result<()> {
         if base_method.flags_modifiers.contains(MethodModifiers::FINAL) {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Cannot override final method '{}' - final methods cannot be overridden",
                     base_method.name
                 ),
-                source: None,
             });
         }
 
@@ -948,13 +940,13 @@ impl OwnedInheritanceValidator {
             .flags_modifiers
             .contains(MethodModifiers::VIRTUAL)
         {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Cannot override non-virtual method '{}' - only virtual methods can be overridden",
                     base_method.name
                 ),
-                source: None,
+
             });
         }
 
@@ -962,13 +954,12 @@ impl OwnedInheritanceValidator {
             .flags_modifiers
             .contains(MethodModifiers::VIRTUAL)
         {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Method '{}' must be virtual to override base method",
                     derived_method.name
                 ),
-                source: None,
             });
         }
 
@@ -988,7 +979,7 @@ impl OwnedInheritanceValidator {
                 && derived_method.flags_access == MethodAccessFlags::FAMILY;
 
             if !is_exception_case {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Override method '{}' cannot be less accessible than base method (derived: {:?}, base: {:?})",
@@ -996,7 +987,7 @@ impl OwnedInheritanceValidator {
                         derived_method.flags_access,
                         base_method.flags_access
                     ),
-                    source: None,
+
                 });
             }
         }

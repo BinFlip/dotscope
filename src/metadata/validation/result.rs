@@ -696,7 +696,10 @@ mod tests {
 
     #[test]
     fn test_validation_result_from_named_results() {
-        let results = vec![("Validator1", Ok(())), ("Validator2", Err(Error::Empty))];
+        let results = vec![
+            ("Validator1", Ok(())),
+            ("Validator2", Err(Error::NotSupported)),
+        ];
 
         let validation_result =
             ValidationResult::from_named_results(results, Duration::from_millis(50));
@@ -734,7 +737,8 @@ mod tests {
         assert_eq!(success_outcome.validator_name(), "TestValidator");
         assert!(success_outcome.error().is_none());
 
-        let failure_outcome = ValidationOutcome::failure("FailValidator".to_string(), Error::Empty);
+        let failure_outcome =
+            ValidationOutcome::failure("FailValidator".to_string(), Error::NotSupported);
         assert!(!failure_outcome.is_success());
         assert!(failure_outcome.is_failure());
         assert_eq!(failure_outcome.validator_name(), "FailValidator");

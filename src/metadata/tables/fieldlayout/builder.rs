@@ -225,38 +225,32 @@ impl FieldLayoutBuilder {
     /// - Returns error if offset exceeds maximum allowed value
     /// - Returns error if table operations fail
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let field_offset =
-            self.field_offset
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Field offset is required".to_string(),
-                })?;
+        let field_offset = self
+            .field_offset
+            .ok_or_else(|| Error::ModificationInvalid("Field offset is required".to_string()))?;
 
         let field = self
             .field
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Field reference is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Field reference is required".to_string()))?;
 
         if field.table() != TableId::Field as u8 {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Field reference must be a Field token, got table {:?}",
-                    field.table()
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Field reference must be a Field token, got table {:?}",
+                field.table()
+            )));
         }
 
         if field.row() == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Field RID cannot be 0".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Field RID cannot be 0".to_string(),
+            ));
         }
 
         // Note: u32::MAX is reserved as "missing offset" indicator in some contexts
         if field_offset == u32::MAX {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Field offset cannot be 0xFFFFFFFF (reserved value)".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Field offset cannot be 0xFFFFFFFF (reserved value)".to_string(),
+            ));
         }
 
         let rid = context.next_rid(TableId::FieldLayout);

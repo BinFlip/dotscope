@@ -10,7 +10,7 @@
 //!
 //! The signature validation system implements comprehensive blob format validation:
 //! 1. **Method Signature Validation** - Validates method signature blobs in MethodDef table
-//! 2. **Field Signature Validation** - Validates field type signatures in Field table  
+//! 2. **Field Signature Validation** - Validates field type signatures in Field table
 //! 3. **Property Signature Validation** - Validates property signatures in Property table
 //! 4. **LocalVar Signature Validation** - Validates local variable signatures in StandAloneSig table
 //! 5. **TypeSpec Signature Validation** - Validates type specification signatures in TypeSpec table
@@ -46,7 +46,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationRawFailed`] for:
 //! - Invalid calling convention bytes in signature blobs
 //! - Malformed compressed integer encoding in signatures
 //! - Signature blobs extending beyond blob heap boundaries
@@ -170,7 +170,7 @@ impl RawSignatureValidator {
     /// # Returns
     ///
     /// * `Ok(())` - Signature blob is valid and properly formatted
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Signature blob violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Signature blob violations found
     ///
     /// # Errors
     ///
@@ -189,26 +189,24 @@ impl RawSignatureValidator {
         }
 
         let Some(blob_heap) = assembly_view.blobs() else {
-            return Err(Error::ValidationRawValidatorFailed {
+            return Err(Error::ValidationRawFailed {
                 validator: "RawSignatureValidator".to_string(),
                 message: "Signature validation requires blob heap access".to_string(),
-                source: None,
             });
         };
 
-        let blob_data = blob_heap.get(blob_index as usize).map_err(|_| {
-            Error::ValidationRawValidatorFailed {
-                validator: "RawSignatureValidator".to_string(),
-                message: format!("Signature blob index {blob_index} exceeds blob heap bounds"),
-                source: None,
-            }
-        })?;
+        let blob_data =
+            blob_heap
+                .get(blob_index as usize)
+                .map_err(|_| Error::ValidationRawFailed {
+                    validator: "RawSignatureValidator".to_string(),
+                    message: format!("Signature blob index {blob_index} exceeds blob heap bounds"),
+                })?;
 
         if blob_data.is_empty() {
-            return Err(Error::ValidationRawValidatorFailed {
+            return Err(Error::ValidationRawFailed {
                 validator: "RawSignatureValidator".to_string(),
                 message: format!("Signature blob at index {blob_index} is empty"),
-                source: None,
             });
         }
 
@@ -220,12 +218,11 @@ impl RawSignatureValidator {
             SignatureKind::Method | SignatureKind::LocalVar | SignatureKind::Property
         ) {
             if blob_data.len() < 2 {
-                return Err(Error::ValidationRawValidatorFailed {
+                return Err(Error::ValidationRawFailed {
                     validator: "RawSignatureValidator".to_string(),
                     message: format!(
                         "Signature blob at index {blob_index} too short for parameter count"
                     ),
-                    source: None,
                 });
             }
 
@@ -263,20 +260,20 @@ impl RawSignatureValidator {
                 // Can also have HASTHIS (0x20) and EXPLICIT_THIS (0x40) flags
                 let base_convention = calling_convention & 0x0F;
                 if base_convention > 0x05 {
-                    return Err(Error::ValidationRawValidatorFailed {
+                    return Err(Error::ValidationRawFailed {
                         validator: "RawSignatureValidator".to_string(),
                         message: format!("Invalid method calling convention 0x{calling_convention:02X} in signature blob {blob_index}"),
-                        source: None,
+
                     });
                 }
             }
             SignatureKind::Field => {
                 // Field signature (ECMA-335 II.23.2.4) - should be 0x06
                 if calling_convention != 0x06 {
-                    return Err(Error::ValidationRawValidatorFailed {
+                    return Err(Error::ValidationRawFailed {
                         validator: "RawSignatureValidator".to_string(),
                         message: format!("Invalid field signature marker 0x{calling_convention:02X} in blob {blob_index}, expected 0x06"),
-                        source: None,
+
                     });
                 }
             }
@@ -285,20 +282,20 @@ impl RawSignatureValidator {
                 // Can also have HASTHIS (0x20) flag
                 let base_convention = calling_convention & 0x0F;
                 if base_convention != 0x08 {
-                    return Err(Error::ValidationRawValidatorFailed {
+                    return Err(Error::ValidationRawFailed {
                         validator: "RawSignatureValidator".to_string(),
                         message: format!("Invalid property signature marker 0x{calling_convention:02X} in blob {blob_index}, expected 0x08"),
-                        source: None,
+
                     });
                 }
             }
             SignatureKind::LocalVar => {
                 // Local variable signature (ECMA-335 II.23.2.6) - should be 0x07
                 if calling_convention != 0x07 {
-                    return Err(Error::ValidationRawValidatorFailed {
+                    return Err(Error::ValidationRawFailed {
                         validator: "RawSignatureValidator".to_string(),
                         message: format!("Invalid local variable signature marker 0x{calling_convention:02X} in blob {blob_index}, expected 0x07"),
-                        source: None,
+
                     });
                 }
             }
@@ -306,10 +303,10 @@ impl RawSignatureValidator {
                 // TypeSpec signature has various type encodings, basic validation for known ranges
                 // Valid element types are in ranges 0x01-0x16, 0x1B-0x20, etc.
                 if calling_convention == 0x00 {
-                    return Err(Error::ValidationRawValidatorFailed {
+                    return Err(Error::ValidationRawFailed {
                         validator: "RawSignatureValidator".to_string(),
                         message: format!("Invalid type specification signature marker 0x{calling_convention:02X} in blob {blob_index}"),
-                        source: None,
+
                     });
                 }
             }
@@ -320,7 +317,7 @@ impl RawSignatureValidator {
     /// Validates compressed integer encoding format.
     ///
     /// Ensures compressed integers follow ECMA-335 encoding rules:
-    /// - 1-byte: 0bbbbbbb (0-127)  
+    /// - 1-byte: 0bbbbbbb (0-127)
     /// - 2-byte: 10bbbbbb xxxxxxxx (128-16383)
     /// - 4-byte: 110bbbbb xxxxxxxx yyyyyyyy zzzzzzzz (16384+)
     ///
@@ -334,10 +331,9 @@ impl RawSignatureValidator {
     /// Returns validation error if compressed integer encoding is malformed.
     fn validate_compressed_integer(data: &[u8], blob_index: u32) -> Result<()> {
         if data.is_empty() {
-            return Err(Error::ValidationRawValidatorFailed {
+            return Err(Error::ValidationRawFailed {
                 validator: "RawSignatureValidator".to_string(),
                 message: format!("Insufficient data for compressed integer in blob {blob_index}"),
-                source: None,
             });
         }
 
@@ -350,35 +346,32 @@ impl RawSignatureValidator {
         } else if (first_byte & 0xC0) == 0x80 {
             // 2-byte encoding: 10bbbbbb xxxxxxxx
             if data.len() < 2 {
-                return Err(Error::ValidationRawValidatorFailed {
+                return Err(Error::ValidationRawFailed {
                     validator: "RawSignatureValidator".to_string(),
                     message: format!(
                         "Insufficient data for 2-byte compressed integer in blob {blob_index}"
                     ),
-                    source: None,
                 });
             }
             Ok(())
         } else if (first_byte & 0xE0) == 0xC0 {
             // 4-byte encoding: 110bbbbb xxxxxxxx yyyyyyyy zzzzzzzz
             if data.len() < 4 {
-                return Err(Error::ValidationRawValidatorFailed {
+                return Err(Error::ValidationRawFailed {
                     validator: "RawSignatureValidator".to_string(),
                     message: format!(
                         "Insufficient data for 4-byte compressed integer in blob {blob_index}"
                     ),
-                    source: None,
                 });
             }
             Ok(())
         } else {
             // Invalid encoding pattern
-            Err(Error::ValidationRawValidatorFailed {
+            Err(Error::ValidationRawFailed {
                 validator: "RawSignatureValidator".to_string(),
                 message: format!(
                     "Invalid compressed integer encoding 0x{first_byte:02X} in blob {blob_index}"
                 ),
-                source: None,
             })
         }
     }
@@ -398,14 +391,13 @@ impl RawSignatureValidator {
     /// Returns validation error for structural inconsistencies.
     fn validate_blob_bounds(blob_data: &[u8], blob_index: u32) -> Result<()> {
         if blob_data.len() > 65536 {
-            return Err(Error::ValidationRawValidatorFailed {
+            return Err(Error::ValidationRawFailed {
                 validator: "RawSignatureValidator".to_string(),
                 message: format!(
                     "Signature blob {} exceeds maximum reasonable size ({})",
                     blob_index,
                     blob_data.len()
                 ),
-                source: None,
             });
         }
 
@@ -419,7 +411,7 @@ impl RawValidator for RawSignatureValidator {
     ///
     /// Performs comprehensive validation of signature blob structures, including:
     /// 1. Method signature validation in MethodDef table
-    /// 2. Field signature validation in Field table  
+    /// 2. Field signature validation in Field table
     /// 3. Property signature validation in Property table
     /// 4. Local variable signature validation in StandAloneSig table
     /// 5. Type specification signature validation in TypeSpec table
@@ -435,7 +427,7 @@ impl RawValidator for RawSignatureValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All signature blobs are valid and properly formatted
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Signature blob violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Signature blob violations found
     ///
     /// # Configuration
     ///
@@ -612,7 +604,7 @@ mod tests {
         validator_test(
             raw_signature_validator_file_factory,
             "RawSignatureValidator",
-            "ValidationRawValidatorFailed",
+            "ValidationRawFailed",
             config,
             |context| validator.validate_raw(context),
         )

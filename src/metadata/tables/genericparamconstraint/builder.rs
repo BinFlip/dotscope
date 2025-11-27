@@ -206,41 +206,33 @@ impl GenericParamConstraintBuilder {
     /// - Returns error if constraint is not a valid TypeDefOrRef coded index
     /// - Returns error if table operations fail
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let owner = self
-            .owner
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "GenericParamConstraint owner is required".to_string(),
-            })?;
+        let owner = self.owner.ok_or_else(|| {
+            Error::ModificationInvalid("GenericParamConstraint owner is required".to_string())
+        })?;
 
-        let constraint = self
-            .constraint
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "GenericParamConstraint constraint is required".to_string(),
-            })?;
+        let constraint = self.constraint.ok_or_else(|| {
+            Error::ModificationInvalid("GenericParamConstraint constraint is required".to_string())
+        })?;
 
         if owner.table() != TableId::GenericParam as u8 {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Owner must be a GenericParam token, got table {:?}",
-                    owner.table()
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Owner must be a GenericParam token, got table {:?}",
+                owner.table()
+            )));
         }
 
         if owner.row() == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "GenericParamConstraint owner RID cannot be 0".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "GenericParamConstraint owner RID cannot be 0".to_string(),
+            ));
         }
 
         let valid_constraint_tables = CodedIndexType::TypeDefOrRef.tables();
         if !valid_constraint_tables.contains(&constraint.tag) {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Constraint must be a TypeDefOrRef coded index (TypeDef/TypeRef/TypeSpec), got {:?}",
-                    constraint.tag
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Constraint must be a TypeDefOrRef coded index (TypeDef/TypeRef/TypeSpec), got {:?}",
+                constraint.tag
+            )));
         }
 
         let rid = context.next_rid(TableId::GenericParamConstraint);

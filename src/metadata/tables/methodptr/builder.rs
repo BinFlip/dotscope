@@ -149,11 +149,9 @@ impl MethodPtrBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let method = self
-            .method
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Method RID is required for MethodPtr".to_string(),
-            })?;
+        let method = self.method.ok_or_else(|| {
+            Error::ModificationInvalid("Method RID is required for MethodPtr".to_string())
+        })?;
 
         let next_rid = context.next_rid(TableId::MethodPtr);
         let token = Token::new(((TableId::MethodPtr as u32) << 24) | next_rid);
@@ -236,10 +234,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Method RID is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

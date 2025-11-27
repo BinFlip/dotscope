@@ -44,7 +44,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Method signature consistency violations (empty names, unresolved parameter types)
 //! - Virtual method inheritance violations (abstract without virtual, static with virtual)
 //! - Constructor convention violations (missing special flags, incorrect modifiers)
@@ -139,11 +139,11 @@ impl OwnedMethodValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All method signatures are valid and resolved
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Method signature violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Method signature violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Method names are empty
     /// - Parameter types are unresolved or have empty names
     /// - Return types are unresolved (Unknown type signatures)
@@ -155,13 +155,12 @@ impl OwnedMethodValidator {
             let method = entry.value();
 
             if method.name.is_empty() {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Method with token 0x{:08X} has empty name",
                         entry.key().value()
                     ),
-                    source: None,
                 });
             }
 
@@ -169,33 +168,30 @@ impl OwnedMethodValidator {
                 if let Some(base_type_ref) = param.base.get() {
                     if let Some(base_type) = base_type_ref.upgrade() {
                         if base_type.name.is_empty() {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Method '{}' parameter {} has unresolved type",
                                     method.name, index
                                 ),
-                                source: None,
                             });
                         }
                     } else {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Method '{}' parameter {} has unresolved type",
                                 method.name, index
                             ),
-                            source: None,
                         });
                     }
                 } else {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' parameter {} has unresolved type",
                             method.name, index
                         ),
-                        source: None,
                     });
                 }
             }
@@ -204,33 +200,30 @@ impl OwnedMethodValidator {
                 &method.signature.return_type.base
             {
                 let method_name = &method.name;
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!("Method '{method_name}' has unresolved return type"),
-                    source: None,
                 });
             }
 
             for (index, (_, local)) in method.local_vars.iter().enumerate() {
                 if let Some(local_type) = local.base.upgrade() {
                     if local_type.name.is_empty() {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Method '{}' local variable {} has unresolved type",
                                 method.name, index
                             ),
-                            source: None,
                         });
                     }
                 } else {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' local variable {} has unresolved type",
                             method.name, index
                         ),
-                        source: None,
                     });
                 }
             }
@@ -252,11 +245,11 @@ impl OwnedMethodValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All virtual inheritance rules are followed
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Virtual inheritance violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Virtual inheritance violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Abstract methods are not marked as virtual
     /// - Static methods are marked as virtual, abstract, or final
     /// - Final methods are not marked as virtual
@@ -270,35 +263,31 @@ impl OwnedMethodValidator {
             if method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
                 && !method.flags_modifiers.contains(MethodModifiers::VIRTUAL)
             {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!("Abstract method '{}' must also be virtual", method.name),
-                    source: None,
                 });
             }
 
             if method.flags_modifiers.contains(MethodModifiers::STATIC) {
                 if method.flags_modifiers.contains(MethodModifiers::VIRTUAL) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Static method '{}' cannot be virtual", method.name),
-                        source: None,
                     });
                 }
 
                 if method.flags_modifiers.contains(MethodModifiers::ABSTRACT) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Static method '{}' cannot be abstract", method.name),
-                        source: None,
                     });
                 }
 
                 if method.flags_modifiers.contains(MethodModifiers::FINAL) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Static method '{}' cannot be final", method.name),
-                        source: None,
                     });
                 }
             }
@@ -306,10 +295,9 @@ impl OwnedMethodValidator {
             if method.flags_modifiers.contains(MethodModifiers::FINAL)
                 && !method.flags_modifiers.contains(MethodModifiers::VIRTUAL)
             {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!("Final method '{}' must also be virtual", method.name),
-                    source: None,
                 });
             }
 
@@ -319,13 +307,12 @@ impl OwnedMethodValidator {
                     .flags_modifiers
                     .contains(MethodModifiers::RTSPECIAL_NAME)
             {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Method '{}' uses NEW_SLOT but is not virtual or runtime special",
                         method.name
                     ),
-                    source: None,
                 });
             }
         }
@@ -346,11 +333,11 @@ impl OwnedMethodValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All constructor conventions are followed
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Constructor violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Constructor violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Instance constructors lack RTSPECIAL_NAME or SPECIAL_NAME flags
     /// - Instance constructors are marked as static or virtual
     /// - Static constructors are not marked as static
@@ -370,13 +357,12 @@ impl OwnedMethodValidator {
                     .flags_modifiers
                     .contains(MethodModifiers::RTSPECIAL_NAME)
                 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Instance constructor '{}' must have RTSPECIAL_NAME flag",
                             method.name
                         ),
-                        source: None,
                     });
                 }
 
@@ -384,32 +370,29 @@ impl OwnedMethodValidator {
                     .flags_modifiers
                     .contains(MethodModifiers::SPECIAL_NAME)
                 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Instance constructor '{}' must have SPECIAL_NAME flag",
                             method.name
                         ),
-                        source: None,
                     });
                 }
 
                 if method.flags_modifiers.contains(MethodModifiers::STATIC) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Instance constructor '{}' cannot be static", method.name),
-                        source: None,
                     });
                 }
 
                 if method.flags_modifiers.contains(MethodModifiers::VIRTUAL) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Instance constructor '{}' cannot be virtual",
                             method.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -418,10 +401,9 @@ impl OwnedMethodValidator {
             if method.name == ".cctor" {
                 // Static constructors must be static, RTSPECIAL_NAME, and SPECIAL_NAME
                 if !method.flags_modifiers.contains(MethodModifiers::STATIC) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Static constructor '{}' must be static", method.name),
-                        source: None,
                     });
                 }
 
@@ -429,13 +411,12 @@ impl OwnedMethodValidator {
                     .flags_modifiers
                     .contains(MethodModifiers::RTSPECIAL_NAME)
                 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Static constructor '{}' must have RTSPECIAL_NAME flag",
                             method.name
                         ),
-                        source: None,
                     });
                 }
 
@@ -443,21 +424,19 @@ impl OwnedMethodValidator {
                     .flags_modifiers
                     .contains(MethodModifiers::SPECIAL_NAME)
                 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Static constructor '{}' must have SPECIAL_NAME flag",
                             method.name
                         ),
-                        source: None,
                     });
                 }
 
                 if method.flags_access != MethodAccessFlags::PRIVATE {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Static constructor '{}' should be private", method.name),
-                        source: None,
                     });
                 }
             }
@@ -479,13 +458,12 @@ impl OwnedMethodValidator {
                     .impl_options
                     .contains(MethodImplOptions::INTERNAL_CALL)
             {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Operator overload '{}' should have SPECIAL_NAME flag",
                         method.name
                     ),
-                    source: None,
                 });
             }
 
@@ -510,11 +488,11 @@ impl OwnedMethodValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All method body requirements are satisfied
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Method body violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Method body violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Abstract methods have implementation (RVA present)
     /// - P/Invoke methods have implementation (RVA present)
     /// - Runtime methods have implementation (RVA present)
@@ -531,13 +509,12 @@ impl OwnedMethodValidator {
                         if method.flags_modifiers.contains(MethodModifiers::ABSTRACT)
                             && method.rva.is_some()
                         {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Abstract method '{}' should not have implementation (RVA)",
                                     method.name
                                 ),
-                                source: None,
                             });
                         }
 
@@ -546,13 +523,12 @@ impl OwnedMethodValidator {
                             .contains(MethodModifiers::PINVOKE_IMPL)
                             && method.rva.is_some()
                         {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "P/Invoke method '{}' should not have implementation (RVA)",
                                     method.name
                                 ),
-                                source: None,
                             });
                         }
 
@@ -561,13 +537,12 @@ impl OwnedMethodValidator {
                             .intersects(MethodImplCodeType::RUNTIME)
                             && method.rva.is_some()
                         {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Runtime method '{}' should not have implementation (RVA)",
                                     method.name
                                 ),
-                                source: None,
                             });
                         }
 
@@ -583,13 +558,12 @@ impl OwnedMethodValidator {
                                 .contains(MethodImplOptions::INTERNAL_CALL)
                             && method.rva.is_none()
                         {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Concrete method '{}' must have implementation (RVA)",
                                     method.name
                                 ),
-                                source: None,
                             });
                         }
                     }
@@ -652,7 +626,7 @@ mod tests {
         owned_validator_test(
             owned_method_validator_file_factory,
             "OwnedMethodValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

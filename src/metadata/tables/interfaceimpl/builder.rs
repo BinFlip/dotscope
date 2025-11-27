@@ -178,32 +178,26 @@ impl InterfaceImplBuilder {
     /// - Returns error if interface is not a valid TypeDefOrRef coded index
     /// - Returns error if table operations fail
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let class = self
-            .class
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "InterfaceImpl class is required".to_string(),
-            })?;
+        let class = self.class.ok_or_else(|| {
+            Error::ModificationInvalid("InterfaceImpl class is required".to_string())
+        })?;
 
-        let interface = self
-            .interface
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "InterfaceImpl interface is required".to_string(),
-            })?;
+        let interface = self.interface.ok_or_else(|| {
+            Error::ModificationInvalid("InterfaceImpl interface is required".to_string())
+        })?;
 
         if class == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "InterfaceImpl class RID cannot be 0".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "InterfaceImpl class RID cannot be 0".to_string(),
+            ));
         }
 
         let valid_interface_tables = CodedIndexType::TypeDefOrRef.tables();
         if !valid_interface_tables.contains(&interface.tag) {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Interface must be a TypeDefOrRef coded index (TypeDef/TypeRef/TypeSpec), got {:?}",
-                    interface.tag
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Interface must be a TypeDefOrRef coded index (TypeDef/TypeRef/TypeSpec), got {:?}",
+                interface.tag
+            )));
         }
 
         let rid = context.next_rid(TableId::InterfaceImpl);

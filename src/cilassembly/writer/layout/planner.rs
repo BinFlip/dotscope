@@ -131,7 +131,7 @@
 //!
 //! The planner provides comprehensive error handling for all planning failures:
 //!
-//! - [`crate::Error::WriteLayoutFailed`] - When component size calculation fails or layout is invalid
+//! - [`crate::Error::LayoutFailed`] - When component size calculation fails or layout is invalid
 //! - [`crate::Error::MetadataLayoutFailed`] - When metadata stream layout cannot be determined
 //! - [`crate::Error::SectionLayoutFailed`] - When PE section layout planning fails
 //! - [`crate::Error::OperationGenerationFailed`] - When operation generation encounters errors
@@ -202,6 +202,7 @@ use crate::{
         },
         File,
     },
+    malformed_error,
     metadata::{
         streams::TablesHeader,
         tables::{
@@ -465,7 +466,7 @@ impl<'a> LayoutPlanner<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::WriteLayoutFailed`] for various planning failures:
+    /// Returns [`crate::Error::LayoutFailed`] for various planning failures:
     /// - **Component Analysis Failure**: When metadata component sizes cannot be calculated
     /// - **Native Table Analysis Failure**: When import/export requirements cannot be determined
     /// - **File Structure Planning Failure**: When PE file structure cannot be planned
@@ -606,7 +607,7 @@ impl<'a> LayoutPlanner<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::WriteLayoutFailed`] if:
+    /// Returns [`crate::Error::LayoutFailed`] if:
     /// - Heap size calculation fails due to corrupted heap data
     /// - Table analysis fails due to invalid table modifications
     /// - Metadata root analysis encounters structural issues
@@ -675,7 +676,7 @@ impl<'a> LayoutPlanner<'a> {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::WriteLayoutFailed`] if:
+    /// Returns [`crate::Error::LayoutFailed`] if:
     /// - PE format detection fails for the assembly
     /// - Import/export data analysis encounters corrupted data
     /// - Size calculations produce invalid results
@@ -796,29 +797,23 @@ impl<'a> LayoutPlanner<'a> {
             metadata_end_file_offset - meta_section.file_region.offset
                 + u64::from(meta_section.virtual_address),
         )
-        .map_err(|_| Error::WriteLayoutFailed {
-            message: "Metadata end RVA exceeds u32 range".to_string(),
-        })?;
+        .map_err(|_| Error::LayoutFailed("Metadata end RVA exceeds u32 range".to_string()))?;
 
         // Place native tables immediately after metadata, with 4-byte alignment
         let mut current_rva = u32::try_from(align_to_4_bytes(u64::from(metadata_end_rva)))
-            .map_err(|_| Error::WriteLayoutFailed {
-                message: "RVA alignment result exceeds u32 range".to_string(),
+            .map_err(|_| {
+                Error::LayoutFailed("RVA alignment result exceeds u32 range".to_string())
             })?;
 
         // Allocate import table RVA if needed
         if requirements.needs_import_tables {
             requirements.import_table_rva = Some(current_rva);
             current_rva += u32::try_from(requirements.import_table_size).map_err(|_| {
-                Error::WriteLayoutFailed {
-                    message: "Import table size exceeds u32 range".to_string(),
-                }
+                Error::LayoutFailed("Import table size exceeds u32 range".to_string())
             })?;
             current_rva =
                 u32::try_from(align_to_4_bytes(u64::from(current_rva))).map_err(|_| {
-                    Error::WriteLayoutFailed {
-                        message: "RVA alignment result exceeds u32 range".to_string(),
-                    }
+                    Error::LayoutFailed("RVA alignment result exceeds u32 range".to_string())
                 })?;
         }
 
@@ -826,26 +821,20 @@ impl<'a> LayoutPlanner<'a> {
         if requirements.needs_export_tables {
             requirements.export_table_rva = Some(current_rva);
             current_rva += u32::try_from(requirements.export_table_size).map_err(|_| {
-                Error::WriteLayoutFailed {
-                    message: "Export table size exceeds u32 range".to_string(),
-                }
+                Error::LayoutFailed("Export table size exceeds u32 range".to_string())
             })?;
             current_rva =
                 u32::try_from(align_to_4_bytes(u64::from(current_rva))).map_err(|_| {
-                    Error::WriteLayoutFailed {
-                        message: "RVA alignment result exceeds u32 range".to_string(),
-                    }
+                    Error::LayoutFailed("RVA alignment result exceeds u32 range".to_string())
                 })?;
         }
 
         // Verify allocations fit within the section
         let section_end = meta_section.virtual_address + meta_section.virtual_size;
         if current_rva > section_end {
-            return Err(Error::WriteLayoutFailed {
-                message: format!(
-                    "Native tables too large for .meta section: need RVA 0x{current_rva:X}, section ends at 0x{section_end:X}"
-                ),
-            });
+            return Err(Error::LayoutFailed(format!(
+                "Native tables too large for .meta section: need RVA 0x{current_rva:X}, section ends at 0x{section_end:X}"
+            )));
         }
 
         Ok(())
@@ -1057,9 +1046,7 @@ impl<'a> LayoutPlanner<'a> {
         // Calculate position after last existing section
         let last_section = existing_sections
             .last()
-            .ok_or_else(|| Error::WriteLayoutFailed {
-                message: "No existing sections found".to_string(),
-            })?;
+            .ok_or_else(|| Error::LayoutFailed("No existing sections found".to_string()))?;
 
         let meta_file_offset = last_section.file_region.offset
             + align_to(
@@ -1108,8 +1095,8 @@ impl<'a> LayoutPlanner<'a> {
             .sections
             .iter()
             .find(|s| s.contains_metadata)
-            .ok_or_else(|| Error::WriteLayoutFailed {
-                message: "No .meta section found in file structure".to_string(),
+            .ok_or_else(|| {
+                Error::LayoutFailed("No .meta section found in file structure".to_string())
             })?;
 
         let meta_start = meta_section.file_region.offset;
@@ -1346,18 +1333,15 @@ impl<'a> LayoutPlanner<'a> {
         let file = view.file();
 
         // Get COR20 header RVA
-        let optional_header =
-            file.header_optional()
-                .as_ref()
-                .ok_or_else(|| Error::WriteLayoutFailed {
-                    message: "Missing optional header for COR20 check".to_string(),
-                })?;
+        let optional_header = file.header_optional().as_ref().ok_or_else(|| {
+            Error::LayoutFailed("Missing optional header for COR20 check".to_string())
+        })?;
 
         let clr_header_entry = optional_header
             .data_directories
             .get_clr_runtime_header()
-            .ok_or_else(|| Error::WriteLayoutFailed {
-                message: "No CLR Runtime Header data directory entry found".to_string(),
+            .ok_or_else(|| {
+                Error::LayoutFailed("No CLR Runtime Header data directory entry found".to_string())
             })?;
 
         let cor20_rva = clr_header_entry.virtual_address;
@@ -1379,11 +1363,11 @@ impl<'a> LayoutPlanner<'a> {
 
         // Get metadata location in the file
         let metadata_rva = view.cor20header().meta_data_rva as usize;
-        let metadata_file_offset =
-            file.rva_to_offset(metadata_rva)
-                .map_err(|e| Error::WriteLayoutFailed {
-                    message: format!("Failed to resolve metadata RVA to file offset: {e}"),
-                })? as u64;
+        let metadata_file_offset = file.rva_to_offset(metadata_rva).map_err(|e| {
+            Error::LayoutFailed(format!(
+                "Failed to resolve metadata RVA to file offset: {e}"
+            ))
+        })? as u64;
         let metadata_size = u64::from(view.cor20header().meta_data_size);
 
         let section_file_start = u64::from(original_section.pointer_to_raw_data);
@@ -1627,9 +1611,7 @@ impl<'a> LayoutPlanner<'a> {
         let last_section = sections
             .iter()
             .max_by_key(|section| section.virtual_address)
-            .ok_or_else(|| Error::WriteLayoutFailed {
-                message: "No sections found in PE file".to_string(),
-            })?;
+            .ok_or_else(|| Error::LayoutFailed("No sections found in PE file".to_string()))?;
 
         // .meta section will be placed after the last existing section
         let last_section_end = last_section.virtual_address + last_section.virtual_size;
@@ -2032,12 +2014,9 @@ impl<'a> LayoutPlanner<'a> {
         let view = self.assembly.view();
         let file = view.file();
 
-        let optional_header =
-            file.header_optional()
-                .as_ref()
-                .ok_or_else(|| Error::WriteLayoutFailed {
-                    message: "Missing optional header for CLR data directory update".to_string(),
-                })?;
+        let optional_header = file.header_optional().as_ref().ok_or_else(|| {
+            Error::LayoutFailed("Missing optional header for CLR data directory update".to_string())
+        })?;
 
         // Calculate the file offset of the CLR directory entry
         // The data directory is at a fixed offset within the optional header
@@ -2108,35 +2087,30 @@ impl<'a> LayoutPlanner<'a> {
         let file = view.file();
 
         // Get the CLR Runtime Header directory entry
-        let optional_header =
-            file.header_optional()
-                .as_ref()
-                .ok_or_else(|| Error::WriteLayoutFailed {
-                    message: "Missing optional header for COR20 location".to_string(),
-                })?;
+        let optional_header = file.header_optional().as_ref().ok_or_else(|| {
+            Error::LayoutFailed("Missing optional header for COR20 location".to_string())
+        })?;
 
         let clr_header_entry = optional_header
             .data_directories
             .get_clr_runtime_header()
-            .ok_or_else(|| Error::WriteLayoutFailed {
-                message: "No CLR Runtime Header data directory entry found".to_string(),
+            .ok_or_else(|| {
+                Error::LayoutFailed("No CLR Runtime Header data directory entry found".to_string())
             })?;
 
         if clr_header_entry.virtual_address == 0 {
-            return Err(Error::WriteLayoutFailed {
-                message: "CLR Runtime Header data directory entry is empty".to_string(),
-            });
+            return Err(Error::LayoutFailed(
+                "CLR Runtime Header data directory entry is empty".to_string(),
+            ));
         }
 
         // Convert RVA to file offset
         let cor20_rva = clr_header_entry.virtual_address as usize;
-        let cor20_file_offset =
-            file.rva_to_offset(cor20_rva)
-                .map_err(|e| Error::WriteLayoutFailed {
-                    message: format!(
-                        "Failed to convert COR20 RVA 0x{cor20_rva:X} to file offset: {e}"
-                    ),
-                })? as u64;
+        let cor20_file_offset = file.rva_to_offset(cor20_rva).map_err(|e| {
+            Error::LayoutFailed(format!(
+                "Failed to convert COR20 RVA 0x{cor20_rva:X} to file offset: {e}"
+            ))
+        })? as u64;
 
         Ok(cor20_file_offset)
     }
@@ -2439,9 +2413,10 @@ impl<'a> LayoutPlanner<'a> {
                 }
                 _ => {
                     // Unknown stream type
-                    return Err(Error::WriteLayoutFailed {
-                        message: format!("Unknown stream type: {}", stream.name),
-                    });
+                    return Err(Error::LayoutFailed(format!(
+                        "Unknown stream type: {}",
+                        stream.name
+                    )));
                 }
             }
         }
@@ -2496,9 +2471,9 @@ impl<'a> LayoutPlanner<'a> {
                 }
             }
         } else {
-            return Err(Error::WriteLayoutFailed {
-                message: ".meta section not found for method body placement".to_string(),
-            });
+            return Err(Error::LayoutFailed(
+                ".meta section not found for method body placement".to_string(),
+            ));
         }
 
         Ok(())
@@ -2523,17 +2498,17 @@ impl<'a> LayoutPlanner<'a> {
                 let metadata_offset = view
                     .file()
                     .rva_to_offset(cor20_header.meta_data_rva as usize)
-                    .map_err(|e| Error::WriteLayoutFailed {
-                        message: format!("Failed to resolve metadata RVA: {e}"),
+                    .map_err(|e| {
+                        Error::LayoutFailed(format!("Failed to resolve metadata RVA: {e}"))
                     })?;
 
                 let stream_start = metadata_offset + stream_header.offset as usize;
                 let stream_end = stream_start + stream_header.size as usize;
 
                 if stream_end > metadata_slice.len() {
-                    return Err(Error::WriteLayoutFailed {
-                        message: "Tables stream extends beyond metadata bounds".to_string(),
-                    });
+                    return Err(Error::LayoutFailed(
+                        "Tables stream extends beyond metadata bounds".to_string(),
+                    ));
                 }
 
                 let original_stream_data = &metadata_slice[stream_start..stream_end];
@@ -2547,9 +2522,9 @@ impl<'a> LayoutPlanner<'a> {
             }
         }
 
-        Err(Error::WriteLayoutFailed {
-            message: "No tables stream (#~ or #-) found in assembly".to_string(),
-        })
+        Err(Error::LayoutFailed(
+            "No tables stream (#~ or #-) found in assembly".to_string(),
+        ))
     }
 
     /// Generates modified tables stream data by applying all changes from assembly.changes().
@@ -2626,9 +2601,9 @@ impl<'a> LayoutPlanner<'a> {
         rva_mappings: &HashMap<u32, u32>,
     ) -> Result<Vec<u8>> {
         let view = self.assembly.view();
-        let tables = view.tables().ok_or_else(|| Error::WriteLayoutFailed {
-            message: "No tables found in assembly".to_string(),
-        })?;
+        let tables = view
+            .tables()
+            .ok_or_else(|| Error::LayoutFailed("No tables found in assembly".to_string()))?;
 
         // Calculate new row counts for all tables
         let mut new_row_counts = Vec::with_capacity(64);
@@ -2735,9 +2710,9 @@ impl<'a> LayoutPlanner<'a> {
         rva_mappings: &HashMap<u32, u32>,
     ) -> Result<Vec<u8>> {
         let view = self.assembly.view();
-        let tables = view.tables().ok_or_else(|| Error::WriteLayoutFailed {
-            message: "No tables found in assembly".to_string(),
-        })?;
+        let tables = view
+            .tables()
+            .ok_or_else(|| Error::LayoutFailed("No tables found in assembly".to_string()))?;
 
         // Calculate new row counts for all tables
         let mut new_row_counts = Vec::with_capacity(64);
@@ -3047,9 +3022,9 @@ impl<'a> LayoutPlanner<'a> {
         let original_data = self.get_original_table_data(table_id, original_header, table_info)?;
 
         if original_data.len() > buffer.len() {
-            return Err(Error::WriteLayoutFailed {
-                message: format!("Table {table_id:?} data too large for buffer"),
-            });
+            return Err(Error::LayoutFailed(format!(
+                "Table {table_id:?} data too large for buffer"
+            )));
         }
 
         buffer[..original_data.len()].copy_from_slice(&original_data);
@@ -3470,9 +3445,9 @@ impl<'a> LayoutPlanner<'a> {
         heap_mappings: &IndexRemapper,
     ) -> Result<()> {
         let view = self.assembly.view();
-        let tables = view.tables().ok_or_else(|| Error::WriteLayoutFailed {
-            message: "No tables found".to_string(),
-        })?;
+        let tables = view
+            .tables()
+            .ok_or_else(|| Error::LayoutFailed("No tables found".to_string()))?;
         let index_size = tables.info.str_bytes() as usize;
 
         if offset + index_size > row_buffer.len() {
@@ -3517,9 +3492,9 @@ impl<'a> LayoutPlanner<'a> {
         heap_mappings: &IndexRemapper,
     ) -> Result<()> {
         let view = self.assembly.view();
-        let tables = view.tables().ok_or_else(|| Error::WriteLayoutFailed {
-            message: "No tables found".to_string(),
-        })?;
+        let tables = view
+            .tables()
+            .ok_or_else(|| Error::LayoutFailed("No tables found".to_string()))?;
         let index_size = tables.info.blob_bytes() as usize;
 
         if offset + index_size > row_buffer.len() {
@@ -3625,8 +3600,8 @@ impl<'a> LayoutPlanner<'a> {
                 let metadata_offset = view
                     .file()
                     .rva_to_offset(cor20_header.meta_data_rva as usize)
-                    .map_err(|e| Error::WriteLayoutFailed {
-                        message: format!("Failed to resolve metadata RVA: {e}"),
+                    .map_err(|e| {
+                        Error::LayoutFailed(format!("Failed to resolve metadata RVA: {e}"))
                     })?;
 
                 let metadata_slice = view.file().data();
@@ -3634,9 +3609,9 @@ impl<'a> LayoutPlanner<'a> {
                 let stream_end = stream_start + stream_header.size as usize;
 
                 if stream_end > metadata_slice.len() {
-                    return Err(Error::WriteLayoutFailed {
-                        message: format!("Stream {stream_name} extends beyond metadata bounds"),
-                    });
+                    return Err(Error::LayoutFailed(format!(
+                        "Stream {stream_name} extends beyond metadata bounds"
+                    )));
                 }
 
                 let stream_data = &metadata_slice[stream_start..stream_end];
@@ -3644,9 +3619,9 @@ impl<'a> LayoutPlanner<'a> {
             }
         }
 
-        Err(Error::WriteLayoutFailed {
-            message: format!("Stream {stream_name} not found in original assembly"),
-        })
+        Err(Error::LayoutFailed(format!(
+            "Stream {stream_name} not found in original assembly"
+        )))
     }
 
     /// Rebuilds the tables stream with modifications applied.
@@ -3659,13 +3634,9 @@ impl<'a> LayoutPlanner<'a> {
         // without using the complex TableWriter infrastructure. This ensures we get the
         // functionality working while maintaining compatibility.
 
-        let tables_header =
-            self.assembly
-                .view
-                .tables()
-                .ok_or_else(|| Error::WriteLayoutFailed {
-                    message: "No metadata tables found in assembly".to_string(),
-                })?;
+        let tables_header = self.assembly.view.tables().ok_or_else(|| {
+            Error::LayoutFailed("No metadata tables found in assembly".to_string())
+        })?;
 
         // Calculate the size needed for the new tables stream
         let new_stream_size = self.calculate_modified_tables_stream_size()?;
@@ -3685,13 +3656,9 @@ impl<'a> LayoutPlanner<'a> {
     /// This method determines the total size required for the new tables stream
     /// by calculating the header size and the sizes of all tables after modifications.
     fn calculate_modified_tables_stream_size(&self) -> Result<usize> {
-        let tables_header =
-            self.assembly
-                .view
-                .tables()
-                .ok_or_else(|| Error::WriteLayoutFailed {
-                    message: "No metadata tables found in assembly".to_string(),
-                })?;
+        let tables_header = self.assembly.view.tables().ok_or_else(|| {
+            Error::LayoutFailed("No metadata tables found in assembly".to_string())
+        })?;
 
         // Calculate header size: 24 bytes fixed + 4 bytes per present table
         let present_table_count = tables_header.valid.count_ones() as usize;
@@ -3762,8 +3729,8 @@ impl<'a> LayoutPlanner<'a> {
             {
                 match table_mod {
                     CilTableModifications::Replaced(new_rows) => u32::try_from(new_rows.len())
-                        .map_err(|_| Error::WriteLayoutFailed {
-                            message: "New table row count exceeds u32 range".to_string(),
+                        .map_err(|_| {
+                            Error::LayoutFailed("New table row count exceeds u32 range".to_string())
                         })?,
                     CilTableModifications::Sparse { operations, .. } => {
                         let original_row_count = tables_header.table_row_count(table_id);
@@ -3918,9 +3885,8 @@ impl<'a> LayoutPlanner<'a> {
     ) -> Result<()> {
         let mut current_offset = offset;
         for (index, row) in new_rows.iter().enumerate() {
-            let rid = u32::try_from(index + 1).map_err(|_| Error::WriteLayoutFailed {
-                message: "Row index exceeds u32 range".to_string(),
-            })?; // RIDs are 1-based
+            let rid = u32::try_from(index + 1)
+                .map_err(|_| Error::LayoutFailed("Row index exceeds u32 range".to_string()))?; // RIDs are 1-based
 
             let row_size = row.calculate_row_size(table_info) as usize;
             let row_slice = &mut stream_data[current_offset..current_offset + row_size];
@@ -3986,14 +3952,14 @@ impl<'a> LayoutPlanner<'a> {
                                 &tables_header.info,
                             )?;
                         } else {
-                            return Err(Error::Error(format!(
+                            return Err(malformed_error!(
                                 "Cannot read original row {original_rid} from table {table_id:?}"
-                            )));
+                            ));
                         }
                     } else {
-                        return Err(Error::Error(format!(
+                        return Err(malformed_error!(
                             "Original table {table_id:?} not found during sparse modification writing"
-                        )));
+                        ));
                     }
                 }
             }
@@ -4014,8 +3980,8 @@ impl<'a> LayoutPlanner<'a> {
                 let row_size = calculate_table_row_size(table_id, &tables_header.info) as usize;
 
                 for (index, row) in original_table.iter().enumerate() {
-                    let rid = u32::try_from(index + 1).map_err(|_| Error::WriteLayoutFailed {
-                        message: "Row index exceeds u32 range".to_string(),
+                    let rid = u32::try_from(index + 1).map_err(|_| {
+                        Error::LayoutFailed("Row index exceeds u32 range".to_string())
                     })?; // RIDs are 1-based
 
                     let row_offset = offset + (index * row_size);

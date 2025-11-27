@@ -133,7 +133,7 @@ use std::path::Path;
 
 use crate::{
     utils::align_to,
-    Error::{Empty, GoblinErr, WriteLayoutFailed},
+    Error::{self, Goblin, LayoutFailed, Other},
     Result,
 };
 use goblin::pe::PE;
@@ -421,7 +421,7 @@ impl File {
         let mut data = Vec::new();
         reader
             .read_to_end(&mut data)
-            .map_err(|e| crate::Error::Error(format!("Failed to read from reader: {}", e)))?;
+            .map_err(|e| Other(format!("Failed to read from reader: {}", e)))?;
         Self::from_mem(data)
     }
 
@@ -436,7 +436,7 @@ impl File {
     /// Returns an error if the data is empty or not a valid PE format.
     fn load<T: Backend + 'static>(data: T) -> Result<File> {
         if data.len() == 0 {
-            return Err(Empty);
+            return Err(Error::NotSupported);
         }
 
         // ToDo: For MONO, the .NET CIL part is embedded into an ELF as an actual valid PE file.
@@ -445,7 +445,7 @@ impl File {
 
         let goblin_pe = match PE::parse(data.data()) {
             Ok(pe) => pe,
-            Err(error) => return Err(GoblinErr(error)),
+            Err(error) => return Err(Goblin(error)),
         };
 
         let owned_pe = Pe::from_goblin_pe(&goblin_pe)?;
@@ -1096,14 +1096,11 @@ impl File {
     /// Returns the file alignment value in bytes.
     ///
     /// # Errors
-    /// Returns [`crate::Error::WriteLayoutFailed`] if the PE header cannot be accessed.
+    /// Returns [`crate::Error::LayoutFailed`] if the PE header cannot be accessed.
     pub fn file_alignment(&self) -> Result<u32> {
-        let optional_header = self
-            .header_optional()
-            .as_ref()
-            .ok_or_else(|| WriteLayoutFailed {
-                message: "Missing optional header for file alignment".to_string(),
-            })?;
+        let optional_header = self.header_optional().as_ref().ok_or_else(|| {
+            LayoutFailed("Missing optional header for file alignment".to_string())
+        })?;
 
         Ok(optional_header.windows_fields.file_alignment)
     }
@@ -1117,14 +1114,11 @@ impl File {
     /// Returns the section alignment value in bytes.
     ///
     /// # Errors
-    /// Returns [`crate::Error::WriteLayoutFailed`] if the PE header cannot be accessed.
+    /// Returns [`crate::Error::LayoutFailed`] if the PE header cannot be accessed.
     pub fn section_alignment(&self) -> Result<u32> {
-        let optional_header = self
-            .header_optional()
-            .as_ref()
-            .ok_or_else(|| WriteLayoutFailed {
-                message: "Missing optional header for section alignment".to_string(),
-            })?;
+        let optional_header = self.header_optional().as_ref().ok_or_else(|| {
+            LayoutFailed("Missing optional header for section alignment".to_string())
+        })?;
 
         Ok(optional_header.windows_fields.section_alignment)
     }
@@ -1138,14 +1132,11 @@ impl File {
     /// Returns `true` if PE32+ format, `false` if PE32 format.
     ///
     /// # Errors
-    /// Returns [`crate::Error::WriteLayoutFailed`] if the PE format cannot be determined.
+    /// Returns [`crate::Error::LayoutFailed`] if the PE format cannot be determined.
     pub fn is_pe32_plus_format(&self) -> Result<bool> {
-        let optional_header = self
-            .header_optional()
-            .as_ref()
-            .ok_or_else(|| WriteLayoutFailed {
-                message: "Missing optional header for PE format detection".to_string(),
-            })?;
+        let optional_header = self.header_optional().as_ref().ok_or_else(|| {
+            LayoutFailed("Missing optional header for PE format detection".to_string())
+        })?;
 
         // PE32 magic is 0x10b, PE32+ magic is 0x20b
         Ok(optional_header.standard_fields.magic != 0x10b)
@@ -1160,14 +1151,12 @@ impl File {
     /// Returns a reference to the .text section table entry.
     ///
     /// # Errors
-    /// Returns [`crate::Error::WriteLayoutFailed`] if no .text section is found.
+    /// Returns [`crate::Error::LayoutFailed`] if no .text section is found.
     fn find_text_section(&self) -> Result<&pe::SectionTable> {
         self.sections()
             .iter()
             .find(|s| s.name.as_str() == ".text" || s.name.starts_with(".text"))
-            .ok_or_else(|| WriteLayoutFailed {
-                message: "Could not find .text section".to_string(),
-            })
+            .ok_or_else(|| LayoutFailed("Could not find .text section".to_string()))
     }
 
     /// Gets the RVA of the .text section.
@@ -1179,7 +1168,7 @@ impl File {
     /// Returns the RVA (Relative Virtual Address) of the .text section.
     ///
     /// # Errors
-    /// Returns [`crate::Error::WriteLayoutFailed`] if no .text section is found.
+    /// Returns [`crate::Error::LayoutFailed`] if no .text section is found.
     pub fn text_section_rva(&self) -> Result<u32> {
         Ok(self.find_text_section()?.virtual_address)
     }
@@ -1193,7 +1182,7 @@ impl File {
     /// Returns the file offset of the .text section.
     ///
     /// # Errors
-    /// Returns [`crate::Error::WriteLayoutFailed`] if no .text section is found.
+    /// Returns [`crate::Error::LayoutFailed`] if no .text section is found.
     pub fn text_section_file_offset(&self) -> Result<u64> {
         Ok(u64::from(self.find_text_section()?.pointer_to_raw_data))
     }
@@ -1207,7 +1196,7 @@ impl File {
     /// Returns the raw size of the .text section in bytes.
     ///
     /// # Errors
-    /// Returns [`crate::Error::WriteLayoutFailed`] if no .text section is found.
+    /// Returns [`crate::Error::LayoutFailed`] if no .text section is found.
     pub fn text_section_raw_size(&self) -> Result<u32> {
         Ok(self.find_text_section()?.size_of_raw_data)
     }
@@ -1232,15 +1221,15 @@ impl File {
     /// Returns the file offset where the PE signature is located.
     ///
     /// # Errors
-    /// Returns [`crate::Error::WriteLayoutFailed`] if the file is too small to contain
+    /// Returns [`crate::Error::LayoutFailed`] if the file is too small to contain
     /// a valid DOS header.
     pub fn pe_signature_offset(&self) -> Result<u64> {
         let data = self.data();
 
         if data.len() < 64 {
-            return Err(WriteLayoutFailed {
-                message: "File too small to contain DOS header".to_string(),
-            });
+            return Err(LayoutFailed(
+                "File too small to contain DOS header".to_string(),
+            ));
         }
 
         // PE offset is at offset 0x3C in DOS header
@@ -1257,7 +1246,7 @@ impl File {
     /// Returns the total size in bytes of all PE headers.
     ///
     /// # Errors
-    /// Returns [`crate::Error::WriteLayoutFailed`] if the file is too small or
+    /// Returns [`crate::Error::LayoutFailed`] if the file is too small or
     /// headers are malformed.
     pub fn pe_headers_size(&self) -> Result<u64> {
         // PE signature (4) + COFF header (20) + Optional header size
@@ -1269,9 +1258,9 @@ impl File {
 
         #[allow(clippy::cast_possible_truncation)]
         if data.len() < (coff_header_offset + 20) as usize {
-            return Err(WriteLayoutFailed {
-                message: "File too small to contain COFF header".to_string(),
-            });
+            return Err(LayoutFailed(
+                "File too small to contain COFF header".to_string(),
+            ));
         }
 
         // Optional header size is at offset 16 in COFF header
@@ -1298,7 +1287,7 @@ impl File {
     /// Returns the offset rounded up to the next file alignment boundary.
     ///
     /// # Errors
-    /// Returns [`crate::Error::WriteLayoutFailed`] if the PE header cannot be accessed.
+    /// Returns [`crate::Error::LayoutFailed`] if the PE header cannot be accessed.
     pub fn align_to_file_alignment(&self, offset: u64) -> Result<u64> {
         let file_alignment = u64::from(self.file_alignment()?);
         Ok(align_to(offset, file_alignment))

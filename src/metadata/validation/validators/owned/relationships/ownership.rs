@@ -10,7 +10,7 @@
 //!
 //! The ownership validation system implements comprehensive ownership relationship validation in sequential order:
 //! 1. **Type-Member Ownership Validation** - Ensures resolved types properly own their members
-//! 2. **Nested Class Ownership Validation** - Validates nested class ownership rules in type hierarchies  
+//! 2. **Nested Class Ownership Validation** - Validates nested class ownership rules in type hierarchies
 //! 3. **Inheritance Relationship Validation** - Validates inheritance relationships between resolved types
 //! 4. **Access Modifier Consistency Validation** - Checks access modifier consistency with semantic ownership
 //! 5. **Cross-Assembly Relationship Validation** - Validates ownership relationships across assembly boundaries
@@ -41,7 +41,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Invalid type-member ownership relationships (orphaned members, incorrect ownership)
 //! - Nested class ownership violations (invalid containment hierarchies, circular dependencies)
 //! - Inheritance relationship inconsistencies (broken parent-child relationships, invalid accessibility)
@@ -81,7 +81,7 @@ use crate::{
             traits::OwnedValidator,
         },
     },
-    Result,
+    Error, Result,
 };
 
 /// Foundation validator for parent-child ownership relationships in resolved metadata structures.
@@ -133,7 +133,7 @@ impl OwnedOwnershipValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All type-member ownership relationships are valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Ownership violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Ownership violations found
     fn validate_type_member_ownership(&self, context: &OwnedValidationContext) -> Result<()> {
         let methods = context.object().methods();
 
@@ -150,14 +150,13 @@ impl OwnedOwnershipValidator {
 
                         // Validate method name consistency with ownership
                         if method_value.name.is_empty() {
-                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Type '{}' owns method with empty name (token 0x{:08X})",
                                     type_entry.name,
                                     method_token.value()
                                 ),
-                                source: None,
                             });
                         }
 
@@ -180,24 +179,22 @@ impl OwnedOwnershipValidator {
                             )?;
                         }
                     } else {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' claims ownership of non-existent method token 0x{:08X}",
                                 type_entry.name,
                                 method_token.value()
                             ),
-                            source: None,
                         });
                     }
                 } else {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' has method reference without valid token",
                             type_entry.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -205,10 +202,9 @@ impl OwnedOwnershipValidator {
             // Validate field ownership relationships
             for (_, field) in type_entry.fields.iter() {
                 if field.name.is_empty() {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Type '{}' owns field with empty name", type_entry.name),
-                        source: None,
                     });
                 }
 
@@ -224,13 +220,12 @@ impl OwnedOwnershipValidator {
             // Validate property ownership relationships
             for (_, property) in type_entry.properties.iter() {
                 if property.name.is_empty() {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' owns property with empty name",
                             type_entry.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -238,10 +233,9 @@ impl OwnedOwnershipValidator {
             // Validate event ownership relationships
             for (_, event) in type_entry.events.iter() {
                 if event.name.is_empty() {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Type '{}' owns event with empty name", type_entry.name),
-                        source: None,
                     });
                 }
             }
@@ -271,12 +265,12 @@ impl OwnedOwnershipValidator {
 
         // Validate that method visibility is within valid range
         if method_visibility > 6 {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Method '{method_name}' in type '{type_name}' has invalid visibility value: 0x{method_visibility:02X}"
                 ),
-                source: None,
+
             });
         }
 
@@ -295,12 +289,11 @@ impl OwnedOwnershipValidator {
                 // Instance constructors should not be static
                 if method_flags & 0x0010 != 0 {
                     // Static flag
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Instance constructor '.ctor' in type '{type_name}' cannot be static"
                         ),
-                        source: None,
                     });
                 }
             }
@@ -308,12 +301,11 @@ impl OwnedOwnershipValidator {
                 // Static constructors must be static
                 if method_flags & 0x0010 == 0 {
                     // Static flag is NOT set - this is an error
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Static constructor '.cctor' in type '{type_name}' must be static"
                         ),
-                        source: None,
                     });
                 }
                 // If static flag is set, this is correct - no error
@@ -338,12 +330,12 @@ impl OwnedOwnershipValidator {
 
         // Validate that field visibility is within valid range
         if field_visibility > 6 {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Field '{field_name}' in type '{type_name}' has invalid visibility value: 0x{field_visibility:02X}"
                 ),
-                source: None,
+
             });
         }
 
@@ -362,7 +354,7 @@ impl OwnedOwnershipValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All nested class ownership rules are satisfied
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Ownership violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Ownership violations found
     fn validate_nested_class_ownership_rules(
         &self,
         context: &OwnedValidationContext,
@@ -415,7 +407,7 @@ impl OwnedOwnershipValidator {
         const MAX_RECURSION_DEPTH: usize = 100;
 
         if depth > MAX_RECURSION_DEPTH {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Maximum recursion depth ({}) exceeded for nested type validation starting with type '{}' (token 0x{:08X})",
@@ -423,7 +415,7 @@ impl OwnedOwnershipValidator {
                     current_type.name,
                     current_type.token.value()
                 ),
-                source: None,
+
             });
         }
 
@@ -431,7 +423,7 @@ impl OwnedOwnershipValidator {
 
         // Check for circular dependency - if this type is already in the current path
         if recursion_stack.contains(&type_ptr) {
-            return Err(crate::Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular nested type dependency detected involving type '{}' with token 0x{:08X} at depth {}",
@@ -439,7 +431,7 @@ impl OwnedOwnershipValidator {
                     current_type.token.value(),
                     depth
                 ),
-                source: None,
+
             });
         }
 
@@ -483,12 +475,12 @@ impl OwnedOwnershipValidator {
         ) {
             // Allow NotPublic (0) for some legitimate cases
             if nested_visibility != 0 && nested_visibility <= 7 {
-                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Nested type '{nested_name}' in container '{container_name}' uses top-level visibility instead of nested visibility: 0x{nested_visibility:02X}"
                     ),
-                    source: None,
+
                 });
             }
         }
@@ -557,7 +549,7 @@ mod tests {
         owned_validator_test(
             owned_ownership_validator_file_factory,
             "OwnedOwnershipValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

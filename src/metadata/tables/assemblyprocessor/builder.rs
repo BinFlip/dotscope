@@ -151,12 +151,11 @@ impl AssemblyProcessorBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let processor = self
-            .processor
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Processor architecture identifier is required for AssemblyProcessor"
-                    .to_string(),
-            })?;
+        let processor = self.processor.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Processor architecture identifier is required for AssemblyProcessor".to_string(),
+            )
+        })?;
 
         let next_rid = context.next_rid(TableId::AssemblyProcessor);
         let token_value = ((TableId::AssemblyProcessor as u32) << 24) | next_rid;
@@ -271,10 +270,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Processor architecture identifier is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

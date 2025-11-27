@@ -41,7 +41,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationTokenError`] for:
+//! This validator returns [`crate::Error::InvalidToken`] for:
 //! - Invalid table types in token references (table type not in valid ECMA-335 range)
 //! - Zero RID values in token references (except for legitimate null references)
 //! - RID values exceeding 24-bit limits (> 0x00FFFFFF)
@@ -86,7 +86,7 @@ use crate::{
             traits::RawValidator,
         },
     },
-    Result,
+    Error, Result,
 };
 use strum::IntoEnumIterator;
 
@@ -237,7 +237,7 @@ impl RawTokenValidator {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationTokenError`] if any token reference is invalid,
+    /// Returns [`crate::Error::InvalidToken`] if any token reference is invalid,
     /// including cases where RID values are zero (when not permitted) or reference
     /// non-existent tables or rows.
     fn validate_token_references(context: &RawValidationContext) -> Result<()> {
@@ -303,7 +303,7 @@ impl RawTokenValidator {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationTokenError`] if any table has RID count > 0x00FFFFFF,
+    /// Returns [`crate::Error::InvalidToken`] if any table has RID count > 0x00FFFFFF,
     /// which would make token encoding impossible using the standard 32-bit token format.
     fn validate_rid_bounds(context: &RawValidationContext) -> Result<()> {
         let assembly_view = context.assembly_view();
@@ -316,7 +316,7 @@ impl RawTokenValidator {
                         let row_count = table.row_count;
                         if row_count > 0x00FF_FFFF {
                             let token_value = (table_type << 24) | row_count;
-                            return Err(crate::Error::ValidationTokenError {
+                            return Err(Error::InvalidToken {
                                 token: Token::new(token_value),
                                 message: format!(
                                     "{table_id:?} table RID {row_count} exceeds maximum allowed value (0x00FFFFFF)"
@@ -348,7 +348,7 @@ impl RawTokenValidator {
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationTokenError`] if any coded index has invalid
+    /// Returns [`crate::Error::InvalidToken`] if any coded index has invalid
     /// tag values or references inappropriate target table types.
     fn validate_coded_indexes(context: &RawValidationContext) -> Result<()> {
         let assembly_view = context.assembly_view();
@@ -736,11 +736,11 @@ mod tests {
     /// # Test Coverage
     ///
     /// - **Positive Test**: Clean WindowsBase.dll passes all validation rules
-    /// - **TypeDef.extends**: Out-of-bounds TypeRef RID triggers ValidationInvalidRid
-    /// - **MemberRef.class**: Out-of-bounds TypeRef RID triggers ValidationInvalidRid
-    /// - **GenericParam.owner**: Out-of-bounds TypeDef RID triggers ValidationInvalidRid
-    /// - **InterfaceImpl.interface**: Out-of-bounds TypeRef RID triggers ValidationInvalidRid
-    /// - **MethodSpec.method**: Out-of-bounds MethodDef RID triggers ValidationInvalidRid
+    /// - **TypeDef.extends**: Out-of-bounds TypeRef RID triggers InvalidRid
+    /// - **MemberRef.class**: Out-of-bounds TypeRef RID triggers InvalidRid
+    /// - **GenericParam.owner**: Out-of-bounds TypeDef RID triggers InvalidRid
+    /// - **InterfaceImpl.interface**: Out-of-bounds TypeRef RID triggers InvalidRid
+    /// - **MethodSpec.method**: Out-of-bounds MethodDef RID triggers InvalidRid
     /// - **Cross-table references**: Valid nested class relationships pass validation
     ///
     /// # Test Configuration
@@ -777,7 +777,7 @@ mod tests {
         validator_test(
             raw_token_validator_file_factory,
             "RawTokenValidator",
-            "ValidationInvalidRid",
+            "InvalidRid",
             ValidationConfig {
                 enable_structural_validation: true,
                 enable_cross_table_validation: true,
@@ -796,7 +796,7 @@ mod tests {
 
         fn clean_only_factory() -> Result<Vec<TestAssembly>> {
             let Some(clean_testfile) = get_testfile_wb() else {
-                return Err(Error::Error("WindowsBase.dll not available".to_string()));
+                return Err(Error::Other("WindowsBase.dll not available".to_string()));
             };
             Ok(vec![TestAssembly::new(&clean_testfile, true)])
         }
@@ -804,7 +804,7 @@ mod tests {
         let result_disabled = validator_test(
             clean_only_factory,
             "RawTokenValidator",
-            "ValidationInvalidRid",
+            "InvalidRid",
             ValidationConfig {
                 enable_structural_validation: false,
                 ..Default::default()
@@ -826,7 +826,7 @@ mod tests {
         let result_enabled = validator_test(
             clean_only_factory,
             "RawTokenValidator",
-            "ValidationInvalidRid",
+            "InvalidRid",
             ValidationConfig {
                 enable_structural_validation: true,
                 ..Default::default()

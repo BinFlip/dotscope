@@ -394,16 +394,14 @@ impl DocumentBuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let document_name = self
-            .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Document name is required for Document".to_string(),
-            })?;
+        let document_name = self.name.ok_or_else(|| {
+            Error::ModificationInvalid("Document name is required for Document".to_string())
+        })?;
 
         if document_name.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Document name cannot be empty".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Document name cannot be empty".to_string(),
+            ));
         }
 
         let rid = context.next_rid(TableId::Document);

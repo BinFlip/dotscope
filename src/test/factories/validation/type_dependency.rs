@@ -20,7 +20,7 @@ pub fn owned_type_dependency_validator_file_factory() -> Result<Vec<TestAssembly
     let mut assemblies = Vec::new();
 
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error(
+        return Err(Error::Other(
             "crafted_2.exe not available - test cannot run".to_string(),
         ));
     };
@@ -32,7 +32,7 @@ pub fn owned_type_dependency_validator_file_factory() -> Result<Vec<TestAssembly
     match create_assembly_with_unresolved_base_type() {
         Ok(test_assembly) => assemblies.push(test_assembly),
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create test assembly with unresolved base type: {e}"
             )));
         }
@@ -42,7 +42,7 @@ pub fn owned_type_dependency_validator_file_factory() -> Result<Vec<TestAssembly
     match create_assembly_with_broken_interface_reference() {
         Ok(test_assembly) => assemblies.push(test_assembly),
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create test assembly with broken interface reference: {e}"
             )));
         }
@@ -57,7 +57,7 @@ pub fn owned_type_dependency_validator_file_factory() -> Result<Vec<TestAssembly
     // match create_assembly_with_missing_parameter_type() {
     //     Ok(test_assembly) => assemblies.push(test_assembly),
     //     Err(e) => {
-    //         return Err(Error::Error(format!(
+    //         return Err(Error::Other(format!(
     //             "Failed to create test assembly with missing parameter type: {e}"
     //         )));
     //     }
@@ -67,7 +67,7 @@ pub fn owned_type_dependency_validator_file_factory() -> Result<Vec<TestAssembly
     match create_assembly_with_unresolved_nested_type() {
         Ok(test_assembly) => assemblies.push(test_assembly),
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create test assembly with unresolved nested type: {e}"
             )));
         }
@@ -83,7 +83,7 @@ pub fn owned_type_dependency_validator_file_factory() -> Result<Vec<TestAssembly
 /// Originally from: `src/metadata/validation/validators/owned/types/dependency.rs`
 pub fn create_assembly_with_unresolved_base_type() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
 
     let view = CilAssemblyView::from_path(&clean_testfile)?;
@@ -137,11 +137,11 @@ pub fn create_assembly_with_unresolved_base_type() -> Result<TestAssembly> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file_with_error(
         temp_file,
@@ -155,7 +155,7 @@ pub fn create_assembly_with_unresolved_base_type() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/types/dependency.rs`
 pub fn create_assembly_with_broken_interface_reference() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
 
     let view = CilAssemblyView::from_path(&clean_testfile)?;
@@ -223,11 +223,11 @@ pub fn create_assembly_with_broken_interface_reference() -> Result<TestAssembly>
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file_with_error(
         temp_file,
@@ -241,7 +241,7 @@ pub fn create_assembly_with_broken_interface_reference() -> Result<TestAssembly>
 /// Originally from: `src/metadata/validation/validators/owned/types/dependency.rs`
 pub fn create_assembly_with_missing_parameter_type() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
 
     let view = CilAssemblyView::from_path(&clean_testfile)?;
@@ -311,11 +311,11 @@ pub fn create_assembly_with_missing_parameter_type() -> Result<TestAssembly> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file_with_error(
         temp_file,
@@ -329,7 +329,7 @@ pub fn create_assembly_with_missing_parameter_type() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/types/dependency.rs`
 pub fn create_assembly_with_unresolved_nested_type() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
 
     let view = CilAssemblyView::from_path(&clean_testfile)?;
@@ -393,11 +393,11 @@ pub fn create_assembly_with_unresolved_nested_type() -> Result<TestAssembly> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file_with_error(
         temp_file,

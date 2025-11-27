@@ -87,7 +87,7 @@
 //!
 //! This module defines comprehensive error handling for the writing process:
 //!
-//! - [`crate::Error::WriteLayoutFailed`] - When layout planning encounters invalid conditions
+//! - [`crate::Error::LayoutFailed`] - When layout planning encounters invalid conditions
 //! - [`crate::Error::WriteFailed`] - When mechanical execution fails due to I/O issues
 //! - [`crate::Error::ValidationFailed`] - When post-execution validation detects inconsistencies
 //! - [`crate::Error::MemoryMappingFailed`] - When output file memory mapping operations fail
@@ -192,7 +192,7 @@ pub use crate::cilassembly::writer::{executor::WriteExecutor, layout::WriteLayou
 /// # let assembly = view.to_owned();
 /// match write_assembly_to_file(&assembly, "output.dll") {
 ///     Ok(()) => println!("Assembly written successfully"),
-///     Err(Error::WriteLayoutFailed { message }) => {
+///     Err(Error::LayoutFailed(message)) => {
 ///         eprintln!("Layout planning failed: {}", message);
 ///     },
 ///     Err(Error::WriteFailed { message }) => {

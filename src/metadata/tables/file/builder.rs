@@ -281,16 +281,14 @@ impl FileBuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let name = self
-            .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "File name is required for File".to_string(),
-            })?;
+        let name = self.name.ok_or_else(|| {
+            Error::ModificationInvalid("File name is required for File".to_string())
+        })?;
 
         if name.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "File name cannot be empty for File".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "File name cannot be empty for File".to_string(),
+            ));
         }
 
         let name_index = context.string_get_or_add(&name)?;

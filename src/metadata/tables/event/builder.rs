@@ -186,30 +186,22 @@ impl EventBuilder {
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
         let name = self
             .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Event name is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Event name is required".to_string()))?;
 
         let flags = self
             .flags
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Event flags are required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Event flags are required".to_string()))?;
 
         let event_type = self
             .event_type
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Event type is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Event type is required".to_string()))?;
 
         let valid_tables = CodedIndexType::TypeDefOrRef.tables();
         if !valid_tables.contains(&event_type.tag) {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Event type must be a TypeDefOrRef coded index (TypeDef/TypeRef/TypeSpec), got {:?}",
-                    event_type.tag
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Event type must be a TypeDefOrRef coded index (TypeDef/TypeRef/TypeSpec), got {:?}",
+                event_type.tag
+            )));
         }
 
         let name_index = context.string_get_or_add(&name)?;

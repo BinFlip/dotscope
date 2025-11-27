@@ -38,6 +38,7 @@
 //! ```
 
 use crate::{
+    malformed_error,
     metadata::{
         signatures::{CustomModifier, SignatureMethod, TypeSignature},
         token::Token,
@@ -268,7 +269,7 @@ impl TypeSignatureEncoder {
                 // Encode NumSizes and Sizes
                 write_compressed_uint(
                     u32::try_from(sizes.len()).map_err(|_| {
-                        Error::Error(format!("Array sizes length out of range: {}", sizes.len()))
+                        malformed_error!("Array sizes length out of range: {}", sizes.len())
                     })?,
                     buffer,
                 );
@@ -279,10 +280,10 @@ impl TypeSignatureEncoder {
                 // Encode NumLoBounds and LoBounds
                 write_compressed_uint(
                     u32::try_from(lower_bounds.len()).map_err(|_| {
-                        Error::Error(format!(
+                        malformed_error!(
                             "Array lower bounds length out of range: {}",
                             lower_bounds.len()
-                        ))
+                        )
                     })?,
                     buffer,
                 );
@@ -299,10 +300,10 @@ impl TypeSignatureEncoder {
                 Self::encode_type_signature_internal(base_type, buffer, depth + 1)?;
                 write_compressed_uint(
                     u32::try_from(type_args.len()).map_err(|_| {
-                        Error::Error(format!(
+                        malformed_error!(
                             "Generic type arguments length out of range: {}",
                             type_args.len()
-                        ))
+                        )
                     })?,
                     buffer,
                 );
@@ -335,29 +336,28 @@ impl TypeSignatureEncoder {
             TypeSignature::Type => buffer.push(0x50), // Custom attribute type marker
             TypeSignature::Boxed => buffer.push(0x51), // Custom attribute boxed marker
             TypeSignature::Field => {
-                return Err(Error::ModificationInvalidOperation {
-                    details: "Field signatures should not appear in type specifications"
-                        .to_string(),
-                });
+                return Err(Error::ModificationInvalid(
+                    "Field signatures should not appear in type specifications".to_string(),
+                ));
             }
             TypeSignature::Internal => {
-                return Err(Error::ModificationInvalidOperation {
-                    details: "Cannot encode internal type signature".to_string(),
-                });
+                return Err(Error::ModificationInvalid(
+                    "Cannot encode internal type signature".to_string(),
+                ));
             }
             TypeSignature::Modifier => buffer.push(0x22), // Modifier sentinel
             TypeSignature::Sentinel => buffer.push(0x41), // Vararg sentinel
             TypeSignature::Reserved => {
-                return Err(Error::ModificationInvalidOperation {
-                    details: "Cannot encode reserved type signature".to_string(),
-                });
+                return Err(Error::ModificationInvalid(
+                    "Cannot encode reserved type signature".to_string(),
+                ));
             }
 
             // Unknown or unsupported types
             TypeSignature::Unknown => {
-                return Err(Error::ModificationInvalidOperation {
-                    details: "Cannot encode unknown type signature".to_string(),
-                });
+                return Err(Error::ModificationInvalid(
+                    "Cannot encode unknown type signature".to_string(),
+                ));
             }
         }
 
@@ -409,10 +409,10 @@ impl TypeSignatureEncoder {
 
         write_compressed_uint(
             u32::try_from(method_sig.params.len()).map_err(|_| {
-                Error::Error(format!(
+                malformed_error!(
                     "Method parameters length out of range: {}",
                     method_sig.params.len()
-                ))
+                )
             })?,
             buffer,
         );
@@ -486,12 +486,10 @@ impl TypeSignatureEncoder {
             0x01 => (rid << 2) | 1, // TypeRef
             0x1B => (rid << 2) | 2, // TypeSpec
             _ => {
-                return Err(Error::ModificationInvalidOperation {
-                    details: format!(
-                        "Invalid token for TypeDefOrRef coded index: {:08x}",
-                        token.value()
-                    ),
-                });
+                return Err(Error::ModificationInvalid(format!(
+                    "Invalid token for TypeDefOrRef coded index: {:08x}",
+                    token.value()
+                )));
             }
         };
 
@@ -757,7 +755,7 @@ mod tests {
         let result = TypeSignatureEncoder::encode(&nested_sig);
         assert!(result.is_err());
         if let Err(err) = result {
-            if let crate::Error::RecursionLimit(depth) = err {
+            if let Error::RecursionLimit(depth) = err {
                 assert_eq!(depth, MAX_RECURSION_DEPTH);
             } else {
                 panic!("Expected RecursionLimit error, got: {err:?}");

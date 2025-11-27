@@ -1435,6 +1435,7 @@ pub fn read_compressed_uint_at(data: &[u8], offset: usize) -> Result<u32> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
 
     const TEST_BUFFER: [u8; 8] = [0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08];
 
@@ -1601,10 +1602,10 @@ mod tests {
         let buffer = [0xFF, 0xFF, 0xFF, 0xFF];
 
         let result = read_le::<u64>(&buffer);
-        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
+        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
 
         let result = read_le::<f64>(&buffer);
-        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
+        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
     }
 
     #[test]
@@ -1894,10 +1895,10 @@ mod tests {
 
         // Try to write u32 (4 bytes) into 2-byte buffer
         let result = write_le(&mut buffer, 0x12345678u32);
-        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
+        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
 
         let result = write_be(&mut buffer, 0x12345678u32);
-        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
+        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
     }
 
     #[test]

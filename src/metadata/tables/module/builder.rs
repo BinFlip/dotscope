@@ -312,15 +312,14 @@ impl ModuleBuilder {
         // Validate required fields
         let name = self
             .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "name field is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("name field is required".to_string()))?;
 
         let existing_count = context.next_rid(TableId::Module) - 1;
         if existing_count > 0 {
-            return Err(crate::Error::ModificationInvalidOperation {
-                details: "Module table already contains an entry. Only one module per assembly is allowed.".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Module table already contains an entry. Only one module per assembly is allowed."
+                    .to_string(),
+            ));
         }
 
         let name_index = context.string_add(&name)?;

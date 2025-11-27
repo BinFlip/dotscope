@@ -2096,6 +2096,7 @@ impl<'a> SignatureParser<'a> {
 #[cfg(test)]
 mod tests {
     use crate::prelude::Token;
+    use crate::Error;
 
     use super::*;
 
@@ -2359,7 +2360,7 @@ mod tests {
         let mut parser = SignatureParser::new(&[0xFF, 0x01]);
         assert!(matches!(
             parser.parse_method_signature(),
-            Err(crate::Error::OutOfBounds { .. })
+            Err(Error::OutOfBounds { .. })
         ));
 
         // Test invalid field signature format

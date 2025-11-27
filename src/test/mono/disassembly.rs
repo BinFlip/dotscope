@@ -204,7 +204,7 @@ impl ILDisassembler {
         let output = Command::new("monodis")
             .arg(assembly_path)
             .output()
-            .map_err(|e| Error::Error(format!("Failed to execute monodis: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to execute monodis: {}", e)))?;
 
         Ok(DisassemblyResult {
             success: output.status.success(),
@@ -231,7 +231,7 @@ impl ILDisassembler {
             .arg("/NOBAR")
             .arg(assembly_path)
             .output()
-            .map_err(|e| Error::Error(format!("Failed to execute ildasm: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to execute ildasm: {}", e)))?;
 
         Ok(DisassemblyResult {
             success: output.status.success(),
@@ -253,7 +253,7 @@ impl ILDisassembler {
             .arg("ildasm")
             .arg(assembly_path)
             .output()
-            .map_err(|e| Error::Error(format!("Failed to execute dotnet ildasm: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to execute dotnet ildasm: {}", e)))?;
 
         Ok(DisassemblyResult {
             success: output.status.success(),
@@ -320,7 +320,7 @@ impl ILDisassembler {
 
         let output = cmd
             .output()
-            .map_err(|e| Error::Error(format!("Failed to execute monodis: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to execute monodis: {}", e)))?;
 
         Ok(DisassemblyResult {
             success: output.status.success(),
@@ -359,7 +359,7 @@ impl ILDisassembler {
 
         let output = cmd
             .output()
-            .map_err(|e| Error::Error(format!("Failed to execute ildasm: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to execute ildasm: {}", e)))?;
 
         Ok(DisassemblyResult {
             success: output.status.success(),
@@ -399,7 +399,7 @@ impl ILDisassembler {
 
         let output = cmd
             .output()
-            .map_err(|e| Error::Error(format!("Failed to execute dotnet ildasm: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to execute dotnet ildasm: {}", e)))?;
 
         Ok(DisassemblyResult {
             success: output.status.success(),

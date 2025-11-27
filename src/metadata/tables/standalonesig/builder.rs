@@ -208,14 +208,12 @@ impl StandAloneSigBuilder {
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
         let signature_data = self
             .signature
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "signature field is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("signature field is required".to_string()))?;
 
         if signature_data.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "signature cannot be empty".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "signature cannot be empty".to_string(),
+            ));
         }
 
         let signature_index = context.blob_add(&signature_data)?;

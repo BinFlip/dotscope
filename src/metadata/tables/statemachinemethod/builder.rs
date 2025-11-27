@@ -172,17 +172,17 @@ impl StateMachineMethodBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let move_next_method =
-            self.move_next_method
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "MoveNext method RID is required for StateMachineMethod".to_string(),
-                })?;
+        let move_next_method = self.move_next_method.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "MoveNext method RID is required for StateMachineMethod".to_string(),
+            )
+        })?;
 
-        let kickoff_method =
-            self.kickoff_method
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Kickoff method RID is required for StateMachineMethod".to_string(),
-                })?;
+        let kickoff_method = self.kickoff_method.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Kickoff method RID is required for StateMachineMethod".to_string(),
+            )
+        })?;
 
         let next_rid = context.next_rid(TableId::StateMachineMethod);
         let token_value = ((TableId::StateMachineMethod as u32) << 24) | next_rid;
@@ -291,10 +291,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("MoveNext method RID is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -309,10 +309,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Kickoff method RID is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

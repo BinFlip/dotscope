@@ -105,7 +105,7 @@ impl ProjectLoader {
     pub fn primary_file<P: AsRef<Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
         if !path.exists() {
-            return Err(Error::Error(format!(
+            return Err(Error::Configuration(format!(
                 "Primary file does not exist: {}",
                 path.display()
             )));
@@ -127,7 +127,7 @@ impl ProjectLoader {
     pub fn with_dependency<P: AsRef<Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
         if !path.exists() {
-            return Err(Error::Error(format!(
+            return Err(Error::Configuration(format!(
                 "Dependency file does not exist: {}",
                 path.display()
             )));
@@ -149,7 +149,7 @@ impl ProjectLoader {
     pub fn with_search_path<P: AsRef<Path>>(mut self, path: P) -> Result<Self> {
         let path = path.as_ref();
         if !path.exists() || !path.is_dir() {
-            return Err(Error::Error(format!(
+            return Err(Error::Configuration(format!(
                 "Search path does not exist or is not a directory: {}",
                 path.display()
             )));
@@ -221,7 +221,7 @@ impl ProjectLoader {
     /// Panics if a worker thread panics during parallel assembly loading.
     pub fn build(self) -> Result<ProjectResult> {
         let primary_path = self.primary_file.clone().ok_or_else(|| {
-            Error::Error(
+            Error::Configuration(
                 "No primary file specified. Use primary_file() to set the main assembly."
                     .to_string(),
             )
@@ -233,7 +233,7 @@ impl ProjectLoader {
         let primary_search_dir = primary_path
             .parent()
             .ok_or_else(|| {
-                Error::Error("Cannot determine parent directory of root file".to_string())
+                Error::Configuration("Cannot determine parent directory of root file".to_string())
             })?
             .to_path_buf();
 
@@ -314,7 +314,7 @@ impl ProjectLoader {
 
         // Validate that we discovered at least the primary assembly
         if discovered_views.is_empty() {
-            return Err(Error::Error(format!(
+            return Err(Error::Configuration(format!(
                 "Failed to discover any assemblies, including the primary file: {}. \
                  This may indicate the file is corrupted or not a valid .NET assembly.",
                 primary_path.display()
@@ -350,7 +350,7 @@ impl ProjectLoader {
                 Ok(cil_object) => {
                     if let Err(e) = project.add_assembly(cil_object) {
                         if self.strict_mode {
-                            return Err(Error::Error(format!(
+                            return Err(Error::Configuration(format!(
                                 "Failed to add {} to project: {}",
                                 identity.name, e
                             )));
@@ -368,7 +368,7 @@ impl ProjectLoader {
                 }
                 Err(e) => {
                     if self.strict_mode {
-                        return Err(Error::Error(format!(
+                        return Err(Error::Configuration(format!(
                             "Failed to load {} in strict mode: {}",
                             identity.name, e
                         )));

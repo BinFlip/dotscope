@@ -111,6 +111,7 @@
 use std::{fmt, fmt::Write as _, str::FromStr, sync::atomic::Ordering};
 
 use crate::{
+    malformed_error,
     metadata::{
         identity::cryptographic::Identity,
         tables::{Assembly, AssemblyHashAlgorithm, AssemblyRef},
@@ -569,12 +570,12 @@ impl AssemblyIdentity {
         let parts: Vec<&str> = display_name.split(',').map(str::trim).collect();
 
         if parts.is_empty() {
-            return Err(Error::Error("Empty assembly display name".to_string()));
+            return Err(malformed_error!("Empty assembly display name"));
         }
 
         let name = parts[0].to_string();
         if name.is_empty() {
-            return Err(Error::Error("Assembly name cannot be empty".to_string()));
+            return Err(malformed_error!("Assembly name cannot be empty"));
         }
 
         // Process optional components
@@ -588,15 +589,15 @@ impl AssemblyIdentity {
             } else if let Some(value) = part.strip_prefix("PublicKeyToken=") {
                 if value != "null" && !value.is_empty() {
                     let token_bytes = hex::decode(value).map_err(|e| {
-                        Error::Error(format!("Invalid hex in PublicKeyToken '{}': {}", value, e))
+                        malformed_error!("Invalid hex in PublicKeyToken '{}': {}", value, e)
                     })?;
 
                     if token_bytes.len() != 8 {
-                        return Err(Error::Error(format!(
+                        return Err(malformed_error!(
                             "PublicKeyToken must be exactly 8 bytes (16 hex characters), got {} bytes from '{}'",
                             token_bytes.len(),
                             value
-                        )));
+                        ));
                     }
 
                     // Convert 8 bytes to u64 token
@@ -863,10 +864,7 @@ impl AssemblyVersion {
         let parts: Vec<&str> = version_str.split('.').collect();
 
         if parts.is_empty() || parts.len() > 4 {
-            return Err(Error::Error(format!(
-                "Invalid version format: {}",
-                version_str
-            )));
+            return Err(malformed_error!("Invalid version format: {}", version_str));
         }
 
         let mut components = [0u16; 4];
@@ -874,7 +872,7 @@ impl AssemblyVersion {
         for (i, part) in parts.iter().enumerate() {
             components[i] = part
                 .parse::<u16>()
-                .map_err(|_| Error::Error(format!("Invalid version component: {}", part)))?;
+                .map_err(|_| malformed_error!("Invalid version component: {}", part))?;
         }
 
         Ok(Self::new(
@@ -916,10 +914,10 @@ impl ProcessorArchitecture {
             "amd64" | "x64" => Ok(Self::AMD64),
             "arm" => Ok(Self::ARM),
             "arm64" => Ok(Self::ARM64),
-            _ => Err(Error::Error(format!(
+            _ => Err(malformed_error!(
                 "Unknown processor architecture: '{}'",
                 arch_str.trim()
-            ))),
+            )),
         }
     }
 }
@@ -1043,10 +1041,10 @@ impl TryFrom<u32> for ProcessorArchitecture {
             0x8664 => Ok(Self::AMD64),
             0x01C0 => Ok(Self::ARM),
             0xAA64 => Ok(Self::ARM64),
-            _ => Err(Error::Error(format!(
+            _ => Err(malformed_error!(
                 "Unknown processor architecture ID: 0x{:04X}",
                 value
-            ))),
+            )),
         }
     }
 }

@@ -291,42 +291,34 @@ impl DeclSecurityBuilder {
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
         let action = self
             .action
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Security action is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Security action is required".to_string()))?;
 
         let parent = self
             .parent
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Security parent is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Security parent is required".to_string()))?;
 
-        let permission_set =
-            self.permission_set
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Permission set is required".to_string(),
-                })?;
+        let permission_set = self
+            .permission_set
+            .ok_or_else(|| Error::ModificationInvalid("Permission set is required".to_string()))?;
 
         if permission_set.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Permission set cannot be empty".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Permission set cannot be empty".to_string(),
+            ));
         }
 
         let valid_parent_tables = CodedIndexType::HasDeclSecurity.tables();
         if !valid_parent_tables.contains(&parent.tag) {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Parent must be a HasDeclSecurity coded index (TypeDef/MethodDef/Assembly), got {:?}",
-                    parent.tag
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Parent must be a HasDeclSecurity coded index (TypeDef/MethodDef/Assembly), got {:?}",
+                parent.tag
+            )));
         }
 
         if action == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Security action cannot be 0".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Security action cannot be 0".to_string(),
+            ));
         }
 
         let permission_set_index = context.blob_add(&permission_set)?;

@@ -73,7 +73,7 @@
 use md5::{Digest, Md5};
 use sha1::Sha1;
 
-use crate::{metadata::tables::AssemblyHashAlgorithm, utils::read_le, Error, Result};
+use crate::{malformed_error, metadata::tables::AssemblyHashAlgorithm, utils::read_le, Result};
 
 /// Assembly identity representation for .NET CIL assemblies.
 ///
@@ -331,12 +331,12 @@ impl Identity {
                 let result = hasher.finalize();
                 read_le::<u64>(&result[result.len() - 8..])
             }
-            _ => Err(Error::Error(format!(
+            _ => Err(malformed_error!(
                 "Unsupported hash algorithm: 0x{:08X}. Only MD5 (0x{:08X}) and SHA1 (0x{:08X}) are supported.",
                 algo,
                 AssemblyHashAlgorithm::MD5,
                 AssemblyHashAlgorithm::SHA1
-            ))),
+            )),
         }
     }
 }

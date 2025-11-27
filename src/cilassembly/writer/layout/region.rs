@@ -58,9 +58,9 @@
 //!
 //! ```rust,ignore
 //! if region1.overlaps(&region2) {
-//!     return Err(Error::WriteLayoutFailed {
-//!         message: "Detected region overlap in file layout".to_string(),
-//!     });
+//!     return Err(Error::LayoutFailed(
+//!         "Detected region overlap in file layout".to_string(),
+//!     ));
 //! }
 //! ```
 //!
@@ -69,9 +69,9 @@
 //!
 //! ```rust,ignore
 //! if !section_region.contains(stream_offset) {
-//!     return Err(Error::WriteLayoutFailed {
-//!         message: "Stream extends beyond section boundaries".to_string(),
-//!     });
+//!     return Err(Error::LayoutFailed(
+//!         "Stream extends beyond section boundaries".to_string(),
+//!     ));
 //! }
 //! ```
 //!

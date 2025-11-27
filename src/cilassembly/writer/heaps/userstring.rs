@@ -118,8 +118,10 @@ impl<'a> UserStringHeapBuilder<'a> {
                 let metadata_offset = view
                     .file()
                     .rva_to_offset(cor20_header.meta_data_rva as usize)
-                    .map_err(|_| Error::WriteLayoutFailed {
-                        message: "Failed to convert metadata RVA to file offset".to_string(),
+                    .map_err(|_| {
+                        Error::LayoutFailed(
+                            "Failed to convert metadata RVA to file offset".to_string(),
+                        )
                     })?;
 
                 let stream_start = metadata_offset + stream_header.offset as usize;
@@ -127,18 +129,18 @@ impl<'a> UserStringHeapBuilder<'a> {
 
                 let file_data = view.file().data();
                 let stream_data = file_data.get(stream_start..stream_end).ok_or_else(|| {
-                    Error::WriteLayoutFailed {
-                        message: "Failed to read original userstring stream data".to_string(),
-                    }
+                    Error::LayoutFailed(
+                        "Failed to read original userstring stream data".to_string(),
+                    )
                 })?;
 
                 return Ok(stream_data.to_vec());
             }
         }
 
-        Err(Error::WriteLayoutFailed {
-            message: "UserString stream not found in original metadata".to_string(),
-        })
+        Err(Error::LayoutFailed(
+            "UserString stream not found in original metadata".to_string(),
+        ))
     }
 }
 
@@ -216,8 +218,8 @@ impl HeapBuilder for UserStringHeapBuilder<'_> {
         for (vec_index, original_string) in userstring_changes.appended_items.iter().enumerate() {
             let original_heap_index = userstring_changes
                 .get_appended_item_index(vec_index)
-                .ok_or_else(|| Error::WriteLayoutFailed {
-                    message: "Missing index for appended userstring item".to_string(),
+                .ok_or_else(|| {
+                    Error::LayoutFailed("Missing index for appended userstring item".to_string())
                 })?;
 
             // Skip if removed

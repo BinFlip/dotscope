@@ -774,7 +774,7 @@ impl DependencyAnalyzer {
     /// is available, preventing the creation of dependencies with incorrect source identities.
     fn extract_current_assembly_identity(context: &LoaderContext) -> Result<AssemblyIdentity> {
         let assembly_lock = context.assembly.get().ok_or_else(|| {
-            Error::Error(
+            Error::TypeError(
                 "Cannot extract assembly identity: assembly metadata not yet loaded. \
                  Dependency analysis requires the Assembly table to be loaded first."
                     .to_string(),

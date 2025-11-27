@@ -92,12 +92,13 @@
 //! - [`crate::metadata::typesystem`] - Type system for accurate encoding
 
 use crate::{
+    malformed_error,
     metadata::customattributes::{
         CustomAttributeArgument, CustomAttributeNamedArgument, CustomAttributeValue,
         NAMED_ARG_TYPE, SERIALIZATION_TYPE,
     },
     utils::write_compressed_uint,
-    Error, Result,
+    Result,
 };
 
 /// Encodes a complete custom attribute value into binary blob format according to ECMA-335.
@@ -124,7 +125,7 @@ use crate::{
 ///
 /// # Errors
 ///
-/// Returns [`Error::Error`] in the following cases:
+/// Returns [`crate::Error::Malformed`] in the following cases:
 /// - Too many named arguments (exceeds u16 maximum of 65535)
 /// - Array length exceeds u32 maximum
 /// - String length exceeds compressed uint maximum (0x1FFFFFFF bytes)
@@ -154,10 +155,10 @@ pub fn encode_custom_attribute_value(value: &CustomAttributeValue) -> Result<Vec
 
     // ECMA-335 §II.23.3: NumNamed is encoded as unsigned int16
     let named_count = u16::try_from(value.named_args.len()).map_err(|_| {
-        Error::Error(format!(
+        malformed_error!(
             "Too many named arguments: {} exceeds u16 maximum (65535)",
             value.named_args.len()
-        ))
+        )
     })?;
     buffer.extend_from_slice(&named_count.to_le_bytes());
 
@@ -263,7 +264,7 @@ fn encode_named_arguments(
 ///
 /// # Errors
 ///
-/// Returns [`Error::Error`] in the following cases:
+/// Returns [`crate::Error::Malformed`] in the following cases:
 /// - `Char`: Character code point exceeds 0xFFFF (outside Basic Multilingual Plane)
 /// - `String`: String length exceeds compressed uint maximum (0x1FFFFFFF bytes)
 /// - `Array`: Array length exceeds u32 maximum (4,294,967,295 elements)
@@ -287,11 +288,11 @@ pub fn encode_custom_attribute_argument(
             // rather than silently corrupting data.
             let code_point = *value as u32;
             if code_point > 0xFFFF {
-                return Err(Error::Error(format!(
+                return Err(malformed_error!(
                     "Character U+{:04X} is outside the Basic Multilingual Plane and cannot be \
                      encoded as a .NET char (which is limited to U+0000..U+FFFF)",
                     code_point
-                )));
+                ));
             }
             #[allow(clippy::cast_possible_truncation)] // Safe: validated above
             let utf16_val = *value as u16;
@@ -372,10 +373,7 @@ pub fn encode_custom_attribute_argument(
         CustomAttributeArgument::Array(elements) => {
             // Array length is encoded as compressed uint (max ~2^29 per ECMA-335 §II.23.2)
             let len = u32::try_from(elements.len()).map_err(|_| {
-                Error::Error(format!(
-                    "Array too large: {} exceeds u32 maximum",
-                    elements.len()
-                ))
+                malformed_error!("Array too large: {} exceeds u32 maximum", elements.len())
             })?;
             write_compressed_uint(len, buffer);
             for element in elements {
@@ -481,10 +479,10 @@ fn write_string(buffer: &mut Vec<u8>, value: &str) -> Result<()> {
     } else {
         let utf8_bytes = value.as_bytes();
         let len = u32::try_from(utf8_bytes.len()).map_err(|_| {
-            Error::Error(format!(
+            malformed_error!(
                 "String too long: {} bytes exceeds u32 maximum",
                 utf8_bytes.len()
-            ))
+            )
         })?;
         write_compressed_uint(len, buffer);
         buffer.extend_from_slice(utf8_bytes);

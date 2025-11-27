@@ -38,7 +38,7 @@
 //! owned_pe.write_section_table(&mut buffer)?;
 //! ```
 
-use crate::{Error, Result};
+use crate::{malformed_error, Error, Result};
 use std::collections::HashMap;
 use std::io::Write;
 
@@ -1025,7 +1025,7 @@ impl WindowsFields {
         } else {
             writer.write_all(
                 &u32::try_from(self.image_base)
-                    .map_err(|_| Error::Error("Image base exceeds u32 range".to_string()))?
+                    .map_err(|_| malformed_error!("Image base exceeds u32 range"))?
                     .to_le_bytes(),
             )?;
         }
@@ -1056,22 +1056,22 @@ impl WindowsFields {
             // PE32: 4-byte fields
             writer.write_all(
                 &u32::try_from(self.size_of_stack_reserve)
-                    .map_err(|_| Error::Error("Stack reserve size exceeds u32 range".to_string()))?
+                    .map_err(|_| malformed_error!("Stack reserve size exceeds u32 range"))?
                     .to_le_bytes(),
             )?;
             writer.write_all(
                 &u32::try_from(self.size_of_stack_commit)
-                    .map_err(|_| Error::Error("Stack commit size exceeds u32 range".to_string()))?
+                    .map_err(|_| malformed_error!("Stack commit size exceeds u32 range"))?
                     .to_le_bytes(),
             )?;
             writer.write_all(
                 &u32::try_from(self.size_of_heap_reserve)
-                    .map_err(|_| Error::Error("Heap reserve size exceeds u32 range".to_string()))?
+                    .map_err(|_| malformed_error!("Heap reserve size exceeds u32 range"))?
                     .to_le_bytes(),
             )?;
             writer.write_all(
                 &u32::try_from(self.size_of_heap_commit)
-                    .map_err(|_| Error::Error("Heap commit size exceeds u32 range".to_string()))?
+                    .map_err(|_| malformed_error!("Heap commit size exceeds u32 range"))?
                     .to_le_bytes(),
             )?;
         }

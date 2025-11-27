@@ -25,6 +25,7 @@
 //! - [`crate::metadata::token`] - Token-based metadata references
 
 use crate::{
+    malformed_error,
     metadata::{token::Token, typesystem::CilTypeRc},
     Result,
 };
@@ -150,7 +151,7 @@ impl ClassLayout {
             // Class size was already set - check if it's the same value
             if let Some(existing_value) = self.parent.class_size.get() {
                 if *existing_value != self.class_size {
-                    return Err(crate::malformed_error!(
+                    return Err(malformed_error!(
                         "Class size CONFLICT for type '{}' (token: 0x{:08X}). Existing value: {}, attempted to set: {}. ClassLayout token: 0x{:08X}, offset: 0x{:X}. Thread: {:?}",
                         self.parent.name,
                         self.parent.token.value(),
@@ -162,7 +163,7 @@ impl ClassLayout {
                     ));
                 }
             } else {
-                return Err(crate::malformed_error!(
+                return Err(malformed_error!(
                     "Class size setting failed for type '{}' (token: 0x{:08X}) but no current value found. Attempted to set: {}. ClassLayout token: 0x{:08X}, offset: 0x{:X}",
                     self.parent.name,
                     self.parent.token.value(),
@@ -177,7 +178,7 @@ impl ClassLayout {
             // Packing size was already set - check if it's the same value
             if let Some(existing_value) = self.parent.packing_size.get() {
                 if *existing_value != self.packing_size {
-                    return Err(crate::malformed_error!(
+                    return Err(malformed_error!(
                         "Packing size CONFLICT for type '{}' (token: 0x{:08X}). Existing value: {}, attempted to set: {}. ClassLayout token: 0x{:08X}, offset: 0x{:X}. Thread: {:?}",
                         self.parent.name,
                         self.parent.token.value(),
@@ -189,7 +190,7 @@ impl ClassLayout {
                     ));
                 }
             } else {
-                return Err(crate::malformed_error!(
+                return Err(malformed_error!(
                     "Packing size setting failed for type '{}' (token: 0x{:08X}) but no current value found. Attempted to set: {}. ClassLayout token: 0x{:08X}, offset: 0x{:X}",
                     self.parent.name,
                     self.parent.token.value(),

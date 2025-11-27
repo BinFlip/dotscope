@@ -162,17 +162,13 @@ impl ParamBuilder {
     /// - Returns error if heap operations fail
     /// - Returns error if table operations fail
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let flags = self
-            .flags
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Parameter flags are required".to_string(),
-            })?;
+        let flags = self.flags.ok_or_else(|| {
+            Error::ModificationInvalid("Parameter flags are required".to_string())
+        })?;
 
-        let sequence = self
-            .sequence
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Parameter sequence is required".to_string(),
-            })?;
+        let sequence = self.sequence.ok_or_else(|| {
+            Error::ModificationInvalid("Parameter sequence is required".to_string())
+        })?;
 
         let name_index = if let Some(name) = self.name {
             context.string_get_or_add(&name)?

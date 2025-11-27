@@ -283,40 +283,34 @@ impl LocalScopeBuilder {
     /// - Table operations fail due to metadata constraints
     /// - Local scope validation failed
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let method = self
-            .method
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Method token is required for LocalScope".to_string(),
-            })?;
+        let method = self.method.ok_or_else(|| {
+            Error::ModificationInvalid("Method token is required for LocalScope".to_string())
+        })?;
 
-        let start_offset =
-            self.start_offset
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Start offset is required for LocalScope".to_string(),
-                })?;
+        let start_offset = self.start_offset.ok_or_else(|| {
+            Error::ModificationInvalid("Start offset is required for LocalScope".to_string())
+        })?;
 
-        let length = self
-            .length
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Length is required for LocalScope".to_string(),
-            })?;
+        let length = self.length.ok_or_else(|| {
+            Error::ModificationInvalid("Length is required for LocalScope".to_string())
+        })?;
 
         if method.table() != TableId::MethodDef as u8 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Method token must reference MethodDef table".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Method token must reference MethodDef table".to_string(),
+            ));
         }
 
         if method.row() == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Method token row cannot be 0".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Method token row cannot be 0".to_string(),
+            ));
         }
 
         if length == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "LocalScope length cannot be zero".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "LocalScope length cannot be zero".to_string(),
+            ));
         }
 
         let next_rid = context.next_rid(TableId::LocalScope);

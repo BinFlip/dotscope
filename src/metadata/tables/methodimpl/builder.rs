@@ -467,23 +467,19 @@ impl MethodImplBuilder {
     /// - Table operations fail due to metadata constraints
     /// - Implementation mapping validation failed
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let class = self
-            .class
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "MethodImplBuilder requires a class token".to_string(),
-            })?;
+        let class = self.class.ok_or_else(|| {
+            Error::ModificationInvalid("MethodImplBuilder requires a class token".to_string())
+        })?;
 
-        let method_body = self
-            .method_body
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "MethodImplBuilder requires a method body".to_string(),
-            })?;
+        let method_body = self.method_body.ok_or_else(|| {
+            Error::ModificationInvalid("MethodImplBuilder requires a method body".to_string())
+        })?;
 
-        let method_declaration =
-            self.method_declaration
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "MethodImplBuilder requires a method declaration".to_string(),
-                })?;
+        let method_declaration = self.method_declaration.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "MethodImplBuilder requires a method declaration".to_string(),
+            )
+        })?;
 
         // Extract RID from class token (should be TypeDef: 0x02xxxxxx)
         let class_rid = class.value() & 0x00FF_FFFF;

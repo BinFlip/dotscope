@@ -25,7 +25,7 @@ use crate::{
         types::{RowWritable, TableInfoRef},
     },
     utils::{write_le_at, write_le_at_dyn},
-    Result,
+    Error, Result,
 };
 
 impl RowWritable for PropertyRaw {
@@ -59,8 +59,8 @@ impl RowWritable for PropertyRaw {
         sizes: &TableInfoRef,
     ) -> Result<()> {
         // Write flags (2 bytes) - convert from u32 to u16 with range check
-        let flags_u16 = u16::try_from(self.flags).map_err(|_| crate::Error::WriteLayoutFailed {
-            message: "Property flags value exceeds u16 range".to_string(),
+        let flags_u16 = u16::try_from(self.flags).map_err(|_| {
+            Error::LayoutFailed("Property flags value exceeds u16 range".to_string())
         })?;
         write_le_at(data, offset, flags_u16)?;
 

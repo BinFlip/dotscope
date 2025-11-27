@@ -149,7 +149,7 @@ fn find_suitable_method(assembly: &CilObject) -> Result<MethodRc> {
         }
     }
 
-    Err(Error::Error(
+    Err(Error::Other(
         "No suitable method found for analysis".to_string(),
     ))
 }

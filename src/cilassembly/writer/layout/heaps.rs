@@ -206,16 +206,13 @@ pub fn calculate_string_heap_size(
         let mut actual_end = 1u64; // Start after mandatory null byte at index 0
         for (offset, string) in strings_heap.iter() {
             if !heap_changes.is_removed(u32::try_from(offset).map_err(|_| {
-                Error::WriteLayoutFailed {
-                    message: "String heap offset exceeds u32 range".to_string(),
-                }
+                Error::LayoutFailed("String heap offset exceeds u32 range".to_string())
             })?) {
                 let string_len = if let Some(modified_string) =
                     heap_changes.get_modification(u32::try_from(offset).map_err(|_| {
-                        Error::WriteLayoutFailed {
-                            message: "String heap offset exceeds u32 range (modification)"
-                                .to_string(),
-                        }
+                        Error::LayoutFailed(
+                            "String heap offset exceeds u32 range (modification)".to_string(),
+                        )
                     })?) {
                     modified_string.len() as u64
                 } else {
@@ -262,8 +259,8 @@ pub fn calculate_string_heap_size(
         // Calculate the API index for this appended string by working backwards from next_index
         let mut api_index = heap_changes.next_index;
         for item in heap_changes.appended_items.iter().rev() {
-            api_index -= u32::try_from(item.len() + 1).map_err(|_| Error::WriteLayoutFailed {
-                message: "String item size exceeds u32 range".to_string(),
+            api_index -= u32::try_from(item.len() + 1).map_err(|_| {
+                Error::LayoutFailed("String item size exceeds u32 range".to_string())
             })?;
             if std::ptr::eq(item, appended_string) {
                 break;
@@ -367,7 +364,7 @@ pub fn calculate_string_heap_size(
 ///
 /// # Errors
 ///
-/// Returns [`crate::Error::WriteLayoutFailed`] if:
+/// Returns [`crate::Error::LayoutFailed`] if:
 /// - Blob heap offset calculations exceed u32 range
 /// - Blob size calculations result in overflow
 /// - Original heap data is corrupted or inaccessible
@@ -579,7 +576,7 @@ pub fn calculate_blob_heap_size(
 ///
 /// # Errors
 ///
-/// Returns [`crate::Error::WriteLayoutFailed`] if:
+/// Returns [`crate::Error::LayoutFailed`] if:
 /// - GUID heap offset calculations exceed u32 range
 /// - GUID count calculations result in overflow
 /// - Original heap data is corrupted or inaccessible
@@ -654,8 +651,8 @@ pub fn calculate_guid_heap_size(
         if let Some(guid_heap) = assembly.view().guids() {
             for (offset, _) in guid_heap.iter() {
                 // The heap changes system uses byte offsets as indices
-                let offset_u32 = u32::try_from(offset).map_err(|_| Error::WriteLayoutFailed {
-                    message: "Blob heap offset exceeds u32 range".to_string(),
+                let offset_u32 = u32::try_from(offset).map_err(|_| {
+                    Error::LayoutFailed("Blob heap offset exceeds u32 range".to_string())
                 })?;
                 if !removed_indices.contains(&offset_u32) && !modified_indices.contains(&offset_u32)
                 {
@@ -666,9 +663,8 @@ pub fn calculate_guid_heap_size(
 
         // Add size of modified GUIDs (but only those that modify original GUIDs, not appended ones)
         let original_guid_count = if let Some(guid_heap) = assembly.view().guids() {
-            u32::try_from(guid_heap.iter().count()).map_err(|_| Error::WriteLayoutFailed {
-                message: "GUID heap count exceeds u32 range".to_string(),
-            })?
+            u32::try_from(guid_heap.iter().count())
+                .map_err(|_| Error::LayoutFailed("GUID heap count exceeds u32 range".to_string()))?
         } else {
             0
         };
@@ -682,8 +678,8 @@ pub fn calculate_guid_heap_size(
 
         // Add size of appended GUIDs that haven't been removed
         let original_heap_size = if let Some(guid_heap) = assembly.view().guids() {
-            u32::try_from(guid_heap.data().len()).map_err(|_| Error::WriteLayoutFailed {
-                message: "GUID heap data length exceeds u32 range".to_string(),
+            u32::try_from(guid_heap.data().len()).map_err(|_| {
+                Error::LayoutFailed("GUID heap data length exceeds u32 range".to_string())
             })?
         } else {
             0

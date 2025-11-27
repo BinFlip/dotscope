@@ -266,57 +266,47 @@ impl ClassLayoutBuilder {
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
         const MAX_CLASS_SIZE: u32 = 0x1000_0000; // 256MB
 
-        let packing_size =
-            self.packing_size
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Packing size is required".to_string(),
-                })?;
+        let packing_size = self
+            .packing_size
+            .ok_or_else(|| Error::ModificationInvalid("Packing size is required".to_string()))?;
 
         let class_size = self
             .class_size
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Class size is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Class size is required".to_string()))?;
 
         let parent = self
             .parent
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Parent type is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Parent type is required".to_string()))?;
 
         if parent.table() != TableId::TypeDef as u8 {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Parent must be a TypeDef token, got table {:?}",
-                    parent.table()
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Parent must be a TypeDef token, got table {:?}",
+                parent.table()
+            )));
         }
 
         if parent.row() == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Parent TypeDef RID cannot be 0".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Parent TypeDef RID cannot be 0".to_string(),
+            ));
         }
 
         if packing_size != 0 && (packing_size & (packing_size - 1)) != 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!("Packing size must be 0 or a power of 2, got {packing_size}"),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Packing size must be 0 or a power of 2, got {packing_size}"
+            )));
         }
 
         if packing_size > 128 {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!("Packing size cannot exceed 128 bytes, got {packing_size}"),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Packing size cannot exceed 128 bytes, got {packing_size}"
+            )));
         }
 
         if class_size > MAX_CLASS_SIZE {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Class size cannot exceed 256MB (0x{MAX_CLASS_SIZE:X}), got {class_size}"
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Class size cannot exceed 256MB (0x{MAX_CLASS_SIZE:X}), got {class_size}"
+            )));
         }
 
         let rid = context.next_rid(TableId::ClassLayout);

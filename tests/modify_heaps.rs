@@ -50,7 +50,7 @@ fn test_string_heap_add_and_verify() -> Result<()> {
         |written_view| {
             let strings = written_view
                 .strings()
-                .ok_or_else(|| Error::Error("No strings heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No strings heap found".to_string()))?;
 
             // Verify the specific string was added
             let found = strings.iter().any(|(_, s)| s == test_string);
@@ -75,7 +75,7 @@ fn test_blob_heap_add_and_verify() -> Result<()> {
         |written_view| {
             let blobs = written_view
                 .blobs()
-                .ok_or_else(|| Error::Error("No blobs heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No blobs heap found".to_string()))?;
 
             // Verify the specific blob was added
             let found = blobs.iter().any(|(_, blob)| blob == test_blob);
@@ -103,7 +103,7 @@ fn test_guid_heap_add_and_verify() -> Result<()> {
         |written_view| {
             let guids = written_view
                 .guids()
-                .ok_or_else(|| Error::Error("No GUIDs heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No GUIDs heap found".to_string()))?;
 
             // Verify the specific GUID was added
             let found = guids.iter().any(|(_, guid)| guid.to_bytes() == test_guid);
@@ -128,7 +128,7 @@ fn test_userstring_heap_add_and_verify() -> Result<()> {
         |written_view| {
             let userstrings = written_view
                 .userstrings()
-                .ok_or_else(|| Error::Error("No userstrings heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No userstrings heap found".to_string()))?;
 
             // Verify the specific userstring was added
             let found = userstrings
@@ -162,7 +162,7 @@ fn test_mixed_heap_additions() -> Result<()> {
             // Verify all additions are present
             let strings = written_view
                 .strings()
-                .ok_or_else(|| Error::Error("No strings heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No strings heap found".to_string()))?;
             assert!(
                 strings.iter().any(|(_, s)| s == test_string),
                 "String should be present"
@@ -170,7 +170,7 @@ fn test_mixed_heap_additions() -> Result<()> {
 
             let blobs = written_view
                 .blobs()
-                .ok_or_else(|| Error::Error("No blobs heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No blobs heap found".to_string()))?;
             assert!(
                 blobs.iter().any(|(_, b)| b == test_blob),
                 "Blob should be present"
@@ -178,7 +178,7 @@ fn test_mixed_heap_additions() -> Result<()> {
 
             let guids = written_view
                 .guids()
-                .ok_or_else(|| Error::Error("No GUIDs heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No GUIDs heap found".to_string()))?;
             assert!(
                 guids.iter().any(|(_, g)| g.to_bytes() == test_guid),
                 "GUID should be present"
@@ -186,7 +186,7 @@ fn test_mixed_heap_additions() -> Result<()> {
 
             let userstrings = written_view
                 .userstrings()
-                .ok_or_else(|| Error::Error("No userstrings heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No userstrings heap found".to_string()))?;
             assert!(
                 userstrings
                     .iter()
@@ -210,13 +210,13 @@ fn test_string_modification_and_verify() -> Result<()> {
             let view = CilAssemblyView::from_path(Path::new(TEST_ASSEMBLY_PATH))?;
             let strings = view
                 .strings()
-                .ok_or_else(|| Error::Error("No strings heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No strings heap found".to_string()))?;
 
             let original_index = strings
                 .iter()
                 .find(|(_, s)| *s == original_string)
                 .map(|(i, _)| i) // Use the actual index from the iterator
-                .ok_or_else(|| Error::Error(format!("String '{original_string}' not found")))?;
+                .ok_or_else(|| Error::Other(format!("String '{original_string}' not found")))?;
 
             context.string_update(original_index as u32, modified_string)?;
             Ok(())
@@ -224,7 +224,7 @@ fn test_string_modification_and_verify() -> Result<()> {
         |written_view| {
             let strings = written_view
                 .strings()
-                .ok_or_else(|| Error::Error("No strings heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No strings heap found".to_string()))?;
 
             // Verify the modification was applied
             let found_modified = strings.iter().any(|(_, s)| s == modified_string);
@@ -296,7 +296,7 @@ fn test_string_heap_replacement() -> Result<()> {
         |written_view| {
             let strings = written_view
                 .strings()
-                .ok_or_else(|| Error::Error("No strings heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No strings heap found".to_string()))?;
 
             // Verify the custom strings are present
             let found_custom1 = strings.iter().any(|(_, s)| s == "CustomString1");
@@ -351,7 +351,7 @@ fn test_blob_heap_replacement() -> Result<()> {
         |written_view| {
             let blobs = written_view
                 .blobs()
-                .ok_or_else(|| Error::Error("No blobs heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No blobs heap found".to_string()))?;
 
             // Verify our custom blobs are present
             let found_blob1 = blobs.iter().any(|(_, blob)| blob == [0x01, 0x02, 0x03]);
@@ -404,7 +404,7 @@ fn test_guid_heap_replacement() -> Result<()> {
         |written_view| {
             let guids = written_view
                 .guids()
-                .ok_or_else(|| Error::Error("No GUIDs heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No GUIDs heap found".to_string()))?;
 
             // Verify the custom GUIDs are present
             let found_guid1 = guids.iter().any(|(_, guid)| guid.to_bytes() == guid1);
@@ -447,7 +447,7 @@ fn test_userstring_heap_replacement() -> Result<()> {
         |written_view| {
             let userstrings = written_view
                 .userstrings()
-                .ok_or_else(|| Error::Error("No userstrings heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No userstrings heap found".to_string()))?;
 
             // Verify the custom user string is present
             let found_custom = userstrings
@@ -490,7 +490,7 @@ fn test_heap_replacement_with_subsequent_additions() -> Result<()> {
         |written_view| {
             let strings = written_view
                 .strings()
-                .ok_or_else(|| Error::Error("No strings heap found".to_string()))?;
+                .ok_or_else(|| Error::Other("No strings heap found".to_string()))?;
 
             // Verify both the replaced string and the newly added string are present
             let found_replaced = strings.iter().any(|(_, s)| s == "ReplacedString");

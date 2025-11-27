@@ -32,11 +32,11 @@ pub fn raw_signature_validator_file_factory() -> Result<Vec<TestAssembly>> {
         Ok(temp_file) => {
             assemblies.push(TestAssembly::from_temp_file_with_error(
                 temp_file,
-                "ValidationRawValidatorFailed",
+                "ValidationRawFailed",
             ));
         }
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create test assembly with invalid method calling convention: {e}"
             )));
         }
@@ -47,11 +47,11 @@ pub fn raw_signature_validator_file_factory() -> Result<Vec<TestAssembly>> {
         Ok(temp_file) => {
             assemblies.push(TestAssembly::from_temp_file_with_error(
                 temp_file,
-                "ValidationRawValidatorFailed",
+                "ValidationRawFailed",
             ));
         }
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create test assembly with invalid field calling convention: {e}"
             )));
         }
@@ -62,11 +62,11 @@ pub fn raw_signature_validator_file_factory() -> Result<Vec<TestAssembly>> {
         Ok(temp_file) => {
             assemblies.push(TestAssembly::from_temp_file_with_error(
                 temp_file,
-                "ValidationRawValidatorFailed",
+                "ValidationRawFailed",
             ));
         }
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create test assembly with malformed compressed integer: {e}"
             )));
         }
@@ -77,11 +77,11 @@ pub fn raw_signature_validator_file_factory() -> Result<Vec<TestAssembly>> {
         Ok(temp_file) => {
             assemblies.push(TestAssembly::from_temp_file_with_error(
                 temp_file,
-                "ValidationRawValidatorFailed",
+                "ValidationRawFailed",
             ));
         }
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create test assembly with oversized signature blob: {e}"
             )));
         }
@@ -99,7 +99,7 @@ pub fn raw_signature_validator_file_factory() -> Result<Vec<TestAssembly>> {
 /// Originally from: `src/metadata/validation/validators/raw/structure/signature.rs`
 pub fn create_assembly_with_invalid_method_calling_convention() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        .ok_or_else(|| Error::Other("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -136,7 +136,7 @@ pub fn create_assembly_with_invalid_method_calling_convention() -> Result<NamedT
 /// Originally from: `src/metadata/validation/validators/raw/structure/signature.rs`
 pub fn create_assembly_with_invalid_field_calling_convention() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        .ok_or_else(|| Error::Other("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -169,7 +169,7 @@ pub fn create_assembly_with_invalid_field_calling_convention() -> Result<NamedTe
 /// Originally from: `src/metadata/validation/validators/raw/structure/signature.rs`
 pub fn create_assembly_with_malformed_compressed_integer() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        .ok_or_else(|| Error::Other("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -203,7 +203,7 @@ pub fn create_assembly_with_malformed_compressed_integer() -> Result<NamedTempFi
 /// Originally from: `src/metadata/validation/validators/raw/structure/signature.rs`
 pub fn create_assembly_with_oversized_signature_blob() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        .ok_or_else(|| Error::Other("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);

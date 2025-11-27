@@ -291,44 +291,38 @@ impl MethodSpecBuilder {
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
         let method = self
             .method
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Generic method is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Generic method is required".to_string()))?;
 
-        let instantiation =
-            self.instantiation
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Instantiation signature is required".to_string(),
-                })?;
+        let instantiation = self.instantiation.ok_or_else(|| {
+            Error::ModificationInvalid("Instantiation signature is required".to_string())
+        })?;
 
         if instantiation.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Instantiation signature cannot be empty".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Instantiation signature cannot be empty".to_string(),
+            ));
         }
 
         let valid_method_tables = CodedIndexType::MethodDefOrRef.tables();
         if !valid_method_tables.contains(&method.tag) {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Method must be a MethodDefOrRef coded index (MethodDef/MemberRef), got {:?}",
-                    method.tag
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Method must be a MethodDefOrRef coded index (MethodDef/MemberRef), got {:?}",
+                method.tag
+            )));
         }
 
         if instantiation.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Instantiation signature must contain at least the generic argument count"
+            return Err(Error::ModificationInvalid(
+                "Instantiation signature must contain at least the generic argument count"
                     .to_string(),
-            });
+            ));
         }
 
         let arg_count = instantiation[0];
         if arg_count == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Generic argument count cannot be zero".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Generic argument count cannot be zero".to_string(),
+            ));
         }
 
         let instantiation_index = context.blob_add(&instantiation)?;

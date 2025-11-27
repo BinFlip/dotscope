@@ -20,6 +20,7 @@
 //! - **TypeSignatureEncoder Foundation**: Built on the proven TypeSignatureEncoder base
 
 use crate::{
+    malformed_error,
     metadata::{
         signatures::{
             CustomModifier, SignatureField, SignatureLocalVariables, SignatureMethod,
@@ -82,7 +83,7 @@ fn encode_custom_modifier(modifier: &CustomModifier, buffer: &mut Vec<u8>) -> Re
 ///
 /// # Errors
 ///
-/// Returns [`crate::Error::ModificationInvalidOperation`] if the token's table is not
+/// Returns [`crate::Error::ModificationInvalid`] if the token's table is not
 /// TypeDef (0x02), TypeRef (0x01), or TypeSpec (0x1B).
 fn encode_type_def_or_ref_coded_index(token: Token) -> Result<u32> {
     let table_id = token.table();
@@ -92,14 +93,12 @@ fn encode_type_def_or_ref_coded_index(token: Token) -> Result<u32> {
         0x02 => Ok(rid << 2),       // TypeDef
         0x01 => Ok((rid << 2) | 1), // TypeRef
         0x1B => Ok((rid << 2) | 2), // TypeSpec
-        _ => Err(Error::ModificationInvalidOperation {
-            details: format!(
-                "Invalid token table 0x{:02X} for TypeDefOrRef coded index. \
-                Expected TypeDef (0x02), TypeRef (0x01), or TypeSpec (0x1B). Token: 0x{:08X}",
-                table_id,
-                token.value()
-            ),
-        }),
+        _ => Err(Error::ModificationInvalid(format!(
+            "Invalid token table 0x{:02X} for TypeDefOrRef coded index. \
+            Expected TypeDef (0x02), TypeRef (0x01), or TypeSpec (0x1B). Token: 0x{:08X}",
+            table_id,
+            token.value()
+        ))),
     }
 }
 
@@ -214,13 +213,12 @@ pub fn encode_method_signature(signature: &SignatureMethod) -> Result<Vec<u8>> {
         write_compressed_uint(signature.param_count_generic, &mut buffer);
     }
 
-    let param_count =
-        u32::try_from(signature.params.len()).map_err(|_| Error::ModificationInvalidOperation {
-            details: format!(
-                "Too many parameters in method signature: {}",
-                signature.params.len()
-            ),
-        })?;
+    let param_count = u32::try_from(signature.params.len()).map_err(|_| {
+        Error::ModificationInvalid(format!(
+            "Too many parameters in method signature: {}",
+            signature.params.len()
+        ))
+    })?;
     write_compressed_uint(param_count, &mut buffer);
 
     encode_parameter(&signature.return_type, &mut buffer)?;
@@ -300,13 +298,12 @@ pub fn encode_property_signature(signature: &SignatureProperty) -> Result<Vec<u8
     }
     buffer.push(prolog);
 
-    let param_count =
-        u32::try_from(signature.params.len()).map_err(|_| Error::ModificationInvalidOperation {
-            details: format!(
-                "Too many parameters in property signature: {}",
-                signature.params.len()
-            ),
-        })?;
+    let param_count = u32::try_from(signature.params.len()).map_err(|_| {
+        Error::ModificationInvalid(format!(
+            "Too many parameters in property signature: {}",
+            signature.params.len()
+        ))
+    })?;
     write_compressed_uint(param_count, &mut buffer);
 
     // Encode custom modifiers before the property type
@@ -352,10 +349,10 @@ pub fn encode_local_var_signature(signature: &SignatureLocalVariables) -> Result
 
     write_compressed_uint(
         u32::try_from(signature.locals.len()).map_err(|_| {
-            Error::Error(format!(
+            malformed_error!(
                 "LocalVar signature has too many locals: {}",
                 signature.locals.len()
-            ))
+            )
         })?,
         &mut buffer,
     );

@@ -254,10 +254,9 @@ impl HeapBuilder for BlobHeapBuilder<'_> {
                     continue; // Skip the mandatory null byte
                 }
 
-                let original_index =
-                    u32::try_from(original_index).map_err(|_| Error::WriteLayoutFailed {
-                        message: "Blob heap index exceeds u32 range".to_string(),
-                    })?;
+                let original_index = u32::try_from(original_index).map_err(|_| {
+                    Error::LayoutFailed("Blob heap index exceeds u32 range".to_string())
+                })?;
 
                 if blob_changes.is_removed(original_index) {
                     // Blob is removed - no mapping entry
@@ -278,8 +277,10 @@ impl HeapBuilder for BlobHeapBuilder<'_> {
                     final_index_position += u32::try_from(
                         compressed_uint_size(modified_blob.len()) + modified_blob.len() as u64,
                     )
-                    .map_err(|_| Error::WriteLayoutFailed {
-                        message: "Modified blob size calculation exceeds u32 range".to_string(),
+                    .map_err(|_| {
+                        Error::LayoutFailed(
+                            "Modified blob size calculation exceeds u32 range".to_string(),
+                        )
                     })?;
                 } else {
                     // Blob is unchanged - add original version
@@ -296,8 +297,10 @@ impl HeapBuilder for BlobHeapBuilder<'_> {
                     final_index_position += u32::try_from(
                         compressed_uint_size(original_blob.len()) + original_blob.len() as u64,
                     )
-                    .map_err(|_| Error::WriteLayoutFailed {
-                        message: "Original blob size calculation exceeds u32 range".to_string(),
+                    .map_err(|_| {
+                        Error::LayoutFailed(
+                            "Original blob size calculation exceeds u32 range".to_string(),
+                        )
                     })?;
                 }
             }
@@ -309,12 +312,11 @@ impl HeapBuilder for BlobHeapBuilder<'_> {
                 let mut calculated_index = blob_changes.next_index;
                 for item in blob_changes.appended_items.iter().rev() {
                     let prefix_size = compressed_uint_size(item.len());
-                    calculated_index -=
-                        u32::try_from(prefix_size).map_err(|_| Error::WriteLayoutFailed {
-                            message: "Blob prefix size exceeds u32 range".to_string(),
-                        })? + u32::try_from(item.len()).map_err(|_| Error::WriteLayoutFailed {
-                            message: "Blob length exceeds u32 range".to_string(),
-                        })?;
+                    calculated_index -= u32::try_from(prefix_size).map_err(|_| {
+                        Error::LayoutFailed("Blob prefix size exceeds u32 range".to_string())
+                    })? + u32::try_from(item.len()).map_err(|_| {
+                        Error::LayoutFailed("Blob length exceeds u32 range".to_string())
+                    })?;
                     if std::ptr::eq(item, original_blob) {
                         break;
                     }
@@ -340,8 +342,10 @@ impl HeapBuilder for BlobHeapBuilder<'_> {
 
                 final_index_position +=
                     u32::try_from(compressed_uint_size(final_blob.len()) + final_blob.len() as u64)
-                        .map_err(|_| Error::WriteLayoutFailed {
-                            message: "Final blob size calculation exceeds u32 range".to_string(),
+                        .map_err(|_| {
+                            Error::LayoutFailed(
+                                "Final blob size calculation exceeds u32 range".to_string(),
+                            )
                         })?;
             }
         }
@@ -407,8 +411,10 @@ impl BlobHeapBuilder<'_> {
                 let metadata_offset = view
                     .file()
                     .rva_to_offset(cor20_header.meta_data_rva as usize)
-                    .map_err(|_| Error::WriteLayoutFailed {
-                        message: "Failed to convert metadata RVA to file offset".to_string(),
+                    .map_err(|_| {
+                        Error::LayoutFailed(
+                            "Failed to convert metadata RVA to file offset".to_string(),
+                        )
                     })?;
 
                 let stream_start = metadata_offset + stream_header.offset as usize;
@@ -416,17 +422,15 @@ impl BlobHeapBuilder<'_> {
 
                 let file_data = view.file().data();
                 let stream_data = file_data.get(stream_start..stream_end).ok_or_else(|| {
-                    Error::WriteLayoutFailed {
-                        message: "Failed to read original blob stream data".to_string(),
-                    }
+                    Error::LayoutFailed("Failed to read original blob stream data".to_string())
                 })?;
 
                 return Ok(stream_data.to_vec());
             }
         }
 
-        Err(Error::WriteLayoutFailed {
-            message: "Blob stream not found in original metadata".to_string(),
-        })
+        Err(Error::LayoutFailed(
+            "Blob stream not found in original metadata".to_string(),
+        ))
     }
 }

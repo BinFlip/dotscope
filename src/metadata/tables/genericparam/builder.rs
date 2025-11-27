@@ -246,50 +246,40 @@ impl GenericParamBuilder {
     /// - Returns error if heap operations fail
     /// - Returns error if table operations fail
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let name = self
-            .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "GenericParam name is required".to_string(),
-            })?;
+        let name = self.name.ok_or_else(|| {
+            Error::ModificationInvalid("GenericParam name is required".to_string())
+        })?;
 
-        let number = self
-            .number
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "GenericParam number is required".to_string(),
-            })?;
+        let number = self.number.ok_or_else(|| {
+            Error::ModificationInvalid("GenericParam number is required".to_string())
+        })?;
 
-        let owner = self
-            .owner
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "GenericParam owner is required".to_string(),
-            })?;
+        let owner = self.owner.ok_or_else(|| {
+            Error::ModificationInvalid("GenericParam owner is required".to_string())
+        })?;
 
         let flags = self.flags.unwrap_or(0);
 
         let valid_owner_tables = CodedIndexType::TypeOrMethodDef.tables();
         if !valid_owner_tables.contains(&owner.tag) {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Owner must be a TypeOrMethodDef coded index (TypeDef/MethodDef), got {:?}",
-                    owner.tag
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Owner must be a TypeOrMethodDef coded index (TypeDef/MethodDef), got {:?}",
+                owner.tag
+            )));
         }
 
         if number > 65535 {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!("GenericParam number {number} is too large (maximum 65535)"),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "GenericParam number {number} is too large (maximum 65535)"
+            )));
         }
 
         let valid_flags_mask =
             GenericParamAttributes::VARIANCE_MASK | GenericParamAttributes::SPECIAL_CONSTRAINT_MASK;
         if flags & !valid_flags_mask != 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Invalid GenericParam flags: 0x{flags:04X}. Unsupported flags detected"
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Invalid GenericParam flags: 0x{flags:04X}. Unsupported flags detected"
+            )));
         }
 
         let name_index = context.string_get_or_add(&name)?;

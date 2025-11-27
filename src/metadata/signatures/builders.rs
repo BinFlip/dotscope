@@ -497,37 +497,37 @@ impl MethodSignatureBuilder {
         .count();
 
         if calling_conv_count == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Method signature must have exactly one calling convention".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Method signature must have exactly one calling convention".to_string(),
+            ));
         }
 
         if calling_conv_count > 1 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Method signature cannot have multiple calling conventions".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Method signature cannot have multiple calling conventions".to_string(),
+            ));
         }
 
         // Validate varargs usage
         if !self.signature.varargs.is_empty() && !self.signature.vararg {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Variable argument parameters require vararg calling convention"
-                    .to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Variable argument parameters require vararg calling convention".to_string(),
+            ));
         }
 
         // Validate explicit_this requires has_this
         if self.signature.explicit_this && !self.signature.has_this {
-            return Err(Error::ModificationInvalidOperation {
-                details: "explicit_this requires has_this to be true".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "explicit_this requires has_this to be true".to_string(),
+            ));
         }
 
         // Update param_count to match actual parameter count
         self.signature.param_count = u32::try_from(self.signature.params.len()).map_err(|_| {
-            Error::ModificationInvalidOperation {
-                details: format!("Too many parameters: {}", self.signature.params.len()),
-            }
+            Error::ModificationInvalid(format!(
+                "Too many parameters: {}",
+                self.signature.params.len()
+            ))
         })?;
 
         Ok(self.signature)
@@ -634,11 +634,9 @@ impl FieldSignatureBuilder {
     /// # Errors
     /// - No field type is specified
     pub fn build(self) -> Result<SignatureField> {
-        let field_type = self
-            .field_type
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Field signature must specify a field type".to_string(),
-            })?;
+        let field_type = self.field_type.ok_or_else(|| {
+            Error::ModificationInvalid("Field signature must specify a field type".to_string())
+        })?;
 
         Ok(SignatureField {
             modifiers: self.modifiers,
@@ -1044,11 +1042,11 @@ impl TypeSpecSignatureBuilder {
     /// # Errors
     /// - No type signature is specified
     pub fn build(self) -> Result<SignatureTypeSpec> {
-        let type_signature =
-            self.type_signature
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Type specification signature must specify a type".to_string(),
-                })?;
+        let type_signature = self.type_signature.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Type specification signature must specify a type".to_string(),
+            )
+        })?;
 
         Ok(SignatureTypeSpec {
             modifiers: Vec::new(),

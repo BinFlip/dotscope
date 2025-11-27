@@ -206,36 +206,28 @@ impl CustomAttributeBuilder {
     /// - Returns error if heap operations fail
     /// - Returns error if table operations fail
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let parent = self
-            .parent
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "CustomAttribute parent is required".to_string(),
-            })?;
+        let parent = self.parent.ok_or_else(|| {
+            Error::ModificationInvalid("CustomAttribute parent is required".to_string())
+        })?;
 
-        let constructor = self
-            .constructor
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "CustomAttribute constructor is required".to_string(),
-            })?;
+        let constructor = self.constructor.ok_or_else(|| {
+            Error::ModificationInvalid("CustomAttribute constructor is required".to_string())
+        })?;
 
         let valid_parent_tables = CodedIndexType::HasCustomAttribute.tables();
         if !valid_parent_tables.contains(&parent.tag) {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Parent must be a HasCustomAttribute coded index, got {:?}",
-                    parent.tag
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Parent must be a HasCustomAttribute coded index, got {:?}",
+                parent.tag
+            )));
         }
 
         let valid_constructor_tables = CodedIndexType::CustomAttributeType.tables();
         if !valid_constructor_tables.contains(&constructor.tag) {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Constructor must be a CustomAttributeType coded index (MethodDef/MemberRef), got {:?}",
-                    constructor.tag
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Constructor must be a CustomAttributeType coded index (MethodDef/MemberRef), got {:?}",
+                constructor.tag
+            )));
         }
 
         let value_index = if let Some(value) = self.value {

@@ -43,7 +43,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Type definition circular dependencies through inheritance hierarchies
 //! - Method call circular dependencies (direct and indirect cycles)
 //! - Field reference circular dependencies across types
@@ -137,11 +137,11 @@ impl OwnedTypeCircularityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - No inheritance circular dependencies found
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Inheritance circularity detected
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Inheritance circularity detected
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Type inherits from itself directly or indirectly
     /// - Inheritance chain forms a cycle through multiple types
     fn validate_inheritance_circularity(&self, context: &OwnedValidationContext) -> Result<()> {
@@ -202,13 +202,13 @@ impl OwnedTypeCircularityValidator {
         let current_token = type_rc.token;
 
         if visiting.contains(&current_token) {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular inheritance detected: Type '{}' (token 0x{:08X}) inherits from itself",
                     type_rc.name, current_token.value()
                 ),
-                source: None,
+
             });
         }
 
@@ -219,13 +219,13 @@ impl OwnedTypeCircularityValidator {
         }
 
         if depth > context.config().max_nesting_depth {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Inheritance chain depth exceeds maximum nesting depth limit of {} for type '{}' (token 0x{:08X})",
                     context.config().max_nesting_depth, type_rc.name, type_rc.token.value()
                 ),
-                source: None,
+
             });
         }
 
@@ -264,7 +264,7 @@ impl OwnedTypeCircularityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - No nested type circular dependencies found
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Nested type circularity detected
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Nested type circularity detected
     fn validate_nested_type_circularity(&self, context: &OwnedValidationContext) -> Result<()> {
         let mut visited = FxHashSet::default();
         let mut visiting = FxHashSet::default();
@@ -310,13 +310,13 @@ impl OwnedTypeCircularityValidator {
         }
 
         if visiting.contains(&token) {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular nested type relationship detected: Type with token 0x{:08X} contains itself as nested type",
                     token.value()
                 ),
-                source: None,
+
             });
         }
 
@@ -353,7 +353,7 @@ impl OwnedTypeCircularityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - No interface implementation circular dependencies found
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Interface circularity detected
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Interface circularity detected
     fn validate_interface_implementation_circularity(
         &self,
         context: &OwnedValidationContext,
@@ -406,13 +406,13 @@ impl OwnedTypeCircularityValidator {
         }
 
         if visiting.contains(&token) {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular interface implementation detected: Interface with token 0x{:08X} implements itself",
                     token.value()
                 ),
-                source: None,
+
             });
         }
 
@@ -491,7 +491,7 @@ mod tests {
         owned_validator_test(
             owned_type_circularity_validator_file_factory,
             "OwnedTypeCircularityValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             ValidationConfig {
                 enable_semantic_validation: true,
                 max_nesting_depth: 100,
@@ -521,7 +521,7 @@ mod tests {
             .build()?;
 
         let object = project_result.project.get_primary().ok_or_else(|| {
-            Error::Error("Failed to get primary assembly from project".to_string())
+            Error::Other("Failed to get primary assembly from project".to_string())
         })?;
 
         let scanner = ReferenceScanner::from_view(&assembly_view)?;
@@ -543,7 +543,7 @@ mod tests {
                 );
             }
             Err(error) => match error {
-                Error::ValidationOwnedValidatorFailed {
+                Error::ValidationOwnedFailed {
                     validator: val_name,
                     message,
                     ..

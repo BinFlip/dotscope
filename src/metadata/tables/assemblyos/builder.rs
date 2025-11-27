@@ -234,23 +234,19 @@ impl AssemblyOSBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let os_platform_id =
-            self.os_platform_id
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "OS platform identifier is required for AssemblyOS".to_string(),
-                })?;
+        let os_platform_id = self.os_platform_id.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "OS platform identifier is required for AssemblyOS".to_string(),
+            )
+        })?;
 
-        let os_major_version =
-            self.os_major_version
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "OS major version is required for AssemblyOS".to_string(),
-                })?;
+        let os_major_version = self.os_major_version.ok_or_else(|| {
+            Error::ModificationInvalid("OS major version is required for AssemblyOS".to_string())
+        })?;
 
-        let os_minor_version =
-            self.os_minor_version
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "OS minor version is required for AssemblyOS".to_string(),
-                })?;
+        let os_minor_version = self.os_minor_version.ok_or_else(|| {
+            Error::ModificationInvalid("OS minor version is required for AssemblyOS".to_string())
+        })?;
 
         let next_rid = context.next_rid(TableId::AssemblyOS);
         let token_value = ((TableId::AssemblyOS as u32) << 24) | next_rid;
@@ -379,10 +375,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("OS platform identifier is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -398,10 +394,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("OS major version is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -417,10 +413,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("OS minor version is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

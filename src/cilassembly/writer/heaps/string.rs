@@ -222,10 +222,9 @@ impl HeapBuilder for StringHeapBuilder<'_> {
         if let Some(strings_heap) = self.assembly.view().strings() {
             // Phase 1: Process all original strings with modifications/removals
             for (original_index, original_string) in strings_heap.iter() {
-                let original_index =
-                    u32::try_from(original_index).map_err(|_| Error::WriteLayoutFailed {
-                        message: "String heap index exceeds u32 range".to_string(),
-                    })?;
+                let original_index = u32::try_from(original_index).map_err(|_| {
+                    Error::LayoutFailed("String heap index exceeds u32 range".to_string())
+                })?;
 
                 if string_changes.is_removed(original_index) {
                     // String is removed - no mapping entry
@@ -238,9 +237,7 @@ impl HeapBuilder for StringHeapBuilder<'_> {
                     final_heap.extend_from_slice(modified_string.as_bytes());
                     final_heap.push(0); // null terminator
                     final_index_position += u32::try_from(modified_string.len()).map_err(|_| {
-                        Error::WriteLayoutFailed {
-                            message: "Modified string length exceeds u32 range".to_string(),
-                        }
+                        Error::LayoutFailed("Modified string length exceeds u32 range".to_string())
                     })? + 1;
                 } else {
                     // String is unchanged - add original version
@@ -250,9 +247,7 @@ impl HeapBuilder for StringHeapBuilder<'_> {
                     final_heap.extend_from_slice(original_data.as_bytes());
                     final_heap.push(0); // null terminator
                     final_index_position += u32::try_from(original_data.len()).map_err(|_| {
-                        Error::WriteLayoutFailed {
-                            message: "Original string length exceeds u32 range".to_string(),
-                        }
+                        Error::LayoutFailed("Original string length exceeds u32 range".to_string())
                     })? + 1;
                 }
             }
@@ -276,10 +271,9 @@ impl HeapBuilder for StringHeapBuilder<'_> {
                     .insert(original_heap_index, final_index_position);
                 final_heap.extend_from_slice(final_string.as_bytes());
                 final_heap.push(0);
-                final_index_position +=
-                    u32::try_from(final_string.len()).map_err(|_| Error::WriteLayoutFailed {
-                        message: "Final string length exceeds u32 range".to_string(),
-                    })? + 1;
+                final_index_position += u32::try_from(final_string.len()).map_err(|_| {
+                    Error::LayoutFailed("Final string length exceeds u32 range".to_string())
+                })? + 1;
             }
         }
 
@@ -341,8 +335,10 @@ impl StringHeapBuilder<'_> {
                 let metadata_offset = view
                     .file()
                     .rva_to_offset(cor20_header.meta_data_rva as usize)
-                    .map_err(|_| Error::WriteLayoutFailed {
-                        message: "Failed to convert metadata RVA to file offset".to_string(),
+                    .map_err(|_| {
+                        Error::LayoutFailed(
+                            "Failed to convert metadata RVA to file offset".to_string(),
+                        )
                     })?;
 
                 let stream_start = metadata_offset + stream_header.offset as usize;
@@ -350,17 +346,15 @@ impl StringHeapBuilder<'_> {
 
                 let file_data = view.file().data();
                 let stream_data = file_data.get(stream_start..stream_end).ok_or_else(|| {
-                    Error::WriteLayoutFailed {
-                        message: "Failed to read original stream data".to_string(),
-                    }
+                    Error::LayoutFailed("Failed to read original stream data".to_string())
                 })?;
 
                 return Ok(stream_data.to_vec());
             }
         }
 
-        Err(Error::WriteLayoutFailed {
-            message: "String stream not found in original metadata".to_string(),
-        })
+        Err(Error::LayoutFailed(
+            "String stream not found in original metadata".to_string(),
+        ))
     }
 }

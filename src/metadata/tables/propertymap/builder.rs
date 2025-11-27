@@ -253,37 +253,33 @@ impl PropertyMapBuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let parent_token = self
-            .parent
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Parent token is required for PropertyMap".to_string(),
-            })?;
+        let parent_token = self.parent.ok_or_else(|| {
+            Error::ModificationInvalid("Parent token is required for PropertyMap".to_string())
+        })?;
 
-        let property_list_index =
-            self.property_list
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Property list index is required for PropertyMap".to_string(),
-                })?;
+        let property_list_index = self.property_list.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Property list index is required for PropertyMap".to_string(),
+            )
+        })?;
 
         if parent_token.table() != TableId::TypeDef as u8 {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Parent token must be a TypeDef token, got table ID: {}",
-                    parent_token.table()
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Parent token must be a TypeDef token, got table ID: {}",
+                parent_token.table()
+            )));
         }
 
         if parent_token.row() == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Parent token row cannot be 0".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Parent token row cannot be 0".to_string(),
+            ));
         }
 
         if property_list_index == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Property list index cannot be 0".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Property list index cannot be 0".to_string(),
+            ));
         }
 
         let rid = context.next_rid(TableId::PropertyMap);

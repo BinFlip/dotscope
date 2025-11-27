@@ -273,7 +273,7 @@ impl TableModifications {
 
                 Ok(())
             }
-            Self::Replaced(_) => Err(Error::ModificationCannotModifyReplacedTable),
+            Self::Replaced(_) => Err(Error::CannotModifyReplacedTable),
         }
     }
 
@@ -348,50 +348,48 @@ impl TableModifications {
         match &op.operation {
             super::Operation::Insert(rid, _) => {
                 if *rid == 0 {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: format!("RID cannot be zero: {rid}"),
-                    });
+                    return Err(Error::ModificationInvalid(format!(
+                        "RID cannot be zero: {rid}"
+                    )));
                 }
 
                 // Check if we already have a row at this RID
                 if self.has_row(*rid) {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: format!(
-                            "Cannot insert row: RID {rid} already exists in table (duplicate insert or existing row)"
-                        ),
-                    });
+                    return Err(Error::ModificationInvalid(format!(
+                        "Cannot insert row: RID {rid} already exists in table (duplicate insert or existing row)"
+                    )));
                 }
 
                 Ok(())
             }
             super::Operation::Update(rid, _) => {
                 if *rid == 0 {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: format!("RID cannot be zero: {rid}"),
-                    });
+                    return Err(Error::ModificationInvalid(format!(
+                        "RID cannot be zero: {rid}"
+                    )));
                 }
 
                 // Check if the row exists to update
                 if !self.has_row(*rid) {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: format!("RID {rid} not found for update"),
-                    });
+                    return Err(Error::ModificationInvalid(format!(
+                        "RID {rid} not found for update"
+                    )));
                 }
 
                 Ok(())
             }
             super::Operation::Delete(rid) => {
                 if *rid == 0 {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: format!("RID cannot be zero: {rid}"),
-                    });
+                    return Err(Error::ModificationInvalid(format!(
+                        "RID cannot be zero: {rid}"
+                    )));
                 }
 
                 // Check if the row exists to delete
                 if !self.has_row(*rid) {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: format!("RID {rid} not found for deletion"),
-                    });
+                    return Err(Error::ModificationInvalid(format!(
+                        "RID {rid} not found for deletion"
+                    )));
                 }
 
                 Ok(())

@@ -129,7 +129,7 @@ pub type FileFactory = fn() -> Result<Vec<TestAssembly>>;
 ///
 /// * `results` - Test results from validator execution
 /// * `validator_name` - Name of the validator being tested (for error messages)
-/// * `expected_error_type` - Expected error type for negative tests (e.g., "ValidationTokenError")
+/// * `expected_error_type` - Expected error type for negative tests (e.g., "InvalidToken")
 ///
 /// # Returns
 ///
@@ -140,7 +140,7 @@ fn file_verify(
     expected_error_type: &str,
 ) -> Result<()> {
     if results.is_empty() {
-        return Err(Error::Error(
+        return Err(Error::Other(
             "No test assemblies were processed".to_string(),
         ));
     }
@@ -152,14 +152,14 @@ fn file_verify(
         if result.assembly.should_pass {
             positive_tests += 1;
             if !result.test_passed {
-                return Err(Error::Error(format!(
+                return Err(Error::Other(format!(
                     "Positive test failed for {}: validation should have passed but got error: {:?}",
                     result.assembly.path.display(),
                     result.error_message
                 )));
             }
             if !result.validation_succeeded {
-                return Err(Error::Error(format!(
+                return Err(Error::Other(format!(
                     "Clean assembly {} failed {} validation unexpectedly",
                     result.assembly.path.display(),
                     validator_name
@@ -168,7 +168,7 @@ fn file_verify(
         } else {
             negative_tests += 1;
             if !result.test_passed {
-                return Err(Error::Error(format!(
+                return Err(Error::Other(format!(
                     "Negative test failed for {}: expected validation failure with pattern '{:?}' but got: validation_succeeded={}, error={:?}",
                     result.assembly.path.display(),
                     result.assembly.expected_error_pattern,
@@ -177,7 +177,7 @@ fn file_verify(
                 )));
             }
             if result.validation_succeeded {
-                return Err(Error::Error(format!(
+                return Err(Error::Other(format!(
                     "Modified assembly {} passed validation but should have failed",
                     result.assembly.path.display()
                 )));
@@ -187,13 +187,13 @@ fn file_verify(
             if let Some(expected_pattern) = &result.assembly.expected_error_pattern {
                 if let Some(error_msg) = &result.error_message {
                     if !error_msg.contains(expected_pattern) {
-                        return Err(Error::Error(format!(
+                        return Err(Error::Other(format!(
                             "Error message '{error_msg}' does not contain expected pattern '{expected_pattern}'"
                         )));
                     }
                     // Verify it's the expected error type
                     if !expected_error_type.is_empty() && !error_msg.contains(expected_error_type) {
-                        return Err(Error::Error(format!(
+                        return Err(Error::Other(format!(
                             "Expected {expected_error_type} but got: {error_msg}"
                         )));
                     }
@@ -204,12 +204,12 @@ fn file_verify(
 
     // Ensure we have at least one positive test (clean assembly)
     if positive_tests < 1 {
-        return Err(Error::Error("No positive test cases found".to_string()));
+        return Err(Error::Other("No positive test cases found".to_string()));
     }
 
     // Verify comprehensive coverage - we should have negative tests for validation rules
     if results.len() > 1 && negative_tests < 1 {
-        return Err(Error::Error(format!(
+        return Err(Error::Other(format!(
             "Expected negative tests for validation rules, got {negative_tests}"
         )));
     }
@@ -235,7 +235,7 @@ fn file_verify(
 ///
 /// * `file_factory` - Function that creates test assemblies with specific validation issues
 /// * `validator_name` - Name of the validator being tested (for error messages)
-/// * `expected_error_type` - Expected error type for negative tests (e.g., "ValidationTokenError")
+/// * `expected_error_type` - Expected error type for negative tests (e.g., "InvalidToken")
 /// * `validation_config` - Configuration for the validation run
 /// * `run_validator` - Function that executes the validator on a given context
 ///
@@ -274,7 +274,7 @@ where
 {
     let test_assemblies = file_factory()?;
     if test_assemblies.is_empty() {
-        return Err(Error::Error("No test-assembly found!".to_string()));
+        return Err(Error::Other("No test-assembly found!".to_string()));
     }
 
     let mut test_results = Vec::new();
@@ -327,7 +327,7 @@ where
 ///
 /// * `file_factory` - Function that creates test assemblies with specific validation issues
 /// * `validator_name` - Name of the validator being tested (for error messages)
-/// * `expected_error_type` - Expected error type for negative tests (e.g., "ValidationOwnedValidatorFailed")
+/// * `expected_error_type` - Expected error type for negative tests (e.g., "ValidationOwnedFailed")
 /// * `validation_config` - Configuration for the validation run
 /// * `run_validator` - Function that executes the owned validator on a given context
 ///
@@ -349,7 +349,7 @@ where
 /// owned_validator_test(
 ///     my_file_factory,
 ///     "MyOwnedValidator",
-///     "ValidationOwnedValidatorFailed",
+///     "ValidationOwnedFailed",
 ///     ValidationConfig::default(),
 ///     |context| my_owned_validator.validate_owned(context),
 /// )?;
@@ -366,7 +366,7 @@ where
 {
     let test_assemblies = file_factory()?;
     if test_assemblies.is_empty() {
-        return Err(Error::Error("No test-assembly found!".to_string()));
+        return Err(Error::Other("No test-assembly found!".to_string()));
     }
 
     let mut test_results = Vec::new();
@@ -461,7 +461,7 @@ where
     let object = project_result
         .project
         .get_primary()
-        .ok_or_else(|| Error::Error("Failed to get primary assembly from project".to_string()))?;
+        .ok_or_else(|| Error::Other("Failed to get primary assembly from project".to_string()))?;
 
     let scanner = ReferenceScanner::from_view(&assembly_view)?;
     let thread_count = std::thread::available_parallelism()

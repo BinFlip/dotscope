@@ -56,7 +56,7 @@ use crate::{
         instruction::{FlowType, Immediate, Operand, OperandType},
         instructions::{CilInstruction, INSTRUCTIONS, INSTRUCTIONS_FE},
     },
-    Error, Result,
+    malformed_error, Error, Result,
 };
 use std::{collections::HashMap, sync::OnceLock};
 
@@ -282,7 +282,9 @@ impl InstructionEncoder {
     ///
     /// # Errors
     ///
-    /// Returns an error if the mnemonic is not a recognized branch instruction.
+    /// Returns [`crate::Error::InvalidMnemonic`] if the mnemonic is not recognized.
+    /// Returns [`crate::Error::InvalidBranch`] if the mnemonic is not a branch instruction
+    /// or has an invalid operand type for branch encoding.
     ///
     /// # Examples
     ///
@@ -306,7 +308,10 @@ impl InstructionEncoder {
             metadata.flow,
             FlowType::ConditionalBranch | FlowType::UnconditionalBranch | FlowType::Leave
         ) {
-            return Err(Error::InvalidBranchInstruction(mnemonic.to_string()));
+            return Err(Error::InvalidBranch(format!(
+                "instruction '{}' is not a branch instruction",
+                mnemonic
+            )));
         }
 
         let instruction_start = self.bytecode.len();
@@ -324,7 +329,11 @@ impl InstructionEncoder {
             OperandType::Int8 => 1,
             OperandType::Int16 => 2,
             OperandType::Int32 => 4,
-            _ => return Err(Error::InvalidBranchOperandType),
+            _ => {
+                return Err(Error::InvalidBranch(
+                    "operand type must be Int8, Int16, or Int32".to_string(),
+                ))
+            }
         };
 
         // Record fixup for later resolution
@@ -399,9 +408,9 @@ impl InstructionEncoder {
     /// # Errors
     ///
     /// Returns an error if:
-    /// - Any referenced labels are undefined
-    /// - Branch offsets exceed the allowed range for their instruction type
-    /// - Stack underflow occurred during encoding (negative stack depth)
+    /// - [`crate::Error::UndefinedLabel`] - Any referenced labels are undefined
+    /// - [`crate::Error::InvalidBranch`] - Branch offsets exceed the allowed range for their instruction type
+    /// - [`crate::Error::Malformed`] - Stack underflow occurred during encoding (negative stack depth)
     ///
     /// # Examples
     ///
@@ -578,14 +587,19 @@ impl InstructionEncoder {
     ///
     /// This internal method writes the calculated branch offset into the bytecode
     /// at the position specified by the fixup, using the appropriate byte size.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::InvalidBranch`] if the offset exceeds the range for the
+    /// instruction's offset size (1, 2, or 4 bytes) or if the offset size is invalid.
     fn write_branch_offset(&mut self, offset: i32, fixup: &LabelFixup) -> Result<()> {
         match fixup.offset_size {
             1 => {
                 if offset < i32::from(i8::MIN) || offset > i32::from(i8::MAX) {
-                    return Err(Error::BranchOffsetOutOfRange {
-                        offset,
-                        instruction_size: 1,
-                    });
+                    return Err(Error::InvalidBranch(format!(
+                        "offset {} out of range for 1-byte instruction",
+                        offset
+                    )));
                 }
                 let offset_i8 = i8::try_from(offset)
                     .map_err(|_| malformed_error!("Branch offset exceeds i8 range"))?;
@@ -593,10 +607,10 @@ impl InstructionEncoder {
             }
             2 => {
                 if offset < i32::from(i16::MIN) || offset > i32::from(i16::MAX) {
-                    return Err(Error::BranchOffsetOutOfRange {
-                        offset,
-                        instruction_size: 2,
-                    });
+                    return Err(Error::InvalidBranch(format!(
+                        "offset {} out of range for 2-byte instruction",
+                        offset
+                    )));
                 }
                 let offset_i16 = i16::try_from(offset)
                     .map_err(|_| malformed_error!("Branch offset exceeds i16 range"))?;
@@ -609,7 +623,12 @@ impl InstructionEncoder {
                 self.bytecode[fixup.fixup_position..fixup.fixup_position + 4]
                     .copy_from_slice(&bytes);
             }
-            _ => return Err(Error::InvalidBranchOffsetSize(fixup.offset_size)),
+            _ => {
+                return Err(Error::InvalidBranch(format!(
+                    "invalid offset size: {} bytes",
+                    fixup.offset_size
+                )))
+            }
         }
         Ok(())
     }
@@ -634,7 +653,7 @@ impl InstructionEncoder {
 
         // Check for stack underflow
         if self.current_stack_depth < 0 {
-            return Err(crate::malformed_error!(
+            return Err(malformed_error!(
                 "Stack underflow: depth became {} after instruction with {} pops, {} pushes",
                 self.current_stack_depth,
                 pops,

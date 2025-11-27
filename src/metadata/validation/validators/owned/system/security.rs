@@ -44,7 +44,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Security permission declaration violations (empty permission sets, invalid XML, suspicious patterns)
 //! - Code access security attribute violations (excessive arguments, dangerous content)
 //! - Security transparency violations (conflicting critical/transparent attributes, invalid inheritance)
@@ -139,7 +139,7 @@ impl OwnedSecurityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All security permission declarations are valid (placeholder implementation)
-    /// * `Err(`[`Error::ValidationOwnedValidatorFailed`]`)` - Declaration violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Declaration violations found
     fn validate_security_permission_declarations(
         &self,
         context: &OwnedValidationContext,
@@ -151,13 +151,12 @@ impl OwnedSecurityValidator {
 
             // Validate security action is within valid range
             if !Self::is_valid_security_action(decl_security.action.into()) {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Security declaration has invalid action: {:?}",
                         decl_security.action
                     ),
-                    source: None,
                 });
             }
 
@@ -169,22 +168,20 @@ impl OwnedSecurityValidator {
 
                 // Check for permission conflicts
                 if let Some(conflict) = Self::detect_permission_conflicts(&xml_content) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Security declaration has permission conflict: {conflict}"
                         ),
-                        source: None,
                     });
                 }
             } else {
                 // For binary format, perform basic validation on the raw data
                 let raw_data = permission_set.raw_data();
                 if raw_data.is_empty() {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: "Security declaration has empty permission set data".to_string(),
-                        source: None,
                     });
                 }
             }
@@ -196,10 +193,9 @@ impl OwnedSecurityValidator {
     /// Validates permission set format according to XML schema.
     fn validate_permission_set_format(&self, permission_set: &str) -> Result<()> {
         if permission_set.is_empty() {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: "Empty permission set in security declaration".to_string(),
-                source: None,
             });
         }
 
@@ -207,38 +203,34 @@ impl OwnedSecurityValidator {
         if !permission_set.trim_start().starts_with('<')
             || !permission_set.trim_end().ends_with('>')
         {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: "Permission set is not valid XML".to_string(),
-                source: None,
             });
         }
 
         // Check for required elements
         if !permission_set.contains("PermissionSet") {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: "Permission set missing PermissionSet element".to_string(),
-                source: None,
             });
         }
 
         // Validate XML is not excessively large
         if permission_set.len() > 100_000 {
             let set_len = permission_set.len();
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!("Permission set is excessively large ({set_len} characters)"),
-                source: None,
             });
         }
 
         // Check for suspicious patterns
         if Self::has_suspicious_permission_patterns(permission_set) {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: "Permission set contains suspicious patterns".to_string(),
-                source: None,
             });
         }
 
@@ -352,11 +344,11 @@ impl OwnedSecurityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All CAS attributes are properly applied
-    /// * `Err(`[`Error::ValidationOwnedValidatorFailed`]`)` - CAS attribute violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - CAS attribute violations found
     ///
     /// # Errors
     ///
-    /// Returns [`Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Security attributes have excessive arguments (>10)
     /// - Security attribute content contains dangerous patterns
     fn validate_code_access_security_attributes(
@@ -408,7 +400,7 @@ impl OwnedSecurityValidator {
     ) -> Result<()> {
         // Validate argument count is reasonable
         if custom_attr.fixed_args.len() > 10 {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Security attribute on {} '{}' has excessive arguments ({})",
@@ -416,7 +408,6 @@ impl OwnedSecurityValidator {
                     target_name,
                     custom_attr.fixed_args.len()
                 ),
-                source: None,
             });
         }
 
@@ -424,12 +415,12 @@ impl OwnedSecurityValidator {
         for arg in &custom_attr.fixed_args {
             if let CustomAttributeArgument::String(s) = arg {
                 if Self::has_dangerous_security_content(s) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Security attribute on {target_type} '{target_name}' contains dangerous content"
                         ),
-                        source: None,
+
                     });
                 }
             }
@@ -472,11 +463,11 @@ impl OwnedSecurityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All security transparency rules are followed
-    /// * `Err(`[`Error::ValidationOwnedValidatorFailed`]`)` - Transparency violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Transparency violations found
     ///
     /// # Errors
     ///
-    /// Returns [`Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Types are marked both SecurityCritical and SecurityTransparent
     /// - Transparent types inherit from critical base types
     fn validate_security_transparency(&self, context: &OwnedValidationContext) -> Result<()> {
@@ -491,13 +482,12 @@ impl OwnedSecurityValidator {
             let is_transparent = Self::has_security_transparent_attribute(type_entry);
 
             if is_critical && is_transparent {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Type '{}' cannot be both SecurityCritical and SecurityTransparent",
                         type_entry.name
                     ),
-                    source: None,
                 });
             }
 
@@ -517,13 +507,12 @@ impl OwnedSecurityValidator {
 
                 // Transparent types cannot inherit from critical types
                 if transparent_types.contains(&type_token) && critical_types.contains(&base_token) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Transparent type '{}' cannot inherit from critical base type",
                             type_entry.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -609,7 +598,7 @@ mod tests {
         owned_validator_test(
             owned_security_validator_file_factory,
             "OwnedSecurityValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

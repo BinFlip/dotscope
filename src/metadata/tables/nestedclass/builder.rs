@@ -256,53 +256,47 @@ impl NestedClassBuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let nested_class_token =
-            self.nested_class
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Nested class token is required for NestedClass".to_string(),
-                })?;
+        let nested_class_token = self.nested_class.ok_or_else(|| {
+            Error::ModificationInvalid("Nested class token is required for NestedClass".to_string())
+        })?;
 
-        let enclosing_class_token =
-            self.enclosing_class
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Enclosing class token is required for NestedClass".to_string(),
-                })?;
+        let enclosing_class_token = self.enclosing_class.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Enclosing class token is required for NestedClass".to_string(),
+            )
+        })?;
 
         if nested_class_token.table() != TableId::TypeDef as u8 {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Nested class token must be a TypeDef token, got table ID: {}",
-                    nested_class_token.table()
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Nested class token must be a TypeDef token, got table ID: {}",
+                nested_class_token.table()
+            )));
         }
 
         if enclosing_class_token.table() != TableId::TypeDef as u8 {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Enclosing class token must be a TypeDef token, got table ID: {}",
-                    enclosing_class_token.table()
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Enclosing class token must be a TypeDef token, got table ID: {}",
+                enclosing_class_token.table()
+            )));
         }
 
         if nested_class_token.row() == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Nested class token row cannot be 0".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Nested class token row cannot be 0".to_string(),
+            ));
         }
 
         if enclosing_class_token.row() == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Enclosing class token row cannot be 0".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Enclosing class token row cannot be 0".to_string(),
+            ));
         }
 
         // Prevent self-nesting
         if nested_class_token == enclosing_class_token {
-            return Err(Error::ModificationInvalidOperation {
-                details: "A type cannot be nested within itself".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "A type cannot be nested within itself".to_string(),
+            ));
         }
 
         let rid = context.next_rid(TableId::NestedClass);

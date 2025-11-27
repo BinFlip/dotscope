@@ -41,7 +41,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Type dependency resolution failures (unresolvable dependencies, inaccessible types)
 //! - Assembly dependency consistency violations (version conflicts, missing assemblies)
 //! - Reference dependency validation failures (broken cross-module references)
@@ -133,11 +133,11 @@ impl OwnedTypeDependencyValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All type dependencies are resolvable and accessible
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Type dependency violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Type dependency violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Type dependencies reference non-existent types
     /// - Type dependencies violate accessibility constraints
     /// - Base type dependencies are invalid or inaccessible
@@ -150,14 +150,14 @@ impl OwnedTypeDependencyValidator {
                 // Check if base type is accessible (this is a simplified check)
                 // In a full implementation, this would check accessibility rules
                 if base_type.name.is_empty() {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' (token 0x{:08X}) has unresolved base type dependency",
                             type_rc.name,
                             token.value()
                         ),
-                        source: None,
+
                     });
                 }
             }
@@ -166,14 +166,14 @@ impl OwnedTypeDependencyValidator {
             for (_, interface_ref) in type_rc.interfaces.iter() {
                 if let Some(interface_type) = interface_ref.upgrade() {
                     if interface_type.name.is_empty() {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' (token 0x{:08X}) has unresolved interface dependency",
                                 type_rc.name,
                                 token.value()
                             ),
-                            source: None,
+
                         });
                     }
 
@@ -182,14 +182,14 @@ impl OwnedTypeDependencyValidator {
                     // set properly in the type system. This validation would be better done
                     // by a more specific interface implementation validator.
                 } else {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' (token 0x{:08X}) has broken interface dependency reference",
                             type_rc.name,
                             token.value()
                         ),
-                        source: None,
+
                     });
                 }
             }
@@ -198,24 +198,24 @@ impl OwnedTypeDependencyValidator {
             for (_, nested_ref) in type_rc.nested_types.iter() {
                 if let Some(nested_type) = nested_ref.upgrade() {
                     if nested_type.name.is_empty() {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' (token 0x{:08X}) has unresolved nested type dependency",
                                 type_rc.name,
                                 token.value()
                             ),
-                            source: None,
+
                         });
                     }
                 } else {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' (token 0x{:08X}) has broken nested type dependency reference",
                             type_rc.name, token.value()
                         ),
-                        source: None,
+
                     });
                 }
             }
@@ -235,7 +235,7 @@ impl OwnedTypeDependencyValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All method signature dependencies are valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Method signature dependency violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Method signature dependency violations found
     fn validate_method_signature_dependencies(
         &self,
         context: &OwnedValidationContext,
@@ -253,33 +253,32 @@ impl OwnedTypeDependencyValidator {
                             if let Some(param_type_ref) = param.base.get() {
                                 if let Some(param_type) = param_type_ref.upgrade() {
                                     if param_type.name.is_empty() {
-                                        return Err(Error::ValidationOwnedValidatorFailed {
+                                        return Err(Error::ValidationOwnedFailed {
                                             validator: self.name().to_string(),
                                             message: format!(
                                                 "Method '{}' parameter {} has unresolved type dependency",
                                                 method.name, index
                                             ),
-                                            source: None,
+
                                         });
                                     }
                                 } else {
-                                    return Err(Error::ValidationOwnedValidatorFailed {
+                                    return Err(Error::ValidationOwnedFailed {
                                         validator: self.name().to_string(),
                                         message: format!(
                                             "Method '{}' parameter {} has broken type dependency reference",
                                             method.name, index
                                         ),
-                                        source: None,
+
                                     });
                                 }
                             } else {
-                                return Err(Error::ValidationOwnedValidatorFailed {
+                                return Err(Error::ValidationOwnedFailed {
                                     validator: self.name().to_string(),
                                     message: format!(
                                         "Method '{}' parameter {} has missing type dependency",
                                         method.name, param.sequence
                                     ),
-                                    source: None,
                                 });
                             }
                         }
@@ -288,23 +287,23 @@ impl OwnedTypeDependencyValidator {
                         for (index, (_, local)) in method.local_vars.iter().enumerate() {
                             if let Some(local_type) = local.base.upgrade() {
                                 if local_type.name.is_empty() {
-                                    return Err(Error::ValidationOwnedValidatorFailed {
+                                    return Err(Error::ValidationOwnedFailed {
                                         validator: self.name().to_string(),
                                         message: format!(
                                             "Method '{}' local variable {} has unresolved type dependency",
                                             method.name, index
                                         ),
-                                        source: None,
+
                                     });
                                 }
                             } else {
-                                return Err(Error::ValidationOwnedValidatorFailed {
+                                return Err(Error::ValidationOwnedFailed {
                                     validator: self.name().to_string(),
                                     message: format!(
                                         "Method '{}' local variable {} has broken type dependency reference",
                                         method.name, index
                                     ),
-                                    source: None,
+
                                 });
                             }
                         }
@@ -329,7 +328,7 @@ impl OwnedTypeDependencyValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All dependency paths are accessible
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Dependency path violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Dependency path violations found
     fn validate_dependency_path_accessibility(
         &self,
         context: &OwnedValidationContext,
@@ -423,13 +422,12 @@ impl OwnedTypeDependencyValidator {
                     |t| t.fullname(),
                 );
 
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular dependency detected in dependency path analysis for type '{}'",
                     type_name
                 ),
-                source: None,
             });
         }
 
@@ -508,7 +506,7 @@ mod tests {
         owned_validator_test(
             owned_type_dependency_validator_file_factory,
             "OwnedTypeDependencyValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

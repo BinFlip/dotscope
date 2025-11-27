@@ -547,11 +547,9 @@ impl TypeSpecBuilder {
     /// - Blob heap encoding failed
     /// - Signature validation failed
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let signature = self
-            .signature
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "TypeSpecBuilder requires a type signature".to_string(),
-            })?;
+        let signature = self.signature.ok_or_else(|| {
+            Error::ModificationInvalid("TypeSpecBuilder requires a type signature".to_string())
+        })?;
 
         let typespec_signature = SignatureTypeSpec {
             modifiers: Vec::new(),

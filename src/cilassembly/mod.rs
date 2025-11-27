@@ -1333,6 +1333,7 @@ mod tests {
 
     use super::*;
     use crate::test::factories::table::cilassembly::create_test_typedef_row;
+    use crate::Error;
 
     #[test]
     fn test_convert_from_view() {
@@ -1773,7 +1774,7 @@ mod tests {
                     .find_assembly_ref_by_name("System.Console")
                     .or_else(|| context.find_core_library_ref())
                     .ok_or_else(|| {
-                        crate::Error::Error(
+                        Error::TypeError(
                             "Could not find System.Console or core library reference".to_string(),
                         )
                     })?;

@@ -11,7 +11,7 @@ use crate::{
         tables::{FieldRaw, TableDataOwned, TableId},
         token::Token,
     },
-    Result,
+    Error, Result,
 };
 
 /// Builder for creating Field metadata entries.
@@ -167,21 +167,15 @@ impl FieldBuilder {
         // Validate required fields
         let name = self
             .name
-            .ok_or_else(|| crate::Error::ModificationInvalidOperation {
-                details: "Field name is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Field name is required".to_string()))?;
 
         let flags = self
             .flags
-            .ok_or_else(|| crate::Error::ModificationInvalidOperation {
-                details: "Field flags are required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Field flags are required".to_string()))?;
 
-        let signature =
-            self.signature
-                .ok_or_else(|| crate::Error::ModificationInvalidOperation {
-                    details: "Field signature is required".to_string(),
-                })?;
+        let signature = self
+            .signature
+            .ok_or_else(|| Error::ModificationInvalid("Field signature is required".to_string()))?;
 
         // Add name to string heap
         let name_index = context.string_get_or_add(&name)?;

@@ -43,7 +43,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Invalid custom attribute usage patterns (malformed fixed/named arguments)
 //! - Attribute constructor call violations (excessive arguments, duplicate named args)
 //! - Target compatibility violations (invalid placement, suspicious patterns)
@@ -138,11 +138,11 @@ impl OwnedAttributeValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All attribute usage rules are followed
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Attribute usage violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Attribute usage violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Custom attributes have invalid usage patterns on types or methods
     /// - Attribute arguments are malformed or invalid
     fn validate_attribute_usage_rules(&self, context: &OwnedValidationContext) -> Result<()> {
@@ -151,12 +151,11 @@ impl OwnedAttributeValidator {
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
                 if let Err(e) = self.validate_attribute_usage(custom_attr, "Type") {
                     let type_name = &type_entry.name;
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{type_name}' has invalid custom attribute usage: {e}"
                         ),
-                        source: Some(Box::new(e)),
                     });
                 }
             }
@@ -168,12 +167,11 @@ impl OwnedAttributeValidator {
             for (_, custom_attr) in method.custom_attributes.iter() {
                 if let Err(e) = self.validate_attribute_usage(custom_attr, "Method") {
                     let method_name = &method.name;
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{method_name}' has invalid custom attribute usage: {e}"
                         ),
-                        source: Some(Box::new(e)),
                     });
                 }
             }
@@ -196,11 +194,11 @@ impl OwnedAttributeValidator {
     /// # Returns
     ///
     /// * `Ok(())` - Attribute usage is valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Attribute usage violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Attribute usage violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Fixed arguments are invalid or malformed
     /// - Named arguments have empty names or invalid values
     fn validate_attribute_usage(
@@ -211,12 +209,11 @@ impl OwnedAttributeValidator {
         // Validate fixed arguments are well-formed
         for (index, arg) in custom_attr.fixed_args.iter().enumerate() {
             if !self.is_valid_attribute_argument(arg) {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Custom attribute has invalid fixed argument at index {index}: {arg:?}"
                     ),
-                    source: None,
                 });
             }
         }
@@ -224,22 +221,20 @@ impl OwnedAttributeValidator {
         // Validate named arguments are well-formed
         for named_arg in &custom_attr.named_args {
             if named_arg.name.is_empty() {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: "Custom attribute has named argument with empty name".to_string(),
-                    source: None,
                 });
             }
 
             if !self.is_valid_attribute_argument(&named_arg.value) {
                 let arg_name = &named_arg.name;
                 let arg_value = &named_arg.value;
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Custom attribute has invalid named argument '{arg_name}': {arg_value:?}"
                     ),
-                    source: None,
                 });
             }
         }
@@ -308,11 +303,11 @@ impl OwnedAttributeValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All attribute constructor calls are valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Constructor call violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Constructor call violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Fixed arguments exceed reasonable limits (>20)
     /// - Named arguments exceed reasonable limits (>50)
     /// - Named arguments have duplicate names
@@ -320,39 +315,36 @@ impl OwnedAttributeValidator {
         for type_entry in context.all_types() {
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
                 if custom_attr.fixed_args.len() > 20 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Custom attribute on type '{}' has excessive fixed arguments ({})",
                             type_entry.name,
                             custom_attr.fixed_args.len()
                         ),
-                        source: None,
                     });
                 }
 
                 if custom_attr.named_args.len() > 50 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Custom attribute on type '{}' has excessive named arguments ({})",
                             type_entry.name,
                             custom_attr.named_args.len()
                         ),
-                        source: None,
                     });
                 }
 
                 let mut named_arg_names = HashSet::new();
                 for named_arg in &custom_attr.named_args {
                     if !named_arg_names.insert(&named_arg.name) {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Custom attribute on type '{}' has duplicate named argument '{}'",
                                 type_entry.name, named_arg.name
                             ),
-                            source: None,
                         });
                     }
                 }
@@ -375,11 +367,11 @@ impl OwnedAttributeValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All attribute target compatibility rules are followed
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Target compatibility violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Target compatibility violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Attributes have suspicious patterns on types, fields, or methods
     /// - Attribute placement violates target compatibility rules
     fn validate_attribute_target_compatibility(
@@ -392,13 +384,12 @@ impl OwnedAttributeValidator {
         for type_entry in context.all_types() {
             for (_, custom_attr) in type_entry.custom_attributes.iter() {
                 if self.has_suspicious_attribute_pattern(custom_attr) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' has custom attribute with suspicious pattern",
                             type_entry.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -406,13 +397,13 @@ impl OwnedAttributeValidator {
             for (_, field) in type_entry.fields.iter() {
                 for (_, custom_attr) in field.custom_attributes.iter() {
                     if self.has_suspicious_attribute_pattern(custom_attr) {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Field '{}' in type '{}' has custom attribute with suspicious pattern",
                                 field.name, type_entry.name
                             ),
-                            source: None,
+
                         });
                     }
                 }
@@ -423,13 +414,12 @@ impl OwnedAttributeValidator {
             let method = method_entry.value();
             for (_, custom_attr) in method.custom_attributes.iter() {
                 if self.has_suspicious_attribute_pattern(custom_attr) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' has custom attribute with suspicious pattern",
                             method.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -606,7 +596,7 @@ mod tests {
         owned_validator_test(
             owned_attribute_validator_file_factory,
             "OwnedAttributeValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

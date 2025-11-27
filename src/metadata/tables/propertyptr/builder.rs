@@ -149,11 +149,9 @@ impl PropertyPtrBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let property = self
-            .property
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Property RID is required for PropertyPtr".to_string(),
-            })?;
+        let property = self.property.ok_or_else(|| {
+            Error::ModificationInvalid("Property RID is required for PropertyPtr".to_string())
+        })?;
 
         let next_rid = context.next_rid(TableId::PropertyPtr);
         let token = Token::from_parts(TableId::PropertyPtr, next_rid);
@@ -239,10 +237,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Property RID is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

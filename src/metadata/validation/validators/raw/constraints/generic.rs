@@ -42,7 +42,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationRawFailed`] for:
 //! - Invalid generic parameter definitions (invalid flags)
 //! - Missing constraints (null owner or constraint references)
 //! - Inconsistent constraint inheritance relationships (non-existent GenericParam references)
@@ -136,11 +136,11 @@ impl RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All generic parameters are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Parameter violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Parameter violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Parameter flags exceed maximum value (0xFFFF)
     /// - Owner coded index references are null (row = 0)
     /// - Name references are null (name = 0)
@@ -191,11 +191,11 @@ impl RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All parameter constraints are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Constraint violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Constraint violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Owner references are null (owner = 0)
     /// - Constraint coded index references are null (constraint.row = 0)
     /// - Owner references exceed GenericParam table row count
@@ -251,11 +251,11 @@ impl RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All constraint inheritance is consistent
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Inheritance violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Inheritance violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Constraint owners reference non-existent GenericParam RIDs
     /// - Cross-table references are inconsistent between GenericParamConstraint and GenericParam tables
     fn validate_constraint_inheritance(assembly_view: &CilAssemblyView) -> Result<()> {
@@ -298,11 +298,11 @@ impl RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All constraint types are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Type violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Type violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Constraint coded index references invalid table entries
     /// - TypeDef constraint references exceed TypeDef table bounds
     /// - TypeRef constraint references exceed TypeRef table bounds
@@ -400,11 +400,11 @@ impl RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All parameter flags are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Flag violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Flag violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Invalid flag combinations (e.g., both covariant and contravariant)
     /// - Reserved flag bits are set
     /// - Variance flags used inappropriately (method vs type parameters)
@@ -468,11 +468,11 @@ impl RawValidator for RawGenericConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All generic constraints are valid and meet ECMA-335 requirements
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Constraint violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Constraint violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] for:
+    /// Returns [`crate::Error::ValidationRawFailed`] for:
     /// - Invalid generic parameter definitions or missing constraints
     /// - Inconsistent constraint inheritance relationships
     /// - Invalid type parameter bounds or interface constraints

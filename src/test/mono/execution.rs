@@ -98,10 +98,10 @@ impl MonoRuntime {
         let output = Command::new("mono")
             .arg("--version")
             .output()
-            .map_err(|_| Error::Error("mono not available".to_string()))?;
+            .map_err(|_| Error::Other("mono not available".to_string()))?;
 
         if !output.status.success() {
-            return Err(Error::Error("mono --version failed".to_string()));
+            return Err(Error::Other("mono --version failed".to_string()));
         }
 
         let version_output = String::from_utf8_lossy(&output.stdout);
@@ -144,7 +144,7 @@ impl MonoRuntime {
         let output = Command::new("mono")
             .arg(assembly_path)
             .output()
-            .map_err(|e| Error::Error(format!("Failed to execute mono: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to execute mono: {}", e)))?;
 
         Ok(ExecutionResult {
             success: output.status.success(),
@@ -174,7 +174,7 @@ impl MonoRuntime {
 
         let output = cmd
             .output()
-            .map_err(|e| Error::Error(format!("Failed to execute dotnet: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to execute dotnet: {}", e)))?;
 
         Ok(ExecutionResult {
             success: output.status.success(),
@@ -270,7 +270,7 @@ impl MonoRuntime {
 
         let output = cmd
             .output()
-            .map_err(|e| Error::Error(format!("{}: {}", cmd_error, e)))?;
+            .map_err(|e| Error::Other(format!("{}: {}", cmd_error, e)))?;
 
         Ok(ExecutionResult {
             success: output.status.success(),

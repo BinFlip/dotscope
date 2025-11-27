@@ -44,7 +44,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Assembly metadata consistency violations (empty names, invalid formats, excessive lengths)
 //! - Cross-assembly reference failures (unresolved references, invalid public keys, malformed identities)
 //! - Version compatibility issues (suspicious version numbers, all-zero versions, excessive values)
@@ -139,11 +139,11 @@ impl OwnedAssemblyValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All assembly metadata is consistent and complete
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Metadata consistency violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Metadata consistency violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Assembly has empty or invalid name format
     /// - Assembly version components are invalid or excessive
     /// - Culture format is malformed
@@ -158,19 +158,17 @@ impl OwnedAssemblyValidator {
         if let Some(assembly) = assembly_info {
             // Validate basic assembly properties
             if assembly.name.is_empty() {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: "Assembly has empty name".to_string(),
-                    source: None,
                 });
             }
 
             // Validate assembly name format
             if !Self::is_valid_assembly_name(&assembly.name) {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!("Assembly has invalid name format: '{}'", assembly.name),
-                    source: None,
                 });
             }
 
@@ -180,10 +178,9 @@ impl OwnedAssemblyValidator {
             // Validate culture information
             if let Some(culture) = &assembly.culture {
                 if !Self::is_valid_culture_format(culture) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Assembly has invalid culture format: '{culture}'"),
-                        source: None,
                     });
                 }
             }
@@ -232,7 +229,7 @@ impl OwnedAssemblyValidator {
             || assembly.build_number > 65535
             || assembly.revision_number > 65535
         {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Assembly '{}' has invalid version components: {}.{}.{}.{}",
@@ -242,7 +239,6 @@ impl OwnedAssemblyValidator {
                     assembly.build_number,
                     assembly.revision_number
                 ),
-                source: None,
             });
         }
 
@@ -284,30 +280,28 @@ impl OwnedAssemblyValidator {
         // - 16 bytes: ECMA keys for framework assemblies
         // - 160+ bytes: Full RSA public keys for strong-named assemblies
         if public_key.len() != 16 && (public_key.len() < 160 || public_key.len() > 2048) {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Assembly public key has invalid size: {} bytes. Expected 16 bytes (ECMA key) or 160-2048 bytes (RSA key)",
                     public_key.len()
                 ),
-                source: None,
+
             });
         }
 
         // Check for suspicious patterns (all zeros, all ones, etc.)
         if public_key.iter().all(|&b| b == 0) {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: "Assembly public key consists entirely of zero bytes".to_string(),
-                source: None,
             });
         }
 
         if public_key.iter().all(|&b| b == 0xFF) {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: "Assembly public key consists entirely of 0xFF bytes".to_string(),
-                source: None,
             });
         }
 
@@ -322,26 +316,24 @@ impl OwnedAssemblyValidator {
         for (_, custom_attr) in assembly.custom_attributes.iter() {
             // Check for reasonable number of arguments
             if custom_attr.fixed_args.len() > 20 {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has custom attribute with excessive fixed arguments ({})",
                         assembly.name,
                         custom_attr.fixed_args.len()
                     ),
-                    source: None,
                 });
             }
 
             if custom_attr.named_args.len() > 50 {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has custom attribute with excessive named arguments ({})",
                         assembly.name,
                         custom_attr.named_args.len()
                     ),
-                    source: None,
                 });
             }
         }
@@ -362,11 +354,11 @@ impl OwnedAssemblyValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All cross-assembly references are valid and resolvable
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Cross-assembly reference violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Cross-assembly reference violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Assembly references have empty names or excessive lengths
     /// - Culture formats are invalid in references
     /// - Public key tokens or keys are malformed
@@ -377,23 +369,21 @@ impl OwnedAssemblyValidator {
         if let Some(assembly) = context.object().assembly() {
             // Validate assembly name is not excessively long
             if assembly.name.len() > 1024 {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly name is excessively long: {} characters",
                         assembly.name.len()
                     ),
-                    source: None,
                 });
             }
 
             // Validate culture format if present
             if let Some(culture) = &assembly.culture {
                 if !Self::is_valid_culture_format(culture) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Assembly has invalid culture format: '{culture}'"),
-                        source: None,
                     });
                 }
             }
@@ -405,36 +395,33 @@ impl OwnedAssemblyValidator {
             let assembly_ref = entry.value();
             // Validate assembly reference name
             if assembly_ref.name.is_empty() {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!("Assembly reference {index} has empty name"),
-                    source: None,
                 });
             }
 
             // Validate assembly reference name length
             if assembly_ref.name.len() > 1024 {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly reference '{}' has excessively long name: {} characters",
                         assembly_ref.name,
                         assembly_ref.name.len()
                     ),
-                    source: None,
                 });
             }
 
             // Validate culture format if present
             if let Some(culture) = &assembly_ref.culture {
                 if !Self::is_valid_culture_format(culture) {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Assembly reference '{}' has invalid culture format: '{}'",
                             assembly_ref.name, culture
                         ),
-                        source: None,
                     });
                 }
             }
@@ -444,25 +431,23 @@ impl OwnedAssemblyValidator {
                 match identity {
                     Identity::Token(token) => {
                         if *token == 0 {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' has empty public key token",
                                     assembly_ref.name
                                 ),
-                                source: None,
                             });
                         }
                     }
                     Identity::PubKey(public_key) => {
                         if public_key.is_empty() {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' has empty public key",
                                     assembly_ref.name
                                 ),
-                                source: None,
                             });
                         }
                         // Valid public key sizes per ECMA-335:
@@ -471,37 +456,36 @@ impl OwnedAssemblyValidator {
                         if public_key.len() != 16
                             && (public_key.len() < 160 || public_key.len() > 2048)
                         {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' has invalid public key size: {} bytes. Expected 16 bytes (ECMA key) or 160-2048 bytes (RSA key)",
                                     assembly_ref.name,
                                     public_key.len()
                                 ),
-                                source: None,
+
                             });
                         }
                     }
                     Identity::EcmaKey(ecma_key) => {
                         if ecma_key.len() != 16 {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' has invalid ECMA key size: {} bytes. Expected exactly 16 bytes",
                                     assembly_ref.name,
                                     ecma_key.len()
                                 ),
-                                source: None,
+
                             });
                         }
                         if ecma_key.is_empty() || ecma_key.iter().all(|&b| b == 0) {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' has empty or invalid ECMA key",
                                     assembly_ref.name
                                 ),
-                                source: None,
                             });
                         }
                     }
@@ -516,23 +500,21 @@ impl OwnedAssemblyValidator {
             if let Some(_external) = type_ref.get_external() {
                 // Validate type reference has valid name
                 if type_ref.name.is_empty() {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: "Cross-assembly type reference has empty name".to_string(),
-                        source: None,
                     });
                 }
 
                 // Validate namespace is reasonable
                 if type_ref.namespace.len() > 512 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type reference '{}' has excessively long namespace: {} characters",
                             type_ref.name,
                             type_ref.namespace.len()
                         ),
-                        source: None,
                     });
                 }
             }
@@ -544,23 +526,21 @@ impl OwnedAssemblyValidator {
             let member_ref = entry.value();
             // Validate member reference has valid name
             if member_ref.name.is_empty() {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: "Cross-assembly member reference has empty name".to_string(),
-                    source: None,
                 });
             }
 
             // Validate member name length
             if member_ref.name.len() > 512 {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Member reference '{}' has excessively long name: {} characters",
                         member_ref.name,
                         member_ref.name.len()
                     ),
-                    source: None,
                 });
             }
         }
@@ -581,11 +561,11 @@ impl OwnedAssemblyValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All assembly versions are compatible and consistent
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Version compatibility violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Version compatibility violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Assembly or reference versions are all-zero or excessively high
     /// - Strong name tokens or public keys are malformed
     /// - Assembly reference flags contain unknown values
@@ -601,13 +581,13 @@ impl OwnedAssemblyValidator {
                 && assembly.build_number == 0
                 && assembly.revision_number == 0
             {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has all-zero version number, which may cause versioning issues",
                         assembly.name
                     ),
-                    source: None,
+
                 });
             }
 
@@ -617,7 +597,7 @@ impl OwnedAssemblyValidator {
                 || assembly.build_number > 65535
                 || assembly.revision_number > 65535
             {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has suspicious version numbers: {}.{}.{}.{}",
@@ -627,7 +607,6 @@ impl OwnedAssemblyValidator {
                         assembly.build_number,
                         assembly.revision_number
                     ),
-                    source: None,
                 });
             }
         }
@@ -642,13 +621,12 @@ impl OwnedAssemblyValidator {
                 && assembly_ref.build_number == 0
                 && assembly_ref.revision_number == 0
             {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly reference '{}' has all-zero version number",
                         assembly_ref.name
                     ),
-                    source: None,
                 });
             }
 
@@ -658,7 +636,7 @@ impl OwnedAssemblyValidator {
                 || assembly_ref.build_number > 65535
                 || assembly_ref.revision_number > 65535
             {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly reference '{}' has suspicious version numbers: {}.{}.{}.{}",
@@ -668,7 +646,6 @@ impl OwnedAssemblyValidator {
                         assembly_ref.build_number,
                         assembly_ref.revision_number
                     ),
-                    source: None,
                 });
             }
 
@@ -677,37 +654,36 @@ impl OwnedAssemblyValidator {
                 match identity {
                     Identity::Token(token) => {
                         if *token == 0 {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' has zero public key token",
                                     assembly_ref.name
                                 ),
-                                source: None,
                             });
                         }
                     }
                     Identity::PubKey(public_key) => {
                         if public_key.iter().all(|&b| b == 0) {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' public key consists entirely of zero bytes",
                                     assembly_ref.name
                                 ),
-                                source: None,
+
                             });
                         }
                     }
                     Identity::EcmaKey(ecma_key) => {
                         if ecma_key.iter().all(|&b| b == 0) {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Assembly reference '{}' ECMA key consists entirely of zero bytes",
                                     assembly_ref.name
                                 ),
-                                source: None,
+
                             });
                         }
                     }
@@ -716,13 +692,12 @@ impl OwnedAssemblyValidator {
 
             // Validate flags are reasonable
             if assembly_ref.flags > 0x0001 {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly reference '{}' has unknown flags: 0x{:08X}",
                         assembly_ref.name, assembly_ref.flags
                     ),
-                    source: None,
                 });
             }
         }
@@ -742,11 +717,11 @@ impl OwnedAssemblyValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All modules and files are consistent within the assembly
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Module file consistency violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Module file consistency violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Assembly flags or hash algorithm IDs are unknown
     /// - Module names are empty, excessively long, or have suspicious generation numbers
     /// - Module IDs (MVIDs) are all-zero
@@ -756,13 +731,12 @@ impl OwnedAssemblyValidator {
         if let Some(assembly) = context.object().assembly() {
             // Check that assembly has reasonable flags
             if assembly.flags > 0x0001 {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has unknown flags: 0x{:08X}",
                         assembly.name, assembly.flags
                     ),
-                    source: None,
                 });
             }
 
@@ -772,13 +746,12 @@ impl OwnedAssemblyValidator {
                 && assembly.hash_alg_id != 0x8004
                 && assembly.hash_alg_id != 0x800C
             {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has unknown hash algorithm: 0x{:08X}",
                         assembly.name, assembly.hash_alg_id
                     ),
-                    source: None,
                 });
             }
         }
@@ -788,47 +761,43 @@ impl OwnedAssemblyValidator {
             let index = 0;
             // Validate module name
             if module.name.is_empty() {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!("Module {index} has empty name"),
-                    source: None,
                 });
             }
 
             // Validate module name length
             if module.name.len() > 260 {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Module '{}' has excessively long name: {} characters",
                         module.name,
                         module.name.len()
                     ),
-                    source: None,
                 });
             }
 
             // Validate module generation is reasonable
             if module.generation > 65535 {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Module '{}' has suspicious generation number: {}",
                         module.name, module.generation
                     ),
-                    source: None,
                 });
             }
 
             // Validate module ID is not all zeros
             if module.mvid.to_bytes().iter().all(|&b| b == 0) {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Module '{}' has all-zero MVID (Module Version ID)",
                         module.name
                     ),
-                    source: None,
                 });
             }
         }
@@ -839,23 +808,21 @@ impl OwnedAssemblyValidator {
 
         // Basic PE file validation
         if file_data.len() < 1024 {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: "Assembly file is suspiciously small (< 1024 bytes)".to_string(),
-                source: None,
             });
         }
 
         // Check for reasonable PE file size (not corrupted)
         if file_data.len() > 100_000_000 {
             // 100MB limit
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Assembly file is excessively large: {} bytes",
                     file_data.len()
                 ),
-                source: None,
             });
         }
 
@@ -914,7 +881,7 @@ mod tests {
         owned_validator_test(
             owned_assembly_validator_file_factory,
             "OwnedAssemblyValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

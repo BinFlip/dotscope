@@ -361,37 +361,35 @@ impl AssemblyRefBuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let name = self
-            .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Assembly name is required for AssemblyRef".to_string(),
-            })?;
+        let name = self.name.ok_or_else(|| {
+            Error::ModificationInvalid("Assembly name is required for AssemblyRef".to_string())
+        })?;
 
         if name.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Assembly name cannot be empty for AssemblyRef".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Assembly name cannot be empty for AssemblyRef".to_string(),
+            ));
         }
 
         if self.major_version > 65535 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Major version number must fit in 16 bits (0-65535)".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Major version number must fit in 16 bits (0-65535)".to_string(),
+            ));
         }
         if self.minor_version > 65535 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Minor version number must fit in 16 bits (0-65535)".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Minor version number must fit in 16 bits (0-65535)".to_string(),
+            ));
         }
         if self.build_number > 65535 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Build number must fit in 16 bits (0-65535)".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Build number must fit in 16 bits (0-65535)".to_string(),
+            ));
         }
         if self.revision_number > 65535 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Revision number must fit in 16 bits (0-65535)".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Revision number must fit in 16 bits (0-65535)".to_string(),
+            ));
         }
 
         let name_index = context.string_get_or_add(&name)?;
@@ -411,9 +409,9 @@ impl AssemblyRefBuilder {
                 0
             } else {
                 if (self.flags & AssemblyFlags::PUBLIC_KEY) == 0 && data.len() != 8 {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: "Public key token must be exactly 8 bytes".to_string(),
-                    });
+                    return Err(Error::ModificationInvalid(
+                        "Public key token must be exactly 8 bytes".to_string(),
+                    ));
                 }
                 context.blob_add(&data)?
             }
