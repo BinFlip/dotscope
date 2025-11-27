@@ -720,6 +720,18 @@ impl CilObject {
     /// require barrier synchronization. The `ProjectContext` coordinates the parallel loading
     /// of multiple assemblies, ensuring proper TypeRegistry linking at the right stages.
     ///
+    /// # Loading Pipeline
+    ///
+    /// The loading process is split into two phases to handle cross-assembly dependencies:
+    ///
+    /// 1. **Loading Phase**: All metadata loaders execute with barrier synchronization
+    ///    - Stage 1-4 barriers ensure proper ordering of cross-assembly operations
+    ///    - All assemblies must complete loading before any proceeds to validation
+    ///
+    /// 2. **Validation Phase**: After stage 4 barrier, validation runs on fully loaded data
+    ///    - Nested type relationships are fully populated across all assemblies
+    ///    - Cross-assembly type references can be safely traversed
+    ///
     /// # Arguments
     ///
     /// * `assembly_view` - Pre-loaded CilAssemblyView with parsed metadata
@@ -739,12 +751,18 @@ impl CilObject {
         project_context: &ProjectContext,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
+        // Phase 1: Load all metadata with barrier synchronization.
+        // The stage 4 barrier inside from_assembly_view ensures all assemblies complete
+        // their metadata loaders before any assembly proceeds past this point.
         let object_data = CilObjectData::from_assembly_view(&assembly_view, Some(project_context))?;
         let object = CilObject {
             assembly_view,
             data: object_data,
         };
 
+        // Phase 2: Validate after all assemblies have completed loading.
+        // This ensures cross-assembly nested type references are fully populated
+        // before validation attempts to traverse them.
         object.validate(validation_config)?;
         Ok(object)
     }

@@ -5,18 +5,15 @@
 //! progressive dependency addition.
 
 use crate::{
+    file::File,
     metadata::{
-        cilassemblyview::CilAssemblyView,
-        cilobject::CilObject,
-        identity::{AssemblyIdentity, AssemblyVersion},
-        tables::AssemblyRefRaw,
+        cilassemblyview::CilAssemblyView, cilobject::CilObject, identity::AssemblyIdentity,
         validation::ValidationConfig,
     },
-    project::{context::ProjectContext, CilProject, ProjectResult},
+    project::{context::ProjectContext, ProjectResult},
     Error, Result,
 };
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
     path::{Path, PathBuf},
     sync::Arc,
 };
@@ -227,9 +224,6 @@ impl ProjectLoader {
             )
         })?;
 
-        let project = CilProject::new();
-
-        // Determine primary search directory (fallback when no explicit search paths)
         let primary_search_dir = primary_path
             .parent()
             .ok_or_else(|| {
@@ -237,83 +231,65 @@ impl ProjectLoader {
             })?
             .to_path_buf();
 
-        // Phase 1: Lightweight dependency discovery using CilAssemblyView
-        let mut discovered_views: HashMap<AssemblyIdentity, CilAssemblyView> = HashMap::new();
-        let mut discovery_queue: VecDeque<PathBuf> = VecDeque::new();
-        let mut processed_files: HashSet<PathBuf> = HashSet::new();
-        let mut missing_dependencies: HashSet<String> = HashSet::new();
-        let mut primary_assembly_identity: Option<AssemblyIdentity> = None;
+        let mut result = ProjectResult::new();
 
-        // Start with the root assembly
-        discovery_queue.push_back(primary_path.clone());
+        // Phase 1: Discover assemblies and their dependencies
+        self.discover_assemblies(&primary_path, &primary_search_dir, &mut result)?;
 
-        // Add explicit dependencies to queue
+        // Phase 2: Load all discovered assemblies in parallel
+        self.load_assemblies_parallel(&mut result)?;
+
+        Ok(result)
+    }
+
+    /// Phase 1: Discover assemblies and their dependencies.
+    ///
+    /// Uses lightweight `File` -> `CilAssemblyView` loading to discover the dependency
+    /// graph without fully loading assemblies as `CilObject` instances.
+    fn discover_assemblies(
+        &self,
+        primary_path: &Path,
+        search_dir: &Path,
+        result: &mut ProjectResult,
+    ) -> Result<()> {
+        let validation_config = self
+            .validation_config
+            .unwrap_or_else(ValidationConfig::production);
+
+        result.enqueue(primary_path.to_path_buf());
         for dep_path in &self.dependency_files {
-            discovery_queue.push_back(dep_path.clone());
+            result.enqueue(dep_path.clone());
         }
 
-        // Discovery loop
-        while let Some(current_path) = discovery_queue.pop_front() {
-            if processed_files.contains(&current_path) {
+        while let Some(current_path) = result.next_path() {
+            let Some((view, identity)) = Self::load_assembly_view(&current_path, validation_config)
+            else {
+                if let Some(name) = current_path.file_stem() {
+                    result.record_failure(
+                        name.to_string_lossy().to_string(),
+                        "Failed to load assembly".to_string(),
+                    );
+                }
+                continue;
+            };
+
+            if current_path == primary_path {
+                result.primary_identity = Some(identity.clone());
+            }
+
+            if result.pending_views.contains_key(&identity) {
                 continue;
             }
-            processed_files.insert(current_path.clone());
 
-            // Use the configured validation or default to production validation
-            let validation_config = self
-                .validation_config
-                .unwrap_or_else(ValidationConfig::production);
-            match CilAssemblyView::from_path_with_validation(&current_path, validation_config) {
-                Ok(view) => {
-                    if let Ok(assembly_identity) = view.identity() {
-                        // Track if this is the primary assembly
-                        if current_path == primary_path {
-                            primary_assembly_identity = Some(assembly_identity.clone());
-                        }
+            let dependencies = view.dependencies();
+            result.pending_views.insert(identity, view);
 
-                        let dependencies = Self::extract_dependencies_from_view(&view);
-                        discovered_views.insert(assembly_identity.clone(), view);
-
-                        // Queue dependencies for discovery if auto_discover is enabled
-                        if self.auto_discover {
-                            for dep_identity in dependencies {
-                                if discovered_views.contains_key(&dep_identity) {
-                                    continue;
-                                }
-
-                                let potential_paths =
-                                    self.find_dependency_paths(&dep_identity, &primary_search_dir);
-
-                                let mut found = false;
-                                for potential_path in potential_paths {
-                                    if potential_path.exists()
-                                        && !processed_files.contains(&potential_path)
-                                    {
-                                        discovery_queue.push_back(potential_path);
-                                        found = true;
-                                        break;
-                                    }
-                                }
-
-                                if !found {
-                                    missing_dependencies.insert(dep_identity.name);
-                                }
-                            }
-                        }
-                    }
-                }
-                Err(_) => {
-                    if let Some(file_name) = current_path.file_stem() {
-                        missing_dependencies.insert(file_name.to_string_lossy().to_string());
-                    }
-                }
+            if self.auto_discover {
+                self.resolve_dependencies(dependencies, search_dir, result);
             }
         }
 
-        // Phase 2: Load all discovered assemblies in parallel with ProjectContext coordination
-
-        // Validate that we discovered at least the primary assembly
-        if discovered_views.is_empty() {
+        if result.pending_views.is_empty() {
             return Err(Error::Configuration(format!(
                 "Failed to discover any assemblies, including the primary file: {}. \
                  This may indicate the file is corrupted or not a valid .NET assembly.",
@@ -321,49 +297,107 @@ impl ProjectLoader {
             )));
         }
 
-        let project_context = Arc::new(ProjectContext::new(discovered_views.len())?);
-        let handles: Vec<_> = discovered_views
+        Ok(())
+    }
+
+    /// Try to load a file as a `CilAssemblyView` and extract its identity.
+    ///
+    /// Returns `None` if the file cannot be loaded or is not a CLR assembly.
+    fn load_assembly_view(
+        path: &Path,
+        validation_config: ValidationConfig,
+    ) -> Option<(CilAssemblyView, AssemblyIdentity)> {
+        let file = File::from_path(path).ok()?;
+        if !file.is_clr() {
+            return None;
+        }
+
+        let view =
+            CilAssemblyView::from_dotscope_file_with_validation(file, validation_config).ok()?;
+        let identity = view.identity().ok()?;
+        Some((view, identity))
+    }
+
+    /// Resolve dependencies and add them to the discovery queue.
+    fn resolve_dependencies(
+        &self,
+        dependencies: Vec<AssemblyIdentity>,
+        search_dir: &Path,
+        result: &mut ProjectResult,
+    ) {
+        for required in dependencies {
+            if result.has_compatible_version(&required) {
+                continue;
+            }
+
+            match self.resolve_dependency(&required, search_dir) {
+                Some((path, actual)) => {
+                    if !actual.satisfies(&required) {
+                        result.record_version_mismatch(required, actual);
+                    }
+                    result.enqueue(path);
+                }
+                None => {
+                    result
+                        .record_failure(required.name.clone(), "Dependency not found".to_string());
+                }
+            }
+        }
+    }
+
+    /// Phase 2: Load all discovered assemblies in parallel.
+    ///
+    /// Creates `CilObject` instances from the discovered `CilAssemblyView`s using
+    /// parallel loading with `ProjectContext` coordination for handling cycles.
+    fn load_assemblies_parallel(&self, result: &mut ProjectResult) -> Result<()> {
+        let views = result.take_pending_views();
+        let primary_identity = result.primary_identity.clone();
+
+        let project_context = Arc::new(ProjectContext::new(views.len())?);
+
+        // Sort by assembly name to ensure deterministic loading order.
+        // This prevents race conditions where HashMap's non-deterministic iteration
+        // could cause barrier synchronization issues with cross-assembly dependencies.
+        let mut sorted_views: Vec<_> = views.into_iter().collect();
+        sorted_views.sort_by(|(a, _), (b, _)| a.name.cmp(&b.name));
+
+        let handles: Vec<_> = sorted_views
             .into_iter()
             .map(|(identity, view)| {
                 let context = project_context.clone();
                 let validation_config = self.validation_config.unwrap_or_default();
                 std::thread::spawn(move || {
-                    let result = CilObject::from_project(view, context.as_ref(), validation_config);
-                    if let Err(ref e) = result {
+                    let load_result =
+                        CilObject::from_project(view, context.as_ref(), validation_config);
+                    if let Err(ref e) = load_result {
                         context.break_all_barriers(&format!(
                             "Assembly {} failed to load: {}",
                             identity.name, e
                         ));
                     }
-                    (identity, result)
+                    (identity, load_result)
                 })
             })
             .collect();
 
-        // Collect results and add to project
-        let mut loaded_assemblies = Vec::new();
-        let mut load_failures = Vec::new();
-
         for handle in handles {
-            let (identity, result) = handle.join().unwrap();
-            match result {
+            let (identity, load_result) = handle.join().unwrap();
+            match load_result {
                 Ok(cil_object) => {
-                    if let Err(e) = project.add_assembly(cil_object) {
+                    let is_primary = primary_identity
+                        .as_ref()
+                        .is_some_and(|primary_id| identity == *primary_id);
+
+                    if let Err(e) = result.project.add_assembly(cil_object, is_primary) {
                         if self.strict_mode {
                             return Err(Error::Configuration(format!(
                                 "Failed to add {} to project: {}",
                                 identity.name, e
                             )));
                         }
-                        load_failures.push((identity.name.clone(), e.to_string()));
+                        result.record_failure(identity.name.clone(), e.to_string());
                     } else {
-                        // Set primary assembly if this matches the primary identity
-                        if let Some(ref primary_id) = primary_assembly_identity {
-                            if identity == *primary_id {
-                                let _ = project.set_primary(identity.clone());
-                            }
-                        }
-                        loaded_assemblies.push(identity);
+                        result.record_success(Some(identity));
                     }
                 }
                 Err(e) => {
@@ -373,80 +407,90 @@ impl ProjectLoader {
                             identity.name, e
                         )));
                     }
-                    load_failures.push((identity.name, e.to_string()));
+                    result.record_failure(identity.name, e.to_string());
                 }
             }
         }
 
-        // Build final result
-        let mut result = ProjectResult::with_project(project);
-        for identity in loaded_assemblies {
-            result.record_success(Some(identity));
-        }
-
-        for (name, error) in load_failures {
-            result.record_failure(name, error);
-        }
-
-        for missing in missing_dependencies {
-            result.record_failure(missing, "Dependency not found".to_string());
-        }
-
-        Ok(result)
+        Ok(())
     }
 
-    /// Extract dependencies from a CilAssemblyView.
-    fn extract_dependencies_from_view(view: &CilAssemblyView) -> Vec<AssemblyIdentity> {
-        let mut discovered_dependencies = Vec::new();
-
-        if let (Some(tables), Some(strings), Some(blobs)) =
-            (view.tables(), view.strings(), view.blobs())
-        {
-            if let Some(assembly_ref_table) = tables.table::<AssemblyRefRaw>() {
-                for row in assembly_ref_table {
-                    if let Ok(assembly_ref) = row.to_owned(strings, blobs) {
-                        #[allow(clippy::cast_possible_truncation)]
-                        let target_identity = AssemblyIdentity {
-                            name: assembly_ref.name.clone(),
-                            version: AssemblyVersion {
-                                major: assembly_ref.major_version as u16,
-                                minor: assembly_ref.minor_version as u16,
-                                build: assembly_ref.build_number as u16,
-                                revision: assembly_ref.revision_number as u16,
-                            },
-                            culture: assembly_ref.culture.clone(),
-                            strong_name: assembly_ref.identifier.clone(),
-                            processor_architecture: None,
-                        };
-
-                        discovered_dependencies.push(target_identity);
-                    }
-                }
-            }
-        }
-
-        discovered_dependencies
-    }
-
-    /// Find potential file paths for a dependency.
-    fn find_dependency_paths(
+    /// Resolve a dependency by finding an assembly file.
+    ///
+    /// This method searches for assembly files that match the required identity.
+    /// It prefers compatible versions (same major, >= required) but will return
+    /// the closest version match if no compatible version is found.
+    ///
+    /// Version selection priority:
+    /// 1. Compatible version (same major, >= required) - returned immediately
+    /// 2. Same major version but lower - closer to required is better
+    /// 3. Different major version - closer to required major is better
+    ///
+    /// # Arguments
+    ///
+    /// * `required` - The assembly identity required by a dependency
+    /// * `search_dir` - The primary search directory (typically the primary assembly's directory)
+    ///
+    /// # Returns
+    ///
+    /// * `Some((path, identity))` - An assembly with the matching name was found
+    /// * `None` - No assembly with the matching name found in any search location
+    fn resolve_dependency(
         &self,
-        identity: &AssemblyIdentity,
+        required: &AssemblyIdentity,
         search_dir: &Path,
-    ) -> Vec<PathBuf> {
+    ) -> Option<(PathBuf, AssemblyIdentity)> {
+        let candidate_paths = self.find_candidate_files(&required.name, search_dir);
+
+        let mut best_match: Option<(PathBuf, AssemblyIdentity)> = None;
+
+        for path in candidate_paths {
+            let file = match File::from_path(&path) {
+                Ok(f) if f.is_clr() => f,
+                _ => continue,
+            };
+
+            let Ok(view) = CilAssemblyView::from_dotscope_file(file) else {
+                continue;
+            };
+
+            let Ok(identity) = view.identity() else {
+                continue;
+            };
+
+            if identity.satisfies(required) {
+                return Some((path, identity));
+            }
+
+            let dominated = best_match.as_ref().is_some_and(|(_, best)| {
+                best.version
+                    .is_closer_to(&identity.version, &required.version)
+            });
+
+            if !dominated {
+                best_match = Some((path, identity));
+            }
+        }
+
+        best_match
+    }
+
+    /// Find candidate file paths for an assembly name.
+    ///
+    /// Returns paths to check for an assembly with the given name.
+    /// Files are not validated at this stage - just path construction.
+    fn find_candidate_files(&self, name: &str, search_dir: &Path) -> Vec<PathBuf> {
         let mut paths = Vec::new();
 
-        // Search in configured search paths first
         for search_path in &self.search_paths {
-            paths.push(search_path.join(format!("{}.dll", identity.name)));
-            paths.push(search_path.join(format!("{}.exe", identity.name)));
+            paths.push(search_path.join(format!("{name}.dll")));
+            paths.push(search_path.join(format!("{name}.exe")));
         }
 
-        // Search in primary search directory
-        paths.push(search_dir.join(format!("{}.dll", identity.name)));
-        paths.push(search_dir.join(format!("{}.exe", identity.name)));
+        paths.push(search_dir.join(format!("{name}.dll")));
+        paths.push(search_dir.join(format!("{name}.exe")));
 
-        paths
+        paths.into_iter().filter(|p| p.exists()).collect()
     }
 }
 

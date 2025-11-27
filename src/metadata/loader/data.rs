@@ -322,6 +322,13 @@ impl CilObjectData {
             };
 
             execute_loaders_in_parallel(&context, project_context)?;
+
+            // Wait for all assemblies to complete all loaders before returning.
+            // This ensures nested type relationships and other cross-assembly dependencies
+            // are fully populated before validation can access them.
+            if let Some(proj_ctx) = project_context {
+                proj_ctx.wait_stage4()?;
+            }
         }
 
         Ok(cil_object)

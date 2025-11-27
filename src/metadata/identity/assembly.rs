@@ -743,6 +743,69 @@ impl AssemblyIdentity {
     pub fn is_culture_neutral(&self) -> bool {
         self.culture.is_none()
     }
+
+    /// Check if this assembly identity satisfies a dependency requirement.
+    ///
+    /// This method determines whether this assembly can be used to satisfy a
+    /// reference to another assembly. It checks name, culture, and version
+    /// compatibility according to .NET binding rules.
+    ///
+    /// # Matching Rules
+    ///
+    /// 1. **Name**: Must match case-insensitively
+    /// 2. **Culture**: Must match exactly (None matches None, "en-US" matches "en-US")
+    /// 3. **Version**: Must be compatible per [`AssemblyVersion::is_compatible_with`]
+    ///
+    /// # Arguments
+    ///
+    /// * `required` - The assembly identity required by a dependency
+    ///
+    /// # Returns
+    ///
+    /// `true` if this assembly can satisfy the requirement, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
+    ///
+    /// let available = AssemblyIdentity::new(
+    ///     "System.Core",
+    ///     AssemblyVersion::new(4, 5, 0, 0),
+    ///     None,
+    ///     None,
+    ///     None,
+    /// );
+    ///
+    /// let required = AssemblyIdentity::new(
+    ///     "System.Core",
+    ///     AssemblyVersion::new(4, 0, 0, 0),
+    ///     None,
+    ///     None,
+    ///     None,
+    /// );
+    ///
+    /// // v4.5 satisfies requirement for v4.0
+    /// assert!(available.satisfies(&required));
+    ///
+    /// // But v4.0 does NOT satisfy requirement for v4.5
+    /// assert!(!required.satisfies(&available));
+    /// ```
+    #[must_use]
+    pub fn satisfies(&self, required: &AssemblyIdentity) -> bool {
+        // Name must match (case-insensitive)
+        if !self.name.eq_ignore_ascii_case(&required.name) {
+            return false;
+        }
+
+        // Culture must match exactly
+        if self.culture != required.culture {
+            return false;
+        }
+
+        // Version must be compatible
+        self.version.is_compatible_with(&required.version)
+    }
 }
 
 impl AssemblyVersion {
@@ -829,6 +892,118 @@ impl AssemblyVersion {
     #[must_use]
     pub const fn is_unknown(&self) -> bool {
         self.major == 0 && self.minor == 0 && self.build == 0 && self.revision == 0
+    }
+
+    /// Check if this version is compatible with a required version.
+    ///
+    /// .NET uses version unification where a higher version can satisfy a lower
+    /// requirement if they share the same major version. This follows the standard
+    /// .NET binding policy for strong-named assemblies.
+    ///
+    /// # Compatibility Rules
+    ///
+    /// - If the required version is unknown (0.0.0.0), any version is compatible
+    /// - Otherwise, the major versions must match and this version must be >= required
+    ///
+    /// # Arguments
+    ///
+    /// * `required` - The version that is required by a dependency
+    ///
+    /// # Returns
+    ///
+    /// `true` if this version can satisfy the requirement, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::identity::AssemblyVersion;
+    ///
+    /// let v4_0 = AssemblyVersion::new(4, 0, 0, 0);
+    /// let v4_5 = AssemblyVersion::new(4, 5, 0, 0);
+    /// let v5_0 = AssemblyVersion::new(5, 0, 0, 0);
+    ///
+    /// // v4.5 is compatible with requirement for v4.0 (same major, higher version)
+    /// assert!(v4_5.is_compatible_with(&v4_0));
+    ///
+    /// // v4.0 is NOT compatible with requirement for v4.5 (same major, but lower)
+    /// assert!(!v4_0.is_compatible_with(&v4_5));
+    ///
+    /// // v5.0 is NOT compatible with requirement for v4.0 (different major)
+    /// assert!(!v5_0.is_compatible_with(&v4_0));
+    ///
+    /// // Any version is compatible with unknown (0.0.0.0)
+    /// assert!(v4_0.is_compatible_with(&AssemblyVersion::UNKNOWN));
+    /// ```
+    #[must_use]
+    pub fn is_compatible_with(&self, required: &AssemblyVersion) -> bool {
+        // Unknown version requirement accepts any version
+        if required.is_unknown() {
+            return true;
+        }
+
+        // Major version must match, and this version must be >= required
+        self.major == required.major && *self >= *required
+    }
+
+    /// Check if this version is closer to a target than another version.
+    ///
+    /// Used for selecting the best fallback when no compatible version exists.
+    /// The comparison prioritizes:
+    ///
+    /// 1. Same major version as target (strongly preferred)
+    /// 2. For same major: higher version is better (closer to being compatible)
+    /// 3. For different major: closer major number is better
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The version to compare against
+    /// * `target` - The target version we're trying to match
+    ///
+    /// # Returns
+    ///
+    /// `true` if `self` is a better match for `target` than `other`.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::identity::AssemblyVersion;
+    ///
+    /// let target = AssemblyVersion::new(4, 5, 0, 0);
+    /// let v4_0 = AssemblyVersion::new(4, 0, 0, 0);
+    /// let v3_0 = AssemblyVersion::new(3, 0, 0, 0);
+    /// let v5_0 = AssemblyVersion::new(5, 0, 0, 0);
+    ///
+    /// // Same major is preferred over different major
+    /// assert!(v4_0.is_closer_to(&v3_0, &target));
+    /// assert!(v4_0.is_closer_to(&v5_0, &target));
+    ///
+    /// // For same major, higher version is better
+    /// let v4_2 = AssemblyVersion::new(4, 2, 0, 0);
+    /// assert!(v4_2.is_closer_to(&v4_0, &target));
+    ///
+    /// // For different majors, closer major number wins
+    /// let v2_0 = AssemblyVersion::new(2, 0, 0, 0);
+    /// assert!(v3_0.is_closer_to(&v2_0, &target)); // v3 is closer to v4 than v2
+    /// ```
+    #[must_use]
+    pub fn is_closer_to(&self, other: &AssemblyVersion, target: &AssemblyVersion) -> bool {
+        let self_same_major = self.major == target.major;
+        let other_same_major = other.major == target.major;
+
+        match (self_same_major, other_same_major) {
+            (true, false) => true,
+            (false, true) => false,
+            (true, true) => {
+                // Both have same major as target - prefer higher (closer to compatible)
+                self > other
+            }
+            (false, false) => {
+                // Both have different major - prefer closer major number
+                let self_dist = self.major.abs_diff(target.major);
+                let other_dist = other.major.abs_diff(target.major);
+                self_dist < other_dist
+            }
+        }
     }
 
     /// Parse assembly version from string representation.
@@ -1797,5 +1972,158 @@ mod tests {
         // Also test the x64 alias for AMD64
         let x64_parsed = ProcessorArchitecture::parse("x64").unwrap();
         assert_eq!(x64_parsed, ProcessorArchitecture::AMD64);
+    }
+
+    #[test]
+    fn test_assembly_version_is_compatible_with() {
+        let v4_0 = AssemblyVersion::new(4, 0, 0, 0);
+        let v4_5 = AssemblyVersion::new(4, 5, 0, 0);
+        let v4_5_1 = AssemblyVersion::new(4, 5, 1, 0);
+        let v5_0 = AssemblyVersion::new(5, 0, 0, 0);
+        let v_unknown = AssemblyVersion::UNKNOWN;
+
+        // Same version is always compatible
+        assert!(v4_0.is_compatible_with(&v4_0));
+        assert!(v4_5.is_compatible_with(&v4_5));
+
+        // Higher minor version is compatible with lower requirement (same major)
+        assert!(v4_5.is_compatible_with(&v4_0));
+        assert!(v4_5_1.is_compatible_with(&v4_0));
+        assert!(v4_5_1.is_compatible_with(&v4_5));
+
+        // Lower version is NOT compatible with higher requirement
+        assert!(!v4_0.is_compatible_with(&v4_5));
+        assert!(!v4_5.is_compatible_with(&v4_5_1));
+
+        // Different major version is NOT compatible
+        assert!(!v5_0.is_compatible_with(&v4_0));
+        assert!(!v4_0.is_compatible_with(&v5_0));
+        assert!(!v5_0.is_compatible_with(&v4_5));
+
+        // Any version is compatible with unknown (0.0.0.0)
+        assert!(v4_0.is_compatible_with(&v_unknown));
+        assert!(v4_5.is_compatible_with(&v_unknown));
+        assert!(v5_0.is_compatible_with(&v_unknown));
+        assert!(v_unknown.is_compatible_with(&v_unknown));
+    }
+
+    #[test]
+    fn test_assembly_identity_satisfies() {
+        let system_core_v4_0 = AssemblyIdentity::new(
+            "System.Core".to_string(),
+            AssemblyVersion::new(4, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        let system_core_v4_5 = AssemblyIdentity::new(
+            "System.Core".to_string(),
+            AssemblyVersion::new(4, 5, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        let system_core_v5_0 = AssemblyIdentity::new(
+            "System.Core".to_string(),
+            AssemblyVersion::new(5, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        let system_v4_0 = AssemblyIdentity::new(
+            "System".to_string(),
+            AssemblyVersion::new(4, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        // Same identity satisfies itself
+        assert!(system_core_v4_0.satisfies(&system_core_v4_0));
+
+        // Higher version satisfies lower requirement (same name)
+        assert!(system_core_v4_5.satisfies(&system_core_v4_0));
+
+        // Lower version does NOT satisfy higher requirement
+        assert!(!system_core_v4_0.satisfies(&system_core_v4_5));
+
+        // Different major version does NOT satisfy
+        assert!(!system_core_v5_0.satisfies(&system_core_v4_0));
+
+        // Different name does NOT satisfy
+        assert!(!system_v4_0.satisfies(&system_core_v4_0));
+        assert!(!system_core_v4_0.satisfies(&system_v4_0));
+    }
+
+    #[test]
+    fn test_assembly_identity_satisfies_case_insensitive() {
+        let lower = AssemblyIdentity::new(
+            "system.core".to_string(),
+            AssemblyVersion::new(4, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        let upper = AssemblyIdentity::new(
+            "System.Core".to_string(),
+            AssemblyVersion::new(4, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        let mixed = AssemblyIdentity::new(
+            "SYSTEM.CORE".to_string(),
+            AssemblyVersion::new(4, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        // Name comparison should be case-insensitive
+        assert!(lower.satisfies(&upper));
+        assert!(upper.satisfies(&lower));
+        assert!(mixed.satisfies(&lower));
+        assert!(lower.satisfies(&mixed));
+    }
+
+    #[test]
+    fn test_assembly_identity_satisfies_culture() {
+        let neutral = AssemblyIdentity::new(
+            "MyLib".to_string(),
+            AssemblyVersion::new(1, 0, 0, 0),
+            None,
+            None,
+            None,
+        );
+
+        let en_us = AssemblyIdentity::new(
+            "MyLib".to_string(),
+            AssemblyVersion::new(1, 0, 0, 0),
+            Some("en-US".to_string()),
+            None,
+            None,
+        );
+
+        let fr_fr = AssemblyIdentity::new(
+            "MyLib".to_string(),
+            AssemblyVersion::new(1, 0, 0, 0),
+            Some("fr-FR".to_string()),
+            None,
+            None,
+        );
+
+        // Same culture satisfies
+        assert!(neutral.satisfies(&neutral));
+        assert!(en_us.satisfies(&en_us));
+
+        // Different cultures do NOT satisfy
+        assert!(!neutral.satisfies(&en_us));
+        assert!(!en_us.satisfies(&neutral));
+        assert!(!en_us.satisfies(&fr_fr));
     }
 }
