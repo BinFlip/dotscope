@@ -117,6 +117,8 @@ pub struct ReferenceScanner {
     table_row_counts: FxHashMap<TableId, u32>,
     /// Heap sizes for bounds checking
     heap_sizes: HeapSizes,
+    /// Nested class relationships: enclosing_class -> set of nested_classes
+    nested_class_map: FxHashMap<Token, FxHashSet<Token>>,
 }
 
 /// Metadata heap sizes for bounds validation.
@@ -170,6 +172,7 @@ impl ReferenceScanner {
             valid_tokens: FxHashSet::default(),
             table_row_counts: FxHashMap::default(),
             heap_sizes: HeapSizes::default(),
+            nested_class_map: FxHashMap::default(),
         };
 
         scanner.analyze_assembly(view)?;
@@ -213,6 +216,7 @@ impl ReferenceScanner {
             valid_tokens: FxHashSet::default(),
             table_row_counts: FxHashMap::default(),
             heap_sizes: HeapSizes::default(),
+            nested_class_map: FxHashMap::default(),
         };
 
         scanner.analyze_object(object)?;
@@ -437,6 +441,11 @@ impl ReferenceScanner {
 
                     let enclosing_token = Token::new(0x0200_0000 | nested.enclosing_class);
                     self.add_reference(from_token, enclosing_token);
+
+                    self.nested_class_map
+                        .entry(enclosing_token)
+                        .or_default()
+                        .insert(nested_token);
                 }
             }
 
@@ -718,6 +727,73 @@ impl ReferenceScanner {
     #[must_use]
     pub fn heap_sizes(&self) -> &HeapSizes {
         &self.heap_sizes
+    }
+
+    /// Returns the set of classes directly nested within the given enclosing class.
+    ///
+    /// This method provides access to the nested class relationships discovered during
+    /// metadata scanning. It only returns direct nested classes, not transitively nested ones.
+    ///
+    /// # Arguments
+    ///
+    /// * `enclosing_token` - The token of the enclosing (outer) class
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(&FxHashSet<Token>)` containing all directly nested class tokens,
+    /// or `None` if the token has no nested classes.
+    #[must_use]
+    pub fn nested_classes_of(&self, enclosing_token: Token) -> Option<&FxHashSet<Token>> {
+        self.nested_class_map.get(&enclosing_token)
+    }
+
+    /// Checks if a type is nested within another type (directly or transitively).
+    ///
+    /// This method performs a depth-first search through the nested class hierarchy
+    /// to determine if `potential_nested` is contained within `potential_enclosing`
+    /// at any nesting level.
+    ///
+    /// # Arguments
+    ///
+    /// * `potential_enclosing` - The token of the potential outer class
+    /// * `potential_nested` - The token of the potential inner class
+    ///
+    /// # Returns
+    ///
+    /// Returns `true` if `potential_nested` is nested within `potential_enclosing`
+    /// (directly or transitively), `false` otherwise.
+    #[must_use]
+    pub fn is_nested_within(&self, potential_enclosing: Token, potential_nested: Token) -> bool {
+        let mut visited = FxHashSet::default();
+        self.is_nested_within_recursive(potential_enclosing, potential_nested, &mut visited)
+    }
+
+    /// Recursive helper for nested class containment check.
+    fn is_nested_within_recursive(
+        &self,
+        enclosing: Token,
+        target: Token,
+        visited: &mut FxHashSet<Token>,
+    ) -> bool {
+        if !visited.insert(enclosing) {
+            return false;
+        }
+
+        if let Some(nested_classes) = self.nested_class_map.get(&enclosing) {
+            // Check direct nesting
+            if nested_classes.contains(&target) {
+                return true;
+            }
+
+            // Check transitive nesting
+            for &nested in nested_classes {
+                if self.is_nested_within_recursive(nested, target, visited) {
+                    return true;
+                }
+            }
+        }
+
+        false
     }
 
     /// Validates a heap index against the appropriate heap size.

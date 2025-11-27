@@ -13,7 +13,7 @@ use crate::{
             CALLING_CONVENTION, SIGNATURE_HEADER,
         },
         streams::Blob,
-        tables::{StandAloneSignature, StandAloneSig, StandAloneSigRc},
+        tables::{StandAloneSig, StandAloneSigRc, StandAloneSignature},
         tables::{TableInfoRef, TableRow},
         token::Token,
     },
