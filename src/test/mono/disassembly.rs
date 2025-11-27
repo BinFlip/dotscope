@@ -47,6 +47,23 @@ impl DisassemblyResult {
         self.success
     }
 
+    /// Check if the failure is due to a missing/broken .NET framework
+    ///
+    /// This detects cases where a tool like dotnet-ildasm is installed but requires
+    /// a .NET framework version that isn't available on the system.
+    pub fn is_framework_error(&self) -> bool {
+        if let Some(ref error) = self.error {
+            // Common patterns for .NET framework version errors
+            error.contains("You must install or update .NET to run this application")
+                || error.contains("Framework:")
+                    && error.contains("version")
+                    && error.contains("was not found")
+                || error.contains("The framework 'Microsoft.NETCore.App'")
+        } else {
+            false
+        }
+    }
+
     /// Check if the IL output contains a specific method
     pub fn contains_method(&self, method_name: &str) -> bool {
         // Look for method definition pattern: .method ... methodname (
@@ -105,7 +122,11 @@ pub fn disassemble(
         }
     };
 
-    disassemble_with(disassembler, assembly_path)
+    disassemble_with_caps(
+        disassembler,
+        assembly_path,
+        capabilities.ildasm_path.as_deref(),
+    )
 }
 
 /// Disassemble with a specific disassembler
@@ -113,9 +134,18 @@ pub fn disassemble_with(
     disassembler: Disassembler,
     assembly_path: &Path,
 ) -> Result<DisassemblyResult> {
+    disassemble_with_caps(disassembler, assembly_path, None)
+}
+
+/// Disassemble with a specific disassembler, using capabilities for path resolution
+fn disassemble_with_caps(
+    disassembler: Disassembler,
+    assembly_path: &Path,
+    ildasm_path: Option<&Path>,
+) -> Result<DisassemblyResult> {
     let output = match disassembler {
         Disassembler::Monodis => disassemble_with_monodis(assembly_path)?,
-        Disassembler::Ildasm => disassemble_with_ildasm(assembly_path)?,
+        Disassembler::Ildasm => disassemble_with_ildasm(assembly_path, ildasm_path)?,
         Disassembler::DotNetIldasm => disassemble_with_dotnet_ildasm(assembly_path)?,
     };
 
@@ -145,8 +175,15 @@ fn disassemble_with_monodis(assembly_path: &Path) -> Result<std::process::Output
 }
 
 /// Disassemble using ildasm
-fn disassemble_with_ildasm(assembly_path: &Path) -> Result<std::process::Output> {
-    Command::new("ildasm")
+fn disassemble_with_ildasm(
+    assembly_path: &Path,
+    ildasm_path: Option<&Path>,
+) -> Result<std::process::Output> {
+    let cmd = ildasm_path
+        .map(|p| p.as_os_str().to_os_string())
+        .unwrap_or_else(|| std::ffi::OsString::from("ildasm"));
+
+    Command::new(cmd)
         .arg("/text")
         .arg("/nobar")
         .arg(assembly_path)

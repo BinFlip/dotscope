@@ -11,8 +11,8 @@
 //! issues where architecture selection was static and didn't account for runtime
 //! limitations (e.g., .NET 8 SDK on 64-bit Windows cannot run x86 assemblies).
 
-use std::path::Path;
-use std::process::Command;
+use std::path::{Path, PathBuf};
+use std::process::{Command, Stdio};
 
 /// Available C# compiler types
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -132,6 +132,8 @@ pub struct TestCapabilities {
     pub runtime: Option<Runtime>,
     /// Available disassembler (best one detected)
     pub disassembler: Option<Disassembler>,
+    /// Full path to ildasm.exe (Windows SDK) if detected
+    pub ildasm_path: Option<std::path::PathBuf>,
     /// Architectures that can be compiled AND executed
     pub supported_architectures: Vec<Architecture>,
     /// All detected compilers
@@ -147,7 +149,7 @@ impl TestCapabilities {
     pub fn detect() -> Self {
         let available_compilers = Self::detect_compilers();
         let available_runtimes = Self::detect_runtimes();
-        let available_disassemblers = Self::detect_disassemblers();
+        let (available_disassemblers, ildasm_path) = Self::detect_disassemblers();
 
         // Select compatible compiler/runtime pair
         // Key constraint: dotnet-compiled assemblies (.NET 8) require dotnet runtime
@@ -173,6 +175,7 @@ impl TestCapabilities {
             compiler,
             runtime,
             disassembler,
+            ildasm_path,
             supported_architectures,
             available_compilers,
             available_runtimes,
@@ -303,33 +306,85 @@ impl TestCapabilities {
     }
 
     /// Detect available disassemblers
-    fn detect_disassemblers() -> Vec<Disassembler> {
+    ///
+    /// Returns a tuple of (disassemblers, ildasm_path) where ildasm_path is the
+    /// full path to ildasm.exe if found in Windows SDK locations.
+    fn detect_disassemblers() -> (Vec<Disassembler>, Option<std::path::PathBuf>) {
         let mut disassemblers = Vec::new();
+        let mut ildasm_path = None;
 
-        // Check monodis
         if Self::command_exists("monodis", &["--help"]) {
             disassemblers.push(Disassembler::Monodis);
         }
 
-        // Check ildasm (usually not in PATH on most systems)
+        // Check ildasm - first in PATH, then in Windows SDK locations
         if Self::command_exists("ildasm", &["/?"]) {
             disassemblers.push(Disassembler::Ildasm);
+        } else if let Some(path) = Self::find_windows_sdk_ildasm() {
+            disassemblers.push(Disassembler::Ildasm);
+            ildasm_path = Some(path);
         }
 
-        // Check dotnet-ildasm global tool
-        if Self::command_exists("dotnet-ildasm", &["--help"]) {
+        // Check dotnet-ildasm global tool (only if we don't have a better ildasm)
+        // Note: dotnet-ildasm often fails on modern .NET due to framework version requirements
+        if !disassemblers.contains(&Disassembler::Ildasm)
+            && Self::command_exists("dotnet-ildasm", &["--help"])
+        {
             disassemblers.push(Disassembler::DotNetIldasm);
         }
 
-        disassemblers
+        (disassemblers, ildasm_path)
     }
 
-    /// Check if a command exists and runs successfully
+    /// Find ildasm.exe in Windows SDK locations
+    ///
+    /// On Windows, ildasm.exe is typically installed with Visual Studio in the
+    /// Windows SDK tools directory. This searches common locations.
+    fn find_windows_sdk_ildasm() -> Option<PathBuf> {
+        if !cfg!(target_os = "windows") {
+            return None;
+        }
+
+        let sdk_paths = [
+            r"C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8.1 Tools",
+            r"C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.8 Tools",
+            r"C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.7.2 Tools",
+            r"C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.7.1 Tools",
+            r"C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.7 Tools",
+            r"C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.2 Tools",
+            r"C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6.1 Tools",
+            r"C:\Program Files (x86)\Microsoft SDKs\Windows\v10.0A\bin\NETFX 4.6 Tools",
+        ];
+
+        for sdk_path in &sdk_paths {
+            let ildasm_exe = PathBuf::from(sdk_path).join("ildasm.exe");
+            if ildasm_exe.exists() && Self::command_at_path_exists(&ildasm_exe, &["/?"]) {
+                return Some(ildasm_exe);
+            }
+        }
+
+        None
+    }
+
+    /// Check if a command at a specific path exists and runs successfully
+    fn command_at_path_exists(path: &Path, args: &[&str]) -> bool {
+        match Command::new(path)
+            .args(args)
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()
+        {
+            Ok(status) => status.success(),
+            Err(_) => false,
+        }
+    }
+
+    /// Check if a command exists and can be spawned
     fn command_exists(cmd: &str, args: &[&str]) -> bool {
         Command::new(cmd)
             .args(args)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .status()
             .is_ok()
     }
