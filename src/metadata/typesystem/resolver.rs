@@ -589,7 +589,8 @@ impl TypeResolver {
                                 name: class_type.name.clone(),
                                 source: self.current_source.clone(),
                                 generic_args: None,
-                                base_type: Some(class_type),
+                                base_type: Some(class_type.clone()),
+                                flags: Some(class_type.flags),
                             })?;
                         Ok(typespec_instance)
                     } else {
@@ -651,6 +652,7 @@ impl TypeResolver {
                     source: self.current_source.clone(),
                     generic_args: None,
                     base_type: None,
+                    flags: None,
                 })?;
 
                 array_type.set_base(&element_type.into())?;
@@ -681,6 +683,7 @@ impl TypeResolver {
                     source: self.current_source.clone(),
                     generic_args: None,
                     base_type: None,
+                    flags: None,
                 })?;
 
                 array_type.set_base(&element_type.into())?;
@@ -712,6 +715,7 @@ impl TypeResolver {
                     source: self.current_source.clone(),
                     generic_args: None,
                     base_type: None,
+                    flags: None,
                 })?;
 
                 ptr_type.set_base(&pointed_type.into())?;
@@ -743,6 +747,7 @@ impl TypeResolver {
                     source: self.current_source.clone(),
                     generic_args: None,
                     base_type: None,
+                    flags: None,
                 })?;
 
                 byref_type.set_base(&ref_type.into())?;
@@ -761,6 +766,7 @@ impl TypeResolver {
                     source: self.current_source.clone(),
                     generic_args: None,
                     base_type: None,
+                    flags: None,
                 })?;
 
                 Ok(fnptr_type)
@@ -781,6 +787,7 @@ impl TypeResolver {
                     source: self.current_source.clone(),
                     generic_args: None,
                     base_type: None,
+                    flags: None,
                 })?;
 
                 pinned_wrapper.set_base(&pinned_type.into())?;
@@ -812,6 +819,7 @@ impl TypeResolver {
                     source,
                     generic_args: None,
                     base_type: None,
+                    flags: Some(base_type.flags),
                 })?;
 
                 let mut generic_args = Vec::with_capacity(type_args.len());
@@ -869,6 +877,7 @@ impl TypeResolver {
                     source: self.current_source.clone(),
                     generic_args: None,
                     base_type: None,
+                    flags: None,
                 })?;
 
                 Ok(param_type)
@@ -887,6 +896,7 @@ impl TypeResolver {
                     source: self.current_source.clone(),
                     generic_args: None,
                     base_type: None,
+                    flags: None,
                 })?;
 
                 Ok(param_type)
@@ -900,6 +910,7 @@ impl TypeResolver {
                     source: self.current_source.clone(),
                     generic_args: None,
                     base_type: None,
+                    flags: None,
                 })?;
 
                 Ok(typed_ref_type)
@@ -1046,6 +1057,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1184,6 +1196,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1268,6 +1281,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1280,6 +1294,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1313,6 +1328,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1327,6 +1343,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 

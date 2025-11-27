@@ -147,6 +147,8 @@ pub struct CompleteTypeSpec {
     pub generic_args: Option<Vec<CilTypeRc>>,
     /// Base type for derived types
     pub base_type: Option<CilTypeRc>,
+    /// TypeAttributes flags (optional, inherited from base type for generic instances)
+    pub flags: Option<u32>,
 }
 
 impl CompleteTypeSpec {
@@ -1214,20 +1216,19 @@ impl TypeRegistry {
             return Ok(existing.value().clone());
         }
 
-        // Create type with complete structure
+        let flags = spec.flags.unwrap_or(0);
         let new_type = Arc::new(CilType::new(
             token,
             spec.namespace.clone(),
             spec.name.clone(),
             self.get_source_reference(&spec.source),
             None,
-            0,
+            flags,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
             Some(spec.flavor.clone()),
         ));
 
-        // Configure the type according to specification
         Self::configure_type_from_spec(&new_type, spec)?;
 
         self.register_type_internal(&new_type, spec.source.clone());
@@ -1683,6 +1684,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1728,6 +1730,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1740,6 +1743,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1928,6 +1932,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1940,6 +1945,7 @@ mod tests {
                 source: module_ref_source.clone(),
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1952,6 +1958,7 @@ mod tests {
                 source: assembly_ref_source.clone(),
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1984,6 +1991,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1996,6 +2004,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -2035,6 +2044,7 @@ mod tests {
                 source: source1,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -2047,6 +2057,7 @@ mod tests {
                 source: source2,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -2095,6 +2106,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: Some(vec![string_type.clone()]),
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -2107,6 +2119,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: Some(vec![string_type.clone()]),
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -2119,6 +2132,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: Some(vec![int_type.clone()]),
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -2215,6 +2229,7 @@ mod tests {
                     source: source.clone(),
                     generic_args: None,
                     base_type: None,
+                    flags: None,
                 })
                 .unwrap();
             created_types.push(type_ref);
@@ -2243,6 +2258,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -2267,6 +2283,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -2279,6 +2296,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -2291,6 +2309,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -2328,6 +2347,7 @@ mod tests {
                     source: TypeSource::Unknown,
                     generic_args: None,
                     base_type: None,
+                    flags: None,
                 })
                 .unwrap();
 

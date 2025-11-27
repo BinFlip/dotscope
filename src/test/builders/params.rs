@@ -323,6 +323,7 @@ impl ParamBuilder {
                             source: TypeSource::Unknown,
                             generic_args: None,
                             base_type: None,
+                            flags: None,
                         })
                         .unwrap()
                 }
@@ -339,6 +340,7 @@ impl ParamBuilder {
                             source: TypeSource::Unknown,
                             generic_args: None,
                             base_type: None,
+                            flags: None,
                         })
                         .unwrap();
 
@@ -356,6 +358,7 @@ impl ParamBuilder {
                             source: TypeSource::Unknown,
                             generic_args: None,
                             base_type: Some(enum_base),
+                            flags: None,
                         })
                         .unwrap();
 
@@ -376,6 +379,7 @@ impl ParamBuilder {
                         source: TypeSource::Unknown,
                         generic_args: None,
                         base_type: None,
+                        flags: None,
                     })
                     .unwrap(),
             };

@@ -810,17 +810,24 @@ impl PermissionSet {
         property_name: &str,
     ) -> bool {
         // Accept common .NET permission enum types
+        // Based on: https://github.com/dotnet/runtime/blob/main/src/libraries/System.Security.Permissions/ref/System.Security.Permissions.cs
         let valid_enum_names = [
-            "Flags",        // SecurityPermissionFlag, etc.
+            "Flags",        // SecurityPermissionFlag, ReflectionPermissionFlag, etc.
             "UsageAllowed", // IsolatedStorageContainment
-            "Access",       // FileIOPermissionAccess
-            "Control",      // Various permission control enums
-            "Rights",       // Various permission rights enums
-            "Level",        // Various permission level enums
-            "Mode",         // Various permission mode enums
-            "Window",       // UIPermissionWindow
-            "Clipboard",    // UIPermissionClipboard
-            "AllFiles",     // FileIOPermissionAccess.AllFiles (added in .NET 4.8)
+            "Access", // FileIOPermissionAccess, EnvironmentPermissionAccess, RegistryPermissionAccess, etc.
+            "Control", // Various permission control enums
+            "Rights", // Various permission rights enums
+            "Level",  // PrintingPermissionLevel, AspNetHostingPermissionLevel
+            "Mode",   // Various permission mode enums
+            "Window", // UIPermissionWindow
+            "Clipboard", // UIPermissionClipboard
+            "AllFiles", // FileIOPermissionAccess.AllFiles
+            "Resources", // HostProtectionResource
+            "Audio",  // MediaPermissionAudio
+            "Image",  // MediaPermissionImage
+            "Video",  // MediaPermissionVideo
+            "Zone",   // SecurityZone
+            "Scope",  // PnrpScope
         ];
 
         if !valid_enum_names.contains(&enum_name) {
@@ -828,18 +835,42 @@ impl PermissionSet {
         }
 
         // Property name should be a known permission flag enum type
+        // Based on: https://github.com/dotnet/runtime/blob/main/src/libraries/System.Security.Permissions/ref/System.Security.Permissions.cs
         let valid_flag_types = [
+            // Core security permissions
             "System.Security.Permissions.SecurityPermissionFlag",
+            "System.Security.Permissions.ReflectionPermissionFlag",
+            "System.Security.Permissions.FileIOPermissionAccess",
+            "System.Security.Permissions.FileDialogPermissionAccess",
+            "System.Security.Permissions.EnvironmentPermissionAccess",
+            "System.Security.Permissions.RegistryPermissionAccess",
+            "System.Security.Permissions.UIPermissionWindow",
+            "System.Security.Permissions.UIPermissionClipboard",
+            "System.Security.Permissions.IsolatedStorageContainment",
+            "System.Security.Permissions.HostProtectionResource",
             "System.Security.Permissions.DataProtectionPermissionFlags",
             "System.Security.Permissions.KeyContainerPermissionFlags",
-            "System.Security.Permissions.ReflectionPermissionFlag",
             "System.Security.Permissions.StorePermissionFlags",
             "System.Security.Permissions.TypeDescriptorPermissionFlags",
-            "System.Security.Permissions.IsolatedStorageContainment", // for IsolatedStorageFilePermissionAttribute
-            "System.Security.Permissions.UIPermissionWindow",         // for UIPermissionAttribute
-            "System.Security.Permissions.UIPermissionClipboard",      // for UIPermissionAttribute
-            "System.Security.Permissions.FileIOPermissionAccess", // for FileIOPermissionAttribute (added in .NET 4.8)
-            "System.Web.AspNetHostingPermissionLevel", // for AspNetHostingPermissionAttribute
+            "System.Security.Permissions.MediaPermissionAudio",
+            "System.Security.Permissions.MediaPermissionImage",
+            "System.Security.Permissions.MediaPermissionVideo",
+            "System.Security.SecurityZone",
+            // Diagnostics permissions
+            "System.Diagnostics.EventLogPermissionAccess",
+            "System.Diagnostics.PerformanceCounterPermissionAccess",
+            // Directory services permissions
+            "System.DirectoryServices.DirectoryServicesPermissionAccess",
+            // Drawing/Printing permissions
+            "System.Drawing.Printing.PrintingPermissionLevel",
+            // Network permissions
+            "System.Net.NetworkAccess",
+            "System.Net.TransportType",
+            "System.Net.Mail.SmtpAccess",
+            "System.Net.NetworkInformation.NetworkInformationAccess",
+            "System.Net.PeerToPeer.PnrpScope",
+            // Web permissions
+            "System.Web.AspNetHostingPermissionLevel",
         ];
 
         let property_matches = valid_flag_types
@@ -851,17 +882,56 @@ impl PermissionSet {
         }
 
         // Permission class should start with a known permission class (ignore version info)
+        // Based on: https://github.com/dotnet/runtime/blob/main/src/libraries/System.Security.Permissions/ref/System.Security.Permissions.cs
         let known_permission_classes = [
+            // Core security permissions
             "System.Security.Permissions.SecurityPermission",
+            "System.Security.Permissions.ReflectionPermission",
+            "System.Security.Permissions.FileIOPermission",
+            "System.Security.Permissions.FileDialogPermission",
+            "System.Security.Permissions.EnvironmentPermission",
+            "System.Security.Permissions.RegistryPermission",
+            "System.Security.Permissions.UIPermission",
+            "System.Security.Permissions.IsolatedStoragePermission",
+            "System.Security.Permissions.IsolatedStorageFilePermission",
+            "System.Security.Permissions.HostProtection",
             "System.Security.Permissions.DataProtectionPermission",
             "System.Security.Permissions.KeyContainerPermission",
-            "System.Security.Permissions.ReflectionPermission",
             "System.Security.Permissions.StorePermission",
             "System.Security.Permissions.TypeDescriptorPermission",
-            "System.Security.Permissions.IsolatedStorageFilePermission",
-            "System.Security.Permissions.UIPermission", // for UIPermissionAttribute
-            "System.Security.Permissions.FileIOPermission", // for FileIOPermissionAttribute (added in .NET 4.8)
-            "System.Web.AspNetHostingPermission",           // for AspNetHostingPermissionAttribute
+            "System.Security.Permissions.MediaPermission",
+            "System.Security.Permissions.GacIdentityPermission",
+            "System.Security.Permissions.PrincipalPermission",
+            "System.Security.Permissions.PublisherIdentityPermission",
+            "System.Security.Permissions.StrongNameIdentityPermission",
+            "System.Security.Permissions.UrlIdentityPermission",
+            "System.Security.Permissions.ZoneIdentityPermission",
+            "System.Security.Permissions.PermissionSet",
+            // Configuration permissions
+            "System.Configuration.ConfigurationPermission",
+            // Data permissions
+            "System.Data.Common.DBDataPermission",
+            "System.Data.Odbc.OdbcPermission",
+            "System.Data.OleDb.OleDbPermission",
+            "System.Data.OracleClient.OraclePermission",
+            "System.Data.SqlClient.SqlClientPermission",
+            // Diagnostics permissions
+            "System.Diagnostics.EventLogPermission",
+            "System.Diagnostics.PerformanceCounterPermission",
+            // Directory services permissions
+            "System.DirectoryServices.DirectoryServicesPermission",
+            // Drawing/Printing permissions
+            "System.Drawing.Printing.PrintingPermission",
+            // Network permissions
+            "System.Net.DnsPermission",
+            "System.Net.SocketPermission",
+            "System.Net.WebPermission",
+            "System.Net.Mail.SmtpPermission",
+            "System.Net.NetworkInformation.NetworkInformationPermission",
+            "System.Net.PeerToPeer.PnrpPermission",
+            "System.Net.PeerToPeer.Collaboration.PeerCollaborationPermission",
+            // Web permissions
+            "System.Web.AspNetHostingPermission",
         ];
 
         known_permission_classes
@@ -871,25 +941,61 @@ impl PermissionSet {
 
     /// Resolve assembly name from permission class name
     ///
-    /// Maps common .NET permission classes to their containing assemblies
+    /// Maps .NET permission classes to their containing assemblies.
+    /// Based on: https://github.com/dotnet/runtime/blob/main/src/libraries/System.Security.Permissions/
+    ///
+    /// Note: In .NET Framework, most security permissions lived in mscorlib.
+    /// In .NET Core/.NET 5+, they were moved to System.Security.Permissions assembly.
+    /// This function attempts to extract the assembly from the fully-qualified class name
+    /// (which often includes assembly info), falling back to reasonable defaults.
     fn resolve_assembly_name_from_class(class_name: &str) -> String {
+        // If the class name contains assembly info (e.g., "Class, Assembly, Version=..."),
+        // extract the assembly name directly
+        if let Some(comma_pos) = class_name.find(',') {
+            let after_comma = &class_name[comma_pos + 1..];
+            // Extract assembly name (first part after the comma, before next comma or end)
+            let assembly_part = after_comma.split(',').next().unwrap_or("").trim();
+            if !assembly_part.is_empty() {
+                return assembly_part.to_string();
+            }
+        }
+
+        // Fallback: infer assembly from namespace prefix
+        // These mappings are based on .NET Framework conventions
         if class_name.starts_with("System.Security.Permissions.")
-            || class_name.starts_with("System.Security.")
-            || class_name.starts_with("System.Net.")
+            || class_name.starts_with("System.Security.Principal.")
         {
-            "mscorlib".to_string() // For .NET Framework
+            "mscorlib".to_string()
+        } else if class_name.starts_with("System.Configuration.") {
+            "System.Configuration".to_string()
         } else if class_name.starts_with("System.Data.") {
             "System.Data".to_string()
-        } else if class_name.starts_with("System.Xml.") {
-            "System.Xml".to_string()
-        } else if class_name.starts_with("System.Web.") {
-            "System.Web".to_string()
+        } else if class_name.starts_with("System.Diagnostics.") {
+            "System".to_string() // EventLog, PerformanceCounter are in System.dll
+        } else if class_name.starts_with("System.DirectoryServices.") {
+            "System.DirectoryServices".to_string()
         } else if class_name.starts_with("System.Drawing.") {
             "System.Drawing".to_string()
+        } else if class_name.starts_with("System.Net.PeerToPeer.") {
+            "System.Net".to_string()
+        } else if class_name.starts_with("System.Net.") {
+            // Includes System.Net.Mail, System.Net.NetworkInformation, etc.
+            "System".to_string()
+        } else if class_name.starts_with("System.Web.") {
+            "System.Web".to_string()
         } else if class_name.starts_with("System.Windows.Forms.") {
             "System.Windows.Forms".to_string()
+        } else if class_name.starts_with("System.Xml.") {
+            "System.Xml".to_string()
         } else {
-            "Unknown".to_string()
+            // Return namespace-based guess rather than "Unknown"
+            // Extract first two parts of namespace as assembly guess
+            let parts: Vec<&str> = class_name.split('.').collect();
+            if parts.len() >= 2 {
+                format!("{}.{}", parts[0], parts[1])
+            } else {
+                "mscorlib".to_string() // Default to mscorlib for unrecognized types
+            }
         }
     }
 
@@ -1475,7 +1581,10 @@ mod tests {
             permission_set.permissions[5].assembly_name,
             "System.Windows.Forms"
         );
-        assert_eq!(permission_set.permissions[6].assembly_name, "Unknown");
+        assert_eq!(
+            permission_set.permissions[6].assembly_name,
+            "Custom.Unknown"
+        );
     }
 
     #[test]
@@ -1624,7 +1733,7 @@ mod tests {
         let permission_set = PermissionSet::new(data).unwrap();
         assert_eq!(permission_set.permissions.len(), 1);
         assert_eq!(permission_set.permissions[0].class_name, "");
-        assert_eq!(permission_set.permissions[0].assembly_name, "Unknown");
+        assert_eq!(permission_set.permissions[0].assembly_name, "mscorlib");
     }
 
     #[test]
@@ -1684,7 +1793,7 @@ mod tests {
         assert_eq!(permission_set.permissions.len(), 3);
         assert_eq!(permission_set.permissions[0].assembly_name, "System.Data");
         assert_eq!(permission_set.permissions[1].assembly_name, "System.Xml");
-        assert_eq!(permission_set.permissions[2].assembly_name, "mscorlib");
+        assert_eq!(permission_set.permissions[2].assembly_name, "System");
     }
 
     #[test]

@@ -75,6 +75,8 @@
 //! - [ECMA-335 II.22.26](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - MethodDef constraints
 //! - [ECMA-335 I.8.9](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - Object model constraints
 
+use std::sync::Arc;
+
 use crate::{
     metadata::{
         token::Token,
@@ -150,10 +152,11 @@ impl OwnedTypeCircularityValidator {
 
         // Use cached all_types from context
         for type_rc in context.all_types() {
-            let token = type_rc.token;
+            let type_ptr = Arc::as_ptr(type_rc) as usize;
+
             // Only skip if we've already visited this type
             // The check inside the recursive function will handle re-traversal at greater depths
-            if visited.contains_key(&token) {
+            if visited.contains_key(&type_ptr) {
                 continue;
             }
             self.check_inheritance_cycle_and_depth(
@@ -180,11 +183,14 @@ impl OwnedTypeCircularityValidator {
     /// which each type was encountered, allowing re-traversal at greater depths to properly
     /// detect depth limit violations.
     ///
+    /// Uses Arc pointers as unique type identifiers to avoid token collisions
+    /// between types from different assemblies.
+    ///
     /// # Arguments
     ///
     /// * `type_rc` - Type to check for inheritance cycles and depth
-    /// * `visited` - Map of completely processed types to their maximum observed depth (black)
-    /// * `visiting` - Set of currently processing types (gray)
+    /// * `visited` - Map of completely processed types (by Arc pointer) to their maximum observed depth (black)
+    /// * `visiting` - Set of currently processing types (by Arc pointer) (gray)
     /// * `context` - Validation context containing configuration
     /// * `depth` - Current recursion depth
     ///
@@ -194,25 +200,25 @@ impl OwnedTypeCircularityValidator {
     fn check_inheritance_cycle_and_depth(
         &self,
         type_rc: &CilTypeRc,
-        visited: &mut FxHashMap<Token, usize>,
-        visiting: &mut FxHashSet<Token>,
+        visited: &mut FxHashMap<usize, usize>,
+        visiting: &mut FxHashSet<usize>,
         context: &OwnedValidationContext,
         depth: usize,
     ) -> Result<()> {
-        let current_token = type_rc.token;
+        let type_ptr = Arc::as_ptr(type_rc) as usize;
 
-        if visiting.contains(&current_token) {
+        if visiting.contains(&type_ptr) {
             return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular inheritance detected: Type '{}' (token 0x{:08X}) inherits from itself",
-                    type_rc.name, current_token.value()
+                    type_rc.name, type_rc.token.value()
                 ),
 
             });
         }
 
-        if let Some(&max_depth) = visited.get(&current_token) {
+        if let Some(&max_depth) = visited.get(&type_ptr) {
             if depth <= max_depth {
                 return Ok(());
             }
@@ -229,7 +235,7 @@ impl OwnedTypeCircularityValidator {
             });
         }
 
-        visiting.insert(current_token);
+        visiting.insert(type_ptr);
 
         if let Some(base_type) = type_rc.base() {
             self.check_inheritance_cycle_and_depth(
@@ -241,10 +247,10 @@ impl OwnedTypeCircularityValidator {
             )?;
         }
 
-        visiting.remove(&current_token);
+        visiting.remove(&type_ptr);
 
         visited
-            .entry(current_token)
+            .entry(type_ptr)
             .and_modify(|d| *d = (*d).max(depth))
             .or_insert(depth);
 
@@ -361,17 +367,15 @@ impl OwnedTypeCircularityValidator {
         let mut visited = FxHashSet::default();
         let mut visiting = FxHashSet::default();
 
-        // Use cached interface relationships from context
-        // Note: The context cache contains ALL types' interface implementations,
-        // but we only check cycles for interface types (interfaces implementing other interfaces)
+        // Use cached interface relationships from context (now using Arc pointers)
         let interface_relationships = context.interface_relationships();
 
-        // Only check interface types for interface implementation cycles
-        for type_rc in context.all_types() {
-            let token = type_rc.token;
-            if type_rc.flavor() == &CilFlavor::Interface && !visited.contains(&token) {
+        // Only check interface types from the target assembly for interface implementation cycles
+        for type_rc in context.target_assembly_types() {
+            let type_ptr = Arc::as_ptr(type_rc) as usize;
+            if type_rc.flavor() == &CilFlavor::Interface && !visited.contains(&type_ptr) {
                 self.check_interface_implementation_cycle(
-                    token,
+                    type_ptr,
                     interface_relationships,
                     &mut visited,
                     &mut visiting,
@@ -382,12 +386,12 @@ impl OwnedTypeCircularityValidator {
         Ok(())
     }
 
-    /// Recursively checks for interface implementation cycles starting from a given interface token.
+    /// Recursively checks for interface implementation cycles starting from a given interface.
     ///
     /// # Arguments
     ///
-    /// * `token` - Interface token to check for implementation cycles
-    /// * `interface_relationships` - Map of interface tokens to implemented interface tokens
+    /// * `type_ptr` - Arc pointer (as usize) to the interface to check
+    /// * `interface_relationships` - Map of type Arc pointers to implemented interface Arc pointers
     /// * `visited` - Set of completely processed interfaces
     /// * `visiting` - Set of currently processing interfaces
     ///
@@ -396,32 +400,29 @@ impl OwnedTypeCircularityValidator {
     /// Returns error if a cycle is detected in the interface implementation relationships.
     fn check_interface_implementation_cycle(
         &self,
-        token: Token,
-        interface_relationships: &FxHashMap<Token, Vec<Token>>,
-        visited: &mut FxHashSet<Token>,
-        visiting: &mut FxHashSet<Token>,
+        type_ptr: usize,
+        interface_relationships: &FxHashMap<usize, Vec<usize>>,
+        visited: &mut FxHashSet<usize>,
+        visiting: &mut FxHashSet<usize>,
     ) -> Result<()> {
-        if visited.contains(&token) {
+        if visited.contains(&type_ptr) {
             return Ok(());
         }
 
-        if visiting.contains(&token) {
+        if visiting.contains(&type_ptr) {
             return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
-                message: format!(
-                    "Circular interface implementation detected: Interface with token 0x{:08X} implements itself",
-                    token.value()
-                ),
-
+                message: "Circular interface implementation detected: Interface implements itself"
+                    .to_string(),
             });
         }
 
-        visiting.insert(token);
+        visiting.insert(type_ptr);
 
-        if let Some(implemented_tokens) = interface_relationships.get(&token) {
-            for &implemented_token in implemented_tokens {
+        if let Some(implemented_ptrs) = interface_relationships.get(&type_ptr) {
+            for &implemented_ptr in implemented_ptrs {
                 self.check_interface_implementation_cycle(
-                    implemented_token,
+                    implemented_ptr,
                     interface_relationships,
                     visited,
                     visiting,
@@ -429,8 +430,8 @@ impl OwnedTypeCircularityValidator {
             }
         }
 
-        visiting.remove(&token);
-        visited.insert(token);
+        visiting.remove(&type_ptr);
+        visited.insert(type_ptr);
 
         Ok(())
     }

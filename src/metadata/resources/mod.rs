@@ -884,21 +884,14 @@ mod tests {
         }
     }
 
-    /// Macro to generate both owned and ref variants of a test
+    /// Macro to generate a test that runs both owned and ref variants
     macro_rules! test_both_variants {
         ($test_name:ident, $body:expr) => {
-            paste::paste! {
-                #[test]
-                fn [<$test_name _owned>]() {
-                    let test_fn = $body;
-                    test_fn(false);
-                }
-
-                #[test]
-                fn [<$test_name _ref>]() {
-                    let test_fn = $body;
-                    test_fn(true);
-                }
+            #[test]
+            fn $test_name() {
+                let test_fn = $body;
+                test_fn(false); // owned variant
+                test_fn(true); // ref variant
             }
         };
     }

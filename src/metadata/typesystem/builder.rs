@@ -415,6 +415,7 @@ impl TypeBuilder {
             source: self.source.clone(),
             generic_args: None,
             base_type: None,
+            flags: None,
         })?);
         Ok(self)
     }
@@ -471,6 +472,7 @@ impl TypeBuilder {
             source: self.source.clone(),
             generic_args: None,
             base_type: None,
+            flags: None,
         })?);
         Ok(self)
     }
@@ -528,6 +530,7 @@ impl TypeBuilder {
             source: self.source.clone(),
             generic_args: None,
             base_type: None,
+            flags: None,
         })?);
         Ok(self)
     }
@@ -591,6 +594,7 @@ impl TypeBuilder {
                 source: self.source.clone(),
                 generic_args: None,
                 base_type: Some(base_type),
+                flags: None,
             })?;
 
             self.current_type = Some(ptr_type);
@@ -615,6 +619,7 @@ impl TypeBuilder {
                 source: self.source.clone(),
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })?;
 
             ref_type
@@ -643,6 +648,7 @@ impl TypeBuilder {
                 source: self.source.clone(),
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })?;
 
             pinned_type
@@ -725,6 +731,7 @@ impl TypeBuilder {
                 source: self.source.clone(),
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })?;
 
             array_type
@@ -765,6 +772,7 @@ impl TypeBuilder {
                 source: self.source.clone(),
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })?;
 
             array_type
@@ -794,6 +802,7 @@ impl TypeBuilder {
             source: self.source.clone(),
             generic_args: None,
             base_type: None,
+            flags: None,
         })?;
 
         self.current_type = Some(fn_ptr_type);
@@ -882,6 +891,7 @@ impl TypeBuilder {
                 source: self.source.clone(),
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })?;
 
             let args = arg_builder(self.registry.clone())?;
@@ -1370,6 +1380,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1415,6 +1426,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 
@@ -1499,6 +1511,7 @@ mod tests {
                 source: TypeSource::Unknown,
                 generic_args: None,
                 base_type: None,
+                flags: None,
             })
             .unwrap();
 

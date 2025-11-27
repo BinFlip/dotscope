@@ -43,7 +43,15 @@ Follow this recommended order to learn dotscope effectively:
   - Signature parsing
   - Control flow examination
 
-### 4. **Assembly Modification**
+### 4. **Multi-Assembly Analysis**
+
+- **[`project_loader.rs`](project_loader.rs)** - Multi-assembly project loading
+  - Loading assemblies with automatic dependency resolution
+  - Cross-assembly type lookup
+  - Handling missing dependencies gracefully
+  - Dependency graph analysis
+
+### 5. **Assembly Modification**
 
 - **[`modify.rs`](modify.rs)** - Assembly modification basics
   - Adding strings, blobs, and metadata
@@ -56,7 +64,7 @@ Follow this recommended order to learn dotscope effectively:
   - CIL bytecode generation
   - Complete modification workflow
 
-### 5. **Specialized Examples**
+### 6. **Specialized Examples**
 
 - **[`lowlevel.rs`](lowlevel.rs)** - Understanding internals
   - Raw PE structure parsing
