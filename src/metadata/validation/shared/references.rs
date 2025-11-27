@@ -493,11 +493,18 @@ impl<'a> ReferenceValidator<'a> {
             )));
         }
 
-        // For nested class validation, we need to check if the enclosing class
-        // is nested within the nested class (which would create a cycle).
-        // We do this by looking for NestedClass table entries, not all references.
-        // TODO: Implement specific nested class circular reference detection
-        // For now, we skip the circular reference check since inheritance is valid
+        // Check if the enclosing class is nested within the nested class (which would create a cycle).
+        // For example: if we're trying to establish that A nests B, check if B already nests A
+        // (directly or transitively). This would create a circular nesting relationship.
+        if self.scanner.is_nested_within(nested_token, enclosing_token) {
+            let enclosing_value = enclosing_token.value();
+            let nested_value = nested_token.value();
+            return Err(Error::CrossReferenceError(format!(
+                "Circular nested class relationship detected: {enclosing_value:#x} cannot be the \
+                 enclosing class of {nested_value:#x} because {enclosing_value:#x} is already \
+                 nested within {nested_value:#x}"
+            )));
+        }
 
         Ok(())
     }
