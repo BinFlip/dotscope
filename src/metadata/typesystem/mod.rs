@@ -1136,8 +1136,11 @@ impl CilType {
     /// assemblies (different AssemblyRef) will return `false`.
     pub fn external_sources_equivalent(&self, other: &CilType) -> bool {
         match (self.external.get(), other.external.get()) {
+            // Both types have external references - compare them
             (Some(ext1), Some(ext2)) => Self::type_sources_equivalent(ext1, ext2),
-            // Both are current module types, or one external one local (TypeRef redirection case)
+            // Both are current module types (no external reference) - same assembly
+            (None, None) => true,
+            // One external, one local - different assemblies (TypeRef redirection case)
             _ => false,
         }
     }
