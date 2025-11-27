@@ -43,7 +43,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Invalid type visibility attributes (unknown visibility values)
 //! - Inconsistent member accessibility relative to containing types
 //! - Nested type accessibility violations (improper visibility combinations)
@@ -137,11 +137,11 @@ impl OwnedAccessibilityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All type accessibility rules are valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Accessibility violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Accessibility violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Type visibility attributes contain invalid values
     /// - Nested types have inappropriate visibility flags
     /// - Interfaces are marked as sealed (invalid combination)
@@ -161,13 +161,12 @@ impl OwnedAccessibilityValidator {
                     // Valid visibility
                 }
                 _ => {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' has invalid visibility: 0x{:02X}",
                             type_entry.name, visibility
                         ),
-                        source: None,
                     });
                 }
             }
@@ -181,13 +180,13 @@ impl OwnedAccessibilityValidator {
                 if !(TypeAttributes::NESTED_PUBLIC..=TypeAttributes::NESTED_FAM_OR_ASSEM)
                     .contains(&visibility)
                 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Nested type '{}' has invalid visibility flags: 0x{:02X} (must be between NESTED_PUBLIC=0x02 and NESTED_FAM_OR_ASSEM=0x07)",
                             type_entry.name, visibility
                         ),
-                        source: None,
+
                     });
                 }
             }
@@ -196,10 +195,9 @@ impl OwnedAccessibilityValidator {
                 && type_entry.flags & TypeAttributes::SEALED != 0
             {
                 // SEALED flag
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!("Interface '{}' cannot be sealed", type_entry.name),
-                    source: None,
                 });
             }
         }
@@ -220,11 +218,11 @@ impl OwnedAccessibilityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All member accessibility rules are consistent
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Member accessibility violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Member accessibility violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Methods have empty names
     /// - Literal fields are not marked as static (ECMA-335 requirement)
     fn validate_member_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
@@ -237,10 +235,9 @@ impl OwnedAccessibilityValidator {
                     // to get its actual accessibility flags. Here we're working with references.
 
                     if method.name.is_empty() {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!("Method in type '{}' has empty name", type_entry.name),
-                            source: None,
                         });
                     }
                 }
@@ -260,12 +257,11 @@ impl OwnedAccessibilityValidator {
                     // LITERAL flag but not static
                     let field_name = &field.name;
                     let type_name = &type_entry.name;
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Literal field '{field_name}' in type '{type_name}' must be static"
                         ),
-                        source: None,
                     });
                 }
             }
@@ -287,11 +283,11 @@ impl OwnedAccessibilityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All interface accessibility requirements are met
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Interface accessibility violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Interface accessibility violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Interface types have empty names
     /// - Interfaces contain non-static fields
     /// - Interfaces contain non-constant fields
@@ -310,13 +306,12 @@ impl OwnedAccessibilityValidator {
                     }
 
                     if interface_type.name.is_empty() {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' implements interface with empty name",
                                 type_entry.name
                             ),
-                            source: None,
                         });
                     }
                 }
@@ -325,25 +320,23 @@ impl OwnedAccessibilityValidator {
             if type_entry.flags & TypeAttributes::INTERFACE != 0 {
                 for (_, field) in type_entry.fields.iter() {
                     if field.flags & FieldAttributes::STATIC == 0 {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Interface '{}' contains non-static field '{}'",
                                 type_entry.name, field.name
                             ),
-                            source: None,
                         });
                     }
 
                     if field.flags & 0x0040 == 0 {
                         // Not LITERAL
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Interface '{}' contains non-constant field '{}'",
                                 type_entry.name, field.name
                             ),
-                            source: None,
                         });
                     }
                 }
@@ -366,11 +359,11 @@ impl OwnedAccessibilityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All inheritance accessibility patterns are valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Inheritance accessibility violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Inheritance accessibility violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if inheritance accessibility patterns are violated
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if inheritance accessibility patterns are violated
     /// (specific violations depend on resolved type hierarchy analysis).
     fn validate_inheritance_accessibility(context: &OwnedValidationContext) {
         for type_entry in context.all_types() {
@@ -449,7 +442,7 @@ mod tests {
         owned_validator_test(
             owned_accessibility_validator_file_factory,
             "OwnedAccessibilityValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

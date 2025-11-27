@@ -2310,15 +2310,15 @@ mod tests {
     fn test_from_blob_error_cases() {
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::BOOLEAN, &[]);
         assert!(result.is_err());
-        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
+        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
 
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::CHAR, &[]);
         assert!(result.is_err());
-        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
+        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
 
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::I4, &[1, 2]);
         assert!(result.is_err());
-        assert!(matches!(result, Err(crate::Error::OutOfBounds { .. })));
+        assert!(matches!(result, Err(Error::OutOfBounds { .. })));
 
         let result = CilPrimitiveData::from_bytes(ELEMENT_TYPE::STRING, &[]);
         assert!(result.is_ok());

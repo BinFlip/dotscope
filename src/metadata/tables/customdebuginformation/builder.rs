@@ -238,33 +238,31 @@ impl CustomDebugInformationBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let parent = self
-            .parent
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Parent coded index is required for CustomDebugInformation".to_string(),
-            })?;
+        let parent = self.parent.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Parent coded index is required for CustomDebugInformation".to_string(),
+            )
+        })?;
 
-        let kind = self
-            .kind
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Kind GUID index is required for CustomDebugInformation".to_string(),
-            })?;
+        let kind = self.kind.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Kind GUID index is required for CustomDebugInformation".to_string(),
+            )
+        })?;
 
-        let value = self
-            .value
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Value blob data is required for CustomDebugInformation".to_string(),
-            })?;
+        let value = self.value.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Value blob data is required for CustomDebugInformation".to_string(),
+            )
+        })?;
 
         // Validate that the parent uses a valid coded index type
         let valid_tables = CodedIndexType::HasCustomDebugInformation.tables();
         if !valid_tables.contains(&parent.tag) {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Invalid parent table {:?} for CustomDebugInformation. Must be a HasCustomDebugInformation coded index.",
-                    parent.tag
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Invalid parent table {:?} for CustomDebugInformation. Must be a HasCustomDebugInformation coded index.",
+                parent.tag
+            )));
         }
 
         let next_rid = context.next_rid(TableId::CustomDebugInformation);
@@ -405,10 +403,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Parent coded index is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -430,10 +428,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Kind GUID index is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -454,10 +452,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Value blob data is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

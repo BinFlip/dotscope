@@ -337,23 +337,17 @@ impl MethodSemanticsBuilder {
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
         // Validate required fields
-        let semantics = self
-            .semantics
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "MethodSemantics semantics field is required".to_string(),
-            })?;
+        let semantics = self.semantics.ok_or_else(|| {
+            Error::ModificationInvalid("MethodSemantics semantics field is required".to_string())
+        })?;
 
-        let method = self
-            .method
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "MethodSemantics method field is required".to_string(),
-            })?;
+        let method = self.method.ok_or_else(|| {
+            Error::ModificationInvalid("MethodSemantics method field is required".to_string())
+        })?;
 
-        let association = self
-            .association
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "MethodSemantics association field is required".to_string(),
-            })?;
+        let association = self.association.ok_or_else(|| {
+            Error::ModificationInvalid("MethodSemantics association field is required".to_string())
+        })?;
 
         // Get the next RID for MethodSemantics table
         let rid = context.next_rid(TableId::MethodSemantics);

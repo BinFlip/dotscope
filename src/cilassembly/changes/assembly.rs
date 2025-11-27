@@ -46,6 +46,7 @@ use std::collections::HashMap;
 
 use crate::{
     cilassembly::{HeapChanges, TableModifications},
+    malformed_error,
     metadata::{
         cilassemblyview::CilAssemblyView, exports::UnifiedExportContainer,
         imports::UnifiedImportContainer, tables::TableId,
@@ -411,7 +412,7 @@ impl AssemblyChanges {
             .values()
             .map(|body| {
                 let size = u32::try_from(body.len())
-                    .map_err(|_| crate::malformed_error!("Method body size exceeds u32 range"))?;
+                    .map_err(|_| malformed_error!("Method body size exceeds u32 range"))?;
                 // Align each method body to 4-byte boundary
                 Ok((size + 3) & !3)
             })

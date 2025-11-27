@@ -554,30 +554,24 @@ impl FieldMarshalBuilder {
 
         let parent = self
             .parent
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Marshal parent is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Marshal parent is required".to_string()))?;
 
-        let native_type = self
-            .native_type
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Native type descriptor is required".to_string(),
-            })?;
+        let native_type = self.native_type.ok_or_else(|| {
+            Error::ModificationInvalid("Native type descriptor is required".to_string())
+        })?;
 
         if native_type.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Native type descriptor cannot be empty".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Native type descriptor cannot be empty".to_string(),
+            ));
         }
 
         let valid_parent_tables = CodedIndexType::HasFieldMarshal.tables();
         if !valid_parent_tables.contains(&parent.tag) {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Parent must be a HasFieldMarshal coded index (Field/Param), got {:?}",
-                    parent.tag
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Parent must be a HasFieldMarshal coded index (Field/Param), got {:?}",
+                parent.tag
+            )));
         }
 
         // Add native type descriptor to blob heap

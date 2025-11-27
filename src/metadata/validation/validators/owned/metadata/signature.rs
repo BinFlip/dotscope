@@ -40,7 +40,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Method signature format violations (empty names, unresolved return types)
 //! - Parameter signature issues (excessively long names, unresolved types, excessive custom attributes)
 //! - Generic parameter violations (empty names, excessive lengths, invalid flags)
@@ -133,11 +133,11 @@ impl OwnedSignatureValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All method signature formats are valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Signature format violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Signature format violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Method names are empty
     /// - Return types are unresolved (Unknown type signatures)
     /// - Parameter names exceed maximum length (>255 characters)
@@ -152,13 +152,13 @@ impl OwnedSignatureValidator {
 
             // Validate method name is not empty (basic signature validation)
             if method.name.is_empty() {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Method with token 0x{:08X} has empty name",
                         entry.key().value()
                     ),
-                    source: None,
+
                 });
             }
 
@@ -166,10 +166,10 @@ impl OwnedSignatureValidator {
             if method.signature.return_type.base
                 == crate::metadata::signatures::TypeSignature::Unknown
             {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!("Method '{}' has unresolved return type", method.name),
-                    source: None,
+
                 });
             }
 
@@ -178,7 +178,7 @@ impl OwnedSignatureValidator {
                 // Validate parameter name is reasonable (if present)
                 if let Some(param_name) = &param.name {
                     if param_name.len() > 255 {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Method '{}' parameter {} has excessively long name ({} characters)",
@@ -186,33 +186,33 @@ impl OwnedSignatureValidator {
                                 param_index,
                                 param_name.len()
                             ),
-                            source: None,
+
                         });
                     }
                 }
 
                 // Validate parameter has resolved type (copied from method validator)
                 if param.base.get().is_none() {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' parameter {} has unresolved type",
                             method.name, param_index
                         ),
-                        source: None,
+
                     });
                 }
 
                 // Check for reasonable number of custom attributes on parameters
                 let custom_attr_count = param.custom_attributes.iter().count();
                 if custom_attr_count > 10 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' parameter {} has excessive custom attributes ({})",
                             method.name, param_index, custom_attr_count
                         ),
-                        source: None,
+
                     });
                 }
             }
@@ -221,36 +221,36 @@ impl OwnedSignatureValidator {
             for (_, generic_param) in method.generic_params.iter() {
                 // Validate generic parameter name
                 if generic_param.name.is_empty() {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' has generic parameter with empty name",
                             method.name
                         ),
-                        source: None,
+
                     });
                 }
 
                 if generic_param.name.len() > 255 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' generic parameter '{}' has excessively long name",
                             method.name, generic_param.name
                         ),
-                        source: None,
+
                     });
                 }
 
                 // Validate generic parameter flags are reasonable
                 if generic_param.flags > 0x001F {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' generic parameter '{}' has invalid flags: 0x{:04X}",
                             method.name, generic_param.name, generic_param.flags
                         ),
-                        source: None,
+
                     });
                 }
             }
@@ -278,11 +278,11 @@ impl OwnedSignatureValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All signature compatibility rules are followed
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Signature compatibility violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Signature compatibility violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Methods have excessive overloads (>1024) indicating potential complexity issues
     fn validate_signature_compatibility(&self, context: &OwnedValidationContext) -> Result<()> {
         // Track method signatures by type and name for proper overload counting
@@ -308,13 +308,13 @@ impl OwnedSignatureValidator {
             // Allow reasonable number of overloads as found in legitimate .NET libraries
             for (method_name, method_tokens) in type_method_signatures {
                 if method_tokens.len() > 1024 {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' in type '{}' has excessive overloads ({}), potential signature complexity issue",
                             method_name, type_rc.name, method_tokens.len()
                         ),
-                        source: None,
+
                     });
                 }
             }
@@ -373,7 +373,7 @@ mod tests {
         owned_validator_test(
             owned_signature_validator_file_factory,
             "OwnedSignatureValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

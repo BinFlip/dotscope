@@ -945,9 +945,7 @@ impl DotNetResourceEncoder {
                 return Err(Error::NotSupported);
             };
 
-            let data_size = resource_type
-                .data_size()
-                .ok_or(crate::Error::NotSupported)?;
+            let data_size = resource_type.data_size().ok_or(Error::NotSupported)?;
             data_offset += type_code_size + data_size;
         }
 
@@ -1064,7 +1062,7 @@ impl DotNetResourceEncoder {
                 ResourceType::TimeSpan(_) => 16u32,    // ResourceTypeCode.TimeSpan (0x10)
                 ResourceType::ByteArray(_) => 32u32,   // ResourceTypeCode.ByteArray (0x20)
                 ResourceType::Stream(_) => 33u32,      // ResourceTypeCode.Stream (0x21)
-                ResourceType::StartOfUserTypes => return Err(crate::Error::NotSupported),
+                ResourceType::StartOfUserTypes => return Err(Error::NotSupported),
             };
 
             // Write type code using 7-bit encoding (exactly like Microsoft's data.Write7BitEncodedInt)
@@ -1148,7 +1146,7 @@ impl DotNetResourceEncoder {
                     buffer.extend_from_slice(data);
                 }
                 ResourceType::StartOfUserTypes => {
-                    return Err(crate::Error::NotSupported);
+                    return Err(Error::NotSupported);
                 }
             }
         }

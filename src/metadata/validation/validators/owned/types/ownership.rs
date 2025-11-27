@@ -40,7 +40,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Nested type ownership violations (orphaned nested types, incorrect containment relationships)
 //! - Member ownership violations (methods or fields owned by incorrect types)
 //! - Generic parameter ownership inconsistencies (parameters owned by wrong types)
@@ -141,13 +141,13 @@ impl OwnedTypeOwnershipValidator {
                     if is_target_assembly_type {
                         // Basic nested type validation using available public APIs
                         if nested_type.name.is_empty() {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Nested type owned by '{}' has empty name",
                                     type_entry.name
                                 ),
-                                source: None,
+
                             });
                         }
 
@@ -159,25 +159,25 @@ impl OwnedTypeOwnershipValidator {
                         // Allow NotPublic (0) as it can be valid for nested types in some contexts
                         if nested_visibility > 7 {
                             // Beyond valid visibility range
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Nested type '{}' owned by '{}' has invalid visibility value: 0x{:02X}",
                                     nested_type.name, type_entry.name, nested_visibility
                                 ),
-                                source: None,
+
                             });
                         }
 
                         // Check for obviously invalid characters in nested type names
                         if nested_type.name.contains('\0') {
-                            return Err(Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Nested type '{}' owned by '{}' contains null character",
                                     nested_type.name, type_entry.name
                                 ),
-                                source: None,
+
                             });
                         }
                     }
@@ -206,13 +206,12 @@ impl OwnedTypeOwnershipValidator {
             for (_, method_ref) in type_entry.methods.iter() {
                 if let Some(method) = method_ref.upgrade() {
                     if method.name.is_empty() {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Method owned by type '{}' has empty name",
                                 type_entry.name
                             ),
-                            source: None,
                         });
                     }
                 }
@@ -221,13 +220,12 @@ impl OwnedTypeOwnershipValidator {
             // Validate field ownership - using direct field references
             for (_, field_ref) in type_entry.fields.iter() {
                 if field_ref.name.is_empty() {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Field owned by type '{}' has empty name",
                             type_entry.name
                         ),
-                        source: None,
                     });
                 }
 
@@ -235,13 +233,12 @@ impl OwnedTypeOwnershipValidator {
                 let field_visibility = field_ref.flags & 0x0007; // FieldAttributes visibility mask
                 if field_visibility > 6 {
                     // Invalid visibility value
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Field '{}' owned by type '{}' has invalid visibility: 0x{:02X}",
                             field_ref.name, type_entry.name, field_visibility
                         ),
-                        source: None,
                     });
                 }
             }
@@ -249,13 +246,12 @@ impl OwnedTypeOwnershipValidator {
             // Validate property ownership - using direct property references
             for (_, property_ref) in type_entry.properties.iter() {
                 if property_ref.name.is_empty() {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Property owned by type '{}' has empty name",
                             type_entry.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -263,13 +259,12 @@ impl OwnedTypeOwnershipValidator {
             // Validate event ownership - using direct event references
             for (_, event_ref) in type_entry.events.iter() {
                 if event_ref.name.is_empty() {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Event owned by type '{}' has empty name",
                             type_entry.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -290,7 +285,7 @@ impl OwnedTypeOwnershipValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All generic parameter ownership relationships are valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Ownership violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Ownership violations found
     fn validate_generic_parameter_ownership(&self, context: &OwnedValidationContext) -> Result<()> {
         for type_entry in context.all_types() {
             // Validate generic parameter ownership
@@ -302,25 +297,23 @@ impl OwnedTypeOwnershipValidator {
                 {
                     // Basic validation - check name is not empty
                     if generic_param.name.is_empty() {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' owns generic parameter at index {} with empty name",
                                 type_entry.name, param_index
                             ),
-                            source: None,
                         });
                     }
 
                     // Check for duplicate parameter names
                     if !param_names.insert(&generic_param.name) {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' has duplicate generic parameter name '{}'",
                                 type_entry.name, generic_param.name
                             ),
-                            source: None,
                         });
                     }
 
@@ -328,13 +321,13 @@ impl OwnedTypeOwnershipValidator {
                     if generic_param.constraints.count() > 0 {
                         for (_, constraint_ref) in generic_param.constraints.iter() {
                             if constraint_ref.upgrade().is_none() {
-                                return Err(Error::ValidationOwnedValidatorFailed {
+                                return Err(Error::ValidationOwnedFailed {
                                     validator: self.name().to_string(),
                                     message: format!(
                                         "Generic parameter '{}' in type '{}' has broken constraint reference",
                                         generic_param.name, type_entry.name
                                     ),
-                                    source: None,
+
                                 });
                             }
                         }
@@ -397,7 +390,7 @@ mod tests {
         owned_validator_test(
             owned_type_ownership_validator_file_factory,
             "OwnedTypeOwnershipValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

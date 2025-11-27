@@ -34,7 +34,7 @@ pub fn owned_signature_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error(
+        return Err(Error::Other(
             "crafted_2.exe not available - test cannot run".to_string(),
         ));
     };
@@ -65,17 +65,17 @@ pub fn owned_signature_validator_file_factory() -> Result<Vec<TestAssembly>> {
 /// Originally from: `src/metadata/validation/validators/owned/metadata/signature.rs`
 pub fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create type to contain the method
     let type_name_index = assembly
         .string_add("TypeWithEmptyMethodName")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -95,12 +95,12 @@ pub fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
     // Create method with empty name
     let empty_name_index = assembly
         .string_add("")
-        .map_err(|e| Error::Error(format!("Failed to add empty method name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add empty method name: {e}")))?;
 
     let signature_bytes = vec![0x00, 0x00]; // Default method signature (no parameters, void return)
     let signature_index = assembly
         .blob_add(&signature_bytes)
-        .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add signature: {e}")))?;
 
     let invalid_method = MethodDefRaw {
         rid: method_rid,
@@ -116,21 +116,21 @@ pub fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-        .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
 
     assembly
         .table_row_add(
             TableId::MethodDef,
             TableDataOwned::MethodDef(invalid_method),
         )
-        .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid method: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -140,17 +140,17 @@ pub fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/metadata/signature.rs`
 pub fn create_assembly_with_long_parameter_name() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create type to contain the method
     let type_name_index = assembly
         .string_add("TypeWithLongParameterName")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -171,13 +171,13 @@ pub fn create_assembly_with_long_parameter_name() -> Result<TestAssembly> {
     // Create method name
     let method_name_index = assembly
         .string_add("MethodWithLongParam")
-        .map_err(|e| Error::Error(format!("Failed to add method name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add method name: {e}")))?;
 
     // Create signature with one parameter
     let signature_bytes = vec![0x00, 0x01, 0x01, 0x08]; // 1 parameter, void return, I4 parameter
     let signature_index = assembly
         .blob_add(&signature_bytes)
-        .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add signature: {e}")))?;
 
     let method_def = MethodDefRaw {
         rid: method_rid,
@@ -195,7 +195,7 @@ pub fn create_assembly_with_long_parameter_name() -> Result<TestAssembly> {
     let long_param_name = "a".repeat(300); // 300 characters - should trigger validation failure
     let long_param_name_index = assembly
         .string_add(&long_param_name)
-        .map_err(|e| Error::Error(format!("Failed to add long parameter name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add long parameter name: {e}")))?;
 
     let invalid_param = ParamRaw {
         rid: param_rid,
@@ -208,22 +208,22 @@ pub fn create_assembly_with_long_parameter_name() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-        .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
 
     assembly
         .table_row_add(TableId::MethodDef, TableDataOwned::MethodDef(method_def))
-        .map_err(|e| Error::Error(format!("Failed to add method: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add method: {e}")))?;
 
     assembly
         .table_row_add(TableId::Param, TableDataOwned::Param(invalid_param))
-        .map_err(|e| Error::Error(format!("Failed to add invalid parameter: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid parameter: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -233,17 +233,17 @@ pub fn create_assembly_with_long_parameter_name() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/metadata/signature.rs`
 pub fn create_assembly_with_excessive_parameter_attributes() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create type to contain the method
     let type_name_index = assembly
         .string_add("TypeWithExcessiveParamAttrs")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -264,13 +264,13 @@ pub fn create_assembly_with_excessive_parameter_attributes() -> Result<TestAssem
     // Create method name
     let method_name_index = assembly
         .string_add("MethodWithExcessiveParamAttrs")
-        .map_err(|e| Error::Error(format!("Failed to add method name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add method name: {e}")))?;
 
     // Create signature with one parameter
     let signature_bytes = vec![0x00, 0x01, 0x01, 0x08]; // 1 parameter, void return, I4 parameter
     let signature_index = assembly
         .blob_add(&signature_bytes)
-        .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add signature: {e}")))?;
 
     let method_def = MethodDefRaw {
         rid: method_rid,
@@ -287,7 +287,7 @@ pub fn create_assembly_with_excessive_parameter_attributes() -> Result<TestAssem
     // Create parameter
     let param_name_index = assembly
         .string_add("paramWithManyAttrs")
-        .map_err(|e| Error::Error(format!("Failed to add parameter name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add parameter name: {e}")))?;
 
     let param = ParamRaw {
         rid: param_rid,
@@ -300,22 +300,22 @@ pub fn create_assembly_with_excessive_parameter_attributes() -> Result<TestAssem
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-        .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
 
     assembly
         .table_row_add(TableId::MethodDef, TableDataOwned::MethodDef(method_def))
-        .map_err(|e| Error::Error(format!("Failed to add method: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add method: {e}")))?;
 
     assembly
         .table_row_add(TableId::Param, TableDataOwned::Param(param))
-        .map_err(|e| Error::Error(format!("Failed to add parameter: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add parameter: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -325,17 +325,17 @@ pub fn create_assembly_with_excessive_parameter_attributes() -> Result<TestAssem
 /// Originally from: `src/metadata/validation/validators/owned/metadata/signature.rs`
 pub fn create_assembly_with_unresolved_return_type() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create type to contain the method
     let type_name_index = assembly
         .string_add("TypeWithUnresolvedReturnType")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -355,7 +355,7 @@ pub fn create_assembly_with_unresolved_return_type() -> Result<TestAssembly> {
     // Create method name
     let method_name_index = assembly
         .string_add("MethodWithUnresolvedReturnType")
-        .map_err(|e| Error::Error(format!("Failed to add method name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add method name: {e}")))?;
 
     // Create invalid signature blob with unresolved return type
     // Format: [calling_convention, param_count, return_type, ...params]
@@ -368,7 +368,7 @@ pub fn create_assembly_with_unresolved_return_type() -> Result<TestAssembly> {
     ];
     let signature_index = assembly
         .blob_add(&invalid_signature_bytes)
-        .map_err(|e| Error::Error(format!("Failed to add invalid signature: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid signature: {e}")))?;
 
     let invalid_method = MethodDefRaw {
         rid: method_rid,
@@ -384,21 +384,21 @@ pub fn create_assembly_with_unresolved_return_type() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-        .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
 
     assembly
         .table_row_add(
             TableId::MethodDef,
             TableDataOwned::MethodDef(invalid_method),
         )
-        .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid method: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -408,17 +408,17 @@ pub fn create_assembly_with_unresolved_return_type() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/metadata/signature.rs`
 pub fn create_assembly_with_unresolved_parameter_type() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create type to contain the method
     let type_name_index = assembly
         .string_add("TypeWithUnresolvedParamType")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -439,7 +439,7 @@ pub fn create_assembly_with_unresolved_parameter_type() -> Result<TestAssembly> 
     // Create method name
     let method_name_index = assembly
         .string_add("MethodWithUnresolvedParamType")
-        .map_err(|e| Error::Error(format!("Failed to add method name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add method name: {e}")))?;
 
     // Create invalid signature blob with unresolved parameter type
     // Format: [calling_convention, param_count, return_type, param1_type, ...]
@@ -453,7 +453,7 @@ pub fn create_assembly_with_unresolved_parameter_type() -> Result<TestAssembly> 
     ];
     let signature_index = assembly
         .blob_add(&invalid_signature_bytes)
-        .map_err(|e| Error::Error(format!("Failed to add invalid signature: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid signature: {e}")))?;
 
     let invalid_method = MethodDefRaw {
         rid: method_rid,
@@ -470,7 +470,7 @@ pub fn create_assembly_with_unresolved_parameter_type() -> Result<TestAssembly> 
     // Create parameter with name (the signature is what has the unresolved type)
     let param_name_index = assembly
         .string_add("unresolvedParam")
-        .map_err(|e| Error::Error(format!("Failed to add parameter name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add parameter name: {e}")))?;
 
     let param = ParamRaw {
         rid: param_rid,
@@ -483,25 +483,25 @@ pub fn create_assembly_with_unresolved_parameter_type() -> Result<TestAssembly> 
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-        .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
 
     assembly
         .table_row_add(
             TableId::MethodDef,
             TableDataOwned::MethodDef(invalid_method),
         )
-        .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid method: {e}")))?;
 
     assembly
         .table_row_add(TableId::Param, TableDataOwned::Param(param))
-        .map_err(|e| Error::Error(format!("Failed to add parameter: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add parameter: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }

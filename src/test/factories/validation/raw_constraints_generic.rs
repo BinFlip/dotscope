@@ -47,7 +47,7 @@ pub fn raw_generic_constraint_validator_file_factory() -> Result<Vec<TestAssembl
             ));
         }
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create test assembly with invalid parameter flags: {e}"
             )));
         }
@@ -62,7 +62,7 @@ pub fn raw_generic_constraint_validator_file_factory() -> Result<Vec<TestAssembl
             ));
         }
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create test assembly with null constraint owner: {e}"
             )));
         }
@@ -77,7 +77,7 @@ pub fn raw_generic_constraint_validator_file_factory() -> Result<Vec<TestAssembl
             ));
         }
         Err(e) => {
-            return Err(Error::Error(format!(
+            return Err(Error::Other(format!(
                 "Failed to create test assembly with constraint owner exceeding bounds: {e}"
             )));
         }
@@ -92,7 +92,7 @@ pub fn raw_generic_constraint_validator_file_factory() -> Result<Vec<TestAssembl
 /// Originally from: `src/metadata/validation/validators/raw/constraints/generic.rs`
 pub fn create_assembly_with_null_constraint_owner() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        .ok_or_else(|| Error::Other("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -151,7 +151,7 @@ pub fn create_assembly_with_null_constraint_owner() -> Result<NamedTempFile> {
 /// Originally from: `src/metadata/validation/validators/raw/constraints/generic.rs`
 pub fn create_assembly_with_constraint_owner_exceeding_bounds() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        .ok_or_else(|| Error::Other("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -210,7 +210,7 @@ pub fn create_assembly_with_constraint_owner_exceeding_bounds() -> Result<NamedT
 /// Originally from: `src/metadata/validation/validators/raw/constraints/generic.rs`
 pub fn create_assembly_with_invalid_parameter_flags() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_wb()
-        .ok_or_else(|| Error::Error("WindowsBase.dll not available".to_string()))?;
+        .ok_or_else(|| Error::Other("WindowsBase.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);

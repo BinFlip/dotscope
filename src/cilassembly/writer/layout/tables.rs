@@ -222,7 +222,7 @@ use crate::{
 ///
 /// # Errors
 ///
-/// Returns [`crate::Error::WriteLayoutFailed`] if:
+/// Returns [`crate::Error::LayoutFailed`] if:
 /// - Table information is unavailable in the assembly
 /// - Table schema information cannot be accessed
 /// - Row size calculations fail due to invalid table structure
@@ -282,8 +282,8 @@ pub fn calculate_table_stream_expansion(assembly: &CilAssembly) -> Result<u64> {
     let changes = assembly.changes();
     let view = assembly.view();
 
-    let tables = view.tables().ok_or_else(|| Error::WriteLayoutFailed {
-        message: "No tables found in assembly for expansion calculation".to_string(),
+    let tables = view.tables().ok_or_else(|| {
+        Error::LayoutFailed("No tables found in assembly for expansion calculation".to_string())
     })?;
 
     let mut total_expansion = 0u64;
@@ -383,7 +383,7 @@ pub fn calculate_table_stream_expansion(assembly: &CilAssembly) -> Result<u64> {
 ///
 /// # Errors
 ///
-/// Returns [`crate::Error::WriteLayoutFailed`] if:
+/// Returns [`crate::Error::LayoutFailed`] if:
 /// - Table information is unavailable in the assembly
 /// - Original table data cannot be accessed
 /// - Row count calculations overflow u32 bounds
@@ -442,9 +442,9 @@ pub fn calculate_new_row_count(
         TableModifications::Replaced(rows) => Ok(u32::try_from(rows.len()).unwrap_or(0)),
         TableModifications::Sparse { operations, .. } => {
             let view = assembly.view();
-            let tables = view.tables().ok_or_else(|| Error::WriteLayoutFailed {
-                message: "No tables found".to_string(),
-            })?;
+            let tables = view
+                .tables()
+                .ok_or_else(|| Error::LayoutFailed("No tables found".to_string()))?;
             let original_count = tables.table_row_count(table_id);
 
             // This is a simplified calculation - in a real implementation,

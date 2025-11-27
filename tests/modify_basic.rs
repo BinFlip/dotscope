@@ -79,7 +79,7 @@ fn test_write_with_minimal_modification() -> Result<()> {
 
     let strings = written_view
         .strings()
-        .ok_or_else(|| Error::Error("Written assembly should have strings heap".to_string()))?;
+        .ok_or_else(|| Error::Other("Written assembly should have strings heap".to_string()))?;
 
     // Verify our modification is present
     let found = strings.iter().any(|(_, s)| s == test_string);

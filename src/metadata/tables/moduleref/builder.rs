@@ -172,16 +172,14 @@ impl ModuleRefBuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let name = self
-            .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Module name is required for ModuleRef".to_string(),
-            })?;
+        let name = self.name.ok_or_else(|| {
+            Error::ModificationInvalid("Module name is required for ModuleRef".to_string())
+        })?;
 
         if name.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Module name cannot be empty for ModuleRef".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Module name cannot be empty for ModuleRef".to_string(),
+            ));
         }
 
         let name_index = context.string_get_or_add(&name)?;

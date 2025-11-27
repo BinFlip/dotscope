@@ -108,7 +108,7 @@ impl FailFastBarrier {
     /// ```
     pub fn new(count: usize) -> Result<Self> {
         if count == 0 {
-            return Err(Error::Error(
+            return Err(Error::LockError(
                 "FailFastBarrier count must be greater than 0".to_string(),
             ));
         }
@@ -163,7 +163,7 @@ impl FailFastBarrier {
         {
             let guard = self.state.lock().unwrap();
             if let Some(msg) = guard.as_ref() {
-                return Err(Error::Error(format!("Barrier was broken: {}", msg)));
+                return Err(Error::LockError(format!("Barrier was broken: {}", msg)));
             }
         }
 
@@ -185,7 +185,7 @@ impl FailFastBarrier {
                 .unwrap();
 
             if let Some(msg) = guard.as_ref() {
-                Err(Error::Error(format!("Barrier was broken: {}", msg)))
+                Err(Error::LockError(format!("Barrier was broken: {}", msg)))
             } else {
                 Ok(())
             }

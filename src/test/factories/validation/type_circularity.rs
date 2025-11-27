@@ -29,7 +29,7 @@ pub fn owned_type_circularity_validator_file_factory() -> Result<Vec<TestAssembl
     let mut assemblies = Vec::new();
 
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     assemblies.push(TestAssembly::new(&clean_testfile, true));
 
@@ -87,7 +87,7 @@ pub fn owned_type_circularity_validator_file_factory() -> Result<Vec<TestAssembl
 /// Originally from: `src/metadata/validation/validators/owned/types/circularity.rs`
 pub fn create_assembly_with_inheritance_circularity() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -144,7 +144,7 @@ pub fn create_assembly_with_inheritance_circularity() -> Result<NamedTempFile> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)
@@ -157,7 +157,7 @@ pub fn create_assembly_with_inheritance_circularity() -> Result<NamedTempFile> {
 /// Originally from: `src/metadata/validation/validators/owned/types/circularity.rs`
 pub fn create_assembly_with_nested_type_circularity() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -188,7 +188,7 @@ pub fn create_assembly_with_nested_type_circularity() -> Result<NamedTempFile> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)
@@ -201,7 +201,7 @@ pub fn create_assembly_with_nested_type_circularity() -> Result<NamedTempFile> {
 /// Originally from: `src/metadata/validation/validators/owned/types/circularity.rs`
 pub fn create_assembly_with_interface_circularity() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -240,7 +240,7 @@ pub fn create_assembly_with_interface_circularity() -> Result<NamedTempFile> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)
@@ -253,7 +253,7 @@ pub fn create_assembly_with_interface_circularity() -> Result<NamedTempFile> {
 /// Originally from: `src/metadata/validation/validators/owned/types/circularity.rs`
 pub fn create_assembly_with_depth_limit_violation() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -283,7 +283,7 @@ pub fn create_assembly_with_depth_limit_violation() -> Result<NamedTempFile> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)

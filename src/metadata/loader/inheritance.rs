@@ -59,7 +59,7 @@ impl MetadataLoader for InheritanceResolver {
                                     | CilTypeReference::TypeRef(type_ref)
                                     | CilTypeReference::TypeSpec(type_ref) => {
                                         let base_type_ref = type_ref.upgrade().ok_or_else(|| {
-                                            Error::Error(format!(
+                                            Error::TypeError(format!(
                                                 "InheritanceResolver: Type reference was dropped for type {}",
                                                 type_def.fullname()
                                             ))

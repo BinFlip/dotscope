@@ -188,18 +188,18 @@ impl AssemblyRefProcessorBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let processor = self
-            .processor
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Processor architecture identifier is required for AssemblyRefProcessor"
+        let processor = self.processor.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Processor architecture identifier is required for AssemblyRefProcessor"
                     .to_string(),
-            })?;
+            )
+        })?;
 
-        let assembly_ref =
-            self.assembly_ref
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "AssemblyRef RID is required for AssemblyRefProcessor".to_string(),
-                })?;
+        let assembly_ref = self.assembly_ref.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "AssemblyRef RID is required for AssemblyRefProcessor".to_string(),
+            )
+        })?;
 
         let next_rid = context.next_rid(TableId::AssemblyRefProcessor);
         let token_value = ((TableId::AssemblyRefProcessor as u32) << 24) | next_rid;
@@ -323,10 +323,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Processor architecture identifier is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -341,10 +341,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("AssemblyRef RID is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

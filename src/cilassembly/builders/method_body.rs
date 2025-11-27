@@ -86,27 +86,23 @@ fn resolve_labeled_exception_handler(
 
     // Calculate lengths
     if try_end_offset < try_start_offset {
-        return Err(Error::ModificationInvalidOperation {
-            details: format!(
-                "Try end label '{}' (at {}) is before try start label '{}' (at {})",
-                labeled_handler.try_end_label,
-                try_end_offset,
-                labeled_handler.try_start_label,
-                try_start_offset
-            ),
-        });
+        return Err(Error::ModificationInvalid(format!(
+            "Try end label '{}' (at {}) is before try start label '{}' (at {})",
+            labeled_handler.try_end_label,
+            try_end_offset,
+            labeled_handler.try_start_label,
+            try_start_offset
+        )));
     }
 
     if handler_end_offset < handler_start_offset {
-        return Err(Error::ModificationInvalidOperation {
-            details: format!(
-                "Handler end label '{}' (at {}) is before handler start label '{}' (at {})",
-                labeled_handler.handler_end_label,
-                handler_end_offset,
-                labeled_handler.handler_start_label,
-                handler_start_offset
-            ),
-        });
+        return Err(Error::ModificationInvalid(format!(
+            "Handler end label '{}' (at {}) is before handler start label '{}' (at {})",
+            labeled_handler.handler_end_label,
+            handler_end_offset,
+            labeled_handler.handler_start_label,
+            handler_start_offset
+        )));
     }
 
     let try_length = try_end_offset - try_start_offset;
@@ -160,52 +156,46 @@ fn validate_exception_handler_ranges(handlers: &[ExceptionHandler], code_size: u
         let try_end = handler
             .try_offset
             .checked_add(handler.try_length)
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: format!(
+            .ok_or_else(|| {
+                Error::ModificationInvalid(format!(
                     "Exception handler {}: try block range overflow (offset {} + length {})",
                     index, handler.try_offset, handler.try_length
-                ),
+                ))
             })?;
 
         if try_end > code_size {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Exception handler {}: try block exceeds code size (offset {} + length {} = {}, code size = {})",
-                    index, handler.try_offset, handler.try_length, try_end, code_size
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Exception handler {}: try block exceeds code size (offset {} + length {} = {}, code size = {})",
+                index, handler.try_offset, handler.try_length, try_end, code_size
+            )));
         }
 
         // Validate handler block range
         let handler_end = handler
             .handler_offset
             .checked_add(handler.handler_length)
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: format!(
+            .ok_or_else(|| {
+                Error::ModificationInvalid(format!(
                     "Exception handler {}: handler block range overflow (offset {} + length {})",
                     index, handler.handler_offset, handler.handler_length
-                ),
+                ))
             })?;
 
         if handler_end > code_size {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Exception handler {}: handler block exceeds code size (offset {} + length {} = {}, code size = {})",
-                    index, handler.handler_offset, handler.handler_length, handler_end, code_size
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Exception handler {}: handler block exceeds code size (offset {} + length {} = {}, code size = {})",
+                index, handler.handler_offset, handler.handler_length, handler_end, code_size
+            )));
         }
 
         // Validate filter offset for FILTER handlers
         if handler.flags.contains(ExceptionHandlerFlags::FILTER)
             && handler.filter_offset >= code_size
         {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Exception handler {}: filter offset {} exceeds code size {}",
-                    index, handler.filter_offset, code_size
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Exception handler {}: filter offset {} exceeds code size {}",
+                index, handler.filter_offset, code_size
+            )));
         }
     }
 
@@ -754,8 +744,8 @@ impl MethodBodyBuilder {
         } = self;
 
         // Must have an implementation
-        let implementation = implementation.ok_or_else(|| Error::ModificationInvalidOperation {
-            details: "Method body implementation is required".to_string(),
+        let implementation = implementation.ok_or_else(|| {
+            Error::ModificationInvalid("Method body implementation is required".to_string())
         })?;
 
         // Generate the CIL bytecode with automatic stack tracking

@@ -121,15 +121,15 @@ impl<'a> ReferenceValidator<'a> {
     /// # Errors
     ///
     /// Returns [`crate::Error`] in the following cases:
-    /// - [`crate::Error::ValidationInvalidRid`] - If a referenced token doesn't exist
-    /// - [`crate::Error::ValidationTokenError`] - If a token type is invalid
+    /// - [`crate::Error::InvalidRid`] - If a referenced token doesn't exist
+    /// - [`crate::Error::InvalidToken`] - If a token type is invalid
     pub fn validate_token_references<I>(&self, tokens: I) -> Result<()>
     where
         I: IntoIterator<Item = Token>,
     {
         for token in tokens {
             if !self.scanner.token_exists(token) {
-                return Err(Error::ValidationInvalidRid {
+                return Err(Error::InvalidRid {
                     table: TableId::from_token_type(token.table()).unwrap_or(TableId::Module),
                     rid: token.row(),
                 });
@@ -156,7 +156,7 @@ impl<'a> ReferenceValidator<'a> {
     /// Returns an error if the token does not exist or if any referenced tokens are invalid.
     pub fn validate_token_integrity(&self, token: Token) -> Result<()> {
         if !self.scanner.token_exists(token) {
-            return Err(Error::ValidationInvalidRid {
+            return Err(Error::InvalidRid {
                 table: TableId::from_token_type(token.table()).unwrap_or(TableId::Module),
                 rid: token.row(),
             });
@@ -166,7 +166,7 @@ impl<'a> ReferenceValidator<'a> {
         if let Some(outgoing_refs) = self.scanner.references_from(token) {
             for &referenced_token in outgoing_refs {
                 if !self.scanner.token_exists(referenced_token) {
-                    return Err(Error::ValidationInvalidRid {
+                    return Err(Error::InvalidRid {
                         table: TableId::from_token_type(referenced_token.table())
                             .unwrap_or(TableId::Module),
                         rid: referenced_token.row(),
@@ -179,7 +179,7 @@ impl<'a> ReferenceValidator<'a> {
         if let Some(incoming_refs) = self.scanner.references_to(token) {
             for &referencing_token in incoming_refs {
                 if !self.scanner.token_exists(referencing_token) {
-                    return Err(Error::ValidationInvalidRid {
+                    return Err(Error::InvalidRid {
                         table: TableId::from_token_type(referencing_token.table())
                             .unwrap_or(TableId::Module),
                         rid: referencing_token.row(),
@@ -295,11 +295,9 @@ impl<'a> ReferenceValidator<'a> {
                 .references_to(token)
                 .map_or(0, std::collections::HashSet::len);
             let token_value = token.value();
-            return Err(Error::ValidationCrossReferenceError {
-                message: format!(
-                    "Cannot delete token {token_value:#x}: {ref_count} references would be broken"
-                ),
-            });
+            return Err(Error::CrossReferenceError(format!(
+                "Cannot delete token {token_value:#x}: {ref_count} references would be broken"
+            )));
         }
         Ok(())
     }
@@ -383,11 +381,9 @@ impl<'a> ReferenceValidator<'a> {
                 if !self.scanner.token_exists(referenced_token) {
                     let from_token = token.value();
                     let to_token = referenced_token.value();
-                    return Err(Error::ValidationCrossReferenceError {
-                        message: format!(
-                            "Forward reference from {from_token:#x} to non-existent token {to_token:#x}"
-                        ),
-                    });
+                    return Err(Error::CrossReferenceError(format!(
+                        "Forward reference from {from_token:#x} to non-existent token {to_token:#x}"
+                    )));
                 }
             }
         }
@@ -418,14 +414,14 @@ impl<'a> ReferenceValidator<'a> {
         child_token: Token,
     ) -> Result<()> {
         if !self.scanner.token_exists(parent_token) {
-            return Err(Error::ValidationInvalidRid {
+            return Err(Error::InvalidRid {
                 table: TableId::from_token_type(parent_token.table()).unwrap_or(TableId::Module),
                 rid: parent_token.row(),
             });
         }
 
         if !self.scanner.token_exists(child_token) {
-            return Err(Error::ValidationInvalidRid {
+            return Err(Error::InvalidRid {
                 table: TableId::from_token_type(child_token.table()).unwrap_or(TableId::Module),
                 rid: child_token.row(),
             });
@@ -433,22 +429,18 @@ impl<'a> ReferenceValidator<'a> {
 
         if parent_token == child_token {
             let token_value = parent_token.value();
-            return Err(Error::ValidationCrossReferenceError {
-                message: format!(
-                    "Self-referential parent-child relationship detected for token {token_value:#x}"
-                ),
-            });
+            return Err(Error::CrossReferenceError(format!(
+                "Self-referential parent-child relationship detected for token {token_value:#x}"
+            )));
         }
 
         if let Some(parent_references) = self.scanner.references_from(child_token) {
             if parent_references.contains(&parent_token) {
                 let parent_value = parent_token.value();
                 let child_value = child_token.value();
-                return Err(Error::ValidationCrossReferenceError {
-                    message: format!(
-                        "Circular parent-child relationship detected between {parent_value:#x} and {child_value:#x}"
-                    ),
-                });
+                return Err(Error::CrossReferenceError(format!(
+                    "Circular parent-child relationship detected between {parent_value:#x} and {child_value:#x}"
+                )));
             }
         }
 
@@ -481,14 +473,14 @@ impl<'a> ReferenceValidator<'a> {
         nested_token: Token,
     ) -> Result<()> {
         if !self.scanner.token_exists(enclosing_token) {
-            return Err(Error::ValidationInvalidRid {
+            return Err(Error::InvalidRid {
                 table: TableId::from_token_type(enclosing_token.table()).unwrap_or(TableId::Module),
                 rid: enclosing_token.row(),
             });
         }
 
         if !self.scanner.token_exists(nested_token) {
-            return Err(Error::ValidationInvalidRid {
+            return Err(Error::InvalidRid {
                 table: TableId::from_token_type(nested_token.table()).unwrap_or(TableId::Module),
                 rid: nested_token.row(),
             });
@@ -496,11 +488,9 @@ impl<'a> ReferenceValidator<'a> {
 
         if enclosing_token == nested_token {
             let token_value = enclosing_token.value();
-            return Err(Error::ValidationCrossReferenceError {
-                message: format!(
-                    "Self-referential nested class relationship detected for token {token_value:#x}"
-                ),
-            });
+            return Err(Error::CrossReferenceError(format!(
+                "Self-referential nested class relationship detected for token {token_value:#x}"
+            )));
         }
 
         // For nested class validation, we need to check if the enclosing class

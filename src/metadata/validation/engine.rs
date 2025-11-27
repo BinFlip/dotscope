@@ -363,13 +363,13 @@ impl ValidationEngine {
             active_validators
                 .par_iter()
                 .map(|validator| {
-                    let validator_result = validator.validate_raw(&context).map_err(|e| {
-                        Error::ValidationRawValidatorFailed {
-                            validator: validator.name().to_string(),
-                            message: e.to_string(),
-                            source: Some(Box::new(e)),
-                        }
-                    });
+                    let validator_result =
+                        validator
+                            .validate_raw(&context)
+                            .map_err(|e| Error::ValidationRawFailed {
+                                validator: validator.name().to_string(),
+                                message: e.to_string(),
+                            });
                     (validator.name(), validator_result)
                 })
                 .collect()
@@ -426,10 +426,9 @@ impl ValidationEngine {
                 .par_iter()
                 .map(|validator| {
                     let validator_result = validator.validate_owned(&context).map_err(|e| {
-                        Error::ValidationOwnedValidatorFailed {
+                        Error::ValidationOwnedFailed {
                             validator: validator.name().to_string(),
                             message: e.to_string(),
-                            source: Some(Box::new(e)),
                         }
                     });
                     (validator.name(), validator_result)
@@ -714,7 +713,7 @@ mod tests {
         // Note: This is testing that all raw validators can be instantiated
     }
 
-    /// Test that owned validator creation doesn't panic and validators have unique names  
+    /// Test that owned validator creation doesn't panic and validators have unique names
     #[test]
     fn test_owned_validators_creation_and_uniqueness() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());

@@ -539,7 +539,7 @@ pub(crate) fn execute_loaders_in_parallel(
                             .types
                             .redirect_typeref_to_typedef(type_rc.token, &canonical_typedef)
                         {
-                            return Err(Error::Error(format!(
+                            return Err(Error::TypeError(format!(
                                 "Failed to redirect TypeRef {}",
                                 &type_rc.fullname()
                             )));

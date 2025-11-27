@@ -23,7 +23,7 @@ pub fn owned_security_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error(
+        return Err(Error::Other(
             "crafted_2.exe not available - test cannot run".to_string(),
         ));
     };
@@ -66,7 +66,7 @@ pub fn owned_security_validator_file_factory() -> Result<Vec<TestAssembly>> {
 /// Originally from: `src/metadata/validation/validators/owned/system/security.rs`
 pub fn create_assembly_with_invalid_security_action() -> Result<NamedTempFile> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
 
     let view = CilAssemblyView::from_path(&clean_testfile)?;
@@ -103,7 +103,7 @@ pub fn create_assembly_with_invalid_security_action() -> Result<NamedTempFile> {
 /// Originally from: `src/metadata/validation/validators/owned/system/security.rs`
 pub fn create_assembly_with_malformed_permission_set() -> Result<NamedTempFile> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
 
     let view = CilAssemblyView::from_path(&clean_testfile)?;
@@ -148,7 +148,7 @@ pub fn create_assembly_with_malformed_permission_set() -> Result<NamedTempFile> 
 /// Originally from: `src/metadata/validation/validators/owned/system/security.rs`
 pub fn create_assembly_with_conflicting_security_attributes() -> Result<NamedTempFile> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
 
     let view = CilAssemblyView::from_path(&clean_testfile)?;
@@ -174,7 +174,7 @@ pub fn create_assembly_with_conflicting_security_attributes() -> Result<NamedTem
 /// Originally from: `src/metadata/validation/validators/owned/system/security.rs`
 pub fn create_assembly_with_security_transparency_violations() -> Result<NamedTempFile> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
 
     let view = CilAssemblyView::from_path(&clean_testfile)?;

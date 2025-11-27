@@ -88,7 +88,7 @@ impl CSharpCompiler {
         // Create source file
         let source_file = output_path.with_extension("cs");
         std::fs::write(&source_file, source_code)
-            .map_err(|e| Error::Error(format!("Failed to write source file: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to write source file: {}", e)))?;
 
         // Compile using the appropriate strategy
         // For dotnet, we need to use .dll extension because that's what the SDK produces
@@ -169,7 +169,7 @@ impl CSharpCompiler {
 
         cmd.arg(source_file);
         cmd.output()
-            .map_err(|e| Error::Error(format!("Failed to execute csc: {}", e)))
+            .map_err(|e| Error::Other(format!("Failed to execute csc: {}", e)))
     }
 
     /// Compile using modern dotnet CLI
@@ -197,7 +197,7 @@ impl CSharpCompiler {
             std::fs::remove_dir_all(&temp_project_dir).ok();
         }
         std::fs::create_dir_all(&temp_project_dir)
-            .map_err(|e| Error::Error(format!("Failed to create temp project dir: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to create temp project dir: {}", e)))?;
 
         // Determine target platform based on architecture
         let platform_target = match arch.name.as_str() {
@@ -230,12 +230,12 @@ impl CSharpCompiler {
         let csproj_name = format!("{}.csproj", project_name);
         let project_file = temp_project_dir.join(&csproj_name);
         std::fs::write(&project_file, project_content)
-            .map_err(|e| Error::Error(format!("Failed to write project file: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to write project file: {}", e)))?;
 
         // Copy source file as Program.cs
         let program_cs = temp_project_dir.join("Program.cs");
         std::fs::copy(source_file, &program_cs)
-            .map_err(|e| Error::Error(format!("Failed to copy source: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to copy source: {}", e)))?;
 
         // Build the project without --output flag to avoid dotnet SDK issues
         // with scanning the output directory for .cs files
@@ -248,7 +248,7 @@ impl CSharpCompiler {
 
         let build_output = build_cmd
             .output()
-            .map_err(|e| Error::Error(format!("Failed to execute dotnet build: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to execute dotnet build: {}", e)))?;
 
         // Find and copy the built files to expected location
         // The build output is in temp_project_dir/bin/Release/net8.0/
@@ -309,7 +309,7 @@ impl CSharpCompiler {
 
         cmd.arg(source_file);
         cmd.output()
-            .map_err(|e| Error::Error(format!("Failed to execute mcs: {}", e)))
+            .map_err(|e| Error::Other(format!("Failed to execute mcs: {}", e)))
     }
 
     /// Compile source code for multiple architectures

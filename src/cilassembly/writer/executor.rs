@@ -83,7 +83,7 @@
 //!
 //! The executor provides comprehensive error handling:
 //!
-//! - [`crate::Error::WriteLayoutFailed`] - When operation validation fails or I/O errors occur
+//! - [`crate::Error::LayoutFailed`] - When operation validation fails or I/O errors occur
 //! - [`crate::Error::WriteFailed`] - When file writing operations encounter system errors
 //! - [`crate::Error::MemoryMappingFailed`] - When memory-mapped file operations fail
 //!
@@ -192,7 +192,7 @@ use crate::{
 /// # let mut output = Output::create(output_path, layout.total_file_size)?;
 /// match WriteExecutor::execute(&layout, &mut output, &assembly) {
 ///     Ok(()) => println!("Execution completed successfully"),
-///     Err(Error::WriteLayoutFailed { message }) => {
+///     Err(Error::LayoutFailed(message)) => {
 ///         eprintln!("Operation failed: {}", message);
 ///     },
 ///     Err(e) => eprintln!("Other error: {}", e),
@@ -224,7 +224,7 @@ impl WriteExecutor {
     ///
     /// This function returns [`crate::Error`] in the following cases:
     ///
-    /// - [`crate::Error::WriteLayoutFailed`] - When operation validation fails, bounds checking fails, or I/O errors occur
+    /// - [`crate::Error::LayoutFailed`] - When operation validation fails, bounds checking fails, or I/O errors occur
     /// - [`crate::Error::WriteFailed`] - When file writing operations encounter system-level errors
     /// - [`crate::Error::MemoryMappingFailed`] - When memory-mapped file operations fail
     ///
@@ -329,7 +329,7 @@ impl WriteExecutor {
     ///
     /// # Errors
     ///
-    /// - [`crate::Error::WriteLayoutFailed`] - When source data cannot be read or target cannot be written
+    /// - [`crate::Error::LayoutFailed`] - When source data cannot be read or target cannot be written
     ///
     /// Each error includes the operation index and description for debugging.
     fn execute_copy_operations(
@@ -372,33 +372,33 @@ impl WriteExecutor {
         let source_data = assembly
             .file()
             .data_slice(
-                usize::try_from(operation.source_offset).map_err(|_| Error::WriteLayoutFailed {
-                    message: format!(
+                usize::try_from(operation.source_offset).map_err(|_| {
+                    Error::LayoutFailed(format!(
                         "Source offset {} exceeds usize range",
                         operation.source_offset
-                    ),
+                    ))
                 })?,
-                usize::try_from(operation.size).map_err(|_| Error::WriteLayoutFailed {
-                    message: format!("Size {} exceeds usize range", operation.size),
+                usize::try_from(operation.size).map_err(|_| {
+                    Error::LayoutFailed(format!("Size {} exceeds usize range", operation.size))
                 })?,
             )
-            .map_err(|e| Error::WriteLayoutFailed {
-                message: format!(
+            .map_err(|e| {
+                Error::LayoutFailed(format!(
                     "Failed to read source data: {size} bytes from 0x{offset:X}: {e}",
                     size = operation.size,
                     offset = operation.source_offset
-                ),
+                ))
             })?;
 
         output
             .write_at(operation.target_offset, source_data)
-            .map_err(|e| Error::WriteLayoutFailed {
-                message: format!(
+            .map_err(|e| {
+                Error::LayoutFailed(format!(
                     "Copy operation failed: {size} bytes from 0x{source_offset:X} to 0x{target_offset:X}: {e}",
                     size = operation.size,
                     source_offset = operation.source_offset,
                     target_offset = operation.target_offset
-                ),
+                ))
             })
     }
 
@@ -444,12 +444,12 @@ impl WriteExecutor {
 
         output
             .zero_range(operation.offset, operation.size)
-            .map_err(|e| Error::WriteLayoutFailed {
-                message: format!(
+            .map_err(|e| {
+                Error::LayoutFailed(format!(
                     "Zero operation failed: {size} bytes at 0x{offset:X}: {e}",
                     size = operation.size,
                     offset = operation.offset
-                ),
+                ))
             })
     }
 
@@ -496,13 +496,13 @@ impl WriteExecutor {
 
         output
             .write_at(operation.offset, &operation.data)
-            .map_err(|e| Error::WriteLayoutFailed {
-                message: format!(
+            .map_err(|e| {
+                Error::LayoutFailed(format!(
                     "Write operation failed: {} bytes at 0x{:X}: {}",
                     operation.data.len(),
                     operation.offset,
                     e
-                ),
+                ))
             })
     }
 
@@ -531,47 +531,39 @@ impl WriteExecutor {
     fn validate_execution_compatibility(layout: &WriteLayout, output: &Output) -> Result<()> {
         let output_size = output.size();
         if output_size != layout.total_file_size {
-            return Err(Error::WriteLayoutFailed {
-                message: format!(
-                    "Output size mismatch: layout expects {} bytes, output has {} bytes",
-                    layout.total_file_size, output_size
-                ),
-            });
+            return Err(Error::LayoutFailed(format!(
+                "Output size mismatch: layout expects {} bytes, output has {} bytes",
+                layout.total_file_size, output_size
+            )));
         }
 
         for operation in &layout.operations.copy {
             let end_offset = operation.target_offset + operation.size;
             if end_offset > layout.total_file_size {
-                return Err(Error::WriteLayoutFailed {
-                    message: format!(
-                        "Copy operation extends beyond file: {} > {}",
-                        end_offset, layout.total_file_size
-                    ),
-                });
+                return Err(Error::LayoutFailed(format!(
+                    "Copy operation extends beyond file: {} > {}",
+                    end_offset, layout.total_file_size
+                )));
             }
         }
 
         for operation in &layout.operations.zero {
             let end_offset = operation.offset + operation.size;
             if end_offset > layout.total_file_size {
-                return Err(Error::WriteLayoutFailed {
-                    message: format!(
-                        "Zero operation extends beyond file: {} > {}",
-                        end_offset, layout.total_file_size
-                    ),
-                });
+                return Err(Error::LayoutFailed(format!(
+                    "Zero operation extends beyond file: {} > {}",
+                    end_offset, layout.total_file_size
+                )));
             }
         }
 
         for operation in &layout.operations.write {
             let end_offset = operation.offset + operation.data.len() as u64;
             if end_offset > layout.total_file_size {
-                return Err(Error::WriteLayoutFailed {
-                    message: format!(
-                        "Write operation extends beyond file: {} > {}",
-                        end_offset, layout.total_file_size
-                    ),
-                });
+                return Err(Error::LayoutFailed(format!(
+                    "Write operation extends beyond file: {} > {}",
+                    end_offset, layout.total_file_size
+                )));
             }
         }
 
@@ -854,9 +846,7 @@ impl WriteExecutor {
                 output.write_u32_le_at(
                     import_entry_offset + 4,
                     u32::try_from(requirements.import_table_size).map_err(|_| {
-                        Error::WriteLayoutFailed {
-                            message: "Import table size exceeds u32 range".to_string(),
-                        }
+                        Error::LayoutFailed("Import table size exceeds u32 range".to_string())
                     })?,
                 )?;
             }
@@ -869,9 +859,7 @@ impl WriteExecutor {
                 output.write_u32_le_at(
                     export_entry_offset + 4,
                     u32::try_from(requirements.export_table_size).map_err(|_| {
-                        Error::WriteLayoutFailed {
-                            message: "Export table size exceeds u32 range".to_string(),
-                        }
+                        Error::LayoutFailed("Export table size exceeds u32 range".to_string())
                     })?,
                 )?;
             }
@@ -1074,13 +1062,11 @@ impl WriteExecutor {
         let view = assembly.view();
         let pe_headers_region = &layout.file_structure.pe_headers;
 
-        let optional_header =
-            view.file()
-                .header_optional()
-                .as_ref()
-                .ok_or_else(|| Error::WriteLayoutFailed {
-                    message: "Missing optional header for PE data directory location".to_string(),
-                })?;
+        let optional_header = view.file().header_optional().as_ref().ok_or_else(|| {
+            Error::LayoutFailed(
+                "Missing optional header for PE data directory location".to_string(),
+            )
+        })?;
         let is_pe32_plus = optional_header.standard_fields.magic != 0x10b;
 
         let optional_header_start = pe_headers_region.offset + 24;
@@ -1092,9 +1078,9 @@ impl WriteExecutor {
         };
 
         if data_directory_offset + 128 > pe_headers_region.offset + pe_headers_region.size {
-            return Err(Error::WriteLayoutFailed {
-                message: "PE data directory extends beyond PE headers region".to_string(),
-            });
+            return Err(Error::LayoutFailed(
+                "PE data directory extends beyond PE headers region".to_string(),
+            ));
         }
 
         Ok(data_directory_offset)
@@ -1122,11 +1108,9 @@ impl WriteExecutor {
         operation_index: usize,
         description: &str,
     ) -> Error {
-        Error::WriteLayoutFailed {
-            message: format!(
-                "{operation_type} operation #{operation_index} failed ({description}): {error}"
-            ),
-        }
+        Error::LayoutFailed(format!(
+            "{operation_type} operation #{operation_index} failed ({description}): {error}"
+        ))
     }
 }
 

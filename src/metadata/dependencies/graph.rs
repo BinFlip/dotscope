@@ -308,7 +308,7 @@ impl AssemblyDependencyGraph {
             let cached = self
                 .cached_cycles
                 .read()
-                .map_err(|_| Error::Error("Failed to acquire cycle cache lock".to_string()))?;
+                .map_err(|_| Error::LockError("Failed to acquire cycle cache lock".to_string()))?;
             if let Some(result) = cached.as_ref() {
                 // Empty vec means no cycles, non-empty means cycles found
                 return Ok(if result.is_empty() {
@@ -325,7 +325,7 @@ impl AssemblyDependencyGraph {
         // Cache result (store empty vec for no cycles, actual vec for cycles)
         {
             let mut cache = self.cached_cycles.write().map_err(|_| {
-                Error::Error("Failed to acquire cycle cache lock for write".to_string())
+                Error::LockError("Failed to acquire cycle cache lock for write".to_string())
             })?;
             *cache = Some(result.clone().unwrap_or_default());
         }
@@ -365,10 +365,9 @@ impl AssemblyDependencyGraph {
     pub fn topological_order(&self) -> Result<Vec<AssemblyIdentity>> {
         // Check cache first
         {
-            let cached = self
-                .cached_topology
-                .read()
-                .map_err(|_| Error::Error("Failed to acquire topology cache lock".to_string()))?;
+            let cached = self.cached_topology.read().map_err(|_| {
+                Error::LockError("Failed to acquire topology cache lock".to_string())
+            })?;
             if let Some(result) = cached.as_ref() {
                 return Ok(result.clone());
             }
@@ -380,7 +379,7 @@ impl AssemblyDependencyGraph {
         // Cache result
         {
             let mut cache = self.cached_topology.write().map_err(|_| {
-                Error::Error("Failed to acquire topology cache lock for write".to_string())
+                Error::LockError("Failed to acquire topology cache lock for write".to_string())
             })?;
             *cache = Some(result.clone());
         }
@@ -499,7 +498,7 @@ impl AssemblyDependencyGraph {
             let mut scc = Vec::new();
             loop {
                 let w = state.stack.pop().ok_or_else(|| {
-                    Error::Error("Stack underflow in Tarjan's algorithm".to_string())
+                    Error::GraphError("Stack underflow in Tarjan's algorithm".to_string())
                 })?;
                 state.on_stack.insert(w.clone(), false);
                 scc.push(w.clone());

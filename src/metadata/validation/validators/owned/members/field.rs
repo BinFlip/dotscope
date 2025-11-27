@@ -44,7 +44,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Field signature consistency violations (empty names, unresolved types)
 //! - Invalid field accessibility levels (unknown access modifiers)
 //! - Field attribute constraint violations (literal fields not static)
@@ -136,11 +136,11 @@ impl OwnedFieldValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All field signatures are valid and resolved
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Field signature violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Field signature violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Field names are empty
     /// - Field signatures contain unresolved types (Unknown type signatures)
     /// - Field modifiers have invalid tokens
@@ -149,31 +149,28 @@ impl OwnedFieldValidator {
             for (_, field) in type_entry.fields.iter() {
                 if field.name.is_empty() {
                     let token_value = field.token.value();
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Field with token 0x{token_value:08X} has empty name"),
-                        source: None,
                     });
                 }
 
                 if let crate::metadata::signatures::TypeSignature::Unknown = &field.signature.base {
                     let field_name = &field.name;
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Field '{field_name}' has unresolved type in signature"),
-                        source: None,
                     });
                 }
 
                 for (index, modifier) in field.signature.modifiers.iter().enumerate() {
                     if modifier.modifier_type.value() == 0 {
                         let field_name = &field.name;
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Field '{field_name}' modifier {index} has invalid token"
                             ),
-                            source: None,
                         });
                     }
                 }
@@ -196,11 +193,11 @@ impl OwnedFieldValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All field accessibility rules are valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Field accessibility violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Field accessibility violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Field access levels contain invalid values
     /// - Literal fields are not marked as static (ECMA-335 requirement)
     fn validate_field_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
@@ -220,12 +217,12 @@ impl OwnedFieldValidator {
                     }
                     _ => {
                         let field_name = &field.name;
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Field '{field_name}' has invalid access level: 0x{access_level:02X}"
                             ),
-                            source: None,
+
                         });
                     }
                 }
@@ -239,10 +236,9 @@ impl OwnedFieldValidator {
 
                 if field.flags & 0x0040 != 0 && field.flags & FieldAttributes::STATIC == 0 {
                     let field_name = &field.name;
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Literal field '{field_name}' must also be static"),
-                        source: None,
                     });
                 }
             }
@@ -264,11 +260,11 @@ impl OwnedFieldValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All special field attributes are valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Special attribute violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Special attribute violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - RTSpecialName flag is set without SpecialName flag
     fn validate_special_attributes(&self, context: &OwnedValidationContext) -> Result<()> {
         for type_entry in context.all_types() {
@@ -308,12 +304,11 @@ impl OwnedFieldValidator {
                     if field.flags & 0x0200 == 0 {
                         // SPECIAL_NAME flag
                         let field_name = &field.name;
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Field '{field_name}' has RTSpecialName but not SpecialName"
                             ),
-                            source: None,
                         });
                     }
                 }
@@ -336,11 +331,11 @@ impl OwnedFieldValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All field naming conventions are valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Field naming violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Field naming violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Backing fields are not marked as private
     /// - Field names contain null characters
     fn validate_field_naming(&self, context: &OwnedValidationContext) -> Result<()> {
@@ -350,10 +345,9 @@ impl OwnedFieldValidator {
                     let access_level = field.flags & FieldAttributes::FIELD_ACCESS_MASK;
                     if access_level != FieldAttributes::PRIVATE {
                         let field_name = &field.name;
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!("Backing field '{field_name}' should be private"),
-                            source: None,
                         });
                     }
                 }
@@ -368,10 +362,9 @@ impl OwnedFieldValidator {
 
                 if field.name.contains('\0') {
                     let field_name = &field.name;
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Field '{field_name}' contains null character"),
-                        source: None,
                     });
                 }
             }
@@ -432,7 +425,7 @@ mod tests {
         owned_validator_test(
             owned_field_validator_file_factory,
             "OwnedFieldValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

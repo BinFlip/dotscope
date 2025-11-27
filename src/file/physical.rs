@@ -95,7 +95,7 @@
 
 use super::Backend;
 use crate::{
-    Error::{Error, FileError},
+    Error::{Io, Other},
     Result,
 };
 
@@ -151,8 +151,8 @@ impl Physical {
     /// * `path` - Path to the PE file on disk. Accepts `&Path`, `&str`, `String`, or `PathBuf`.
     ///
     /// # Errors
-    /// Returns [`crate::Error::FileError`] if the file cannot be opened or
-    /// [`crate::Error::Error`] if memory mapping fails.
+    /// Returns [`crate::Error::Io`] if the file cannot be opened or
+    /// [`crate::Error::Other`] if memory mapping fails.
     ///
     /// # Examples
     ///
@@ -172,7 +172,7 @@ impl Physical {
     pub fn new(path: impl AsRef<Path>) -> Result<Physical> {
         let file = match fs::File::open(path) {
             Ok(file) => file,
-            Err(error) => return Err(FileError(error)),
+            Err(error) => return Err(Io(error)),
         };
 
         // SAFETY: Mmap::map() requires that the file descriptor remains valid for the lifetime
@@ -185,7 +185,7 @@ impl Physical {
         let mmap = match unsafe { Mmap::map(&file) } {
             Ok(mmap) => mmap,
             Err(error) => {
-                return Err(Error(format!(
+                return Err(Other(format!(
                     "Failed to memory-map file: {} ({})",
                     error,
                     error.kind()
@@ -227,7 +227,7 @@ impl Physical {
         // Taking by value matches std library conventions and ensures the caller doesn't
         // accidentally close the file while the mapping exists (though that would be safe too).
         let mmap = unsafe { Mmap::map(&file) }.map_err(|error| {
-            Error(format!(
+            Other(format!(
                 "Failed to memory-map file: {} ({})",
                 error,
                 error.kind()
@@ -269,6 +269,7 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+    use crate::Error;
 
     #[test]
     fn physical() {
@@ -302,10 +303,10 @@ mod tests {
         let result = Physical::new(PathBuf::from("/nonexistent/path/to/file.dll"));
         assert!(result.is_err());
         match result.unwrap_err() {
-            FileError(io_error) => {
+            Io(io_error) => {
                 assert_eq!(io_error.kind(), std::io::ErrorKind::NotFound);
             }
-            _ => panic!("Expected FileError"),
+            _ => panic!("Expected Io error"),
         }
     }
 
@@ -340,27 +341,18 @@ mod tests {
         // Test offset + len overflow
         let result = physical.data_slice(usize::MAX, 1);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            crate::Error::OutOfBounds { .. }
-        ));
+        assert!(matches!(result.unwrap_err(), Error::OutOfBounds { .. }));
 
         // Test offset exactly at length
         let len = physical.len();
         let result = physical.data_slice(len, 1);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            crate::Error::OutOfBounds { .. }
-        ));
+        assert!(matches!(result.unwrap_err(), Error::OutOfBounds { .. }));
 
         // Test offset + len exceeds length by 1
         let result = physical.data_slice(len - 1, 2);
         assert!(result.is_err());
-        assert!(matches!(
-            result.unwrap_err(),
-            crate::Error::OutOfBounds { .. }
-        ));
+        assert!(matches!(result.unwrap_err(), Error::OutOfBounds { .. }));
     }
 
     #[test]

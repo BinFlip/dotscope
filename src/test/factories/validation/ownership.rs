@@ -22,7 +22,7 @@ pub fn owned_ownership_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
     let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Error(
+        return Err(Error::Other(
             "mscorlib.dll not available - test cannot run".to_string(),
         ));
     };
@@ -47,17 +47,17 @@ pub fn owned_ownership_validator_file_factory() -> Result<Vec<TestAssembly>> {
 /// Originally from: `src/metadata/validation/validators/owned/relationships/ownership.rs`
 pub fn create_assembly_with_broken_method_ownership() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Error("mscorlib.dll not available".to_string()));
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create method with empty name to trigger validation failure
     let empty_method_name_index = assembly
         .string_add("")
-        .map_err(|e| Error::Error(format!("Failed to add empty method name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add empty method name: {e}")))?;
 
     let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
     let invalid_method = crate::metadata::tables::MethodDefRaw {
@@ -77,12 +77,12 @@ pub fn create_assembly_with_broken_method_ownership() -> Result<TestAssembly> {
             TableId::MethodDef,
             TableDataOwned::MethodDef(invalid_method),
         )
-        .map_err(|e| Error::Error(format!("Failed to add method: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add method: {e}")))?;
 
     // Create type that owns the method with empty name
     let type_name_index = assembly
         .string_add("TestType")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let invalid_type = TypeDefRaw {
@@ -99,14 +99,14 @@ pub fn create_assembly_with_broken_method_ownership() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-        .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -116,17 +116,17 @@ pub fn create_assembly_with_broken_method_ownership() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/relationships/ownership.rs`
 pub fn create_assembly_with_invalid_method_accessibility() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Error("mscorlib.dll not available".to_string()));
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create method with invalid visibility flags
     let method_name_index = assembly
         .string_add("TestMethod")
-        .map_err(|e| Error::Error(format!("Failed to add method name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add method name: {e}")))?;
 
     let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
     let invalid_method = crate::metadata::tables::MethodDefRaw {
@@ -146,11 +146,11 @@ pub fn create_assembly_with_invalid_method_accessibility() -> Result<TestAssembl
             TableId::MethodDef,
             TableDataOwned::MethodDef(invalid_method),
         )
-        .map_err(|e| Error::Error(format!("Failed to add method: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add method: {e}")))?;
 
     let type_name_index = assembly
         .string_add("TestType")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let test_type = TypeDefRaw {
@@ -167,14 +167,14 @@ pub fn create_assembly_with_invalid_method_accessibility() -> Result<TestAssembl
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(test_type))
-        .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -184,17 +184,17 @@ pub fn create_assembly_with_invalid_method_accessibility() -> Result<TestAssembl
 /// Originally from: `src/metadata/validation/validators/owned/relationships/ownership.rs`
 pub fn create_assembly_with_invalid_static_constructor() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Error("mscorlib.dll not available".to_string()));
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create static constructor (.cctor) without static flag
     let cctor_name_index = assembly
         .string_add(".cctor")
-        .map_err(|e| Error::Error(format!("Failed to add .cctor name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add .cctor name: {e}")))?;
 
     let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
     let invalid_cctor = crate::metadata::tables::MethodDefRaw {
@@ -211,11 +211,11 @@ pub fn create_assembly_with_invalid_static_constructor() -> Result<TestAssembly>
 
     assembly
         .table_row_add(TableId::MethodDef, TableDataOwned::MethodDef(invalid_cctor))
-        .map_err(|e| Error::Error(format!("Failed to add .cctor method: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add .cctor method: {e}")))?;
 
     let type_name_index = assembly
         .string_add("TestType")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let test_type = TypeDefRaw {
@@ -232,14 +232,14 @@ pub fn create_assembly_with_invalid_static_constructor() -> Result<TestAssembly>
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(test_type))
-        .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }

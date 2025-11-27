@@ -122,10 +122,9 @@ impl HeapBuilder for GuidHeapBuilder<'_> {
             for (logical_index, original_guid) in guid_heap.iter() {
                 // The iterator returns 1-based logical indices (1, 2, 3, ...)
                 // HeapChanges uses byte offsets, so convert: byte_offset = (logical_index - 1) * 16
-                let logical_index =
-                    u32::try_from(logical_index).map_err(|_| Error::WriteLayoutFailed {
-                        message: "GUID heap index exceeds u32 range".to_string(),
-                    })?;
+                let logical_index = u32::try_from(logical_index).map_err(|_| {
+                    Error::LayoutFailed("GUID heap index exceeds u32 range".to_string())
+                })?;
                 let byte_offset = (logical_index - 1) * 16;
 
                 if guid_changes.is_removed(byte_offset) {

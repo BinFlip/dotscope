@@ -28,7 +28,7 @@ use crate::{
         types::{RowWritable, TableInfoRef},
     },
     utils::{write_le_at, write_le_at_dyn},
-    Result,
+    Error, Result,
 };
 
 impl RowWritable for ParamRaw {
@@ -62,16 +62,15 @@ impl RowWritable for ParamRaw {
         sizes: &TableInfoRef,
     ) -> Result<()> {
         // Write flags (2 bytes) - convert from u32 to u16 with range check
-        let flags_u16 = u16::try_from(self.flags).map_err(|_| crate::Error::WriteLayoutFailed {
-            message: "Parameter flags value exceeds u16 range".to_string(),
+        let flags_u16 = u16::try_from(self.flags).map_err(|_| {
+            Error::LayoutFailed("Parameter flags value exceeds u16 range".to_string())
         })?;
         write_le_at(data, offset, flags_u16)?;
 
         // Write sequence (2 bytes) - convert from u32 to u16 with range check
-        let sequence_u16 =
-            u16::try_from(self.sequence).map_err(|_| crate::Error::WriteLayoutFailed {
-                message: "Parameter sequence value exceeds u16 range".to_string(),
-            })?;
+        let sequence_u16 = u16::try_from(self.sequence).map_err(|_| {
+            Error::LayoutFailed("Parameter sequence value exceeds u16 range".to_string())
+        })?;
         write_le_at(data, offset, sequence_u16)?;
 
         // Write name string heap index (2 or 4 bytes)

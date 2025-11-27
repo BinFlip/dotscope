@@ -731,9 +731,9 @@ impl PropertyBuilder {
                         let configured_getter = getter_impl(getter_method);
                         configured_getter.build(context)?;
                     } else {
-                        return Err(Error::ModificationInvalidOperation {
-                            details: "Computed property requires getter implementation".to_string(),
-                        });
+                        return Err(Error::ModificationInvalid(
+                            "Computed property requires getter implementation".to_string(),
+                        ));
                     }
                 }
 
@@ -753,9 +753,9 @@ impl PropertyBuilder {
                         let configured_setter = setter_impl(setter_method);
                         configured_setter.build(context)?;
                     } else {
-                        return Err(Error::ModificationInvalidOperation {
-                            details: "Computed property requires setter implementation".to_string(),
-                        });
+                        return Err(Error::ModificationInvalid(
+                            "Computed property requires setter implementation".to_string(),
+                        ));
                     }
                 }
 

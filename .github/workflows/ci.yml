@@ -37,7 +37,10 @@ jobs:
         dotnet-version: '8.0.x'
 
     - name: Warm up .NET SDK
-      run: dotnet --info
+      run: |
+        dotnet --info
+        dotnet new console -n warmup -o ${{ runner.temp }}/warmup
+        dotnet build ${{ runner.temp }}/warmup
 
     - name: Install Mono utilities (Linux)
       if: runner.os == 'Linux'
@@ -149,7 +152,10 @@ jobs:
         dotnet-version: '8.0.x'
 
     - name: Warm up .NET SDK
-      run: dotnet --info
+      run: |
+        dotnet --info
+        dotnet new console -n warmup -o ${{ runner.temp }}/warmup
+        dotnet build ${{ runner.temp }}/warmup
 
     - name: Install Mono utilities
       run: |

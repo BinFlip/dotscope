@@ -181,19 +181,18 @@ impl LocalConstantBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let name = self
-            .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details:
-                    "Constant name is required for LocalConstant (use empty string for anonymous)"
-                        .to_string(),
-            })?;
+        let name = self.name.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Constant name is required for LocalConstant (use empty string for anonymous)"
+                    .to_string(),
+            )
+        })?;
 
-        let signature = self
-            .signature
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Constant signature is required for LocalConstant".to_string(),
-            })?;
+        let signature = self.signature.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Constant signature is required for LocalConstant".to_string(),
+            )
+        })?;
 
         let next_rid = context.next_rid(TableId::LocalConstant);
         let token_value = ((TableId::LocalConstant as u32) << 24) | next_rid;
@@ -302,10 +301,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Constant name is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -320,10 +319,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Constant signature is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

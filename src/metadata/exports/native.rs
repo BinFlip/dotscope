@@ -119,8 +119,9 @@ use std::collections::HashMap;
 
 use crate::{
     file::pe::Export,
+    malformed_error,
     utils::{write_le_at, write_string_at},
-    Error, Result,
+    Result,
 };
 
 /// Container for native PE export table data.
@@ -384,22 +385,22 @@ impl NativeExports {
     #[allow(clippy::cast_possible_truncation)]
     pub fn add_function(&mut self, name: &str, ordinal: u16, address: u32) -> Result<()> {
         if name.is_empty() {
-            return Err(Error::Error("Function name cannot be empty".to_string()));
+            return Err(malformed_error!("Function name cannot be empty"));
         }
 
         if ordinal == 0 {
-            return Err(Error::Error("Ordinal cannot be 0".to_string()));
+            return Err(malformed_error!("Ordinal cannot be 0"));
         }
 
         // Check for conflicts
         if self.functions.contains_key(&ordinal) || self.forwarders.contains_key(&ordinal) {
-            return Err(Error::Error(format!("Ordinal {ordinal} is already in use")));
+            return Err(malformed_error!("Ordinal {ordinal} is already in use"));
         }
 
         if self.name_to_ordinal.contains_key(name) {
-            return Err(Error::Error(format!(
+            return Err(malformed_error!(
                 "Function name '{name}' is already exported"
-            )));
+            ));
         }
 
         // Create function export
@@ -457,12 +458,12 @@ impl NativeExports {
     #[allow(clippy::cast_possible_truncation)]
     pub fn add_function_by_ordinal(&mut self, ordinal: u16, address: u32) -> Result<()> {
         if ordinal == 0 {
-            return Err(Error::Error("Ordinal cannot be 0".to_string()));
+            return Err(malformed_error!("Ordinal cannot be 0"));
         }
 
         // Check for conflicts
         if self.functions.contains_key(&ordinal) || self.forwarders.contains_key(&ordinal) {
-            return Err(Error::Error(format!("Ordinal {ordinal} is already in use")));
+            return Err(malformed_error!("Ordinal {ordinal} is already in use"));
         }
 
         // Create function export
@@ -524,34 +525,34 @@ impl NativeExports {
     /// - The ordinal is 0 (invalid)
     pub fn add_forwarder(&mut self, name: &str, ordinal: u16, target: &str) -> Result<()> {
         if ordinal == 0 {
-            return Err(Error::Error("Ordinal cannot be 0".to_string()));
+            return Err(malformed_error!("Ordinal cannot be 0"));
         }
 
         if target.is_empty() {
-            return Err(Error::Error("Forwarder target cannot be empty".to_string()));
+            return Err(malformed_error!("Forwarder target cannot be empty"));
         }
 
         if !target.contains('.') {
-            return Err(Error::Error(format!(
+            return Err(malformed_error!(
                 "Forwarder target '{}' must be in format 'DllName.FunctionName' or 'DllName.#Ordinal'",
                 target
-            )));
+            ));
         }
 
         if target.contains('\0') {
-            return Err(Error::Error(
-                "Forwarder target cannot contain null bytes".to_string(),
+            return Err(malformed_error!(
+                "Forwarder target cannot contain null bytes"
             ));
         }
 
         if self.functions.contains_key(&ordinal) || self.forwarders.contains_key(&ordinal) {
-            return Err(Error::Error(format!("Ordinal {ordinal} is already in use")));
+            return Err(malformed_error!("Ordinal {ordinal} is already in use"));
         }
 
         if !name.is_empty() && self.name_to_ordinal.contains_key(name) {
-            return Err(Error::Error(format!(
+            return Err(malformed_error!(
                 "Function name '{name}' is already exported"
-            )));
+            ));
         }
 
         let forwarder = ExportForwarder {
@@ -876,7 +877,7 @@ impl NativeExports {
 
         let base_rva = self.export_table_base_rva;
         if base_rva == 0 {
-            return Err(Error::Error("Export table base RVA not set".to_string()));
+            return Err(malformed_error!("Export table base RVA not set"));
         }
 
         // Calculate table sizes and offsets
@@ -1062,13 +1063,11 @@ impl NativeExports {
     /// Returns an error if the DLL name is empty or contains invalid characters.
     pub fn set_dll_name(&mut self, dll_name: &str) -> Result<()> {
         if dll_name.is_empty() {
-            return Err(Error::Error("DLL name cannot be empty".to_string()));
+            return Err(malformed_error!("DLL name cannot be empty"));
         }
 
         if dll_name.contains('\0') {
-            return Err(Error::Error(
-                "DLL name cannot contain null bytes".to_string(),
-            ));
+            return Err(malformed_error!("DLL name cannot contain null bytes"));
         }
 
         dll_name.clone_into(&mut self.directory.dll_name);

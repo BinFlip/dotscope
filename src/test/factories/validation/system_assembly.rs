@@ -32,7 +32,7 @@ pub fn owned_assembly_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error(
+        return Err(Error::Other(
             "crafted_2.exe not available - test cannot run".to_string(),
         ));
     };
@@ -63,17 +63,17 @@ pub fn owned_assembly_validator_file_factory() -> Result<Vec<TestAssembly>> {
 /// Originally from: `src/metadata/validation/validators/owned/system/assembly.rs`
 pub fn create_assembly_with_empty_name() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create assembly with empty name
     let empty_name_index = assembly
         .string_add("")
-        .map_err(|e| Error::Error(format!("Failed to add empty assembly name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add empty assembly name: {e}")))?;
 
     let assembly_rid = 1; // Assembly table always has RID 1
 
@@ -98,14 +98,14 @@ pub fn create_assembly_with_empty_name() -> Result<TestAssembly> {
             1,
             TableDataOwned::Assembly(invalid_assembly),
         )
-        .map_err(|e| Error::Error(format!("Failed to update invalid assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to update invalid assembly: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -115,10 +115,10 @@ pub fn create_assembly_with_empty_name() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/system/assembly.rs`
 pub fn create_assembly_with_invalid_name_format() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
@@ -126,7 +126,7 @@ pub fn create_assembly_with_invalid_name_format() -> Result<TestAssembly> {
     let invalid_name = "Invalid/Assembly*Name";
     let invalid_name_index = assembly
         .string_add(invalid_name)
-        .map_err(|e| Error::Error(format!("Failed to add invalid assembly name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid assembly name: {e}")))?;
 
     let assembly_rid = 1;
 
@@ -151,14 +151,14 @@ pub fn create_assembly_with_invalid_name_format() -> Result<TestAssembly> {
             1,
             TableDataOwned::Assembly(invalid_assembly),
         )
-        .map_err(|e| Error::Error(format!("Failed to update invalid assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to update invalid assembly: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -168,17 +168,17 @@ pub fn create_assembly_with_invalid_name_format() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/system/assembly.rs`
 pub fn create_assembly_with_maximum_version_numbers() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create valid assembly name
     let assembly_name_index = assembly
         .string_add("ValidAssemblyName")
-        .map_err(|e| Error::Error(format!("Failed to add assembly name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add assembly name: {e}")))?;
 
     let assembly_rid = 1;
 
@@ -203,14 +203,14 @@ pub fn create_assembly_with_maximum_version_numbers() -> Result<TestAssembly> {
             1,
             TableDataOwned::Assembly(invalid_assembly),
         )
-        .map_err(|e| Error::Error(format!("Failed to update invalid assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to update invalid assembly: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, true))
 }
@@ -220,23 +220,23 @@ pub fn create_assembly_with_maximum_version_numbers() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/system/assembly.rs`
 pub fn create_assembly_with_invalid_culture_format() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create valid assembly name
     let assembly_name_index = assembly
         .string_add("ValidAssemblyName")
-        .map_err(|e| Error::Error(format!("Failed to add assembly name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add assembly name: {e}")))?;
 
     // Create invalid culture format (too many parts)
     let invalid_culture = "en-US-extra-invalid";
     let invalid_culture_index = assembly
         .string_add(invalid_culture)
-        .map_err(|e| Error::Error(format!("Failed to add invalid culture: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid culture: {e}")))?;
 
     let assembly_rid = 1;
 
@@ -261,14 +261,14 @@ pub fn create_assembly_with_invalid_culture_format() -> Result<TestAssembly> {
             1,
             TableDataOwned::Assembly(invalid_assembly),
         )
-        .map_err(|e| Error::Error(format!("Failed to update invalid assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to update invalid assembly: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }

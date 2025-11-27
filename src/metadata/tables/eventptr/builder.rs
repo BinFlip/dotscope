@@ -149,11 +149,9 @@ impl EventPtrBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let event = self
-            .event
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Event RID is required for EventPtr".to_string(),
-            })?;
+        let event = self.event.ok_or_else(|| {
+            Error::ModificationInvalid("Event RID is required for EventPtr".to_string())
+        })?;
 
         let next_rid = context.next_rid(TableId::EventPtr);
         let token = Token::new(((TableId::EventPtr as u32) << 24) | next_rid);
@@ -236,10 +234,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Event RID is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

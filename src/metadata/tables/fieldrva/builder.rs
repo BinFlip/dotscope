@@ -239,37 +239,29 @@ impl FieldRVABuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let field_token = self
-            .field
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Field token is required for FieldRVA".to_string(),
-            })?;
+        let field_token = self.field.ok_or_else(|| {
+            Error::ModificationInvalid("Field token is required for FieldRVA".to_string())
+        })?;
 
-        let rva = self
-            .rva
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "RVA is required for FieldRVA".to_string(),
-            })?;
+        let rva = self.rva.ok_or_else(|| {
+            Error::ModificationInvalid("RVA is required for FieldRVA".to_string())
+        })?;
 
         if field_token.table() != TableId::Field as u8 {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Field token must be a Field token, got table ID: {}",
-                    field_token.table()
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Field token must be a Field token, got table ID: {}",
+                field_token.table()
+            )));
         }
 
         if field_token.row() == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Field token row cannot be 0".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Field token row cannot be 0".to_string(),
+            ));
         }
 
         if rva == 0 {
-            return Err(Error::ModificationInvalidOperation {
-                details: "RVA cannot be 0".to_string(),
-            });
+            return Err(Error::ModificationInvalid("RVA cannot be 0".to_string()));
         }
 
         let rid = context.next_rid(TableId::FieldRVA);

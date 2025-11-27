@@ -614,9 +614,9 @@ impl EventBuilder {
                     let configured_add = add_impl(add_method_builder);
                     configured_add.build(context)?;
                 } else {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: "Custom event requires add method implementation".to_string(),
-                    });
+                    return Err(Error::ModificationInvalid(
+                        "Custom event requires add method implementation".to_string(),
+                    ));
                 }
 
                 // Create remove method if provided
@@ -633,9 +633,9 @@ impl EventBuilder {
                     let configured_remove = remove_impl(remove_method_builder);
                     configured_remove.build(context)?;
                 } else {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: "Custom event requires remove method implementation".to_string(),
-                    });
+                    return Err(Error::ModificationInvalid(
+                        "Custom event requires remove method implementation".to_string(),
+                    ));
                 }
 
                 Ok(event_token)

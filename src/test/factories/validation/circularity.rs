@@ -22,7 +22,7 @@ pub fn owned_circularity_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error(
+        return Err(Error::Other(
             "crafted_2.exe not available - test cannot run".to_string(),
         ));
     };
@@ -47,22 +47,22 @@ pub fn owned_circularity_validator_file_factory() -> Result<Vec<TestAssembly>> {
 /// Originally from: `src/metadata/validation/validators/owned/relationships/circularity.rs`
 pub fn create_assembly_with_circular_inheritance() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create type A name
     let type_a_name_index = assembly
         .string_add("TypeA")
-        .map_err(|e| Error::Error(format!("Failed to add TypeA name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add TypeA name: {e}")))?;
 
     // Create type B name
     let type_b_name_index = assembly
         .string_add("TypeB")
-        .map_err(|e| Error::Error(format!("Failed to add TypeB name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add TypeB name: {e}")))?;
 
     let type_a_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let type_b_rid = type_a_rid + 1;
@@ -95,18 +95,18 @@ pub fn create_assembly_with_circular_inheritance() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_a))
-        .map_err(|e| Error::Error(format!("Failed to add TypeA: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add TypeA: {e}")))?;
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_b))
-        .map_err(|e| Error::Error(format!("Failed to add TypeB: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add TypeB: {e}")))?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -116,17 +116,17 @@ pub fn create_assembly_with_circular_inheritance() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/relationships/circularity.rs`
 pub fn create_assembly_with_self_referential_type() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create self-referential type name
     let type_name_index = assembly
         .string_add("SelfReferentialType")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
@@ -145,14 +145,14 @@ pub fn create_assembly_with_self_referential_type() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(self_ref_type))
-        .map_err(|e| Error::Error(format!("Failed to add self-referential type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add self-referential type: {e}")))?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -162,22 +162,22 @@ pub fn create_assembly_with_self_referential_type() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/relationships/circularity.rs`
 pub fn create_assembly_with_circular_interface_implementation() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create interface I1 name
     let interface_i1_name_index = assembly
         .string_add("IInterface1")
-        .map_err(|e| Error::Error(format!("Failed to add IInterface1 name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add IInterface1 name: {e}")))?;
 
     // Create interface I2 name
     let interface_i2_name_index = assembly
         .string_add("IInterface2")
-        .map_err(|e| Error::Error(format!("Failed to add IInterface2 name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add IInterface2 name: {e}")))?;
 
     let interface_i1_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let interface_i2_rid = interface_i1_rid + 1;
@@ -218,18 +218,18 @@ pub fn create_assembly_with_circular_interface_implementation() -> Result<TestAs
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(interface_i1))
-        .map_err(|e| Error::Error(format!("Failed to add IInterface1: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add IInterface1: {e}")))?;
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(interface_i2))
-        .map_err(|e| Error::Error(format!("Failed to add IInterface2: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add IInterface2: {e}")))?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }

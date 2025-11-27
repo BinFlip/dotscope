@@ -43,7 +43,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationRawFailed`] for:
 //! - Missing required metadata tables (Module table always required, Assembly table for executables)
 //! - Invalid table row counts or inconsistent table headers (row counts exceeding 0x00FFFFFF)
 //! - Malformed table structures or corrupted metadata (RID inconsistencies within tables)
@@ -135,11 +135,11 @@ impl RawTableValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All required tables are present with valid content
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Required tables missing or invalid
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Required tables missing or invalid
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Module table is missing (always required by ECMA-335)
     /// - Module table is present but contains zero rows (at least one required)
     /// - Assembly table contains more than one row (ECMA-335 limit violation)
@@ -187,11 +187,11 @@ impl RawTableValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All table structures are valid and consistent
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Structure violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Structure violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Table row counts exceed maximum allowed values (0x00FFFFFF)
     /// - RID values within table rows are inconsistent with expected sequential numbering
     /// - Internal table structure inconsistencies are detected during iteration
@@ -233,11 +233,11 @@ impl RawTableValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All table dependencies are satisfied
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Dependency violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Dependency violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - TypeDef field list references exceed Field table row count
     /// - TypeDef method list references exceed MethodDef table row count
     /// - List-based cross-table references are out of bounds
@@ -302,11 +302,11 @@ impl RawValidator for RawTableValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All table structures are valid and meet ECMA-335 requirements
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Table structure violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Table structure violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] for:
+    /// Returns [`crate::Error::ValidationRawFailed`] for:
     /// - Missing required tables (Module, Assembly for executables)
     /// - Invalid table row counts or corrupted table headers
     /// - Cross-table dependency violations
@@ -367,7 +367,7 @@ mod tests {
     ///
     /// - **Positive Test**: Clean WindowsBase.dll passes all validation rules
     /// - **Multiple Assembly Rows**: Assembly table with >1 rows triggers Malformed error
-    /// - **Field List Violation**: TypeDef.field_list beyond Field table bounds triggers Malformed error  
+    /// - **Field List Violation**: TypeDef.field_list beyond Field table bounds triggers Malformed error
     /// - **Method List Violation**: TypeDef.method_list beyond MethodDef table bounds triggers Malformed error
     /// - **Empty Module Table**: Module table with 0 rows triggers Malformed error (FIXED - Delete operations now applied)
     ///
@@ -383,7 +383,7 @@ mod tests {
     ///
     /// The test systematically validates ECMA-335 compliance for:
     /// - Module table presence and single row requirement
-    /// - Assembly table maximum 1 row constraint  
+    /// - Assembly table maximum 1 row constraint
     /// - Table structure consistency and RID sequential numbering
     /// - Cross-table reference bounds checking
     ///
@@ -415,7 +415,7 @@ mod tests {
 
         fn clean_only_factory() -> Result<Vec<TestAssembly>> {
             let Some(clean_testfile) = get_testfile_wb() else {
-                return Err(Error::Error("WindowsBase.dll not available".to_string()));
+                return Err(Error::Other("WindowsBase.dll not available".to_string()));
             };
             Ok(vec![TestAssembly::new(&clean_testfile, true)])
         }

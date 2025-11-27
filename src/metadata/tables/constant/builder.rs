@@ -329,38 +329,30 @@ impl ConstantBuilder {
     /// - Returns error if heap operations fail
     /// - Returns error if table operations fail
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let element_type =
-            self.element_type
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Constant element type is required".to_string(),
-                })?;
+        let element_type = self.element_type.ok_or_else(|| {
+            Error::ModificationInvalid("Constant element type is required".to_string())
+        })?;
 
         let parent = self
             .parent
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Constant parent is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Constant parent is required".to_string()))?;
 
         let value = self
             .value
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Constant value is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Constant value is required".to_string()))?;
 
         if value.is_empty() && element_type != ELEMENT_TYPE::CLASS {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Constant value cannot be empty (except for null references)".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Constant value cannot be empty (except for null references)".to_string(),
+            ));
         }
 
         let valid_parent_tables = CodedIndexType::HasConstant.tables();
         if !valid_parent_tables.contains(&parent.tag) {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Parent must be a HasConstant coded index (Field/Param/Property), got {:?}",
-                    parent.tag
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Parent must be a HasConstant coded index (Field/Param/Property), got {:?}",
+                parent.tag
+            )));
         }
 
         match element_type {
@@ -381,11 +373,9 @@ impl ConstantBuilder {
                 // Valid constant types
             }
             _ => {
-                return Err(Error::ModificationInvalidOperation {
-                    details: format!(
-                        "Invalid element type for constant: 0x{element_type:02X}. Only primitive types, strings, and null references are allowed"
-                    ),
-                });
+                return Err(Error::ModificationInvalid(format!(
+                    "Invalid element type for constant: 0x{element_type:02X}. Only primitive types, strings, and null references are allowed"
+                )));
             }
         }
 

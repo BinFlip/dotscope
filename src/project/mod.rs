@@ -285,11 +285,11 @@ impl CilProject {
     /// with the same identity already exists in the project.
     pub fn add_assembly(&self, assembly: CilObject) -> Result<()> {
         let identity = assembly.identity().ok_or_else(|| {
-            Error::Error("Assembly does not have identity information".to_string())
+            Error::Configuration("Assembly does not have identity information".to_string())
         })?;
 
         if self.assemblies.contains_key(&identity) {
-            return Err(Error::Error(format!(
+            return Err(Error::Configuration(format!(
                 "Assembly with identity '{}' already exists in project",
                 identity.name
             )));
@@ -518,7 +518,7 @@ impl CilProject {
         self.primary_assembly
             .set(identity)
             .map_err(|existing_identity| {
-                Error::Error(format!(
+                Error::Configuration(format!(
                     "Primary assembly already set to '{}', cannot change to '{}'",
                     existing_identity.name, identity_name
                 ))

@@ -21,7 +21,7 @@ pub fn owned_type_definition_validator_file_factory() -> Result<Vec<TestAssembly
     let mut assemblies = Vec::new();
 
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error(
+        return Err(Error::Other(
             "crafted_2.exe not available - test cannot run".to_string(),
         ));
     };
@@ -54,22 +54,22 @@ pub fn owned_type_definition_validator_file_factory() -> Result<Vec<TestAssembly
 /// Originally from: `src/metadata/validation/validators/owned/types/definition.rs`
 pub fn create_assembly_with_empty_type_name() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create type with empty name
     let empty_name_index = assembly
         .string_add("")
-        .map_err(|e| Error::Error(format!("Failed to add empty type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add empty type name: {e}")))?;
 
     // Create a regular namespace (not "<Module>") to ensure validation triggers
     let namespace_index = assembly
         .string_add("TestNamespace")
-        .map_err(|e| Error::Error(format!("Failed to add namespace: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add namespace: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
@@ -87,14 +87,14 @@ pub fn create_assembly_with_empty_type_name() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-        .map_err(|e| Error::Error(format!("Failed to add invalid type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid type: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -104,10 +104,10 @@ pub fn create_assembly_with_empty_type_name() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/types/definition.rs`
 pub fn create_assembly_with_null_char_in_type_name() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
@@ -115,7 +115,7 @@ pub fn create_assembly_with_null_char_in_type_name() -> Result<TestAssembly> {
     let invalid_name = "Invalid\0Type";
     let invalid_name_index = assembly
         .string_add(invalid_name)
-        .map_err(|e| Error::Error(format!("Failed to add invalid type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
@@ -133,14 +133,14 @@ pub fn create_assembly_with_null_char_in_type_name() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-        .map_err(|e| Error::Error(format!("Failed to add invalid type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid type: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -150,23 +150,23 @@ pub fn create_assembly_with_null_char_in_type_name() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/types/definition.rs`
 pub fn create_assembly_with_null_char_in_namespace() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create valid type name
     let type_name_index = assembly
         .string_add("ValidTypeName")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     // Create namespace with null character
     let invalid_namespace = "Invalid\0Namespace";
     let invalid_namespace_index = assembly
         .string_add(invalid_namespace)
-        .map_err(|e| Error::Error(format!("Failed to add invalid namespace: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid namespace: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
@@ -184,14 +184,14 @@ pub fn create_assembly_with_null_char_in_namespace() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-        .map_err(|e| Error::Error(format!("Failed to add invalid type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid type: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -201,10 +201,10 @@ pub fn create_assembly_with_null_char_in_namespace() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/types/definition.rs`
 pub fn create_assembly_with_malformed_special_name() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
@@ -212,7 +212,7 @@ pub fn create_assembly_with_malformed_special_name() -> Result<TestAssembly> {
     let malformed_name = "<InvalidSpecialName";
     let malformed_name_index = assembly
         .string_add(malformed_name)
-        .map_err(|e| Error::Error(format!("Failed to add malformed type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add malformed type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
@@ -230,14 +230,14 @@ pub fn create_assembly_with_malformed_special_name() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-        .map_err(|e| Error::Error(format!("Failed to add invalid type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid type: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }

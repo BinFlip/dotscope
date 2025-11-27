@@ -33,7 +33,7 @@ use crate::{
         types::{RowWritable, TableId, TableInfoRef},
     },
     utils::{write_le_at, write_le_at_dyn},
-    Result,
+    Error, Result,
 };
 
 impl RowWritable for MethodDefRaw {
@@ -73,16 +73,14 @@ impl RowWritable for MethodDefRaw {
         write_le_at(data, offset, self.rva)?;
 
         // Write implementation flags (2 bytes) - convert from u32 to u16 with range check
-        let impl_flags_u16 =
-            u16::try_from(self.impl_flags).map_err(|_| crate::Error::WriteLayoutFailed {
-                message: "Method implementation flags value exceeds u16 range".to_string(),
-            })?;
+        let impl_flags_u16 = u16::try_from(self.impl_flags).map_err(|_| {
+            Error::LayoutFailed("Method implementation flags value exceeds u16 range".to_string())
+        })?;
         write_le_at(data, offset, impl_flags_u16)?;
 
         // Write method flags (2 bytes) - convert from u32 to u16 with range check
-        let flags_u16 = u16::try_from(self.flags).map_err(|_| crate::Error::WriteLayoutFailed {
-            message: "Method flags value exceeds u16 range".to_string(),
-        })?;
+        let flags_u16 = u16::try_from(self.flags)
+            .map_err(|_| Error::LayoutFailed("Method flags value exceeds u16 range".to_string()))?;
         write_le_at(data, offset, flags_u16)?;
 
         // Write name string heap index (2 or 4 bytes)

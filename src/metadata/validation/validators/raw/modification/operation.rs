@@ -44,7 +44,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationRawFailed`] for:
 //! - Invalid RID values in operations (out of bounds, conflicts, reserved values)
 //! - Malformed operation data or incorrect table data types
 //! - Update operations targeting non-existent rows or deleted rows
@@ -137,11 +137,11 @@ impl RawOperationValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All insert operations are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Insert operation violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Insert operation violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Insert RIDs are invalid (zero/reserved) or out of bounds (exceeding 0xFFFFFF)
     /// - Insert operations conflict with existing rows in original table
     /// - Multiple inserts target the same RID within the same table
@@ -236,11 +236,11 @@ impl RawOperationValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All update operations are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Update operation violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Update operation violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Update operations target non-existent rows (beyond original count and not inserted)
     /// - Update RIDs are invalid (zero/reserved) or target deleted rows
     /// - Table data types are incompatible with target tables
@@ -332,11 +332,11 @@ impl RawOperationValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All delete operations are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Delete operation violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Delete operation violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Delete operations target non-existent rows (beyond original count and not inserted)
     /// - Delete RIDs are invalid (zero/reserved)
     /// - Multiple deletes target the same RID within the same table
@@ -414,11 +414,11 @@ impl RawOperationValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All operation sequences are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Sequence violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Sequence violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Operations have invalid timestamps or non-chronological ordering
     /// - Operation sequences create impossible state transitions (insert after delete)
     /// - Multiple insert or delete operations target the same RID
@@ -554,11 +554,11 @@ impl RawValidator for RawOperationValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All modification operations are valid and meet structural requirements
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Operation violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Operation violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] for:
+    /// Returns [`crate::Error::ValidationRawFailed`] for:
     /// - Invalid RID values in operations (out of bounds, conflicts)
     /// - Malformed operation data or incorrect table data types
     /// - Update operations targeting non-existent rows
@@ -737,7 +737,7 @@ mod tests {
         };
 
         let Some(clean_testfile) = get_testfile_wb() else {
-            return Err(Error::Error("WindowsBase.dll not available".to_string()));
+            return Err(Error::Other("WindowsBase.dll not available".to_string()));
         };
 
         let view = CilAssemblyView::from_path(&clean_testfile)?;

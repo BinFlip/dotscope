@@ -446,40 +446,34 @@ impl ExportedTypeBuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let name = self
-            .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Type name is required for ExportedType".to_string(),
-            })?;
+        let name = self.name.ok_or_else(|| {
+            Error::ModificationInvalid("Type name is required for ExportedType".to_string())
+        })?;
 
         if name.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Type name cannot be empty for ExportedType".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Type name cannot be empty for ExportedType".to_string(),
+            ));
         }
 
-        let implementation =
-            self.implementation
-                .ok_or_else(|| Error::ModificationInvalidOperation {
-                    details: "Implementation is required for ExportedType".to_string(),
-                })?;
+        let implementation = self.implementation.ok_or_else(|| {
+            Error::ModificationInvalid("Implementation is required for ExportedType".to_string())
+        })?;
 
         // Validate implementation reference
         match implementation.tag {
             TableId::File | TableId::AssemblyRef | TableId::ExportedType => {
                 if implementation.row == 0 {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: "Implementation reference row cannot be 0".to_string(),
-                    });
+                    return Err(Error::ModificationInvalid(
+                        "Implementation reference row cannot be 0".to_string(),
+                    ));
                 }
             }
             _ => {
-                return Err(Error::ModificationInvalidOperation {
-                    details: format!(
-                        "Invalid implementation table type: {:?}. Must be File, AssemblyRef, or ExportedType",
-                        implementation.tag
-                    ),
-                });
+                return Err(Error::ModificationInvalid(format!(
+                    "Invalid implementation table type: {:?}. Must be File, AssemblyRef, or ExportedType",
+                    implementation.tag
+                )));
             }
         }
 

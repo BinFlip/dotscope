@@ -109,7 +109,7 @@
 //!
 //! This module defines specific error conditions for operation validation:
 //!
-//! - [`crate::Error::WriteLayoutFailed`] - When operation validation detects conflicts or overlaps
+//! - [`crate::Error::LayoutFailed`] - When operation validation detects conflicts or overlaps
 //! - Operation overlap detection with detailed conflict reporting
 //! - Invalid offset or size validation with specific error locations
 //! - Complete audit trail of which operations conflict and why
@@ -626,13 +626,13 @@ impl OperationSet {
     /// # Returns
     ///
     /// Returns [`crate::Result<()>`] on successful validation. If validation fails,
-    /// returns [`crate::Error::WriteLayoutFailed`] with detailed information about
+    /// returns [`crate::Error::LayoutFailed`] with detailed information about
     /// the specific conflict detected, including which operations overlap and their
     /// file offset ranges.
     ///
     /// # Errors
     ///
-    /// This method returns [`crate::Error::WriteLayoutFailed`] when:
+    /// This method returns [`crate::Error::LayoutFailed`] when:
     /// - Two or more operations attempt to write to overlapping file regions
     /// - Operations have invalid offsets (negative or extremely large values)
     /// - Operation sizes would cause integer overflow when calculating end positions
@@ -721,11 +721,9 @@ impl OperationSet {
             let (start2, _end2, desc2) = &window[1];
 
             if end1 > start2 {
-                return Err(Error::WriteLayoutFailed {
-                    message: format!(
-                        "Operation overlap detected: '{desc1}' ({start1}..{end1}) overlaps with '{desc2}' (starts at {start2})" 
-                    ),
-                });
+                return Err(Error::LayoutFailed(format!(
+                    "Operation overlap detected: '{desc1}' ({start1}..{end1}) overlaps with '{desc2}' (starts at {start2})"
+                )));
             }
         }
 

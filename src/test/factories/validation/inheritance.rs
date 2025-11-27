@@ -42,7 +42,7 @@ pub fn owned_inheritance_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
 
     assemblies.push(TestAssembly::new(&clean_testfile, true));
@@ -137,7 +137,7 @@ pub fn owned_inheritance_validator_file_factory() -> Result<Vec<TestAssembly>> {
 /// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
 pub fn create_assembly_with_circular_inheritance() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -166,7 +166,7 @@ pub fn create_assembly_with_circular_inheritance() -> Result<NamedTempFile> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)
@@ -180,7 +180,7 @@ pub fn create_assembly_with_circular_inheritance() -> Result<NamedTempFile> {
 /// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
 pub fn create_assembly_with_sealed_type_inheritance() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -206,7 +206,7 @@ pub fn create_assembly_with_sealed_type_inheritance() -> Result<NamedTempFile> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)
@@ -220,7 +220,7 @@ pub fn create_assembly_with_sealed_type_inheritance() -> Result<NamedTempFile> {
 /// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
 pub fn create_assembly_with_interface_inheritance_violation() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -246,7 +246,7 @@ pub fn create_assembly_with_interface_inheritance_violation() -> Result<NamedTem
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)
@@ -260,7 +260,7 @@ pub fn create_assembly_with_interface_inheritance_violation() -> Result<NamedTem
 /// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
 pub fn create_assembly_with_accessibility_violation() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -286,7 +286,7 @@ pub fn create_assembly_with_accessibility_violation() -> Result<NamedTempFile> {
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)
@@ -300,7 +300,7 @@ pub fn create_assembly_with_accessibility_violation() -> Result<NamedTempFile> {
 /// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
 pub fn create_assembly_with_abstract_concrete_violation() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -315,7 +315,7 @@ pub fn create_assembly_with_abstract_concrete_violation() -> Result<NamedTempFil
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)
@@ -329,7 +329,7 @@ pub fn create_assembly_with_abstract_concrete_violation() -> Result<NamedTempFil
 /// Originally from: `src/metadata/validation/validators/owned/types/inheritance.rs`
 pub fn create_assembly_with_method_inheritance_violation() -> Result<NamedTempFile> {
     let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Error("crafted_2.exe not available".to_string()))?;
+        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -354,7 +354,7 @@ pub fn create_assembly_with_method_inheritance_violation() -> Result<NamedTempFi
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
     assembly.write_to_file(temp_file.path())?;
 
     Ok(temp_file)

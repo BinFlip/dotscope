@@ -165,7 +165,7 @@
 //!     )?;
 //!
 //!     if !compilation.is_success() {
-//!         return Err(dotscope::Error::Error("Compilation failed".to_string()));
+//!         return Err(dotscope::Error::Other("Compilation failed".to_string()));
 //!     }
 //!
 //!     // 2. Test original execution

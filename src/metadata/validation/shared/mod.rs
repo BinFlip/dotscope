@@ -10,7 +10,7 @@
 //!
 //! The shared validation system provides three main categories of utilities:
 //! 1. **Token Validation** ([`tokens`]) - Token format and integrity validation
-//! 2. **Schema Validation** ([`schema`]) - ECMA-335 schema compliance validation  
+//! 2. **Schema Validation** ([`schema`]) - ECMA-335 schema compliance validation
 //! 3. **Reference Validation** ([`references`]) - Cross-table reference integrity validation
 //!
 //! These utilities are designed to be composed into higher-level validators without

@@ -6,7 +6,7 @@
 use crate::{
     metadata::{identity::AssemblyIdentity, typesystem::TypeRegistry},
     utils::FailFastBarrier,
-    Result,
+    Error, Result,
 };
 use boxcar::Vec as BoxcarVec;
 use std::sync::Arc;
@@ -77,7 +77,7 @@ impl ProjectContext {
     pub fn wait_stage1(&self) -> Result<()> {
         self.stage1_barrier
             .wait()
-            .map_err(|e| crate::Error::Error(format!("Stage 1 barrier failed: {}", e)))
+            .map_err(|e| Error::LockError(format!("Stage 1 barrier failed: {}", e)))
     }
 
     /// Wait for all assemblies to complete stage 2 (type definitions loaded).
@@ -91,7 +91,7 @@ impl ProjectContext {
     pub fn wait_stage2(&self) -> Result<()> {
         self.stage2_barrier
             .wait()
-            .map_err(|e| crate::Error::Error(format!("Stage 2 barrier failed: {}", e)))
+            .map_err(|e| Error::LockError(format!("Stage 2 barrier failed: {}", e)))
     }
 
     /// Wait for all assemblies to complete stage 3 (inheritance resolution completed).
@@ -105,7 +105,7 @@ impl ProjectContext {
     pub fn wait_stage3(&self) -> Result<()> {
         self.stage3_barrier
             .wait()
-            .map_err(|e| crate::Error::Error(format!("Stage 3 barrier failed: {}", e)))
+            .map_err(|e| Error::LockError(format!("Stage 3 barrier failed: {}", e)))
     }
 
     /// Register a TypeRegistry for cross-assembly linking after stage 1.

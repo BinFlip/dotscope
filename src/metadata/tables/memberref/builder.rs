@@ -209,30 +209,22 @@ impl MemberRefBuilder {
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
         let class = self
             .class
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "MemberRef class is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("MemberRef class is required".to_string()))?;
 
         let name = self
             .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "MemberRef name is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("MemberRef name is required".to_string()))?;
 
-        let signature = self
-            .signature
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "MemberRef signature is required".to_string(),
-            })?;
+        let signature = self.signature.ok_or_else(|| {
+            Error::ModificationInvalid("MemberRef signature is required".to_string())
+        })?;
 
         let valid_class_tables = CodedIndexType::MemberRefParent.tables();
         if !valid_class_tables.contains(&class.tag) {
-            return Err(Error::ModificationInvalidOperation {
-                details: format!(
-                    "Class must be a MemberRefParent coded index (TypeDef/TypeRef/ModuleRef/MethodDef/TypeSpec), got {:?}",
-                    class.tag
-                ),
-            });
+            return Err(Error::ModificationInvalid(format!(
+                "Class must be a MemberRefParent coded index (TypeDef/TypeRef/ModuleRef/MethodDef/TypeSpec), got {:?}",
+                class.tag
+            )));
         }
 
         let name_index = context.string_get_or_add(&name)?;

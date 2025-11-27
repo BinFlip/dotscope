@@ -252,20 +252,16 @@ impl ConflictResolver for LastWriteWinsResolver {
                     delete_op,
                 } => {
                     if !insert_op.is_insert() {
-                        return Err(Error::ConflictResolutionError {
-                            details: format!(
-                                "InsertDeleteConflict for RID {}: insert_op is not an Insert operation",
-                                rid
-                            ),
-                        });
+                        return Err(Error::ConflictResolution(format!(
+                            "InsertDeleteConflict for RID {}: insert_op is not an Insert operation",
+                            rid
+                        )));
                     }
                     if !delete_op.is_delete() {
-                        return Err(Error::ConflictResolutionError {
-                            details: format!(
-                                "InsertDeleteConflict for RID {}: delete_op is not a Delete operation",
-                                rid
-                            ),
-                        });
+                        return Err(Error::ConflictResolution(format!(
+                            "InsertDeleteConflict for RID {}: delete_op is not a Delete operation",
+                            rid
+                        )));
                     }
 
                     let winning_op = if insert_op.timestamp >= delete_op.timestamp {

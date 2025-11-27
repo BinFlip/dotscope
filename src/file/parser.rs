@@ -1015,6 +1015,7 @@ impl<'a> Parser<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::Error;
 
     #[test]
     fn test_read_compressed_uint() {
@@ -1037,7 +1038,7 @@ mod tests {
         let mut parser = Parser::new(&[]);
         assert!(matches!(
             parser.read_compressed_uint(),
-            Err(crate::Error::OutOfBounds { .. })
+            Err(Error::OutOfBounds { .. })
         ));
     }
 
@@ -1078,7 +1079,7 @@ mod tests {
         assert!(matches!(parser.read_compressed_uint(), Ok(8)));
         assert!(matches!(
             parser.read_compressed_uint(),
-            Err(crate::Error::OutOfBounds { .. })
+            Err(Error::OutOfBounds { .. })
         ));
     }
 
@@ -1221,7 +1222,7 @@ mod tests {
         let mut parser = Parser::new(&data);
         assert!(matches!(
             parser.read_prefixed_string_utf8_ref(),
-            Err(crate::Error::OutOfBounds { .. })
+            Err(Error::OutOfBounds { .. })
         ));
     }
 }

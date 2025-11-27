@@ -636,16 +636,14 @@ impl ManifestResourceBuilder {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let name = self
-            .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Resource name is required for ManifestResource".to_string(),
-            })?;
+        let name = self.name.ok_or_else(|| {
+            Error::ModificationInvalid("Resource name is required for ManifestResource".to_string())
+        })?;
 
         if name.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Resource name cannot be empty for ManifestResource".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Resource name cannot be empty for ManifestResource".to_string(),
+            ));
         }
 
         let name_index = context.string_get_or_add(&name)?;
@@ -654,30 +652,27 @@ impl ManifestResourceBuilder {
             match impl_ref.tag {
                 TableId::File | TableId::AssemblyRef => {
                     if impl_ref.row == 0 {
-                        return Err(Error::ModificationInvalidOperation {
-                            details: "Implementation reference row cannot be 0 for File or AssemblyRef tables".to_string(),
-                        });
+                        return Err(Error::ModificationInvalid(
+                            "Implementation reference row cannot be 0 for File or AssemblyRef tables".to_string(),
+                        ));
                     }
                     impl_ref
                 }
                 TableId::ExportedType => {
                     // ExportedType is valid but rarely used
                     if impl_ref.row == 0 {
-                        return Err(Error::ModificationInvalidOperation {
-                            details:
-                                "Implementation reference row cannot be 0 for ExportedType table"
-                                    .to_string(),
-                        });
+                        return Err(Error::ModificationInvalid(
+                            "Implementation reference row cannot be 0 for ExportedType table"
+                                .to_string(),
+                        ));
                     }
                     impl_ref
                 }
                 _ => {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: format!(
-                            "Invalid implementation table type: {:?}. Must be File, AssemblyRef, or ExportedType",
-                            impl_ref.tag
-                        ),
-                    });
+                    return Err(Error::ModificationInvalid(format!(
+                        "Invalid implementation table type: {:?}. Must be File, AssemblyRef, or ExportedType",
+                        impl_ref.tag
+                    )));
                 }
             }
         } else {

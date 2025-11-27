@@ -106,8 +106,9 @@ use std::collections::HashMap;
 
 use crate::{
     file::pe::Import,
+    malformed_error,
     utils::{write_le_at, write_string_at},
-    Error, Result,
+    Result,
 };
 
 /// Container for native PE import table data.
@@ -402,7 +403,7 @@ impl NativeImports {
     /// Returns an error if the DLL name is empty or contains invalid characters.
     pub fn add_dll(&mut self, dll_name: &str) -> Result<()> {
         if dll_name.is_empty() {
-            return Err(Error::Error("DLL name cannot be empty".to_string()));
+            return Err(malformed_error!("DLL name cannot be empty"));
         }
 
         if !self.descriptors.contains_key(dll_name) {
@@ -458,7 +459,7 @@ impl NativeImports {
     /// Use [`Self::add_dll`] before calling this method.
     pub fn add_function(&mut self, dll_name: &str, function_name: &str) -> Result<()> {
         if function_name.is_empty() {
-            return Err(Error::Error("Function name cannot be empty".to_string()));
+            return Err(malformed_error!("Function name cannot be empty"));
         }
 
         if let Some(descriptor) = self.descriptors.get(dll_name) {
@@ -467,14 +468,14 @@ impl NativeImports {
                 .iter()
                 .any(|f| f.name.as_deref() == Some(function_name))
             {
-                return Err(Error::Error(format!(
+                return Err(malformed_error!(
                     "Function '{function_name}' already imported from '{dll_name}'"
-                )));
+                ));
             }
         } else {
-            return Err(Error::Error(format!(
+            return Err(malformed_error!(
                 "DLL '{dll_name}' not found in import table"
-            )));
+            ));
         }
 
         let iat_rva = self.allocate_iat_rva();
@@ -538,7 +539,7 @@ impl NativeImports {
     /// Use [`Self::add_dll`] before calling this method.
     pub fn add_function_by_ordinal(&mut self, dll_name: &str, ordinal: u16) -> Result<()> {
         if ordinal == 0 {
-            return Err(Error::Error("Ordinal cannot be 0".to_string()));
+            return Err(malformed_error!("Ordinal cannot be 0"));
         }
 
         if let Some(descriptor) = self.descriptors.get(dll_name) {
@@ -547,14 +548,14 @@ impl NativeImports {
                 .iter()
                 .any(|f| f.ordinal == Some(ordinal))
             {
-                return Err(Error::Error(format!(
+                return Err(malformed_error!(
                     "Ordinal {ordinal} already imported from '{dll_name}'"
-                )));
+                ));
             }
         } else {
-            return Err(Error::Error(format!(
+            return Err(malformed_error!(
                 "DLL '{dll_name}' not found in import table"
-            )));
+            ));
         }
 
         let iat_rva = self.allocate_iat_rva();
@@ -1035,7 +1036,7 @@ impl NativeImports {
                     updated_entries.insert(rva, entry);
                 }
                 None => {
-                    return Err(Error::Error("RVA delta would cause overflow".to_string()));
+                    return Err(malformed_error!("RVA delta would cause overflow"));
                 }
             }
         }
@@ -1054,7 +1055,7 @@ impl NativeImports {
                 match new_rva {
                     Some(rva) => function.rva = rva,
                     None => {
-                        return Err(Error::Error("RVA delta would cause overflow".to_string()));
+                        return Err(malformed_error!("RVA delta would cause overflow"));
                     }
                 }
             }
@@ -1070,7 +1071,7 @@ impl NativeImports {
         match new_next_rva {
             Some(rva) => self.next_iat_rva = rva,
             None => {
-                return Err(Error::Error("RVA delta would cause overflow".to_string()));
+                return Err(malformed_error!("RVA delta would cause overflow"));
             }
         }
 

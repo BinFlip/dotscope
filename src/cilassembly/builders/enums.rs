@@ -265,9 +265,9 @@ impl EnumBuilder {
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
         // Validate enum constraints
         if self.name.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Enum name cannot be empty".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Enum name cannot be empty".to_string(),
+            ));
         }
 
         // Create the enum TypeDef entry (sealed value type that inherits from System.Enum)
@@ -383,12 +383,10 @@ impl EnumBuilder {
                     val.to_le_bytes().to_vec()
                 }
                 _ => {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: format!(
-                            "Unsupported enum underlying type: {:?}",
-                            self.underlying_type
-                        ),
-                    });
+                    return Err(Error::ModificationInvalid(format!(
+                        "Unsupported enum underlying type: {:?}",
+                        self.underlying_type
+                    )));
                 }
             };
 
@@ -403,12 +401,10 @@ impl EnumBuilder {
                 TypeSignature::I8 => ELEMENT_TYPE::I8,
                 TypeSignature::U8 => ELEMENT_TYPE::U8,
                 _ => {
-                    return Err(Error::ModificationInvalidOperation {
-                        details: format!(
-                            "Unsupported enum underlying type: {:?}",
-                            self.underlying_type
-                        ),
-                    });
+                    return Err(Error::ModificationInvalid(format!(
+                        "Unsupported enum underlying type: {:?}",
+                        self.underlying_type
+                    )));
                 }
             };
 

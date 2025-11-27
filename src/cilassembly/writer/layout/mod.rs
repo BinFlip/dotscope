@@ -140,7 +140,7 @@
 //!
 //! This module defines comprehensive error handling for layout planning issues:
 //!
-//! - [`crate::Error::WriteLayoutFailed`] - When layout planning encounters invalid conditions or conflicts
+//! - [`crate::Error::LayoutFailed`] - When layout planning encounters invalid conditions or conflicts
 //! - Detailed error messages with specific information about what failed and why
 //! - Context-rich errors that help diagnose assembly structure issues
 //! - Validation errors that prevent generation of invalid PE files
@@ -1357,7 +1357,7 @@ impl WriteLayout {
     ///
     /// # Errors
     ///
-    /// This method returns [`crate::Error::WriteLayoutFailed`] when:
+    /// This method returns [`crate::Error::LayoutFailed`] when:
     /// - Assembly structure is invalid or unsupported for modification
     /// - Size calculations exceed file format limitations
     /// - Layout planning encounters irreconcilable conflicts
@@ -1511,12 +1511,10 @@ impl WriteLayout {
         // Verify file size matches
         let actual_size = output.size();
         if actual_size != self.total_file_size {
-            return Err(Error::WriteLayoutFailed {
-                message: format!(
-                    "File size mismatch: planned {total_file_size} bytes, actual {actual_size} bytes",
-                    total_file_size = self.total_file_size
-                ),
-            });
+            return Err(Error::LayoutFailed(format!(
+                "File size mismatch: planned {total_file_size} bytes, actual {actual_size} bytes",
+                total_file_size = self.total_file_size
+            )));
         }
 
         // Additional validation can be added here:
@@ -1596,13 +1594,11 @@ impl WriteLayout {
         // Validate section table can accommodate all sections
         let expected_section_table_size = self.file_structure.sections.len() * 40;
         if self.file_structure.section_table.size < expected_section_table_size as u64 {
-            return Err(Error::WriteLayoutFailed {
-                message: format!(
-                    "Section table too small: {size} bytes for {count} sections",
-                    size = self.file_structure.section_table.size,
-                    count = self.file_structure.sections.len()
-                ),
-            });
+            return Err(Error::LayoutFailed(format!(
+                "Section table too small: {size} bytes for {count} sections",
+                size = self.file_structure.section_table.size,
+                count = self.file_structure.sections.len()
+            )));
         }
 
         // Validate sections don't overlap
@@ -1615,15 +1611,13 @@ impl WriteLayout {
 
             let section1_end = section1.file_region.offset + section1.file_region.size;
             if section1_end > section2.file_region.offset {
-                return Err(Error::WriteLayoutFailed {
-                    message: format!(
-                        "Section overlap: {name1} (ends at {end1}) overlaps with {name2} (starts at {start2})",
-                        name1 = section1.name,
-                        end1 = section1_end,
-                        name2 = section2.name,
-                        start2 = section2.file_region.offset
-                    ),
-                });
+                return Err(Error::LayoutFailed(format!(
+                    "Section overlap: {name1} (ends at {end1}) overlaps with {name2} (starts at {start2})",
+                    name1 = section1.name,
+                    end1 = section1_end,
+                    name2 = section2.name,
+                    start2 = section2.file_region.offset
+                )));
             }
         }
 
@@ -1638,13 +1632,11 @@ impl WriteLayout {
         for stream in &self.metadata_layout.streams {
             let stream_end = stream.file_region.offset + stream.file_region.size;
             if stream_end > meta_section_end {
-                return Err(Error::WriteLayoutFailed {
-                    message: format!(
-                        "Stream {name} extends beyond .meta section: {stream_end} > {meta_end}",
-                        name = stream.name,
-                        meta_end = meta_section_end
-                    ),
-                });
+                return Err(Error::LayoutFailed(format!(
+                    "Stream {name} extends beyond .meta section: {stream_end} > {meta_end}",
+                    name = stream.name,
+                    meta_end = meta_section_end
+                )));
             }
         }
 

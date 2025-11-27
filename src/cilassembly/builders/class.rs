@@ -558,9 +558,10 @@ impl ClassBuilder {
         if (self.flags & TypeAttributes::SEALED) != 0
             && (self.flags & TypeAttributes::ABSTRACT) != 0
         {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Class cannot be both sealed and abstract (mutually exclusive flags per ECMA-335)".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Class cannot be both sealed and abstract (mutually exclusive flags per ECMA-335)"
+                    .to_string(),
+            ));
         }
 
         // Create the TypeDef entry
@@ -616,8 +617,10 @@ impl ClassBuilder {
                     .iter()
                     .find(|(name, _)| name == backing_field_name)
                     .map(|(_, token)| *token)
-                    .ok_or_else(|| Error::ModificationInvalidOperation {
-                        details: format!("Backing field {backing_field_name} not found"),
+                    .ok_or_else(|| {
+                        Error::ModificationInvalid(format!(
+                            "Backing field {backing_field_name} not found"
+                        ))
                     })?;
 
                 // Create getter

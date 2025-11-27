@@ -40,7 +40,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Circular inheritance chains in type hierarchies (types inheriting from themselves)
 //! - Circular nested class relationships (nested types forming dependency loops)
 //! - Cross-assembly dependency cycles (assemblies with mutual dependencies)
@@ -131,7 +131,7 @@ impl OwnedCircularityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - No inheritance circular dependencies found
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Inheritance circularity detected
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Inheritance circularity detected
     fn validate_inheritance_cycles(&self, context: &OwnedValidationContext) -> Result<()> {
         let mut visited = FxHashSet::default();
         let mut visiting = FxHashSet::default();
@@ -181,13 +181,13 @@ impl OwnedCircularityValidator {
 
         // If currently being processed, we found a cycle
         if visiting.contains(&current_token) {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular inheritance relationship detected: Type '{}' (token 0x{:08X}) is part of an inheritance cycle",
                     type_entry.name, current_token.value()
                 ),
-                source: None,
+
             });
         }
 
@@ -218,7 +218,7 @@ impl OwnedCircularityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - No interface implementation circular dependencies found
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Interface circularity detected
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Interface circularity detected
     fn validate_interface_implementation_cycles(
         &self,
         context: &OwnedValidationContext,
@@ -271,13 +271,13 @@ impl OwnedCircularityValidator {
 
         // If currently being processed, we found a cycle
         if visiting.contains(&token) {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular interface implementation relationship detected: Type with token 0x{:08X} implements itself through interface chain",
                     token.value()
                 ),
-                source: None,
+
             });
         }
 
@@ -316,7 +316,7 @@ impl OwnedCircularityValidator {
     /// # Returns
     ///
     /// * `Ok(())` - No problematic cross-reference circular dependencies found
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Cross-reference circularity detected
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Cross-reference circularity detected
     fn validate_cross_reference_cycles(&self, context: &OwnedValidationContext) -> Result<()> {
         let mut visited = FxHashSet::default();
         let mut visiting = FxHashSet::default();
@@ -398,13 +398,13 @@ impl OwnedCircularityValidator {
 
         // If currently being processed, we found a cycle
         if visiting.contains(&token) {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular cross-reference relationship detected: Type with token 0x{:08X} references itself through relationship chain",
                     token.value()
                 ),
-                source: None,
+
             });
         }
 
@@ -481,7 +481,7 @@ mod tests {
         owned_validator_test(
             owned_circularity_validator_file_factory,
             "OwnedCircularityValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

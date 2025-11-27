@@ -423,9 +423,9 @@ impl InterfaceBuilder {
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
         // Validate interface constraints
         if self.name.is_empty() {
-            return Err(Error::ModificationInvalidOperation {
-                details: "Interface name cannot be empty".to_string(),
-            });
+            return Err(Error::ModificationInvalid(
+                "Interface name cannot be empty".to_string(),
+            ));
         }
 
         // Create the interface TypeDef entry

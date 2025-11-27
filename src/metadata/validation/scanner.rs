@@ -606,14 +606,13 @@ impl ReferenceScanner {
         let table_value = token.table();
         let rid = token.row();
 
-        let table_id =
-            TableId::from_token_type(table_value).ok_or(Error::ValidationInvalidRid {
-                table: TableId::Module,
-                rid,
-            })?;
+        let table_id = TableId::from_token_type(table_value).ok_or(Error::InvalidRid {
+            table: TableId::Module,
+            rid,
+        })?;
 
         if rid == 0 {
-            return Err(Error::ValidationInvalidRid {
+            return Err(Error::InvalidRid {
                 table: table_id,
                 rid,
             });
@@ -621,7 +620,7 @@ impl ReferenceScanner {
 
         let max_rid = self.table_row_count(table_id);
         if rid > max_rid {
-            return Err(Error::ValidationInvalidRid {
+            return Err(Error::InvalidRid {
                 table: table_id,
                 rid,
             });
@@ -742,16 +741,16 @@ impl ReferenceScanner {
             "guids" => self.heap_sizes.guids,
             "userstrings" => self.heap_sizes.userstrings,
             _ => {
-                return Err(Error::ValidationHeapBoundsError {
-                    heap_type: heap_type.to_string(),
+                return Err(Error::HeapBoundsError {
+                    heap: heap_type.to_string(),
                     index,
                 })
             }
         };
 
         if index >= max_size {
-            return Err(Error::ValidationHeapBoundsError {
-                heap_type: heap_type.to_string(),
+            return Err(Error::HeapBoundsError {
+                heap: heap_type.to_string(),
                 index,
             });
         }

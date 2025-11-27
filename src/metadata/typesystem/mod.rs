@@ -315,8 +315,8 @@ impl CilType {
                             {
                                 Ok(())
                             } else {
-                                Err(Error::Error(
-                                    format!("Base type was already set with different value: existing {} vs new {}", 
+                                Err(Error::TypeError(
+                                    format!("Base type was already set with different value: existing {} vs new {}",
                                            existing_ref.fullname(), new_ref.fullname())
                                 ))
                             }
@@ -347,7 +347,7 @@ impl CilType {
                     }
                 } else {
                     // This should be impossible with OnceLock - if set() failed, get() should return Some()
-                    Err(Error::Error(
+                    Err(Error::TypeError(
                         "Impossible OnceLock state detected".to_string(),
                     ))
                 }
@@ -424,7 +424,7 @@ impl CilType {
                             {
                                 Ok(())
                             } else {
-                                Err(Error::Error(format!(
+                                Err(Error::TypeError(format!(
                                     "Enclosing type was already set with different value: existing {} vs new {}",
                                     existing_ref.fullname(),
                                     new_ref.fullname()
@@ -437,7 +437,7 @@ impl CilType {
                     }
                 } else {
                     // This should be impossible with OnceLock
-                    Err(Error::Error(
+                    Err(Error::TypeError(
                         "Impossible OnceLock state detected in set_enclosing_type".to_string(),
                     ))
                 }

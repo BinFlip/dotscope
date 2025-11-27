@@ -44,7 +44,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationRawFailed`] for:
 //! - Invalid UTF-8 encoding in string heaps (#Strings stream violations)
 //! - Malformed blob size encoding or data corruption (#Blob stream violations)
 //! - Incorrect GUID alignment or invalid format (#GUID stream violations)
@@ -136,11 +136,11 @@ impl RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - String heap is valid and properly formatted
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - String heap violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - String heap violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - String heap size exceeds maximum allowed value (0x7FFFFFFF)
     /// - String heap size is not 4-byte aligned as required by ECMA-335
     /// - String heap offset exceeds maximum allowed value
@@ -191,11 +191,11 @@ impl RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All string entries are valid UTF-8 and properly formatted
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Invalid string content found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Invalid string content found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - String contains invalid UTF-8 byte sequences
     /// - String is not properly null-terminated (ECMA-335 requirement)
     /// - String heap iteration fails due to corruption
@@ -227,11 +227,11 @@ impl RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - Blob heap is valid and properly formatted
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Blob heap violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Blob heap violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Blob heap size exceeds maximum allowed value (0x7FFFFFFF)
     /// - Blob heap size is not 4-byte aligned as required by ECMA-335
     /// - Blob heap offset exceeds maximum allowed value
@@ -281,11 +281,11 @@ impl RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All blob entries have valid size encoding and data integrity
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Invalid blob content found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Invalid blob content found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Blob has invalid compressed integer size prefix
     /// - Blob data length doesn't match encoded size
     /// - Blob heap iteration fails due to corruption
@@ -325,11 +325,11 @@ impl RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - GUID heap is valid and properly formatted
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - GUID heap violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - GUID heap violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - GUID heap size exceeds maximum allowed value (0x7FFFFFFF)
     /// - GUID heap size is not a multiple of 16 bytes (GUID entry size)
     /// - GUID heap size is not 4-byte aligned as required by ECMA-335
@@ -387,11 +387,11 @@ impl RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All GUID entries are properly formatted and accessible
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Invalid GUID content found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Invalid GUID content found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - GUID heap iteration fails due to corruption
     /// - GUID entries are inaccessible or malformed
     /// - GUID heap contains inconsistent data
@@ -475,11 +475,11 @@ impl RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - UserString heap is valid and properly formatted
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - UserString heap violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - UserString heap violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - UserString heap size exceeds maximum allowed value (0x7FFFFFFF)
     /// - UserString heap size is not 4-byte aligned as required by ECMA-335
     /// - UserString heap offset exceeds maximum allowed value
@@ -529,11 +529,11 @@ impl RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All user string entries are valid UTF-16 and properly formatted
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Invalid user string content found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Invalid user string content found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - User string contains invalid UTF-16 encoding
     /// - User string length prefix is malformed
     /// - User string heap iteration fails due to corruption
@@ -582,11 +582,11 @@ impl RawValidator for RawHeapValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All heap structures are valid and meet ECMA-335 requirements
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Heap structure violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Heap structure violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] for:
+    /// Returns [`crate::Error::ValidationRawFailed`] for:
     /// - Invalid UTF-8 encoding in string heaps
     /// - Malformed blob size encoding or corrupted data
     /// - Incorrect GUID alignment or invalid format
@@ -661,7 +661,7 @@ mod tests {
 
         fn clean_only_factory() -> Result<Vec<TestAssembly>> {
             let Some(clean_testfile) = get_testfile_wb() else {
-                return Err(Error::Error("WindowsBase.dll not available".to_string()));
+                return Err(Error::Other("WindowsBase.dll not available".to_string()));
             };
             Ok(vec![TestAssembly::new(&clean_testfile, true)])
         }

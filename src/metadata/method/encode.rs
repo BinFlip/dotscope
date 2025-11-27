@@ -4,7 +4,7 @@
 //! according to the ECMA-335 specification. It handles both tiny and fat format
 //! method body headers as defined in II.25.4.5.
 
-use crate::Result;
+use crate::{malformed_error, Result};
 
 /// Encode method body header according to ECMA-335 II.25.4.5.
 ///
@@ -69,7 +69,7 @@ pub fn encode_method_body_header(
     if code_size <= 63 && max_stack <= 8 && local_var_sig_tok == 0 && !has_exceptions {
         // Tiny format: 1 byte header
         let header = u8::try_from((code_size << 2) | 0x02)
-            .map_err(|_| crate::malformed_error!("Method body header value exceeds u8 range"))?;
+            .map_err(|_| malformed_error!("Method body header value exceeds u8 range"))?;
         Ok(vec![header])
     } else {
         // Fat format: 12 byte header

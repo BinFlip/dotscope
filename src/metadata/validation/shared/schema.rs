@@ -121,21 +121,21 @@ impl<'a> SchemaValidator<'a> {
     ///
     /// # Errors
     ///
-    /// - `ValidationTypeSystemError`: If table structure is invalid
+    /// - `ValidationOwnedFailed`: If table structure is invalid
     pub fn validate_basic_structure(&self, tables: &crate::TablesHeader) -> Result<()> {
         // Module table is required by ECMA-335
         if self.scanner.table_row_count(TableId::Module) == 0 {
-            return Err(Error::ValidationTypeSystemError {
+            return Err(Error::ValidationOwnedFailed {
+                validator: "SchemaValidator".to_string(),
                 message: "Module table is required but empty".to_string(),
-                type_token: None,
             });
         }
 
         // Module table must have exactly one row
         if self.scanner.table_row_count(TableId::Module) > 1 {
-            return Err(Error::ValidationTypeSystemError {
+            return Err(Error::ValidationOwnedFailed {
+                validator: "SchemaValidator".to_string(),
                 message: "Module table must contain exactly one row".to_string(),
-                type_token: None,
             });
         }
 
@@ -166,9 +166,9 @@ impl<'a> SchemaValidator<'a> {
             let assemblyref_count = self.scanner.table_row_count(TableId::AssemblyRef);
 
             if assembly_count == 0 && assemblyref_count == 0 {
-                return Err(Error::ValidationTypeSystemError {
+                return Err(Error::ValidationOwnedFailed {
+                    validator: "SchemaValidator".to_string(),
                     message: "TypeDef tables require Assembly or AssemblyRef table".to_string(),
-                    type_token: None,
                 });
             }
         }
@@ -192,9 +192,9 @@ impl<'a> SchemaValidator<'a> {
 
         // If we have fields, we must have type definitions that own them
         if field_count > 0 && typedef_count == 0 {
-            return Err(Error::ValidationFieldError {
+            return Err(Error::ValidationOwnedFailed {
+                validator: "SchemaValidator".to_string(),
                 message: "Field table requires TypeDef table".to_string(),
-                field_token: None,
             });
         }
 
@@ -211,8 +211,8 @@ impl<'a> SchemaValidator<'a> {
 
         // If we have methods, we must have type definitions that own them
         if methoddef_count > 0 && typedef_count == 0 {
-            return Err(Error::ValidationMethodError {
-                method_token: crate::metadata::token::Token::new(0x0600_0001), // Placeholder MethodDef token
+            return Err(Error::ValidationOwnedFailed {
+                validator: "SchemaValidator".to_string(),
                 message: "MethodDef table requires TypeDef table".to_string(),
             });
         }
@@ -236,7 +236,7 @@ impl<'a> SchemaValidator<'a> {
     ///
     /// # Errors
     ///
-    /// - `ValidationHeapBoundsError`: If the heap index is out of bounds
+    /// - `HeapBoundsError`: If the heap index is out of bounds
     pub fn validate_heap_reference(&self, heap_type: &str, index: u32) -> Result<()> {
         self.scanner.validate_heap_index(heap_type, index)
     }
@@ -286,10 +286,10 @@ impl<'a> SchemaValidator<'a> {
     ///
     /// # Errors
     ///
-    /// - `ValidationInvalidRid`: If the RID is invalid
+    /// - `InvalidRid`: If the RID is invalid
     pub fn validate_rid(&self, table_id: TableId, rid: u32) -> Result<()> {
         if rid == 0 {
-            return Err(Error::ValidationInvalidRid {
+            return Err(Error::InvalidRid {
                 table: table_id,
                 rid,
             });
@@ -297,7 +297,7 @@ impl<'a> SchemaValidator<'a> {
 
         let max_rid = self.scanner.table_row_count(table_id);
         if rid > max_rid {
-            return Err(Error::ValidationInvalidRid {
+            return Err(Error::InvalidRid {
                 table: table_id,
                 rid,
             });
@@ -323,7 +323,7 @@ impl<'a> SchemaValidator<'a> {
     /// # Errors
     ///
     /// - `ValidationInvalidTokenType`: If the coded index references an invalid table
-    /// - `ValidationInvalidRid`: If the referenced RID is invalid
+    /// - `InvalidRid`: If the referenced RID is invalid
     pub fn validate_coded_index(&self, coded_index: u32, allowed_tables: &[TableId]) -> Result<()> {
         if coded_index == 0 {
             // Null coded index is often valid
@@ -339,7 +339,7 @@ impl<'a> SchemaValidator<'a> {
 
         // Validate table index is within allowed range
         if (table_index as usize) >= allowed_tables.len() {
-            return Err(Error::ValidationTokenError {
+            return Err(Error::InvalidToken {
                 token: crate::metadata::token::Token::new(coded_index),
                 message: format!("Table index {table_index} not in allowed range"),
             });
@@ -417,8 +417,8 @@ impl<'a> SchemaValidator<'a> {
         let max_index = guid_heap_size / 16; // Each GUID is 16 bytes
 
         if index > max_index {
-            return Err(Error::ValidationHeapBoundsError {
-                heap_type: "guids".to_string(),
+            return Err(Error::HeapBoundsError {
+                heap: "guids".to_string(),
                 index,
             });
         }

@@ -10,7 +10,7 @@
 //!
 //! The type constraint validation system implements comprehensive constraint satisfaction validation in sequential order:
 //! 1. **Generic Parameter Constraint Validation** - Ensures generic type parameters satisfy their constraints
-//! 2. **Inheritance Constraint Validation** - Validates inheritance relationships meet constraint requirements  
+//! 2. **Inheritance Constraint Validation** - Validates inheritance relationships meet constraint requirements
 //! 3. **Interface Implementation Constraint Validation** - Ensures interface constraints are properly implemented
 //! 4. **Type Compatibility Constraint Validation** - Validates type compatibility against generic constraints
 //! 5. **Constructor Constraint Validation** - Ensures new() constraint satisfaction for generic parameters
@@ -41,7 +41,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Generic parameter constraint violations (type arguments not satisfying constraints)
 //! - Inheritance constraint failures (invalid inheritance relationships for constrained types)
 //! - Interface implementation constraint violations (missing interface implementations)
@@ -133,11 +133,11 @@ impl OwnedTypeConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All generic parameter constraints are valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Constraint violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Constraint violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationOwnedValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationOwnedFailed`] if:
     /// - Generic parameters have invalid constraint combinations
     /// - Constraint types are not accessible or resolvable
     /// - Circular constraint dependencies are detected
@@ -184,13 +184,12 @@ impl OwnedTypeConstraintValidator {
 
                     // Validate constraint type accessibility
                     if constraint_type.name.is_empty() {
-                        return Err(Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Generic parameter '{}' in type '{}' has unresolved constraint",
                                 generic_param.name, type_entry.name
                             ),
-                            source: None,
                         });
                     }
 
@@ -201,13 +200,12 @@ impl OwnedTypeConstraintValidator {
                         &type_entry.name,
                     )?;
                 } else {
-                    return Err(Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Generic parameter '{}' in type '{}' has broken constraint reference",
                             generic_param.name, type_entry.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -286,13 +284,12 @@ impl OwnedTypeConstraintValidator {
                 // e.g., where T : U in generic type definitions
                 Ok(())
             }
-            _ => Err(Error::ValidationOwnedValidatorFailed {
+            _ => Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Generic parameter '{}' in type '{}' has incompatible constraint type '{}'",
                     param_name, type_name, constraint_type.name
                 ),
-                source: None,
             }),
         }
     }
@@ -321,12 +318,12 @@ impl OwnedTypeConstraintValidator {
         if (attributes & GenericParamAttributes::COVARIANT != 0)
             && (attributes & GenericParamAttributes::CONTRAVARIANT != 0)
         {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Generic parameter '{param_name}' in type '{type_name}' cannot be both covariant and contravariant"
                 ),
-                source: None,
+
             });
         }
 
@@ -334,12 +331,12 @@ impl OwnedTypeConstraintValidator {
         if (attributes & GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT != 0)
             && (attributes & GenericParamAttributes::NOT_NULLABLE_VALUE_TYPE_CONSTRAINT != 0)
         {
-            return Err(Error::ValidationOwnedValidatorFailed {
+            return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Generic parameter '{param_name}' in type '{type_name}' cannot have both reference type and value type constraints"
                 ),
-                source: None,
+
             });
         }
 
@@ -358,7 +355,7 @@ impl OwnedTypeConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All inheritance constraints are satisfied
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Constraint violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Constraint violations found
     fn validate_inheritance_constraint_satisfaction(
         &self,
         context: &OwnedValidationContext,
@@ -435,13 +432,12 @@ impl OwnedTypeConstraintValidator {
             let is_likely_interface =
                 interface_fullname.contains(".I") || interface_fullname.starts_with('I');
             if !is_likely_interface {
-                return Err(Error::ValidationOwnedValidatorFailed {
+                return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Type '{}' implements non-interface type '{}'",
                         implementing_type.name, interface_type.name
                     ),
-                    source: None,
                 });
             }
         }

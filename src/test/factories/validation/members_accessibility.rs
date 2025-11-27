@@ -26,7 +26,7 @@ pub fn owned_accessibility_validator_file_factory() -> Result<Vec<TestAssembly>>
     let mut assemblies = Vec::new();
 
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error(
+        return Err(Error::Other(
             "crafted_2.exe not available - test cannot run".to_string(),
         ));
     };
@@ -84,16 +84,16 @@ pub fn owned_accessibility_validator_file_factory() -> Result<Vec<TestAssembly>>
 /// Originally from: `src/metadata/validation/validators/owned/members/accessibility.rs`
 pub fn create_assembly_with_sealed_interface() -> Result<NamedTempFile> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     let name_index = assembly
         .string_add("InvalidSealedInterface")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let next_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
@@ -112,14 +112,14 @@ pub fn create_assembly_with_sealed_interface() -> Result<NamedTempFile> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_interface))
-        .map_err(|e| Error::Error(format!("Failed to add invalid interface: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid interface: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(temp_file)
 }
@@ -129,10 +129,10 @@ pub fn create_assembly_with_sealed_interface() -> Result<NamedTempFile> {
 /// Originally from: `src/metadata/validation/validators/owned/members/accessibility.rs`
 pub fn create_assembly_with_interface_instance_field() -> Result<NamedTempFile> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
@@ -143,17 +143,17 @@ pub fn create_assembly_with_interface_instance_field() -> Result<NamedTempFile> 
     // Create interface type name
     let interface_name_index = assembly
         .string_add("InterfaceWithInstanceField")
-        .map_err(|e| Error::Error(format!("Failed to add interface name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add interface name: {e}")))?;
 
     // Create field name and signature
     let field_name_index = assembly
         .string_add("InstanceField")
-        .map_err(|e| Error::Error(format!("Failed to add field name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add field name: {e}")))?;
 
     let signature_bytes = vec![0x06, 0x08]; // FIELD signature marker + ELEMENT_TYPE_I4
     let signature_index = assembly
         .blob_add(&signature_bytes)
-        .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add signature: {e}")))?;
 
     // Create the interface type first, with field_list pointing to our field
     let interface_type = TypeDefRaw {
@@ -181,18 +181,18 @@ pub fn create_assembly_with_interface_instance_field() -> Result<NamedTempFile> 
     // Add both to the assembly
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(interface_type))
-        .map_err(|e| Error::Error(format!("Failed to add interface: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add interface: {e}")))?;
 
     assembly
         .table_row_add(TableId::Field, TableDataOwned::Field(invalid_field))
-        .map_err(|e| Error::Error(format!("Failed to add invalid field: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid field: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(temp_file)
 }
@@ -202,10 +202,10 @@ pub fn create_assembly_with_interface_instance_field() -> Result<NamedTempFile> 
 /// Originally from: `src/metadata/validation/validators/owned/members/accessibility.rs`
 pub fn create_assembly_with_interface_non_constant_field() -> Result<NamedTempFile> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -230,11 +230,11 @@ pub fn create_assembly_with_interface_non_constant_field() -> Result<NamedTempFi
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(temp_file)
 }
@@ -244,17 +244,17 @@ pub fn create_assembly_with_interface_non_constant_field() -> Result<NamedTempFi
 /// Originally from: `src/metadata/validation/validators/owned/members/accessibility.rs`
 pub fn create_assembly_with_empty_method_name() -> Result<NamedTempFile> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create type
     let type_name_index = assembly
         .string_add("TypeWithEmptyMethodName")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
@@ -274,12 +274,12 @@ pub fn create_assembly_with_empty_method_name() -> Result<NamedTempFile> {
     // Create method with empty name - invalid
     let empty_name_index = assembly
         .string_add("")
-        .map_err(|e| Error::Error(format!("Failed to add empty name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add empty name: {e}")))?;
 
     let signature_bytes = vec![0x00, 0x00, 0x01]; // Method signature: DEFAULT calling convention, 0 args, void return
     let signature_index = assembly
         .blob_add(&signature_bytes)
-        .map_err(|e| Error::Error(format!("Failed to add signature: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add signature: {e}")))?;
 
     let invalid_method = MethodDefRaw {
         rid: method_rid,
@@ -295,21 +295,21 @@ pub fn create_assembly_with_empty_method_name() -> Result<NamedTempFile> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(type_def))
-        .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
 
     assembly
         .table_row_add(
             TableId::MethodDef,
             TableDataOwned::MethodDef(invalid_method),
         )
-        .map_err(|e| Error::Error(format!("Failed to add invalid method: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add invalid method: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(temp_file)
 }
@@ -319,10 +319,10 @@ pub fn create_assembly_with_empty_method_name() -> Result<NamedTempFile> {
 /// Originally from: `src/metadata/validation/validators/owned/members/accessibility.rs`
 pub fn create_assembly_with_literal_non_static_field() -> Result<NamedTempFile> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -347,11 +347,11 @@ pub fn create_assembly_with_literal_non_static_field() -> Result<NamedTempFile> 
     assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(temp_file)
 }
@@ -362,17 +362,17 @@ pub fn create_assembly_with_literal_non_static_field() -> Result<NamedTempFile> 
 /// Moved to accessibility validator as it tests accessibility, not ownership.
 pub fn create_assembly_with_nested_accessibility_violation() -> Result<NamedTempFile> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create non-public container type
     let container_name_index = assembly
         .string_add("InternalContainer")
-        .map_err(|e| Error::Error(format!("Failed to add container name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add container name: {e}")))?;
 
     let container_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let container_type = TypeDefRaw {
@@ -389,12 +389,12 @@ pub fn create_assembly_with_nested_accessibility_violation() -> Result<NamedTemp
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(container_type))
-        .map_err(|e| Error::Error(format!("Failed to add container type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add container type: {e}")))?;
 
     // Create nested type with top-level visibility instead of nested visibility - should trigger validation failure
     let nested_name_index = assembly
         .string_add("InternalContainer+InvalidNested")
-        .map_err(|e| Error::Error(format!("Failed to add nested name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add nested name: {e}")))?;
 
     let nested_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let nested_type = TypeDefRaw {
@@ -411,7 +411,7 @@ pub fn create_assembly_with_nested_accessibility_violation() -> Result<NamedTemp
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(nested_type))
-        .map_err(|e| Error::Error(format!("Failed to add nested type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add nested type: {e}")))?;
 
     // Create NestedClass entry to establish the ownership relationship
     let nested_class_rid = assembly.original_table_row_count(TableId::NestedClass) + 1;
@@ -428,14 +428,14 @@ pub fn create_assembly_with_nested_accessibility_violation() -> Result<NamedTemp
             TableId::NestedClass,
             TableDataOwned::NestedClass(nested_class),
         )
-        .map_err(|e| Error::Error(format!("Failed to add nested class relationship: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add nested class relationship: {e}")))?;
 
     let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(temp_file)
 }

@@ -253,27 +253,19 @@ impl MethodDefBuilder {
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
         let name = self
             .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Method name is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Method name is required".to_string()))?;
 
         let flags = self
             .flags
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Method flags are required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Method flags are required".to_string()))?;
 
-        let impl_flags = self
-            .impl_flags
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Method implementation flags are required".to_string(),
-            })?;
+        let impl_flags = self.impl_flags.ok_or_else(|| {
+            Error::ModificationInvalid("Method implementation flags are required".to_string())
+        })?;
 
-        let signature = self
-            .signature
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Method signature is required".to_string(),
-            })?;
+        let signature = self.signature.ok_or_else(|| {
+            Error::ModificationInvalid("Method signature is required".to_string())
+        })?;
 
         let rva = self.rva.unwrap_or(0); // Default to 0 (abstract/interface method)
         let param_list = self.param_list.unwrap_or(0); // Default to 0 (no parameters)

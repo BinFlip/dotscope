@@ -356,11 +356,11 @@ impl MarshallingInfo {
     /// # Returns
     ///
     /// * `Ok(())` if the marshalling info is valid
-    /// * `Err(Error::MarshallingEncodingError)` with a description of the validation error
+    /// * `Err(Error::MarshallingError)` with a description of the validation error
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MarshallingEncodingError`] if the marshalling descriptor
+    /// Returns [`crate::Error::MarshallingError`] if the marshalling descriptor
     /// contains invalid combinations of optional parameters.
     ///
     /// # Examples
@@ -407,7 +407,7 @@ impl MarshallingInfo {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::MarshallingEncodingError`] if:
+    /// Returns [`crate::Error::MarshallingError`] if:
     /// - `Struct` has `class_size` set without `packing_size`
     /// - `Array` has `num_element` set without `num_param`
     /// - Any nested type (in `FixedArray`, `Array`, or `Ptr`) is invalid
@@ -420,7 +420,7 @@ impl MarshallingInfo {
                 // class_size can only be present if packing_size is also present
                 // due to sequential binary encoding format
                 if packing_size.is_none() && class_size.is_some() {
-                    return Err(Error::MarshallingEncodingError(
+                    return Err(Error::MarshallingError(
                         "Struct: class_size cannot be set without packing_size \
                          (sequential encoding constraint)"
                             .to_string(),
@@ -436,7 +436,7 @@ impl MarshallingInfo {
                 // num_element can only be present if num_param is also present
                 // due to sequential binary encoding format
                 if num_param.is_none() && num_element.is_some() {
-                    return Err(Error::MarshallingEncodingError(
+                    return Err(Error::MarshallingError(
                         "Array: num_element cannot be set without num_param \
                          (sequential encoding constraint)"
                             .to_string(),

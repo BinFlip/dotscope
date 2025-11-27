@@ -24,7 +24,7 @@ pub fn owned_type_ownership_validator_file_factory() -> Result<Vec<TestAssembly>
     let mut assemblies = Vec::new();
 
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error(
+        return Err(Error::Other(
             "crafted_2.exe not available - test cannot run".to_string(),
         ));
     };
@@ -49,17 +49,17 @@ pub fn owned_type_ownership_validator_file_factory() -> Result<Vec<TestAssembly>
 /// Originally from: `src/metadata/validation/validators/owned/types/ownership.rs`
 pub fn create_assembly_with_invalid_nested_visibility() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create container type
     let container_name_index = assembly
         .string_add("ContainerType")
-        .map_err(|e| Error::Error(format!("Failed to add container name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add container name: {e}")))?;
 
     let container_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let container_type = TypeDefRaw {
@@ -76,12 +76,12 @@ pub fn create_assembly_with_invalid_nested_visibility() -> Result<TestAssembly> 
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(container_type))
-        .map_err(|e| Error::Error(format!("Failed to add container type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add container type: {e}")))?;
 
     // Create nested type with invalid visibility (value beyond valid range)
     let nested_name_index = assembly
         .string_add("ContainerType+NestedType")
-        .map_err(|e| Error::Error(format!("Failed to add nested name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add nested name: {e}")))?;
 
     let nested_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let nested_type = TypeDefRaw {
@@ -98,7 +98,7 @@ pub fn create_assembly_with_invalid_nested_visibility() -> Result<TestAssembly> 
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(nested_type))
-        .map_err(|e| Error::Error(format!("Failed to add nested type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add nested type: {e}")))?;
 
     // Create NestedClass entry to establish the ownership relationship
     let nested_class_rid = assembly.original_table_row_count(TableId::NestedClass) + 1;
@@ -115,14 +115,14 @@ pub fn create_assembly_with_invalid_nested_visibility() -> Result<TestAssembly> 
             TableId::NestedClass,
             TableDataOwned::NestedClass(nested_class),
         )
-        .map_err(|e| Error::Error(format!("Failed to add nested class relationship: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add nested class relationship: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -132,17 +132,17 @@ pub fn create_assembly_with_invalid_nested_visibility() -> Result<TestAssembly> 
 /// Originally from: `src/metadata/validation/validators/owned/types/ownership.rs`
 pub fn create_assembly_with_empty_nested_name() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create container type
     let container_name_index = assembly
         .string_add("ContainerType")
-        .map_err(|e| Error::Error(format!("Failed to add container name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add container name: {e}")))?;
 
     let container_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let container_type = TypeDefRaw {
@@ -159,12 +159,12 @@ pub fn create_assembly_with_empty_nested_name() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(container_type))
-        .map_err(|e| Error::Error(format!("Failed to add container type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add container type: {e}")))?;
 
     // Create nested type with empty name (should trigger validation failure)
     let empty_name_index = assembly
         .string_add("")
-        .map_err(|e| Error::Error(format!("Failed to add empty name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add empty name: {e}")))?;
 
     let nested_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let nested_type = TypeDefRaw {
@@ -181,7 +181,7 @@ pub fn create_assembly_with_empty_nested_name() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(nested_type))
-        .map_err(|e| Error::Error(format!("Failed to add nested type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add nested type: {e}")))?;
 
     // Create NestedClass entry to establish the ownership relationship
     let nested_class_rid = assembly.original_table_row_count(TableId::NestedClass) + 1;
@@ -198,14 +198,14 @@ pub fn create_assembly_with_empty_nested_name() -> Result<TestAssembly> {
             TableId::NestedClass,
             TableDataOwned::NestedClass(nested_class),
         )
-        .map_err(|e| Error::Error(format!("Failed to add nested class relationship: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add nested class relationship: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -215,17 +215,17 @@ pub fn create_assembly_with_empty_nested_name() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/types/ownership.rs`
 pub fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create type to contain the method
     let type_name_index = assembly
         .string_add("TestType")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let typedef = TypeDefRaw {
@@ -242,12 +242,12 @@ pub fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(typedef))
-        .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
 
     // Create method with empty name
     let empty_name_index = assembly
         .string_add("")
-        .map_err(|e| Error::Error(format!("Failed to add empty method name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add empty method name: {e}")))?;
 
     let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
     let method = MethodDefRaw {
@@ -264,14 +264,14 @@ pub fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::MethodDef, TableDataOwned::MethodDef(method))
-        .map_err(|e| Error::Error(format!("Failed to add method: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add method: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -281,17 +281,17 @@ pub fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/types/ownership.rs`
 pub fn create_assembly_with_empty_field_name() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create type to contain the field
     let type_name_index = assembly
         .string_add("TestType")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let typedef = TypeDefRaw {
@@ -308,12 +308,12 @@ pub fn create_assembly_with_empty_field_name() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(typedef))
-        .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
 
     // Create field with empty name
     let empty_name_index = assembly
         .string_add("")
-        .map_err(|e| Error::Error(format!("Failed to add empty field name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add empty field name: {e}")))?;
 
     let field_rid = assembly.original_table_row_count(TableId::Field) + 1;
     let field = FieldRaw {
@@ -327,14 +327,14 @@ pub fn create_assembly_with_empty_field_name() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::Field, TableDataOwned::Field(field))
-        .map_err(|e| Error::Error(format!("Failed to add field: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add field: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }
@@ -344,17 +344,17 @@ pub fn create_assembly_with_empty_field_name() -> Result<TestAssembly> {
 /// Originally from: `src/metadata/validation/validators/owned/types/ownership.rs`
 pub fn create_assembly_with_invalid_field_visibility() -> Result<TestAssembly> {
     let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Error("crafted_2.exe not available".to_string()));
+        return Err(Error::Other("crafted_2.exe not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Error(format!("Failed to load test assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
 
     let mut assembly = CilAssembly::new(view);
 
     // Create type to contain the field
     let type_name_index = assembly
         .string_add("TestType")
-        .map_err(|e| Error::Error(format!("Failed to add type name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
     let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
     let typedef = TypeDefRaw {
@@ -371,12 +371,12 @@ pub fn create_assembly_with_invalid_field_visibility() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(typedef))
-        .map_err(|e| Error::Error(format!("Failed to add type: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
 
     // Create field with invalid visibility flags
     let field_name_index = assembly
         .string_add("InvalidField")
-        .map_err(|e| Error::Error(format!("Failed to add field name: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add field name: {e}")))?;
 
     let field_rid = assembly.original_table_row_count(TableId::Field) + 1;
     let field = FieldRaw {
@@ -390,14 +390,14 @@ pub fn create_assembly_with_invalid_field_visibility() -> Result<TestAssembly> {
 
     assembly
         .table_row_add(TableId::Field, TableDataOwned::Field(field))
-        .map_err(|e| Error::Error(format!("Failed to add field: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to add field: {e}")))?;
 
     let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Error(format!("Failed to create temp file: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
 
     assembly
         .write_to_file(temp_file.path())
-        .map_err(|e| Error::Error(format!("Failed to write assembly: {e}")))?;
+        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
 
     Ok(TestAssembly::from_temp_file(temp_file, false))
 }

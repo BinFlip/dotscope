@@ -40,7 +40,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationOwnedValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationOwnedFailed`] for:
 //! - Broken dependency chains in type hierarchies (missing required dependencies)
 //! - Unsatisfied transitive dependencies across assemblies (unresolved type references)
 //! - Invalid dependency ordering for inheritance and composition (circular dependencies)
@@ -73,7 +73,7 @@ use crate::{
         context::{OwnedValidationContext, ValidationContext},
         traits::OwnedValidator,
     },
-    Result,
+    Error, Result,
 };
 
 /// Foundation validator for dependency chain validation in resolved metadata structures.
@@ -124,19 +124,18 @@ impl OwnedDependencyValidator {
     /// # Returns
     ///
     /// * `Ok(())` - Dependency graph integrity is valid
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Graph integrity violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Graph integrity violations found
     fn validate_dependency_graph_integrity(&self, context: &OwnedValidationContext) -> Result<()> {
         for type_entry in context.target_assembly_types() {
             // Validate base type dependencies
             if let Some(base_type) = type_entry.base() {
                 if base_type.name.is_empty() {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' has broken base type dependency (empty name)",
                             type_entry.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -145,23 +144,21 @@ impl OwnedDependencyValidator {
             for (_, interface_ref) in type_entry.interfaces.iter() {
                 if let Some(interface_type) = interface_ref.upgrade() {
                     if interface_type.name.is_empty() {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' has broken interface dependency (empty name)",
                                 type_entry.name
                             ),
-                            source: None,
                         });
                     }
                 } else {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' has broken interface dependency reference",
                             type_entry.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -170,23 +167,21 @@ impl OwnedDependencyValidator {
             for (_, nested_ref) in type_entry.nested_types.iter() {
                 if let Some(nested_type) = nested_ref.upgrade() {
                     if nested_type.name.is_empty() {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' has broken nested type dependency (empty name)",
                                 type_entry.name
                             ),
-                            source: None,
                         });
                     }
                 } else {
-                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                    return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Type '{}' has broken nested type dependency reference",
                             type_entry.name
                         ),
-                        source: None,
                     });
                 }
             }
@@ -196,23 +191,23 @@ impl OwnedDependencyValidator {
                 for (_, constraint_ref) in generic_param.constraints.iter() {
                     if let Some(constraint_type) = constraint_ref.upgrade() {
                         if constraint_type.name.is_empty() {
-                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Type '{}' generic parameter '{}' has broken constraint dependency (empty name)",
                                     type_entry.name, generic_param.name
                                 ),
-                                source: None,
+
                             });
                         }
                     } else {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' generic parameter '{}' has broken constraint dependency reference",
                                 type_entry.name, generic_param.name
                             ),
-                            source: None,
+
                         });
                     }
                 }
@@ -234,7 +229,7 @@ impl OwnedDependencyValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All transitive dependencies are satisfied
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Transitive dependency violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Transitive dependency violations found
     fn validate_transitive_dependency_satisfaction(
         &self,
         context: &OwnedValidationContext,
@@ -276,13 +271,13 @@ impl OwnedDependencyValidator {
                         for (index, (_, param)) in method.value().params.iter().enumerate() {
                             if let Some(param_type_ref) = param.base.get() {
                                 if param_type_ref.upgrade().is_none() {
-                                    return Err(crate::Error::ValidationOwnedValidatorFailed {
+                                    return Err(Error::ValidationOwnedFailed {
                                         validator: self.name().to_string(),
                                         message: format!(
                                             "Method '{}' in type '{}' has broken parameter {} type dependency",
                                             method.value().name, type_entry.name, index
                                         ),
-                                        source: None,
+
                                     });
                                 }
                             }
@@ -291,13 +286,13 @@ impl OwnedDependencyValidator {
                         // Validate local variable type dependencies
                         for (index, (_, local)) in method.value().local_vars.iter().enumerate() {
                             if local.base.upgrade().is_none() {
-                                return Err(crate::Error::ValidationOwnedValidatorFailed {
+                                return Err(Error::ValidationOwnedFailed {
                                     validator: self.name().to_string(),
                                     message: format!(
                                         "Method '{}' in type '{}' has broken local variable {} type dependency",
                                         method.value().name, type_entry.name, index
                                     ),
-                                    source: None,
+
                                 });
                             }
                         }
@@ -321,7 +316,7 @@ impl OwnedDependencyValidator {
     /// # Returns
     ///
     /// * `Ok(())` - Dependency ordering is correct
-    /// * `Err(`[`crate::Error::ValidationOwnedValidatorFailed`]`)` - Dependency ordering violations found
+    /// * `Err(`[`crate::Error::ValidationOwnedFailed`]`)` - Dependency ordering violations found
     fn validate_dependency_ordering(&self, context: &OwnedValidationContext) -> Result<()> {
         for type_entry in context.target_assembly_types() {
             // Validate inheritance ordering
@@ -344,13 +339,12 @@ impl OwnedDependencyValidator {
                     };
 
                     if is_same_assembly {
-                        return Err(crate::Error::ValidationOwnedValidatorFailed {
+                        return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
                                 "Type '{}' has self-referential inheritance dependency",
                                 type_entry.name
                             ),
-                            source: None,
                         });
                     }
                 }
@@ -376,13 +370,13 @@ impl OwnedDependencyValidator {
                             matches!((type_is_local, interface_is_local), (true, true));
 
                         if is_same_assembly {
-                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Type '{}' has self-referential interface implementation dependency",
                                     type_entry.name
                                 ),
-                                source: None,
+
                             });
                         }
                     }
@@ -402,13 +396,12 @@ impl OwnedDependencyValidator {
                             matches!((type_is_local, nested_is_local), (true, true));
 
                         if is_same_assembly {
-                            return Err(crate::Error::ValidationOwnedValidatorFailed {
+                            return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
                                 message: format!(
                                     "Type '{}' has self-referential nested type dependency",
                                     type_entry.name
                                 ),
-                                source: None,
                             });
                         }
                     }
@@ -470,7 +463,7 @@ mod tests {
         owned_validator_test(
             owned_dependency_validator_file_factory,
             "OwnedDependencyValidator",
-            "ValidationOwnedValidatorFailed",
+            "ValidationOwnedFailed",
             config,
             |context| validator.validate_owned(context),
         )

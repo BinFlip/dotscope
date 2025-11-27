@@ -116,7 +116,7 @@ impl<'a> TokenValidator<'a> {
     ///
     /// # Errors
     ///
-    /// - `ValidationInvalidRid`: If the RID is 0 or exceeds the table row count
+    /// - `InvalidRid`: If the RID is 0 or exceeds the table row count
     /// - `ValidationInvalidTokenType`: If the token type is not recognized
     /// - `ValidationTableNotFound`: If the referenced table doesn't exist
     pub fn validate_token_bounds(&self, token: Token) -> Result<()> {
@@ -188,7 +188,7 @@ impl<'a> TokenValidator<'a> {
         let expected_table_value = expected_table.token_type();
 
         if token_table_value != expected_table_value {
-            return Err(Error::ValidationTokenError {
+            return Err(Error::InvalidToken {
                 token,
                 message: format!(
                     "Token belongs to table {token_table_value:#x}, expected table {expected_table_value:#x}"
@@ -300,13 +300,13 @@ impl<'a> TokenValidator<'a> {
     ///
     /// # Errors
     ///
-    /// - `ValidationInvalidRid`: If a null token is not allowed in this context
+    /// - `InvalidRid`: If a null token is not allowed in this context
     pub fn validate_null_token(&self, token: Token, nullable: bool) -> Result<()> {
         if token.value() == 0 {
             if nullable {
                 Ok(())
             } else {
-                Err(Error::ValidationInvalidRid {
+                Err(Error::InvalidRid {
                     table: TableId::Module, // Default table for error reporting
                     rid: 0,
                 })
@@ -344,7 +344,7 @@ impl<'a> TokenValidator<'a> {
         }
 
         // Token doesn't match any allowed table type
-        Err(Error::ValidationTokenError {
+        Err(Error::InvalidToken {
             token,
             message: format!("Table type {token_table_value:#x} not in allowed tables"),
         })
@@ -407,7 +407,7 @@ impl<'a> TokenValidator<'a> {
     /// Returns an error if the RID is invalid (zero) or out of bounds for the table.
     pub fn validate_table_row(&self, table_id: TableId, rid: u32) -> Result<()> {
         if rid == 0 {
-            return Err(Error::ValidationInvalidRid {
+            return Err(Error::InvalidRid {
                 table: table_id,
                 rid,
             });
@@ -415,7 +415,7 @@ impl<'a> TokenValidator<'a> {
 
         let max_rid = self.scanner.table_row_count(table_id);
         if rid > max_rid {
-            return Err(Error::ValidationInvalidRid {
+            return Err(Error::InvalidRid {
                 table: table_id,
                 rid,
             });
@@ -600,7 +600,7 @@ mod tests {
         // Test with errors
         let mut result = TokenValidationResult::new();
         result.add_result(Ok(()));
-        result.add_result(Err(Error::ValidationInvalidRid {
+        result.add_result(Err(Error::InvalidRid {
             table: TableId::TypeDef,
             rid: 0,
         }));

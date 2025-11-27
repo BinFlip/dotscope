@@ -148,11 +148,9 @@ impl FieldPtrBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let field = self
-            .field
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Field RID is required for FieldPtr".to_string(),
-            })?;
+        let field = self.field.ok_or_else(|| {
+            Error::ModificationInvalid("Field RID is required for FieldPtr".to_string())
+        })?;
 
         let next_rid = context.next_rid(TableId::FieldPtr);
         let token = Token::new(((TableId::FieldPtr as u32) << 24) | next_rid);
@@ -235,10 +233,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Field RID is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

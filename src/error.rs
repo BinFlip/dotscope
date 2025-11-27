@@ -63,7 +63,7 @@
 //!     Err(Error::Malformed { message, file, line }) => {
 //!         eprintln!("Malformed file: {} ({}:{})", message, file, line);
 //!     }
-//!     Err(Error::FileError(io_err)) => {
+//!     Err(Error::Io(io_err)) => {
 //!         eprintln!("I/O error: {}", io_err);
 //!     }
 //!     Err(e) => {
@@ -186,29 +186,24 @@ macro_rules! out_of_bounds_error {
 /// # Error Categories
 ///
 /// ## File Parsing Errors
-/// - [`crate::Error::InvalidOffset`] - Invalid file offset during parsing
 /// - [`crate::Error::Malformed`] - Corrupted or invalid file structure
 /// - [`crate::Error::OutOfBounds`] - Attempted to read beyond file boundaries
 /// - [`crate::Error::NotSupported`] - Unsupported file format or feature
-/// - [`crate::Error::Empty`] - Empty input provided
 ///
 /// ## I/O and External Errors
-/// - [`crate::Error::FileError`] - Filesystem I/O errors
-/// - [`crate::Error::GoblinErr`] - PE/ELF parsing errors from goblin crate
+/// - [`crate::Error::Io`] - Filesystem I/O errors
+/// - [`crate::Error::Goblin`] - PE/ELF parsing errors from goblin crate
 ///
 /// ## Type System Errors
-/// - [`crate::Error::TypeInsert`] - Failed to register new type in type system
 /// - [`crate::Error::TypeNotFound`] - Requested type not found in type system
 /// - [`crate::Error::TypeError`] - General type system operation error
 /// - [`crate::Error::TypeMissingParent`] - Type inheritance chain broken
 /// - [`crate::Error::TypeNotPrimitive`] - Expected primitive type
-/// - [`crate::Error::TypeNotConst`] - Cannot convert to constant type
 /// - [`crate::Error::TypeConversionInvalid`] - Invalid type conversion requested
 ///
 /// ## Analysis Errors
 /// - [`crate::Error::RecursionLimit`] - Maximum recursion depth exceeded
 /// - [`crate::Error::DepthLimitExceeded`] - Maximum nesting depth exceeded in iterative parsing
-/// - [`crate::Error::LockError`] - Thread synchronization failure
 /// - [`crate::Error::GraphError`] - Dependency graph analysis error
 ///
 /// # Thread Safety
@@ -219,14 +214,6 @@ macro_rules! out_of_bounds_error {
 #[derive(Error, Debug)]
 pub enum Error {
     // File parsing Errors
-    /// Encountered an invalid offset while parsing file structures.
-    ///
-    /// This error occurs when the parser encounters an offset that is invalid
-    /// for the current file context, such as negative offsets or offsets that
-    /// would point outside the valid file structure.
-    #[error("Could not retrieve a valid offset!")]
-    InvalidOffset,
-
     /// The file is damaged and could not be parsed.
     ///
     /// This error indicates that the file structure is corrupted or doesn't
@@ -274,43 +261,28 @@ pub enum Error {
     #[error("This file type is not supported")]
     NotSupported,
 
-    /// Provided input was empty.
-    ///
-    /// This error occurs when an empty file or buffer is provided where
-    /// actual .NET assembly data was expected.
-    #[error("Provided input was empty")]
-    Empty,
-
     /// File I/O error.
     ///
     /// Wraps standard I/O errors that can occur during file operations
     /// such as reading from disk, permission issues, or filesystem errors.
     #[error("{0}")]
-    FileError(#[from] std::io::Error),
+    Io(#[from] std::io::Error),
 
-    /// Generic error for miscellaneous failures.
+    /// Other errors that don't fit specific categories.
     ///
-    /// Used for errors that don't fit into other categories or for
-    /// wrapping external library errors with additional context.
+    /// NOTE: Prefer specific error types. Use this only for:
+    /// - Wrapping external library errors with context
+    /// - Temporary errors during development
+    /// - Truly miscellaneous errors
     #[error("{0}")]
-    Error(String),
+    Other(String),
 
     /// Error from the goblin crate during PE/ELF parsing.
     ///
     /// The goblin crate is used for low-level PE format parsing.
     /// This error wraps any failures from that parsing layer.
     #[error("{0}")]
-    GoblinErr(#[from] goblin::error::Error),
-
-    /// Failed to insert new type into `TypeSystem`.
-    ///
-    /// This error occurs when attempting to register a new type in the
-    /// type system fails, typically due to conflicting metadata tokens
-    /// or invalid type definitions.
-    ///
-    /// The associated [`crate::metadata::token::Token`] identifies which type caused the failure.
-    #[error("Failed to insert new type into TypeSystem - {0}")]
-    TypeInsert(Token),
+    Goblin(#[from] goblin::error::Error),
 
     /// Failed to find type in `TypeSystem`.
     ///
@@ -343,14 +315,6 @@ pub enum Error {
     #[error("This type can not be converted to a primitive")]
     TypeNotPrimitive,
 
-    /// This type can not be converted to a `ConstType`.
-    ///
-    /// Indicates that a type cannot be represented as a compile-time
-    /// constant value. The associated value indicates the type code
-    /// that failed conversion.
-    #[error("This type can not be converted to a const type - {0}")]
-    TypeNotConst(u8),
-
     /// The requested type conversion is not possible.
     ///
     /// This error occurs when attempting type conversions that are
@@ -368,17 +332,16 @@ pub enum Error {
     #[error("Reach the maximum recursion level allowed - {0}")]
     RecursionLimit(usize),
 
-    /// Marshalling encoding error.
+    /// Marshalling descriptor encoding error.
     ///
     /// This error occurs when encoding marshalling information fails due
     /// to invalid or inconsistent marshalling descriptor data, such as
     /// sequential parameter constraints being violated.
     ///
     /// The associated string contains details about what failed during encoding.
-    #[error("Marshalling encoding error: {0}")]
-    MarshallingEncodingError(String),
+    #[error("Marshalling error: {0}")]
+    MarshallingError(String),
 
-    /// Nesting depth limit reached.
     ///
     /// To prevent resource exhaustion and stack overflow during iterative parsing
     /// operations, a maximum nesting depth is enforced. This error indicates that
@@ -393,13 +356,6 @@ pub enum Error {
     #[error("Reached the maximum nesting depth allowed - {0}")]
     DepthLimitExceeded(usize),
 
-    /// Failed to lock target.
-    ///
-    /// This error occurs when thread synchronization fails, typically
-    /// when trying to acquire a mutex or rwlock that is in an invalid state.
-    #[error("Failed to lock target")]
-    LockError,
-
     /// `LoaderGraph` error.
     ///
     /// Errors related to dependency graph analysis and metadata loading
@@ -408,176 +364,47 @@ pub enum Error {
     #[error("{0}")]
     GraphError(String),
 
-    // Assembly Modification Errors
-    /// RID already exists during table modification.
-    ///
-    /// This error occurs when attempting to insert a row with a RID that
-    /// already exists in the target metadata table.
-    #[error("Modification error: RID {rid} already exists in table {table:?}")]
-    ModificationRidAlreadyExists {
-        /// The table where the conflict occurred
-        table: TableId,
-        /// The conflicting RID
-        rid: u32,
-    },
-
-    /// RID not found during table modification.
-    ///
-    /// This error occurs when attempting to update or delete a row that
-    /// doesn't exist in the target metadata table.
-    #[error("Modification error: RID {rid} not found in table {table:?}")]
-    ModificationRidNotFound {
-        /// The table where the RID was not found
-        table: TableId,
-        /// The missing RID
-        rid: u32,
-    },
-
     /// Cannot modify replaced table.
     ///
     /// This error occurs when attempting to apply sparse modifications
     /// to a table that has been completely replaced.
-    #[error("Modification error: Cannot modify replaced table - convert to sparse first")]
-    ModificationCannotModifyReplacedTable,
-
-    /// Operation conflicts detected during modification.
-    ///
-    /// This error occurs when multiple conflicting operations target
-    /// the same RID and cannot be automatically resolved.
-    #[error("Modification error: Operation conflicts detected - {details}")]
-    ModificationConflictDetected {
-        /// Details about the conflict
-        details: String,
-    },
+    #[error("Cannot modify replaced table")]
+    CannotModifyReplacedTable,
 
     /// Invalid modification operation.
     ///
     /// This error occurs when attempting an operation that is not
     /// valid for the current state or context.
-    #[error("Modification error: Invalid operation - {details}")]
-    ModificationInvalidOperation {
-        /// Details about why the operation is invalid
-        details: String,
-    },
+    #[error("Invalid modification: {0}")]
+    ModificationInvalid(String),
 
-    /// Table schema validation failed.
-    ///
-    /// This error occurs when table row data doesn't conform to the
-    /// expected schema for the target table type.
-    #[error("Modification error: Table schema validation failed - {details}")]
-    ModificationSchemaValidationFailed {
-        /// Details about the schema validation failure
-        details: String,
-    },
-
-    // Assembly Validation Errors
     /// Invalid RID for table during validation.
     ///
     /// This error occurs when a RID is invalid for the target table,
     /// such as zero-valued RIDs or RIDs exceeding table bounds.
-    #[error("Validation error: Invalid RID {rid} for table {table:?}")]
-    ValidationInvalidRid {
+    #[error("Invalid RID {rid} for table {table:?}")]
+    InvalidRid {
         /// The table with the invalid RID
         table: TableId,
         /// The invalid RID
         rid: u32,
     },
 
-    /// Cannot update non-existent row during validation.
-    ///
-    /// This error occurs when validation detects an attempt to update
-    /// a row that doesn't exist in the original table.
-    #[error("Validation error: Cannot update non-existent row {rid} in table {table:?}")]
-    ValidationUpdateNonExistentRow {
-        /// The table where the update was attempted
-        table: TableId,
-        /// The non-existent RID
-        rid: u32,
-    },
-
-    /// Cannot delete non-existent row during validation.
-    ///
-    /// This error occurs when validation detects an attempt to delete
-    /// a row that doesn't exist in the original table.
-    #[error("Validation error: Cannot delete non-existent row {rid} in table {table:?}")]
-    ValidationDeleteNonExistentRow {
-        /// The table where the deletion was attempted
-        table: TableId,
-        /// The non-existent RID
-        rid: u32,
-    },
-
-    /// Cannot delete referenced row during validation.
-    ///
-    /// This error occurs when attempting to delete a row that is
-    /// referenced by other metadata tables, which would break
-    /// referential integrity.
-    #[error("Validation error: Cannot delete referenced row {rid} in table {table:?} - {reason}")]
-    ValidationCannotDeleteReferencedRow {
-        /// The table containing the referenced row
-        table: TableId,
-        /// The RID of the referenced row
-        rid: u32,
-        /// The reason why deletion is not allowed
-        reason: String,
-    },
-
-    /// Row type mismatch during validation.
-    ///
-    /// This error occurs when the provided row data type doesn't
-    /// match the expected type for the target table.
-    #[error("Validation error: Row type mismatch for table {table:?} - expected table-specific type, got {actual_type}")]
-    ValidationRowTypeMismatch {
-        /// The target table
-        table: TableId,
-        /// The actual type that was provided
-        actual_type: String,
-    },
-
-    /// Table schema validation mismatch.
-    ///
-    /// This error occurs when table data doesn't conform to the expected
-    /// schema for the target table type.
-    #[error("Validation error: Table schema mismatch for table {table:?} - expected {expected}, got {actual}")]
-    ValidationTableSchemaMismatch {
-        /// The target table
-        table: TableId,
-        /// The expected schema type
-        expected: String,
-        /// The actual type that was provided
-        actual: String,
-    },
-
     /// Cross-reference validation failed.
     ///
     /// This error occurs when validation detects broken cross-references
     /// between metadata tables.
-    #[error("Validation error: Cross-reference validation failed - {message}")]
-    ValidationCrossReferenceError {
-        /// Details about the cross-reference failure
-        message: String,
-    },
-
-    /// Referential integrity validation failed.
-    ///
-    /// This error occurs when validation detects operations that would
-    /// violate referential integrity constraints.
-    #[error("Validation error: Referential integrity constraint violated - {message}")]
-    ValidationReferentialIntegrity {
-        /// Details about the referential integrity violation
-        message: String,
-    },
+    #[error("Cross-reference error: {0}")]
+    CrossReferenceError(String),
 
     /// Heap bounds validation failed.
     ///
     /// This error occurs when metadata heap indices are out of bounds
     /// for the target heap.
-    #[error(
-        "Validation error: Heap bounds validation failed - {heap_type} index {index} out of bounds"
-    )]
-    ValidationHeapBoundsError {
+    #[error("Heap bounds error: {heap} index {index}")]
+    HeapBoundsError {
         /// The type of heap (strings, blobs, etc.)
-        heap_type: String,
+        heap: String,
         /// The out-of-bounds index
         index: u32,
     },
@@ -586,13 +413,9 @@ pub enum Error {
     ///
     /// This error occurs when the conflict resolution system cannot
     /// automatically resolve detected conflicts.
-    #[error("Conflict resolution error: {details}")]
-    ConflictResolutionError {
-        /// Details about why conflict resolution failed
-        details: String,
-    },
+    #[error("Conflict resolution failed: {0}")]
+    ConflictResolution(String),
 
-    // Unified Validation Framework Errors
     /// Stage 1 (raw) validation failed, preventing Stage 2 execution.
     ///
     /// This error occurs when the first stage of validation (raw metadata validation)
@@ -626,14 +449,11 @@ pub enum Error {
     /// This error occurs when a specific raw validator (Stage 1) fails during
     /// the validation process on CilAssemblyView data.
     #[error("Raw validation failed in {validator}: {message}")]
-    ValidationRawValidatorFailed {
+    ValidationRawFailed {
         /// Name of the validator that failed
         validator: String,
         /// Details about the validation failure
         message: String,
-        /// The underlying error that caused the failure
-        #[source]
-        source: Option<Box<Error>>,
     },
 
     /// Owned validation failed for a specific validator.
@@ -641,14 +461,11 @@ pub enum Error {
     /// This error occurs when a specific owned validator (Stage 2) fails during
     /// the validation process on CilObject data.
     #[error("Owned validation failed in {validator}: {message}")]
-    ValidationOwnedValidatorFailed {
+    ValidationOwnedFailed {
         /// Name of the validator that failed
         validator: String,
         /// Details about the validation failure
         message: String,
-        /// The underlying error that caused the failure
-        #[source]
-        source: Option<Box<Error>>,
     },
 
     /// Validation engine initialization failed.
@@ -661,120 +478,15 @@ pub enum Error {
         message: String,
     },
 
-    /// Validation context creation failed.
-    ///
-    /// This error occurs when the validation context cannot be created for
-    /// either raw or owned validation stages.
-    #[error("Validation context creation failed for {stage}: {message}")]
-    ValidationContextCreationFailed {
-        /// The validation stage (Raw or Owned)
-        stage: String,
-        /// Details about the context creation failure
-        message: String,
-    },
-
-    /// Token validation failed.
+    /// Invalid token or token reference.
     ///
     /// This error occurs when token format or cross-reference validation fails
     /// during either raw or owned validation stages.
-    #[error("Token validation failed for {token}: {message}")]
-    ValidationTokenError {
+    #[error("Invalid token {token}: {message}")]
+    InvalidToken {
         /// The token that failed validation
         token: Token,
         /// Details about the token validation failure
-        message: String,
-    },
-
-    /// Semantic validation failed.
-    ///
-    /// This error occurs when semantic validation rules fail during owned
-    /// validation, such as inheritance rules or interface constraints.
-    #[error("Semantic validation failed: {message}")]
-    ValidationSemanticError {
-        /// Details about the semantic validation failure
-        message: String,
-        /// Optional token context for the failure
-        token: Option<Token>,
-    },
-
-    /// Method validation failed.
-    ///
-    /// This error occurs when method-specific validation fails, such as
-    /// constructor validation or method signature validation.
-    #[error("Method validation failed for {method_token}: {message}")]
-    ValidationMethodError {
-        /// The method token that failed validation
-        method_token: Token,
-        /// Details about the method validation failure
-        message: String,
-    },
-
-    /// Field validation failed.
-    ///
-    /// This error occurs when field layout validation fails, such as
-    /// field overlap detection or layout validation.
-    #[error("Field validation failed: {message}")]
-    ValidationFieldError {
-        /// Details about the field validation failure
-        message: String,
-        /// Optional field token context
-        field_token: Option<Token>,
-    },
-
-    /// Type system validation failed.
-    ///
-    /// This error occurs when type system consistency validation fails,
-    /// such as layout validation or constraint validation.
-    #[error("Type system validation failed: {message}")]
-    ValidationTypeSystemError {
-        /// Details about the type system validation failure
-        message: String,
-        /// Optional type token context
-        type_token: Option<Token>,
-    },
-
-    /// Nested class validation failed.
-    ///
-    /// This error occurs when nested class hierarchy validation fails,
-    /// such as circular reference detection or nesting depth validation.
-    #[error("Nested class validation failed: {message}")]
-    ValidationNestedClassError {
-        /// Details about the nested class validation failure
-        message: String,
-        /// The nested class token that failed validation
-        nested_class_token: Option<Token>,
-    },
-
-    /// PE structure validation failed.
-    ///
-    /// This error occurs when PE format validation fails during raw validation,
-    /// such as section alignment or RVA validation.
-    #[error("PE structure validation failed: {message}")]
-    ValidationPeStructureError {
-        /// Details about the PE structure validation failure
-        message: String,
-    },
-
-    /// Signature validation failed.
-    ///
-    /// This error occurs when method or field signature validation fails
-    /// during blob signature parsing and validation.
-    #[error("Signature validation failed: {message}")]
-    ValidationSignatureError {
-        /// Details about the signature validation failure
-        message: String,
-        /// Optional signature blob data for debugging
-        signature_data: Option<Vec<u8>>,
-    },
-
-    // Binary Writing Errors
-    /// Assembly validation failed before writing.
-    ///
-    /// This error occurs when pre-write validation detects issues that
-    /// would prevent successful binary generation.
-    #[error("Binary write validation failed: {message}")]
-    WriteValidationFailed {
-        /// Details about the validation failure
         message: String,
     },
 
@@ -783,114 +495,23 @@ pub enum Error {
     /// This error occurs when the write planner cannot determine a valid
     /// layout for the output file, such as when the file would exceed
     /// configured size limits.
-    #[error("Binary write layout planning failed: {message}")]
-    WriteLayoutFailed {
-        /// Details about the layout failure
-        message: String,
-    },
+    #[error("Layout failed: {0}")]
+    LayoutFailed(String),
 
-    /// Memory mapping failed during binary writing.
+    /// Memory mapping failed during binary reading or writing.
     ///
-    /// This error occurs when the memory-mapped file cannot be created
-    /// or accessed for writing the output assembly.
-    #[error("Binary write memory mapping failed: {message}")]
-    WriteMmapFailed {
-        /// Details about the memory mapping failure
-        message: String,
-    },
-
-    /// Memory mapping read failed during output inspection.
-    ///
-    /// This error occurs when attempting to read from a memory-mapped file
-    /// during the write process (e.g., reading existing values before modifying them).
-    #[error("Binary read memory mapping failed: {message}")]
-    ReadMmapFailed {
-        /// Details about the memory mapping read failure
-        message: String,
-    },
-
-    /// Heap writing failed during binary generation.
-    ///
-    /// This error occurs when writing metadata heaps (strings, blobs, etc.)
-    /// to the output file fails.
-    #[error("Binary write heap writing failed: {message}")]
-    WriteHeapFailed {
-        /// Details about the heap writing failure
-        message: String,
-    },
-
-    /// Table writing failed during binary generation.
-    ///
-    /// This error occurs when writing metadata tables to the output file fails.
-    #[error("Binary write table writing failed: {message}")]
-    WriteTableFailed {
-        /// Details about the table writing failure
-        message: String,
-    },
-
-    /// PE structure writing failed during binary generation.
-    ///
-    /// This error occurs when writing PE headers, sections, or other
-    /// PE-specific structures to the output file fails.
-    #[error("Binary write PE structure writing failed: {message}")]
-    WritePeFailed {
-        /// Details about the PE writing failure
-        message: String,
-    },
+    /// This error occurs when memory-mapped file operations fail,
+    /// either for creating new mappings or accessing existing ones.
+    #[error("Memory mapping failed: {0}")]
+    MmapFailed(String),
 
     /// File finalization failed during binary writing.
     ///
     /// This error occurs when the final step of writing (such as flushing,
     /// syncing, or closing the output file) fails.
-    #[error("Binary write finalization failed: {message}")]
-    WriteFinalizationFailed {
-        /// Details about the finalization failure
-        message: String,
-    },
+    #[error("Finalization failed: {0}")]
+    FinalizationFailed(String),
 
-    /// Binary writing configuration is invalid.
-    ///
-    /// This error occurs when the provided writer configuration contains
-    /// invalid or conflicting settings.
-    #[error("Binary write configuration invalid: {message}")]
-    WriteInvalidConfig {
-        /// Details about the configuration error
-        message: String,
-    },
-
-    /// File size would exceed configured limits.
-    ///
-    /// This error occurs when the planned output file size exceeds the
-    /// maximum allowed size set in the writer configuration.
-    #[error("Binary write file size {actual} exceeds maximum allowed size {max}")]
-    WriteFileSizeExceeded {
-        /// The actual file size that would be generated
-        actual: u64,
-        /// The maximum allowed file size
-        max: u64,
-    },
-
-    /// Required metadata is missing or invalid for binary writing.
-    ///
-    /// This error occurs when the assembly is missing metadata required
-    /// for binary generation, or when the metadata is in an invalid state.
-    #[error("Binary write missing required metadata: {message}")]
-    WriteMissingMetadata {
-        /// Details about the missing metadata
-        message: String,
-    },
-
-    /// Internal error during binary writing.
-    ///
-    /// This error represents an internal inconsistency or bug in the
-    /// binary writing logic that should not occur under normal conditions.
-    #[error("Binary write internal error: {message}")]
-    WriteInternalError {
-        /// Details about the internal error
-        message: String,
-    },
-
-    // Assembly Encoding Errors
     /// Invalid instruction mnemonic.
     ///
     /// This error occurs when attempting to encode an instruction with
@@ -915,19 +536,14 @@ pub enum Error {
     #[error("Unexpected operand provided for instruction that expects none")]
     UnexpectedOperand,
 
-    /// Invalid branch instruction.
+    /// Invalid branch instruction or operand.
     ///
-    /// This error occurs when attempting to use the branch instruction
-    /// encoding method with a non-branch instruction mnemonic.
-    #[error("Invalid branch instruction: {0}")]
-    InvalidBranchInstruction(String),
-
-    /// Invalid branch operand type.
-    ///
-    /// This error occurs when a branch instruction has an operand type
-    /// that is not valid for branch offset encoding.
-    #[error("Invalid branch operand type - must be Int8, Int16, or Int32")]
-    InvalidBranchOperandType,
+    /// This error occurs when:
+    /// - Attempting to use the branch instruction encoding method with a non-branch instruction
+    /// - A branch instruction has an operand type not valid for branch offset encoding
+    /// - An invalid offset size is specified for branch instruction encoding
+    #[error("Invalid branch: {0}")]
+    InvalidBranch(String),
 
     /// Undefined label referenced.
     ///
@@ -943,57 +559,54 @@ pub enum Error {
     #[error("Duplicate label definition: {0}")]
     DuplicateLabel(String),
 
-    /// Branch offset out of range.
+    /// Lock or synchronization error.
     ///
-    /// This error occurs when a calculated branch offset exceeds the
-    /// maximum range for the instruction's offset size.
-    #[error("Branch offset {offset} out of range for {instruction_size}-byte instruction")]
-    BranchOffsetOutOfRange {
-        /// The calculated offset
-        offset: i32,
-        /// The instruction offset size in bytes
-        instruction_size: u8,
-    },
+    /// This error occurs when synchronization primitives like barriers, locks,
+    /// or cache locks fail during concurrent operations.
+    ///
+    /// # Examples
+    ///
+    /// - Barrier wait failures during parallel loading
+    /// - Lock acquisition failures for cache updates
+    /// - Thread synchronization failures
+    #[error("Lock error: {0}")]
+    LockError(String),
 
-    /// Invalid branch offset size.
+    /// Configuration or setup error.
     ///
-    /// This error occurs when an invalid offset size is specified
-    /// for branch instruction encoding.
-    #[error("Invalid branch offset size: {0} bytes")]
-    InvalidBranchOffsetSize(u8),
+    /// This error occurs when there are issues with configuration, project setup,
+    /// file paths, or other setup-related operations.
+    ///
+    /// # Examples
+    ///
+    /// - Missing primary file specification
+    /// - Invalid search paths
+    /// - Duplicate assembly identities
+    #[error("Configuration error: {0}")]
+    Configuration(String),
 }
 
 impl Clone for Error {
     fn clone(&self) -> Self {
         match self {
             // Handle non-cloneable variants by converting to string representation
-            Error::FileError(io_err) => Error::Error(io_err.to_string()),
-            Error::GoblinErr(goblin_err) => Error::Error(goblin_err.to_string()),
+            Error::Io(io_err) => Error::Other(io_err.to_string()),
+            Error::Goblin(goblin_err) => Error::Other(goblin_err.to_string()),
             // For validation errors that have Box<Error> sources, clone them recursively
             Error::ValidationStage1Failed { source, message } => Error::ValidationStage1Failed {
                 source: source.clone(),
                 message: message.clone(),
             },
-            Error::ValidationRawValidatorFailed {
-                validator,
-                message,
-                source,
-            } => Error::ValidationRawValidatorFailed {
+            Error::ValidationRawFailed { validator, message } => Error::ValidationRawFailed {
                 validator: validator.clone(),
                 message: message.clone(),
-                source: source.clone(),
             },
-            Error::ValidationOwnedValidatorFailed {
-                validator,
-                message,
-                source,
-            } => Error::ValidationOwnedValidatorFailed {
+            Error::ValidationOwnedFailed { validator, message } => Error::ValidationOwnedFailed {
                 validator: validator.clone(),
                 message: message.clone(),
-                source: source.clone(),
             },
-            // For all other variants, convert to their string representation and use GeneralError
-            other => Error::Error(other.to_string()),
+            // For all other variants, convert to their string representation and use Other
+            other => Error::Other(other.to_string()),
         }
     }
 }

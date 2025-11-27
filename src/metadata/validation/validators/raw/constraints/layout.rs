@@ -42,7 +42,7 @@
 //!
 //! # Error Handling
 //!
-//! This validator returns [`crate::Error::ValidationRawValidatorFailed`] for:
+//! This validator returns [`crate::Error::ValidationRawFailed`] for:
 //! - Invalid field layout positioning or overlapping field definitions (multiple fields at same offset)
 //! - Inconsistent class packing size or total size constraints (non-power-of-2 packing, excessive sizes)
 //! - Field offsets exceeding class size boundaries (unreasonably large offsets)
@@ -134,11 +134,11 @@ impl RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All field layouts are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Field layout violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Field layout violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Field offsets are invalid or out of bounds (exceeding 0x7FFFFFFF)
     /// - Field layouts overlap in explicit layout scenarios (multiple fields at same offset)
     /// - Field references are invalid or null (zero field reference)
@@ -215,11 +215,11 @@ impl RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All class layouts are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Class layout violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Class layout violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Class packing sizes are invalid (not 0 or power of 2) or exceed 128 bytes
     /// - Class sizes exceed reasonable bounds (exceeding 0x7FFFFFFF)
     /// - Parent type references are invalid (null or exceed TypeDef table row count)
@@ -294,11 +294,11 @@ impl RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All layout constraints are consistent
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Layout consistency violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Layout consistency violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Field offsets are at maximum boundary indicating potential overflow
     /// - Parent type references are invalid or missing (non-existent TypeDef RIDs)
     /// - Field layouts exceed reasonable offset bounds (>1MB suggesting corruption)
@@ -406,11 +406,11 @@ impl RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All field alignments are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Alignment violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Alignment violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Field offsets are not properly aligned for their type
     /// - Field layouts violate natural alignment requirements
     /// - Explicit layout fields have unreasonable spacing
@@ -467,11 +467,11 @@ impl RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All value type layouts are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Value type violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Value type violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] if:
+    /// Returns [`crate::Error::ValidationRawFailed`] if:
     /// - Value type class sizes exceed reasonable stack limits
     /// - Value type packing constraints are inappropriate
     /// - Value type field layouts create alignment issues
@@ -534,7 +534,7 @@ impl RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All sequential layouts are valid
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Sequential layout violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Sequential layout violations found
     fn validate_sequential_layout(assembly_view: &CilAssemblyView) -> Result<()> {
         let tables = assembly_view
             .tables()
@@ -606,11 +606,11 @@ impl RawValidator for RawLayoutConstraintValidator {
     /// # Returns
     ///
     /// * `Ok(())` - All layout constraints are valid and meet ECMA-335 requirements
-    /// * `Err(`[`crate::Error::ValidationRawValidatorFailed`]`)` - Layout constraint violations found
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Layout constraint violations found
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::ValidationRawValidatorFailed`] for:
+    /// Returns [`crate::Error::ValidationRawFailed`] for:
     /// - Invalid field layout positioning or overlapping field definitions
     /// - Inconsistent class packing size or total size constraints
     /// - Field offsets exceeding class size boundaries

@@ -205,19 +205,16 @@ impl LocalVariableBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let index = self
-            .index
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Variable index is required for LocalVariable".to_string(),
-            })?;
+        let index = self.index.ok_or_else(|| {
+            Error::ModificationInvalid("Variable index is required for LocalVariable".to_string())
+        })?;
 
-        let name = self
-            .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details:
-                    "Variable name is required for LocalVariable (use empty string for anonymous)"
-                        .to_string(),
-            })?;
+        let name = self.name.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Variable name is required for LocalVariable (use empty string for anonymous)"
+                    .to_string(),
+            )
+        })?;
 
         let next_rid = context.next_rid(TableId::LocalVariable);
         let token = Token::new(0x3300_0000 + next_rid);
@@ -334,10 +331,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Variable index is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -350,10 +347,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Variable name is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

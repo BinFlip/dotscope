@@ -180,18 +180,15 @@ impl ImportScopeBuilder {
     ///     .build(&mut context)?;
     /// ```
     pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let parent = self
-            .parent
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Parent scope index is required for ImportScope (use 0 for root scope)"
-                    .to_string(),
-            })?;
+        let parent = self.parent.ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Parent scope index is required for ImportScope (use 0 for root scope)".to_string(),
+            )
+        })?;
 
-        let imports = self
-            .imports
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Import blob data is required for ImportScope".to_string(),
-            })?;
+        let imports = self.imports.ok_or_else(|| {
+            Error::ModificationInvalid("Import blob data is required for ImportScope".to_string())
+        })?;
 
         let next_rid = context.next_rid(TableId::ImportScope);
         let token_value = ((TableId::ImportScope as u32) << 24) | next_rid;
@@ -309,10 +306,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Parent scope index is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }
@@ -325,10 +322,10 @@ mod tests {
 
         assert!(result.is_err());
         match result.unwrap_err() {
-            Error::ModificationInvalidOperation { details } => {
+            Error::ModificationInvalid(details) => {
                 assert!(details.contains("Import blob data is required"));
             }
-            _ => panic!("Expected ModificationInvalidOperation error"),
+            _ => panic!("Expected ModificationInvalid error"),
         }
         Ok(())
     }

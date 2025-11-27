@@ -24,7 +24,7 @@ use crate::{
         types::{CodedIndexType, RowWritable, TableInfoRef},
     },
     utils::{write_le_at, write_le_at_dyn},
-    Result,
+    Error, Result,
 };
 
 impl RowWritable for EventRaw {
@@ -59,9 +59,8 @@ impl RowWritable for EventRaw {
         sizes: &TableInfoRef,
     ) -> Result<()> {
         // Write flags (2 bytes) - convert from u32 to u16 with range check
-        let flags_u16 = u16::try_from(self.flags).map_err(|_| crate::Error::WriteLayoutFailed {
-            message: "Event flags value exceeds u16 range".to_string(),
-        })?;
+        let flags_u16 = u16::try_from(self.flags)
+            .map_err(|_| Error::LayoutFailed("Event flags value exceeds u16 range".to_string()))?;
         write_le_at(data, offset, flags_u16)?;
 
         // Write name string heap index (2 or 4 bytes)

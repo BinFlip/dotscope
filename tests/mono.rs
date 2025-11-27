@@ -129,8 +129,8 @@ fn categorize_error(error: &str) -> &'static str {
         "UnicodeError"
     } else if error.contains("NotSupported") {
         "NotSupported"
-    } else if error.contains("FileError") {
-        "FileError"
+    } else if error.contains("Io(") {
+        "Io"
     } else {
         "Other"
     }

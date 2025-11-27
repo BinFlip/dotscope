@@ -187,21 +187,15 @@ impl PropertyBuilder {
         // Validate required fields
         let name = self
             .name
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Property name is required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Property name is required".to_string()))?;
 
         let flags = self
             .flags
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Property flags are required".to_string(),
-            })?;
+            .ok_or_else(|| Error::ModificationInvalid("Property flags are required".to_string()))?;
 
-        let signature = self
-            .signature
-            .ok_or_else(|| Error::ModificationInvalidOperation {
-                details: "Property signature is required".to_string(),
-            })?;
+        let signature = self.signature.ok_or_else(|| {
+            Error::ModificationInvalid("Property signature is required".to_string())
+        })?;
 
         let name_index = context.string_get_or_add(&name)?;
         let signature_index = context.blob_add(&signature)?;

@@ -187,7 +187,7 @@ use crate::{
         validation::{ValidationConfig, ValidationEngine},
     },
     project::ProjectContext,
-    Result,
+    Error, Result,
 };
 
 /// A fully parsed and loaded .NET assembly representation.
@@ -510,7 +510,7 @@ impl CilObject {
     ) -> Result<Self> {
         // Validate CLR header presence
         if !file.is_clr() {
-            return Err(crate::Error::NotSupported);
+            return Err(Error::NotSupported);
         }
 
         // Extract data and use existing from_mem path
