@@ -119,7 +119,7 @@ use crate::{
         identity::{AssemblyIdentity, AssemblyVersion, Identity, ProcessorArchitecture},
         root::Root,
         streams::{Blob, Guid, StreamHeader, Strings, TablesHeader, UserStrings},
-        tables::{AssemblyProcessorRaw, AssemblyRaw},
+        tables::{AssemblyProcessorRaw, AssemblyRaw, AssemblyRefRaw},
         validation::ValidationEngine,
     },
     Error, Result, ValidationConfig,
@@ -861,6 +861,50 @@ impl CilAssemblyView {
         let engine = ValidationEngine::new(self, config)?;
         let result = engine.execute_stage1_validation(self, None)?;
         result.into_result()
+    }
+
+    /// Extract assembly dependencies from the AssemblyRef metadata table.
+    ///
+    /// This method reads the AssemblyRef table (0x23) from the metadata to extract
+    /// all referenced assemblies as `AssemblyIdentity` instances. These represent
+    /// the external assemblies that this assembly depends on.
+    ///
+    /// # Returns
+    ///
+    /// A vector of `AssemblyIdentity` for each referenced assembly. Returns an empty
+    /// vector if the metadata tables are unavailable or the AssemblyRef table is empty.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilAssemblyView;
+    /// use std::path::Path;
+    ///
+    /// let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
+    /// let deps = view.dependencies();
+    ///
+    /// for dep in deps {
+    ///     println!("Depends on: {} v{}", dep.name, dep.version);
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn dependencies(&self) -> Vec<AssemblyIdentity> {
+        let (Some(tables), Some(strings), Some(blobs)) =
+            (self.tables(), self.strings(), self.blobs())
+        else {
+            return Vec::new();
+        };
+
+        let Some(assembly_ref_table) = tables.table::<AssemblyRefRaw>() else {
+            return Vec::new();
+        };
+
+        assembly_ref_table
+            .into_iter()
+            .filter_map(|row| row.to_owned(strings, blobs).ok())
+            .map(|assembly_ref| AssemblyIdentity::from_assembly_ref(&assembly_ref))
+            .collect()
     }
 
     /// Extract assembly identity from the Assembly metadata table.

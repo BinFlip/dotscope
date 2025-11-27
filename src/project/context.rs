@@ -22,6 +22,7 @@ use std::sync::Arc;
 /// 1. **Stage 1**: Basic setup and TypeRegistry creation
 /// 2. **Stage 2**: Type definitions and basic metadata loading
 /// 3. **Stage 3**: Cross-assembly references and custom attributes
+/// 4. **Stage 4**: All loaders completed (before validation)
 ///
 /// # Thread Safety
 ///
@@ -39,6 +40,9 @@ pub(crate) struct ProjectContext {
 
     /// Barrier for stage 3 completion (inheritance resolution completed)
     stage3_barrier: Arc<FailFastBarrier>,
+
+    /// Barrier for stage 4 completion (all loaders completed, before validation)
+    stage4_barrier: Arc<FailFastBarrier>,
 
     /// Lock-free storage for assembly identities and their TypeRegistries
     /// Used for cross-registry linking after stage 1
@@ -62,6 +66,7 @@ impl ProjectContext {
             stage1_barrier: Arc::new(FailFastBarrier::new(total_count)?),
             stage2_barrier: Arc::new(FailFastBarrier::new(total_count)?),
             stage3_barrier: Arc::new(FailFastBarrier::new(total_count)?),
+            stage4_barrier: Arc::new(FailFastBarrier::new(total_count)?),
             registries: BoxcarVec::new(),
         })
     }
@@ -106,6 +111,21 @@ impl ProjectContext {
         self.stage3_barrier
             .wait()
             .map_err(|e| Error::LockError(format!("Stage 3 barrier failed: {}", e)))
+    }
+
+    /// Wait for all assemblies to complete stage 4 (all loaders completed).
+    ///
+    /// This method blocks until all assemblies have completed all metadata loaders,
+    /// including nested class relationships. This ensures all cross-assembly type
+    /// references (including nested types) are fully populated before validation.
+    ///
+    /// # Returns
+    /// `Ok(())` if all assemblies completed stage 4 successfully, or an error
+    /// if any assembly failed during this stage.
+    pub fn wait_stage4(&self) -> Result<()> {
+        self.stage4_barrier
+            .wait()
+            .map_err(|e| Error::LockError(format!("Stage 4 barrier failed: {}", e)))
     }
 
     /// Register a TypeRegistry for cross-assembly linking after stage 1.
@@ -153,6 +173,7 @@ impl ProjectContext {
         self.stage1_barrier.break_barrier(error_message);
         self.stage2_barrier.break_barrier(error_message);
         self.stage3_barrier.break_barrier(error_message);
+        self.stage4_barrier.break_barrier(error_message);
     }
 
     /// Register a TypeRegistry and wait for stage 1 completion.

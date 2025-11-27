@@ -94,7 +94,7 @@ use std::sync::{Arc, OnceLock};
 
 pub(crate) use context::ProjectContext;
 pub use loader::ProjectLoader;
-pub use result::ProjectResult;
+pub use result::{ProjectResult, VersionMismatch};
 
 /// Multi-assembly project container with dependency management and cross-assembly resolution.
 ///
@@ -147,12 +147,12 @@ pub struct CilProject {
     /// different versions, cultures, and strong names.
     assemblies: DashMap<AssemblyIdentity, Arc<CilObject>>,
 
-    /// Identity of the primary/root assembly that was loaded first.
+    /// Direct reference to the primary/root assembly.
     ///
     /// This is typically the main executable or the primary library that
     /// serves as the entry point for the analysis. Set by ProjectLoader
     /// during the loading process using OnceLock for thread-safe single assignment.
-    primary_assembly: OnceLock<AssemblyIdentity>,
+    primary_assembly: OnceLock<Arc<CilObject>>,
 }
 
 impl CilProject {
@@ -259,6 +259,7 @@ impl CilProject {
     /// # Arguments
     ///
     /// * `assembly` - The CilObject to add to the project
+    /// * `is_primary` - Whether this assembly should be marked as the primary/entry point
     ///
     /// # Returns
     ///
@@ -275,7 +276,7 @@ impl CilProject {
     /// let mut project = CilProject::new();
     /// let assembly = CilObject::from_path(Path::new("example.dll"))?;
     ///
-    /// project.add_assembly(assembly)?;
+    /// project.add_assembly(assembly, true)?; // Mark as primary
     /// assert_eq!(project.assembly_count(), 1);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -283,7 +284,7 @@ impl CilProject {
     /// # Errors
     /// Returns an error if the assembly lacks identity information or if an assembly
     /// with the same identity already exists in the project.
-    pub fn add_assembly(&self, assembly: CilObject) -> Result<()> {
+    pub fn add_assembly(&self, assembly: CilObject, is_primary: bool) -> Result<()> {
         let identity = assembly.identity().ok_or_else(|| {
             Error::Configuration("Assembly does not have identity information".to_string())
         })?;
@@ -312,9 +313,22 @@ impl CilProject {
                 .registry_link(identity.clone(), assembly_arc.types());
         }
 
-        // Add to assemblies map
         self.assemblies
             .insert(identity.clone(), assembly_arc.clone());
+
+        if is_primary {
+            self.primary_assembly
+                .set(assembly_arc)
+                .map_err(|existing| {
+                    let existing_name = existing
+                        .identity()
+                        .map_or_else(|| "<unknown>".to_string(), |id| id.name.clone());
+                    Error::Configuration(format!(
+                        "Primary assembly already set to '{}', cannot set '{}' as primary",
+                        existing_name, identity.name
+                    ))
+                })?;
+        }
 
         Ok(())
     }
@@ -486,43 +500,7 @@ impl CilProject {
     /// }
     /// ```
     pub fn get_primary(&self) -> Option<Arc<CilObject>> {
-        self.primary_assembly
-            .get()
-            .and_then(|identity| self.get_assembly(identity))
-    }
-
-    /// Set the primary assembly for this project.
-    ///
-    /// This method is typically called by ProjectLoader during the loading process
-    /// to designate which assembly serves as the main entry point. Can only be called once.
-    ///
-    /// # Arguments
-    /// * `identity` - The identity of the assembly to mark as primary
-    ///
-    /// # Returns
-    /// * `Ok(())` if the primary was set successfully
-    /// * `Err(identity)` if a primary assembly was already set
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// let project = CilProject::new();
-    /// // ... add assemblies ...
-    /// project.set_primary(main_assembly_identity)?;
-    /// ```
-    ///
-    /// # Errors
-    /// Returns an error if the primary assembly has already been set.
-    pub fn set_primary(&self, identity: AssemblyIdentity) -> Result<()> {
-        let identity_name = identity.name.clone();
-        self.primary_assembly
-            .set(identity)
-            .map_err(|existing_identity| {
-                Error::Configuration(format!(
-                    "Primary assembly already set to '{}', cannot change to '{}'",
-                    existing_identity.name, identity_name
-                ))
-            })
+        self.primary_assembly.get().cloned()
     }
 
     /// Clear all assemblies from the project.
@@ -544,9 +522,14 @@ impl Default for CilProject {
 
 impl std::fmt::Debug for CilProject {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let primary_identity = self
+            .primary_assembly
+            .get()
+            .and_then(|assembly| assembly.identity());
+
         f.debug_struct("CilProject")
             .field("assembly_count", &self.assembly_count())
-            .field("primary_assembly", &self.primary_assembly.get())
+            .field("primary_assembly", &primary_identity)
             .field("assemblies", &self.all_assemblies())
             .finish()
     }
