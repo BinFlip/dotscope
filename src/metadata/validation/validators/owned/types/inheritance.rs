@@ -170,7 +170,8 @@ impl OwnedInheritanceValidator {
         let mut visiting = FxHashSet::default();
 
         for type_entry in context.target_assembly_types() {
-            if !visited.contains(&type_entry.token.value()) {
+            let type_ptr = Arc::as_ptr(type_entry) as usize;
+            if !visited.contains(&type_ptr) {
                 self.check_inheritance_cycles(type_entry, &mut visited, &mut visiting, context, 0)?;
             }
         }
@@ -182,11 +183,13 @@ impl OwnedInheritanceValidator {
     ///
     /// Uses depth-first search to detect cycles in the inheritance graph.
     /// Includes recursion depth limiting to prevent stack overflow.
+    /// Uses Arc pointers as unique type identifiers to avoid token collisions
+    /// between types from different assemblies.
     fn check_inheritance_cycles(
         &self,
         type_entry: &CilType,
-        visited: &mut FxHashSet<u32>,
-        visiting: &mut FxHashSet<u32>,
+        visited: &mut FxHashSet<usize>,
+        visiting: &mut FxHashSet<usize>,
         context: &OwnedValidationContext,
         depth: usize,
     ) -> Result<()> {
@@ -201,10 +204,11 @@ impl OwnedInheritanceValidator {
             });
         }
 
-        let token = type_entry.token.value();
+        // Use pointer as unique identifier to avoid token collisions across assemblies
+        let type_ptr = std::ptr::from_ref::<CilType>(type_entry) as usize;
 
-        if visiting.contains(&token) {
-            let type_name = &type_entry.name;
+        if visiting.contains(&type_ptr) {
+            let type_name = type_entry.fullname();
             return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
@@ -213,11 +217,11 @@ impl OwnedInheritanceValidator {
             });
         }
 
-        if visited.contains(&token) {
+        if visited.contains(&type_ptr) {
             return Ok(());
         }
 
-        visiting.insert(token);
+        visiting.insert(type_ptr);
 
         if let Some(base_type) = type_entry.base() {
             self.check_inheritance_cycles(&base_type, visited, visiting, context, depth + 1)?;
@@ -235,8 +239,8 @@ impl OwnedInheritanceValidator {
             }
         }
 
-        visiting.remove(&token);
-        visited.insert(token);
+        visiting.remove(&type_ptr);
+        visited.insert(type_ptr);
 
         Ok(())
     }
@@ -366,7 +370,20 @@ impl OwnedInheritanceValidator {
                 for (_, interface_ref) in type_entry.interfaces.iter() {
                     if let Some(interface_type) = interface_ref.upgrade() {
                         let is_system_interface = interface_type.fullname().starts_with("System.");
-                        if interface_type.flags & TypeAttributes::INTERFACE == 0
+                        // Check if it's an interface by flag OR by flavor (for generic instances)
+                        // OR by naming convention (interfaces starting with 'I' followed by uppercase)
+                        let is_interface_by_flag =
+                            interface_type.flags & TypeAttributes::INTERFACE != 0;
+                        let is_interface_by_flavor =
+                            matches!(*interface_type.flavor(), CilFlavor::Interface);
+                        let is_generic_instance =
+                            matches!(*interface_type.flavor(), CilFlavor::GenericInstance);
+                        let is_interface_by_name =
+                            is_generic_instance && interface_type.name.starts_with('I');
+
+                        if !is_interface_by_flag
+                            && !is_interface_by_flavor
+                            && !is_interface_by_name
                             && !is_system_interface
                         {
                             return Err(Error::ValidationOwnedFailed {
@@ -946,7 +963,6 @@ impl OwnedInheritanceValidator {
                     "Cannot override non-virtual method '{}' - only virtual methods can be overridden",
                     base_method.name
                 ),
-
             });
         }
 
@@ -966,17 +982,20 @@ impl OwnedInheritanceValidator {
         // ECMA-335 I.8.5.3.2: Check accessibility narrowing restrictions
         // General rule: Override methods cannot be less accessible than base methods
         // Exception (ECMA-335 I.8.5.3.2): When overriding a method from a different assembly
-        // with family-or-assembly accessibility, the override may have family accessibility.
+        // with family-or-assembly accessibility, the override may have family or assembly accessibility.
         // This is not considered restricting access because family-or-assembly cannot be
         // properly expressed across assembly boundaries.
         if derived_method.flags_access < base_method.flags_access {
-            // ECMA-335 I.8.5.3.2: Cross-assembly exception for FAMILY_OR_ASSEMBLY → FAMILY narrowing
-            // When overriding across assembly boundaries, family-or-assembly can be narrowed to family
+            // ECMA-335 I.8.5.3.2: Cross-assembly exception for FAMILY_OR_ASSEMBLY narrowing
+            // When overriding across assembly boundaries, family-or-assembly can be narrowed to:
+            // - FAMILY (protected) - accessible to derived classes
+            // - ASSEMBLY (internal) - accessible within the assembly
             let is_cross_assembly = !derived_type.external_sources_equivalent(base_type);
 
             let is_exception_case = is_cross_assembly
                 && base_method.flags_access == MethodAccessFlags::FAMILY_OR_ASSEMBLY
-                && derived_method.flags_access == MethodAccessFlags::FAMILY;
+                && (derived_method.flags_access == MethodAccessFlags::FAMILY
+                    || derived_method.flags_access == MethodAccessFlags::ASSEMBLY);
 
             if !is_exception_case {
                 return Err(Error::ValidationOwnedFailed {

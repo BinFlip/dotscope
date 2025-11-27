@@ -324,7 +324,10 @@ impl OwnedTypeDefinitionValidator {
             }
 
             // Validate that interfaces don't have conflicting flavors
-            if flags & TypeAttributes::INTERFACE != 0 && !matches!(flavor, CilFlavor::Interface) {
+            // GenericInstance is also valid for interface types (e.g., IList<T> instantiations)
+            if flags & TypeAttributes::INTERFACE != 0
+                && !matches!(flavor, CilFlavor::Interface | CilFlavor::GenericInstance)
+            {
                 return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: {

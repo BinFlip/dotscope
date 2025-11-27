@@ -54,25 +54,24 @@ impl MetadataLoader for InheritanceResolver {
                         }
 
                         if let Some(type_def) = context.types.get(&raw_typedef.token) {
-                                match context.get_ref(&raw_typedef.extends) {
-                                    CilTypeReference::TypeDef(type_ref)
-                                    | CilTypeReference::TypeRef(type_ref)
-                                    | CilTypeReference::TypeSpec(type_ref) => {
-                                        let base_type_ref = type_ref.upgrade().ok_or_else(|| {
-                                            Error::TypeError(format!(
-                                                "InheritanceResolver: Type reference was dropped for type {}",
-                                                type_def.fullname()
-                                            ))
-                                        })?;
+                            match context.get_ref(&raw_typedef.extends) {
+                                CilTypeReference::TypeDef(type_ref)
+                                | CilTypeReference::TypeRef(type_ref)
+                                | CilTypeReference::TypeSpec(type_ref) => {
+                                    let base_type_ref = type_ref.upgrade().ok_or_else(|| {
+                                        Error::TypeError(format!(
+                                            "InheritanceResolver: Type reference was dropped for type {}",
+                                            type_def.fullname()
+                                        ))
+                                    })?;
 
-                                        let base_fullname = base_type_ref.fullname();
-                                        if let Some(canonical_base_type) = context.types.resolve_type_global(&base_fullname) {
-                                            type_def.set_base(&canonical_base_type.into())?;
-                                        } else {
-                                            type_def.set_base(&base_type_ref.into())?;
-                                        }
-                                    }
-                                    _ => {} // Other types not supported
+                                    // Use the resolved base type directly by its token.
+                                    // Do NOT lookup by fullname as that can return the wrong type
+                                    // when multiple types share the same name (e.g., nested types
+                                    // with the same simple name in different enclosing types).
+                                    type_def.set_base(&base_type_ref.into())?;
+                                }
+                                _ => {} // Other types not supported
                             }
 
                             // Note: Failed resolution is not an error - some TypeSpec references

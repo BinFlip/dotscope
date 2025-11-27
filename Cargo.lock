@@ -274,7 +274,6 @@ dependencies = [
  "memmap2",
  "num_cpus",
  "ouroboros",
- "paste",
  "quick-xml",
  "rayon",
  "rustc-hash",

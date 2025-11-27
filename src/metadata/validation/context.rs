@@ -497,10 +497,11 @@ pub struct ValidationCache {
     /// Expensive to build: iterates all types and all methods.
     method_type_mapping: OnceLock<MethodTypeMapping>,
 
-    /// Interface implementation relationships: type token -> implemented interface tokens.
+    /// Interface implementation relationships: type Arc pointer -> implemented interface Arc pointers.
     /// Used by: both circularity validators for cycle detection.
-    /// Built from all types, mapping each type to its directly implemented interfaces.
-    interface_relationships: OnceLock<FxHashMap<Token, Vec<Token>>>,
+    /// Built from target assembly types, mapping each type to its directly implemented interfaces.
+    /// Uses Arc pointers (as usize) instead of tokens to avoid token collisions in multi-assembly scenarios.
+    interface_relationships: OnceLock<FxHashMap<usize, Vec<usize>>>,
 
     /// Nested type relationships: parent type token -> nested type tokens.
     /// Used by: types/circularity validator for nested type cycle detection.
@@ -704,26 +705,31 @@ impl OwnedValidationContext<'_> {
     ///
     /// # Returns
     ///
-    /// Cached reference to a FxHashMap mapping type tokens to implemented interface tokens.
+    /// Cached reference to a FxHashMap mapping type Arc pointers (as usize) to implemented
+    /// interface Arc pointers (as usize). Using Arc pointers instead of tokens avoids
+    /// token collisions in multi-assembly scenarios where different types from different
+    /// assemblies may share the same token value.
     ///
     /// # Performance
     ///
     /// First call: O(n*m) where n is types and m is average interfaces per type
     /// Subsequent calls: O(1) (returns cached reference)
-    pub fn interface_relationships(&self) -> &FxHashMap<Token, Vec<Token>> {
+    pub fn interface_relationships(&self) -> &FxHashMap<usize, Vec<usize>> {
         self.cache.interface_relationships.get_or_init(|| {
             let mut relationships = FxHashMap::default();
             for type_entry in self.all_types() {
-                let token = type_entry.token;
+                let type_ptr = Arc::as_ptr(type_entry) as usize;
                 let mut implemented_interfaces = Vec::new();
+
                 for (_, interface_ref) in type_entry.interfaces.iter() {
                     if let Some(interface_type) = interface_ref.upgrade() {
-                        implemented_interfaces.push(interface_type.token);
+                        let interface_ptr = Arc::as_ptr(&interface_type) as usize;
+                        implemented_interfaces.push(interface_ptr);
                     }
                 }
-                // Only insert if there are implemented interfaces to save memory
+
                 if !implemented_interfaces.is_empty() {
-                    relationships.insert(token, implemented_interfaces);
+                    relationships.insert(type_ptr, implemented_interfaces);
                 }
             }
             relationships

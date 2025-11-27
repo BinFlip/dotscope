@@ -68,11 +68,12 @@
 //! - [ECMA-335 II.22.37](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - TypeDef table and inheritance chains
 //! - [ECMA-335 II.22.32](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - NestedClass table and containment relationships
 
+use std::sync::Arc;
+
 use rustc_hash::{FxHashMap, FxHashSet};
 
 use crate::{
     metadata::{
-        token::Token,
         typesystem::CilType,
         validation::{
             context::{OwnedValidationContext, ValidationContext},
@@ -137,8 +138,8 @@ impl OwnedCircularityValidator {
         let mut visiting = FxHashSet::default();
 
         for type_entry in context.all_types() {
-            let token = type_entry.token;
-            if !visited.contains(&token) {
+            let type_ptr = Arc::as_ptr(type_entry) as usize;
+            if !visited.contains(&type_ptr) {
                 self.check_inheritance_cycle_relationships(
                     type_entry,
                     &mut visited,
@@ -169,30 +170,30 @@ impl OwnedCircularityValidator {
     fn check_inheritance_cycle_relationships(
         &self,
         type_entry: &CilType,
-        visited: &mut FxHashSet<Token>,
-        visiting: &mut FxHashSet<Token>,
+        visited: &mut FxHashSet<usize>,
+        visiting: &mut FxHashSet<usize>,
     ) -> Result<()> {
-        let current_token = type_entry.token;
+        let type_ptr = std::ptr::from_ref::<CilType>(type_entry) as usize;
 
         // If already completely processed, skip
-        if visited.contains(&current_token) {
+        if visited.contains(&type_ptr) {
             return Ok(());
         }
 
         // If currently being processed, we found a cycle
-        if visiting.contains(&current_token) {
+        if visiting.contains(&type_ptr) {
             return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
                     "Circular inheritance relationship detected: Type '{}' (token 0x{:08X}) is part of an inheritance cycle",
-                    type_entry.name, current_token.value()
+                    type_entry.name, type_entry.token.value()
                 ),
 
             });
         }
 
         // Mark as currently being processed
-        visiting.insert(current_token);
+        visiting.insert(type_ptr);
 
         // Check base type relationships
         if let Some(base_type) = type_entry.base() {
@@ -200,8 +201,8 @@ impl OwnedCircularityValidator {
         }
 
         // Mark as completely processed and remove from currently processing
-        visiting.remove(&current_token);
-        visited.insert(current_token);
+        visiting.remove(&type_ptr);
+        visited.insert(type_ptr);
 
         Ok(())
     }
@@ -226,15 +227,14 @@ impl OwnedCircularityValidator {
         let mut visited = FxHashSet::default();
         let mut visiting = FxHashSet::default();
 
-        // Use cached interface relationships from context
         let interface_relationships = context.interface_relationships();
 
-        // Check each type for interface implementation cycles
-        for type_entry in context.all_types() {
-            let token = type_entry.token;
-            if !visited.contains(&token) {
+        // Check each type from target assembly for interface implementation cycles
+        for type_entry in context.target_assembly_types() {
+            let type_ptr = Arc::as_ptr(type_entry) as usize;
+            if !visited.contains(&type_ptr) {
                 self.check_interface_implementation_cycle(
-                    token,
+                    type_ptr,
                     interface_relationships,
                     &mut visited,
                     &mut visiting,
@@ -249,8 +249,8 @@ impl OwnedCircularityValidator {
     ///
     /// # Arguments
     ///
-    /// * `token` - Type token to check for implementation cycles
-    /// * `interface_relationships` - Map of type tokens to implemented interface tokens
+    /// * `type_ptr` - Arc pointer (as usize) to the type to check
+    /// * `interface_relationships` - Map of type Arc pointers to implemented interface Arc pointers
     /// * `visited` - Set of completely processed types
     /// * `visiting` - Set of currently processing types
     ///
@@ -259,36 +259,34 @@ impl OwnedCircularityValidator {
     /// Returns error if a cycle is detected in the interface implementation relationships.
     fn check_interface_implementation_cycle(
         &self,
-        token: Token,
-        interface_relationships: &FxHashMap<Token, Vec<Token>>,
-        visited: &mut FxHashSet<Token>,
-        visiting: &mut FxHashSet<Token>,
+        type_ptr: usize,
+        interface_relationships: &FxHashMap<usize, Vec<usize>>,
+        visited: &mut FxHashSet<usize>,
+        visiting: &mut FxHashSet<usize>,
     ) -> Result<()> {
         // If already completely processed, skip
-        if visited.contains(&token) {
+        if visited.contains(&type_ptr) {
             return Ok(());
         }
 
         // If currently being processed, we found a cycle
-        if visiting.contains(&token) {
+        if visiting.contains(&type_ptr) {
             return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
-                message: format!(
-                    "Circular interface implementation relationship detected: Type with token 0x{:08X} implements itself through interface chain",
-                    token.value()
-                ),
-
+                message:
+                    "Circular interface implementation relationship detected: Type implements itself through interface chain"
+                        .to_string(),
             });
         }
 
         // Mark as currently being processed
-        visiting.insert(token);
+        visiting.insert(type_ptr);
 
         // Check all implemented interfaces
-        if let Some(implemented_tokens) = interface_relationships.get(&token) {
-            for &implemented_token in implemented_tokens {
+        if let Some(implemented_ptrs) = interface_relationships.get(&type_ptr) {
+            for &implemented_ptr in implemented_ptrs {
                 self.check_interface_implementation_cycle(
-                    implemented_token,
+                    implemented_ptr,
                     interface_relationships,
                     visited,
                     visiting,
@@ -297,8 +295,8 @@ impl OwnedCircularityValidator {
         }
 
         // Mark as completely processed and remove from currently processing
-        visiting.remove(&token);
-        visited.insert(token);
+        visiting.remove(&type_ptr);
+        visited.insert(type_ptr);
 
         Ok(())
     }
@@ -321,31 +319,32 @@ impl OwnedCircularityValidator {
         let mut visited = FxHashSet::default();
         let mut visiting = FxHashSet::default();
 
-        let all_types = context.all_types();
+        let target_types = context.target_assembly_types();
 
-        // Build specific reference map focusing on inheritance and interface relationships
+        // Build specific reference map using Arc pointers (not tokens) to avoid collisions
+        // Focus on inheritance and interface relationships
         // Exclude nested types as they can legitimately reference their containers
-        let mut reference_relationships = FxHashMap::default();
-        for type_entry in all_types {
-            let token = type_entry.token;
+        let mut reference_relationships: FxHashMap<usize, Vec<usize>> = FxHashMap::default();
+        for type_entry in target_types {
+            let type_ptr = Arc::as_ptr(type_entry) as usize;
             let mut references = Vec::new();
 
             // Add base type references (inheritance cycles are problematic)
             if let Some(base_type) = type_entry.base() {
-                // Exclude self-references to System.Object which can happen
-                if base_type.token != token && !base_type.fullname().starts_with("System.") {
-                    references.push(base_type.token);
+                let base_ptr = Arc::as_ptr(&base_type) as usize;
+                // Exclude System.Object which is a common base
+                if !base_type.fullname().starts_with("System.") {
+                    references.push(base_ptr);
                 }
             }
 
             // Add interface references (interface implementation cycles are problematic)
             for (_, interface_ref) in type_entry.interfaces.iter() {
                 if let Some(interface_type) = interface_ref.upgrade() {
-                    // Exclude self-references and System interfaces which can be special
-                    if interface_type.token != token
-                        && !interface_type.fullname().starts_with("System.")
-                    {
-                        references.push(interface_type.token);
+                    let interface_ptr = Arc::as_ptr(&interface_type) as usize;
+                    // Exclude System interfaces which are common base interfaces
+                    if !interface_type.fullname().starts_with("System.") {
+                        references.push(interface_ptr);
                     }
                 }
             }
@@ -353,15 +352,17 @@ impl OwnedCircularityValidator {
             // Skip nested type references as they can legitimately reference containers
             // and don't cause the same loading issues as inheritance cycles
 
-            reference_relationships.insert(token, references);
+            if !references.is_empty() {
+                reference_relationships.insert(type_ptr, references);
+            }
         }
 
         // Check each type for problematic cross-reference cycles
-        for type_entry in all_types {
-            let token = type_entry.token;
-            if !visited.contains(&token) {
+        for type_entry in target_types {
+            let type_ptr = Arc::as_ptr(type_entry) as usize;
+            if !visited.contains(&type_ptr) {
                 self.check_cross_reference_cycle(
-                    token,
+                    type_ptr,
                     &reference_relationships,
                     &mut visited,
                     &mut visiting,
@@ -376,8 +377,8 @@ impl OwnedCircularityValidator {
     ///
     /// # Arguments
     ///
-    /// * `token` - Type token to check for reference cycles
-    /// * `reference_relationships` - Map of type tokens to referenced type tokens
+    /// * `type_ptr` - Arc pointer (as usize) to the type to check
+    /// * `reference_relationships` - Map of type Arc pointers to referenced type Arc pointers
     /// * `visited` - Set of completely processed types
     /// * `visiting` - Set of currently processing types
     ///
@@ -386,36 +387,34 @@ impl OwnedCircularityValidator {
     /// Returns error if a cycle is detected in the cross-reference relationships.
     fn check_cross_reference_cycle(
         &self,
-        token: Token,
-        reference_relationships: &FxHashMap<Token, Vec<Token>>,
-        visited: &mut FxHashSet<Token>,
-        visiting: &mut FxHashSet<Token>,
+        type_ptr: usize,
+        reference_relationships: &FxHashMap<usize, Vec<usize>>,
+        visited: &mut FxHashSet<usize>,
+        visiting: &mut FxHashSet<usize>,
     ) -> Result<()> {
         // If already completely processed, skip
-        if visited.contains(&token) {
+        if visited.contains(&type_ptr) {
             return Ok(());
         }
 
         // If currently being processed, we found a cycle
-        if visiting.contains(&token) {
+        if visiting.contains(&type_ptr) {
             return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
-                message: format!(
-                    "Circular cross-reference relationship detected: Type with token 0x{:08X} references itself through relationship chain",
-                    token.value()
-                ),
-
+                message:
+                    "Circular cross-reference relationship detected: Type references itself through relationship chain"
+                        .to_string(),
             });
         }
 
         // Mark as currently being processed
-        visiting.insert(token);
+        visiting.insert(type_ptr);
 
         // Check all referenced types
-        if let Some(referenced_tokens) = reference_relationships.get(&token) {
-            for &referenced_token in referenced_tokens {
+        if let Some(referenced_ptrs) = reference_relationships.get(&type_ptr) {
+            for &referenced_ptr in referenced_ptrs {
                 self.check_cross_reference_cycle(
-                    referenced_token,
+                    referenced_ptr,
                     reference_relationships,
                     visited,
                     visiting,
@@ -424,8 +423,8 @@ impl OwnedCircularityValidator {
         }
 
         // Mark as completely processed and remove from currently processing
-        visiting.remove(&token);
-        visited.insert(token);
+        visiting.remove(&type_ptr);
+        visited.insert(type_ptr);
 
         Ok(())
     }
