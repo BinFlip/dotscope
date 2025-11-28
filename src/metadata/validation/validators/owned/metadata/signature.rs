@@ -352,6 +352,7 @@ impl Default for OwnedSignatureValidator {
 }
 
 #[cfg(test)]
+#[cfg_attr(feature = "skip-expensive-tests", allow(unused_imports))]
 mod tests {
     use super::*;
     use crate::{

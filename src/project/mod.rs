@@ -536,6 +536,7 @@ impl std::fmt::Debug for CilProject {
 }
 
 #[cfg(test)]
+#[cfg_attr(feature = "skip-expensive-tests", allow(unused_imports))]
 mod tests {
     use crate::test::{verify_crafted_2, verify_windowsbasedll};
 
