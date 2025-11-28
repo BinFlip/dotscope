@@ -5,6 +5,45 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2025-11-27
+
+### Added
+
+- **Multi-Assembly Project System**: New `ProjectLoader` for loading and analyzing multiple assemblies with automatic dependency resolution
+- **Assembly Dependency Analysis**: Comprehensive dependency graph analysis with cycle detection and topological sorting
+- **Assembly Identity System**: Cryptographic identity tracking with strong name and public key support
+- **Zero-Copy Resource Parsing**: New `ResourceTypeRef<'a>` and `ResourceEntryRef<'a>` types for memory-efficient resource access
+- **Additional Resource Types**: Support for `Stream`, `Decimal`, `DateTime`, and `TimeSpan` resource types
+- **Nested Class Cycle Detection**: Validation system now detects circular nesting relationships in metadata
+- **Parser Enhancements**: Transactional parsing with `transactional()` and non-advancing `peek_*` methods
+- **Performance Benchmarks**: Extended benchmark suite covering COR20 header, method bodies, signatures, streams, and security parsing
+
+### Changed
+
+- **Error System Redesign**: Comprehensive refactoring of error types for clarity and consistency
+  - `Error::Error` → `Error::Other`
+  - `FileError` → `Io`
+  - `GoblinErr` → `Goblin`
+  - `BranchTarget*` errors consolidated into `BranchTargetOutOfRange`
+  - Validation errors renamed for consistency (e.g., `InvalidFieldType` → `FieldTypeInvalid`)
+  - Unused error variants removed
+- **MethodAccessFlags**: Changed from bitflags to a pseudo-enum to correctly represent mutually exclusive access modifiers per ECMA-335
+- **Inheritance Validator**: Optimized algorithm for significantly faster validation on large assemblies
+
+### Fixed
+
+- **Resource Encoder Bug**: Fixed string length encoding using incorrect format (ECMA-335 compressed uint instead of .NET BinaryWriter 7-bit encoded int)
+- **ECMA-335 Compliance**: Added handling for I.8.5.3.2 narrowing accessibility restriction exception
+- **OOM Prevention**: Added checks to prevent out-of-memory crashes from corrupted or invalid counts in malformed assemblies
+- **CI/CD Improvements**: Fixed cross-platform test compilation for Windows, macOS, and Linux with proper architecture detection
+
+### Improved
+
+- **Documentation**: Extensive documentation improvements across all modules with better examples and ECMA-335 references
+- **ECMA-335 Correctness**: Multiple fixes to improve spec compliance throughout the codebase
+- **Test Infrastructure**: Enhanced test support for different runtimes (CoreCLR, Mono) and platforms
+- **Performance**: Various optimizations for parsing and validation operations
+
 ## [0.4.0] - 2025-08-19
 
 ### Added
