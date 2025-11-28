@@ -28,7 +28,7 @@ Add `dotscope` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-dotscope = "0.4.0"
+dotscope = "0.5.0"
 ```
 
 ### Raw Access Example
@@ -120,11 +120,11 @@ fn main() -> dotscope::Result<()> {
     let view = CilAssemblyView::from_path("input.dll".as_ref())?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
-    
+
     // Add a user string
     let msg_index = context.userstring_add("Hello World!")?;
     let msg_token = Token::new(0x70000000 | msg_index);
-    
+
     // Create method with CIL instructions
     let method_token = MethodBuilder::new("MyNewMethod")
         .public()
@@ -138,11 +138,48 @@ fn main() -> dotscope::Result<()> {
             })
         })
         .build(&mut context)?;
-    
+
     // Save the modified assembly
     let mut assembly = context.finish();
     assembly.write_to_file("output.dll".as_ref())?;
-    
+
+    Ok(())
+}
+```
+
+### Project Loader Example
+
+```rust
+use dotscope::project::ProjectLoader;
+
+fn main() -> dotscope::Result<()> {
+    // Load assembly with automatic dependency resolution
+    let result = ProjectLoader::new()
+        .primary_file("MyApp.exe")?
+        .with_search_path("/usr/lib/mono/4.5")?
+        .auto_discover(true)
+        .build()?;
+
+    println!("Loaded {} assemblies", result.success_count());
+
+    // Access the project with all loaded assemblies
+    let project = &result.project;
+
+    // Get the primary assembly
+    if let Some(primary) = project.get_primary() {
+        println!("Types: {}", primary.types().len());
+        println!("Methods: {}", primary.methods().len());
+    }
+
+    // Cross-assembly type lookup
+    if let Some(string_type) = project.get_type_by_name("System.String") {
+        println!("Found System.String with {} methods", string_type.methods.count());
+    }
+
+    // Find type definitions across all assemblies
+    let object_types = project.find_type_definitions("Object");
+    println!("Found {} types matching 'Object'", object_types.len());
+
     Ok(())
 }
 ```
@@ -221,13 +258,16 @@ Check out the [examples](examples/) directory for complete working examples with
 
 - **[Basic Usage](examples/basic.rs)** - Start here! Simple assembly loading and inspection with error handling
 - **[Assembly Modification](examples/modify.rs)** - Complete guide to editing assemblies with heap and table operations
-- **[Metadata Analysis](examples/metadata.rs)** - Deep dive into assembly metadata and dependency tracking  
+- **[Metadata Analysis](examples/metadata.rs)** - Deep dive into assembly metadata and dependency tracking
 - **[Disassembly](examples/disassembly.rs)** - CIL instruction disassembly and method body analysis
 - **[Type System](examples/types.rs)** - Working with .NET types, generics, and inheritance
 - **[Comprehensive Analysis](examples/comprehensive.rs)** - Full-featured analysis combining all capabilities
 - **[Method Analysis](examples/method_analysis.rs)** - Exhaustive single-method inspection
 - **[Low-Level API](examples/lowlevel.rs)** - Understanding dotscope internals and raw parsing
 - **[Control Flow](examples/decode_blocks.rs)** - Basic block construction and flow analysis
+- **[Code Injection](examples/injectcode.rs)** - Injecting new methods into existing assemblies with MethodBuilder
+- **[Raw Assembly View](examples/raw_assembly_view.rs)** - Direct access to PE headers, metadata streams, and heaps
+- **[Project Loader](examples/project_loader.rs)** - Loading assemblies with automatic dependency resolution
 
 Each example includes detailed documentation explaining:
 
@@ -278,7 +318,7 @@ We maintain high code quality through:
 - **Comprehensive Test Suite**: Unit, integration, and fuzz testing
 - **Continuous Integration**: Automated testing on multiple platforms
 - **Code Coverage**: >90% test coverage target
-- **Static Analysis**: Clippy, rustfmt, and security audits
+- **Static Analysis**: Clippy, rustfmt, and audits
 - **Performance Testing**: Regular benchmarking and regression detection
 
 ### Running Tests
@@ -330,9 +370,6 @@ We're continuously working to improve `dotscope` and add new capabilities. Here 
 
 ### Performance and Scalability
 
-- Parallel loading optimizations
-- Cross-assembly dependency resolution
-- Project-wide analysis capabilities
 - Assembly linking and merging
 - Store and load full Assembly to/from JSON
 

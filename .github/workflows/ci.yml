@@ -65,24 +65,24 @@ jobs:
       run: cargo fmt --all -- --check
       
     - name: Run clippy
-      run: cargo clippy --all-features --all-targets -- -D warnings
-      
+      run: cargo clippy --all-targets -- -D warnings
+
     - name: Check compilation
-      run: cargo check --all-features
+      run: cargo check
       
     - name: Run tests (Linux - full)
       if: runner.os == 'Linux'
-      run: cargo test --release --all-features --verbose
+      run: cargo test --release --verbose
 
     - name: Run tests (macOS/Windows - skip expensive tests)
       if: runner.os != 'Linux'
       run: cargo test --release --features skip-expensive-tests --verbose
-      
+
     - name: Run doc tests
-      run: cargo test --release --doc --all-features
+      run: cargo test --release --doc
       
     - name: Check documentation
-      run: cargo doc --all-features --no-deps
+      run: cargo doc --no-deps
 
   # Optional fuzzing on main branch pushes only
   fuzzing:
@@ -176,7 +176,7 @@ jobs:
       uses: taiki-e/install-action@cargo-llvm-cov
       
     - name: Generate code coverage
-      run: cargo llvm-cov --all-features --workspace --lcov --output-path lcov.info
+      run: cargo llvm-cov --workspace --lcov --output-path lcov.info
       
     - name: Upload to codecov.io
       uses: codecov/codecov-action@v5
