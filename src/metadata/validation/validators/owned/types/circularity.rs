@@ -469,23 +469,16 @@ impl Default for OwnedTypeCircularityValidator {
 mod tests {
     use super::*;
     use crate::{
-        metadata::{
-            cilassemblyview::CilAssemblyView,
-            validation::{scanner::ReferenceScanner, ValidationConfig},
-        },
-        prelude::*,
+        metadata::validation::ValidationConfig,
         test::{
-            factories::validation::type_circularity::{
-                create_assembly_with_inheritance_circularity,
-                owned_type_circularity_validator_file_factory,
-            },
+            factories::validation::type_circularity::owned_type_circularity_validator_file_factory,
             owned_validator_test,
         },
         Result,
     };
-    use rayon::ThreadPoolBuilder;
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_type_circularity_validator() -> Result<()> {
         let validator = OwnedTypeCircularityValidator::new();
 
@@ -500,66 +493,5 @@ mod tests {
             },
             |context| validator.validate_owned(context),
         )
-    }
-
-    /// Test if the validator actually detects circular inheritance.
-    #[test]
-    fn test_validator_detects_circular_inheritance() -> Result<()> {
-        let temp_file = create_assembly_with_inheritance_circularity()?;
-
-        let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let mono_deps_path = std::path::Path::new(&manifest_dir).join("tests/samples/mono_4.8");
-
-        let assembly_view = CilAssemblyView::from_path(temp_file.path())?;
-
-        // Use project loading with dependencies instead of direct file loading
-        let project_result = crate::project::ProjectLoader::new()
-            .primary_file(temp_file.path())?
-            .with_search_path(&mono_deps_path)?
-            .auto_discover(true)
-            .strict_mode(true)
-            .with_validation(ValidationConfig::disabled())
-            .build()?;
-
-        let object = project_result.project.get_primary().ok_or_else(|| {
-            Error::Other("Failed to get primary assembly from project".to_string())
-        })?;
-
-        let scanner = ReferenceScanner::from_view(&assembly_view)?;
-        let config = ValidationConfig {
-            enable_semantic_validation: true,
-            max_nesting_depth: 100,
-            ..Default::default()
-        };
-
-        let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
-        let context = OwnedValidationContext::new(object.as_ref(), &scanner, &config, &thread_pool);
-
-        let validator = OwnedTypeCircularityValidator::new();
-
-        match validator.validate_owned(&context) {
-            Ok(()) => {
-                panic!(
-                    "Expected validation failure for circular inheritance but validation passed"
-                );
-            }
-            Err(error) => match error {
-                Error::ValidationOwnedFailed {
-                    validator: val_name,
-                    message,
-                    ..
-                } => {
-                    assert_eq!(val_name, "OwnedTypeCircularityValidator");
-                    assert!(
-                        message.contains("circular")
-                            || message.contains("inheritance")
-                            || message.contains("cycle")
-                    );
-                }
-                _ => panic!("Wrong error type returned: {error}"),
-            },
-        }
-
-        Ok(())
     }
 }

@@ -557,6 +557,7 @@ mod tests {
         cilassembly::AssemblyChanges,
         metadata::{
             cilassemblyview::CilAssemblyView,
+            cilobject::CilObject,
             validation::{
                 config::ValidationConfig, context::RawValidationContext, traits::RawValidator,
             },
@@ -717,25 +718,9 @@ mod tests {
     #[test]
     fn test_owned_validators_creation_and_uniqueness() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
-        let path = PathBuf::from(&manifest_dir).join("tests/samples/WindowsBase.dll");
-        let mono_deps_path = PathBuf::from(&manifest_dir).join("tests/samples/mono_4.8");
+        let path = PathBuf::from(&manifest_dir).join("tests/samples/mono_4.8/mscorlib.dll");
 
-        // Load CilObject with dependencies using ProjectLoader
-        let result = crate::project::ProjectLoader::new()
-            .primary_file(&path)
-            .expect("Failed to set primary file")
-            .with_search_path(&mono_deps_path)
-            .expect("Failed to set search path")
-            .auto_discover(true)
-            .build();
-
-        let project_result = result.expect("Failed to load project with dependencies");
-
-        let object = project_result
-            .project
-            .get_primary()
-            .expect("Failed to get primary assembly from project");
-
+        let object = CilObject::from_path(&path).expect("Failed to load mscorlib.dll");
         let view = CilAssemblyView::from_path(&path).expect("Failed to load test assembly");
         let config = ValidationConfig::comprehensive();
         let engine =
@@ -757,8 +742,8 @@ mod tests {
     fn test_complete_two_stage_validation() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
         let path = PathBuf::from(&manifest_dir).join("tests/samples/mono_4.8/mscorlib.dll");
-        let mono_deps_path = PathBuf::from(&manifest_dir).join("tests/samples/mono_4.8");
         let view = CilAssemblyView::from_path(&path).expect("Failed to load test assembly");
+        let object = CilObject::from_path(&path).expect("Failed to load mscorlib.dll");
 
         // Test with different validation configurations
         let configs = vec![
@@ -772,27 +757,8 @@ mod tests {
             let engine =
                 ValidationEngine::new(&view, config).expect("Failed to create validation engine");
 
-            // Test loading a CilObject with dependencies using ProjectLoader
-            let project_result = crate::project::ProjectLoader::new()
-                .primary_file(&path)
-                .expect("Failed to set primary file")
-                .with_search_path(&mono_deps_path)
-                .expect("Failed to set search path")
-                .auto_discover(true)
-                .with_validation(config)
-                .build();
-
-            let project_result = project_result.unwrap_or_else(|e| {
-                panic!("Failed to load project with dependencies for {name} config: {e}")
-            });
-
-            let object = project_result
-                .project
-                .get_primary()
-                .unwrap_or_else(|| panic!("No primary assembly loaded for {name} config"));
-
-            // Test two-stage validation directly through the engine with loaded dependencies
-            let result = engine.execute_two_stage_validation(&view, None, Some(&*object));
+            // Test two-stage validation directly through the engine
+            let result = engine.execute_two_stage_validation(&view, None, Some(&object));
             assert!(
                 result.is_ok(),
                 "Two-stage validation should complete for {name} config"

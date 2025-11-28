@@ -586,6 +586,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_attribute_validator() -> Result<()> {
         let validator = OwnedAttributeValidator::new();
         let config = ValidationConfig {

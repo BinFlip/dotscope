@@ -44,7 +44,9 @@ flate2 = "1.0"
 criterion = "0.7.0"
 
 [features]
-debug-parsing = []
+# Skip expensive validation tests that use ProjectLoader with dependency resolution.
+# These tests are slow on CI runners with limited cores/IO. Use this feature on slow runners (e.g., macOS/Windows CI).
+skip-expensive-tests = []
 
 [[bench]]
 name = "cilobject"

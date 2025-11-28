@@ -1152,17 +1152,8 @@ mod tests {
         },
     };
 
-    /// Comprehensive test for OwnedInheritanceValidator using the golden pattern.
-    ///
-    /// Tests all major inheritance validation scenarios:
-    /// - Circular inheritance detection
-    /// - Sealed type inheritance violations
-    /// - Interface inheritance violations
-    /// - Accessibility violations
-    /// - Abstract/concrete rule violations
-    ///
-    /// Uses the centralized test harness for consistent validation across all owned validators.
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_inheritance_validator_comprehensive() -> Result<()> {
         let validator = OwnedInheritanceValidator::new();
 

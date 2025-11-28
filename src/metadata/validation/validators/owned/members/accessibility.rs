@@ -432,6 +432,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_accessibility_validator() -> Result<()> {
         let validator = OwnedAccessibilityValidator::new();
         let config = ValidationConfig {

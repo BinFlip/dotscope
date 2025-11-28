@@ -13,7 +13,7 @@ use crate::{
         },
         token::Token,
     },
-    test::{get_testfile_crafted2, TestAssembly},
+    test::{get_testfile_mscorlib, TestAssembly},
     Error, Result,
 };
 
@@ -23,9 +23,9 @@ use crate::{
 pub fn owned_type_ownership_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_testfile_crafted2() else {
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
         return Err(Error::Other(
-            "crafted_2.exe not available - test cannot run".to_string(),
+            "mscorlib.dll not available - test cannot run".to_string(),
         ));
     };
 
@@ -48,8 +48,8 @@ pub fn owned_type_ownership_validator_file_factory() -> Result<Vec<TestAssembly>
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/ownership.rs`
 pub fn create_assembly_with_invalid_nested_visibility() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
         .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
@@ -131,8 +131,8 @@ pub fn create_assembly_with_invalid_nested_visibility() -> Result<TestAssembly> 
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/ownership.rs`
 pub fn create_assembly_with_empty_nested_name() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
         .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
@@ -214,8 +214,8 @@ pub fn create_assembly_with_empty_nested_name() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/ownership.rs`
 pub fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
         .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
@@ -280,8 +280,8 @@ pub fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/ownership.rs`
 pub fn create_assembly_with_empty_field_name() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
         .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
@@ -343,8 +343,8 @@ pub fn create_assembly_with_empty_field_name() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/ownership.rs`
 pub fn create_assembly_with_invalid_field_visibility() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
         .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;

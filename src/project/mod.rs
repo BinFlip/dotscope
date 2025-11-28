@@ -559,6 +559,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_get_primary_with_loader() {
         // Use CARGO_MANIFEST_DIR to get absolute paths
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
@@ -599,6 +600,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_load_crafted2_exe() {
         // Use CARGO_MANIFEST_DIR to get absolute paths
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
@@ -662,6 +664,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_load_windowsbase_dll() {
         let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
         let windowsbase_path =

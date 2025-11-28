@@ -10,7 +10,7 @@ use crate::{
         tables::{AssemblyRaw, TableDataOwned, TableId},
         token::Token,
     },
-    test::{get_testfile_crafted2, TestAssembly},
+    test::{get_testfile_mscorlib, TestAssembly},
     Error, Result,
 };
 
@@ -31,9 +31,9 @@ use crate::{
 pub fn owned_assembly_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_testfile_crafted2() else {
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
         return Err(Error::Other(
-            "crafted_2.exe not available - test cannot run".to_string(),
+            "mscorlib.dll not available - test cannot run".to_string(),
         ));
     };
 
@@ -62,8 +62,8 @@ pub fn owned_assembly_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/system/assembly.rs`
 pub fn create_assembly_with_empty_name() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
         .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
@@ -114,8 +114,8 @@ pub fn create_assembly_with_empty_name() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/system/assembly.rs`
 pub fn create_assembly_with_invalid_name_format() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
         .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
@@ -167,8 +167,8 @@ pub fn create_assembly_with_invalid_name_format() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/system/assembly.rs`
 pub fn create_assembly_with_maximum_version_numbers() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
         .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
@@ -219,8 +219,8 @@ pub fn create_assembly_with_maximum_version_numbers() -> Result<TestAssembly> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/system/assembly.rs`
 pub fn create_assembly_with_invalid_culture_format() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     let view = CilAssemblyView::from_path(&clean_testfile)
         .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;

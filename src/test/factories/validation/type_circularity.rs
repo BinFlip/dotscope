@@ -14,7 +14,7 @@ use crate::{
         token::Token,
         validation::ValidationConfig,
     },
-    test::{get_testfile_crafted2, TestAssembly},
+    test::{get_testfile_mscorlib, TestAssembly},
     Error, Result,
 };
 use tempfile::NamedTempFile;
@@ -28,8 +28,8 @@ use tempfile::NamedTempFile;
 pub fn owned_type_circularity_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
     assemblies.push(TestAssembly::new(&clean_testfile, true));
 
@@ -86,8 +86,8 @@ pub fn owned_type_circularity_validator_file_factory() -> Result<Vec<TestAssembl
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/circularity.rs`
 pub fn create_assembly_with_inheritance_circularity() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
+    let clean_testfile = get_testfile_mscorlib()
+        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -156,8 +156,8 @@ pub fn create_assembly_with_inheritance_circularity() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/circularity.rs`
 pub fn create_assembly_with_nested_type_circularity() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
+    let clean_testfile = get_testfile_mscorlib()
+        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -200,8 +200,8 @@ pub fn create_assembly_with_nested_type_circularity() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/circularity.rs`
 pub fn create_assembly_with_interface_circularity() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
+    let clean_testfile = get_testfile_mscorlib()
+        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -252,8 +252,8 @@ pub fn create_assembly_with_interface_circularity() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/circularity.rs`
 pub fn create_assembly_with_depth_limit_violation() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
+    let clean_testfile = get_testfile_mscorlib()
+        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
