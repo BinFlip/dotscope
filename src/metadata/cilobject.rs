@@ -62,7 +62,7 @@
 //! use std::path::Path;
 //!
 //! // Load an assembly from file
-//! let assembly = CilObject::from_path(Path::new("tests/samples/mono_2.0/mscorlib.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/mono_4.8/mscorlib.dll"))?;
 //!
 //! // Access basic assembly information
 //! if let Some(module) = assembly.module() {
@@ -112,13 +112,13 @@
 //!
 //! // Use minimal validation for best performance
 //! let assembly = CilObject::from_path_with_validation(
-//!     Path::new("tests/samples/mono_2.0/mscorlib.dll"),
+//!     Path::new("tests/samples/mono_4.8/mscorlib.dll"),
 //!     ValidationConfig::minimal()
 //! )?;
 //!
 //! // Use strict validation for maximum verification
 //! let assembly = CilObject::from_path_with_validation(
-//!     Path::new("tests/samples/mono_2.0/mscorlib.dll"),
+//!     Path::new("tests/samples/mono_4.8/mscorlib.dll"),
 //!     ValidationConfig::strict()
 //! )?;
 //! # Ok::<(), dotscope::Error>(())
@@ -130,7 +130,7 @@
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
-//! let assembly = CilObject::from_path(Path::new("tests/samples/mono_2.0/mscorlib.dll"))?;
+//! let assembly = CilObject::from_path(Path::new("tests/samples/mono_4.8/mscorlib.dll"))?;
 //!
 //! // Analyze imports and exports
 //! let imports = assembly.imports();
@@ -219,7 +219,7 @@ use crate::{
 /// use std::path::Path;
 ///
 /// // Load an assembly from file
-/// let assembly = CilObject::from_path(Path::new("tests/samples/mono_2.0/mscorlib.dll"))?;
+/// let assembly = CilObject::from_path(Path::new("tests/samples/mono_4.8/mscorlib.dll"))?;
 ///
 /// // Access assembly metadata
 /// if let Some(assembly_info) = assembly.assembly() {
@@ -234,7 +234,7 @@ use crate::{
 /// }
 ///
 /// // Load from memory buffer
-/// let file_data = std::fs::read("tests/samples/mono_2.0/mscorlib.dll")?;
+/// let file_data = std::fs::read("tests/samples/mono_4.8/mscorlib.dll")?;
 /// let assembly = CilObject::from_mem(file_data)?;
 /// # Ok::<(), Box<dyn std::error::Error>>(())
 /// ```
@@ -279,10 +279,10 @@ impl CilObject {
     /// use std::path::Path;
     ///
     /// // With Path
-    /// let assembly = CilObject::from_path(Path::new("tests/samples/mono_2.0/mscorlib.dll"))?;
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/mono_4.8/mscorlib.dll"))?;
     ///
     /// // With string slice
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     ///
     /// if let Some(assembly_info) = assembly.assembly() {
     ///     println!("Loaded assembly: {}", assembly_info.name);
@@ -319,13 +319,13 @@ impl CilObject {
     ///
     /// // Load with minimal validation for maximum speed
     /// let assembly = CilObject::from_path_with_validation(
-    ///     "tests/samples/mono_2.0/mscorlib.dll",
+    ///     "tests/samples/mono_4.8/mscorlib.dll",
     ///     ValidationConfig::minimal()
     /// )?;
     ///
     /// // Load with production validation for balance of safety and speed
     /// let assembly = CilObject::from_path_with_validation(
-    ///     Path::new("tests/samples/mono_2.0/mscorlib.dll"),
+    ///     Path::new("tests/samples/mono_4.8/mscorlib.dll"),
     ///     ValidationConfig::production()
     /// )?;
     /// # Ok::<(), dotscope::Error>(())
@@ -379,7 +379,7 @@ impl CilObject {
     /// use dotscope::CilObject;
     ///
     /// // Load assembly from file into memory then parse
-    /// let file_data = std::fs::read("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let file_data = std::fs::read("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let assembly = CilObject::from_mem(file_data)?;
     ///
     /// // Access the loaded assembly
@@ -415,7 +415,7 @@ impl CilObject {
     /// ```rust,no_run
     /// use dotscope::{CilObject, ValidationConfig};
     ///
-    /// let file_data = std::fs::read("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let file_data = std::fs::read("tests/samples/mono_4.8/mscorlib.dll")?;
     ///
     /// // Load with production validation settings
     /// let assembly = CilObject::from_mem_with_validation(
@@ -786,7 +786,7 @@ impl CilObject {
     /// ```rust,no_run
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let header = assembly.cor20header();
     ///
     /// println!("Metadata RVA: 0x{:X}", header.meta_data_rva);
@@ -816,7 +816,7 @@ impl CilObject {
     /// ```rust,no_run
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let root = assembly.metadata_root();
     ///
     /// println!("Metadata version: {}", root.version);
@@ -852,7 +852,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::{CilObject, metadata::tables::{TypeDefRaw, TableId}};
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     ///
     /// if let Some(tables) = assembly.tables() {
     ///     println!("Schema version: {}.{}", tables.major_version, tables.minor_version);
@@ -884,7 +884,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     ///
     /// if let Some(strings) = assembly.strings() {
     ///     // Look up string by index (from metadata table)
@@ -914,7 +914,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     ///
     /// if let Some(user_strings) = assembly.userstrings() {
     ///     // Look up user string by token (from ldstr instruction)
@@ -944,7 +944,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     ///
     /// if let Some(guids) = assembly.guids() {
     ///     // Look up GUID by index (from metadata table)
@@ -974,7 +974,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     ///
     /// if let Some(blob) = assembly.blob() {
     ///     // Look up blob by index (from metadata table)
@@ -1003,7 +1003,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let refs = assembly.refs_assembly();
     ///
     /// for entry in refs.iter() {
@@ -1037,7 +1037,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let refs = assembly.refs_module();
     ///
     /// for entry in refs.iter() {
@@ -1065,7 +1065,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let refs = assembly.refs_members();
     ///
     /// for entry in refs.iter() {
@@ -1128,7 +1128,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     ///
     /// if let Some(module) = assembly.module() {
     ///     println!("Module name: {}", module.name);
@@ -1156,7 +1156,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     ///
     /// if let Some(assembly_info) = assembly.assembly() {
     ///     println!("Assembly: {}", assembly_info.name);
@@ -1239,8 +1239,8 @@ impl CilObject {
     ///
     /// let mut assemblies = HashMap::new();
     /// let assembly_paths = vec![
-    ///     PathBuf::from("tests/samples/mono_2.0/mscorlib.dll"),
-    ///     PathBuf::from("tests/samples/mono_2.0/System.dll"),
+    ///     PathBuf::from("tests/samples/mono_4.8/mscorlib.dll"),
+    ///     PathBuf::from("tests/samples/mono_4.8/System.dll"),
     /// ];
     ///
     /// for path in assembly_paths {
@@ -1271,7 +1271,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let imports = assembly.imports();
     ///
     /// for entry in imports.cil().iter() {
@@ -1299,7 +1299,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let exports = assembly.exports();
     ///
     /// // Access CIL exports (existing functionality)
@@ -1334,7 +1334,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let methods = assembly.methods();
     ///
     /// for entry in methods.iter() {
@@ -1365,7 +1365,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let method_specs = assembly.method_specs();
     ///
     /// for entry in method_specs.iter() {
@@ -1394,7 +1394,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let resources = assembly.resources();
     ///
     /// for entry in resources.iter() {
@@ -1423,7 +1423,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let types = assembly.types();
     ///
     /// println!("Total types: {}", types.len());
@@ -1461,7 +1461,7 @@ impl CilObject {
     /// ```rust
     /// use dotscope::CilObject;
     ///
-    /// let assembly = CilObject::from_path("tests/samples/mono_2.0/mscorlib.dll")?;
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
     /// let file = assembly.file();
     ///
     /// // Access file-level information
@@ -1511,7 +1511,7 @@ impl CilObject {
     /// # fn main() -> Result<(), Box<dyn std::error::Error>> {
     /// // Load assembly with minimal validation for speed
     /// let assembly = CilObject::from_path_with_validation(
-    ///     Path::new("tests/samples/mono_2.0/mscorlib.dll"),
+    ///     Path::new("tests/samples/mono_4.8/mscorlib.dll"),
     ///     ValidationConfig::minimal()
     /// )?;
     ///

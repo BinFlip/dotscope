@@ -11,7 +11,7 @@ use dotscope::prelude::*;
 use std::path::Path;
 use tempfile::NamedTempFile;
 
-const TEST_ASSEMBLY_PATH: &str = "tests/samples/mono_4.5/mscorlib.dll";
+const TEST_ASSEMBLY_PATH: &str = "tests/samples/mono_4.8/mscorlib.dll";
 
 /// Helper function to create a test assembly for integration testing
 fn create_test_assembly() -> Result<CilAssembly> {

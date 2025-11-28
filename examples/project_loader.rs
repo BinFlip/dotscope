@@ -22,7 +22,7 @@
 //!
 //! Example with Mono framework assemblies:
 //! ```bash
-//! cargo run --example project_loader -- tests/samples/crafted_2.exe --search-path tests/samples/mono_4.5
+//! cargo run --example project_loader -- tests/samples/crafted_2.exe --search-path tests/samples/mono_4.8
 //! ```
 
 use dotscope::project::ProjectLoader;
@@ -45,7 +45,7 @@ fn main() -> dotscope::Result<()> {
         eprintln!("  {} MyApp.exe", args[0]);
         eprintln!("  {} MyApp.exe --search-path /usr/lib/mono/4.5", args[0]);
         eprintln!(
-            "  {} tests/samples/crafted_2.exe --search-path tests/samples/mono_4.5",
+            "  {} tests/samples/crafted_2.exe --search-path tests/samples/mono_4.8",
             args[0]
         );
         std::process::exit(1);
