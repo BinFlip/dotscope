@@ -50,12 +50,12 @@
 //!
 //! # Features
 //!
-//! - **🔍 Complete metadata analysis** - Parse all ECMA-335 metadata tables and streams
-//! - **⚡ CIL processing** - Complete instruction decoding, encoding, and control flow analysis
-//! - **🔧 Cross-platform** - Works on Windows, Linux, macOS, and any Rust-supported platform
-//! - **🛡️ Memory safe** - Built in Rust with comprehensive error handling
-//! - **📊 Rich type system** - Full support for generics, signatures, and complex .NET types
-//! - **🧩 Extensible architecture** - Modular design for custom analysis and tooling
+//! - **Complete metadata analysis** - Parse all ECMA-335 metadata tables and streams
+//! - **CIL processing** - Complete instruction decoding, encoding, and control flow analysis
+//! - **Cross-platform** - Works on Windows, Linux, macOS, and any Rust-supported platform
+//! - **Memory safe** - Built in Rust with comprehensive error handling
+//! - **Rich type system** - Full support for generics, signatures, and complex .NET types
+//! - **Extensible architecture** - Modular design for custom analysis and tooling
 //!
 //! # Usage Examples
 //!
@@ -65,7 +65,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! dotscope = "0.5.0"
+//! dotscope = "0.5.1"
 //! ```
 //!
 //! ### Using the Prelude

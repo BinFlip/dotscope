@@ -5,6 +5,14 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.1] - 2025-11-28
+
+### Fixed
+
+- **Package Size**: Excluded legacy Mono test directories (mono_2.0, mono_3.5, mono_4.0, mono_4.5) from crate package to reduce size from ~160MB to ~6MB compressed, staying within crates.io limits
+- **Documentation Examples**: Updated all doc examples to use mono_4.8 test samples for consistency
+- **Blob Heap Modification Remapping**: Fixed table index remapping when modifying existing blobs that grow larger than their original size. Previously, blob modifications that didn't fit in place were appended to the heap but table references weren't updated, causing validation failures
+
 ## [0.5.0] - 2025-11-27
 
 ### Added
