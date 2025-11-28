@@ -72,23 +72,27 @@ jobs:
       
     - name: Run tests (Linux - full)
       if: runner.os == 'Linux'
-      run: cargo test --release --verbose
+      run: cargo test --release --lib --verbose
 
     - name: Run tests (macOS/Windows - skip expensive tests)
       if: runner.os != 'Linux'
-      run: cargo test --release --features skip-expensive-tests --verbose
+      run: cargo test --release --lib --features skip-expensive-tests --verbose
 
-    - name: Run doc tests
+    - name: Run doc tests (Linux only)
+      if: runner.os == 'Linux'
       run: cargo test --release --doc
       
     - name: Check documentation
       run: cargo doc --no-deps
 
-  # Optional fuzzing on main branch pushes only
+  # Fuzzing on pushes to master or PRs targeting master
   fuzzing:
     name: Quick Fuzzing
     runs-on: ubuntu-latest
-    if: (github.event_name == 'push' && github.ref == 'refs/heads/master') || contains(github.event.head_commit.message, '[fuzz]')
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'master') ||
+      contains(github.event.head_commit.message, '[fuzz]')
     
     steps:
     - name: Checkout code
@@ -118,11 +122,13 @@ jobs:
           exit 1
         fi
 
-  # Security audit
+  # Security audit on pushes to master or PRs targeting master
   security:
     name: Security Audit
     runs-on: ubuntu-latest
-    if: github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'master'
+    if: |
+      (github.event_name == 'push' && github.ref == 'refs/heads/master') ||
+      (github.event_name == 'pull_request' && github.event.pull_request.base.ref == 'master')
     
     steps:
     - name: Checkout code
