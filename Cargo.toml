@@ -11,6 +11,16 @@ documentation = "https://docs.rs/dotscope"
 keywords = ["dotnet", "cil", "assembly", "reverse-engineering", "metadata"]
 categories = ["parsing", "development-tools", "encoding"]
 readme = "README.md"
+# Exclude large mono test directories from the crate package to stay under crates.io size limit.
+# Only mono_4.8 is included; other versions remain in the repository for local testing.
+exclude = [
+    "tests/samples/mono_2.0",
+    "tests/samples/mono_3.5",
+    "tests/samples/mono_4.0",
+    "tests/samples/mono_4.5",
+    "docs/",
+    "*.log",
+]
 
 [package.metadata.docs.rs]
 all-features = true

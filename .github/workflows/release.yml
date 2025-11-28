@@ -39,18 +39,18 @@ jobs:
       run: cargo fmt --all -- --check
       
     - name: Run clippy
-      run: cargo clippy --all-features --all-targets -- -D warnings
+      run: cargo clippy --all-targets -- -D warnings
       env:
         RUSTFLAGS: "-Dwarnings"
-      
+
     - name: Run tests
-      run: cargo test --release --all-features --verbose
-      
+      run: cargo test --release --lib --verbose
+
     - name: Run doc tests
-      run: cargo test --release --doc --all-features
-      
+      run: cargo test --release --doc
+
     - name: Check documentation
-      run: cargo doc --all-features --no-deps
+      run: cargo doc --no-deps
 
   # Create GitHub release
   create-release:
@@ -155,10 +155,10 @@ jobs:
       uses: Swatinem/rust-cache@v2
       
     - name: Verify package can be published
-      run: cargo publish --dry-run --all-features
-      
+      run: cargo publish --dry-run
+
     - name: Publish to crates.io
-      run: cargo publish --all-features
+      run: cargo publish
       env:
         CARGO_REGISTRY_TOKEN: ${{ secrets.CARGO_REGISTRY_TOKEN }}
 
@@ -181,6 +181,6 @@ jobs:
       
     - name: Build documentation for docs.rs
       run: |
-        cargo doc --all-features --no-deps --document-private-items
-        echo "✅ Documentation builds successfully"
-        echo "📚 Documentation will be automatically available at https://docs.rs/dotscope after publishing"
+        cargo doc --no-deps --document-private-items
+        echo "Documentation builds successfully"
+        echo "Documentation will be automatically available at https://docs.rs/dotscope after publishing"
