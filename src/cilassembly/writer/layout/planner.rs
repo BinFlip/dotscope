@@ -1527,7 +1527,7 @@ impl<'a> LayoutPlanner<'a> {
 
         // Build comprehensive index remapping using the proper remapping system
         let index_remapper =
-            IndexRemapper::build_from_changes(self.assembly.changes(), self.assembly.view());
+            IndexRemapper::build_from_changes(self.assembly.changes(), self.assembly.view())?;
 
         Ok((rva_mappings, index_remapper))
     }
@@ -2513,10 +2513,15 @@ impl<'a> LayoutPlanner<'a> {
 
                 let original_stream_data = &metadata_slice[stream_start..stream_end];
 
-                // Check if we have table changes to apply
+                // Check if we have changes to apply
                 let changes = self.assembly.changes();
-                if !changes.table_changes.is_empty() {
-                    return self.generate_modified_tables_stream_data(original_stream_data);
+                let might_need_heap_remapping = changes.string_heap_changes.has_modifications()
+                    || changes.blob_heap_changes.has_modifications()
+                    || changes.userstring_heap_changes.has_modifications();
+
+                if !changes.table_changes.is_empty() || might_need_heap_remapping {
+                    return self
+                        .reconstruct_tables_stream(original_stream_data, &changes.table_changes);
                 }
                 return Ok(original_stream_data.to_vec());
             }
@@ -2527,47 +2532,28 @@ impl<'a> LayoutPlanner<'a> {
         ))
     }
 
-    /// Generates modified tables stream data by applying all changes from assembly.changes().
+    /// Reconstructs the tables stream with table modifications and heap index remapping.
     ///
-    /// This method takes the original tables stream data and applies all modifications
-    /// that have been accumulated in the assembly's changes. It uses the existing table
-    /// writing logic to ensure compatibility with the existing pipeline.
-    fn generate_modified_tables_stream_data(&self, original_stream_data: &[u8]) -> Result<Vec<u8>> {
-        let changes = self.assembly.changes();
-
-        // If there are no table modifications, return the original data
-        if changes.table_changes.is_empty() {
-            return Ok(original_stream_data.to_vec());
-        }
-
-        // For this initial implementation, we'll use a simplified approach:
-        // 1. Parse the original tables header
-        // 2. Calculate new row counts based on changes
-        // 3. Update the header with new row counts but keep the same data
-        // 4. This will make the method appear in the count but may not have actual data
-
-        // This is a temporary solution to get the pipeline working
-        // A full implementation would rebuild the entire tables stream
-
-        self.apply_simple_table_modifications(original_stream_data, &changes.table_changes)
-    }
-
-    /// Applies proper table modifications with full table reconstruction and heap index remapping.
+    /// This method rebuilds the complete tables stream (#~ or #-) with:
+    /// - Table row modifications (inserts, updates, deletes)
+    /// - Heap index remapping for modified blobs/strings that moved to new locations
+    /// - Method body RVA updates for relocated IL code
     ///
-    /// This is the full implementation that properly rebuilds all modified tables with correct
-    /// heap indices, maintains referential integrity, and implements complete metadata stream
-    /// reconstruction for production-quality assembly generation.
-    fn apply_simple_table_modifications(
+    /// The reconstruction process:
+    /// 1. Builds comprehensive index remapping from heap changes
+    /// 2. Builds method body RVA mappings for relocated code
+    /// 3. Reconstructs all table rows with updated heap indices and RVAs
+    fn reconstruct_tables_stream(
         &self,
         original_stream_data: &[u8],
-        table_changes: &std::collections::HashMap<TableId, TableModifications>,
+        table_changes: &HashMap<TableId, TableModifications>,
     ) -> Result<Vec<u8>> {
         // Parse the original header to understand the structure
         let original_header = TablesHeader::from(original_stream_data)?;
 
         // Step 1: Build comprehensive index remapping using the proper remapping system
         let heap_mappings =
-            IndexRemapper::build_from_changes(self.assembly.changes(), self.assembly.view());
+            IndexRemapper::build_from_changes(self.assembly.changes(), self.assembly.view())?;
 
         // Step 2: Build method body RVA mappings
         let rva_mappings = self.build_method_body_rva_mappings()?;
@@ -2597,7 +2583,7 @@ impl<'a> LayoutPlanner<'a> {
     fn reconstruct_tables_with_rva_updates_only(
         &self,
         original_header: &TablesHeader,
-        table_changes: &std::collections::HashMap<TableId, TableModifications>,
+        table_changes: &HashMap<TableId, TableModifications>,
         rva_mappings: &HashMap<u32, u32>,
     ) -> Result<Vec<u8>> {
         let view = self.assembly.view();
@@ -2705,7 +2691,7 @@ impl<'a> LayoutPlanner<'a> {
     fn reconstruct_tables_with_heap_remapping(
         &self,
         original_header: &TablesHeader,
-        table_changes: &std::collections::HashMap<TableId, TableModifications>,
+        table_changes: &HashMap<TableId, TableModifications>,
         heap_mappings: &IndexRemapper,
         rva_mappings: &HashMap<u32, u32>,
     ) -> Result<Vec<u8>> {
@@ -2781,7 +2767,7 @@ impl<'a> LayoutPlanner<'a> {
         &self,
         original_header: &TablesHeader,
         new_row_counts: &[u32],
-        table_changes: &std::collections::HashMap<TableId, TableModifications>,
+        table_changes: &HashMap<TableId, TableModifications>,
         heap_mappings: &IndexRemapper,
         table_info: &TableInfoRef,
         rva_mappings: &HashMap<u32, u32>,
@@ -2892,7 +2878,7 @@ impl<'a> LayoutPlanner<'a> {
         buffer: &mut [u8],
         original_header: &TablesHeader,
         new_row_counts: &[u32],
-        table_changes: &std::collections::HashMap<TableId, TableModifications>,
+        table_changes: &HashMap<TableId, TableModifications>,
         heap_mappings: &IndexRemapper,
         table_info: &TableInfoRef,
         rva_mappings: &HashMap<u32, u32>,
@@ -3519,12 +3505,6 @@ impl<'a> LayoutPlanner<'a> {
                 )?;
             } else {
                 write_le_at(row_buffer, &mut write_offset, new_index)?;
-            }
-        } else if original_index != 0 {
-            // If no blob mappings are available, don't remap anything (simplified heap approach)
-            if heap_mappings.blob_map.is_empty() {
-            } else {
-                // Only warn when mappings exist but this specific index is missing
             }
         }
 

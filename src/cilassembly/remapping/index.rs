@@ -39,7 +39,7 @@
 //! # let view = CilAssemblyView::from_path(Path::new("test.dll"));
 //! # let mut changes = AssemblyChanges::new(&view);
 //! // Build complete remapping from changes
-//! let remapper = IndexRemapper::build_from_changes(&changes, &view);
+//! let remapper = IndexRemapper::build_from_changes(&changes, &view)?;
 //!
 //! // Query specific index mappings
 //! if let Some(final_index) = remapper.map_string_index(42) {
@@ -68,10 +68,13 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     cilassembly::{remapping::RidRemapper, AssemblyChanges, HeapChanges, TableModifications},
+    malformed_error,
     metadata::{
         cilassemblyview::CilAssemblyView,
         tables::{CodedIndex, TableDataOwned, TableId},
     },
+    utils::compressed_uint_size,
+    Result,
 };
 
 /// Manages index remapping during binary generation phase.
@@ -110,7 +113,7 @@ use crate::{
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"));
 /// # let changes = AssemblyChanges::new(&view);
 /// // Build remapper from assembly changes
-/// let remapper = IndexRemapper::build_from_changes(&changes, &view);
+/// let remapper = IndexRemapper::build_from_changes(&changes, &view)?;
 ///
 /// // Check heap index mappings
 /// let final_string_idx = remapper.map_string_index(42);
@@ -171,7 +174,10 @@ impl IndexRemapper {
     /// 1. **Heap Remapping**: Builds index mappings for all modified heaps
     /// 2. **Table Remapping**: Creates RID remappers for all modified tables
     /// 3. **Cross-Reference Preparation**: Prepares for final cross-reference updates
-    pub fn build_from_changes(changes: &AssemblyChanges, original_view: &CilAssemblyView) -> Self {
+    pub fn build_from_changes(
+        changes: &AssemblyChanges,
+        original_view: &CilAssemblyView,
+    ) -> Result<Self> {
         let mut remapper = Self {
             string_map: HashMap::new(),
             string_removed: HashSet::new(),
@@ -184,9 +190,9 @@ impl IndexRemapper {
             table_maps: HashMap::new(),
         };
 
-        remapper.build_heap_remapping(changes, original_view);
+        remapper.build_heap_remapping(changes, original_view)?;
         remapper.build_table_remapping(changes, original_view);
-        remapper
+        Ok(remapper)
     }
 
     /// Build heap index remapping for all modified heaps.
@@ -202,14 +208,14 @@ impl IndexRemapper {
     fn build_heap_remapping(
         &mut self,
         changes: &AssemblyChanges,
-        _original_view: &CilAssemblyView,
-    ) {
+        original_view: &CilAssemblyView,
+    ) -> Result<()> {
         if changes.string_heap_changes.has_changes() {
-            self.build_string_mapping(&changes.string_heap_changes);
+            self.build_string_mapping(&changes.string_heap_changes, original_view)?;
         }
 
         if changes.blob_heap_changes.has_changes() {
-            self.build_blob_mapping(&changes.blob_heap_changes);
+            self.build_blob_mapping(&changes.blob_heap_changes, original_view)?;
         }
 
         if changes.guid_heap_changes.has_changes() {
@@ -219,6 +225,8 @@ impl IndexRemapper {
         if changes.userstring_heap_changes.has_changes() {
             self.build_userstring_mapping(&changes.userstring_heap_changes);
         }
+
+        Ok(())
     }
 
     /// Build table RID remapping for all modified tables.
@@ -261,14 +269,59 @@ impl IndexRemapper {
     /// This method builds mappings for:
     /// - Removed items: No mapping (returns None when queried)
     /// - Original items: Identity mapping (byte offset unchanged, data zeroed in place)
+    /// - Modified items: Remapped to end of heap if new string is larger than original
     /// - Appended items: Mapped to their assigned byte offsets
     ///
     /// Note: The string heap writer zeros out removed items in place rather than
     /// compacting the heap, so original byte offsets remain valid.
-    fn build_string_mapping(&mut self, string_changes: &HeapChanges<String>) {
+    fn build_string_mapping(
+        &mut self,
+        string_changes: &HeapChanges<String>,
+        original_view: &CilAssemblyView,
+    ) -> Result<()> {
         // Store removed indices for lookup
         for &removed_index in &string_changes.removed_indices {
             self.string_removed.insert(removed_index);
+        }
+
+        // Handle modified strings that need remapping (new string larger than original)
+        // These will be appended at the end of the heap
+        if let Some(strings_heap) = original_view.strings() {
+            let original_heap_size = u32::try_from(strings_heap.data().len())
+                .map_err(|_| malformed_error!("String heap size exceeds u32 range"))?;
+            let mut next_append_position = original_heap_size;
+
+            // First, collect all modifications that need remapping
+            let mut remapped_mods: Vec<(u32, &String)> = Vec::new();
+
+            for (&modified_index, new_string) in &string_changes.modified_items {
+                // Find the original string to compare sizes
+                if let Some((_offset, original_string)) = strings_heap
+                    .iter()
+                    .find(|(offset, _)| *offset == modified_index as usize)
+                {
+                    let original_size = original_string.len() + 1; // +1 for null terminator
+                    let new_size = new_string.len() + 1; // +1 for null terminator
+
+                    // If new string is larger than original, it needs remapping
+                    if new_size > original_size {
+                        remapped_mods.push((modified_index, new_string));
+                    }
+                    // If it fits in place, no mapping needed (identity)
+                }
+            }
+
+            // Sort by index for deterministic ordering
+            remapped_mods.sort_by_key(|(idx, _)| *idx);
+
+            // Calculate new positions for remapped strings
+            for (modified_index, new_string) in remapped_mods {
+                self.string_map.insert(modified_index, next_append_position);
+                // Advance position: string bytes + null terminator
+                let string_size = u32::try_from(new_string.len() + 1)
+                    .map_err(|_| malformed_error!("String size exceeds u32 range"))?;
+                next_append_position += string_size;
+            }
         }
 
         // Map appended items to their assigned byte offsets
@@ -279,6 +332,8 @@ impl IndexRemapper {
                 self.string_map.insert(assigned_index, assigned_index);
             }
         }
+
+        Ok(())
     }
 
     /// Build blob heap index mapping.
@@ -287,11 +342,16 @@ impl IndexRemapper {
     /// This method builds mappings for:
     /// - Removed items: No mapping (returns None when queried)
     /// - Original items: Identity mapping (byte offset unchanged, data zeroed in place)
+    /// - Modified items: Remapped to end of heap if new blob is larger than original
     /// - Appended items: Mapped to their assigned byte offsets
     ///
     /// Note: The blob heap writer zeros out removed items in place rather than
     /// compacting the heap, so original byte offsets remain valid.
-    fn build_blob_mapping(&mut self, blob_changes: &HeapChanges<Vec<u8>>) {
+    fn build_blob_mapping(
+        &mut self,
+        blob_changes: &HeapChanges<Vec<u8>>,
+        original_view: &CilAssemblyView,
+    ) -> Result<()> {
         // For removed indices, we explicitly do NOT add them to the map.
         // When map_blob_index is called for a removed index, it will return None.
         // The removed_indices set is checked by the caller.
@@ -303,6 +363,48 @@ impl IndexRemapper {
             self.blob_removed.insert(removed_index);
         }
 
+        // Handle modified blobs that need remapping (new blob larger than original)
+        // These will be appended at the end of the heap
+        if let Some(blob_heap) = original_view.blobs() {
+            let original_heap_size = u32::try_from(blob_heap.data().len())
+                .map_err(|_| malformed_error!("Blob heap size exceeds u32 range"))?;
+            let mut next_append_position = original_heap_size;
+
+            // First, collect all modifications that need remapping
+            let mut remapped_mods: Vec<(u32, &Vec<u8>)> = Vec::new();
+
+            for (&modified_index, new_blob) in &blob_changes.modified_items {
+                // Find the original blob to compare sizes
+                if let Some((_, original_blob)) = blob_heap
+                    .iter()
+                    .find(|(offset, _)| *offset == modified_index as usize)
+                {
+                    let original_data_size = original_blob.len();
+                    let new_blob_size = new_blob.len();
+
+                    // If new blob is larger than original, it needs remapping
+                    if new_blob_size > original_data_size {
+                        remapped_mods.push((modified_index, new_blob));
+                    }
+                    // If it fits in place, no mapping needed (identity)
+                }
+            }
+
+            // Sort by index for deterministic ordering
+            remapped_mods.sort_by_key(|(idx, _)| *idx);
+
+            // Calculate new positions for remapped blobs
+            for (modified_index, new_blob) in remapped_mods {
+                self.blob_map.insert(modified_index, next_append_position);
+                // Advance position: length prefix + blob data
+                let prefix_size = u32::try_from(compressed_uint_size(new_blob.len()))
+                    .map_err(|_| malformed_error!("Blob prefix size exceeds u32 range"))?;
+                let blob_len = u32::try_from(new_blob.len())
+                    .map_err(|_| malformed_error!("Blob size exceeds u32 range"))?;
+                next_append_position += prefix_size + blob_len;
+            }
+        }
+
         // Map appended items to their assigned byte offsets
         // The HeapChanges tracks the byte offset for each appended item
         for (vec_index, _) in blob_changes.appended_items.iter().enumerate() {
@@ -311,6 +413,8 @@ impl IndexRemapper {
                 self.blob_map.insert(assigned_index, assigned_index);
             }
         }
+
+        Ok(())
     }
 
     /// Build GUID heap index mapping.
@@ -816,7 +920,7 @@ mod tests {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
             let changes = AssemblyChanges::empty();
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
 
             // Empty changes should result in empty mappings
             assert!(remapper.string_map.is_empty());
@@ -840,7 +944,7 @@ mod tests {
             string_changes.next_index = 203733; // Original size + 2
             changes.string_heap_changes = string_changes;
 
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
 
             // Check that original indices are preserved
             assert_eq!(remapper.map_string_index(1), Some(1));
@@ -866,7 +970,7 @@ mod tests {
             blob_changes.next_index = 77818; // Original size + 2
             changes.blob_heap_changes = blob_changes;
 
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
 
             // Check that original indices are preserved
             assert_eq!(remapper.map_blob_index(1), Some(1));
@@ -893,7 +997,7 @@ mod tests {
                 .table_changes
                 .insert(TableId::TypeDef, table_modifications);
 
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
 
             // Check that table remapper was created
             assert!(remapper.get_table_remapper(TableId::TypeDef).is_some());
@@ -918,7 +1022,7 @@ mod tests {
                 .table_changes
                 .insert(TableId::TypeDef, replaced_modifications);
 
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
 
             // Check that table remapper was created
             let table_remapper = remapper.get_table_remapper(TableId::TypeDef).unwrap();
@@ -944,7 +1048,7 @@ mod tests {
             guid_changes.next_index = 3; // Original count + 2
             changes.guid_heap_changes = guid_changes;
 
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
 
             // Check that original indices are preserved
             assert_eq!(remapper.map_guid_index(1), Some(1));
@@ -983,7 +1087,7 @@ mod tests {
                 .table_changes
                 .insert(TableId::TypeDef, table_modifications);
 
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
 
             // Verify appended item mappings were created
             assert!(!remapper.string_map.is_empty());
@@ -1020,7 +1124,7 @@ mod tests {
             string_changes.next_index = 32; // Updated next_index
             changes.string_heap_changes = string_changes;
 
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
 
             // Verify removed items return None
             assert_eq!(remapper.map_string_index(2), None); // Removed
@@ -1075,7 +1179,7 @@ mod tests {
             changes.string_heap_changes = string_changes;
 
             // Build remapper and apply cross-reference updates
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
             let mut updated_changes = changes;
 
             // Apply cross-reference remapping
@@ -1145,7 +1249,7 @@ mod tests {
             userstring_changes.next_index = 38;
             changes.userstring_heap_changes = userstring_changes;
 
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
 
             // Verify blob heap - identity mapping, removed returns None
             assert_eq!(remapper.map_blob_index(3), None); // Removed
@@ -1194,7 +1298,7 @@ mod tests {
             changes.guid_heap_changes = guid_changes;
             changes.userstring_heap_changes = userstring_changes;
 
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
 
             // All heap maps should be empty since no appended items were added
             assert!(remapper.string_map.is_empty());
@@ -1229,7 +1333,7 @@ mod tests {
             string_changes.appended_item_indices.push(5); // Byte offset 5
             changes.string_heap_changes = string_changes;
 
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
 
             // All removed indices should return None
             for i in 1..=5 {
@@ -1291,7 +1395,7 @@ mod tests {
                 .table_changes
                 .insert(TableId::TypeDef, typedef_modifications);
 
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
             let mut updated_changes = changes;
 
             // Apply cross-reference updates
@@ -1336,7 +1440,7 @@ mod tests {
             changes.string_heap_changes = string_changes;
 
             let start = std::time::Instant::now();
-            let remapper = IndexRemapper::build_from_changes(&changes, &view);
+            let remapper = IndexRemapper::build_from_changes(&changes, &view).unwrap();
             let build_time = start.elapsed();
 
             // Verify identity mapping works correctly (no compaction)
