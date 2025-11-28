@@ -852,6 +852,9 @@ impl CilAssembly {
     /// modifications and resolves any conflicts found. It should be called before
     /// writing the assembly to ensure metadata consistency.
     ///
+    /// This is equivalent to calling [`Self::validate_and_apply_changes_with_config`]
+    /// with [`ValidationConfig::production()`].
+    ///
     /// # Returns
     ///
     /// Returns `Ok(())` if all validations pass and conflicts are resolved,
@@ -861,17 +864,7 @@ impl CilAssembly {
     ///
     /// Returns an error if validation fails or conflicts cannot be resolved.
     pub fn validate_and_apply_changes(&mut self) -> Result<()> {
-        let remapper = {
-            let engine = ValidationEngine::new(&self.view, ValidationConfig::production())?;
-            let result = engine.execute_stage1_validation(&self.view, Some(&self.changes))?;
-
-            result.into_result()?;
-            IndexRemapper::build_from_changes(&self.changes, &self.view)
-        };
-
-        remapper.apply_to_assembly(&mut self.changes);
-
-        Ok(())
+        self.validate_and_apply_changes_with_config(ValidationConfig::production())
     }
 
     /// Validates and applies changes using a custom validation configuration.
@@ -912,7 +905,7 @@ impl CilAssembly {
             let result = engine.execute_stage1_validation(&self.view, Some(&self.changes))?;
 
             result.into_result()?;
-            IndexRemapper::build_from_changes(&self.changes, &self.view)
+            IndexRemapper::build_from_changes(&self.changes, &self.view)?
         };
 
         remapper.apply_to_assembly(&mut self.changes);

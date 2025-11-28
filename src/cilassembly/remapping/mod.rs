@@ -61,7 +61,7 @@
 //! # let mut changes = AssemblyChanges::new(&view);
 //!
 //! // Build comprehensive remapping
-//! let remapper = IndexRemapper::build_from_changes(&changes, &view);
+//! let remapper = IndexRemapper::build_from_changes(&changes, &view)?;
 //!
 //! // Access table-specific remapping
 //! if let Some(table_remapper) = remapper.get_table_remapper(TableId::TypeDef) {
