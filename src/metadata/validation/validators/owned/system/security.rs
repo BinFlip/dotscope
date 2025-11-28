@@ -588,6 +588,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_security_validator() -> Result<()> {
         let validator = OwnedSecurityValidator::new();
         let config = ValidationConfig {

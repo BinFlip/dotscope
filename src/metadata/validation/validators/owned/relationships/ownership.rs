@@ -539,6 +539,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_ownership_validator() -> Result<()> {
         let validator = OwnedOwnershipValidator::new();
         let config = ValidationConfig {

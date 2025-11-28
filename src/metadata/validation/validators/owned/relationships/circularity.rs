@@ -470,6 +470,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_circularity_validator() -> Result<()> {
         let validator = OwnedCircularityValidator::new();
         let config = ValidationConfig {

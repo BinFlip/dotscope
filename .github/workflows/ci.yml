@@ -70,8 +70,13 @@ jobs:
     - name: Check compilation
       run: cargo check --all-features
       
-    - name: Run tests
+    - name: Run tests (Linux - full)
+      if: runner.os == 'Linux'
       run: cargo test --release --all-features --verbose
+
+    - name: Run tests (macOS/Windows - skip expensive tests)
+      if: runner.os != 'Linux'
+      run: cargo test --release --features skip-expensive-tests --verbose
       
     - name: Run doc tests
       run: cargo test --release --doc --all-features

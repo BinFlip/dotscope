@@ -10,7 +10,7 @@ use crate::{
         tables::{CodedIndex, CodedIndexType, CustomAttributeRaw, TableDataOwned, TableId},
         token::Token,
     },
-    test::{get_testfile_crafted2, get_testfile_mscorlib, TestAssembly},
+    test::{get_testfile_mscorlib, TestAssembly},
     Error, Result,
 };
 
@@ -33,9 +33,9 @@ use crate::{
 pub fn owned_attribute_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_testfile_crafted2() else {
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
         return Err(Error::Other(
-            "crafted_2.exe not available - test cannot run".to_string(),
+            "mscorlib.dll not available - test cannot run".to_string(),
         ));
     };
 

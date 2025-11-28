@@ -616,6 +616,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_method_validator() -> Result<()> {
         let validator = OwnedMethodValidator::new();
         let config = ValidationConfig {

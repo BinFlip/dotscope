@@ -871,6 +871,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_assembly_validator() -> Result<()> {
         let validator = OwnedAssemblyValidator::new();
         let config = ValidationConfig {

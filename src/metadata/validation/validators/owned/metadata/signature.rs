@@ -363,6 +363,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_signature_validator() -> Result<()> {
         let validator = OwnedSignatureValidator::new();
         let config = ValidationConfig {

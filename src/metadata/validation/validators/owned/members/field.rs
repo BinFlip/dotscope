@@ -415,6 +415,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_field_validator() -> Result<()> {
         let validator = OwnedFieldValidator::new();
         let config = ValidationConfig {

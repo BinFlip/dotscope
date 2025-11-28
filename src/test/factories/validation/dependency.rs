@@ -10,7 +10,7 @@ use crate::{
         token::Token,
         validation::ValidationConfig,
     },
-    test::{get_testfile_crafted2, TestAssembly},
+    test::{get_testfile_mscorlib, TestAssembly},
     CilAssemblyView, Error, Result,
 };
 use tempfile::NamedTempFile;
@@ -21,9 +21,9 @@ use tempfile::NamedTempFile;
 pub fn owned_dependency_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_testfile_crafted2() else {
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
         return Err(Error::Other(
-            "crafted_2.exe not available - test cannot run".to_string(),
+            "mscorlib.dll not available - test cannot run".to_string(),
         ));
     };
 
@@ -64,8 +64,8 @@ pub fn owned_dependency_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/relationships/dependency.rs`
 pub fn create_assembly_with_broken_dependency_chain() -> Result<NamedTempFile> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
 
     let view = CilAssemblyView::from_path(&clean_testfile)?;
@@ -101,8 +101,8 @@ pub fn create_assembly_with_broken_dependency_chain() -> Result<NamedTempFile> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/relationships/dependency.rs`
 pub fn create_assembly_with_unsatisfied_transitive_dependencies() -> Result<NamedTempFile> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
 
     let view = CilAssemblyView::from_path(&clean_testfile)?;
@@ -153,8 +153,8 @@ pub fn create_assembly_with_unsatisfied_transitive_dependencies() -> Result<Name
 ///
 /// Originally from: `src/metadata/validation/validators/owned/relationships/dependency.rs`
 pub fn create_assembly_with_invalid_dependency_ordering() -> Result<NamedTempFile> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
 
     let view = CilAssemblyView::from_path(&clean_testfile)?;
@@ -205,8 +205,8 @@ pub fn create_assembly_with_invalid_dependency_ordering() -> Result<NamedTempFil
 ///
 /// Originally from: `src/metadata/validation/validators/owned/relationships/dependency.rs`
 pub fn create_assembly_with_self_referential_dependencies() -> Result<NamedTempFile> {
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
 
     let view = CilAssemblyView::from_path(&clean_testfile)?;

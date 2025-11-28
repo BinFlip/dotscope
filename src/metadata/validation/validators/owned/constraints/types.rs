@@ -490,6 +490,7 @@ mod tests {
     /// and assemblies with constraint violations (when available) using the centralized
     /// owned validator test harness.
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_type_constraint_validator_comprehensive() -> Result<()> {
         let validator = OwnedTypeConstraintValidator::new();
 

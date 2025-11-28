@@ -453,6 +453,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_dependency_validator() -> Result<()> {
         let validator = OwnedDependencyValidator::new();
         let config = ValidationConfig {

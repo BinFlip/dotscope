@@ -14,7 +14,7 @@ use crate::{
         token::Token,
         validation::ValidationConfig,
     },
-    test::{get_testfile_crafted2, TestAssembly},
+    test::{get_testfile_mscorlib, TestAssembly},
     Error, Result,
 };
 use tempfile::NamedTempFile;
@@ -35,8 +35,8 @@ use tempfile::NamedTempFile;
 pub fn owned_type_constraint_validator_file_factory() -> Result<Vec<TestAssembly>> {
     let mut assemblies = Vec::new();
 
-    let Some(clean_testfile) = get_testfile_crafted2() else {
-        return Err(Error::Other("crafted_2.exe not available".to_string()));
+    let Some(clean_testfile) = get_testfile_mscorlib() else {
+        return Err(Error::Other("mscorlib.dll not available".to_string()));
     };
 
     // 1. Clean assembly - should pass all constraint validation
@@ -126,8 +126,8 @@ pub fn owned_type_constraint_validator_file_factory() -> Result<Vec<TestAssembly
 /// both COVARIANT and CONTRAVARIANT flags set, which violates ECMA-335 constraints.
 /// When loaded by CilObject, this should trigger validation failure in the owned validator.
 fn create_assembly_with_conflicting_variance() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
+    let clean_testfile = get_testfile_mscorlib()
+        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -173,8 +173,8 @@ fn create_assembly_with_conflicting_variance() -> Result<NamedTempFile> {
 /// which is invalid according to ECMA-335. When loaded by CilObject, this should
 /// trigger validation failure in the owned validator.
 fn create_assembly_with_conflicting_constraints() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
+    let clean_testfile = get_testfile_mscorlib()
+        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -220,8 +220,8 @@ fn create_assembly_with_conflicting_constraints() -> Result<NamedTempFile> {
 /// metadata is resolved by CilObject, this should result in broken constraint references
 /// that trigger validation failure in the owned validator.
 fn create_assembly_with_broken_constraint_reference() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
+    let clean_testfile = get_testfile_mscorlib()
+        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -274,8 +274,8 @@ fn create_assembly_with_broken_constraint_reference() -> Result<NamedTempFile> {
 /// This creates a raw assembly where constraint types have empty names,
 /// simulating unresolved constraints that should trigger validation failure.
 fn create_assembly_with_empty_constraint_name() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
+    let clean_testfile = get_testfile_mscorlib()
+        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);
@@ -336,8 +336,8 @@ fn create_assembly_with_empty_constraint_name() -> Result<NamedTempFile> {
 /// (not an interface) as if it were an interface, which should trigger validation
 /// failure when the owned validator checks interface implementation constraints.
 fn create_assembly_with_fake_interface_implementation() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_crafted2()
-        .ok_or_else(|| Error::Other("crafted_2.exe not available".to_string()))?;
+    let clean_testfile = get_testfile_mscorlib()
+        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
     let view = CilAssemblyView::from_path(&clean_testfile)?;
     let assembly = CilAssembly::new(view);
     let mut context = BuilderContext::new(assembly);

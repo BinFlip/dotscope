@@ -513,6 +513,7 @@ mod tests {
     };
 
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_owned_type_definition_validator() -> Result<()> {
         let validator = OwnedTypeDefinitionValidator::new();
         let config = ValidationConfig {
