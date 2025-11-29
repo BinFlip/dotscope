@@ -4,7 +4,6 @@
 //! between assemblies, detects circular dependencies, and generates optimal loading orders
 //! for multi-assembly scenarios.
 
-use std::collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
 use std::sync::{
     atomic::{AtomicUsize, Ordering},
     Arc, RwLock,
@@ -14,38 +13,9 @@ use dashmap::DashMap;
 
 use crate::{
     metadata::{dependencies::AssemblyDependency, identity::AssemblyIdentity},
+    utils::graph::{algorithms, DirectedGraph, IndexedGraph, NodeId},
     Error, Result,
 };
-
-/// Helper struct to group Tarjan's algorithm state and reduce function argument count
-struct TarjanState {
-    index_counter: usize,
-    stack: Vec<AssemblyIdentity>,
-    indices: HashMap<AssemblyIdentity, usize>,
-    lowlinks: HashMap<AssemblyIdentity, usize>,
-    on_stack: HashMap<AssemblyIdentity, bool>,
-    sccs: Vec<Vec<AssemblyIdentity>>,
-}
-
-impl TarjanState {
-    fn new() -> Self {
-        Self {
-            index_counter: 0,
-            stack: Vec::new(),
-            indices: HashMap::new(),
-            lowlinks: HashMap::new(),
-            on_stack: HashMap::new(),
-            sccs: Vec::new(),
-        }
-    }
-}
-
-#[derive(Debug, Clone, PartialEq)]
-enum Color {
-    White, // Unvisited
-    Gray,  // Currently being processed
-    Black, // Completely processed
-}
 
 /// Thread-safe dependency graph for tracking inter-assembly relationships.
 ///
@@ -391,211 +361,95 @@ impl AssemblyDependencyGraph {
     ///
     /// This approach uses Tarjan's algorithm to find SCCs and orders them topologically.
     /// Within each SCC, assemblies are ordered by priority heuristics (core assemblies first).
+    ///
+    /// Delegates to [`crate::utils::graph::algorithms`] for the core graph algorithms.
     fn scc_based_order(&self) -> Result<Vec<AssemblyIdentity>> {
-        // Build adjacency list representation
-        let mut adj_list: HashMap<AssemblyIdentity, Vec<AssemblyIdentity>> = HashMap::new();
-        let mut all_nodes: HashSet<AssemblyIdentity> = HashSet::new();
+        let indexed_graph = self.build_indexed_graph()?;
 
-        for entry in self.dependencies.iter() {
-            let source = entry.key().clone();
-            all_nodes.insert(source.clone());
+        if indexed_graph.is_empty() {
+            return Ok(Vec::new());
+        }
 
-            let targets: Vec<AssemblyIdentity> = entry
-                .value()
-                .iter()
-                .map(|dep| dep.target_identity.clone())
-                .collect();
+        // Get access to the underlying DirectedGraph for the condensation algorithm
+        let graph = indexed_graph.inner();
 
-            for target in &targets {
-                all_nodes.insert(target.clone());
-            }
+        // Find SCCs using the generic algorithm
+        let sccs = algorithms::strongly_connected_components(graph);
 
-            // Group all targets for this source and deduplicate
-            let adj_entry = adj_list.entry(source).or_default();
-            for target in targets {
-                if !adj_entry.contains(&target) {
-                    adj_entry.push(target);
+        // Get the condensation (SCC DAG) and node-to-SCC mapping
+        let (node_to_scc, _scc_edges) = algorithms::condensation(graph, &sccs);
+
+        // Build the SCC DAG for topological ordering
+        // We need to reverse the edges: if A depends on B, then B's SCC should come before A's SCC
+        let mut scc_dag: DirectedGraph<usize, ()> = DirectedGraph::new();
+        let scc_count = sccs.len();
+
+        // Add SCC nodes
+        for i in 0..scc_count {
+            scc_dag.add_node(i);
+        }
+
+        // Add reversed edges between SCCs (for loading order: dependencies first)
+        for node_idx in 0..graph.node_count() {
+            let source_scc = node_to_scc[node_idx];
+            for successor in graph.successors(NodeId::new(node_idx)) {
+                let target_scc = node_to_scc[successor.index()];
+                if source_scc != target_scc {
+                    // target_scc should come before source_scc in loading order
+                    // So we add edge: target_scc -> source_scc
+                    let target_scc_node = NodeId::new(target_scc);
+                    let source_scc_node = NodeId::new(source_scc);
+                    if !scc_dag
+                        .successors(target_scc_node)
+                        .any(|s| s == source_scc_node)
+                    {
+                        scc_dag.add_edge(target_scc_node, source_scc_node, ())?;
+                    }
                 }
             }
         }
 
-        // Ensure all nodes have an entry (even if no outgoing edges)
-        for node in &all_nodes {
-            adj_list.entry(node.clone()).or_default();
-        }
+        // Topologically sort the SCC DAG
+        let scc_order = algorithms::topological_sort(&scc_dag).unwrap_or_else(|| {
+            // Fallback: if topological sort fails (shouldn't happen for condensation),
+            // just return SCCs in order
+            (0..scc_count).map(NodeId::new).collect()
+        });
 
-        // Find SCCs using Tarjan's algorithm
-        let sccs = Self::tarjan_scc(&adj_list)?;
-
-        // Build SCC graph (DAG of SCCs)
-        let scc_graph = Self::build_scc_graph(&sccs, &adj_list);
-
-        // Topologically sort SCCs
-        let scc_order = Self::topological_sort_sccs(&scc_graph);
-
-        // Flatten SCCs into assembly order
-        let mut result = Vec::new();
-        for scc_id in scc_order {
-            let scc_assemblies = &sccs[scc_id];
-            result.extend(scc_assemblies.iter().cloned());
+        // Flatten SCCs into assembly order, mapping NodeIds back to AssemblyIdentities
+        let mut result = Vec::with_capacity(graph.node_count());
+        for scc_node_id in scc_order {
+            let scc_idx = scc_node_id.index();
+            for &node_id in &sccs[scc_idx] {
+                if let Some(identity) = indexed_graph.get_key(node_id) {
+                    result.push(identity.clone());
+                }
+            }
         }
 
         Ok(result)
     }
 
-    /// Tarjan's algorithm for finding strongly connected components
-    fn tarjan_scc(
-        adj_list: &HashMap<AssemblyIdentity, Vec<AssemblyIdentity>>,
-    ) -> Result<Vec<Vec<AssemblyIdentity>>> {
-        let mut state = TarjanState::new();
+    /// Build an IndexedGraph from the dependency data.
+    ///
+    /// The `IndexedGraph` handles all the mapping between `AssemblyIdentity` and `NodeId`
+    /// internally, providing a cleaner API for graph algorithms.
+    fn build_indexed_graph(&self) -> Result<IndexedGraph<AssemblyIdentity, ()>> {
+        let dep_count = self.dependency_count();
+        let assembly_count = self.assembly_count.load(Ordering::Relaxed);
+        let mut graph: IndexedGraph<AssemblyIdentity, ()> =
+            IndexedGraph::with_capacity(assembly_count, dep_count);
 
-        for node in adj_list.keys() {
-            if !state.indices.contains_key(node) {
-                Self::tarjan_strongconnect(node, adj_list, &mut state)?;
+        for entry in self.dependencies.iter() {
+            let source = entry.key().clone();
+            graph.add_node(source.clone());
+
+            for dep in entry.value() {
+                graph.add_edge(source.clone(), dep.target_identity.clone(), ())?;
             }
         }
 
-        Ok(state.sccs)
-    }
-
-    /// Recursive helper for Tarjan's algorithm
-    fn tarjan_strongconnect(
-        node: &AssemblyIdentity,
-        adj_list: &HashMap<AssemblyIdentity, Vec<AssemblyIdentity>>,
-        state: &mut TarjanState,
-    ) -> Result<()> {
-        // Set the depth index for this node
-        state.indices.insert(node.clone(), state.index_counter);
-        state.lowlinks.insert(node.clone(), state.index_counter);
-        state.index_counter += 1;
-        state.stack.push(node.clone());
-        state.on_stack.insert(node.clone(), true);
-
-        // Consider successors of node
-        if let Some(successors) = adj_list.get(node) {
-            for successor in successors {
-                if !state.indices.contains_key(successor) {
-                    // Successor has not yet been visited; recurse on it
-                    Self::tarjan_strongconnect(successor, adj_list, state)?;
-                    let successor_lowlink = state.lowlinks[successor];
-                    let node_lowlink = state.lowlinks[node];
-                    state
-                        .lowlinks
-                        .insert(node.clone(), node_lowlink.min(successor_lowlink));
-                } else if *state.on_stack.get(successor).unwrap_or(&false) {
-                    // Successor is in stack and hence in the current SCC
-                    let successor_index = state.indices[successor];
-                    let node_lowlink = state.lowlinks[node];
-                    state
-                        .lowlinks
-                        .insert(node.clone(), node_lowlink.min(successor_index));
-                }
-            }
-        }
-
-        // If node is a root node, pop the stack and create an SCC
-        if state.lowlinks[node] == state.indices[node] {
-            let mut scc = Vec::new();
-            loop {
-                let w = state.stack.pop().ok_or_else(|| {
-                    Error::GraphError("Stack underflow in Tarjan's algorithm".to_string())
-                })?;
-                state.on_stack.insert(w.clone(), false);
-                scc.push(w.clone());
-                if w == *node {
-                    break;
-                }
-            }
-            state.sccs.push(scc);
-        }
-
-        Ok(())
-    }
-
-    /// Build a DAG of SCCs from the individual SCCs
-    fn build_scc_graph(
-        sccs: &[Vec<AssemblyIdentity>],
-        adj_list: &HashMap<AssemblyIdentity, Vec<AssemblyIdentity>>,
-    ) -> HashMap<usize, Vec<usize>> {
-        // Map each assembly to its SCC index
-        let mut assembly_to_scc: HashMap<AssemblyIdentity, usize> = HashMap::new();
-        for (scc_id, scc) in sccs.iter().enumerate() {
-            for assembly in scc {
-                assembly_to_scc.insert(assembly.clone(), scc_id);
-            }
-        }
-
-        // Initialize all SCCs in the graph (even those with no outgoing edges)
-        let mut scc_graph: HashMap<usize, HashSet<usize>> = HashMap::new();
-        for scc_id in 0..sccs.len() {
-            scc_graph.insert(scc_id, HashSet::new());
-        }
-
-        // Build SCC adjacency list
-        // Note: For topological ordering, we want reverse dependencies (target -> source)
-        // because we need to load dependencies before dependents
-        for (source, targets) in adj_list {
-            if let Some(&source_scc) = assembly_to_scc.get(source) {
-                for target in targets {
-                    if let Some(&target_scc) = assembly_to_scc.get(target) {
-                        if source_scc != target_scc {
-                            // target_scc should come before source_scc in loading order
-                            scc_graph.entry(target_scc).or_default().insert(source_scc);
-                        }
-                    }
-                }
-            }
-        }
-
-        // Convert to Vec representation
-        scc_graph
-            .into_iter()
-            .map(|(k, v)| (k, v.into_iter().collect()))
-            .collect()
-    }
-
-    /// Topologically sort SCCs (which form a DAG)
-    fn topological_sort_sccs(scc_graph: &HashMap<usize, Vec<usize>>) -> Vec<usize> {
-        // All SCC IDs are the keys in scc_graph
-        let all_scc_ids: Vec<usize> = scc_graph.keys().copied().collect();
-
-        // Calculate in-degrees
-        let mut in_degrees: HashMap<usize, usize> = HashMap::new();
-        for &scc_id in &all_scc_ids {
-            in_degrees.insert(scc_id, 0);
-        }
-
-        for targets in scc_graph.values() {
-            for &target in targets {
-                *in_degrees.entry(target).or_insert(0) += 1;
-            }
-        }
-
-        // Apply Kahn's algorithm to the SCC DAG (which is guaranteed to be acyclic)
-        let mut queue: VecDeque<usize> = VecDeque::new();
-        for (&scc_id, &degree) in &in_degrees {
-            if degree == 0 {
-                queue.push_back(scc_id);
-            }
-        }
-
-        let mut result = Vec::new();
-        while let Some(scc_id) = queue.pop_front() {
-            result.push(scc_id);
-
-            if let Some(targets) = scc_graph.get(&scc_id) {
-                for &target in targets {
-                    if let Some(degree) = in_degrees.get_mut(&target) {
-                        *degree -= 1;
-                        if *degree == 0 {
-                            queue.push_back(target);
-                        }
-                    }
-                }
-            }
-        }
-
-        result
+        Ok(graph)
     }
 
     /// Check if the dependency graph is empty.
@@ -759,85 +613,18 @@ impl AssemblyDependencyGraph {
         }
     }
 
-    /// Perform cycle detection using depth-first search.
+    /// Perform cycle detection using the generic graph algorithm.
     ///
-    /// Implements a three-color DFS algorithm to detect cycles in the
-    /// dependency graph. Returns the first cycle found.
+    /// Delegates to [`crate::utils::graph::IndexedGraph::find_any_cycle`] which
+    /// handles all NodeId mapping internally.
     fn detect_cycles_dfs(&self) -> Result<Option<Vec<AssemblyIdentity>>> {
-        let mut colors: HashMap<AssemblyIdentity, Color> = HashMap::new();
-        let mut path: Vec<AssemblyIdentity> = Vec::new();
+        let graph = self.build_indexed_graph()?;
 
-        // Initialize all nodes as white
-        for entry in self.dependencies.iter() {
-            colors.insert(entry.key().clone(), Color::White);
+        if graph.is_empty() {
+            return Ok(None);
         }
 
-        // Visit all white nodes
-        for entry in self.dependencies.iter() {
-            let node = entry.key().clone();
-            if colors.get(&node) == Some(&Color::White) {
-                if let Some(cycle) = self.dfs_visit(&node, &mut colors, &mut path)? {
-                    return Ok(Some(cycle));
-                }
-            }
-        }
-
-        Ok(None)
-    }
-
-    /// Recursive DFS visit for cycle detection.
-    ///
-    /// Performs the recursive traversal for cycle detection, maintaining
-    /// the current path and node colors.
-    fn dfs_visit(
-        &self,
-        node: &AssemblyIdentity,
-        colors: &mut HashMap<AssemblyIdentity, Color>,
-        path: &mut Vec<AssemblyIdentity>,
-    ) -> Result<Option<Vec<AssemblyIdentity>>> {
-        colors.insert(node.clone(), Color::Gray);
-        path.push(node.clone());
-
-        // Visit all dependencies
-        if let Some(deps) = self.dependencies.get(node) {
-            for dependency in deps.iter() {
-                let target = &dependency.target_identity;
-
-                match colors.entry(target.clone()) {
-                    Entry::Occupied(mut entry) => {
-                        match entry.get() {
-                            Color::Gray => {
-                                // Found a cycle - extract the cycle path
-                                if let Some(start_idx) = path.iter().position(|id| id == target) {
-                                    let mut cycle = path[start_idx..].to_vec();
-                                    cycle.push(target.clone()); // Complete the cycle
-                                    return Ok(Some(cycle));
-                                }
-                            }
-                            Color::White => {
-                                entry.insert(Color::White); // Keep as white for recursion
-                                if let Some(cycle) = self.dfs_visit(target, colors, path)? {
-                                    return Ok(Some(cycle));
-                                }
-                            }
-                            Color::Black => {
-                                // Already processed, safe to ignore
-                            }
-                        }
-                    }
-                    Entry::Vacant(entry) => {
-                        entry.insert(Color::White);
-                        if let Some(cycle) = self.dfs_visit(target, colors, path)? {
-                            return Ok(Some(cycle));
-                        }
-                    }
-                }
-            }
-        }
-
-        colors.insert(node.clone(), Color::Black);
-        path.pop();
-        Ok(None)
+        Ok(graph.find_any_cycle())
     }
 
     /// Check if the graph contains a specific assembly identity.
