@@ -205,6 +205,7 @@ macro_rules! out_of_bounds_error {
 /// - [`crate::Error::RecursionLimit`] - Maximum recursion depth exceeded
 /// - [`crate::Error::DepthLimitExceeded`] - Maximum nesting depth exceeded in iterative parsing
 /// - [`crate::Error::GraphError`] - Dependency graph analysis error
+/// - [`crate::Error::SsaError`] - SSA construction error
 ///
 /// # Thread Safety
 ///
@@ -363,6 +364,13 @@ pub enum Error {
     /// detected or when the dependency graph cannot be properly constructed.
     #[error("{0}")]
     GraphError(String),
+
+    /// SSA construction error.
+    ///
+    /// Errors related to Static Single Assignment form construction,
+    /// including stack simulation failures and phi node placement issues.
+    #[error("SSA error: {0}")]
+    SsaError(String),
 
     /// Cannot modify replaced table.
     ///
