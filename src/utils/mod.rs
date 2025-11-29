@@ -44,6 +44,7 @@
 mod alignment;
 mod compression;
 mod enums;
+pub(crate) mod graph;
 mod heap_calc;
 mod io;
 mod synchronization;

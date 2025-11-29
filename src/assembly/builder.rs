@@ -517,6 +517,49 @@ impl InstructionAssembler {
         Ok(self)
     }
 
+    /// Store a value into an argument (short form).
+    ///
+    /// Store the value from the top of the stack into the specified argument slot.
+    /// This is the short form instruction supporting argument indices 0-127.
+    ///
+    /// **Opcode**: `0x10`
+    /// **Stack**: `..., value → ...`
+    ///
+    /// # Parameters
+    ///
+    /// * `index` - Argument index (0-127, but encoded as signed i8)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn starg_s(&mut self, index: i8) -> Result<&mut Self> {
+        self.encoder
+            .emit_instruction("starg.s", Some(Operand::Immediate(Immediate::Int8(index))))?;
+        Ok(self)
+    }
+
+    /// Store a value into an argument (full form).
+    ///
+    /// Store the value from the top of the stack into the specified argument slot.
+    /// This is the full form instruction supporting the complete range of
+    /// argument indices (0-65535).
+    ///
+    /// **Opcode**: `0xFE 0x0B`
+    /// **Stack**: `..., value → ...`
+    ///
+    /// # Parameters
+    ///
+    /// * `index` - Argument index (0-65535)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn starg(&mut self, index: i16) -> Result<&mut Self> {
+        self.encoder
+            .emit_instruction("starg", Some(Operand::Immediate(Immediate::Int16(index))))?;
+        Ok(self)
+    }
+
     /// Load local variable 0 onto the stack.
     ///
     /// Optimized single-byte instruction for loading the first local variable.

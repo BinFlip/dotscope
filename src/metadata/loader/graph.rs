@@ -26,6 +26,7 @@ use std::fmt::Write;
 
 use crate::{
     metadata::{loader::MetadataLoader, tables::TableId},
+    utils::graph::IndexedGraph,
     Error::GraphError,
     Result,
 };
@@ -189,7 +190,10 @@ impl<'a> LoaderGraph<'a> {
         Ok(())
     }
 
-    /// Checks for circular dependencies using depth-first search with stack tracking.
+    /// Checks for circular dependencies using the generic graph algorithm.
+    ///
+    /// Delegates to [`crate::utils::graph::IndexedGraph::find_any_cycle`] for cycle detection
+    /// which handles all NodeId mapping internally.
     ///
     /// # Returns
     ///
@@ -199,61 +203,62 @@ impl<'a> LoaderGraph<'a> {
     ///
     /// Returns `GraphError` if a circular dependency is detected.
     fn check_circular_dependencies(&self) -> Result<()> {
+        // Build an IndexedGraph from table loader dependencies
         // Note: Only need to check table loaders for cycles since special loaders
         // can only depend on tables but cannot be depended upon
-        let mut visited = HashSet::new();
-        let mut stack = HashSet::new();
+        let graph = self.build_indexed_graph()?;
 
-        for loader_key in self.loaders.keys() {
-            if let LoaderKey::Table(table_id) = loader_key {
-                if !visited.contains(table_id) {
-                    self.detect_cycle(*table_id, &mut visited, &mut stack)?;
-                }
+        if graph.is_empty() {
+            return Ok(());
+        }
+
+        // Check for any cycle in the graph
+        if let Some(cycle) = graph.find_any_cycle() {
+            // Use the first table in the cycle for the error message
+            if let Some(table_id) = cycle.first() {
+                return Err(GraphError(format!(
+                    "Circular dependency detected involving table {table_id:?}"
+                )));
             }
+            return Err(GraphError(
+                "Circular dependency detected in loader graph".to_string(),
+            ));
         }
 
         Ok(())
     }
 
-    /// Recursive DFS helper for cycle detection.
+    /// Build an IndexedGraph from table loader dependencies.
     ///
-    /// # Arguments
-    ///
-    /// * `table_id` - The table ID to start DFS traversal from.
-    /// * `visited` - Set of all nodes visited during the entire cycle detection.
-    /// * `stack` - Set of nodes currently in the DFS recursion stack.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(())` if no cycle is reachable from this node.
-    ///
-    /// # Errors
-    ///
-    /// Returns `GraphError` if a back edge (cycle) is detected.
-    fn detect_cycle(
-        &self,
-        table_id: TableId,
-        visited: &mut HashSet<TableId>,
-        stack: &mut HashSet<TableId>,
-    ) -> Result<()> {
-        visited.insert(table_id);
-        stack.insert(table_id);
+    /// The `IndexedGraph` handles all the mapping between `TableId` and `NodeId`
+    /// internally, providing a cleaner API for graph algorithms.
+    fn build_indexed_graph(&self) -> Result<IndexedGraph<TableId, ()>> {
+        let mut graph: IndexedGraph<TableId, ()> = IndexedGraph::new();
 
-        let loader_key = LoaderKey::Table(table_id);
-        if let Some(deps) = self.dependencies.get(&loader_key) {
-            for &dep_id in deps {
-                if !visited.contains(&dep_id) {
-                    self.detect_cycle(dep_id, visited, stack)?;
-                } else if stack.contains(&dep_id) {
-                    return Err(GraphError(format!(
-                        "Circular dependency detected involving table {dep_id:?}"
-                    )));
+        // Add nodes for all table loaders
+        for loader_key in self.loaders.keys() {
+            if let LoaderKey::Table(table_id) = loader_key {
+                graph.add_node(*table_id);
+            }
+        }
+
+        // Also add nodes for dependencies that might not have their own loader entry
+        for deps in self.dependencies.values() {
+            for dep_table_id in deps {
+                graph.add_node(*dep_table_id);
+            }
+        }
+
+        // Add edges: source depends on target (source -> target)
+        for (loader_key, deps) in &self.dependencies {
+            if let LoaderKey::Table(source_table_id) = loader_key {
+                for dep_table_id in deps {
+                    graph.add_edge(*source_table_id, *dep_table_id, ())?;
                 }
             }
         }
 
-        stack.remove(&table_id);
-        Ok(())
+        Ok(graph)
     }
 
     /// Returns loaders grouped by dependency level (topological sort).

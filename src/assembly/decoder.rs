@@ -51,7 +51,10 @@
 //! - [`crate::file::parser`] - Supplies low-level bytecode parsing capabilities
 //! - [`crate::metadata::method`] - Supports method-level disassembly and caching
 
-use std::sync::Arc;
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use crate::{
     assembly::{
@@ -208,34 +211,106 @@ impl<'a> Decoder<'a> {
         self.blocks
     }
 
-    /// Decode all accessible blocks that are contained in this parser
+    /// Decode all accessible blocks that are contained in this parser.
+    ///
+    /// This method implements a single-pass control flow analysis algorithm that
+    /// discovers and decodes all reachable basic blocks in the method body. It uses
+    /// a work-list approach where new blocks are discovered during decoding and
+    /// added to the processing queue.
+    ///
+    /// # Algorithm
+    ///
+    /// 1. Initialize entry points from exception handlers (try blocks, catch handlers, filters)
+    /// 2. Create the initial block at the method entry point
+    /// 3. Process blocks in work-list fashion:
+    ///    - Decode instructions sequentially until a control flow boundary
+    ///    - When branch targets are discovered, create new blocks or split existing ones
+    ///    - Track all entry points to detect block boundaries
+    /// 4. Clean up empty blocks (unreachable code)
+    /// 5. Sort blocks by RVA and reassign IDs for consistent ordering
+    /// 6. Wire up control flow edges (successors/predecessors)
+    ///
+    /// # Block Splitting
+    ///
+    /// When a branch target falls in the middle of an already-decoded block, that
+    /// block is split immediately at the target address. This ensures every branch
+    /// target is the start of its own basic block, which is required for correct
+    /// control flow graph construction.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction decoding fails or if the parser encounters
+    /// invalid bytecode.
     fn decode_blocks(&mut self) -> Result<()> {
-        self.blocks.push(BasicBlock::new(
-            self.block_id,
-            self.rva_start as u64,
-            self.offset_start,
-        ));
+        let mut entry_points: HashSet<u64> = HashSet::new();
+
+        if let Some(exceptions) = self.exceptions {
+            for handler in exceptions {
+                entry_points.insert(self.rva_start as u64 + u64::from(handler.try_offset));
+                entry_points.insert(self.rva_start as u64 + u64::from(handler.handler_offset));
+                if handler.filter_offset > 0 {
+                    entry_points.insert(self.rva_start as u64 + u64::from(handler.filter_offset));
+                }
+            }
+        }
+
+        self.blocks
+            .push(BasicBlock::new(0, self.rva_start as u64, self.offset_start));
+        entry_points.insert(self.rva_start as u64);
 
         while self.block_id < self.blocks.len() {
-            self.decode_block(self.block_id)?;
+            self.decode_single_block(&mut entry_points)?;
             self.block_id += 1;
         }
 
+        self.blocks.retain(|b| !b.instructions.is_empty());
+        self.blocks.sort_by_key(|b| b.rva);
+
+        for (idx, block) in self.blocks.iter_mut().enumerate() {
+            block.id = idx;
+        }
+
         self.process_exception_handlers();
+        self.wire_control_flow_edges();
 
         Ok(())
     }
 
-    /// Process a single block, adding its instructions and successor blocks.
+    /// Decode a single basic block starting at the current block ID.
+    ///
+    /// This method decodes instructions sequentially from the block's starting offset
+    /// until it encounters a control flow boundary (branch, return, throw, etc.) or
+    /// reaches an existing block's entry point.
+    ///
+    /// # Control Flow Handling
+    ///
+    /// - **Conditional branches**: Both branch targets and fall-through paths become
+    ///   new entry points. The block terminates after the branch instruction.
+    /// - **Unconditional branches/switches**: All targets become entry points. No
+    ///   fall-through path exists.
+    /// - **Leave instructions**: Target becomes an entry point (used in exception handling).
+    /// - **Return/Throw/EndFinally**: Terminal instructions that end the block with
+    ///   no successors.
+    /// - **Sequential/Call**: Continue decoding in the same block.
+    ///
+    /// # Block Boundary Detection
+    ///
+    /// If the decoder reaches an RVA that is already registered as an entry point
+    /// (from a previous branch target), the current block ends and the remaining
+    /// instructions belong to the other block.
     ///
     /// # Arguments
     ///
-    /// * `block_id` - The id of the block to decode
+    /// * `entry_points` - Mutable set of known block entry points (RVAs). New entry
+    ///   points discovered during decoding are added to this set.
     ///
     /// # Errors
     ///
-    /// Returns [`crate::Error::OutOfBounds`] if the block offset exceeds parser bounds.
-    fn decode_block(&mut self, block_id: usize) -> Result<()> {
+    /// Returns an error if the block's offset is out of bounds or if instruction
+    /// decoding fails.
+    fn decode_single_block(&mut self, entry_points: &mut HashSet<u64>) -> Result<()> {
+        let block_id = self.block_id;
+
         if self.blocks[block_id].offset > self.parser.len() {
             return Err(out_of_bounds_error!());
         }
@@ -248,71 +323,242 @@ impl<'a> Decoder<'a> {
 
         let mut current_offset = self.blocks[block_id].offset;
         let mut current_rva = self.blocks[block_id].rva;
-        let mut terminated = false;
 
-        while !terminated && current_offset < self.parser.len() {
+        loop {
+            if current_offset >= self.parser.len() {
+                break;
+            }
+
+            if current_rva != self.blocks[block_id].rva && entry_points.contains(&current_rva) {
+                // We've reached the start of another block - stop here
+                break;
+            }
+
             let instruction = decode_instruction(self.parser, current_rva)?;
+            let instr_size = usize::try_from(instruction.size).map_err(|_| {
+                malformed_error!(format!(
+                    "instruction size {} exceeds platform limits at RVA 0x{:x}",
+                    instruction.size, current_rva
+                ))
+            })?;
+
+            self.visited.set_range(current_offset, true, instr_size);
+
+            self.blocks[block_id].size += instr_size;
+            self.blocks[block_id].instructions.push(instruction.clone());
 
             match instruction.flow_type {
                 FlowType::ConditionalBranch => {
-                    for target_rva in &instruction.branch_targets {
-                        // Calculate the target offset from the start offset
-                        #[allow(clippy::cast_possible_truncation)]
-                        let target_offset = self.offset_start
-                            + (target_rva.saturating_sub(self.rva_start as u64) as usize);
-                        // Only create block if target is within bounds
-                        if target_offset < self.parser.len() {
-                            let block = BasicBlock::new(self.block_id, *target_rva, target_offset);
-                            self.blocks.push(block);
-                        }
+                    for &target_rva in &instruction.branch_targets {
+                        self.add_entry_point(target_rva, entry_points);
                     }
 
-                    let instruction_size = usize::try_from(instruction.size).unwrap_or(0);
-                    let block = BasicBlock::new(
-                        self.block_id,
-                        current_rva + instruction.size,
-                        current_offset + instruction_size,
-                    );
-                    self.blocks.push(block);
+                    let fall_through_rva = current_rva + instruction.size;
+                    self.add_entry_point(fall_through_rva, entry_points);
 
-                    terminated = true;
+                    break;
                 }
-                FlowType::UnconditionalBranch | FlowType::Switch => {
-                    for target_rva in &instruction.branch_targets {
-                        // Calculate the target offset from the start offset
-                        #[allow(clippy::cast_possible_truncation)]
-                        let target_offset = self.offset_start
-                            + (target_rva.saturating_sub(self.rva_start as u64) as usize);
-                        // Only create block if target is within bounds
-                        if target_offset < self.parser.len() {
-                            let block = BasicBlock::new(self.block_id, *target_rva, target_offset);
-                            self.blocks.push(block);
-                        }
+                FlowType::UnconditionalBranch | FlowType::Switch | FlowType::Leave => {
+                    for &target_rva in &instruction.branch_targets {
+                        self.add_entry_point(target_rva, entry_points);
                     }
-
-                    terminated = true;
+                    break;
                 }
-                FlowType::Return | FlowType::Throw => terminated = true,
-                _ => {}
+                FlowType::Return | FlowType::Throw | FlowType::EndFinally => {
+                    break;
+                }
+                _ => {
+                    // Sequential instruction - continue
+                }
             }
 
-            self.visited.set_range(
-                current_offset,
-                true,
-                usize::try_from(instruction.size).unwrap_or(0),
-            );
-
-            let instruction_size_usize = usize::try_from(instruction.size).unwrap_or(0);
-            current_offset += instruction_size_usize;
+            current_offset += instr_size;
             current_rva += instruction.size;
-            self.blocks[block_id].size += instruction_size_usize;
-            self.blocks[block_id].instructions.push(instruction);
         }
 
         Ok(())
     }
 
-    /// Process exception handlers and associate them with blocks
+    /// Register a new block entry point at the given RVA.
+    ///
+    /// This method handles the discovery of a new control flow target (branch destination,
+    /// fall-through path, or exception handler). It ensures that a basic block exists
+    /// starting at the given RVA.
+    ///
+    /// # Block Creation vs Splitting
+    ///
+    /// - If the RVA is not inside any existing block, a new empty block is created
+    ///   and added to the work list for later decoding.
+    /// - If the RVA falls in the middle of an already-decoded block, that block is
+    ///   split at the RVA. The first part retains the original block's instructions
+    ///   up to (but not including) the split point, and a new block is created with
+    ///   the remaining instructions.
+    ///
+    /// # Bounds Checking
+    ///
+    /// Entry points outside the valid method body range are silently ignored. This
+    /// handles edge cases like branches to addresses before the method start or
+    /// beyond the method end.
+    ///
+    /// # Arguments
+    ///
+    /// * `rva` - The relative virtual address of the new entry point
+    /// * `entry_points` - Mutable set tracking all known entry points to avoid
+    ///   duplicate processing
+    fn add_entry_point(&mut self, rva: u64, entry_points: &mut HashSet<u64>) {
+        if rva < self.rva_start as u64 {
+            return;
+        }
+
+        if entry_points.contains(&rva) {
+            return;
+        }
+
+        let Ok(relative_offset) = usize::try_from(rva - self.rva_start as u64) else {
+            return; // RVA delta too large for this platform
+        };
+        let offset = self.offset_start + relative_offset;
+        if offset >= self.parser.len() {
+            return;
+        }
+
+        if let Some((block_idx, split_instr_idx)) = self.find_block_containing_rva(rva) {
+            self.split_block_at(block_idx, split_instr_idx, rva, offset);
+        } else {
+            let new_block = BasicBlock::new(self.blocks.len(), rva, offset);
+            self.blocks.push(new_block);
+        }
+
+        entry_points.insert(rva);
+    }
+
+    /// Find a block that contains the given RVA in its interior (not at its start).
+    ///
+    /// This method searches through all decoded blocks to find one where the given
+    /// RVA falls strictly inside the block's address range. This is used to detect
+    /// when a branch target points to the middle of an already-decoded block,
+    /// which requires splitting that block.
+    ///
+    /// # Returns
+    ///
+    /// - `Some((block_index, instruction_index))` if a block contains the RVA, where
+    ///   `instruction_index` is the index of the instruction that starts at the RVA
+    /// - `None` if no block contains the RVA (it's either at a block start, outside
+    ///   all blocks, or doesn't align with an instruction boundary)
+    ///
+    /// # Arguments
+    ///
+    /// * `rva` - The relative virtual address to search for
+    fn find_block_containing_rva(&self, rva: u64) -> Option<(usize, usize)> {
+        for (block_idx, block) in self.blocks.iter().enumerate() {
+            if block.rva == rva {
+                return None;
+            }
+
+            let block_end_rva = block.rva + block.size as u64;
+            if rva > block.rva && rva < block_end_rva {
+                for (instr_idx, instr) in block.instructions.iter().enumerate() {
+                    if instr.rva == rva {
+                        return Some((block_idx, instr_idx));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Split a basic block at the specified instruction index.
+    ///
+    /// This method divides an existing block into two parts when a branch target
+    /// is discovered that points to the middle of the block. The original block
+    /// is truncated to contain only instructions before the split point, and a
+    /// new block is created with the remaining instructions.
+    ///
+    /// # Block Modification
+    ///
+    /// - The original block (`block_idx`) keeps instructions `[0..split_instr_idx)`
+    /// - A new block is created with instructions `[split_instr_idx..]`
+    /// - The new block inherits exception handler associations from the original
+    /// - Block sizes are recalculated for both blocks
+    ///
+    /// # Arguments
+    ///
+    /// * `block_idx` - Index of the block to split in `self.blocks`
+    /// * `split_instr_idx` - Index of the first instruction for the new block
+    /// * `rva` - RVA of the split point (for the new block's starting address)
+    /// * `offset` - File offset of the split point (for the new block's offset)
+    ///
+    /// # Panics
+    ///
+    /// Does not panic, but silently returns if `split_instr_idx` is 0 (nothing to split).
+    fn split_block_at(
+        &mut self,
+        block_idx: usize,
+        split_instr_idx: usize,
+        rva: u64,
+        offset: usize,
+    ) {
+        if split_instr_idx == 0 {
+            return;
+        }
+
+        // Create new block with instructions from split point onwards
+        let mut new_block = BasicBlock::new(self.blocks.len(), rva, offset);
+        new_block.instructions = self.blocks[block_idx].instructions[split_instr_idx..].to_vec();
+        new_block.size = Self::compute_instructions_size(&new_block.instructions);
+        new_block
+            .exceptions
+            .clone_from(&self.blocks[block_idx].exceptions);
+
+        // Truncate the original block
+        self.blocks[block_idx]
+            .instructions
+            .truncate(split_instr_idx);
+        self.blocks[block_idx].size =
+            Self::compute_instructions_size(&self.blocks[block_idx].instructions);
+
+        self.blocks.push(new_block);
+    }
+
+    /// Compute the total size of a slice of instructions with overflow protection.
+    ///
+    /// This method safely sums instruction sizes using saturating arithmetic to prevent
+    /// overflow from malicious or corrupted input. Each instruction's `size` field is
+    /// converted from `u64` to `usize`, clamping to `usize::MAX` if the value exceeds
+    /// platform limits.
+    ///
+    /// # Arguments
+    ///
+    /// * `instructions` - Slice of instructions to sum sizes for
+    ///
+    /// # Returns
+    ///
+    /// Total size in bytes, saturating at `usize::MAX` if overflow would occur.
+    fn compute_instructions_size(instructions: &[Instruction]) -> usize {
+        instructions.iter().fold(0usize, |acc, instr| {
+            let size = usize::try_from(instr.size).unwrap_or(usize::MAX);
+            acc.saturating_add(size)
+        })
+    }
+
+    /// Associate exception handlers with their corresponding basic blocks.
+    ///
+    /// This method iterates through all exception handlers defined for the method
+    /// and marks each block that falls within a try region with the handler's index.
+    /// This information is used later for control flow analysis and exception handling
+    /// semantics.
+    ///
+    /// # Handler Association
+    ///
+    /// A block is associated with an exception handler if the block's starting RVA
+    /// falls within the try region's address range `[try_offset, try_offset + try_length]`.
+    /// Multiple handlers can be associated with a single block (nested try blocks).
+    ///
+    /// # Note
+    ///
+    /// This method should be called after all blocks have been decoded and before
+    /// control flow edges are wired, as the exception associations may affect
+    /// control flow analysis.
     fn process_exception_handlers(&mut self) {
         if let Some(exceptions) = self.exceptions {
             for (handler_idx, handler) in exceptions.iter().enumerate() {
@@ -324,6 +570,148 @@ impl<'a> Decoder<'a> {
                         block.exceptions.push(handler_idx);
                     }
                 }
+            }
+        }
+    }
+
+    /// Wire up control flow edges (successors/predecessors) between blocks.
+    ///
+    /// This method is called after all blocks have been decoded and exception handlers
+    /// have been processed. It analyzes the last instruction of each block to determine
+    /// its control flow successors, building a complete control flow graph.
+    ///
+    /// # Edge Types
+    ///
+    /// The method handles various control flow patterns:
+    /// - **Sequential/Call**: Fall through to the next block by address
+    /// - **Conditional branches**: Both the branch target and fall-through become successors
+    /// - **Unconditional branches**: Single successor at the branch target
+    /// - **Switch statements**: Multiple successors for each case target
+    /// - **Return/Throw**: No successors (terminal blocks)
+    /// - **Leave**: Single successor outside the protected region
+    ///
+    /// # Bidirectional Edges
+    ///
+    /// For each successor relationship established, the corresponding predecessor
+    /// relationship is also recorded. This enables both forward and backward
+    /// traversal of the control flow graph.
+    fn wire_control_flow_edges(&mut self) {
+        let rva_to_block: HashMap<u64, usize> = self
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(idx, block)| (block.rva, idx))
+            .collect();
+
+        for block_idx in 0..self.blocks.len() {
+            let successors = self.compute_block_successors(block_idx, &rva_to_block);
+
+            self.blocks[block_idx].successors.clone_from(&successors);
+
+            for &succ_idx in &successors {
+                if succ_idx < self.blocks.len() {
+                    self.blocks[succ_idx].predecessors.push(block_idx);
+                }
+            }
+        }
+    }
+
+    /// Compute the successor block indices for a given block.
+    ///
+    /// This method analyzes the last instruction of a block to determine which
+    /// blocks can be reached via control flow from this block. The successors
+    /// are determined based on the instruction's flow type and branch targets.
+    ///
+    /// # Flow Type Handling
+    ///
+    /// | Flow Type | Successors |
+    /// |-----------|------------|
+    /// | Return/Throw | None (terminal) |
+    /// | UnconditionalBranch | Branch target only |
+    /// | ConditionalBranch | Branch target + fall-through |
+    /// | Switch | All case targets |
+    /// | Leave | Leave target |
+    /// | EndFinally | None (dynamic return) |
+    /// | Sequential/Call | Fall-through to next block |
+    ///
+    /// # Arguments
+    ///
+    /// * `block_idx` - Index of the block in `self.blocks`
+    /// * `rva_to_block` - Map from RVA to block index for target resolution
+    ///
+    /// # Returns
+    ///
+    /// A vector of block indices representing all possible control flow successors.
+    /// The vector may be empty for terminal blocks (return, throw, endfinally).
+    fn compute_block_successors(
+        &self,
+        block_idx: usize,
+        rva_to_block: &HashMap<u64, usize>,
+    ) -> Vec<usize> {
+        let block = &self.blocks[block_idx];
+        let Some(last_instr) = block.instructions.last() else {
+            return vec![];
+        };
+
+        match last_instr.flow_type {
+            FlowType::Return | FlowType::Throw => {
+                // No successors for terminal instructions
+                vec![]
+            }
+            FlowType::UnconditionalBranch => {
+                // Single successor: the branch target
+                last_instr
+                    .branch_targets
+                    .iter()
+                    .filter_map(|&target_rva| rva_to_block.get(&target_rva).copied())
+                    .collect()
+            }
+            FlowType::ConditionalBranch => {
+                // Two successors: branch target (first) and fall-through (second)
+                let mut successors = Vec::with_capacity(2);
+
+                // Add branch target(s)
+                for &target_rva in &last_instr.branch_targets {
+                    if let Some(&target_idx) = rva_to_block.get(&target_rva) {
+                        successors.push(target_idx);
+                    }
+                }
+
+                // Add fall-through target (instruction immediately after this block)
+                let fall_through_rva = block.rva + block.size as u64;
+                if let Some(&fall_through_idx) = rva_to_block.get(&fall_through_rva) {
+                    successors.push(fall_through_idx);
+                }
+
+                successors
+            }
+            FlowType::Switch => {
+                // Multiple successors from switch targets
+                last_instr
+                    .branch_targets
+                    .iter()
+                    .filter_map(|&target_rva| rva_to_block.get(&target_rva).copied())
+                    .collect()
+            }
+            FlowType::Leave => {
+                // Leave instruction jumps to target outside protected region
+                last_instr
+                    .branch_targets
+                    .iter()
+                    .filter_map(|&target_rva| rva_to_block.get(&target_rva).copied())
+                    .collect()
+            }
+            FlowType::EndFinally => {
+                // EndFinally returns to caller of finally block - no static successors
+                vec![]
+            }
+            FlowType::Sequential | FlowType::Call => {
+                // Fall through to next block
+                let fall_through_rva = block.rva + block.size as u64;
+                rva_to_block
+                    .get(&fall_through_rva)
+                    .map(|&idx| vec![idx])
+                    .unwrap_or_default()
             }
         }
     }

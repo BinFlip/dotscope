@@ -1341,7 +1341,7 @@ pub fn verify_methods(methods: &MethodMap) {
     assert_eq!(fn_search.name, "Search");
     assert_eq!(fn_search.rva, Some(0xF10FC));
     assert!(fn_search.is_code_il());
-    assert_eq!(fn_search.block_count(), 5);
+    assert_eq!(fn_search.block_count(), 4);
     assert_eq!(fn_search.body.get().unwrap().max_stack, 3);
     assert_eq!(fn_search.local_vars.count(), 1);
 }

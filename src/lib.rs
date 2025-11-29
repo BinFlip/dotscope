@@ -364,6 +364,52 @@ pub mod prelude;
 /// All assembly types are [`std::marker::Send`] and [`std::marker::Sync`] for safe concurrent processing.
 pub mod assembly;
 
+/// Program analysis infrastructure for .NET assemblies.
+///
+/// This module provides foundational analysis capabilities for understanding and
+/// transforming .NET CIL code. It builds upon the generic graph infrastructure
+/// in [`crate::utils::graph`] to provide domain-specific analysis tools.
+///
+/// # Architecture
+///
+/// The analysis module is organized into focused sub-modules:
+///
+/// - [`crate::analysis::cfg`] - Control Flow Graph construction and analysis
+///
+/// # Key Components
+///
+/// ## Control Flow Graph (CFG)
+/// - [`crate::analysis::ControlFlowGraph`] - CFG built from basic blocks
+/// - [`crate::analysis::CfgEdge`] - Edge representation with control flow semantics
+/// - [`crate::analysis::CfgEdgeKind`] - Classification of edge types
+///
+/// # Usage Examples
+///
+/// ```rust,ignore
+/// use dotscope::analysis::ControlFlowGraph;
+/// use dotscope::assembly::decode_blocks;
+///
+/// // Decode method body into basic blocks
+/// let blocks = decode_blocks(data, offset, rva, Some(size))?;
+///
+/// // Build control flow graph
+/// let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
+///
+/// // Access dominator tree (lazily computed)
+/// let dominators = cfg.dominators();
+///
+/// // Iterate in reverse postorder for data flow analysis
+/// for block_id in cfg.reverse_postorder() {
+///     let block = cfg.block(block_id).unwrap();
+///     println!("Block at RVA 0x{:x}", block.rva);
+/// }
+/// ```
+///
+/// # Thread Safety
+///
+/// All analysis types are [`std::marker::Send`] and [`std::marker::Sync`] for safe concurrent access.
+pub mod analysis;
+
 /// .NET metadata parsing, loading, and type system based on ECMA-335.
 ///
 /// This module implements the complete ECMA-335 metadata system for .NET assemblies.
