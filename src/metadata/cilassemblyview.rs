@@ -113,7 +113,6 @@ use std::{path::Path, sync::Arc};
 use crate::{
     cilassembly::CilAssembly,
     file::File,
-    malformed_error,
     metadata::{
         cor20header::Cor20Header,
         identity::{AssemblyIdentity, AssemblyVersion, Identity, ProcessorArchitecture},

@@ -106,7 +106,6 @@ use std::collections::HashMap;
 
 use crate::{
     file::pe::Import,
-    malformed_error,
     utils::{write_le_at, write_string_at},
     Result,
 };

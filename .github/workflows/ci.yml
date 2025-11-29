@@ -109,10 +109,13 @@ jobs:
       with:
         key: fuzz-quick
         
+    - name: Build fuzz target
+      run: cargo +nightly fuzz build --release cilobject
+      working-directory: fuzz
+
     - name: Run quick fuzz test
-      run: |
-        cd fuzz
-        timeout 60 cargo +nightly fuzz run cilobject --release -- -max_total_time=50 || true
+      run: timeout 60 cargo +nightly fuzz run cilobject --release -- -max_total_time=50 || true
+      working-directory: fuzz
         
     - name: Check for crashes
       run: |

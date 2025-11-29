@@ -25,7 +25,6 @@
 //! - [`crate::metadata::token`] - Token-based metadata references
 
 use crate::{
-    malformed_error,
     metadata::{token::Token, typesystem::CilTypeRc},
     Result,
 };

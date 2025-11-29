@@ -68,7 +68,6 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     cilassembly::{remapping::RidRemapper, AssemblyChanges, HeapChanges, TableModifications},
-    malformed_error,
     metadata::{
         cilassemblyview::CilAssemblyView,
         tables::{CodedIndex, TableDataOwned, TableId},

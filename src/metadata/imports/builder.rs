@@ -4,7 +4,7 @@
 //! with a fluent API. The builder follows the established dotscope pattern of not holding
 //! references to BuilderContext and instead taking it as a parameter to the build() method.
 
-use crate::{cilassembly::BuilderContext, malformed_error, Result};
+use crate::{cilassembly::BuilderContext, Result};
 
 /// Builder for creating native PE import tables.
 ///

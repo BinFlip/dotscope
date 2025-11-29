@@ -173,7 +173,6 @@ use std::io::Read;
 
 use crate::{
     file::parser::Parser,
-    malformed_error,
     metadata::customdebuginformation::types::{CustomDebugInfo, CustomDebugKind},
     Result,
 };

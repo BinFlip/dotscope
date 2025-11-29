@@ -4,7 +4,7 @@
 //! according to the ECMA-335 specification. It handles both tiny and fat format
 //! method body headers as defined in II.25.4.5.
 
-use crate::{malformed_error, Result};
+use crate::Result;
 
 /// Encode method body header according to ECMA-335 II.25.4.5.
 ///

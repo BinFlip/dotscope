@@ -73,7 +73,7 @@
 use md5::{Digest, Md5};
 use sha1::Sha1;
 
-use crate::{malformed_error, metadata::tables::AssemblyHashAlgorithm, utils::read_le, Result};
+use crate::{metadata::tables::AssemblyHashAlgorithm, utils::read_le, Result};
 
 /// Assembly identity representation for .NET CIL assemblies.
 ///

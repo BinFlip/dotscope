@@ -92,7 +92,6 @@
 //! - [`crate::metadata::typesystem`] - Type system for accurate encoding
 
 use crate::{
-    malformed_error,
     metadata::customattributes::{
         CustomAttributeArgument, CustomAttributeNamedArgument, CustomAttributeValue,
         NAMED_ARG_TYPE, SERIALIZATION_TYPE,

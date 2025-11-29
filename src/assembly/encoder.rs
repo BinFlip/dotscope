@@ -56,7 +56,7 @@ use crate::{
         instruction::{FlowType, Immediate, Operand, OperandType},
         instructions::{CilInstruction, INSTRUCTIONS, INSTRUCTIONS_FE},
     },
-    malformed_error, Error, Result,
+    Error, Result,
 };
 use std::{collections::HashMap, sync::OnceLock};
 
