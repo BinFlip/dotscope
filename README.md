@@ -268,6 +268,7 @@ Check out the [examples](examples/) directory for complete working examples with
 - **[Code Injection](examples/injectcode.rs)** - Injecting new methods into existing assemblies with MethodBuilder
 - **[Raw Assembly View](examples/raw_assembly_view.rs)** - Direct access to PE headers, metadata streams, and heaps
 - **[Project Loader](examples/project_loader.rs)** - Loading assemblies with automatic dependency resolution
+- **[SSA Viewer](examples/ssa_viewer.rs)** - View SSA form and disassembly of methods with control flow graphs
 
 Each example includes detailed documentation explaining:
 
