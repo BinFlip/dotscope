@@ -20,7 +20,6 @@
 //! - **TypeSignatureEncoder Foundation**: Built on the proven TypeSignatureEncoder base
 
 use crate::{
-    malformed_error,
     metadata::{
         signatures::{
             CustomModifier, SignatureField, SignatureLocalVariables, SignatureMethod,

@@ -111,7 +111,6 @@
 use std::{fmt, fmt::Write as _, str::FromStr, sync::atomic::Ordering};
 
 use crate::{
-    malformed_error,
     metadata::{
         identity::cryptographic::Identity,
         tables::{Assembly, AssemblyHashAlgorithm, AssemblyRef},

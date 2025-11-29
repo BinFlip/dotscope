@@ -46,7 +46,6 @@ use std::collections::HashMap;
 
 use crate::{
     cilassembly::{HeapChanges, TableModifications},
-    malformed_error,
     metadata::{
         cilassemblyview::CilAssemblyView, exports::UnifiedExportContainer,
         imports::UnifiedImportContainer, tables::TableId,

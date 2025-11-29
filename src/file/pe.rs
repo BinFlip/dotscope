@@ -38,7 +38,7 @@
 //! owned_pe.write_section_table(&mut buffer)?;
 //! ```
 
-use crate::{malformed_error, Error, Result};
+use crate::{Error, Result};
 use std::collections::HashMap;
 use std::io::Write;
 

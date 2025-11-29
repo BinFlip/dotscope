@@ -202,7 +202,6 @@ use crate::{
         },
         File,
     },
-    malformed_error,
     metadata::{
         streams::TablesHeader,
         tables::{

@@ -38,7 +38,6 @@
 //! ```
 
 use crate::{
-    malformed_error,
     metadata::{
         signatures::{CustomModifier, SignatureMethod, TypeSignature},
         token::Token,
