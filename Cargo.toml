@@ -51,6 +51,7 @@ flate2 = "1.1.5"
 
 [dev-dependencies]
 criterion = "0.8.1"
+clap = { version = "4.5.53", features = ["derive"] }
 
 [features]
 default = ["legacy-crypto"]

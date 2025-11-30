@@ -76,11 +76,11 @@ Follow this recommended order to learn dotscope effectively:
   - Branch instruction handling
   - Flow control patterns
 
-- **[`ssa_viewer.rs`](ssa_viewer.rs)** - SSA form and disassembly viewer
+- **[`analysis.rs`](analysis.rs)** - Analysis viewer with multiple output modes
   - Load assemblies with dependency resolution
   - View methods by name or RVA
-  - Display SSA form with phi nodes
-  - Control flow graph information
+  - Display disassembly, SSA form, control flow graphs, and call graphs
+  - Export CFG and call graphs to DOT format for visualization
 
 ## Running Examples
 
@@ -93,9 +93,12 @@ cargo run --example basic tests/samples/WindowsBase.dll
 # Code injection example
 cargo run --example injectcode tests/samples/WindowsBase.dll injected_output.dll
 
-# SSA viewer - list methods, view disassembly and SSA form
-cargo run --example ssa_viewer -- --file tests/samples/mono_4.8/mscorlib.dll --method "Main"
-cargo run --example ssa_viewer -- --file tests/samples/crafted_2.exe --search tests/samples/mono_4.8 --rva 0x23A4
+# Analysis viewer - list methods, view disassembly, SSA, CFG, and call graphs
+cargo run --example analysis -- --file tests/samples/mono_4.8/mscorlib.dll list
+cargo run --example analysis -- --file tests/samples/mono_4.8/mscorlib.dll disasm --method "Main"
+cargo run --example analysis -- --file tests/samples/crafted_2.exe -s tests/samples/mono_4.8 ssa --rva 0x23A4
+cargo run --example analysis -- --file tests/samples/crafted_2.exe -s tests/samples/mono_4.8 cfg --method "Main" --output cfg.dot
+cargo run --example analysis -- --file tests/samples/crafted_2.exe -s tests/samples/mono_4.8 callgraph --output callgraph.dot
 
 # Each example provides usage help
 cargo run --example basic

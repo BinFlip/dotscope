@@ -115,7 +115,7 @@ impl CallResolver {
         let types = assembly.types();
 
         // Find all virtual methods and their overriders
-        for entry in methods.iter() {
+        for entry in methods {
             let method = entry.value();
 
             // Skip non-virtual methods

@@ -392,7 +392,7 @@ mod tests {
         DirectedGraph, NodeId,
     };
 
-    fn create_linear_graph() -> DirectedGraph<&'static str, ()> {
+    fn create_linear_graph() -> DirectedGraph<'static, &'static str, ()> {
         let mut graph = DirectedGraph::new();
         let a = graph.add_node("A");
         let b = graph.add_node("B");
@@ -402,7 +402,7 @@ mod tests {
         graph
     }
 
-    fn create_diamond_graph() -> DirectedGraph<&'static str, ()> {
+    fn create_diamond_graph() -> DirectedGraph<'static, &'static str, ()> {
         let mut graph = DirectedGraph::new();
         let a = graph.add_node("A");
         let b = graph.add_node("B");
@@ -415,7 +415,7 @@ mod tests {
         graph
     }
 
-    fn create_cycle_graph() -> DirectedGraph<&'static str, ()> {
+    fn create_cycle_graph() -> DirectedGraph<'static, &'static str, ()> {
         let mut graph = DirectedGraph::new();
         let a = graph.add_node("A");
         let b = graph.add_node("B");
@@ -426,7 +426,7 @@ mod tests {
         graph
     }
 
-    fn create_tree_graph() -> DirectedGraph<&'static str, ()> {
+    fn create_tree_graph() -> DirectedGraph<'static, &'static str, ()> {
         //       A
         //      / \
         //     B   C

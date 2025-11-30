@@ -141,9 +141,8 @@ impl CallTarget {
     #[must_use]
     pub fn primary_token(&self) -> Option<Token> {
         match self {
-            Self::Resolved(token) => Some(*token),
+            Self::Resolved(token) | Self::Unresolved { token, .. } => Some(*token),
             Self::Virtual { declared, .. } => Some(*declared),
-            Self::Unresolved { token, .. } => Some(*token),
             _ => None,
         }
     }
@@ -155,12 +154,13 @@ impl CallTarget {
     ///
     /// # Returns
     ///
-    /// A vector of method tokens. Empty for `External`, `Delegate`, `Indirect`,
-    /// and `Unresolved` variants.
+    /// A vector of method tokens. Empty for `External`, `Delegate`, and `Indirect` variants.
+    /// For `Unresolved` variants, returns the original unresolved token to allow
+    /// external method references (MemberRef/MethodSpec) to be included in the call graph.
     #[must_use]
     pub fn all_targets(&self) -> Vec<Token> {
         match self {
-            Self::Resolved(token) => vec![*token],
+            Self::Resolved(token) | Self::Unresolved { token, .. } => vec![*token],
             Self::Virtual {
                 possible_targets, ..
             } => possible_targets.clone(),

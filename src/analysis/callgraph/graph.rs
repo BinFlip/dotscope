@@ -8,7 +8,8 @@
 //! The implementation leverages the generic [`DirectedGraph`] infrastructure
 //! from the `utils/graph` module, providing access to standard graph algorithms.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
+use std::fmt::Write;
 use std::sync::OnceLock;
 
 use crate::{
@@ -16,11 +17,16 @@ use crate::{
     assembly::{Instruction, Operand},
     metadata::{
         method::{Method, MethodModifiers},
+        tables::MemberRefSignature,
         token::Token,
+        typesystem::{CilTypeReference, TypeRegistry},
     },
-    utils::graph::{
-        algorithms::{self, strongly_connected_components},
-        DirectedGraph, NodeId,
+    utils::{
+        escape_dot,
+        graph::{
+            algorithms::{self, strongly_connected_components},
+            DirectedGraph, NodeId,
+        },
     },
     CilObject, Result,
 };
@@ -51,7 +57,7 @@ use crate::{
 #[derive(Debug)]
 pub struct CallGraph {
     /// The underlying directed graph: nodes are method metadata, edges are call relationships.
-    graph: DirectedGraph<CallGraphNode, CallType>,
+    graph: DirectedGraph<'static, CallGraphNode, CallType>,
     /// Map from method token to node ID in the graph for O(1) lookup.
     token_to_node: HashMap<Token, NodeId>,
     /// Call resolver for virtual dispatch and type hierarchy queries.
@@ -89,21 +95,24 @@ impl CallGraph {
         let resolver = CallResolver::new(assembly);
         let methods = assembly.methods();
         let method_count = methods.len();
+        let types = assembly.types();
 
         let mut graph: DirectedGraph<CallGraphNode, CallType> =
             DirectedGraph::with_capacity(method_count, method_count * 4);
         let mut token_to_node: HashMap<Token, NodeId> = HashMap::with_capacity(method_count);
 
-        // First pass: add all methods as nodes
-        for entry in methods.iter() {
+        // First pass: add all internal methods as nodes
+        for entry in methods {
             let method = entry.value();
-            let node = Self::create_node(method);
+            let full_name =
+                Self::get_method_full_name(&types, &resolver, method.token, &method.name);
+            let node = Self::create_node(method, full_name);
             let node_id = graph.add_node(node);
             token_to_node.insert(method.token, node_id);
         }
 
         // Second pass: extract call sites and build edges
-        for entry in methods.iter() {
+        for entry in methods {
             let method = entry.value();
             let caller_token = method.token;
 
@@ -112,7 +121,9 @@ impl CallGraph {
             };
 
             // Skip methods without bodies
-            let caller_node = graph.node(caller_node_id).expect("node exists");
+            let Some(caller_node) = graph.node(caller_node_id) else {
+                continue;
+            };
             if caller_node.is_abstract || caller_node.is_external {
                 continue;
             }
@@ -123,10 +134,22 @@ impl CallGraph {
             // Build edges for each call site
             for site in &call_sites {
                 for callee_token in site.target.all_targets() {
-                    if let Some(&callee_node_id) = token_to_node.get(&callee_token) {
-                        // Add edge from caller to callee
-                        let _ = graph.add_edge(caller_node_id, callee_node_id, site.call_type);
-                    }
+                    // Check if target already exists
+                    let callee_node_id = if let Some(&node_id) = token_to_node.get(&callee_token) {
+                        node_id
+                    } else {
+                        // External reference - create node for it
+                        if let Some(node) = Self::create_external_node(assembly, callee_token) {
+                            let node_id = graph.add_node(node);
+                            token_to_node.insert(callee_token, node_id);
+                            node_id
+                        } else {
+                            continue;
+                        }
+                    };
+
+                    // Add edge from caller to callee
+                    let _ = graph.add_edge(caller_node_id, callee_node_id, site.call_type);
                 }
             }
 
@@ -146,11 +169,153 @@ impl CallGraph {
         })
     }
 
+    /// Builds a call graph starting from the assembly's entry point.
+    ///
+    /// Unlike [`build`], this method only includes methods that are reachable
+    /// from the assembly's entry point (typically `Main`). This produces a
+    /// cleaner graph focused on the actual execution paths rather than
+    /// including every method in the assembly.
+    ///
+    /// # Arguments
+    ///
+    /// * `assembly` - The assembly to build the call graph from
+    ///
+    /// # Returns
+    ///
+    /// A new [`CallGraph`] instance containing only reachable methods,
+    /// or `None` if the assembly has no entry point (e.g., a library).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if method body parsing fails during call site extraction.
+    pub fn build_from_entrypoint(assembly: &CilObject) -> Result<Option<Self>> {
+        let entry_point_token = assembly.cor20header().entry_point_token;
+        if entry_point_token == 0 {
+            return Ok(None);
+        }
+
+        let entry_token = Token::new(entry_point_token);
+        Self::build_from_roots(assembly, &[entry_token]).map(Some)
+    }
+
+    /// Builds a call graph starting from specified root methods.
+    ///
+    /// This method performs a traversal starting from the given root tokens,
+    /// only including methods that are reachable from those roots. This is
+    /// useful for analyzing specific code paths or building focused call graphs.
+    ///
+    /// # Arguments
+    ///
+    /// * `assembly` - The assembly to build the call graph from
+    /// * `roots` - The method tokens to start traversal from
+    ///
+    /// # Returns
+    ///
+    /// A new [`CallGraph`] instance containing only reachable methods.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if method body parsing fails during call site extraction.
+    pub fn build_from_roots(assembly: &CilObject, roots: &[Token]) -> Result<Self> {
+        let resolver = CallResolver::new(assembly);
+        let methods = assembly.methods();
+        let types = assembly.types();
+
+        let mut graph: DirectedGraph<CallGraphNode, CallType> = DirectedGraph::new();
+        let mut token_to_node: HashMap<Token, NodeId> = HashMap::new();
+
+        // Worklist for BFS traversal
+        let mut worklist: Vec<Token> = roots.to_vec();
+        let mut visited: HashSet<Token> = HashSet::new();
+
+        while let Some(current_token) = worklist.pop() {
+            if visited.contains(&current_token) {
+                continue;
+            }
+            visited.insert(current_token);
+
+            // Try to get the method - could be internal (MethodDef) or external (MemberRef/MethodSpec)
+            let table_id = current_token.table();
+
+            if table_id == 0x06 {
+                // MethodDef - internal method
+                if let Some(method_entry) = methods.get(&current_token) {
+                    let method = method_entry.value();
+                    let full_name =
+                        Self::get_method_full_name(&types, &resolver, method.token, &method.name);
+                    let mut node = Self::create_node(method, full_name);
+
+                    // Extract call sites if method has a body
+                    if !node.is_abstract && !node.is_external {
+                        let call_sites = Self::extract_call_sites(assembly, method, &resolver);
+
+                        // Add callees to worklist
+                        for site in &call_sites {
+                            for callee_token in site.target.all_targets() {
+                                if !visited.contains(&callee_token) {
+                                    worklist.push(callee_token);
+                                }
+                            }
+                        }
+
+                        node.call_sites = call_sites;
+                    }
+
+                    let node_id = graph.add_node(node);
+                    token_to_node.insert(current_token, node_id);
+                }
+            } else if table_id == 0x0A || table_id == 0x2B {
+                // MemberRef or MethodSpec - external reference
+                if let Some(node) = Self::create_external_node(assembly, current_token) {
+                    let node_id = graph.add_node(node);
+                    token_to_node.insert(current_token, node_id);
+                }
+            }
+        }
+
+        // Second pass: collect edges first, then add them
+        let edges_to_add: Vec<(NodeId, NodeId, CallType)> = token_to_node
+            .values()
+            .filter_map(|&node_id| {
+                graph.node(node_id).map(|node| {
+                    node.callees()
+                        .into_iter()
+                        .filter_map(|callee_token| {
+                            token_to_node.get(&callee_token).map(|&callee_node_id| {
+                                let call_type = node
+                                    .call_sites
+                                    .iter()
+                                    .find(|s| s.target.all_targets().contains(&callee_token))
+                                    .map_or(CallType::Call, |s| s.call_type);
+                                (node_id, callee_node_id, call_type)
+                            })
+                        })
+                        .collect::<Vec<_>>()
+                })
+            })
+            .flatten()
+            .collect();
+
+        for (from, to, call_type) in edges_to_add {
+            let _ = graph.add_edge(from, to, call_type);
+        }
+
+        Ok(Self {
+            graph,
+            token_to_node,
+            resolver,
+            sccs: OnceLock::new(),
+            topo_order: OnceLock::new(),
+            entry_points: OnceLock::new(),
+        })
+    }
+
     /// Creates a call graph node from a method.
-    fn create_node(method: &Method) -> CallGraphNode {
+    fn create_node(method: &Method, full_name: String) -> CallGraphNode {
         let mut node = CallGraphNode::new(
             method.token,
             method.name.clone(),
+            full_name,
             method.signature.to_string(),
         );
 
@@ -166,6 +331,162 @@ impl CallGraph {
         }
 
         node
+    }
+
+    /// Computes the full qualified name for a method.
+    ///
+    /// For internal methods (MethodDef), the full name includes the declaring type's
+    /// namespace and name. For external methods, only the method name is returned.
+    fn get_method_full_name(
+        types: &TypeRegistry,
+        resolver: &CallResolver,
+        method_token: Token,
+        method_name: &str,
+    ) -> String {
+        // Try to get declaring type from the resolver
+        if let Some(type_token) = resolver.declaring_type(method_token) {
+            if let Some(type_info) = types.get(&type_token) {
+                let type_full_name = if type_info.namespace.is_empty() {
+                    type_info.name.clone()
+                } else {
+                    format!("{}.{}", type_info.namespace, type_info.name)
+                };
+                return format!("{}::{}", type_full_name, method_name);
+            }
+        }
+        // Fallback to just the method name
+        method_name.to_string()
+    }
+
+    /// Creates a call graph node for an external method reference (MemberRef or MethodSpec).
+    fn create_external_node(assembly: &CilObject, callee_token: Token) -> Option<CallGraphNode> {
+        let table_id = callee_token.table();
+
+        match table_id {
+            // MemberRef table (0x0A)
+            0x0A => {
+                let refs = assembly.refs_members();
+                if let Some(member_ref) = refs.get(&callee_token) {
+                    let member_ref = member_ref.value();
+
+                    // Get the declaring type name
+                    let type_name = Self::get_external_type_name(&member_ref.declaredby);
+                    let full_name = if type_name.is_empty() {
+                        member_ref.name.clone()
+                    } else {
+                        format!("{}::{}", type_name, member_ref.name)
+                    };
+
+                    let signature = match &member_ref.signature {
+                        MemberRefSignature::Method(sig) => sig.to_string(),
+                        MemberRefSignature::Field(_) => String::new(),
+                    };
+
+                    let mut node = CallGraphNode::new(
+                        callee_token,
+                        member_ref.name.clone(),
+                        full_name,
+                        signature,
+                    );
+                    node.is_external_ref = true;
+                    node.is_constructor = member_ref.is_constructor();
+                    return Some(node);
+                }
+            }
+            // MethodSpec table (0x2B)
+            0x2B => {
+                let specs = assembly.method_specs();
+                if let Some(method_spec) = specs.get(&callee_token) {
+                    let method_spec = method_spec.value();
+
+                    // Get information from the underlying method
+                    let (name, full_name, signature, is_constructor) =
+                        Self::get_method_spec_info(assembly, &method_spec.method);
+
+                    let mut node = CallGraphNode::new(callee_token, name, full_name, signature);
+                    node.is_external_ref = true;
+                    node.is_constructor = is_constructor;
+                    return Some(node);
+                }
+            }
+            _ => {}
+        }
+
+        None
+    }
+
+    /// Gets the type name from a CilTypeReference for external references.
+    fn get_external_type_name(type_ref: &CilTypeReference) -> String {
+        match type_ref {
+            CilTypeReference::TypeRef(t)
+            | CilTypeReference::TypeDef(t)
+            | CilTypeReference::TypeSpec(t) => {
+                if let Some(type_info) = t.upgrade() {
+                    if type_info.namespace.is_empty() {
+                        type_info.name.clone()
+                    } else {
+                        format!("{}.{}", type_info.namespace, type_info.name)
+                    }
+                } else {
+                    String::new()
+                }
+            }
+            CilTypeReference::MemberRef(mr) => {
+                // For MemberRef as parent, recurse to get its declaring type
+                Self::get_external_type_name(&mr.declaredby)
+            }
+            CilTypeReference::ModuleRef(m) => m.name.clone(),
+            _ => String::new(),
+        }
+    }
+
+    /// Gets method information from a MethodSpec's underlying method reference.
+    fn get_method_spec_info(
+        assembly: &CilObject,
+        method_ref: &CilTypeReference,
+    ) -> (String, String, String, bool) {
+        match method_ref {
+            CilTypeReference::MethodDef(mr) => {
+                if let Some(method) = mr.upgrade() {
+                    let types = assembly.types();
+                    let resolver = CallResolver::new(assembly);
+                    let full_name =
+                        Self::get_method_full_name(&types, &resolver, method.token, &method.name);
+                    (
+                        method.name.clone(),
+                        full_name,
+                        method.signature.to_string(),
+                        method.is_constructor(),
+                    )
+                } else {
+                    (
+                        "unknown".to_string(),
+                        "unknown".to_string(),
+                        String::new(),
+                        false,
+                    )
+                }
+            }
+            CilTypeReference::MemberRef(mr) => {
+                let type_name = Self::get_external_type_name(&mr.declaredby);
+                let full_name = if type_name.is_empty() {
+                    mr.name.clone()
+                } else {
+                    format!("{}::{}", type_name, mr.name)
+                };
+                let signature = match &mr.signature {
+                    MemberRefSignature::Method(sig) => sig.to_string(),
+                    MemberRefSignature::Field(_) => String::new(),
+                };
+                (mr.name.clone(), full_name, signature, mr.is_constructor())
+            }
+            _ => (
+                "unknown".to_string(),
+                "unknown".to_string(),
+                String::new(),
+                false,
+            ),
+        }
     }
 
     /// Extracts call sites from a method body.
@@ -205,7 +526,7 @@ impl CallGraph {
             "ldftn" => (CallType::Ldftn, Self::extract_method_token(instr)?),
             "ldvirtftn" => (CallType::LdVirtFtn, Self::extract_method_token(instr)?),
             "calli" => return Some((CallType::Calli, CallTarget::Indirect)),
-            "tail." => return None, // Prefix, handled with next instruction
+            // "tail." is a prefix handled with next instruction, fall through to default
             _ => return None,
         };
 
@@ -360,9 +681,7 @@ impl CallGraph {
     /// found or has no call sites.
     #[must_use]
     pub fn call_sites(&self, method: Token) -> &[CallSite] {
-        self.node(method)
-            .map(|n| n.call_sites.as_slice())
-            .unwrap_or(&[])
+        self.node(method).map_or(&[], |n| n.call_sites.as_slice())
     }
 
     /// Returns entry points (methods with no callers within the assembly).
@@ -524,7 +843,7 @@ impl CallGraph {
     ///
     /// A reference to the underlying [`DirectedGraph`] structure.
     #[must_use]
-    pub fn graph(&self) -> &DirectedGraph<CallGraphNode, CallType> {
+    pub fn graph(&self) -> &DirectedGraph<'static, CallGraphNode, CallType> {
         &self.graph
     }
 
@@ -571,6 +890,92 @@ impl CallGraph {
             recursive_methods: self.recursive_methods().len(),
         }
     }
+
+    /// Generates a DOT format representation of this call graph.
+    ///
+    /// The generated DOT can be rendered using Graphviz tools like `dot` or
+    /// online viewers. Entry points (methods with no callers) are highlighted
+    /// in green, leaf methods (methods with no callees) are highlighted in blue.
+    ///
+    /// # Arguments
+    ///
+    /// * `title` - Optional title for the graph
+    ///
+    /// # Returns
+    ///
+    /// A string containing the DOT representation of the call graph.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::analysis::CallGraph;
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_path(Path::new("test.dll"))?;
+    /// let callgraph = CallGraph::build(&assembly)?;
+    /// let dot = callgraph.to_dot(Some("MyAssembly"));
+    /// std::fs::write("callgraph.dot", dot)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub fn to_dot(&self, title: Option<&str>) -> String {
+        let mut dot = String::new();
+
+        dot.push_str("digraph CallGraph {\n");
+        if let Some(name) = title {
+            let _ = writeln!(dot, "    label=\"{}\";", escape_dot(name));
+        } else {
+            dot.push_str("    label=\"Call Graph\";\n");
+        }
+        dot.push_str("    labelloc=t;\n");
+        dot.push_str("    node [shape=box, fontname=\"Courier\", fontsize=10];\n");
+        dot.push_str("    edge [fontname=\"Courier\", fontsize=9];\n");
+        dot.push_str("    rankdir=TB;\n\n");
+
+        let entry_points: HashSet<_> = self.entry_points().iter().copied().collect();
+
+        // Generate nodes
+        for node_id in self.graph.node_ids() {
+            if let Some(node) = self.graph.node(node_id) {
+                let style = if node.is_external_ref {
+                    // External references (MemberRef/MethodSpec) in orange
+                    ", style=filled, fillcolor=lightyellow"
+                } else if entry_points.contains(&node.token) {
+                    // Entry points in green
+                    ", style=filled, fillcolor=lightgreen"
+                } else if node.is_leaf() {
+                    // Leaf methods in blue
+                    ", style=filled, fillcolor=lightblue"
+                } else {
+                    ""
+                };
+
+                let _ = writeln!(
+                    dot,
+                    "    \"{}\" [label=\"{}\"{style}];",
+                    node.token,
+                    escape_dot(&node.full_name),
+                );
+            }
+        }
+
+        dot.push('\n');
+
+        // Generate edges
+        for node_id in self.graph.node_ids() {
+            if let Some(node) = self.graph.node(node_id) {
+                for callee_token in node.callees() {
+                    if self.token_to_node.contains_key(&callee_token) {
+                        let _ = writeln!(dot, "    \"{}\" -> \"{callee_token}\";", node.token);
+                    }
+                }
+            }
+        }
+
+        dot.push_str("}\n");
+        dot
+    }
 }
 
 /// Statistics about a call graph.
@@ -612,6 +1017,7 @@ impl CallGraphStats {
     /// The percentage of resolved call sites (0.0 to 100.0). Returns 100.0
     /// if there are no call sites.
     #[must_use]
+    #[allow(clippy::cast_precision_loss)]
     pub fn resolution_rate(&self) -> f64 {
         if self.total_call_sites == 0 {
             100.0

@@ -78,6 +78,7 @@
 //! - Custom attribute scenarios
 //! - Generic type definitions
 
+pub mod analysis;
 pub mod builders;
 mod crafted2;
 pub mod factories;

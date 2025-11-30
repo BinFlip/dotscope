@@ -3,14 +3,17 @@
 //! This module provides the main [`ControlFlowGraph`] structure that wraps basic blocks
 //! with proper graph semantics and provides access to dominator trees, loops, and traversals.
 
-use std::{collections::HashSet, sync::OnceLock};
+use std::{collections::HashSet, fmt::Write, sync::OnceLock};
 
 use crate::{
     analysis::cfg::{CfgEdge, CfgEdgeKind},
-    assembly::{BasicBlock, FlowType},
-    utils::graph::{
-        algorithms::{self, DominatorTree},
-        DirectedGraph, EdgeId, NodeId,
+    assembly::{BasicBlock, FlowType, Operand},
+    utils::{
+        escape_dot,
+        graph::{
+            algorithms::{self, DominatorTree},
+            DirectedGraph, EdgeId, NodeId,
+        },
     },
     Error::GraphError,
     Result,
@@ -111,10 +114,16 @@ impl NaturalLoop {
 ///
 /// `ControlFlowGraph` is [`Send`] and [`Sync`]. Lazy-initialized fields use
 /// [`OnceLock`] for thread-safe initialization.
+///
+/// # Lifetime Parameter
+///
+/// The `'a` lifetime represents the lifetime of borrowed basic block data:
+/// - Use `ControlFlowGraph<'static>` for owned CFGs (blocks are `Cow::Owned`)
+/// - Use `ControlFlowGraph<'a>` when borrowing blocks from a method
 #[derive(Debug)]
-pub struct ControlFlowGraph {
+pub struct ControlFlowGraph<'a> {
     /// The underlying directed graph structure.
-    graph: DirectedGraph<BasicBlock, CfgEdge>,
+    graph: DirectedGraph<'a, BasicBlock, CfgEdge>,
     /// Index of the entry block (always 0 for method entry).
     entry: NodeId,
     /// Indices of exit blocks (blocks with no successors or return instructions).
@@ -127,7 +136,7 @@ pub struct ControlFlowGraph {
     loops: OnceLock<Vec<NaturalLoop>>,
 }
 
-impl ControlFlowGraph {
+impl ControlFlowGraph<'static> {
     /// Creates a new control flow graph from a vector of basic blocks.
     ///
     /// This constructor builds the CFG by:
@@ -236,6 +245,119 @@ impl ControlFlowGraph {
             dominance_frontiers: OnceLock::new(),
             loops: OnceLock::new(),
         })
+    }
+}
+
+/// Methods available on any `ControlFlowGraph`, regardless of ownership.
+impl<'a> ControlFlowGraph<'a> {
+    /// Creates a new control flow graph borrowing blocks from a slice.
+    ///
+    /// This constructor enables zero-copy CFG construction when blocks are
+    /// already stored elsewhere (e.g., in a method's `blocks` field).
+    ///
+    /// # Arguments
+    ///
+    /// * `blocks` - A slice of basic blocks to borrow
+    ///
+    /// # Returns
+    ///
+    /// A new `ControlFlowGraph` borrowing the blocks, or an error if construction fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The blocks slice is empty
+    /// - Block successor indices are out of range
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::analysis::ControlFlowGraph;
+    ///
+    /// // Build CFG borrowing from method's blocks (zero-copy)
+    /// if let Some(blocks) = method.blocks.get() {
+    ///     let cfg = ControlFlowGraph::from_blocks_ref(blocks)?;
+    ///     // cfg is valid as long as `blocks` is valid
+    /// }
+    /// ```
+    pub fn from_blocks_ref(blocks: &'a [BasicBlock]) -> Result<Self> {
+        if blocks.is_empty() {
+            return Err(GraphError(
+                "Cannot create CFG from empty block list".to_string(),
+            ));
+        }
+
+        let block_count = blocks.len();
+        let mut graph: DirectedGraph<'a, BasicBlock, CfgEdge> =
+            DirectedGraph::from_nodes_borrowed(blocks);
+
+        // Build edges based on successor relationships
+        for (block_idx, block) in blocks.iter().enumerate() {
+            let node_id = NodeId::new(block_idx);
+            let last_instruction = block.instructions.last();
+            let flow_type = last_instruction.map(|i| i.flow_type);
+
+            for (idx, &succ_idx) in block.successors.iter().enumerate() {
+                if succ_idx >= block_count {
+                    return Err(GraphError(format!(
+                        "Block {} has successor index {} which exceeds block count {}",
+                        block_idx, succ_idx, block_count
+                    )));
+                }
+
+                let target_node = NodeId::new(succ_idx);
+                let edge_kind = Self::classify_edge(flow_type, idx, block.successors.len());
+                let edge = CfgEdge::new(succ_idx, edge_kind);
+
+                graph.add_edge(node_id, target_node, edge)?;
+            }
+        }
+
+        // Identify entry and exit blocks
+        let entry = NodeId::new(0); // Method entry is always block 0
+        let mut exits: Vec<NodeId> = Vec::new();
+        for (block_idx, block) in blocks.iter().enumerate() {
+            let is_exit = block.successors.is_empty()
+                || block
+                    .instructions
+                    .last()
+                    .is_some_and(|i| i.flow_type == FlowType::Return);
+            if is_exit {
+                exits.push(NodeId::new(block_idx));
+            }
+        }
+
+        Ok(Self {
+            graph,
+            entry,
+            exits,
+            dominators: OnceLock::new(),
+            dominance_frontiers: OnceLock::new(),
+            loops: OnceLock::new(),
+        })
+    }
+
+    /// Converts this CFG into an owned CFG with `'static` lifetime.
+    ///
+    /// If the CFG already owns its blocks, this is efficient. If borrowed,
+    /// this clones the block data.
+    ///
+    /// Note: Cached analysis results (dominators, loops) are preserved if
+    /// already computed.
+    ///
+    /// # Returns
+    ///
+    /// An owned `ControlFlowGraph<'static>`.
+    #[must_use]
+    pub fn into_owned(self) -> ControlFlowGraph<'static> {
+        ControlFlowGraph {
+            graph: self.graph.into_owned(),
+            entry: self.entry,
+            exits: self.exits,
+            dominators: self.dominators,
+            dominance_frontiers: self.dominance_frontiers,
+            loops: self.loops,
+        }
     }
 
     /// Classifies an edge based on the flow type and position in successor list.
@@ -587,7 +709,7 @@ impl ControlFlowGraph {
     ///
     /// A reference to the underlying [`DirectedGraph`] structure.
     #[must_use]
-    pub fn graph(&self) -> &DirectedGraph<BasicBlock, CfgEdge> {
+    pub fn graph(&self) -> &DirectedGraph<'a, BasicBlock, CfgEdge> {
         &self.graph
     }
 
@@ -630,6 +752,149 @@ impl ControlFlowGraph {
     #[must_use]
     pub fn idom(&self, node_id: NodeId) -> Option<NodeId> {
         self.dominators().immediate_dominator(node_id)
+    }
+
+    /// Generates a DOT format representation of this control flow graph.
+    ///
+    /// The generated DOT can be rendered using Graphviz tools like `dot` or
+    /// online viewers. Entry blocks are highlighted in green, exit blocks in red.
+    ///
+    /// # Arguments
+    ///
+    /// * `title` - Optional title for the graph (e.g., method name)
+    ///
+    /// # Returns
+    ///
+    /// A string containing the DOT representation of the CFG.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_path(Path::new("test.dll"))?;
+    /// for entry in assembly.methods().iter().take(1) {
+    ///     let method = entry.value();
+    ///     if let Some(cfg) = method.cfg() {
+    ///         let dot = cfg.to_dot(Some(&method.name));
+    ///         std::fs::write("cfg.dot", dot)?;
+    ///     }
+    /// }
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    #[must_use]
+    pub fn to_dot(&self, title: Option<&str>) -> String {
+        let mut dot = String::new();
+
+        dot.push_str("digraph CFG {\n");
+        if let Some(name) = title {
+            let _ = writeln!(dot, "    label=\"CFG: {}\";", escape_dot(name));
+        }
+        dot.push_str("    labelloc=t;\n");
+        dot.push_str("    node [shape=box, fontname=\"Courier\", fontsize=10];\n");
+        dot.push_str("    edge [fontname=\"Courier\", fontsize=9];\n\n");
+
+        // Generate nodes
+        for block_idx in 0..self.block_count() {
+            let node_id = NodeId::new(block_idx);
+            if let Some(block) = self.block(node_id) {
+                let is_entry = node_id == self.entry;
+                let is_exit = self.exits.contains(&node_id);
+
+                let node_name = format!("B{block_idx}_{:04X}", block.rva);
+                let mut label = format!("B{block_idx}_{:04X}", block.rva);
+                if is_entry {
+                    label.push_str(" (entry)");
+                }
+                if is_exit {
+                    label.push_str(" (exit)");
+                }
+                label.push_str("\\l"); // Left-align with newline
+
+                for instr in &block.instructions {
+                    // Format: RVA: mnemonic [operand]
+                    let _ = write!(label, "{:04X}: {}", instr.rva, escape_dot(instr.mnemonic));
+
+                    match &instr.operand {
+                        Operand::None => {}
+                        Operand::Immediate(imm) => {
+                            let _ = write!(label, " {}", escape_dot(&format!("{imm:?}")));
+                        }
+                        Operand::Target(addr) => {
+                            let _ = write!(label, " 0x{addr:X}");
+                        }
+                        Operand::Token(tok) => {
+                            let _ = write!(label, " {tok:?}");
+                        }
+                        Operand::Local(idx) => {
+                            let _ = write!(label, " V_{idx}");
+                        }
+                        Operand::Argument(idx) => {
+                            let _ = write!(label, " A_{idx}");
+                        }
+                        Operand::Switch(targets) => {
+                            let _ = write!(label, " [{}]", targets.len());
+                        }
+                    }
+
+                    label.push_str("\\l"); // Left-align newline
+                }
+
+                let style = if is_entry {
+                    ", style=filled, fillcolor=lightgreen"
+                } else if is_exit {
+                    ", style=filled, fillcolor=lightcoral"
+                } else {
+                    ""
+                };
+
+                let _ = writeln!(dot, "    {node_name} [label=\"{label}\"{style}];");
+            }
+        }
+
+        dot.push('\n');
+
+        // Generate edges
+        for block_idx in 0..self.block_count() {
+            let node_id = NodeId::new(block_idx);
+            let source_rva = self.block(node_id).map_or(0, |b| b.rva);
+            let source_name = format!("B{block_idx}_{source_rva:04X}");
+
+            for (_, target, edge) in self.outgoing_edges(node_id) {
+                let target_rva = self.block(target).map_or(0, |b| b.rva);
+                let target_name = format!("B{}_{target_rva:04X}", target.index());
+
+                let edge_label = match edge.kind() {
+                    CfgEdgeKind::Unconditional => String::new(),
+                    CfgEdgeKind::ConditionalTrue => "true".to_string(),
+                    CfgEdgeKind::ConditionalFalse => "false".to_string(),
+                    CfgEdgeKind::Switch { case_value } => {
+                        case_value.map_or("default".to_string(), |v| format!("case {v}"))
+                    }
+                    CfgEdgeKind::ExceptionHandler { .. } => "catch".to_string(),
+                    CfgEdgeKind::Leave => "leave".to_string(),
+                    CfgEdgeKind::EndFinally => "endfinally".to_string(),
+                };
+
+                let color = match edge.kind() {
+                    CfgEdgeKind::Unconditional => "black",
+                    CfgEdgeKind::ConditionalTrue => "green",
+                    CfgEdgeKind::ConditionalFalse => "red",
+                    CfgEdgeKind::Switch { .. } => "blue",
+                    _ => "purple",
+                };
+
+                let _ = writeln!(
+                    dot,
+                    "    {source_name} -> {target_name} [label=\"{}\", color={color}];",
+                    escape_dot(&edge_label)
+                );
+            }
+        }
+
+        dot.push_str("}\n");
+        dot
     }
 }
 

@@ -109,6 +109,7 @@ pub use iter::InstructionIterator;
 pub use types::*;
 
 use crate::{
+    analysis::ControlFlowGraph,
     assembly::{self, BasicBlock},
     file::File,
     metadata::{
@@ -944,6 +945,59 @@ impl Method {
     #[must_use]
     pub fn is_constructor(&self) -> bool {
         self.name.starts_with(".ctor") || self.name.starts_with(".cctor")
+    }
+
+    /// Builds and returns the control flow graph for this method.
+    ///
+    /// The CFG is constructed from the method's basic blocks, providing graph-based
+    /// access to control flow with support for dominator computation, loop detection,
+    /// and various traversal algorithms.
+    ///
+    /// The returned CFG borrows the method's blocks (zero-copy). If you need an
+    /// owned CFG that outlives the method, use [`into_owned()`](ControlFlowGraph::into_owned)
+    /// on the result.
+    ///
+    /// # Returns
+    ///
+    /// A [`ControlFlowGraph`] for this method, or `None` if:
+    /// - The method hasn't been disassembled yet
+    /// - The method has no basic blocks (e.g., abstract or native methods)
+    /// - CFG construction fails
+    ///
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe. The CFG is built from a snapshot of the
+    /// method's blocks at call time.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
+    ///
+    /// for entry in assembly.methods().iter().take(5) {
+    ///     let method = entry.value();
+    ///     if let Some(cfg) = method.cfg() {
+    ///         println!("Method: {} has {} blocks, {} loops",
+    ///                  method.name, cfg.block_count(), cfg.loops().len());
+    ///
+    ///         // Access dominators
+    ///         let dominators = cfg.dominators();
+    ///         println!("  Entry dominates all: {}",
+    ///                  cfg.node_ids().all(|n| cfg.dominates(cfg.entry(), n)));
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn cfg(&self) -> Option<ControlFlowGraph<'_>> {
+        let blocks = self.blocks.get()?;
+        if blocks.is_empty() {
+            return None;
+        }
+        ControlFlowGraph::from_blocks_ref(blocks).ok()
     }
 
     /// Parse provided data, and extract additional information from the binary. e.g. Disassembly,

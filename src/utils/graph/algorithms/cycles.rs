@@ -197,7 +197,7 @@ mod tests {
         DirectedGraph, NodeId,
     };
 
-    fn create_linear_graph() -> DirectedGraph<&'static str, ()> {
+    fn create_linear_graph() -> DirectedGraph<'static, &'static str, ()> {
         let mut graph = DirectedGraph::new();
         let a = graph.add_node("A");
         let b = graph.add_node("B");
@@ -207,7 +207,7 @@ mod tests {
         graph
     }
 
-    fn create_diamond_graph() -> DirectedGraph<&'static str, ()> {
+    fn create_diamond_graph() -> DirectedGraph<'static, &'static str, ()> {
         let mut graph = DirectedGraph::new();
         let a = graph.add_node("A");
         let b = graph.add_node("B");
@@ -220,7 +220,7 @@ mod tests {
         graph
     }
 
-    fn create_simple_cycle() -> DirectedGraph<&'static str, ()> {
+    fn create_simple_cycle() -> DirectedGraph<'static, &'static str, ()> {
         let mut graph = DirectedGraph::new();
         let a = graph.add_node("A");
         let b = graph.add_node("B");
@@ -231,14 +231,14 @@ mod tests {
         graph
     }
 
-    fn create_self_loop() -> DirectedGraph<&'static str, ()> {
+    fn create_self_loop() -> DirectedGraph<'static, &'static str, ()> {
         let mut graph = DirectedGraph::new();
         let a = graph.add_node("A");
         graph.add_edge(a, a, ()).unwrap();
         graph
     }
 
-    fn create_complex_with_cycle() -> DirectedGraph<&'static str, ()> {
+    fn create_complex_with_cycle() -> DirectedGraph<'static, &'static str, ()> {
         // A -> B -> C -> D
         //      ^       |
         //      +-------+

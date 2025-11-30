@@ -87,7 +87,11 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     ///
     /// Returns the analysis results containing input and output states
     /// for each basic block.
-    pub fn solve(mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph) -> AnalysisResults<A::Lattice>
+    pub fn solve(
+        mut self,
+        ssa: &SsaFunction,
+        cfg: &ControlFlowGraph<'_>,
+    ) -> AnalysisResults<A::Lattice>
     where
         A::Lattice: Clone,
     {
@@ -116,7 +120,7 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     }
 
     /// Initializes the solver state.
-    fn initialize(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph)
+    fn initialize(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>)
     where
         A::Lattice: Clone,
     {
@@ -165,7 +169,7 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     }
 
     /// Main iteration loop.
-    fn iterate(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph)
+    fn iterate(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>)
     where
         A::Lattice: Clone,
     {
@@ -282,7 +286,7 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     }
 
     /// Adds affected blocks to the worklist after a change.
-    fn add_affected_to_worklist(&mut self, block_idx: usize, cfg: &ControlFlowGraph) {
+    fn add_affected_to_worklist(&mut self, block_idx: usize, cfg: &ControlFlowGraph<'_>) {
         let node = NodeId::new(block_idx);
 
         match A::DIRECTION {
