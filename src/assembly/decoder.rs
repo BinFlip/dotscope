@@ -58,14 +58,15 @@ use std::{
 
 use crate::{
     assembly::{
-        visitedmap::VisitedMap, BasicBlock, FlowType, Immediate, Instruction, Operand, OperandType,
-        StackBehavior, INSTRUCTIONS, INSTRUCTIONS_FE,
+        BasicBlock, FlowType, Immediate, Instruction, Operand, OperandType, StackBehavior,
+        INSTRUCTIONS, INSTRUCTIONS_FE,
     },
     file::{parser::Parser, File},
     metadata::{
         method::{ExceptionHandler, Method},
         token::Token,
     },
+    utils::VisitedMap,
     Result,
 };
 
@@ -109,7 +110,7 @@ impl<'a> Decoder<'a> {
     /// * `offset` - The offset at which the first instruction starts (must be in range of parser)
     /// * `rva` - The relative virtual address of the first instruction
     /// * `exceptions` - Optional information about exception handlers from method metadata
-    /// * `visited` - [`crate::assembly::visitedmap::VisitedMap`] for tracking disassembly progress
+    /// * `visited` - [`crate::utils::VisitedMap`] for tracking disassembly progress
     ///
     /// # Returns
     ///
@@ -728,7 +729,7 @@ impl<'a> Decoder<'a> {
 ///
 /// * `method` - The [`crate::metadata::method::Method`] instance to populate with disassembled basic blocks
 /// * `file` - The [`crate::file::File`] containing the raw method bytecode and metadata
-/// * `shared_visited` - Shared [`crate::assembly::visitedmap::VisitedMap`] for coordinated disassembly across methods
+/// * `shared_visited` - Shared [`crate::utils::VisitedMap`] for coordinated disassembly across methods
 ///
 /// # Returns
 ///

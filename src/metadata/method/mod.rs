@@ -109,7 +109,7 @@ pub use iter::InstructionIterator;
 pub use types::*;
 
 use crate::{
-    assembly::{self, BasicBlock, VisitedMap},
+    assembly::{self, BasicBlock},
     file::File,
     metadata::{
         customattributes::CustomAttributeValueList,
@@ -120,6 +120,7 @@ use crate::{
         token::Token,
         typesystem::{TypeRegistry, TypeResolver},
     },
+    utils::VisitedMap,
     Result,
 };
 

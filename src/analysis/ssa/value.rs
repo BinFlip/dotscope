@@ -122,9 +122,8 @@ impl ConstValue {
     #[must_use]
     pub const fn as_bool(&self) -> Option<bool> {
         match self {
-            Self::True => Some(true),
             Self::False | Self::I32(0) | Self::Null => Some(false),
-            Self::I32(_) => Some(true), // non-zero is truthy
+            Self::True | Self::I32(_) => Some(true), // non-zero is truthy
             _ => None,
         }
     }
@@ -206,9 +205,9 @@ impl ConstValue {
             (Self::I64(a), Self::I64(b)) => Some(Self::from_bool(a == b)),
             (Self::F32(a), Self::F32(b)) => Some(Self::from_bool(a == b)),
             (Self::F64(a), Self::F64(b)) => Some(Self::from_bool(a == b)),
-            (Self::Null, Self::Null)
-            | (Self::True, Self::True)
-            | (Self::False, Self::False) => Some(Self::True),
+            (Self::Null, Self::Null) | (Self::True, Self::True) | (Self::False, Self::False) => {
+                Some(Self::True)
+            }
             (Self::True, Self::False) | (Self::False, Self::True) => Some(Self::False),
             _ => None,
         }

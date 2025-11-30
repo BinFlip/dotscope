@@ -42,14 +42,17 @@
 //! ```
 
 mod alignment;
+mod bitset;
 mod compression;
 mod enums;
 pub(crate) mod graph;
 mod heap_calc;
 mod io;
 mod synchronization;
+mod visitedmap;
 
 pub use alignment::{align_to, align_to_4_bytes};
+pub use bitset::BitSet;
 pub use compression::compressed_uint_size;
 pub use enums::EnumUtils;
 pub use heap_calc::calculate_table_row_size;
@@ -62,3 +65,4 @@ pub use io::{
     write_prefixed_string_utf8, write_string_at, write_string_utf8, CilIO,
 };
 pub use synchronization::FailFastBarrier;
+pub use visitedmap::VisitedMap;

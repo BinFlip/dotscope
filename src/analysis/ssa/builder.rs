@@ -602,7 +602,14 @@ impl<'a> SsaBuilder<'a> {
                     .map(|instr| (instr.original().clone(), instr.uses().to_vec(), instr.def()))
             });
 
-            if let Some((cil_instr, _old_uses, _old_def)) = instr_info {
+            if let Some((cil_instr, uses, _old_def)) = instr_info {
+                // Record uses for each operand
+                // The uses are SsaVarIds that were assigned during stack simulation
+                for &use_var in &uses {
+                    let use_site = UseSite::instruction(block_idx, instr_idx);
+                    self.record_use(use_var, use_site);
+                }
+
                 // Determine the origin this instruction defines (if any)
                 let def_origin = Self::infer_origin(&cil_instr)?;
 

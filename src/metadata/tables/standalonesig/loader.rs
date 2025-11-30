@@ -37,12 +37,12 @@
 use std::sync::Arc;
 
 use crate::{
-    assembly::VisitedMap,
     metadata::{
         loader::{LoaderContext, MetadataLoader},
         tables::StandAloneSigRaw,
     },
     prelude::TableId,
+    utils::VisitedMap,
     Result,
 };
 use rayon::iter::{ParallelBridge, ParallelIterator};
