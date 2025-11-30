@@ -98,7 +98,6 @@ mod decoder;
 mod encoder;
 mod instruction;
 mod instructions;
-mod visitedmap;
 
 pub use block::BasicBlock;
 pub use builder::InstructionAssembler;
@@ -109,4 +108,3 @@ pub use instruction::{
     FlowType, Immediate, Instruction, InstructionCategory, Operand, OperandType, StackBehavior,
 };
 pub use instructions::*;
-pub(crate) use visitedmap::VisitedMap;

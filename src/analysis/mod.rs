@@ -10,6 +10,7 @@
 //!
 //! - [`cfg`] - Control Flow Graph construction and analysis
 //! - [`ssa`] - Static Single Assignment form transformation
+//! - [`dataflow`] - Data flow analysis framework
 //!
 //! # Future Components
 //!
@@ -35,11 +36,17 @@
 //! ```
 
 mod cfg;
+mod dataflow;
 mod ssa;
 
 // Re-export primary types at module level
 pub use crate::utils::graph::NodeId;
 pub use cfg::{CfgEdge, CfgEdgeKind, ControlFlowGraph, NaturalLoop};
+pub use dataflow::{
+    AnalysisResults, ConstantPropagation, DataFlowAnalysis, DataFlowSolver, Direction,
+    JoinSemiLattice, Lattice, LiveVariables, LivenessResult, MeetSemiLattice, ReachingDefinitions,
+    ReachingDefsResult, ScalarValue, SccpResult,
+};
 pub use ssa::{
     AbstractValue, ComputedOp, ComputedValue, ConstValue, DefSite, FieldRef, FnPtrSig, MethodRef,
     PhiNode, PhiOperand, SigRef, SimulationResult, SsaBlock, SsaBuilder, SsaFunction,
