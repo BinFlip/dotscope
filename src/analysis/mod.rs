@@ -11,12 +11,7 @@
 //! - [`cfg`] - Control Flow Graph construction and analysis
 //! - [`ssa`] - Static Single Assignment form transformation
 //! - [`dataflow`] - Data flow analysis framework
-//!
-//! # Future Components
-//!
-//! Planned additions include:
-//! - Data flow analysis framework
-//! - Call graph construction
+//! - [`callgraph`] - Inter-procedural call graph construction
 //!
 //! # Usage
 //!
@@ -35,12 +30,17 @@
 //! assert!(dominators.dominates(cfg.entry(), some_block));
 //! ```
 
+mod callgraph;
 mod cfg;
 mod dataflow;
 mod ssa;
 
 // Re-export primary types at module level
 pub use crate::utils::graph::NodeId;
+pub use callgraph::{
+    CallGraph, CallGraphNode, CallGraphStats, CallResolver, CallSite, CallTarget, CallType,
+    ResolverStats,
+};
 pub use cfg::{CfgEdge, CfgEdgeKind, ControlFlowGraph, NaturalLoop};
 pub use dataflow::{
     AnalysisResults, ConstantPropagation, DataFlowAnalysis, DataFlowSolver, Direction,

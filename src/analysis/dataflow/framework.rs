@@ -168,6 +168,15 @@ pub struct AnalysisResults<L> {
 
 impl<L: Clone> AnalysisResults<L> {
     /// Creates new analysis results with the given states.
+    ///
+    /// # Arguments
+    ///
+    /// * `in_states` - The input states for each block
+    /// * `out_states` - The output states for each block
+    ///
+    /// # Returns
+    ///
+    /// A new [`AnalysisResults`] instance.
     #[must_use]
     pub fn new(in_states: Vec<L>, out_states: Vec<L>) -> Self {
         Self {
@@ -177,18 +186,38 @@ impl<L: Clone> AnalysisResults<L> {
     }
 
     /// Returns the input state for a block.
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - The block index to query
+    ///
+    /// # Returns
+    ///
+    /// The input state for the block, or `None` if the index is out of bounds.
     #[must_use]
     pub fn in_state(&self, block: usize) -> Option<&L> {
         self.in_states.get(block)
     }
 
     /// Returns the output state for a block.
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - The block index to query
+    ///
+    /// # Returns
+    ///
+    /// The output state for the block, or `None` if the index is out of bounds.
     #[must_use]
     pub fn out_state(&self, block: usize) -> Option<&L> {
         self.out_states.get(block)
     }
 
     /// Returns the number of blocks.
+    ///
+    /// # Returns
+    ///
+    /// The total number of blocks in the analysis results.
     #[must_use]
     pub fn block_count(&self) -> usize {
         self.in_states.len()

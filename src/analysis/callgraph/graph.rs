@@ -1,0 +1,640 @@
+//! Call graph construction and representation.
+//!
+//! This module provides the main [`CallGraph`] structure which represents
+//! the inter-procedural call relationships in a .NET assembly. The call graph
+//! is constructed by scanning all method bodies for call instructions and
+//! resolving their targets using assembly metadata and Class Hierarchy Analysis.
+//!
+//! The implementation leverages the generic [`DirectedGraph`] infrastructure
+//! from the `utils/graph` module, providing access to standard graph algorithms.
+
+use std::collections::HashMap;
+use std::sync::OnceLock;
+
+use crate::{
+    analysis::callgraph::{CallGraphNode, CallResolver, CallSite, CallTarget, CallType},
+    assembly::{Instruction, Operand},
+    metadata::{
+        method::{Method, MethodModifiers},
+        token::Token,
+    },
+    utils::graph::{
+        algorithms::{self, strongly_connected_components},
+        DirectedGraph, NodeId,
+    },
+    CilObject, Result,
+};
+
+/// Inter-procedural call graph for a .NET assembly.
+///
+/// The call graph captures method-to-method call relationships, enabling
+/// inter-procedural analysis such as dead code detection, call chain analysis,
+/// and optimization.
+///
+/// This implementation uses the generic [`DirectedGraph`] infrastructure from
+/// `utils/graph`, providing access to standard graph algorithms like SCC
+/// computation, topological sorting, and traversal.
+///
+/// # Example
+///
+/// ```ignore
+/// let assembly = CilObject::open("sample.dll")?;
+/// let call_graph = CallGraph::build(&assembly)?;
+///
+/// // Get statistics about the call graph
+/// let stats = call_graph.stats();
+/// println!("Methods: {}, Edges: {}", stats.method_count, stats.edge_count);
+///
+/// // Find methods called by a specific method
+/// let callees = call_graph.callees(method_token);
+/// ```
+#[derive(Debug)]
+pub struct CallGraph {
+    /// The underlying directed graph: nodes are method metadata, edges are call relationships.
+    graph: DirectedGraph<CallGraphNode, CallType>,
+    /// Map from method token to node ID in the graph for O(1) lookup.
+    token_to_node: HashMap<Token, NodeId>,
+    /// Call resolver for virtual dispatch and type hierarchy queries.
+    resolver: CallResolver,
+    /// Strongly connected components (lazily computed on first access).
+    sccs: OnceLock<Vec<Vec<NodeId>>>,
+    /// Topological order of methods (lazily computed on first access).
+    topo_order: OnceLock<Vec<Token>>,
+    /// Entry points - methods with no callers (lazily computed on first access).
+    entry_points: OnceLock<Vec<Token>>,
+}
+
+impl CallGraph {
+    /// Builds a call graph from an assembly.
+    ///
+    /// This method performs a two-pass construction:
+    /// 1. First pass: Creates a node for each method in the assembly
+    /// 2. Second pass: Scans method bodies for call instructions and creates edges
+    ///
+    /// Virtual calls are resolved using Class Hierarchy Analysis (CHA) to determine
+    /// all possible runtime targets.
+    ///
+    /// # Arguments
+    ///
+    /// * `assembly` - The assembly to build the call graph from
+    ///
+    /// # Returns
+    ///
+    /// A new [`CallGraph`] instance representing the inter-procedural call relationships.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if method body parsing fails during call site extraction.
+    pub fn build(assembly: &CilObject) -> Result<Self> {
+        let resolver = CallResolver::new(assembly);
+        let methods = assembly.methods();
+        let method_count = methods.len();
+
+        let mut graph: DirectedGraph<CallGraphNode, CallType> =
+            DirectedGraph::with_capacity(method_count, method_count * 4);
+        let mut token_to_node: HashMap<Token, NodeId> = HashMap::with_capacity(method_count);
+
+        // First pass: add all methods as nodes
+        for entry in methods.iter() {
+            let method = entry.value();
+            let node = Self::create_node(method);
+            let node_id = graph.add_node(node);
+            token_to_node.insert(method.token, node_id);
+        }
+
+        // Second pass: extract call sites and build edges
+        for entry in methods.iter() {
+            let method = entry.value();
+            let caller_token = method.token;
+
+            let Some(&caller_node_id) = token_to_node.get(&caller_token) else {
+                continue;
+            };
+
+            // Skip methods without bodies
+            let caller_node = graph.node(caller_node_id).expect("node exists");
+            if caller_node.is_abstract || caller_node.is_external {
+                continue;
+            }
+
+            // Extract call sites from the method body
+            let call_sites = Self::extract_call_sites(assembly, method, &resolver);
+
+            // Build edges for each call site
+            for site in &call_sites {
+                for callee_token in site.target.all_targets() {
+                    if let Some(&callee_node_id) = token_to_node.get(&callee_token) {
+                        // Add edge from caller to callee
+                        let _ = graph.add_edge(caller_node_id, callee_node_id, site.call_type);
+                    }
+                }
+            }
+
+            // Store call sites in the node
+            if let Some(node) = graph.node_mut(caller_node_id) {
+                node.call_sites = call_sites;
+            }
+        }
+
+        Ok(Self {
+            graph,
+            token_to_node,
+            resolver,
+            sccs: OnceLock::new(),
+            topo_order: OnceLock::new(),
+            entry_points: OnceLock::new(),
+        })
+    }
+
+    /// Creates a call graph node from a method.
+    fn create_node(method: &Method) -> CallGraphNode {
+        let mut node = CallGraphNode::new(
+            method.token,
+            method.name.clone(),
+            method.signature.to_string(),
+        );
+
+        node.is_virtual = method.flags_modifiers.contains(MethodModifiers::VIRTUAL);
+        node.is_abstract = method.flags_modifiers.contains(MethodModifiers::ABSTRACT);
+        node.is_static = method.flags_modifiers.contains(MethodModifiers::STATIC);
+        node.is_external = method.is_pinvoke() || method.is_internal_call();
+        node.is_constructor = method.is_constructor();
+
+        // Get override information if available
+        if let Some(overrides) = method.overrides.get() {
+            node.overrides = overrides.token();
+        }
+
+        node
+    }
+
+    /// Extracts call sites from a method body.
+    fn extract_call_sites(
+        assembly: &CilObject,
+        method: &Method,
+        resolver: &CallResolver,
+    ) -> Vec<CallSite> {
+        let mut call_sites = Vec::new();
+
+        // Get method instructions - instructions() returns an iterator directly
+        let instructions = method.instructions();
+
+        for instr in instructions {
+            if let Some((call_type, target)) = Self::analyze_instruction(assembly, resolver, instr)
+            {
+                // Safe cast: instruction offsets in CIL are at most 32 bits
+                let offset = u32::try_from(instr.offset).unwrap_or(u32::MAX);
+                let site = CallSite::new(offset, call_type, target);
+                call_sites.push(site);
+            }
+        }
+
+        call_sites
+    }
+
+    /// Analyzes an instruction to determine if it's a call and extract target.
+    fn analyze_instruction(
+        assembly: &CilObject,
+        resolver: &CallResolver,
+        instr: &Instruction,
+    ) -> Option<(CallType, CallTarget)> {
+        let (call_type, token) = match instr.mnemonic {
+            "call" => (CallType::Call, Self::extract_method_token(instr)?),
+            "callvirt" => (CallType::CallVirt, Self::extract_method_token(instr)?),
+            "newobj" => (CallType::NewObj, Self::extract_method_token(instr)?),
+            "ldftn" => (CallType::Ldftn, Self::extract_method_token(instr)?),
+            "ldvirtftn" => (CallType::LdVirtFtn, Self::extract_method_token(instr)?),
+            "calli" => return Some((CallType::Calli, CallTarget::Indirect)),
+            "tail." => return None, // Prefix, handled with next instruction
+            _ => return None,
+        };
+
+        // Resolve the target
+        let target = Self::resolve_target(assembly, resolver, call_type, token);
+        Some((call_type, target))
+    }
+
+    /// Extracts the method token from an instruction operand.
+    fn extract_method_token(instr: &Instruction) -> Option<Token> {
+        match &instr.operand {
+            Operand::Token(token) => Some(*token),
+            _ => None,
+        }
+    }
+
+    /// Resolves a call target from a token.
+    fn resolve_target(
+        assembly: &CilObject,
+        resolver: &CallResolver,
+        call_type: CallType,
+        token: Token,
+    ) -> CallTarget {
+        // Check if method is in current assembly
+        if assembly.methods().contains_key(&token) {
+            if call_type.is_virtual() {
+                // Virtual call - use CHA
+                let possible_targets = resolver.resolve_virtual(token);
+                if possible_targets.len() > 1 {
+                    CallTarget::Virtual {
+                        declared: token,
+                        possible_targets,
+                    }
+                } else {
+                    CallTarget::Resolved(token)
+                }
+            } else {
+                CallTarget::Resolved(token)
+            }
+        } else {
+            // External reference
+            CallTarget::Unresolved {
+                token,
+                reason: "External method reference".to_string(),
+            }
+        }
+    }
+
+    /// Returns the number of methods in the call graph.
+    ///
+    /// # Returns
+    ///
+    /// The total count of method nodes in the graph.
+    #[must_use]
+    pub fn method_count(&self) -> usize {
+        self.graph.node_count()
+    }
+
+    /// Returns the total number of call edges.
+    ///
+    /// Note that multiple calls from the same caller to the same callee
+    /// are represented as a single edge.
+    ///
+    /// # Returns
+    ///
+    /// The total count of call edges in the graph.
+    #[must_use]
+    pub fn edge_count(&self) -> usize {
+        self.graph.edge_count()
+    }
+
+    /// Returns a node by its method token.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The method token to look up
+    ///
+    /// # Returns
+    ///
+    /// A reference to the [`CallGraphNode`] if found, or `None` if the
+    /// token does not correspond to a method in this call graph.
+    #[must_use]
+    pub fn node(&self, token: Token) -> Option<&CallGraphNode> {
+        self.token_to_node
+            .get(&token)
+            .and_then(|&node_id| self.graph.node(node_id))
+    }
+
+    /// Returns an iterator over all nodes in the call graph.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding references to all [`CallGraphNode`] instances.
+    pub fn nodes(&self) -> impl Iterator<Item = &CallGraphNode> {
+        self.graph.nodes().map(|(_, node)| node)
+    }
+
+    /// Returns all method tokens that are called by the given method.
+    ///
+    /// # Arguments
+    ///
+    /// * `caller` - The token of the calling method
+    ///
+    /// # Returns
+    ///
+    /// A vector of method tokens for all methods called by the specified method.
+    /// Returns an empty vector if the caller is not found in the graph.
+    #[must_use]
+    pub fn callees(&self, caller: Token) -> Vec<Token> {
+        let Some(&node_id) = self.token_to_node.get(&caller) else {
+            return Vec::new();
+        };
+
+        self.graph
+            .successors(node_id)
+            .filter_map(|callee_id| self.graph.node(callee_id).map(|n| n.token))
+            .collect()
+    }
+
+    /// Returns all method tokens that call the given method.
+    ///
+    /// # Arguments
+    ///
+    /// * `callee` - The token of the called method
+    ///
+    /// # Returns
+    ///
+    /// A vector of method tokens for all methods that call the specified method.
+    /// Returns an empty vector if the callee is not found in the graph.
+    #[must_use]
+    pub fn callers(&self, callee: Token) -> Vec<Token> {
+        let Some(&node_id) = self.token_to_node.get(&callee) else {
+            return Vec::new();
+        };
+
+        self.graph
+            .predecessors(node_id)
+            .filter_map(|caller_id| self.graph.node(caller_id).map(|n| n.token))
+            .collect()
+    }
+
+    /// Returns all call sites within a method.
+    ///
+    /// # Arguments
+    ///
+    /// * `method` - The token of the method to get call sites for
+    ///
+    /// # Returns
+    ///
+    /// A slice of [`CallSite`] instances representing all call instructions
+    /// within the method body. Returns an empty slice if the method is not
+    /// found or has no call sites.
+    #[must_use]
+    pub fn call_sites(&self, method: Token) -> &[CallSite] {
+        self.node(method)
+            .map(|n| n.call_sites.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// Returns entry points (methods with no callers within the assembly).
+    ///
+    /// Entry points are methods that are not called by any other method in
+    /// the assembly. This typically includes `Main` methods, event handlers,
+    /// and externally-invoked methods.
+    ///
+    /// # Returns
+    ///
+    /// A slice of method tokens for all entry point methods.
+    #[must_use]
+    pub fn entry_points(&self) -> &[Token] {
+        self.entry_points.get_or_init(|| {
+            self.graph
+                .entry_nodes()
+                .filter_map(|node_id| self.graph.node(node_id).map(|n| n.token))
+                .collect()
+        })
+    }
+
+    /// Returns leaf methods (methods with no callees).
+    ///
+    /// Leaf methods are terminal nodes in the call graph that do not call
+    /// any other methods within the assembly.
+    ///
+    /// # Returns
+    ///
+    /// A vector of method tokens for all leaf methods.
+    #[must_use]
+    pub fn leaf_methods(&self) -> Vec<Token> {
+        self.graph
+            .exit_nodes()
+            .filter_map(|node_id| self.graph.node(node_id).map(|n| n.token))
+            .collect()
+    }
+
+    /// Returns the strongly connected components of the call graph.
+    ///
+    /// Each SCC is a set of methods that are mutually recursive - every method
+    /// in the SCC can reach every other method in the same SCC through calls.
+    /// SCCs are returned in reverse topological order (leaves first).
+    ///
+    /// The result is lazily computed and cached on first access.
+    ///
+    /// # Returns
+    ///
+    /// A slice of SCCs, where each SCC is a vector of node IDs.
+    #[must_use]
+    pub fn sccs(&self) -> &[Vec<NodeId>] {
+        self.sccs
+            .get_or_init(|| strongly_connected_components(&self.graph))
+    }
+
+    /// Returns method tokens in topological order (callees before callers).
+    ///
+    /// For methods in SCCs (cycles), the order within the SCC is arbitrary.
+    /// The result is lazily computed and cached on first access.
+    ///
+    /// # Returns
+    ///
+    /// A slice of method tokens in topological order.
+    #[must_use]
+    pub fn topological_order(&self) -> &[Token] {
+        self.topo_order.get_or_init(|| {
+            // Try topological sort first (works for DAGs)
+            if let Some(order) = algorithms::topological_sort(&self.graph) {
+                order
+                    .into_iter()
+                    .filter_map(|node_id| self.graph.node(node_id).map(|n| n.token))
+                    .collect()
+            } else {
+                // Graph has cycles - use SCC-based ordering
+                let sccs = self.sccs();
+                sccs.iter()
+                    .flatten()
+                    .filter_map(|&node_id| self.graph.node(node_id).map(|n| n.token))
+                    .collect()
+            }
+        })
+    }
+
+    /// Returns `true` if there are any recursive methods or mutual recursion.
+    ///
+    /// This detects both direct self-recursion (a method calling itself) and
+    /// mutual recursion (cycles of methods calling each other).
+    ///
+    /// # Returns
+    ///
+    /// `true` if any recursion exists in the call graph, `false` otherwise.
+    #[must_use]
+    pub fn has_recursion(&self) -> bool {
+        // Check for cycles using SCC - if any SCC has more than 1 node, there's mutual recursion
+        self.sccs().iter().any(|scc| scc.len() > 1)
+            // Also check for direct self-recursion
+            || self.graph.node_ids().any(|node_id| {
+                self.graph.successors(node_id).any(|succ| succ == node_id)
+            })
+    }
+
+    /// Returns all methods involved in recursion.
+    ///
+    /// Includes both methods with direct self-recursion and methods involved
+    /// in mutual recursion cycles.
+    ///
+    /// # Returns
+    ///
+    /// A sorted, deduplicated vector of method tokens for all recursive methods.
+    #[must_use]
+    pub fn recursive_methods(&self) -> Vec<Token> {
+        let mut recursive = Vec::new();
+
+        // Direct recursion (self-loops)
+        for node_id in self.graph.node_ids() {
+            if self.graph.successors(node_id).any(|succ| succ == node_id) {
+                if let Some(node) = self.graph.node(node_id) {
+                    recursive.push(node.token);
+                }
+            }
+        }
+
+        // Mutual recursion (SCCs with size > 1)
+        for scc in self.sccs() {
+            if scc.len() > 1 {
+                for &node_id in scc {
+                    if let Some(node) = self.graph.node(node_id) {
+                        if !recursive.contains(&node.token) {
+                            recursive.push(node.token);
+                        }
+                    }
+                }
+            }
+        }
+
+        recursive.sort();
+        recursive.dedup();
+        recursive
+    }
+
+    /// Returns the call resolver for virtual dispatch analysis.
+    ///
+    /// The resolver provides access to type hierarchy information and
+    /// virtual method dispatch tables.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the [`CallResolver`] used by this call graph.
+    #[must_use]
+    pub const fn resolver(&self) -> &CallResolver {
+        &self.resolver
+    }
+
+    /// Returns a reference to the underlying directed graph.
+    ///
+    /// This provides access to the full graph API for advanced use cases
+    /// such as custom traversals or algorithm applications.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the underlying [`DirectedGraph`] structure.
+    #[must_use]
+    pub fn graph(&self) -> &DirectedGraph<CallGraphNode, CallType> {
+        &self.graph
+    }
+
+    /// Returns statistics about the call graph.
+    ///
+    /// Computes aggregate metrics about the call graph including method counts,
+    /// edge counts, call site statistics, and recursion information.
+    ///
+    /// # Returns
+    ///
+    /// A [`CallGraphStats`] structure containing various metrics about the graph.
+    #[must_use]
+    pub fn stats(&self) -> CallGraphStats {
+        let total_call_sites: usize = self.nodes().map(|n| n.call_sites.len()).sum();
+
+        let virtual_calls = self
+            .nodes()
+            .flat_map(|n| &n.call_sites)
+            .filter(|s| s.call_type.is_virtual())
+            .count();
+
+        let resolved_calls = self
+            .nodes()
+            .flat_map(|n| &n.call_sites)
+            .filter(|s| s.is_resolved())
+            .count();
+
+        let polymorphic_calls = self
+            .nodes()
+            .flat_map(|n| &n.call_sites)
+            .filter(|s| s.is_polymorphic())
+            .count();
+
+        CallGraphStats {
+            method_count: self.graph.node_count(),
+            edge_count: self.graph.edge_count(),
+            total_call_sites,
+            virtual_calls,
+            resolved_calls,
+            polymorphic_calls,
+            entry_points: self.entry_points().len(),
+            leaf_methods: self.leaf_methods().len(),
+            scc_count: self.sccs().len(),
+            recursive_methods: self.recursive_methods().len(),
+        }
+    }
+}
+
+/// Statistics about a call graph.
+///
+/// Provides aggregate metrics about the call graph structure, including
+/// method counts, call site statistics, and recursion information.
+#[derive(Debug, Clone, Default)]
+pub struct CallGraphStats {
+    /// Number of methods (nodes) in the graph.
+    pub method_count: usize,
+    /// Number of call edges between methods.
+    pub edge_count: usize,
+    /// Total number of call sites across all method bodies.
+    pub total_call_sites: usize,
+    /// Number of virtual call sites (`callvirt` instruction).
+    pub virtual_calls: usize,
+    /// Number of call sites with resolved targets.
+    pub resolved_calls: usize,
+    /// Number of polymorphic call sites (multiple possible targets).
+    pub polymorphic_calls: usize,
+    /// Number of entry points (methods with no callers).
+    pub entry_points: usize,
+    /// Number of leaf methods (methods with no callees).
+    pub leaf_methods: usize,
+    /// Number of strongly connected components.
+    pub scc_count: usize,
+    /// Number of methods involved in direct or mutual recursion.
+    pub recursive_methods: usize,
+}
+
+impl CallGraphStats {
+    /// Returns the call target resolution rate as a percentage.
+    ///
+    /// This metric indicates how many call sites were successfully resolved
+    /// to concrete method targets within the assembly.
+    ///
+    /// # Returns
+    ///
+    /// The percentage of resolved call sites (0.0 to 100.0). Returns 100.0
+    /// if there are no call sites.
+    #[must_use]
+    pub fn resolution_rate(&self) -> f64 {
+        if self.total_call_sites == 0 {
+            100.0
+        } else {
+            (self.resolved_calls as f64 / self.total_call_sites as f64) * 100.0
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::analysis::callgraph::CallGraphStats;
+
+    #[test]
+    fn test_call_graph_stats_resolution_rate() {
+        let mut stats = CallGraphStats::default();
+
+        // Empty graph - 100% resolved
+        assert!((stats.resolution_rate() - 100.0).abs() < f64::EPSILON);
+
+        // 8 out of 10 resolved
+        stats.total_call_sites = 10;
+        stats.resolved_calls = 8;
+        assert!((stats.resolution_rate() - 80.0).abs() < f64::EPSILON);
+    }
+}
