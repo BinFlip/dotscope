@@ -167,6 +167,7 @@
 use std::{path::Path, sync::Arc};
 
 use crate::{
+    analysis::CallGraph,
     file::File,
     metadata::{
         cilassemblyview::CilAssemblyView,
@@ -1443,6 +1444,46 @@ impl CilObject {
     /// ```
     pub fn types(&self) -> Arc<TypeRegistry> {
         self.data.types.clone()
+    }
+
+    /// Builds and returns the call graph for this assembly.
+    ///
+    /// The call graph represents the calling relationships between methods in the
+    /// assembly, including direct calls, virtual dispatch, and interface calls.
+    /// This is useful for understanding code structure, finding entry points,
+    /// and performing inter-procedural analysis.
+    ///
+    /// Note: Building the call graph requires analyzing all methods in the assembly,
+    /// which may be expensive for large assemblies. Consider caching the result if
+    /// you need to access it multiple times.
+    ///
+    /// # Returns
+    ///
+    /// A [`CallGraph`] for this assembly, or an error if construction fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if call graph construction fails (e.g., due to corrupted
+    /// method metadata).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
+    /// let callgraph = assembly.callgraph()?;
+    ///
+    /// let stats = callgraph.stats();
+    /// println!("Call graph: {} methods, {} edges", stats.method_count, stats.edge_count);
+    ///
+    /// // Export as DOT for visualization
+    /// let dot = callgraph.to_dot(Some("MyAssembly"));
+    /// std::fs::write("callgraph.dot", dot)?;
+    /// # Ok::<(), Box<dyn std::error::Error>>(())
+    /// ```
+    pub fn callgraph(&self) -> Result<CallGraph> {
+        CallGraph::build(self)
     }
 
     /// Returns the underlying file representation of this assembly.

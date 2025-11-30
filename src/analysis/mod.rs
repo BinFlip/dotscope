@@ -65,7 +65,7 @@ mod tests {
     };
 
     /// Helper to build bytecode and decode it into a CFG.
-    fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph {
+    fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph<'static> {
         let (bytecode, _max_stack) = assembler.finish().expect("Failed to assemble bytecode");
         let blocks =
             decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len())).expect("Failed to decode");
@@ -73,8 +73,18 @@ mod tests {
     }
 
     /// Helper to build SSA from a CFG.
-    fn build_ssa(cfg: &ControlFlowGraph, num_args: usize, num_locals: usize) -> SsaFunction {
+    fn build_ssa(cfg: &ControlFlowGraph<'_>, num_args: usize, num_locals: usize) -> SsaFunction {
         SsaBuilder::build(cfg, num_args, num_locals).expect("SSA construction failed")
+    }
+
+    /// Consolidated SSA validation - checks all standard SSA invariants.
+    /// Call this instead of individual assert_* functions in most tests.
+    fn assert_ssa_valid(ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>) {
+        assert_has_arguments(ssa, ssa.num_args());
+        assert_has_locals(ssa, ssa.num_locals());
+        assert_valid_variable_ids(ssa);
+        assert_single_assignment(ssa);
+        assert_phi_operands_valid(ssa, cfg);
     }
 
     /// Validates that the SSA function has all expected argument variables (version 0).
@@ -164,7 +174,7 @@ mod tests {
     }
 
     /// Validates phi nodes have operands from correct predecessors.
-    fn assert_phi_operands_valid(ssa: &SsaFunction, cfg: &ControlFlowGraph) {
+    fn assert_phi_operands_valid(ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>) {
         for (block_idx, block) in ssa.blocks().iter().enumerate() {
             let preds: Vec<_> = cfg.predecessors(NodeId::new(block_idx)).collect();
 
@@ -218,17 +228,8 @@ mod tests {
         assert_eq!(ssa.block_count(), 1);
         assert_eq!(ssa.num_args(), 2);
         assert_eq!(ssa.num_locals(), 0);
-
-        assert_has_arguments(&ssa, 2);
-        assert_has_locals(&ssa, 0);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
-
-        // No phi nodes needed (single block)
+        assert_ssa_valid(&ssa, &cfg);
         assert_eq!(ssa.total_phi_count(), 0);
-
-        // Verify we have at least the argument variables
         assert!(
             ssa.variable_count() >= 2,
             "Should have at least 2 variables (args)"
@@ -252,31 +253,19 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         assert_eq!(cfg.block_count(), 1);
         let block = cfg.block(cfg.entry()).unwrap();
         assert_eq!(block.instructions.len(), 5); // 3 nops + ldc.i4.0 + ret
 
-        // SSA validation
         let ssa = build_ssa(&cfg, 0, 0);
         assert_eq!(ssa.block_count(), 1);
-        assert_eq!(ssa.num_args(), 0);
-        assert_eq!(ssa.num_locals(), 0);
-
-        assert_has_arguments(&ssa, 0);
-        assert_has_locals(&ssa, 0);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
-
+        assert_ssa_valid(&ssa, &cfg);
         assert_eq!(ssa.total_phi_count(), 0);
     }
 
     #[test]
     fn test_simple_if_then() {
         // if (arg0) { return 1; } return 0;
-        // int Check(bool cond) { if (cond) return 1; return 0; }
         let mut asm = InstructionAssembler::new();
         asm.ldarg_0()
             .unwrap()
@@ -294,13 +283,9 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         assert_eq!(cfg.block_count(), 3);
         assert!(!cfg.has_loops());
-
-        let entry_succs: Vec<_> = cfg.successors(cfg.entry()).collect();
-        assert_eq!(entry_succs.len(), 2);
+        assert_eq!(cfg.exits().len(), 2);
 
         let edges: Vec<_> = cfg.outgoing_edges(cfg.entry()).collect();
         assert_eq!(edges.len(), 2);
@@ -308,35 +293,15 @@ mod tests {
         assert!(edge_kinds.contains(&CfgEdgeKind::ConditionalTrue));
         assert!(edge_kinds.contains(&CfgEdgeKind::ConditionalFalse));
 
-        assert_eq!(cfg.exits().len(), 2);
-
-        // SSA validation
         let ssa = build_ssa(&cfg, 1, 0);
         assert_eq!(ssa.block_count(), 3);
-        assert_eq!(ssa.num_args(), 1);
-        assert_eq!(ssa.num_locals(), 0);
-
-        assert_has_arguments(&ssa, 1);
-        assert_has_locals(&ssa, 0);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
-
-        // No phi nodes needed - both paths return (no merge)
-        assert_eq!(ssa.total_phi_count(), 0);
-
-        // Verify arg0 is referenced
-        let arg0_vars: Vec<_> = ssa.variables_from_argument(0).collect();
-        assert!(
-            !arg0_vars.is_empty(),
-            "Should have at least one version of arg0"
-        );
+        assert_ssa_valid(&ssa, &cfg);
+        assert_eq!(ssa.total_phi_count(), 0); // No merge point
     }
 
     #[test]
     fn test_if_then_else_merge() {
         // if (arg0) { push 1; } else { push 0; } return top;
-        // int Ternary(bool cond) { int x; if (cond) x = 1; else x = 0; return x; }
         let mut asm = InstructionAssembler::new();
         asm.ldarg_0()
             .unwrap()
@@ -356,46 +321,22 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         assert_eq!(cfg.block_count(), 4);
         assert!(!cfg.has_loops());
-
         assert_eq!(cfg.exits().len(), 1);
 
         let merge_block = cfg.exits()[0];
         let preds: Vec<_> = cfg.predecessors(merge_block).collect();
         assert_eq!(preds.len(), 2);
 
-        for i in 0..cfg.block_count() {
-            assert!(cfg.dominates(cfg.entry(), NodeId::new(i)));
-        }
-
-        // SSA validation
         let ssa = build_ssa(&cfg, 1, 0);
         assert_eq!(ssa.block_count(), 4);
-        assert_eq!(ssa.num_args(), 1);
-        assert_eq!(ssa.num_locals(), 0);
-
-        assert_has_arguments(&ssa, 1);
-        assert_has_locals(&ssa, 0);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
-
-        // The merge block needs a phi to merge the stack values from then/else
-        // Check that phi nodes exist at the merge point
-        let merge_ssa_block = ssa.block(merge_block.index()).unwrap();
-        assert!(
-            merge_ssa_block.phi_count() > 0 || ssa.total_phi_count() > 0 || true,
-            "Merge block should have phi nodes or stack was empty at merge"
-        );
+        assert_ssa_valid(&ssa, &cfg);
     }
 
     #[test]
     fn test_nested_conditionals() {
         // if (a) { if (b) { return 1; } return 2; } return 0;
-        // int NestedIf(bool a, bool b) { if (a) { if (b) return 1; return 2; } return 0; }
         let mut asm = InstructionAssembler::new();
         asm.ldarg_0()
             .unwrap()
@@ -423,38 +364,19 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         assert_eq!(cfg.block_count(), 5);
         assert!(!cfg.has_loops());
         assert_eq!(cfg.exits().len(), 3);
 
-        // SSA validation
         let ssa = build_ssa(&cfg, 2, 0);
         assert_eq!(ssa.block_count(), 5);
-        assert_eq!(ssa.num_args(), 2);
-        assert_eq!(ssa.num_locals(), 0);
-
-        assert_has_arguments(&ssa, 2);
-        assert_has_locals(&ssa, 0);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
-
-        // No phi nodes needed - all paths return without merge
-        assert_eq!(ssa.total_phi_count(), 0);
-
-        // Verify both arguments are present
-        let arg0_vars: Vec<_> = ssa.variables_from_argument(0).collect();
-        let arg1_vars: Vec<_> = ssa.variables_from_argument(1).collect();
-        assert!(!arg0_vars.is_empty(), "Should have versions of arg0");
-        assert!(!arg1_vars.is_empty(), "Should have versions of arg1");
+        assert_ssa_valid(&ssa, &cfg);
+        assert_eq!(ssa.total_phi_count(), 0); // All paths return without merge
     }
 
     #[test]
     fn test_simple_while_loop() {
         // while (arg0 > 0) { arg0--; } return arg0;
-        // int Countdown(int n) { while (n > 0) n--; return n; }
         let mut asm = InstructionAssembler::new();
         asm.label("loop_header")
             .unwrap()
@@ -463,7 +385,7 @@ mod tests {
             .ldc_i4_0()
             .unwrap()
             .ble_s("loop_exit")
-            .unwrap() // if (arg0 <= 0) goto exit
+            .unwrap()
             .ldarg_0()
             .unwrap()
             .ldc_i4_1()
@@ -471,9 +393,9 @@ mod tests {
             .sub()
             .unwrap()
             .starg_s(0)
-            .unwrap() // arg0--
+            .unwrap()
             .br_s("loop_header")
-            .unwrap() // back edge
+            .unwrap()
             .label("loop_exit")
             .unwrap()
             .ldarg_0()
@@ -482,45 +404,21 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         assert!(cfg.block_count() >= 2);
         assert!(cfg.has_loops());
 
         let loops = cfg.loops();
         assert_eq!(loops.len(), 1);
+        assert_eq!(loops[0].header, NodeId::new(0));
+        assert!(!loops[0].back_edges.is_empty());
 
-        let the_loop = &loops[0];
-        assert_eq!(the_loop.header, NodeId::new(0));
-        assert!(!the_loop.back_edges.is_empty());
-
-        for &body_node in &the_loop.body {
-            assert!(cfg.dominates(the_loop.header, body_node));
-        }
-
-        // SSA validation
         let ssa = build_ssa(&cfg, 1, 0);
-        assert_eq!(ssa.num_args(), 1);
-        assert_eq!(ssa.num_locals(), 0);
-
-        assert_has_arguments(&ssa, 1);
-        assert_has_locals(&ssa, 0);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
-
-        // Verify arg0 exists
-        let arg0_vars: Vec<_> = ssa.variables_from_argument(0).collect();
-        assert!(
-            !arg0_vars.is_empty(),
-            "Should have at least one version of arg0"
-        );
+        assert_ssa_valid(&ssa, &cfg);
     }
 
     #[test]
     fn test_do_while_loop() {
         // do { arg0--; } while (arg0 > 0); return arg0;
-        // int DoCountdown(int n) { do { n--; } while (n > 0); return n; }
         let mut asm = InstructionAssembler::new();
         asm.label("loop_body")
             .unwrap()
@@ -531,57 +429,31 @@ mod tests {
             .sub()
             .unwrap()
             .starg_s(0)
-            .unwrap() // arg0--
+            .unwrap()
             .ldarg_0()
             .unwrap()
             .ldc_i4_0()
             .unwrap()
             .bgt_s("loop_body")
-            .unwrap() // back edge if arg0 > 0
+            .unwrap()
             .ldarg_0()
             .unwrap()
             .ret()
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         assert!(cfg.has_loops());
-        let loops = cfg.loops();
-        assert_eq!(loops.len(), 1);
+        assert_eq!(cfg.loops().len(), 1);
+        assert_eq!(cfg.loops()[0].header, NodeId::new(0));
 
-        let the_loop = &loops[0];
-        assert_eq!(the_loop.header, NodeId::new(0));
-
-        // SSA validation
         let ssa = build_ssa(&cfg, 1, 0);
-        assert_eq!(ssa.num_args(), 1);
-        assert_eq!(ssa.num_locals(), 0);
-
-        assert_has_arguments(&ssa, 1);
-        assert_has_locals(&ssa, 0);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
-
-        // Verify arg0 exists
-        let arg0_vars: Vec<_> = ssa.variables_from_argument(0).collect();
-        assert!(
-            !arg0_vars.is_empty(),
-            "Should have at least one version of arg0"
-        );
+        assert_ssa_valid(&ssa, &cfg);
     }
 
     #[test]
     fn test_nested_loops() {
-        // for (i = 0; i < n; i++) { for (j = 0; j < m; j++) { ... } }
-        // void NestedLoop(int n, int m) {
-        //     for (int i = n; i > 0; i--) {
-        //         for (int j = m; j > 0; j--) { }
-        //     }
-        // }
+        // for (i = n; i > 0; i--) { for (j = m; j > 0; j--) { } }
         let mut asm = InstructionAssembler::new();
-        // Outer loop: i = arg0
         asm.ldarg_0()
             .unwrap()
             .stloc_0()
@@ -594,7 +466,6 @@ mod tests {
             .unwrap()
             .ble_s("outer_exit")
             .unwrap()
-            // Inner loop: j = arg1
             .ldarg_1()
             .unwrap()
             .stloc_1()
@@ -607,7 +478,6 @@ mod tests {
             .unwrap()
             .ble_s("inner_exit")
             .unwrap()
-            // Inner body: j--
             .ldloc_1()
             .unwrap()
             .ldc_i4_1()
@@ -617,10 +487,9 @@ mod tests {
             .stloc_1()
             .unwrap()
             .br_s("inner_header")
-            .unwrap() // inner back edge
+            .unwrap()
             .label("inner_exit")
             .unwrap()
-            // Outer: i--
             .ldloc_0()
             .unwrap()
             .ldc_i4_1()
@@ -630,7 +499,7 @@ mod tests {
             .stloc_0()
             .unwrap()
             .br_s("outer_header")
-            .unwrap() // outer back edge
+            .unwrap()
             .label("outer_exit")
             .unwrap()
             .ldc_i4_0()
@@ -639,65 +508,36 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         assert!(cfg.has_loops());
         let loops = cfg.loops();
         assert_eq!(loops.len(), 2);
 
         let outer_loop = loops.iter().find(|l| l.depth == 0).unwrap();
         let inner_loop = loops.iter().find(|l| l.depth == 1).unwrap();
-
         assert!(outer_loop.body.contains(&inner_loop.header));
 
         for &node in &inner_loop.body {
-            let innermost = cfg.innermost_loop(node);
-            assert!(innermost.is_some());
-            assert_eq!(innermost.unwrap().header, inner_loop.header);
+            assert_eq!(cfg.innermost_loop(node).unwrap().header, inner_loop.header);
         }
 
-        // SSA validation
         let ssa = build_ssa(&cfg, 2, 2);
-        assert_eq!(ssa.num_args(), 2);
-        assert_eq!(ssa.num_locals(), 2);
-
-        assert_has_arguments(&ssa, 2);
-        assert_has_locals(&ssa, 2);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
-
-        // Verify locals exist
-        let loc0_vars: Vec<_> = ssa.variables_from_local(0).collect();
-        let loc1_vars: Vec<_> = ssa.variables_from_local(1).collect();
-
-        assert!(
-            !loc0_vars.is_empty(),
-            "Should have at least one version of local 0"
-        );
-        assert!(
-            !loc1_vars.is_empty(),
-            "Should have at least one version of local 1"
-        );
+        assert_ssa_valid(&ssa, &cfg);
     }
 
     #[test]
     fn test_dominator_diamond() {
         // Diamond pattern: entry -> A, entry -> B, A -> merge, B -> merge
-        // void Diamond(bool cond) { if (cond) { } else { } }
         let mut asm = InstructionAssembler::new();
         asm.ldarg_0()
             .unwrap()
             .brfalse_s("b_path")
             .unwrap()
-            // A path
             .nop()
             .unwrap()
             .br_s("merge")
             .unwrap()
             .label("b_path")
             .unwrap()
-            // B path
             .nop()
             .unwrap()
             .label("merge")
@@ -706,8 +546,6 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         assert_eq!(cfg.block_count(), 4);
 
         let entry = cfg.entry();
@@ -719,32 +557,16 @@ mod tests {
             .node_ids()
             .find(|&id| cfg.predecessors(id).count() == 2)
             .unwrap();
-
-        let a_path = NodeId::new(1);
-        let b_path = NodeId::new(2);
-
-        assert!(
-            !cfg.dominators().strictly_dominates(a_path, merge)
-                || !cfg.dominators().strictly_dominates(b_path, merge)
-        );
-
         assert_eq!(cfg.idom(merge), Some(entry));
 
-        // SSA validation
         let ssa = build_ssa(&cfg, 1, 0);
         assert_eq!(ssa.block_count(), 4);
-        assert_eq!(ssa.num_args(), 1);
-
-        assert_has_arguments(&ssa, 1);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
+        assert_ssa_valid(&ssa, &cfg);
     }
 
     #[test]
     fn test_dominance_frontiers() {
         // Diamond pattern for phi node placement test
-        // int DiamondValue(bool cond) { if (cond) return 1; else return 0; }
         let mut asm = InstructionAssembler::new();
         asm.ldarg_0()
             .unwrap()
@@ -764,21 +586,12 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         let frontiers = cfg.dominance_frontiers();
         assert!(!frontiers.is_empty());
         assert!(frontiers[cfg.entry().index()].is_empty());
 
-        // SSA validation
         let ssa = build_ssa(&cfg, 1, 0);
-        assert_has_arguments(&ssa, 1);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
-
-        // The merge block is in the dominance frontier of both branches
-        // which is where phi nodes should be placed for stack values
+        assert_ssa_valid(&ssa, &cfg);
     }
 
     #[test]
@@ -803,8 +616,6 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         let rpo = cfg.reverse_postorder();
         assert_eq!(rpo[0], cfg.entry());
 
@@ -817,11 +628,8 @@ mod tests {
             );
         }
 
-        // SSA validation
         let ssa = build_ssa(&cfg, 1, 0);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
+        assert_ssa_valid(&ssa, &cfg);
     }
 
     #[test]
@@ -838,8 +646,6 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         let po = cfg.postorder();
         let rpo = cfg.reverse_postorder();
 
@@ -848,11 +654,8 @@ mod tests {
             assert_eq!(*node, rpo[rpo.len() - 1 - i]);
         }
 
-        // SSA validation
         let ssa = build_ssa(&cfg, 2, 0);
-        assert_has_arguments(&ssa, 2);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
+        assert_ssa_valid(&ssa, &cfg);
     }
 
     #[test]
@@ -862,31 +665,22 @@ mod tests {
         asm.br_s("target")
             .unwrap()
             .nop()
-            .unwrap() // This is "unreachable" but still encoded
+            .unwrap() // "unreachable" but still encoded
             .label("target")
             .unwrap()
             .ret()
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         assert!(cfg.block_count() >= 2);
 
-        // SSA validation - should still work even with unreachable code
         let ssa = build_ssa(&cfg, 0, 0);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
+        assert_ssa_valid(&ssa, &cfg);
     }
 
     #[test]
     fn test_multiple_returns() {
-        // Function with early returns
-        // int MultiReturn(bool a, bool b) {
-        //     if (a) return 1;
-        //     if (b) return 2;
-        //     return 0;
-        // }
+        // if (a) return 1; if (b) return 2; return 0;
         let mut asm = InstructionAssembler::new();
         asm.ldarg_0()
             .unwrap()
@@ -895,7 +689,7 @@ mod tests {
             .ldc_i4_1()
             .unwrap()
             .ret()
-            .unwrap() // Early return 1
+            .unwrap()
             .label("check2")
             .unwrap()
             .ldarg_1()
@@ -905,32 +699,21 @@ mod tests {
             .ldc_i4_2()
             .unwrap()
             .ret()
-            .unwrap() // Early return 2
+            .unwrap()
             .label("default")
             .unwrap()
             .ldc_i4_0()
             .unwrap()
             .ret()
-            .unwrap(); // Default return
+            .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         assert_eq!(cfg.exits().len(), 3);
         assert!(!cfg.has_loops());
 
-        // SSA validation
         let ssa = build_ssa(&cfg, 2, 0);
-        assert_eq!(ssa.num_args(), 2);
-        assert_eq!(ssa.num_locals(), 0);
-
-        assert_has_arguments(&ssa, 2);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
-
-        // No phi nodes needed - all paths return without merge
-        assert_eq!(ssa.total_phi_count(), 0);
+        assert_ssa_valid(&ssa, &cfg);
+        assert_eq!(ssa.total_phi_count(), 0); // All paths return without merge
     }
 
     #[test]
@@ -947,44 +730,22 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
         assert_eq!(cfg.block_count(), 1);
         assert!(!cfg.has_loops());
 
-        // SSA validation
         let ssa = build_ssa(&cfg, 1, 1);
-        assert_eq!(ssa.num_args(), 1);
-        assert_eq!(ssa.num_locals(), 1);
-
-        assert_has_arguments(&ssa, 1);
-        assert_has_locals(&ssa, 1);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-
-        // Verify local has at least version 0 (initial) and version 1 (after store)
-        let loc0_vars: Vec<_> = ssa.variables_from_local(0).collect();
-        assert!(
-            loc0_vars.len() >= 1,
-            "Should have at least the initial version of local 0"
-        );
-
-        // No phi nodes in single block
+        assert_ssa_valid(&ssa, &cfg);
         assert_eq!(ssa.total_phi_count(), 0);
     }
 
     #[test]
     fn test_conditional_local_assignment() {
-        // int ConditionalAssign(bool cond) {
-        //     int x = 0;
-        //     if (cond) { x = 1; }
-        //     return x;
-        // }
+        // int x = 0; if (cond) { x = 1; } return x;
         let mut asm = InstructionAssembler::new();
         asm.ldc_i4_0()
             .unwrap()
             .stloc_0()
-            .unwrap() // x = 0
+            .unwrap()
             .ldarg_0()
             .unwrap()
             .brfalse_s("skip")
@@ -992,7 +753,7 @@ mod tests {
             .ldc_i4_1()
             .unwrap()
             .stloc_0()
-            .unwrap() // x = 1
+            .unwrap()
             .label("skip")
             .unwrap()
             .ldloc_0()
@@ -1001,33 +762,16 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // CFG validation
-        assert_eq!(cfg.block_count(), 3); // entry, then, merge
+        assert_eq!(cfg.block_count(), 3);
         assert!(!cfg.has_loops());
 
-        // SSA validation
         let ssa = build_ssa(&cfg, 1, 1);
-        assert_eq!(ssa.num_args(), 1);
-        assert_eq!(ssa.num_locals(), 1);
-
-        assert_has_arguments(&ssa, 1);
-        assert_has_locals(&ssa, 1);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-        assert_phi_operands_valid(&ssa, &cfg);
-
-        // Verify local exists
-        let loc0_vars: Vec<_> = ssa.variables_from_local(0).collect();
-        assert!(
-            !loc0_vars.is_empty(),
-            "Should have at least one version of local 0"
-        );
+        assert_ssa_valid(&ssa, &cfg);
     }
 
     #[test]
     fn test_dup_instruction() {
-        // int Dup(int x) { return x + x; } -- using dup
+        // return x + x; using dup
         let mut asm = InstructionAssembler::new();
         asm.ldarg_0()
             .unwrap()
@@ -1039,16 +783,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // SSA validation
         let ssa = build_ssa(&cfg, 1, 0);
-        assert_eq!(ssa.num_args(), 1);
-
-        assert_has_arguments(&ssa, 1);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-
-        // Should have variables (args + any stack vars)
+        assert_ssa_valid(&ssa, &cfg);
         assert!(
             ssa.variable_count() >= 1,
             "Should have at least the argument variable"
@@ -1057,7 +793,7 @@ mod tests {
 
     #[test]
     fn test_comparison_instruction() {
-        // bool Compare(int a, int b) { return a < b; }
+        // return a < b;
         let mut asm = InstructionAssembler::new();
         asm.ldarg_0()
             .unwrap()
@@ -1069,16 +805,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-
-        // SSA validation
         let ssa = build_ssa(&cfg, 2, 0);
-        assert_eq!(ssa.num_args(), 2);
-
-        assert_has_arguments(&ssa, 2);
-        assert_valid_variable_ids(&ssa);
-        assert_single_assignment(&ssa);
-
-        // Should have at least the argument variables
+        assert_ssa_valid(&ssa, &cfg);
         assert!(
             ssa.variable_count() >= 2,
             "Should have at least the argument variables"

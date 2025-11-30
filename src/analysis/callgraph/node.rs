@@ -16,6 +16,8 @@ pub struct CallGraphNode {
     pub token: Token,
     /// Method name for display purposes.
     pub name: String,
+    /// Full qualified name including type (e.g., "Namespace.Type::Method").
+    pub full_name: String,
     /// Full method signature string for disambiguation of overloaded methods.
     pub signature: String,
     /// Whether this is a virtual method that can be overridden.
@@ -26,6 +28,8 @@ pub struct CallGraphNode {
     pub is_static: bool,
     /// Whether this is an external method (P/Invoke or internal call).
     pub is_external: bool,
+    /// Whether this is a reference to an external assembly (MemberRef).
+    pub is_external_ref: bool,
     /// Whether this is a constructor (`.ctor` or `.cctor`).
     pub is_constructor: bool,
     /// All call sites within this method's body.
@@ -46,6 +50,7 @@ impl CallGraphNode {
     ///
     /// * `token` - The metadata token uniquely identifying the method
     /// * `name` - The method name for display purposes
+    /// * `full_name` - The full qualified name including type (e.g., "Namespace.Type::Method")
     /// * `signature` - The full method signature string
     ///
     /// # Returns
@@ -53,15 +58,17 @@ impl CallGraphNode {
     /// A new [`CallGraphNode`] instance with the specified properties and
     /// default values for flags and collections.
     #[must_use]
-    pub fn new(token: Token, name: String, signature: String) -> Self {
+    pub fn new(token: Token, name: String, full_name: String, signature: String) -> Self {
         Self {
             token,
             name,
+            full_name,
             signature,
             is_virtual: false,
             is_abstract: false,
             is_static: false,
             is_external: false,
+            is_external_ref: false,
             is_constructor: false,
             call_sites: Vec::new(),
             overriders: Vec::new(),
@@ -153,10 +160,16 @@ mod tests {
     #[test]
     fn test_node_creation() {
         let token = Token::new(0x0600_0001);
-        let node = CallGraphNode::new(token, "TestMethod".to_string(), "void ()".to_string());
+        let node = CallGraphNode::new(
+            token,
+            "TestMethod".to_string(),
+            "TestClass::TestMethod".to_string(),
+            "void ()".to_string(),
+        );
 
         assert_eq!(node.token, token);
         assert_eq!(node.name, "TestMethod");
+        assert_eq!(node.full_name, "TestClass::TestMethod");
         assert!(!node.is_virtual);
         assert!(!node.is_abstract);
         assert!(node.is_leaf());
@@ -166,7 +179,12 @@ mod tests {
     #[test]
     fn test_node_with_calls() {
         let token = Token::new(0x0600_0001);
-        let mut node = CallGraphNode::new(token, "Caller".to_string(), "void ()".to_string());
+        let mut node = CallGraphNode::new(
+            token,
+            "Caller".to_string(),
+            "TestClass::Caller".to_string(),
+            "void ()".to_string(),
+        );
 
         let callee1 = Token::new(0x0600_0002);
         let callee2 = Token::new(0x0600_0003);
@@ -190,7 +208,12 @@ mod tests {
     #[test]
     fn test_node_overridable() {
         let token = Token::new(0x0600_0001);
-        let mut node = CallGraphNode::new(token, "Test".to_string(), "void ()".to_string());
+        let mut node = CallGraphNode::new(
+            token,
+            "Test".to_string(),
+            "TestClass::Test".to_string(),
+            "void ()".to_string(),
+        );
 
         // Not virtual - not overridable
         assert!(!node.is_overridable());
@@ -207,7 +230,12 @@ mod tests {
     #[test]
     fn test_node_has_body() {
         let token = Token::new(0x0600_0001);
-        let mut node = CallGraphNode::new(token, "Test".to_string(), "void ()".to_string());
+        let mut node = CallGraphNode::new(
+            token,
+            "Test".to_string(),
+            "TestClass::Test".to_string(),
+            "void ()".to_string(),
+        );
 
         // Normal method has body
         assert!(node.has_body());
@@ -225,7 +253,12 @@ mod tests {
     #[test]
     fn test_callees_deduplication() {
         let token = Token::new(0x0600_0001);
-        let mut node = CallGraphNode::new(token, "Test".to_string(), "void ()".to_string());
+        let mut node = CallGraphNode::new(
+            token,
+            "Test".to_string(),
+            "TestClass::Test".to_string(),
+            "void ()".to_string(),
+        );
 
         let callee = Token::new(0x0600_0002);
 

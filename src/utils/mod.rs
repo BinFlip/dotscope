@@ -44,6 +44,7 @@
 mod alignment;
 mod bitset;
 mod compression;
+mod dot;
 mod enums;
 pub(crate) mod graph;
 mod heap_calc;
@@ -54,6 +55,7 @@ mod visitedmap;
 pub use alignment::{align_to, align_to_4_bytes};
 pub use bitset::BitSet;
 pub use compression::compressed_uint_size;
+pub use dot::escape_dot;
 pub use enums::EnumUtils;
 pub use heap_calc::calculate_table_row_size;
 #[allow(unused_imports)]

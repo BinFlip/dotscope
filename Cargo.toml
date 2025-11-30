@@ -48,10 +48,11 @@ boxcar = "0.2.14"
 quick-xml = "0.38.4"
 hex = "0.4.3"
 num_cpus = "1.17.0"
-flate2 = "1.0"
+flate2 = "1.1.5"
 
 [dev-dependencies]
-criterion = "0.7.0"
+criterion = "0.8.0"
+clap = { version = "4.5.53", features = ["derive"] }
 
 [features]
 # Skip expensive validation tests that use ProjectLoader with dependency resolution.

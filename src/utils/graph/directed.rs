@@ -3,6 +3,11 @@
 //! This module provides [`DirectedGraph`], the primary graph data structure used
 //! throughout the analysis infrastructure. The implementation uses adjacency lists
 //! for efficient traversal while maintaining full edge data access.
+//!
+//! The graph supports both owned and borrowed node data through [`Cow`], enabling
+//! zero-copy graph construction when nodes are borrowed from external storage.
+
+use std::borrow::Cow;
 
 use crate::{
     utils::graph::{
@@ -33,16 +38,23 @@ struct EdgeData<E> {
 /// - Generic edge data (`E`) - Store any data associated with each edge
 /// - Efficient adjacency queries via adjacency lists
 /// - Both forward (successors) and backward (predecessors) traversal
+/// - Borrowed or owned node storage via [`Cow`]
 ///
 /// # Memory Layout
 ///
 /// The graph uses separate storage for nodes and edges:
 ///
-/// - Nodes are stored in a contiguous vector indexed by `NodeId`
+/// - Nodes are stored in a [`Cow`] slice, allowing borrowed or owned data
 /// - Edges are stored in a contiguous vector indexed by `EdgeId`
 /// - Adjacency lists (outgoing/incoming) store `EdgeId` references
 ///
 /// This design provides O(1) node/edge access and efficient iteration.
+///
+/// # Lifetime Parameter
+///
+/// The `'a` lifetime parameter represents the lifetime of borrowed node data:
+/// - Use `DirectedGraph<'static, N, E>` for owned graphs (nodes are `Cow::Owned`)
+/// - Use `DirectedGraph<'a, N, E>` when borrowing nodes from external storage
 ///
 /// # Thread Safety
 ///
@@ -96,9 +108,9 @@ struct EdgeData<E> {
 /// assert_eq!(predecessors, vec![a]);
 /// ```
 #[derive(Debug, Clone)]
-pub struct DirectedGraph<N, E> {
-    /// Node data storage
-    nodes: Vec<N>,
+pub struct DirectedGraph<'a, N: Clone, E> {
+    /// Node data storage (borrowed or owned)
+    nodes: Cow<'a, [N]>,
     /// Edge data storage
     edges: Vec<EdgeData<E>>,
     /// Outgoing edges per node (adjacency list for successors)
@@ -107,14 +119,14 @@ pub struct DirectedGraph<N, E> {
     incoming: Vec<Vec<EdgeId>>,
 }
 
-impl<N, E> Default for DirectedGraph<N, E> {
+impl<N: Clone, E> Default for DirectedGraph<'static, N, E> {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl<N, E> DirectedGraph<N, E> {
-    /// Creates a new empty directed graph.
+impl<N: Clone, E> DirectedGraph<'static, N, E> {
+    /// Creates a new empty directed graph with owned storage.
     ///
     /// The graph starts with no nodes or edges. Use [`add_node`](Self::add_node)
     /// and [`add_edge`](Self::add_edge) to build up the graph structure.
@@ -134,7 +146,7 @@ impl<N, E> DirectedGraph<N, E> {
     #[must_use]
     pub fn new() -> Self {
         DirectedGraph {
-            nodes: Vec::new(),
+            nodes: Cow::Owned(Vec::new()),
             edges: Vec::new(),
             outgoing: Vec::new(),
             incoming: Vec::new(),
@@ -168,7 +180,7 @@ impl<N, E> DirectedGraph<N, E> {
     #[must_use]
     pub fn with_capacity(node_capacity: usize, edge_capacity: usize) -> Self {
         DirectedGraph {
-            nodes: Vec::with_capacity(node_capacity),
+            nodes: Cow::Owned(Vec::with_capacity(node_capacity)),
             edges: Vec::with_capacity(edge_capacity),
             outgoing: Vec::with_capacity(node_capacity),
             incoming: Vec::with_capacity(node_capacity),
@@ -205,35 +217,10 @@ impl<N, E> DirectedGraph<N, E> {
     /// ```
     pub fn add_node(&mut self, data: N) -> NodeId {
         let id = NodeId::new(self.nodes.len());
-        self.nodes.push(data);
+        self.nodes.to_mut().push(data);
         self.outgoing.push(Vec::new());
         self.incoming.push(Vec::new());
         id
-    }
-
-    /// Returns a reference to the data associated with the given node.
-    ///
-    /// # Arguments
-    ///
-    /// * `node` - The node to look up
-    ///
-    /// # Returns
-    ///
-    /// `Some(&N)` if the node exists, `None` otherwise.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use dotscope::graph::DirectedGraph;
-    ///
-    /// let mut graph: DirectedGraph<&str, ()> = DirectedGraph::new();
-    /// let node = graph.add_node("hello");
-    ///
-    /// assert_eq!(graph.node(node), Some(&"hello"));
-    /// ```
-    #[must_use]
-    pub fn node(&self, node: NodeId) -> Option<&N> {
-        self.nodes.get(node.index())
     }
 
     /// Returns a mutable reference to the data associated with the given node.
@@ -261,7 +248,101 @@ impl<N, E> DirectedGraph<N, E> {
     /// assert_eq!(graph.node(node), Some(&String::from("hello world")));
     /// ```
     pub fn node_mut(&mut self, node: NodeId) -> Option<&mut N> {
-        self.nodes.get_mut(node.index())
+        self.nodes.to_mut().get_mut(node.index())
+    }
+}
+
+/// Methods for creating graphs with borrowed node storage.
+impl<'a, N: Clone, E> DirectedGraph<'a, N, E> {
+    /// Creates a new directed graph borrowing nodes from an external slice.
+    ///
+    /// This enables zero-copy graph construction when nodes already exist
+    /// in external storage (e.g., basic blocks from a method).
+    ///
+    /// The returned graph has borrowed node storage. Edges can still be added
+    /// normally as they are always owned. To get an owned graph, use
+    /// [`into_owned`](Self::into_owned).
+    ///
+    /// # Arguments
+    ///
+    /// * `nodes` - A slice of nodes to borrow
+    ///
+    /// # Returns
+    ///
+    /// A new `DirectedGraph` with borrowed nodes and empty adjacency lists.
+    /// The caller must add edges separately.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::graph::DirectedGraph;
+    ///
+    /// let nodes = vec!["A", "B", "C"];
+    /// let mut graph: DirectedGraph<&str, ()> = DirectedGraph::from_nodes_borrowed(&nodes);
+    ///
+    /// // Add edges
+    /// graph.add_edge(NodeId::new(0), NodeId::new(1), ())?;
+    /// ```
+    #[must_use]
+    pub fn from_nodes_borrowed(nodes: &'a [N]) -> Self {
+        let node_count = nodes.len();
+        DirectedGraph {
+            nodes: Cow::Borrowed(nodes),
+            edges: Vec::new(),
+            outgoing: vec![Vec::new(); node_count],
+            incoming: vec![Vec::new(); node_count],
+        }
+    }
+
+    /// Converts this graph into an owned graph with `'static` lifetime.
+    ///
+    /// If the nodes are already owned, this is efficient. If borrowed,
+    /// this clones the node data.
+    ///
+    /// # Returns
+    ///
+    /// An owned `DirectedGraph<'static, N, E>`.
+    #[must_use]
+    pub fn into_owned(self) -> DirectedGraph<'static, N, E> {
+        DirectedGraph {
+            nodes: Cow::Owned(self.nodes.into_owned()),
+            edges: self.edges,
+            outgoing: self.outgoing,
+            incoming: self.incoming,
+        }
+    }
+
+    /// Returns `true` if the graph owns its node data.
+    ///
+    /// Returns `false` if nodes are borrowed from external storage.
+    #[must_use]
+    pub fn is_owned(&self) -> bool {
+        matches!(self.nodes, Cow::Owned(_))
+    }
+
+    /// Returns a reference to the data associated with the given node.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The node to look up
+    ///
+    /// # Returns
+    ///
+    /// `Some(&N)` if the node exists, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::graph::DirectedGraph;
+    ///
+    /// let mut graph: DirectedGraph<&str, ()> = DirectedGraph::new();
+    /// let node = graph.add_node("hello");
+    ///
+    /// assert_eq!(graph.node(node), Some(&"hello"));
+    /// ```
+    #[must_use]
+    pub fn node(&self, node: NodeId) -> Option<&N> {
+        self.nodes.get(node.index())
     }
 
     /// Returns the number of nodes in the graph.
@@ -852,7 +933,7 @@ impl<N, E> DirectedGraph<N, E> {
 }
 
 // Implement the GraphBase trait
-impl<N, E> GraphBase for DirectedGraph<N, E> {
+impl<N: Clone, E> GraphBase for DirectedGraph<'_, N, E> {
     fn node_count(&self) -> usize {
         self.nodes.len()
     }
@@ -863,7 +944,7 @@ impl<N, E> GraphBase for DirectedGraph<N, E> {
 }
 
 // Implement the Successors trait
-impl<N, E> Successors for DirectedGraph<N, E> {
+impl<N: Clone, E> Successors for DirectedGraph<'_, N, E> {
     fn successors(&self, node: NodeId) -> impl Iterator<Item = NodeId> {
         self.outgoing[node.index()]
             .iter()
@@ -872,7 +953,7 @@ impl<N, E> Successors for DirectedGraph<N, E> {
 }
 
 // Implement the Predecessors trait
-impl<N, E> Predecessors for DirectedGraph<N, E> {
+impl<N: Clone, E> Predecessors for DirectedGraph<'_, N, E> {
     fn predecessors(&self, node: NodeId) -> impl Iterator<Item = NodeId> {
         self.incoming[node.index()]
             .iter()
@@ -890,7 +971,7 @@ mod tests {
     };
 
     /// Creates a simple linear graph: A -> B -> C
-    fn create_linear_graph() -> DirectedGraph<&'static str, ()> {
+    fn create_linear_graph() -> DirectedGraph<'static, &'static str, ()> {
         let mut graph = DirectedGraph::new();
         let a = graph.add_node("A");
         let b = graph.add_node("B");
@@ -901,7 +982,7 @@ mod tests {
     }
 
     /// Creates a diamond graph: A -> B, A -> C, B -> D, C -> D
-    fn create_diamond_graph() -> DirectedGraph<&'static str, ()> {
+    fn create_diamond_graph() -> DirectedGraph<'static, &'static str, ()> {
         let mut graph = DirectedGraph::new();
         let a = graph.add_node("A");
         let b = graph.add_node("B");
@@ -915,7 +996,7 @@ mod tests {
     }
 
     /// Creates a graph with a cycle: A -> B -> C -> A
-    fn create_cycle_graph() -> DirectedGraph<&'static str, ()> {
+    fn create_cycle_graph() -> DirectedGraph<'static, &'static str, ()> {
         let mut graph = DirectedGraph::new();
         let a = graph.add_node("A");
         let b = graph.add_node("B");

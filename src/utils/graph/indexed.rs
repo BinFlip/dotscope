@@ -65,7 +65,7 @@ where
     K: Hash + Eq + Clone,
 {
     /// The underlying directed graph (nodes store unit type, keys are separate)
-    graph: DirectedGraph<(), E>,
+    graph: DirectedGraph<'static, (), E>,
     /// Map from domain key to `NodeId`
     key_to_node: HashMap<K, NodeId>,
     /// Map from `NodeId` to domain key
@@ -198,7 +198,7 @@ where
     /// This is useful when you need to pass the graph to algorithms that
     /// work with `DirectedGraph` directly.
     #[must_use]
-    pub fn inner(&self) -> &DirectedGraph<(), E> {
+    pub fn inner(&self) -> &DirectedGraph<'static, (), E> {
         &self.graph
     }
 

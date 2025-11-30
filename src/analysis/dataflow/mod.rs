@@ -66,7 +66,7 @@ mod tests {
     use crate::assembly::{decode_blocks, InstructionAssembler};
 
     /// Helper to build CFG from assembled bytecode.
-    fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph {
+    fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph<'static> {
         let (bytecode, _max_stack) = assembler.finish().expect("Failed to assemble bytecode");
         let blocks =
             decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len())).expect("Failed to decode");
@@ -78,7 +78,7 @@ mod tests {
         assembler: InstructionAssembler,
         num_args: usize,
         num_locals: usize,
-    ) -> (crate::analysis::SsaFunction, ControlFlowGraph) {
+    ) -> (crate::analysis::SsaFunction, ControlFlowGraph<'static>) {
         let cfg = build_cfg(assembler);
         let ssa = SsaBuilder::build(&cfg, num_args, num_locals).expect("SSA construction failed");
         (ssa, cfg)

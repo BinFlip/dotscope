@@ -149,7 +149,7 @@ pub trait DataFlowAnalysis {
         _in_states: &[Self::Lattice],
         _out_states: &[Self::Lattice],
         _ssa: &SsaFunction,
-        _cfg: &ControlFlowGraph,
+        _cfg: &ControlFlowGraph<'_>,
     ) {
         // Default: no post-processing
     }

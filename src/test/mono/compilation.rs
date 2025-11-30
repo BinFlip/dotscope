@@ -89,9 +89,42 @@ pub fn compile(
         .map_err(|e| Error::Other(format!("Failed to write source file: {}", e)))?;
 
     match compiler {
-        Compiler::Csc => compile_with_csc(&source_path, output_dir, name, arch),
-        Compiler::Mcs => compile_with_mcs(&source_path, output_dir, name, arch),
-        Compiler::DotNet => compile_with_dotnet(&source_path, output_dir, name, arch),
+        Compiler::Csc => compile_with_csc(&source_path, output_dir, name, arch, true),
+        Compiler::Mcs => compile_with_mcs(&source_path, output_dir, name, arch, true),
+        Compiler::DotNet => compile_with_dotnet(&source_path, output_dir, name, arch, true),
+    }
+}
+
+/// Compile C# source code with optimizations disabled (debug mode)
+///
+/// This produces assemblies that preserve the source code structure more faithfully,
+/// which is important for analysis testing where we want to verify CFG/SSA properties
+/// match the original source code rather than optimized IL.
+pub fn compile_debug(
+    capabilities: &TestCapabilities,
+    source_code: &str,
+    output_dir: &Path,
+    name: &str,
+    arch: &Architecture,
+) -> Result<CompilationResult> {
+    let compiler = match capabilities.compiler {
+        Some(c) => c,
+        None => {
+            return Ok(CompilationResult::failure(
+                "No C# compiler available".to_string(),
+            ))
+        }
+    };
+
+    // Write source code to file
+    let source_path = output_dir.join(format!("{}.cs", name));
+    std::fs::write(&source_path, source_code)
+        .map_err(|e| Error::Other(format!("Failed to write source file: {}", e)))?;
+
+    match compiler {
+        Compiler::Csc => compile_with_csc(&source_path, output_dir, name, arch, false),
+        Compiler::Mcs => compile_with_mcs(&source_path, output_dir, name, arch, false),
+        Compiler::DotNet => compile_with_dotnet(&source_path, output_dir, name, arch, false),
     }
 }
 
@@ -101,12 +134,21 @@ fn compile_with_csc(
     output_dir: &Path,
     name: &str,
     arch: &Architecture,
+    optimize: bool,
 ) -> Result<CompilationResult> {
     let output_path = output_dir.join(format!("{}.exe", name));
 
     let mut cmd = Command::new("csc");
     cmd.arg(format!("/out:{}", output_path.display()));
     cmd.arg("/nologo");
+
+    // Add optimization flags
+    if optimize {
+        cmd.arg("/optimize+");
+    } else {
+        cmd.arg("/optimize-");
+        cmd.arg("/debug+");
+    }
 
     // Add platform flag if specified
     if let Some(flag) = arch.csc_flag {
@@ -135,11 +177,20 @@ fn compile_with_mcs(
     output_dir: &Path,
     name: &str,
     arch: &Architecture,
+    optimize: bool,
 ) -> Result<CompilationResult> {
     let output_path = output_dir.join(format!("{}.exe", name));
 
     let mut cmd = Command::new("mcs");
     cmd.arg(format!("-out:{}", output_path.display()));
+
+    // Add optimization flags
+    if optimize {
+        cmd.arg("-optimize+");
+    } else {
+        cmd.arg("-optimize-");
+        cmd.arg("-debug");
+    }
 
     // Add platform flag
     let platform = match arch.name {
@@ -172,6 +223,7 @@ fn compile_with_dotnet(
     output_dir: &Path,
     name: &str,
     arch: &Architecture,
+    optimize: bool,
 ) -> Result<CompilationResult> {
     // Create a temporary project directory
     let project_dir = output_dir.join(format!("_dotnet_{}", name));
@@ -189,6 +241,12 @@ fn compile_with_dotnet(
         .map(|p| format!("    <PlatformTarget>{}</PlatformTarget>\n", p))
         .unwrap_or_default();
 
+    let optimize_setting = if optimize {
+        "    <Optimize>true</Optimize>\n"
+    } else {
+        "    <Optimize>false</Optimize>\n    <DebugType>full</DebugType>\n"
+    };
+
     let csproj_content = format!(
         r#"<Project Sdk="Microsoft.NET.Sdk">
   <PropertyGroup>
@@ -198,7 +256,7 @@ fn compile_with_dotnet(
     <AssemblyVersion>1.0.0.0</AssemblyVersion>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
-{platform_target}  </PropertyGroup>
+{optimize_setting}{platform_target}  </PropertyGroup>
 </Project>"#
     );
 
@@ -211,11 +269,12 @@ fn compile_with_dotnet(
     std::fs::copy(source_path, &program_path)
         .map_err(|e| Error::Other(format!("Failed to copy source file: {}", e)))?;
 
-    // Build
+    // Build with appropriate configuration
+    let configuration = if optimize { "Release" } else { "Debug" };
     let build_output = Command::new("dotnet")
         .arg("build")
         .arg("--configuration")
-        .arg("Release")
+        .arg(configuration)
         .arg("--nologo")
         .current_dir(&project_dir)
         .output()
@@ -229,7 +288,7 @@ fn compile_with_dotnet(
     }
 
     // Find and copy the built assembly
-    let build_output_dir = project_dir.join("bin/Release/net8.0");
+    let build_output_dir = project_dir.join(format!("bin/{}/net8.0", configuration));
     let built_dll = build_output_dir.join(format!("{}.dll", name));
     let built_runtimeconfig = build_output_dir.join(format!("{}.runtimeconfig.json", name));
 

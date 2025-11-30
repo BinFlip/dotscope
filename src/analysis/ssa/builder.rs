@@ -104,9 +104,9 @@ struct VarDef {
 /// 2. Compute dominance frontiers and place phi nodes
 /// 3. Rename variables using dominator tree traversal
 #[derive(Debug)]
-pub struct SsaBuilder<'a> {
+pub struct SsaBuilder<'a, 'cfg> {
     /// The control flow graph being transformed.
-    cfg: &'a ControlFlowGraph,
+    cfg: &'a ControlFlowGraph<'cfg>,
 
     /// Number of method arguments.
     num_args: usize,
@@ -132,7 +132,7 @@ pub struct SsaBuilder<'a> {
     address_taken: HashSet<VariableOrigin>,
 }
 
-impl<'a> SsaBuilder<'a> {
+impl<'a, 'cfg> SsaBuilder<'a, 'cfg> {
     /// Converts a usize index to u16 with validation.
     ///
     /// Returns an error if the index exceeds `u16::MAX`.
@@ -165,7 +165,7 @@ impl<'a> SsaBuilder<'a> {
     /// - Stack simulation encounters inconsistencies
     /// - Internal invariants are violated
     pub fn build(
-        cfg: &'a ControlFlowGraph,
+        cfg: &'a ControlFlowGraph<'cfg>,
         num_args: usize,
         num_locals: usize,
     ) -> Result<SsaFunction> {
@@ -692,7 +692,7 @@ mod tests {
     use crate::assembly::{decode_blocks, InstructionAssembler};
 
     /// Helper to build a CFG from assembled bytecode.
-    fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph {
+    fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph<'static> {
         let (bytecode, _max_stack) = assembler.finish().expect("Failed to assemble bytecode");
         let blocks =
             decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len())).expect("Failed to decode");

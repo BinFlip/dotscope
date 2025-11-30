@@ -103,7 +103,7 @@ impl ConstantPropagation {
     /// Runs the SCCP algorithm on the given SSA function.
     ///
     /// Returns the analysis results containing the value for each variable.
-    pub fn analyze(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph) -> SccpResult {
+    pub fn analyze(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>) -> SccpResult {
         self.initialize(ssa, cfg);
         self.propagate(ssa, cfg);
 
@@ -114,7 +114,7 @@ impl ConstantPropagation {
     }
 
     /// Initializes the analysis state.
-    fn initialize(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph) {
+    fn initialize(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>) {
         self.values.clear();
         self.executable_edges.clear();
         self.executable_blocks.clear();
@@ -143,7 +143,7 @@ impl ConstantPropagation {
     }
 
     /// Main propagation loop.
-    fn propagate(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph) {
+    fn propagate(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>) {
         // Process until both worklists are empty
         loop {
             // Process CFG worklist first (to discover new blocks)
@@ -172,7 +172,13 @@ impl ConstantPropagation {
     /// 2. Re-evaluate all phi nodes in `to` since they may now have a new operand
     ///    from the `from` block
     /// 3. If first visit, propagate outgoing edges based on the terminator
-    fn process_edge(&mut self, from: usize, to: usize, ssa: &SsaFunction, cfg: &ControlFlowGraph) {
+    fn process_edge(
+        &mut self,
+        from: usize,
+        to: usize,
+        ssa: &SsaFunction,
+        cfg: &ControlFlowGraph<'_>,
+    ) {
         let first_visit = !self.executable_blocks.contains(&to);
 
         if first_visit {
@@ -218,7 +224,12 @@ impl ConstantPropagation {
     }
 
     /// Processes uses of a variable whose value changed.
-    fn process_variable_uses(&mut self, var: SsaVarId, ssa: &SsaFunction, cfg: &ControlFlowGraph) {
+    fn process_variable_uses(
+        &mut self,
+        var: SsaVarId,
+        ssa: &SsaFunction,
+        cfg: &ControlFlowGraph<'_>,
+    ) {
         // Find all uses of this variable
         if let Some(ssa_var) = ssa.variable(var) {
             for use_site in ssa_var.uses() {
@@ -262,7 +273,7 @@ impl ConstantPropagation {
         &mut self,
         block_id: usize,
         block: &SsaBlock,
-        cfg: &ControlFlowGraph,
+        cfg: &ControlFlowGraph<'_>,
     ) {
         // Find the terminator instruction
         let terminator = block.instructions().last();
