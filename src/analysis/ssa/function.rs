@@ -78,6 +78,10 @@ impl SsaFunction {
     ///
     /// * `num_args` - Number of method arguments (including `this` for instance methods)
     /// * `num_locals` - Number of local variables declared in the method
+    ///
+    /// # Returns
+    ///
+    /// A new empty [`SsaFunction`] with no blocks or variables.
     #[must_use]
     pub fn new(num_args: usize, num_locals: usize) -> Self {
         Self {
@@ -96,6 +100,10 @@ impl SsaFunction {
     /// * `num_locals` - Number of local variables
     /// * `block_capacity` - Expected number of blocks
     /// * `var_capacity` - Expected number of SSA variables
+    ///
+    /// # Returns
+    ///
+    /// A new empty [`SsaFunction`] with pre-allocated storage.
     #[must_use]
     pub fn with_capacity(
         num_args: usize,
@@ -112,85 +120,165 @@ impl SsaFunction {
     }
 
     /// Returns the SSA blocks.
+    ///
+    /// # Returns
+    ///
+    /// A slice of all [`SsaBlock`]s in this function.
     #[must_use]
     pub fn blocks(&self) -> &[SsaBlock] {
         &self.blocks
     }
 
     /// Returns a mutable reference to the blocks.
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the vector of [`SsaBlock`]s.
     pub fn blocks_mut(&mut self) -> &mut Vec<SsaBlock> {
         &mut self.blocks
     }
 
     /// Returns the SSA variables.
+    ///
+    /// # Returns
+    ///
+    /// A slice of all [`SsaVariable`]s in this function.
     #[must_use]
     pub fn variables(&self) -> &[SsaVariable] {
         &self.variables
     }
 
     /// Returns a mutable reference to the variables.
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the vector of [`SsaVariable`]s.
     pub fn variables_mut(&mut self) -> &mut Vec<SsaVariable> {
         &mut self.variables
     }
 
     /// Returns the number of method arguments.
+    ///
+    /// # Returns
+    ///
+    /// The count of method arguments, including `this` for instance methods.
     #[must_use]
     pub const fn num_args(&self) -> usize {
         self.num_args
     }
 
     /// Returns the number of local variables.
+    ///
+    /// # Returns
+    ///
+    /// The count of local variables declared in the method.
     #[must_use]
     pub const fn num_locals(&self) -> usize {
         self.num_locals
     }
 
     /// Returns the number of blocks.
+    ///
+    /// # Returns
+    ///
+    /// The count of basic blocks in this function.
     #[must_use]
     pub fn block_count(&self) -> usize {
         self.blocks.len()
     }
 
     /// Returns the number of variables.
+    ///
+    /// # Returns
+    ///
+    /// The count of SSA variables in this function.
     #[must_use]
     pub fn variable_count(&self) -> usize {
         self.variables.len()
     }
 
     /// Returns `true` if this function has no blocks.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the function contains no blocks, `false` otherwise.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.blocks.is_empty()
     }
 
     /// Gets a block by index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The block index to retrieve
+    ///
+    /// # Returns
+    ///
+    /// A reference to the block, or `None` if the index is out of bounds.
     #[must_use]
     pub fn block(&self, index: usize) -> Option<&SsaBlock> {
         self.blocks.get(index)
     }
 
     /// Gets a mutable block by index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The block index to retrieve
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the block, or `None` if the index is out of bounds.
     pub fn block_mut(&mut self, index: usize) -> Option<&mut SsaBlock> {
         self.blocks.get_mut(index)
     }
 
     /// Gets a variable by ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The variable ID to look up
+    ///
+    /// # Returns
+    ///
+    /// A reference to the variable, or `None` if the ID is invalid.
     #[must_use]
     pub fn variable(&self, id: SsaVarId) -> Option<&SsaVariable> {
         self.variables.get(id.index())
     }
 
     /// Gets a mutable variable by ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The variable ID to look up
+    ///
+    /// # Returns
+    ///
+    /// A mutable reference to the variable, or `None` if the ID is invalid.
     pub fn variable_mut(&mut self, id: SsaVarId) -> Option<&mut SsaVariable> {
         self.variables.get_mut(id.index())
     }
 
     /// Adds a block to this function.
+    ///
+    /// # Arguments
+    ///
+    /// * `block` - The block to add
     pub fn add_block(&mut self, block: SsaBlock) {
         self.blocks.push(block);
     }
 
     /// Adds a variable to this function and returns its ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `variable` - The variable to add
+    ///
+    /// # Returns
+    ///
+    /// The [`SsaVarId`] assigned to the newly added variable.
     pub fn add_variable(&mut self, variable: SsaVariable) -> SsaVarId {
         let id = SsaVarId::new(self.variables.len());
         self.variables.push(variable);
@@ -200,6 +288,10 @@ impl SsaFunction {
     /// Returns an iterator over argument variables (version 0).
     ///
     /// These are the initial SSA versions of arguments at method entry.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over argument variables with version 0.
     pub fn argument_variables(&self) -> impl Iterator<Item = &SsaVariable> {
         self.variables
             .iter()
@@ -209,6 +301,10 @@ impl SsaFunction {
     /// Returns an iterator over local variables (version 0).
     ///
     /// These are the initial SSA versions of locals at method entry.
+    ///
+    /// # Returns
+    ///
+    /// An iterator over local variables with version 0.
     pub fn local_variables(&self) -> impl Iterator<Item = &SsaVariable> {
         self.variables
             .iter()
@@ -216,6 +312,14 @@ impl SsaFunction {
     }
 
     /// Finds all variables originating from a specific argument.
+    ///
+    /// # Arguments
+    ///
+    /// * `arg_index` - The argument index to filter by
+    ///
+    /// # Returns
+    ///
+    /// An iterator over all SSA versions of the specified argument.
     pub fn variables_from_argument(&self, arg_index: u16) -> impl Iterator<Item = &SsaVariable> {
         self.variables.iter().filter(
             move |v| matches!(v.origin(), VariableOrigin::Argument(idx) if idx == arg_index),
@@ -223,6 +327,14 @@ impl SsaFunction {
     }
 
     /// Finds all variables originating from a specific local.
+    ///
+    /// # Arguments
+    ///
+    /// * `local_index` - The local variable index to filter by
+    ///
+    /// # Returns
+    ///
+    /// An iterator over all SSA versions of the specified local variable.
     pub fn variables_from_local(&self, local_index: u16) -> impl Iterator<Item = &SsaVariable> {
         self.variables
             .iter()
@@ -230,31 +342,55 @@ impl SsaFunction {
     }
 
     /// Returns the total number of phi nodes across all blocks.
+    ///
+    /// # Returns
+    ///
+    /// The sum of phi node counts in all blocks.
     pub fn total_phi_count(&self) -> usize {
         self.blocks.iter().map(SsaBlock::phi_count).sum()
     }
 
     /// Returns the total number of instructions across all blocks.
+    ///
+    /// # Returns
+    ///
+    /// The sum of instruction counts in all blocks.
     pub fn total_instruction_count(&self) -> usize {
         self.blocks.iter().map(SsaBlock::instruction_count).sum()
     }
 
     /// Returns an iterator over all phi nodes in the function.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding references to all [`PhiNode`]s across all blocks.
     pub fn all_phi_nodes(&self) -> impl Iterator<Item = &PhiNode> {
         self.blocks.iter().flat_map(SsaBlock::phi_nodes)
     }
 
     /// Returns an iterator over all instructions in the function.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding references to all [`SsaInstruction`]s across all blocks.
     pub fn all_instructions(&self) -> impl Iterator<Item = &SsaInstruction> {
         self.blocks.iter().flat_map(SsaBlock::instructions)
     }
 
     /// Finds dead variables (variables with no uses).
+    ///
+    /// # Returns
+    ///
+    /// An iterator over variables that have no uses recorded.
     pub fn dead_variables(&self) -> impl Iterator<Item = &SsaVariable> {
         self.variables.iter().filter(|v| v.is_dead())
     }
 
     /// Counts dead variables.
+    ///
+    /// # Returns
+    ///
+    /// The number of variables with no uses.
     #[must_use]
     pub fn dead_variable_count(&self) -> usize {
         self.variables.iter().filter(|v| v.is_dead()).count()

@@ -3464,3 +3464,108 @@ impl TypeSignature {
         }
     }
 }
+
+impl std::fmt::Display for TypeSignature {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            TypeSignature::Void => write!(f, "void"),
+            TypeSignature::Boolean => write!(f, "bool"),
+            TypeSignature::Char => write!(f, "char"),
+            TypeSignature::I1 => write!(f, "sbyte"),
+            TypeSignature::U1 => write!(f, "byte"),
+            TypeSignature::I2 => write!(f, "short"),
+            TypeSignature::U2 => write!(f, "ushort"),
+            TypeSignature::I4 => write!(f, "int"),
+            TypeSignature::U4 => write!(f, "uint"),
+            TypeSignature::I8 => write!(f, "long"),
+            TypeSignature::U8 => write!(f, "ulong"),
+            TypeSignature::R4 => write!(f, "float"),
+            TypeSignature::R8 => write!(f, "double"),
+            TypeSignature::I => write!(f, "nint"),
+            TypeSignature::U => write!(f, "nuint"),
+            TypeSignature::String => write!(f, "string"),
+            TypeSignature::Object => write!(f, "object"),
+            TypeSignature::TypedByRef => write!(f, "typedref"),
+            TypeSignature::Class(token) => write!(f, "class[{:08X}]", token.value()),
+            TypeSignature::ValueType(token) => write!(f, "valuetype[{:08X}]", token.value()),
+            TypeSignature::SzArray(inner) => write!(f, "{}[]", inner.base),
+            TypeSignature::Array(arr) => write!(f, "{}[{}]", arr.base, arr.rank),
+            TypeSignature::Ptr(ptr) => write!(f, "{}*", ptr.base),
+            TypeSignature::ByRef(inner) => write!(f, "ref {}", inner),
+            TypeSignature::GenericInst(base, args) => {
+                write!(f, "{}<", base)?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}", arg)?;
+                }
+                write!(f, ">")
+            }
+            TypeSignature::GenericParamType(idx) => write!(f, "!{}", idx),
+            TypeSignature::GenericParamMethod(idx) => write!(f, "!!{}", idx),
+            TypeSignature::FnPtr(sig) => write!(f, "fnptr({})", sig),
+            TypeSignature::ModifiedRequired(modifiers) => {
+                write!(f, "modreq[")?;
+                for (i, m) in modifiers.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{:08X}", m.modifier_type.value())?;
+                }
+                write!(f, "]")
+            }
+            TypeSignature::ModifiedOptional(modifiers) => {
+                write!(f, "modopt[")?;
+                for (i, m) in modifiers.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{:08X}", m.modifier_type.value())?;
+                }
+                write!(f, "]")
+            }
+            TypeSignature::Pinned(inner) => write!(f, "pinned {}", inner),
+            TypeSignature::Sentinel => write!(f, "..."),
+            TypeSignature::Unknown => write!(f, "<unknown>"),
+            TypeSignature::Internal => write!(f, "<internal>"),
+            TypeSignature::Modifier => write!(f, "<modifier>"),
+            TypeSignature::Type => write!(f, "System.Type"),
+            TypeSignature::Boxed => write!(f, "<boxed>"),
+            TypeSignature::Reserved => write!(f, "<reserved>"),
+            TypeSignature::Field => write!(f, "<field>"),
+        }
+    }
+}
+
+impl std::fmt::Display for SignatureParameter {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.by_ref {
+            write!(f, "ref ")?;
+        }
+        write!(f, "{}", self.base)
+    }
+}
+
+impl std::fmt::Display for SignatureMethod {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        // Return type
+        write!(f, "{}", self.return_type)?;
+
+        // Parameters
+        write!(f, " (")?;
+        for (i, param) in self.params.iter().enumerate() {
+            if i > 0 {
+                write!(f, ", ")?;
+            }
+            write!(f, "{}", param)?;
+        }
+        if !self.varargs.is_empty() {
+            if !self.params.is_empty() {
+                write!(f, ", ")?;
+            }
+            write!(f, "...")?;
+        }
+        write!(f, ")")
+    }
+}

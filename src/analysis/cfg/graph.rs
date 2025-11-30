@@ -58,12 +58,24 @@ impl NaturalLoop {
     }
 
     /// Returns true if this loop contains the given block.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The node ID to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if the block is part of this loop's body, `false` otherwise.
     #[must_use]
     pub fn contains(&self, node: NodeId) -> bool {
         self.body.contains(&node)
     }
 
     /// Returns the number of blocks in the loop body.
+    ///
+    /// # Returns
+    ///
+    /// The count of basic blocks in this loop, including the header.
     #[must_use]
     pub fn size(&self) -> usize {
         self.body.len()
@@ -262,6 +274,10 @@ impl ControlFlowGraph {
     /// Returns the entry block ID.
     ///
     /// The entry block is always the first block in the method body.
+    ///
+    /// # Returns
+    ///
+    /// The [`NodeId`] of the entry block.
     #[must_use]
     pub const fn entry(&self) -> NodeId {
         self.entry
@@ -270,12 +286,20 @@ impl ControlFlowGraph {
     /// Returns the exit block IDs.
     ///
     /// Exit blocks are blocks with no successors or those ending with return instructions.
+    ///
+    /// # Returns
+    ///
+    /// A slice of [`NodeId`]s for all exit blocks.
     #[must_use]
     pub fn exits(&self) -> &[NodeId] {
         &self.exits
     }
 
     /// Returns the number of blocks in the CFG.
+    ///
+    /// # Returns
+    ///
+    /// The total count of basic blocks in this control flow graph.
     #[must_use]
     pub fn block_count(&self) -> usize {
         self.graph.node_count()
@@ -433,12 +457,28 @@ impl ControlFlowGraph {
     }
 
     /// Returns true if this CFG contains any loops.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the CFG has at least one natural loop, `false` otherwise.
     #[must_use]
     pub fn has_loops(&self) -> bool {
         !self.loops().is_empty()
     }
 
     /// Returns the innermost loop containing the given node, if any.
+    ///
+    /// When a block is contained in multiple nested loops, this returns the
+    /// loop with the highest nesting depth.
+    ///
+    /// # Arguments
+    ///
+    /// * `node` - The node ID to query
+    ///
+    /// # Returns
+    ///
+    /// A reference to the innermost [`NaturalLoop`] containing the node,
+    /// or `None` if the node is not in any loop.
     #[must_use]
     pub fn innermost_loop(&self, node: NodeId) -> Option<&NaturalLoop> {
         self.loops()
@@ -540,13 +580,22 @@ impl ControlFlowGraph {
 
     /// Returns a reference to the underlying graph.
     ///
-    /// This provides access to the full graph API for advanced use cases.
+    /// This provides access to the full graph API for advanced use cases
+    /// such as custom traversals or algorithm applications.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the underlying [`DirectedGraph`] structure.
     #[must_use]
     pub fn graph(&self) -> &DirectedGraph<BasicBlock, CfgEdge> {
         &self.graph
     }
 
     /// Returns an iterator over all node IDs in the graph.
+    ///
+    /// # Returns
+    ///
+    /// An iterator yielding all [`NodeId`]s in the graph.
     pub fn node_ids(&self) -> impl Iterator<Item = NodeId> + '_ {
         self.graph.node_ids()
     }

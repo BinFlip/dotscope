@@ -73,6 +73,11 @@ pub enum CfgEdgeKind {
 impl CfgEdgeKind {
     /// Returns `true` if this is a conditional branch edge.
     ///
+    /// # Returns
+    ///
+    /// `true` for [`ConditionalTrue`](Self::ConditionalTrue) and
+    /// [`ConditionalFalse`](Self::ConditionalFalse), `false` otherwise.
+    ///
     /// # Examples
     ///
     /// ```rust,ignore
@@ -88,6 +93,11 @@ impl CfgEdgeKind {
     }
 
     /// Returns `true` if this is an exception-related edge.
+    ///
+    /// # Returns
+    ///
+    /// `true` for [`ExceptionHandler`](Self::ExceptionHandler), [`Leave`](Self::Leave),
+    /// and [`EndFinally`](Self::EndFinally), `false` otherwise.
     ///
     /// # Examples
     ///
@@ -107,6 +117,10 @@ impl CfgEdgeKind {
     }
 
     /// Returns `true` if this is a switch case edge.
+    ///
+    /// # Returns
+    ///
+    /// `true` for [`Switch`](Self::Switch) edges, `false` otherwise.
     #[must_use]
     pub const fn is_switch(&self) -> bool {
         matches!(self, Self::Switch { .. })
@@ -153,48 +167,106 @@ impl CfgEdge {
     }
 
     /// Returns the target block index of this edge.
+    ///
+    /// # Returns
+    ///
+    /// The index of the target basic block.
     #[must_use]
     pub const fn target(&self) -> usize {
         self.target
     }
 
     /// Returns the kind of control flow this edge represents.
+    ///
+    /// # Returns
+    ///
+    /// A reference to the [`CfgEdgeKind`] for this edge.
     #[must_use]
     pub const fn kind(&self) -> &CfgEdgeKind {
         &self.kind
     }
 
     /// Creates an unconditional edge to the target block.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - The target block index
+    ///
+    /// # Returns
+    ///
+    /// A new [`CfgEdge`] with [`CfgEdgeKind::Unconditional`] kind.
     #[must_use]
     pub const fn unconditional(target: usize) -> Self {
         Self::new(target, CfgEdgeKind::Unconditional)
     }
 
     /// Creates a conditional true edge to the target block.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - The target block index
+    ///
+    /// # Returns
+    ///
+    /// A new [`CfgEdge`] with [`CfgEdgeKind::ConditionalTrue`] kind.
     #[must_use]
     pub const fn conditional_true(target: usize) -> Self {
         Self::new(target, CfgEdgeKind::ConditionalTrue)
     }
 
     /// Creates a conditional false edge to the target block.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - The target block index
+    ///
+    /// # Returns
+    ///
+    /// A new [`CfgEdge`] with [`CfgEdgeKind::ConditionalFalse`] kind.
     #[must_use]
     pub const fn conditional_false(target: usize) -> Self {
         Self::new(target, CfgEdgeKind::ConditionalFalse)
     }
 
     /// Creates a switch case edge to the target block.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - The target block index
+    /// * `case_value` - The case value, or `None` for the default case
+    ///
+    /// # Returns
+    ///
+    /// A new [`CfgEdge`] with [`CfgEdgeKind::Switch`] kind.
     #[must_use]
     pub const fn switch_case(target: usize, case_value: Option<i32>) -> Self {
         Self::new(target, CfgEdgeKind::Switch { case_value })
     }
 
     /// Creates an exception handler edge to the target block.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - The target block index
+    /// * `exception_type` - The caught exception type token, or `None` for catch-all
+    ///
+    /// # Returns
+    ///
+    /// A new [`CfgEdge`] with [`CfgEdgeKind::ExceptionHandler`] kind.
     #[must_use]
     pub const fn exception_handler(target: usize, exception_type: Option<Token>) -> Self {
         Self::new(target, CfgEdgeKind::ExceptionHandler { exception_type })
     }
 
     /// Creates a leave edge to the target block.
+    ///
+    /// # Arguments
+    ///
+    /// * `target` - The target block index
+    ///
+    /// # Returns
+    ///
+    /// A new [`CfgEdge`] with [`CfgEdgeKind::Leave`] kind.
     #[must_use]
     pub const fn leave(target: usize) -> Self {
         Self::new(target, CfgEdgeKind::Leave)
