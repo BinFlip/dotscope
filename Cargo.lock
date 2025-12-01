@@ -435,7 +435,7 @@ dependencies = [
 [[package]]
 name = "goblin"
 version = "0.10.3"
-source = "git+https://github.com/BinFlip/goblin.git?branch=mono_resource_padding#80a125ec881908297a81bff0da2f25593425d377"
+source = "git+https://github.com/BinFlip/goblin.git?branch=mono_resource_padding#55d42817a9625566e05b9104c0aec67c0d3fd787"
 dependencies = [
  "log",
  "plain",
