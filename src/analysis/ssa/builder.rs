@@ -75,6 +75,7 @@ mod opcodes {
     pub const LDLOCA_S: u8 = 0x12;
     pub const STLOC_S: u8 = 0x13;
     pub const DUP: u8 = 0x25;
+    pub const RET: u8 = 0x2A;
 
     pub const FE_PREFIX: u8 = 0xFE;
     pub const FE_LDARG: u8 = 0x09;
@@ -219,11 +220,16 @@ impl<'a, 'cfg> SsaBuilder<'a, 'cfg> {
         // First pass: compute stack depths at block exits
         let exit_depths = self.compute_stack_depths(&rpo)?;
 
+        // Create a single simulator for the entire method to ensure unique variable IDs
+        // across all blocks within this method. In well-formed CIL, the stack is always
+        // balanced at block boundaries.
+        let mut simulator = StackSimulator::new(self.num_args, self.num_locals);
+
         // Second pass: simulate with correct starting stack depths
         for &node_id in &rpo {
             let block_idx = node_id.index();
             let entry_depth = self.compute_entry_depth(block_idx, &exit_depths);
-            self.simulate_block(block_idx, entry_depth)?;
+            self.simulate_block(block_idx, entry_depth, &mut simulator)?;
         }
 
         Ok(())
@@ -284,29 +290,54 @@ impl<'a, 'cfg> SsaBuilder<'a, 'cfg> {
     }
 
     /// Simulates a single block, converting CIL instructions to SSA.
-    fn simulate_block(&mut self, block_idx: usize, entry_stack_depth: usize) -> Result<()> {
+    ///
+    /// Uses a shared simulator to ensure unique variable IDs across all blocks within this method.
+    /// In well-formed CIL, the stack is always balanced at block boundaries.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_idx` - The index of the block to simulate.
+    /// * `entry_stack_depth` - The stack depth at block entry.
+    /// * `simulator` - The shared stack simulator for this method.
+    fn simulate_block(
+        &mut self,
+        block_idx: usize,
+        entry_stack_depth: usize,
+        simulator: &mut StackSimulator,
+    ) -> Result<()> {
         let node_id = NodeId::new(block_idx);
         let cfg_block = self
             .cfg
             .block(node_id)
             .ok_or_else(|| Error::SsaError(format!("Block {block_idx} not found in CFG")))?;
 
-        let mut simulator = StackSimulator::new(self.num_args, self.num_locals);
+        // Reset the stack to the expected entry depth for this block
+        // This handles cases where control flow merges with different stack states
+        simulator.reset_stack_to_depth(entry_stack_depth);
 
-        // Initialize stack with placeholder values if block is entered with non-empty stack
-        if entry_stack_depth > 0 {
-            simulator.initialize_stack(entry_stack_depth);
-        }
+        // Get the block's successors for branch target resolution
+        let successors = &cfg_block.successors;
 
-        for cil_instr in &cfg_block.instructions {
-            let result = Self::simulate_instruction(&mut simulator, cil_instr)?;
+        let instr_count = cfg_block.instructions.len();
+        for (instr_idx, cil_instr) in cfg_block.instructions.iter().enumerate() {
+            let result = Self::simulate_instruction(simulator, cil_instr)?;
 
             // Create SSA instruction with uses and def
             let mut ssa_instr =
                 SsaInstruction::new(cil_instr.clone(), result.uses.clone(), result.def);
 
+            // Pass successors only for the last instruction (terminator)
+            // Non-terminator instructions don't need successor information
+            let instr_successors = if instr_idx == instr_count - 1 {
+                successors.as_slice()
+            } else {
+                &[]
+            };
+
             // Try to decompose the CIL instruction into an SsaOp
-            if let Some(op) = decompose_instruction(cil_instr, &result.uses, result.def) {
+            if let Some(op) =
+                decompose_instruction(cil_instr, &result.uses, result.def, instr_successors)
+            {
                 ssa_instr.set_op(op);
             }
 
@@ -387,6 +418,7 @@ impl<'a, 'cfg> SsaBuilder<'a, 'cfg> {
                 opcodes::STLOC_S => Self::extract_index(&instr.operand)
                     .and_then(|idx| simulator.simulate_stloc(idx)),
                 opcodes::DUP => simulator.simulate_dup(),
+                opcodes::RET => Some(simulator.simulate_ret()),
                 _ => simulator
                     .simulate_stack_effect(instr.stack_behavior.pops, instr.stack_behavior.pushes),
             }

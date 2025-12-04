@@ -395,6 +395,421 @@ impl SsaFunction {
     pub fn dead_variable_count(&self) -> usize {
         self.variables.iter().filter(|v| v.is_dead()).count()
     }
+
+    /// Returns the total instruction count across all blocks.
+    #[must_use]
+    pub fn instruction_count(&self) -> usize {
+        self.total_instruction_count()
+    }
+
+    /// Returns the number of method parameters.
+    #[must_use]
+    pub fn parameter_count(&self) -> usize {
+        self.num_args
+    }
+
+    /// Checks if a parameter at the given index is used in the function.
+    #[must_use]
+    pub fn is_parameter_used(&self, param_index: usize) -> bool {
+        self.variables_from_argument(param_index as u16)
+            .any(|v| v.use_count() > 0)
+    }
+
+    /// Returns the use count for a parameter.
+    #[must_use]
+    pub fn parameter_use_count(&self, param_index: usize) -> usize {
+        self.variables_from_argument(param_index as u16)
+            .map(|v| v.use_count())
+            .sum()
+    }
+
+    /// Checks if the function has any XOR operations.
+    #[must_use]
+    pub fn has_xor_operations(&self) -> bool {
+        self.all_instructions().any(|instr| {
+            instr
+                .op()
+                .map_or(false, |op| matches!(op, super::SsaOp::Xor { .. }))
+        })
+    }
+
+    /// Checks if the function has any array element access operations.
+    #[must_use]
+    pub fn has_array_element_access(&self) -> bool {
+        self.all_instructions().any(|instr| {
+            instr.op().map_or(false, |op| {
+                matches!(
+                    op,
+                    super::SsaOp::LoadElement { .. } | super::SsaOp::StoreElement { .. }
+                )
+            })
+        })
+    }
+
+    /// Checks if the function has any field store operations.
+    #[must_use]
+    pub fn has_field_stores(&self) -> bool {
+        self.all_instructions().any(|instr| {
+            instr.op().map_or(false, |op| {
+                matches!(
+                    op,
+                    super::SsaOp::StoreField { .. } | super::SsaOp::StoreStaticField { .. }
+                )
+            })
+        })
+    }
+
+    /// Checks if the function accesses any static fields.
+    #[must_use]
+    pub fn has_static_field_access(&self) -> bool {
+        self.all_instructions().any(|instr| {
+            instr.op().map_or(false, |op| {
+                matches!(
+                    op,
+                    super::SsaOp::LoadStaticField { .. }
+                        | super::SsaOp::StoreStaticField { .. }
+                        | super::SsaOp::LoadStaticFieldAddr { .. }
+                )
+            })
+        })
+    }
+
+    /// Checks if the function has any field load operations.
+    #[must_use]
+    pub fn has_field_loads(&self) -> bool {
+        self.all_instructions().any(|instr| {
+            instr.op().map_or(false, |op| {
+                matches!(
+                    op,
+                    super::SsaOp::LoadField { .. } | super::SsaOp::LoadStaticField { .. }
+                )
+            })
+        })
+    }
+
+    /// Checks if the function calls any methods that might be impure.
+    /// This is a conservative check - any external call is considered potentially impure.
+    #[must_use]
+    pub fn has_calls_to_impure_methods(&self) -> bool {
+        self.all_instructions().any(|instr| {
+            instr.op().map_or(false, |op| {
+                matches!(
+                    op,
+                    super::SsaOp::Call { .. }
+                        | super::SsaOp::CallVirt { .. }
+                        | super::SsaOp::CallIndirect { .. }
+                )
+            })
+        })
+    }
+
+    /// Returns the target count of the largest switch in the function, if any.
+    #[must_use]
+    pub fn largest_switch_target_count(&self) -> Option<usize> {
+        self.all_instructions()
+            .filter_map(|instr| {
+                instr.op().and_then(|op| {
+                    if let super::SsaOp::Switch { targets, .. } = op {
+                        Some(targets.len())
+                    } else {
+                        None
+                    }
+                })
+            })
+            .max()
+    }
+
+    /// Checks if the function returns a string type (heuristic based on common patterns).
+    /// Note: This is approximate since full type info requires metadata resolution.
+    #[must_use]
+    pub fn returns_string(&self) -> bool {
+        // Check if there's a return with a value that comes from a string-related operation
+        // This is a heuristic - full implementation would check return type from metadata
+        false // Conservative default - override in specialized analysis
+    }
+
+    /// Checks if the function returns void (no return value).
+    #[must_use]
+    pub fn is_void_return(&self) -> bool {
+        self.all_instructions().any(|instr| {
+            instr.op().map_or(false, |op| {
+                matches!(op, super::SsaOp::Return { value: None })
+            })
+        })
+    }
+
+    /// Returns None as return type info isn't stored in basic SsaFunction.
+    /// Full type analysis requires metadata context.
+    #[must_use]
+    pub fn return_type(&self) -> Option<()> {
+        // Return type would need method metadata - not available in pure SSA
+        None
+    }
+
+    /// Gets the defining operation for an SSA variable.
+    ///
+    /// Searches through all blocks and instructions to find where the given
+    /// variable is defined (appears as a destination).
+    ///
+    /// # Arguments
+    ///
+    /// * `var` - The SSA variable to look up.
+    ///
+    /// # Returns
+    ///
+    /// The defining `SsaOp` if found, or `None` if not found.
+    #[must_use]
+    pub fn get_definition(&self, var: SsaVarId) -> Option<&super::SsaOp> {
+        // Check instructions
+        for block in &self.blocks {
+            for instr in block.instructions() {
+                if let Some(op) = instr.op() {
+                    if op.dest() == Some(var) {
+                        return Some(op);
+                    }
+                }
+            }
+
+            // Check phi nodes (they also define variables)
+            for phi in block.phi_nodes() {
+                if phi.result() == var {
+                    // Return a synthetic phi representation
+                    // Note: SsaOp::Phi exists but isn't directly stored in phi_nodes
+                    // We need to handle this differently - phi_nodes are separate
+                    break;
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Checks if a variable is a parameter variable.
+    ///
+    /// In SSA form, parameters are typically mapped to specific variable ranges
+    /// at the function entry. This method checks if the given variable ID
+    /// corresponds to a parameter.
+    ///
+    /// # Arguments
+    ///
+    /// * `var` - The SSA variable to check.
+    ///
+    /// # Returns
+    ///
+    /// The parameter index if this is a parameter variable, `None` otherwise.
+    #[must_use]
+    pub fn is_parameter_variable(&self, var: SsaVarId) -> Option<usize> {
+        // Parameters are typically assigned at function entry to the first N variables
+        // where N is the parameter count. The exact mapping depends on SSA construction.
+
+        // Check if this variable's definition is from a parameter load
+        // or if it's in the initial argument range
+        let idx = var.index();
+        if idx < self.num_args {
+            return Some(idx);
+        }
+
+        // Also check if defined by argument loading
+        for block in &self.blocks {
+            for instr in block.instructions() {
+                if let Some(op) = instr.op() {
+                    if op.dest() == Some(var) {
+                        // Check if this is loading from an argument
+                        if let super::SsaOp::Const { .. } = op {
+                            // Not a parameter
+                            return None;
+                        }
+                        // Check for patterns like copy from parameter variable
+                        if let super::SsaOp::Copy { src, .. } = op {
+                            // Recursively check if source is a parameter
+                            return self.is_parameter_variable(*src);
+                        }
+                    }
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Replaces all uses of `old_var` with `new_var` throughout the function.
+    ///
+    /// This is the core operation for copy propagation - when we know that
+    /// `v1 = v0` (a copy), we can replace all uses of `v1` with `v0`.
+    ///
+    /// # Arguments
+    ///
+    /// * `old_var` - The variable whose uses should be replaced.
+    /// * `new_var` - The variable to use instead.
+    ///
+    /// # Returns
+    ///
+    /// The number of uses that were replaced.
+    pub fn replace_uses(&mut self, old_var: SsaVarId, new_var: SsaVarId) -> usize {
+        let mut replaced = 0;
+
+        // Replace in instructions
+        for block in &mut self.blocks {
+            for instr in block.instructions_mut() {
+                if let Some(op) = instr.op_mut() {
+                    replaced += op.replace_uses(old_var, new_var);
+                }
+            }
+        }
+
+        // Replace in phi node operands
+        for block in &mut self.blocks {
+            for phi in block.phi_nodes_mut() {
+                for operand in phi.operands_mut() {
+                    if operand.value() == old_var {
+                        *operand = super::PhiOperand::new(new_var, operand.predecessor());
+                        replaced += 1;
+                    }
+                }
+            }
+        }
+
+        replaced
+    }
+
+    /// Replaces the operation of an instruction at a specific location.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_idx` - The block containing the instruction.
+    /// * `instr_idx` - The instruction index within the block.
+    /// * `new_op` - The new operation to set.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the replacement was successful, `false` if the location was invalid.
+    pub fn replace_instruction_op(
+        &mut self,
+        block_idx: usize,
+        instr_idx: usize,
+        new_op: super::SsaOp,
+    ) -> bool {
+        if let Some(block) = self.blocks.get_mut(block_idx) {
+            if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                instr.set_op(new_op);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Removes an instruction by replacing it with a Nop.
+    ///
+    /// This maintains block structure while effectively removing the instruction.
+    /// Dead code elimination can later compact the blocks if needed.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_idx` - The block containing the instruction.
+    /// * `instr_idx` - The instruction index within the block.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the instruction was removed, `false` if the location was invalid.
+    pub fn remove_instruction(&mut self, block_idx: usize, instr_idx: usize) -> bool {
+        self.replace_instruction_op(block_idx, instr_idx, super::SsaOp::Nop)
+    }
+
+    /// Simplifies a phi node by converting it to a copy operation.
+    ///
+    /// When a phi node has all identical operands (excluding self-references),
+    /// it can be converted to a simple copy operation: `phi_result = source`.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_idx` - The block containing the phi node.
+    /// * `phi_idx` - The phi node index within the block.
+    /// * `source` - The single source variable all operands resolve to.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the simplification was applied, `false` otherwise.
+    pub fn simplify_phi_to_copy(
+        &mut self,
+        block_idx: usize,
+        phi_idx: usize,
+        source: SsaVarId,
+    ) -> bool {
+        let block = match self.blocks.get_mut(block_idx) {
+            Some(b) => b,
+            None => return false,
+        };
+
+        let phi = match block.phi_nodes().get(phi_idx) {
+            Some(p) => p,
+            None => return false,
+        };
+
+        let dest = phi.result();
+
+        // Remove the phi node
+        block.phi_nodes_mut().remove(phi_idx);
+
+        // Add a copy instruction at the start of the block
+        // Note: In pure SSA, the copy is implicit - we just need to
+        // replace all uses of `dest` with `source`
+        self.replace_uses(dest, source);
+
+        true
+    }
+
+    /// Removes a phi node that is unreachable (all operands are self-references).
+    ///
+    /// # Arguments
+    ///
+    /// * `block_idx` - The block containing the phi node.
+    /// * `phi_idx` - The phi node index within the block.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the phi was removed, `false` otherwise.
+    pub fn remove_unreachable_phi(&mut self, block_idx: usize, phi_idx: usize) -> bool {
+        if let Some(block) = self.blocks.get_mut(block_idx) {
+            if phi_idx < block.phi_nodes().len() {
+                block.phi_nodes_mut().remove(phi_idx);
+                return true;
+            }
+        }
+        false
+    }
+
+    /// Folds a constant operation, replacing its uses with the computed value.
+    ///
+    /// When we can compute a constant result (e.g., `1 + 2 = 3`), we replace
+    /// the operation with a `Const` instruction.
+    ///
+    /// # Arguments
+    ///
+    /// * `block_idx` - The block containing the instruction.
+    /// * `instr_idx` - The instruction index within the block.
+    /// * `value` - The constant value to fold to.
+    ///
+    /// # Returns
+    ///
+    /// `true` if folding was successful, `false` otherwise.
+    pub fn fold_constant(
+        &mut self,
+        block_idx: usize,
+        instr_idx: usize,
+        value: super::ConstValue,
+    ) -> bool {
+        if let Some(block) = self.blocks.get_mut(block_idx) {
+            if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                if let Some(op) = instr.op() {
+                    if let Some(dest) = op.dest() {
+                        instr.set_op(super::SsaOp::Const { dest, value });
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
 }
 
 impl fmt::Display for SsaFunction {

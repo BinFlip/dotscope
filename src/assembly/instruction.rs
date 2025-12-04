@@ -559,6 +559,174 @@ impl Instruction {
             _ => Vec::new(),
         }
     }
+
+    /// Extracts a u8 operand from the instruction.
+    ///
+    /// Returns `None` if the operand is not a suitable type for u8 extraction.
+    #[must_use]
+    pub fn get_u8_operand(&self) -> Option<u8> {
+        match &self.operand {
+            Operand::Immediate(imm) => {
+                let val: u64 = (*imm).into();
+                u8::try_from(val).ok()
+            }
+            Operand::Local(idx) | Operand::Argument(idx) => u8::try_from(*idx).ok(),
+            _ => None,
+        }
+    }
+
+    /// Extracts an i8 operand from the instruction.
+    ///
+    /// Returns `None` if the operand is not a suitable type for i8 extraction.
+    #[must_use]
+    pub fn get_i8_operand(&self) -> Option<i8> {
+        match &self.operand {
+            Operand::Immediate(Immediate::Int8(v)) => Some(*v),
+            // Reinterpret u8 bits as i8 (CIL semantics)
+            Operand::Immediate(Immediate::UInt8(v)) => Some(i8::from_ne_bytes(v.to_ne_bytes())),
+            Operand::Immediate(imm) => {
+                let val: u64 = (*imm).into();
+                // Only valid if value fits in u8, then reinterpret as i8
+                u8::try_from(val)
+                    .ok()
+                    .map(|v| i8::from_ne_bytes(v.to_ne_bytes()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Extracts a u16 operand from the instruction.
+    ///
+    /// Returns `None` if the operand is not a suitable type for u16 extraction.
+    #[must_use]
+    pub fn get_u16_operand(&self) -> Option<u16> {
+        match &self.operand {
+            Operand::Immediate(imm) => {
+                let val: u64 = (*imm).into();
+                u16::try_from(val).ok()
+            }
+            Operand::Local(idx) | Operand::Argument(idx) => Some(*idx),
+            _ => None,
+        }
+    }
+
+    /// Extracts an i32 operand from the instruction.
+    ///
+    /// Returns `None` if the operand is not a suitable type for i32 extraction.
+    #[must_use]
+    pub fn get_i32_operand(&self) -> Option<i32> {
+        match &self.operand {
+            Operand::Immediate(Immediate::Int32(v)) => Some(*v),
+            // Reinterpret u32 bits as i32 (CIL semantics)
+            Operand::Immediate(Immediate::UInt32(v)) => Some(i32::from_ne_bytes(v.to_ne_bytes())),
+            Operand::Immediate(Immediate::Int16(v)) => Some(i32::from(*v)),
+            Operand::Immediate(Immediate::UInt16(v)) => Some(i32::from(*v)),
+            Operand::Immediate(Immediate::Int8(v)) => Some(i32::from(*v)),
+            Operand::Immediate(Immediate::UInt8(v)) => Some(i32::from(*v)),
+            Operand::Immediate(imm) => {
+                let val: u64 = (*imm).into();
+                // Only valid if value fits in u32, then reinterpret as i32
+                u32::try_from(val)
+                    .ok()
+                    .map(|v| i32::from_ne_bytes(v.to_ne_bytes()))
+            }
+            _ => None,
+        }
+    }
+
+    /// Extracts an i64 operand from the instruction.
+    ///
+    /// Returns `None` if the operand is not a suitable type for i64 extraction.
+    #[must_use]
+    pub fn get_i64_operand(&self) -> Option<i64> {
+        match &self.operand {
+            Operand::Immediate(Immediate::Int64(v)) => Some(*v),
+            // Reinterpret u64 bits as i64 (CIL semantics)
+            Operand::Immediate(Immediate::UInt64(v)) => Some(i64::from_ne_bytes(v.to_ne_bytes())),
+            Operand::Immediate(Immediate::Int32(v)) => Some(i64::from(*v)),
+            Operand::Immediate(Immediate::UInt32(v)) => Some(i64::from(*v)),
+            Operand::Immediate(Immediate::Int16(v)) => Some(i64::from(*v)),
+            Operand::Immediate(Immediate::UInt16(v)) => Some(i64::from(*v)),
+            Operand::Immediate(Immediate::Int8(v)) => Some(i64::from(*v)),
+            Operand::Immediate(Immediate::UInt8(v)) => Some(i64::from(*v)),
+            _ => None,
+        }
+    }
+
+    /// Extracts an f32 operand from the instruction.
+    ///
+    /// Returns `None` if the operand is not a suitable type for f32 extraction.
+    #[must_use]
+    pub fn get_f32_operand(&self) -> Option<f32> {
+        match &self.operand {
+            Operand::Immediate(Immediate::Float32(v)) => Some(*v),
+            Operand::Immediate(imm) => {
+                let val: u64 = (*imm).into();
+                u32::try_from(val).ok().map(f32::from_bits)
+            }
+            _ => None,
+        }
+    }
+
+    /// Extracts an f64 operand from the instruction.
+    ///
+    /// Returns `None` if the operand is not a suitable type for f64 extraction.
+    #[must_use]
+    pub fn get_f64_operand(&self) -> Option<f64> {
+        match &self.operand {
+            Operand::Immediate(Immediate::Float64(v)) => Some(*v),
+            Operand::Immediate(imm) => {
+                let val: u64 = (*imm).into();
+                Some(f64::from_bits(val))
+            }
+            _ => None,
+        }
+    }
+
+    /// Extracts a branch target from the instruction.
+    ///
+    /// Returns the branch target address if this instruction has one.
+    #[must_use]
+    pub fn get_branch_target(&self) -> Option<u64> {
+        match &self.operand {
+            Operand::Target(target) => Some(*target),
+            _ => self.branch_targets.first().copied(),
+        }
+    }
+
+    /// Extracts a metadata token from the instruction.
+    ///
+    /// Returns the token if the operand is a token type.
+    #[must_use]
+    pub fn get_token_operand(&self) -> Option<Token> {
+        match &self.operand {
+            Operand::Token(token) => Some(*token),
+            _ => None,
+        }
+    }
+
+    /// Extracts switch targets from the instruction.
+    ///
+    /// Returns the switch targets if the operand is a switch type.
+    #[must_use]
+    pub fn get_switch_targets(&self) -> Option<&[u32]> {
+        match &self.operand {
+            Operand::Switch(targets) => Some(targets),
+            _ => None,
+        }
+    }
+
+    /// Returns whether this instruction is a prefix instruction.
+    ///
+    /// Prefix instructions modify the behavior of the following instruction
+    /// rather than being executed independently.
+    #[must_use]
+    pub fn is_prefix(&self) -> bool {
+        matches!(
+            self.mnemonic,
+            "tail." | "volatile." | "unaligned." | "constrained." | "readonly."
+        )
+    }
 }
 
 impl fmt::Debug for Instruction {

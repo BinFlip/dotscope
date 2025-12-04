@@ -418,15 +418,14 @@ impl OwnedTypeDependencyValidator {
                 .iter()
                 .find(|t| Arc::as_ptr(t) as usize == type_key)
                 .map_or_else(
-                    || format!("Unknown type at address 0x{:X}", type_key),
+                    || format!("Unknown type at address 0x{type_key:X}"),
                     |t| t.fullname(),
                 );
 
             return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
                 message: format!(
-                    "Circular dependency detected in dependency path analysis for type '{}'",
-                    type_name
+                    "Circular dependency detected in dependency path analysis for type '{type_name}'"
                 ),
             });
         }

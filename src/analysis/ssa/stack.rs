@@ -159,6 +159,21 @@ impl StackSimulator {
     /// * `num_locals` - Number of local variables
     #[must_use]
     pub fn new(num_args: usize, num_locals: usize) -> Self {
+        Self::with_var_offset(num_args, num_locals, num_args + num_locals)
+    }
+
+    /// Creates a new stack simulator with a specific starting variable ID.
+    ///
+    /// This is used when simulating multiple blocks to ensure unique
+    /// variable IDs across the entire function.
+    ///
+    /// # Arguments
+    ///
+    /// * `num_args` - Number of method arguments (including `this` for instance methods)
+    /// * `num_locals` - Number of local variables
+    /// * `next_var_id` - The next variable ID to allocate (should be >= num_args + num_locals)
+    #[must_use]
+    pub fn with_var_offset(num_args: usize, num_locals: usize, next_var_id: usize) -> Self {
         let mut args = Vec::with_capacity(num_args);
         for i in 0..num_args {
             args.push(VariableState::new(SsaVarId::new(i)));
@@ -174,7 +189,7 @@ impl StackSimulator {
             args,
             locals,
             next_stack_slot: 0,
-            next_var_id: num_args + num_locals,
+            next_var_id,
             num_args,
             num_locals,
         }
@@ -207,6 +222,33 @@ impl StackSimulator {
             let (var, _origin) = self.alloc_stack_var();
             self.stack.push(var);
         }
+    }
+
+    /// Resets the stack to a specific depth for entering a new basic block.
+    ///
+    /// This is used when simulating multiple blocks with a shared simulator.
+    /// In well-formed CIL, the stack depth at block entry is deterministic and
+    /// must be consistent across all paths to that block. This method adjusts
+    /// the stack to match the expected entry depth:
+    /// - If current depth > target: truncate the stack
+    /// - If current depth < target: add placeholder variables
+    ///
+    /// # Arguments
+    ///
+    /// * `depth` - The expected stack depth at block entry
+    pub fn reset_stack_to_depth(&mut self, depth: usize) {
+        let current = self.stack.len();
+        if current > depth {
+            // Truncate to target depth
+            self.stack.truncate(depth);
+        } else if current < depth {
+            // Add placeholder variables for missing slots
+            for _ in current..depth {
+                let (var, _origin) = self.alloc_stack_var();
+                self.stack.push(var);
+            }
+        }
+        // If current == depth, nothing to do
     }
 
     /// Returns the number of method arguments.
@@ -310,7 +352,8 @@ impl StackSimulator {
     ///
     /// # Returns
     ///
-    /// The simulation result with the popped variable, or `None` if stack is empty or index invalid.
+    /// The simulation result with the popped value as use and the new arg variable as def,
+    /// or `None` if stack is empty or index invalid.
     pub fn simulate_starg(&mut self, index: usize) -> Option<SimulationResult> {
         let value = self.stack.pop()?;
 
@@ -325,7 +368,8 @@ impl StackSimulator {
         state.version += 1;
         state.current_var = new_var;
 
-        Some(SimulationResult::uses_only(vec![value]))
+        // Return new_var as def to enable Copy op generation for constant propagation
+        Some(SimulationResult::with_def(vec![value], new_var))
     }
 
     /// Simulates storing to a local (stloc).
@@ -338,7 +382,8 @@ impl StackSimulator {
     ///
     /// # Returns
     ///
-    /// The simulation result with the popped variable, or `None` if stack is empty or index invalid.
+    /// The simulation result with the popped value as use and the new local variable as def,
+    /// or `None` if stack is empty or index invalid.
     pub fn simulate_stloc(&mut self, index: usize) -> Option<SimulationResult> {
         let value = self.stack.pop()?;
         if index >= self.locals.len() {
@@ -351,7 +396,8 @@ impl StackSimulator {
         state.version += 1;
         state.current_var = new_var;
 
-        Some(SimulationResult::uses_only(vec![value]))
+        // Return new_var as def to enable Copy op generation for constant propagation
+        Some(SimulationResult::with_def(vec![value], new_var))
     }
 
     /// Simulates loading the address of an argument (ldarga).
@@ -490,6 +536,26 @@ impl StackSimulator {
         let (new_var, _origin) = self.alloc_stack_var();
         self.stack.push(new_var);
         Some(SimulationResult::with_def(vec![top], new_var))
+    }
+
+    /// Simulates a ret instruction.
+    ///
+    /// For non-void methods, pops the return value from the stack.
+    /// For void methods (empty stack), returns empty uses.
+    ///
+    /// # Returns
+    ///
+    /// The simulation result with the return value (if any) as a use.
+    #[must_use]
+    pub fn simulate_ret(&mut self) -> SimulationResult {
+        // Pop the return value if there's something on the stack
+        let uses = if let Some(ret_val) = self.stack.pop() {
+            vec![ret_val]
+        } else {
+            vec![]
+        };
+
+        SimulationResult { uses, def: None }
     }
 
     /// Simulates generic stack effects based on pop/push counts.
@@ -654,12 +720,14 @@ mod tests {
         let result = sim.simulate_starg(1).unwrap();
         assert_eq!(result.uses.len(), 1);
         assert_eq!(result.uses[0], SsaVarId::new(0)); // The value we pushed
-        assert!(result.def.is_none());
         assert_eq!(sim.stack_depth(), 0);
 
         // arg1 should now have a new variable
         let new_var = sim.get_arg_var(1).unwrap();
         assert_ne!(new_var, SsaVarId::new(1)); // Should be different from initial
+
+        // def should be the new variable (for Copy op generation)
+        assert_eq!(result.def, Some(new_var));
     }
 
     #[test]
@@ -673,11 +741,13 @@ mod tests {
         let result = sim.simulate_stloc(0).unwrap();
         assert_eq!(result.uses.len(), 1);
         assert_eq!(result.uses[0], SsaVarId::new(0)); // arg0
-        assert!(result.def.is_none());
 
         // local0 should now have a new variable
         let new_var = sim.get_local_var(0).unwrap();
         assert_ne!(new_var, SsaVarId::new(1)); // Different from initial local0
+
+        // def should be the new variable (for Copy op generation)
+        assert_eq!(result.def, Some(new_var));
     }
 
     #[test]

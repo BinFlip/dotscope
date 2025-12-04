@@ -300,8 +300,7 @@ impl<'a> ControlFlowGraph<'a> {
             for (idx, &succ_idx) in block.successors.iter().enumerate() {
                 if succ_idx >= block_count {
                     return Err(GraphError(format!(
-                        "Block {} has successor index {} which exceeds block count {}",
-                        block_idx, succ_idx, block_count
+                        "Block {block_idx} has successor index {succ_idx} which exceeds block count {block_count}"
                     )));
                 }
 

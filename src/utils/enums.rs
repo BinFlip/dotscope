@@ -156,7 +156,7 @@ impl EnumUtils {
     /// # Returns
     /// A formatted string representation
     pub fn format_enum_value(type_name: &str, value: i64) -> String {
-        format!("{}({})", type_name, value)
+        format!("{type_name}({value})")
     }
 
     /// Helper method to check enum inheritance using the type registry

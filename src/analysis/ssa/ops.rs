@@ -805,6 +805,281 @@ impl SsaOp {
                 | Self::Nop
         )
     }
+
+    /// Replaces all uses of `old_var` with `new_var` in this operation.
+    ///
+    /// This is used for copy propagation and other variable substitution transformations.
+    ///
+    /// # Arguments
+    ///
+    /// * `old_var` - The variable to replace.
+    /// * `new_var` - The variable to use instead.
+    ///
+    /// # Returns
+    ///
+    /// The number of replacements made.
+    pub fn replace_uses(&mut self, old_var: super::SsaVarId, new_var: super::SsaVarId) -> usize {
+        let mut count = 0;
+
+        // Helper closure to replace a variable
+        let mut replace = |var: &mut super::SsaVarId| {
+            if *var == old_var {
+                *var = new_var;
+                count += 1;
+            }
+        };
+
+        match self {
+            // Binary arithmetic
+            Self::Add { left, right, .. }
+            | Self::AddOvf { left, right, .. }
+            | Self::Sub { left, right, .. }
+            | Self::SubOvf { left, right, .. }
+            | Self::Mul { left, right, .. }
+            | Self::MulOvf { left, right, .. }
+            | Self::Div { left, right, .. }
+            | Self::Rem { left, right, .. }
+            | Self::And { left, right, .. }
+            | Self::Or { left, right, .. }
+            | Self::Xor { left, right, .. }
+            | Self::Ceq { left, right, .. }
+            | Self::Clt { left, right, .. }
+            | Self::Cgt { left, right, .. } => {
+                replace(left);
+                replace(right);
+            }
+
+            // Unary operations
+            Self::Neg { operand, .. }
+            | Self::Not { operand, .. }
+            | Self::Ckfinite { operand, .. } => {
+                replace(operand);
+            }
+
+            // Shift operations
+            Self::Shl { value, amount, .. } | Self::Shr { value, amount, .. } => {
+                replace(value);
+                replace(amount);
+            }
+
+            // Conversion
+            Self::Conv { operand, .. } => {
+                replace(operand);
+            }
+
+            // Copy operation
+            Self::Copy { src, .. } => {
+                replace(src);
+            }
+
+            // Control flow
+            Self::Branch { condition, .. } => {
+                replace(condition);
+            }
+            Self::Switch { value, .. } => {
+                replace(value);
+            }
+            Self::Return { value: Some(v) } => {
+                replace(v);
+            }
+
+            // Object/field operations
+            Self::LoadField { object, .. } | Self::LoadFieldAddr { object, .. } => {
+                replace(object);
+            }
+            Self::StoreField { object, value, .. } => {
+                replace(object);
+                replace(value);
+            }
+            Self::StoreStaticField { value, .. } => {
+                replace(value);
+            }
+
+            // Array operations
+            Self::LoadElement { array, index, .. } | Self::LoadElementAddr { array, index, .. } => {
+                replace(array);
+                replace(index);
+            }
+            Self::StoreElement {
+                array,
+                index,
+                value,
+                ..
+            } => {
+                replace(array);
+                replace(index);
+                replace(value);
+            }
+            Self::NewArr { length, .. } => {
+                replace(length);
+            }
+            Self::ArrayLength { array, .. } => {
+                replace(array);
+            }
+
+            // Indirect load/store
+            Self::LoadIndirect { addr, .. } => {
+                replace(addr);
+            }
+            Self::StoreIndirect { addr, value, .. } => {
+                replace(addr);
+                replace(value);
+            }
+
+            // Calls
+            Self::Call { args, .. } | Self::CallVirt { args, .. } | Self::NewObj { args, .. } => {
+                for arg in args {
+                    replace(arg);
+                }
+            }
+            Self::CallIndirect { fptr, args, .. } => {
+                replace(fptr);
+                for arg in args {
+                    replace(arg);
+                }
+            }
+
+            // Type operations
+            Self::CastClass { object, .. }
+            | Self::IsInst { object, .. }
+            | Self::Box { value: object, .. }
+            | Self::Unbox { object, .. }
+            | Self::UnboxAny { object, .. } => {
+                replace(object);
+            }
+
+            // Other
+            Self::Throw { exception } => {
+                replace(exception);
+            }
+            Self::Pop { value } => {
+                replace(value);
+            }
+            Self::EndFilter { result } => {
+                replace(result);
+            }
+            Self::Phi { operands, .. } => {
+                for (_, operand) in operands {
+                    replace(operand);
+                }
+            }
+            Self::StoreObj {
+                dest_addr, value, ..
+            } => {
+                replace(dest_addr);
+                replace(value);
+            }
+            Self::LoadObj { src_addr, .. } => {
+                replace(src_addr);
+            }
+            Self::LocalAlloc { size, .. } => {
+                replace(size);
+            }
+            Self::InitObj { dest_addr, .. } => {
+                replace(dest_addr);
+            }
+            Self::CopyObj {
+                dest_addr,
+                src_addr,
+                ..
+            } => {
+                replace(dest_addr);
+                replace(src_addr);
+            }
+            Self::CopyBlk {
+                dest_addr,
+                src_addr,
+                size,
+            } => {
+                replace(dest_addr);
+                replace(src_addr);
+                replace(size);
+            }
+            Self::InitBlk {
+                dest_addr,
+                value,
+                size,
+            } => {
+                replace(dest_addr);
+                replace(value);
+                replace(size);
+            }
+
+            // Operations without variable uses
+            Self::Const { .. }
+            | Self::LoadStaticField { .. }
+            | Self::LoadStaticFieldAddr { .. }
+            | Self::Jump { .. }
+            | Self::Return { value: None }
+            | Self::Rethrow
+            | Self::EndFinally
+            | Self::Leave { .. }
+            | Self::SizeOf { .. }
+            | Self::LoadToken { .. }
+            | Self::LoadArgAddr { .. }
+            | Self::LoadLocalAddr { .. }
+            | Self::LoadFunctionPtr { .. }
+            | Self::LoadVirtFunctionPtr { .. }
+            | Self::Nop
+            | Self::Break
+            | Self::Constrained { .. } => {}
+        }
+
+        count
+    }
+
+    /// Remaps branch target block indices using the provided mapping function.
+    ///
+    /// This is used to translate RVA-based targets (from CIL instructions) to
+    /// sequential block indices (used by the SSA representation).
+    ///
+    /// # Arguments
+    ///
+    /// * `remap` - A function that maps old block indices to new block indices.
+    ///             Returns `None` if the target should remain unchanged.
+    pub fn remap_branch_targets<F>(&mut self, remap: F)
+    where
+        F: Fn(usize) -> Option<usize>,
+    {
+        match self {
+            Self::Jump { target } => {
+                if let Some(new_target) = remap(*target) {
+                    *target = new_target;
+                }
+            }
+            Self::Branch {
+                true_target,
+                false_target,
+                ..
+            } => {
+                if let Some(new_target) = remap(*true_target) {
+                    *true_target = new_target;
+                }
+                if let Some(new_target) = remap(*false_target) {
+                    *false_target = new_target;
+                }
+            }
+            Self::Switch {
+                targets, default, ..
+            } => {
+                for target in targets.iter_mut() {
+                    if let Some(new_target) = remap(*target) {
+                        *target = new_target;
+                    }
+                }
+                if let Some(new_target) = remap(*default) {
+                    *default = new_target;
+                }
+            }
+            Self::Leave { target } => {
+                if let Some(new_target) = remap(*target) {
+                    *target = new_target;
+                }
+            }
+            // All other operations don't have branch targets
+            _ => {}
+        }
+    }
 }
 
 impl fmt::Display for SsaOp {

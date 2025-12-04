@@ -42,6 +42,24 @@ pub struct CallResolver {
 }
 
 impl CallResolver {
+    /// Creates an empty call resolver with no type hierarchy data.
+    ///
+    /// This is useful for testing or when no assembly analysis is needed.
+    ///
+    /// # Returns
+    ///
+    /// An empty `CallResolver` instance.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            virtual_dispatch_table: HashMap::new(),
+            method_to_type: HashMap::new(),
+            type_subtypes: HashMap::new(),
+            interfaces: HashSet::new(),
+            sealed_types: HashSet::new(),
+        }
+    }
+
     /// Builds a call resolver from the assembly metadata.
     ///
     /// This constructor precomputes the type hierarchy and virtual dispatch

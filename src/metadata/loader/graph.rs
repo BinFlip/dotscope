@@ -150,8 +150,7 @@ impl<'a> LoaderGraph<'a> {
 
                 if !has_table_loader {
                     return Err(GraphError(format!(
-                        "Loader {:?} depends on table {:?}, but no loader for that table exists",
-                        loader_key, dep_table_id
+                        "Loader {loader_key:?} depends on table {dep_table_id:?}, but no loader for that table exists"
                     )));
                 }
 
@@ -160,8 +159,7 @@ impl<'a> LoaderGraph<'a> {
                     .get_mut(loader_key)
                     .ok_or_else(|| {
                         GraphError(format!(
-                            "Internal error: loader {:?} not found in dependencies map",
-                            loader_key
+                            "Internal error: loader {loader_key:?} not found in dependencies map"
                         ))
                     })?
                     .insert(*dep_table_id);
@@ -171,8 +169,7 @@ impl<'a> LoaderGraph<'a> {
                     .get_mut(dep_table_id)
                     .ok_or_else(|| {
                         GraphError(format!(
-                            "Internal error: table {:?} not found in dependents map",
-                            dep_table_id
+                            "Internal error: table {dep_table_id:?} not found in dependents map"
                         ))
                     })?
                     .insert(loader_key.clone());

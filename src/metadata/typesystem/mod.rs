@@ -1276,7 +1276,7 @@ impl CilType {
         }
 
         if let Some(element_name) = self.fullname().strip_suffix("[]") {
-            base_fullname == element_name || base_fullname.ends_with(&format!("/{}", element_name))
+            base_fullname == element_name || base_fullname.ends_with(&format!("/{element_name}"))
         } else {
             false
         }
@@ -1305,7 +1305,7 @@ impl CilType {
         }
 
         if let Some(element_name) = self.fullname().strip_suffix('*') {
-            base_fullname == element_name || base_fullname.ends_with(&format!("/{}", element_name))
+            base_fullname == element_name || base_fullname.ends_with(&format!("/{element_name}"))
         } else {
             false
         }

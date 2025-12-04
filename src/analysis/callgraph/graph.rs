@@ -71,6 +71,25 @@ pub struct CallGraph {
 }
 
 impl CallGraph {
+    /// Creates an empty call graph.
+    ///
+    /// This is useful for testing or when a call graph is needed but no assembly
+    /// analysis has been performed yet.
+    ///
+    /// # Returns
+    ///
+    /// An empty `CallGraph` with no methods or call edges.
+    pub fn new() -> Self {
+        Self {
+            graph: DirectedGraph::new(),
+            token_to_node: HashMap::new(),
+            resolver: CallResolver::empty(),
+            sccs: OnceLock::new(),
+            topo_order: OnceLock::new(),
+            entry_points: OnceLock::new(),
+        }
+    }
+
     /// Builds a call graph from an assembly.
     ///
     /// This method performs a two-pass construction:
@@ -351,7 +370,7 @@ impl CallGraph {
                 } else {
                     format!("{}.{}", type_info.namespace, type_info.name)
                 };
-                return format!("{}::{}", type_full_name, method_name);
+                return format!("{type_full_name}::{method_name}");
             }
         }
         // Fallback to just the method name
@@ -975,6 +994,12 @@ impl CallGraph {
 
         dot.push_str("}\n");
         dot
+    }
+}
+
+impl Default for CallGraph {
+    fn default() -> Self {
+        Self::new()
     }
 }
 

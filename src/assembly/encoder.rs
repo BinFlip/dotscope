@@ -84,7 +84,7 @@ fn get_mnemonic_lookup(
         for (opcode, instr) in INSTRUCTIONS.iter().enumerate() {
             if !instr.instr.is_empty() {
                 let opcode_u8 = u8::try_from(opcode)
-                    .unwrap_or_else(|_| panic!("Opcode {} exceeds u8 range", opcode));
+                    .unwrap_or_else(|_| panic!("Opcode {opcode} exceeds u8 range"));
                 map.insert(instr.instr, (opcode_u8, 0, instr));
             }
         }
@@ -93,7 +93,7 @@ fn get_mnemonic_lookup(
         for (opcode, instr) in INSTRUCTIONS_FE.iter().enumerate() {
             if !instr.instr.is_empty() {
                 let opcode_u8 = u8::try_from(opcode)
-                    .unwrap_or_else(|_| panic!("Opcode {} exceeds u8 range", opcode));
+                    .unwrap_or_else(|_| panic!("Opcode {opcode} exceeds u8 range"));
                 map.insert(instr.instr, (opcode_u8, 0xFE, instr));
             }
         }
@@ -309,8 +309,7 @@ impl InstructionEncoder {
             FlowType::ConditionalBranch | FlowType::UnconditionalBranch | FlowType::Leave
         ) {
             return Err(Error::InvalidBranch(format!(
-                "instruction '{}' is not a branch instruction",
-                mnemonic
+                "instruction '{mnemonic}' is not a branch instruction"
             )));
         }
 
@@ -597,8 +596,7 @@ impl InstructionEncoder {
             1 => {
                 if offset < i32::from(i8::MIN) || offset > i32::from(i8::MAX) {
                     return Err(Error::InvalidBranch(format!(
-                        "offset {} out of range for 1-byte instruction",
-                        offset
+                        "offset {offset} out of range for 1-byte instruction"
                     )));
                 }
                 let offset_i8 = i8::try_from(offset)
@@ -608,8 +606,7 @@ impl InstructionEncoder {
             2 => {
                 if offset < i32::from(i16::MIN) || offset > i32::from(i16::MAX) {
                     return Err(Error::InvalidBranch(format!(
-                        "offset {} out of range for 2-byte instruction",
-                        offset
+                        "offset {offset} out of range for 2-byte instruction"
                     )));
                 }
                 let offset_i16 = i16::try_from(offset)
@@ -749,7 +746,9 @@ mod tests {
     fn test_instruction_with_operands() -> Result<()> {
         let mut encoder = InstructionEncoder::new();
 
-        encoder.emit_instruction("ldarg.s", Some(Operand::Immediate(Immediate::Int8(1))))?;
+        // ldarg.s uses UInt8 for argument index (0-255 range, no sign needed)
+        encoder.emit_instruction("ldarg.s", Some(Operand::Immediate(Immediate::UInt8(1))))?;
+        // ldc.i4.s uses Int8 for the signed immediate value
         encoder.emit_instruction("ldc.i4.s", Some(Operand::Immediate(Immediate::Int8(42))))?;
 
         let (bytecode, _max_stack) = encoder.finalize()?;

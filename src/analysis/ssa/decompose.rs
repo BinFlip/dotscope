@@ -38,6 +38,7 @@ use crate::{
 /// * `instr` - The CIL instruction to decompose
 /// * `uses` - SSA variables consumed by this instruction (from stack simulation)
 /// * `def` - SSA variable produced by this instruction (if any)
+/// * `successors` - Block indices for branch targets (for conditional branches: [branch_target, fallthrough])
 ///
 /// # Returns
 ///
@@ -48,6 +49,7 @@ pub fn decompose_instruction(
     instr: &Instruction,
     uses: &[SsaVarId],
     def: Option<SsaVarId>,
+    successors: &[usize],
 ) -> Option<SsaOp> {
     // Handle FE-prefixed instructions
     if instr.prefix == 0xFE {
@@ -618,95 +620,96 @@ pub fn decompose_instruction(
         // Unconditional branches
         0x2B | 0x38 => {
             // br.s, br
-            instr.branch_targets.first().map(|&target| SsaOp::Jump {
-                target: target as usize,
-            })
+            // For unconditional jumps, there's only one successor
+            successors.first().map(|&target| SsaOp::Jump { target })
         }
 
         // Conditional branches (with single operand)
         0x2C | 0x39 => {
             // brfalse.s, brfalse
+            // For conditional branches, successors[0] is the branch target, successors[1] is fallthrough
             uses.first().and_then(|&condition| {
-                instr.branch_targets.first().map(|&true_target| {
-                    // brfalse jumps to target if false, falls through if true
-                    // We model this as: branch !condition, target, fallthrough
-                    // But since we don't have a proper fallthrough block index here,
-                    // we need to rely on the second branch target if available
-                    let false_target = instr.branch_targets.get(1).copied().unwrap_or(true_target);
-                    SsaOp::Branch {
+                if successors.len() >= 2 {
+                    // brfalse: jumps to target if false, falls through if true
+                    // successors[0] = branch target (false path), successors[1] = fallthrough (true path)
+                    Some(SsaOp::Branch {
                         condition,
-                        true_target: false_target as usize,
-                        false_target: true_target as usize,
-                    }
-                })
+                        true_target: successors[1],  // fallthrough
+                        false_target: successors[0], // branch target
+                    })
+                } else {
+                    None
+                }
             })
         }
         0x2D | 0x3A => {
             // brtrue.s, brtrue
+            // For conditional branches, successors[0] is the branch target, successors[1] is fallthrough
             uses.first().and_then(|&condition| {
-                instr.branch_targets.first().map(|&true_target| {
-                    let false_target = instr.branch_targets.get(1).copied().unwrap_or(true_target);
-                    SsaOp::Branch {
+                if successors.len() >= 2 {
+                    // brtrue: jumps to target if true, falls through if false
+                    // successors[0] = branch target (true path), successors[1] = fallthrough (false path)
+                    Some(SsaOp::Branch {
                         condition,
-                        true_target: true_target as usize,
-                        false_target: false_target as usize,
-                    }
-                })
+                        true_target: successors[0],  // branch target
+                        false_target: successors[1], // fallthrough
+                    })
+                } else {
+                    None
+                }
             })
         }
 
         // Binary conditional branches
         0x2E | 0x3B => {
             // beq.s, beq
-            comparison_branch(uses, instr, false)
+            comparison_branch(uses, successors, false)
         }
         0x2F | 0x3C => {
             // bge.s, bge
-            comparison_branch(uses, instr, false)
+            comparison_branch(uses, successors, false)
         }
         0x30 | 0x3D => {
             // bgt.s, bgt
-            comparison_branch(uses, instr, false)
+            comparison_branch(uses, successors, false)
         }
         0x31 | 0x3E => {
             // ble.s, ble
-            comparison_branch(uses, instr, false)
+            comparison_branch(uses, successors, false)
         }
         0x32 | 0x3F => {
             // blt.s, blt
-            comparison_branch(uses, instr, false)
+            comparison_branch(uses, successors, false)
         }
         0x33 | 0x40 => {
             // bne.un.s, bne.un
-            comparison_branch(uses, instr, true)
+            comparison_branch(uses, successors, true)
         }
         0x34 | 0x41 => {
             // bge.un.s, bge.un
-            comparison_branch(uses, instr, true)
+            comparison_branch(uses, successors, true)
         }
         0x35 | 0x42 => {
             // bgt.un.s, bgt.un
-            comparison_branch(uses, instr, true)
+            comparison_branch(uses, successors, true)
         }
         0x36 | 0x43 => {
             // ble.un.s, ble.un
-            comparison_branch(uses, instr, true)
+            comparison_branch(uses, successors, true)
         }
         0x37 | 0x44 => {
             // blt.un.s, blt.un
-            comparison_branch(uses, instr, true)
+            comparison_branch(uses, successors, true)
         }
 
         0x45 => {
             // switch
+            // For switch, successors contains all the case targets followed by the default
             uses.first().and_then(|&value| {
-                if instr.branch_targets.len() >= 2 {
-                    let default = instr.branch_targets.last().copied().unwrap_or(0) as usize;
-                    let targets: Vec<usize> = instr.branch_targets
-                        [..instr.branch_targets.len() - 1]
-                        .iter()
-                        .map(|&t| t as usize)
-                        .collect();
+                if successors.len() >= 2 {
+                    // Last successor is the default, rest are case targets
+                    let default = *successors.last().unwrap_or(&0);
+                    let targets: Vec<usize> = successors[..successors.len() - 1].to_vec();
                     Some(SsaOp::Switch {
                         value,
                         targets,
@@ -720,15 +723,12 @@ pub fn decompose_instruction(
 
         0xDD => {
             // leave.s
-            instr.branch_targets.first().map(|&target| SsaOp::Leave {
-                target: target as usize,
-            })
+            // For leave, there's a single successor
+            successors.first().map(|&target| SsaOp::Leave { target })
         }
         0xDE => {
             // leave
-            instr.branch_targets.first().map(|&target| SsaOp::Leave {
-                target: target as usize,
-            })
+            successors.first().map(|&target| SsaOp::Leave { target })
         }
 
         // =====================================================================
@@ -746,7 +746,11 @@ pub fn decompose_instruction(
         }
         0x0A..=0x0D | 0x13 => {
             // stloc.0-3, stloc.s
-            None // Already tracked by uses/def
+            // Generate Copy op to enable constant propagation through locals
+            match (def, uses.first()) {
+                (Some(dest), Some(&src)) => Some(SsaOp::Copy { dest, src }),
+                _ => None,
+            }
         }
         0x0F | 0x10 | 0x12 => {
             // ldarga.s, starg.s, ldloca.s
@@ -1326,7 +1330,7 @@ where
     }
 }
 
-fn comparison_branch(uses: &[SsaVarId], instr: &Instruction, _unsigned: bool) -> Option<SsaOp> {
+fn comparison_branch(uses: &[SsaVarId], successors: &[usize], _unsigned: bool) -> Option<SsaOp> {
     // Binary comparison branches need to be decomposed into:
     // 1. A comparison operation (ceq, clt, etc.)
     // 2. A branch on the result
@@ -1334,14 +1338,14 @@ fn comparison_branch(uses: &[SsaVarId], instr: &Instruction, _unsigned: bool) ->
     if let (Some(&_left), Some(&_right)) = (uses.first(), uses.get(1)) {
         // This is a simplification - we should ideally generate a temporary
         // variable for the comparison result. For now, we use the first operand.
-        if let Some(&true_target) = instr.branch_targets.first() {
-            let false_target = instr.branch_targets.get(1).copied().unwrap_or(true_target);
+        if successors.len() >= 2 {
             // Use first operand as the "condition" - this is a placeholder
             // Real implementation would decompose this into cmp + branch
+            // successors[0] = branch target (true path), successors[1] = fallthrough (false path)
             uses.first().map(|&condition| SsaOp::Branch {
                 condition,
-                true_target: true_target as usize,
-                false_target: false_target as usize,
+                true_target: successors[0],
+                false_target: successors[1],
             })
         } else {
             None
@@ -1563,7 +1567,7 @@ mod tests {
         let uses = vec![SsaVarId::new(0), SsaVarId::new(1)];
         let def = Some(SsaVarId::new(2));
 
-        let op = decompose_instruction(&instr, &uses, def);
+        let op = decompose_instruction(&instr, &uses, def, &[]);
         assert!(op.is_some());
 
         if let Some(SsaOp::Add { dest, left, right }) = op {
@@ -1581,7 +1585,7 @@ mod tests {
         let uses = vec![];
         let def = Some(SsaVarId::new(0));
 
-        let op = decompose_instruction(&instr, &uses, def);
+        let op = decompose_instruction(&instr, &uses, def, &[]);
         assert!(op.is_some());
 
         if let Some(SsaOp::Const { dest, value }) = op {
@@ -1605,7 +1609,7 @@ mod tests {
         let uses = vec![];
         let def = Some(SsaVarId::new(0));
 
-        let op = decompose_instruction(&instr, &uses, def);
+        let op = decompose_instruction(&instr, &uses, def, &[]);
         assert!(op.is_some());
 
         if let Some(SsaOp::Const { dest, value }) = op {
@@ -1622,7 +1626,7 @@ mod tests {
         let uses = vec![SsaVarId::new(5)];
         let def = None;
 
-        let op = decompose_instruction(&instr, &uses, def);
+        let op = decompose_instruction(&instr, &uses, def, &[]);
         assert!(op.is_some());
 
         if let Some(SsaOp::Return { value }) = op {
@@ -1638,7 +1642,7 @@ mod tests {
         let uses = vec![];
         let def = None;
 
-        let op = decompose_instruction(&instr, &uses, def);
+        let op = decompose_instruction(&instr, &uses, def, &[]);
         assert!(op.is_some());
 
         if let Some(SsaOp::Return { value }) = op {
@@ -1654,7 +1658,7 @@ mod tests {
         let uses = vec![SsaVarId::new(0), SsaVarId::new(1)];
         let def = Some(SsaVarId::new(2));
 
-        let op = decompose_instruction(&instr, &uses, def);
+        let op = decompose_instruction(&instr, &uses, def, &[]);
         assert!(op.is_some());
 
         if let Some(SsaOp::Ceq { dest, left, right }) = op {
@@ -1672,7 +1676,7 @@ mod tests {
         let uses = vec![];
         let def = None;
 
-        let op = decompose_instruction(&instr, &uses, def);
+        let op = decompose_instruction(&instr, &uses, def, &[]);
         assert_eq!(op, Some(SsaOp::Nop));
     }
 
@@ -1682,7 +1686,7 @@ mod tests {
         let uses = vec![SsaVarId::new(0)];
         let def = Some(SsaVarId::new(1));
 
-        let op = decompose_instruction(&instr, &uses, def);
+        let op = decompose_instruction(&instr, &uses, def, &[]);
         assert!(op.is_some());
 
         if let Some(SsaOp::Conv {

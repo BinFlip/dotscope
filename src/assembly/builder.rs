@@ -480,9 +480,9 @@ impl InstructionAssembler {
     /// # Errors
     ///
     /// Returns an error if instruction encoding fails.
-    pub fn ldarg_s(&mut self, index: i8) -> Result<&mut Self> {
+    pub fn ldarg_s(&mut self, index: u8) -> Result<&mut Self> {
         self.encoder
-            .emit_instruction("ldarg.s", Some(Operand::Immediate(Immediate::Int8(index))))?;
+            .emit_instruction("ldarg.s", Some(Operand::Immediate(Immediate::UInt8(index))))?;
         Ok(self)
     }
 
@@ -532,9 +532,9 @@ impl InstructionAssembler {
     /// # Errors
     ///
     /// Returns an error if instruction encoding fails.
-    pub fn starg_s(&mut self, index: i8) -> Result<&mut Self> {
+    pub fn starg_s(&mut self, index: u8) -> Result<&mut Self> {
         self.encoder
-            .emit_instruction("starg.s", Some(Operand::Immediate(Immediate::Int8(index))))?;
+            .emit_instruction("starg.s", Some(Operand::Immediate(Immediate::UInt8(index))))?;
         Ok(self)
     }
 
@@ -622,9 +622,9 @@ impl InstructionAssembler {
     /// # Errors
     ///
     /// Returns an error if instruction encoding fails.
-    pub fn ldloc_s(&mut self, index: i8) -> Result<&mut Self> {
+    pub fn ldloc_s(&mut self, index: u8) -> Result<&mut Self> {
         self.encoder
-            .emit_instruction("ldloc.s", Some(Operand::Immediate(Immediate::Int8(index))))?;
+            .emit_instruction("ldloc.s", Some(Operand::Immediate(Immediate::UInt8(index))))?;
         Ok(self)
     }
 
@@ -702,9 +702,9 @@ impl InstructionAssembler {
     /// # Errors
     ///
     /// Returns an error if instruction encoding fails.
-    pub fn stloc_s(&mut self, index: i8) -> Result<&mut Self> {
+    pub fn stloc_s(&mut self, index: u8) -> Result<&mut Self> {
         self.encoder
-            .emit_instruction("stloc.s", Some(Operand::Immediate(Immediate::Int8(index))))?;
+            .emit_instruction("stloc.s", Some(Operand::Immediate(Immediate::UInt8(index))))?;
         Ok(self)
     }
 
@@ -1229,8 +1229,8 @@ impl InstructionAssembler {
             1 => self.ldarg_1(),
             2 => self.ldarg_2(),
             3 => self.ldarg_3(),
-            i if i <= 127 => self.ldarg_s(
-                i8::try_from(i).map_err(|_| malformed_error!("Argument index too large for i8"))?,
+            i if i <= 255 => self.ldarg_s(
+                u8::try_from(i).map_err(|_| malformed_error!("Argument index too large for u8"))?,
             ),
             i => self.ldarg(
                 i16::try_from(i)
@@ -1254,8 +1254,8 @@ impl InstructionAssembler {
             1 => self.stloc_1(),
             2 => self.stloc_2(),
             3 => self.stloc_3(),
-            i if i <= 127 => self.stloc_s(
-                i8::try_from(i).map_err(|_| malformed_error!("Local index too large for i8"))?,
+            i if i <= 255 => self.stloc_s(
+                u8::try_from(i).map_err(|_| malformed_error!("Local index too large for u8"))?,
             ),
             i => self.stloc(
                 i16::try_from(i).map_err(|_| malformed_error!("Local index too large for i16"))?,
@@ -1278,8 +1278,8 @@ impl InstructionAssembler {
             1 => self.ldloc_1(),
             2 => self.ldloc_2(),
             3 => self.ldloc_3(),
-            i if i <= 127 => self.ldloc_s(
-                i8::try_from(i).map_err(|_| malformed_error!("Local index too large for i8"))?,
+            i if i <= 255 => self.ldloc_s(
+                u8::try_from(i).map_err(|_| malformed_error!("Local index too large for u8"))?,
             ),
             i => self.ldloc(
                 i16::try_from(i).map_err(|_| malformed_error!("Local index too large for i16"))?,

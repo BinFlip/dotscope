@@ -477,6 +477,12 @@ impl SsaVariable {
         self.uses.is_empty()
     }
 
+    /// Returns the number of uses for this variable.
+    #[must_use]
+    pub fn use_count(&self) -> usize {
+        self.uses.len()
+    }
+
     /// Adds a use site for this variable.
     pub fn add_use(&mut self, use_site: UseSite) {
         self.uses.push(use_site);

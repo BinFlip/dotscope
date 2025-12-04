@@ -485,7 +485,7 @@ impl TypeResolver {
         if base_name.contains('`') {
             base_name.to_string()
         } else {
-            format!("{}`{}", base_name, arg_count)
+            format!("{base_name}`{arg_count}")
         }
     }
 
@@ -916,8 +916,7 @@ impl TypeResolver {
                 Ok(typed_ref_type)
             }
             _ => Err(TypeError(format!(
-                "TypeSignature not supported: {:?}",
-                signature
+                "TypeSignature not supported: {signature:?}"
             ))),
         }
     }

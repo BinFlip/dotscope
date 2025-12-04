@@ -487,7 +487,7 @@ impl std::fmt::Display for VersionRequirement {
             VersionRequirement::Compatible => write!(f, "Compatible"),
             VersionRequirement::Any => write!(f, "Any"),
             VersionRequirement::Minimum(version) => {
-                write!(f, "Minimum({})", version)
+                write!(f, "Minimum({version})")
             }
         }
     }
@@ -561,7 +561,7 @@ impl std::fmt::Display for DependencyResolutionState {
             DependencyResolutionState::ResolutionFailed {
                 error, is_fatal, ..
             } => {
-                write!(f, "ResolutionFailed({}, fatal={})", error, is_fatal)
+                write!(f, "ResolutionFailed({error}, fatal={is_fatal})")
             }
         }
     }

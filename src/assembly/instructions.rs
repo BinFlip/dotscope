@@ -268,7 +268,7 @@ pub const INSTRUCTIONS: [CilInstruction; INSTRUCTIONS_MAX as usize] = [
     },
     /* 0E */
     CilInstruction {
-        op_type: OperandType::Int8,
+        op_type: OperandType::UInt8,
         instr: "ldarg.s",
         category: InstructionCategory::LoadStore,
         stack_pops: 0,
@@ -277,7 +277,7 @@ pub const INSTRUCTIONS: [CilInstruction; INSTRUCTIONS_MAX as usize] = [
     },
     /* 0F */
     CilInstruction {
-        op_type: OperandType::Int8,
+        op_type: OperandType::UInt8,
         instr: "ldarga.s",
         category: InstructionCategory::LoadStore,
         stack_pops: 0,
@@ -286,7 +286,7 @@ pub const INSTRUCTIONS: [CilInstruction; INSTRUCTIONS_MAX as usize] = [
     },
     /* 10 */
     CilInstruction {
-        op_type: OperandType::Int8,
+        op_type: OperandType::UInt8,
         instr: "starg.s",
         category: InstructionCategory::LoadStore,
         stack_pops: 1,
@@ -295,7 +295,7 @@ pub const INSTRUCTIONS: [CilInstruction; INSTRUCTIONS_MAX as usize] = [
     },
     /* 11 */
     CilInstruction {
-        op_type: OperandType::Int8,
+        op_type: OperandType::UInt8,
         instr: "ldloc.s",
         category: InstructionCategory::LoadStore,
         stack_pops: 0,
@@ -304,7 +304,7 @@ pub const INSTRUCTIONS: [CilInstruction; INSTRUCTIONS_MAX as usize] = [
     },
     /* 12 */
     CilInstruction {
-        op_type: OperandType::Int8,
+        op_type: OperandType::UInt8,
         instr: "ldloca.s",
         category: InstructionCategory::LoadStore,
         stack_pops: 0,
@@ -313,7 +313,7 @@ pub const INSTRUCTIONS: [CilInstruction; INSTRUCTIONS_MAX as usize] = [
     },
     /* 13 */
     CilInstruction {
-        op_type: OperandType::Int8,
+        op_type: OperandType::UInt8,
         instr: "stloc.s",
         category: InstructionCategory::LoadStore,
         stack_pops: 1,
@@ -2360,7 +2360,7 @@ pub const INSTRUCTIONS_FE: [CilInstruction; INSTRUCTIONS_FE_MAX as usize] = [
     },
     /* FE 12 */
     CilInstruction {
-        op_type: OperandType::Int8,
+        op_type: OperandType::UInt8,
         instr: "unaligned.",
         category: InstructionCategory::Prefix,
         stack_pops: 0,

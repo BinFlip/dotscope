@@ -785,13 +785,13 @@ impl PermissionSetEncoder {
                 ArgumentValue::Single(v) => v.to_string(),
                 ArgumentValue::Double(v) => v.to_string(),
                 ArgumentValue::String(v) | ArgumentValue::Type(v) => v.clone(),
-                ArgumentValue::Enum(type_name, v) => format!("{}.{}", type_name, v),
+                ArgumentValue::Enum(type_name, v) => format!("{type_name}.{v}"),
                 ArgumentValue::Object(inner) => inner.to_string(),
                 ArgumentValue::Array(elements) => {
                     // Format array as comma-separated values
                     elements
                         .iter()
-                        .map(|e| format!("{}", e))
+                        .map(|e| format!("{e}"))
                         .collect::<Vec<_>>()
                         .join(",")
                 }

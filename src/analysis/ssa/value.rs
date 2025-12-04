@@ -36,11 +36,35 @@ use super::SsaVarId;
 /// the SSA graph for constant propagation and folding.
 #[derive(Debug, Clone, PartialEq)]
 pub enum ConstValue {
+    /// 8-bit signed integer.
+    I8(i8),
+
+    /// 16-bit signed integer.
+    I16(i16),
+
     /// 32-bit signed integer.
     I32(i32),
 
     /// 64-bit signed integer.
     I64(i64),
+
+    /// 8-bit unsigned integer.
+    U8(u8),
+
+    /// 16-bit unsigned integer.
+    U16(u16),
+
+    /// 32-bit unsigned integer.
+    U32(u32),
+
+    /// 64-bit unsigned integer.
+    U64(u64),
+
+    /// Native integer (pointer-sized).
+    NativeInt(i64),
+
+    /// Native unsigned integer (pointer-sized).
+    NativeUInt(u64),
 
     /// 32-bit floating point.
     F32(f32),
@@ -83,10 +107,40 @@ impl ConstValue {
         matches!(self, Self::True | Self::False)
     }
 
-    /// Returns `true` if this is an integer constant.
+    /// Returns `true` if this is an integer constant (signed or unsigned).
     #[must_use]
     pub const fn is_integer(&self) -> bool {
-        matches!(self, Self::I32(_) | Self::I64(_))
+        matches!(
+            self,
+            Self::I8(_)
+                | Self::I16(_)
+                | Self::I32(_)
+                | Self::I64(_)
+                | Self::U8(_)
+                | Self::U16(_)
+                | Self::U32(_)
+                | Self::U64(_)
+                | Self::NativeInt(_)
+                | Self::NativeUInt(_)
+        )
+    }
+
+    /// Returns `true` if this is a signed integer constant.
+    #[must_use]
+    pub const fn is_signed(&self) -> bool {
+        matches!(
+            self,
+            Self::I8(_) | Self::I16(_) | Self::I32(_) | Self::I64(_) | Self::NativeInt(_)
+        )
+    }
+
+    /// Returns `true` if this is an unsigned integer constant.
+    #[must_use]
+    pub const fn is_unsigned(&self) -> bool {
+        matches!(
+            self,
+            Self::U8(_) | Self::U16(_) | Self::U32(_) | Self::U64(_) | Self::NativeUInt(_)
+        )
     }
 
     /// Returns `true` if this is a floating-point constant.
@@ -99,7 +153,11 @@ impl ConstValue {
     #[must_use]
     pub const fn as_i32(&self) -> Option<i32> {
         match self {
+            Self::I8(v) => Some(*v as i32),
+            Self::I16(v) => Some(*v as i32),
             Self::I32(v) => Some(*v),
+            Self::U8(v) => Some(*v as i32),
+            Self::U16(v) => Some(*v as i32),
             Self::True => Some(1),
             Self::False => Some(0),
             _ => None,
@@ -110,8 +168,33 @@ impl ConstValue {
     #[must_use]
     pub const fn as_i64(&self) -> Option<i64> {
         match self {
-            Self::I64(v) => Some(*v),
+            Self::I8(v) => Some(*v as i64),
+            Self::I16(v) => Some(*v as i64),
             Self::I32(v) => Some(*v as i64),
+            Self::I64(v) => Some(*v),
+            Self::U8(v) => Some(*v as i64),
+            Self::U16(v) => Some(*v as i64),
+            Self::U32(v) => Some(*v as i64),
+            Self::NativeInt(v) => Some(*v),
+            Self::True => Some(1),
+            Self::False => Some(0),
+            _ => None,
+        }
+    }
+
+    /// Returns the constant as a u64 if applicable (for unsigned operations).
+    #[must_use]
+    pub const fn as_u64(&self) -> Option<u64> {
+        match self {
+            Self::U8(v) => Some(*v as u64),
+            Self::U16(v) => Some(*v as u64),
+            Self::U32(v) => Some(*v as u64),
+            Self::U64(v) => Some(*v),
+            Self::NativeUInt(v) => Some(*v),
+            Self::I8(v) if *v >= 0 => Some(*v as u64),
+            Self::I16(v) if *v >= 0 => Some(*v as u64),
+            Self::I32(v) if *v >= 0 => Some(*v as u64),
+            Self::I64(v) if *v >= 0 => Some(*v as u64),
             Self::True => Some(1),
             Self::False => Some(0),
             _ => None,
@@ -122,8 +205,12 @@ impl ConstValue {
     #[must_use]
     pub const fn as_bool(&self) -> Option<bool> {
         match self {
-            Self::False | Self::I32(0) | Self::Null => Some(false),
-            Self::True | Self::I32(_) => Some(true), // non-zero is truthy
+            Self::False | Self::Null => Some(false),
+            Self::True => Some(true),
+            Self::I8(0) | Self::I16(0) | Self::I32(0) | Self::I64(0) => Some(false),
+            Self::U8(0) | Self::U16(0) | Self::U32(0) | Self::U64(0) => Some(false),
+            Self::I8(_) | Self::I16(_) | Self::I32(_) | Self::I64(_) => Some(true),
+            Self::U8(_) | Self::U16(_) | Self::U32(_) | Self::U64(_) => Some(true),
             _ => None,
         }
     }
@@ -142,10 +229,19 @@ impl ConstValue {
     #[must_use]
     pub fn negate(&self) -> Option<Self> {
         match self {
-            Self::I32(v) => Some(Self::I32(-v)),
-            Self::I64(v) => Some(Self::I64(-v)),
+            Self::I8(v) => Some(Self::I8(v.wrapping_neg())),
+            Self::I16(v) => Some(Self::I16(v.wrapping_neg())),
+            Self::I32(v) => Some(Self::I32(v.wrapping_neg())),
+            Self::I64(v) => Some(Self::I64(v.wrapping_neg())),
+            Self::NativeInt(v) => Some(Self::NativeInt(v.wrapping_neg())),
             Self::F32(v) => Some(Self::F32(-v)),
             Self::F64(v) => Some(Self::F64(-v)),
+            // Unsigned negation wraps
+            Self::U8(v) => Some(Self::U8(v.wrapping_neg())),
+            Self::U16(v) => Some(Self::U16(v.wrapping_neg())),
+            Self::U32(v) => Some(Self::U32(v.wrapping_neg())),
+            Self::U64(v) => Some(Self::U64(v.wrapping_neg())),
+            Self::NativeUInt(v) => Some(Self::NativeUInt(v.wrapping_neg())),
             _ => None,
         }
     }
@@ -154,8 +250,157 @@ impl ConstValue {
     #[must_use]
     pub fn bitwise_not(&self) -> Option<Self> {
         match self {
+            Self::I8(v) => Some(Self::I8(!v)),
+            Self::I16(v) => Some(Self::I16(!v)),
             Self::I32(v) => Some(Self::I32(!v)),
             Self::I64(v) => Some(Self::I64(!v)),
+            Self::U8(v) => Some(Self::U8(!v)),
+            Self::U16(v) => Some(Self::U16(!v)),
+            Self::U32(v) => Some(Self::U32(!v)),
+            Self::U64(v) => Some(Self::U64(!v)),
+            Self::NativeInt(v) => Some(Self::NativeInt(!v)),
+            Self::NativeUInt(v) => Some(Self::NativeUInt(!v)),
+            _ => None,
+        }
+    }
+
+    /// Attempts to perform bitwise AND on two constants.
+    #[must_use]
+    pub fn bitwise_and(&self, other: &Self) -> Option<Self> {
+        match (self, other) {
+            (Self::I8(a), Self::I8(b)) => Some(Self::I8(a & b)),
+            (Self::I16(a), Self::I16(b)) => Some(Self::I16(a & b)),
+            (Self::I32(a), Self::I32(b)) => Some(Self::I32(a & b)),
+            (Self::I64(a), Self::I64(b)) => Some(Self::I64(a & b)),
+            (Self::U8(a), Self::U8(b)) => Some(Self::U8(a & b)),
+            (Self::U16(a), Self::U16(b)) => Some(Self::U16(a & b)),
+            (Self::U32(a), Self::U32(b)) => Some(Self::U32(a & b)),
+            (Self::U64(a), Self::U64(b)) => Some(Self::U64(a & b)),
+            (Self::NativeInt(a), Self::NativeInt(b)) => Some(Self::NativeInt(a & b)),
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => Some(Self::NativeUInt(a & b)),
+            // Cross-type: promote to i64 for mixed signed operations
+            (Self::I32(a), Self::I64(b)) | (Self::I64(b), Self::I32(a)) => {
+                Some(Self::I64((*a as i64) & b))
+            }
+            (Self::U32(a), Self::U64(b)) | (Self::U64(b), Self::U32(a)) => {
+                Some(Self::U64((*a as u64) & b))
+            }
+            _ => None,
+        }
+    }
+
+    /// Attempts to perform bitwise OR on two constants.
+    #[must_use]
+    pub fn bitwise_or(&self, other: &Self) -> Option<Self> {
+        match (self, other) {
+            (Self::I8(a), Self::I8(b)) => Some(Self::I8(a | b)),
+            (Self::I16(a), Self::I16(b)) => Some(Self::I16(a | b)),
+            (Self::I32(a), Self::I32(b)) => Some(Self::I32(a | b)),
+            (Self::I64(a), Self::I64(b)) => Some(Self::I64(a | b)),
+            (Self::U8(a), Self::U8(b)) => Some(Self::U8(a | b)),
+            (Self::U16(a), Self::U16(b)) => Some(Self::U16(a | b)),
+            (Self::U32(a), Self::U32(b)) => Some(Self::U32(a | b)),
+            (Self::U64(a), Self::U64(b)) => Some(Self::U64(a | b)),
+            (Self::NativeInt(a), Self::NativeInt(b)) => Some(Self::NativeInt(a | b)),
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => Some(Self::NativeUInt(a | b)),
+            (Self::I32(a), Self::I64(b)) | (Self::I64(b), Self::I32(a)) => {
+                Some(Self::I64((*a as i64) | b))
+            }
+            (Self::U32(a), Self::U64(b)) | (Self::U64(b), Self::U32(a)) => {
+                Some(Self::U64((*a as u64) | b))
+            }
+            _ => None,
+        }
+    }
+
+    /// Attempts to perform bitwise XOR on two constants.
+    #[must_use]
+    pub fn bitwise_xor(&self, other: &Self) -> Option<Self> {
+        match (self, other) {
+            (Self::I8(a), Self::I8(b)) => Some(Self::I8(a ^ b)),
+            (Self::I16(a), Self::I16(b)) => Some(Self::I16(a ^ b)),
+            (Self::I32(a), Self::I32(b)) => Some(Self::I32(a ^ b)),
+            (Self::I64(a), Self::I64(b)) => Some(Self::I64(a ^ b)),
+            (Self::U8(a), Self::U8(b)) => Some(Self::U8(a ^ b)),
+            (Self::U16(a), Self::U16(b)) => Some(Self::U16(a ^ b)),
+            (Self::U32(a), Self::U32(b)) => Some(Self::U32(a ^ b)),
+            (Self::U64(a), Self::U64(b)) => Some(Self::U64(a ^ b)),
+            (Self::NativeInt(a), Self::NativeInt(b)) => Some(Self::NativeInt(a ^ b)),
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => Some(Self::NativeUInt(a ^ b)),
+            (Self::I32(a), Self::I64(b)) | (Self::I64(b), Self::I32(a)) => {
+                Some(Self::I64((*a as i64) ^ b))
+            }
+            (Self::U32(a), Self::U64(b)) | (Self::U64(b), Self::U32(a)) => {
+                Some(Self::U64((*a as u64) ^ b))
+            }
+            _ => None,
+        }
+    }
+
+    /// Attempts to shift left.
+    #[must_use]
+    pub fn shl(&self, amount: &Self) -> Option<Self> {
+        let shift = amount.as_i32()? as u32;
+        match self {
+            Self::I8(v) => Some(Self::I8(v.wrapping_shl(shift))),
+            Self::I16(v) => Some(Self::I16(v.wrapping_shl(shift))),
+            Self::I32(v) => Some(Self::I32(v.wrapping_shl(shift))),
+            Self::I64(v) => Some(Self::I64(v.wrapping_shl(shift))),
+            Self::U8(v) => Some(Self::U8(v.wrapping_shl(shift))),
+            Self::U16(v) => Some(Self::U16(v.wrapping_shl(shift))),
+            Self::U32(v) => Some(Self::U32(v.wrapping_shl(shift))),
+            Self::U64(v) => Some(Self::U64(v.wrapping_shl(shift))),
+            Self::NativeInt(v) => Some(Self::NativeInt(v.wrapping_shl(shift))),
+            Self::NativeUInt(v) => Some(Self::NativeUInt(v.wrapping_shl(shift))),
+            _ => None,
+        }
+    }
+
+    /// Attempts to shift right (arithmetic for signed, logical for unsigned).
+    #[must_use]
+    pub fn shr(&self, amount: &Self, unsigned: bool) -> Option<Self> {
+        let shift = amount.as_i32()? as u32;
+        match self {
+            Self::I8(v) => {
+                if unsigned {
+                    Some(Self::I8((*v as u8).wrapping_shr(shift) as i8))
+                } else {
+                    Some(Self::I8(v.wrapping_shr(shift)))
+                }
+            }
+            Self::I16(v) => {
+                if unsigned {
+                    Some(Self::I16((*v as u16).wrapping_shr(shift) as i16))
+                } else {
+                    Some(Self::I16(v.wrapping_shr(shift)))
+                }
+            }
+            Self::I32(v) => {
+                if unsigned {
+                    Some(Self::I32((*v as u32).wrapping_shr(shift) as i32))
+                } else {
+                    Some(Self::I32(v.wrapping_shr(shift)))
+                }
+            }
+            Self::I64(v) => {
+                if unsigned {
+                    Some(Self::I64((*v as u64).wrapping_shr(shift) as i64))
+                } else {
+                    Some(Self::I64(v.wrapping_shr(shift)))
+                }
+            }
+            Self::U8(v) => Some(Self::U8(v.wrapping_shr(shift))),
+            Self::U16(v) => Some(Self::U16(v.wrapping_shr(shift))),
+            Self::U32(v) => Some(Self::U32(v.wrapping_shr(shift))),
+            Self::U64(v) => Some(Self::U64(v.wrapping_shr(shift))),
+            Self::NativeInt(v) => {
+                if unsigned {
+                    Some(Self::NativeInt((*v as u64).wrapping_shr(shift) as i64))
+                } else {
+                    Some(Self::NativeInt(v.wrapping_shr(shift)))
+                }
+            }
+            Self::NativeUInt(v) => Some(Self::NativeUInt(v.wrapping_shr(shift))),
             _ => None,
         }
     }
@@ -164,10 +409,27 @@ impl ConstValue {
     #[must_use]
     pub fn add(&self, other: &Self) -> Option<Self> {
         match (self, other) {
+            (Self::I8(a), Self::I8(b)) => Some(Self::I8(a.wrapping_add(*b))),
+            (Self::I16(a), Self::I16(b)) => Some(Self::I16(a.wrapping_add(*b))),
             (Self::I32(a), Self::I32(b)) => Some(Self::I32(a.wrapping_add(*b))),
             (Self::I64(a), Self::I64(b)) => Some(Self::I64(a.wrapping_add(*b))),
+            (Self::U8(a), Self::U8(b)) => Some(Self::U8(a.wrapping_add(*b))),
+            (Self::U16(a), Self::U16(b)) => Some(Self::U16(a.wrapping_add(*b))),
+            (Self::U32(a), Self::U32(b)) => Some(Self::U32(a.wrapping_add(*b))),
+            (Self::U64(a), Self::U64(b)) => Some(Self::U64(a.wrapping_add(*b))),
+            (Self::NativeInt(a), Self::NativeInt(b)) => Some(Self::NativeInt(a.wrapping_add(*b))),
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => {
+                Some(Self::NativeUInt(a.wrapping_add(*b)))
+            }
             (Self::F32(a), Self::F32(b)) => Some(Self::F32(a + b)),
             (Self::F64(a), Self::F64(b)) => Some(Self::F64(a + b)),
+            // Cross-type promotions
+            (Self::I32(a), Self::I64(b)) | (Self::I64(b), Self::I32(a)) => {
+                Some(Self::I64((*a as i64).wrapping_add(*b)))
+            }
+            (Self::U32(a), Self::U64(b)) | (Self::U64(b), Self::U32(a)) => {
+                Some(Self::U64((*a as u64).wrapping_add(*b)))
+            }
             _ => None,
         }
     }
@@ -176,10 +438,24 @@ impl ConstValue {
     #[must_use]
     pub fn sub(&self, other: &Self) -> Option<Self> {
         match (self, other) {
+            (Self::I8(a), Self::I8(b)) => Some(Self::I8(a.wrapping_sub(*b))),
+            (Self::I16(a), Self::I16(b)) => Some(Self::I16(a.wrapping_sub(*b))),
             (Self::I32(a), Self::I32(b)) => Some(Self::I32(a.wrapping_sub(*b))),
             (Self::I64(a), Self::I64(b)) => Some(Self::I64(a.wrapping_sub(*b))),
+            (Self::U8(a), Self::U8(b)) => Some(Self::U8(a.wrapping_sub(*b))),
+            (Self::U16(a), Self::U16(b)) => Some(Self::U16(a.wrapping_sub(*b))),
+            (Self::U32(a), Self::U32(b)) => Some(Self::U32(a.wrapping_sub(*b))),
+            (Self::U64(a), Self::U64(b)) => Some(Self::U64(a.wrapping_sub(*b))),
+            (Self::NativeInt(a), Self::NativeInt(b)) => Some(Self::NativeInt(a.wrapping_sub(*b))),
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => {
+                Some(Self::NativeUInt(a.wrapping_sub(*b)))
+            }
             (Self::F32(a), Self::F32(b)) => Some(Self::F32(a - b)),
             (Self::F64(a), Self::F64(b)) => Some(Self::F64(a - b)),
+            (Self::I32(a), Self::I64(b)) => Some(Self::I64((*a as i64).wrapping_sub(*b))),
+            (Self::I64(a), Self::I32(b)) => Some(Self::I64(a.wrapping_sub(*b as i64))),
+            (Self::U32(a), Self::U64(b)) => Some(Self::U64((*a as u64).wrapping_sub(*b))),
+            (Self::U64(a), Self::U32(b)) => Some(Self::U64(a.wrapping_sub(*b as u64))),
             _ => None,
         }
     }
@@ -188,10 +464,70 @@ impl ConstValue {
     #[must_use]
     pub fn mul(&self, other: &Self) -> Option<Self> {
         match (self, other) {
+            (Self::I8(a), Self::I8(b)) => Some(Self::I8(a.wrapping_mul(*b))),
+            (Self::I16(a), Self::I16(b)) => Some(Self::I16(a.wrapping_mul(*b))),
             (Self::I32(a), Self::I32(b)) => Some(Self::I32(a.wrapping_mul(*b))),
             (Self::I64(a), Self::I64(b)) => Some(Self::I64(a.wrapping_mul(*b))),
+            (Self::U8(a), Self::U8(b)) => Some(Self::U8(a.wrapping_mul(*b))),
+            (Self::U16(a), Self::U16(b)) => Some(Self::U16(a.wrapping_mul(*b))),
+            (Self::U32(a), Self::U32(b)) => Some(Self::U32(a.wrapping_mul(*b))),
+            (Self::U64(a), Self::U64(b)) => Some(Self::U64(a.wrapping_mul(*b))),
+            (Self::NativeInt(a), Self::NativeInt(b)) => Some(Self::NativeInt(a.wrapping_mul(*b))),
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => {
+                Some(Self::NativeUInt(a.wrapping_mul(*b)))
+            }
             (Self::F32(a), Self::F32(b)) => Some(Self::F32(a * b)),
             (Self::F64(a), Self::F64(b)) => Some(Self::F64(a * b)),
+            (Self::I32(a), Self::I64(b)) | (Self::I64(b), Self::I32(a)) => {
+                Some(Self::I64((*a as i64).wrapping_mul(*b)))
+            }
+            (Self::U32(a), Self::U64(b)) | (Self::U64(b), Self::U32(a)) => {
+                Some(Self::U64((*a as u64).wrapping_mul(*b)))
+            }
+            _ => None,
+        }
+    }
+
+    /// Attempts to divide two constants.
+    #[must_use]
+    pub fn div(&self, other: &Self) -> Option<Self> {
+        match (self, other) {
+            (Self::I8(a), Self::I8(b)) if *b != 0 => Some(Self::I8(a.wrapping_div(*b))),
+            (Self::I16(a), Self::I16(b)) if *b != 0 => Some(Self::I16(a.wrapping_div(*b))),
+            (Self::I32(a), Self::I32(b)) if *b != 0 => Some(Self::I32(a.wrapping_div(*b))),
+            (Self::I64(a), Self::I64(b)) if *b != 0 => Some(Self::I64(a.wrapping_div(*b))),
+            (Self::U8(a), Self::U8(b)) if *b != 0 => Some(Self::U8(a / b)),
+            (Self::U16(a), Self::U16(b)) if *b != 0 => Some(Self::U16(a / b)),
+            (Self::U32(a), Self::U32(b)) if *b != 0 => Some(Self::U32(a / b)),
+            (Self::U64(a), Self::U64(b)) if *b != 0 => Some(Self::U64(a / b)),
+            (Self::NativeInt(a), Self::NativeInt(b)) if *b != 0 => {
+                Some(Self::NativeInt(a.wrapping_div(*b)))
+            }
+            (Self::NativeUInt(a), Self::NativeUInt(b)) if *b != 0 => Some(Self::NativeUInt(a / b)),
+            (Self::F32(a), Self::F32(b)) => Some(Self::F32(a / b)), // Float div by zero is inf
+            (Self::F64(a), Self::F64(b)) => Some(Self::F64(a / b)),
+            _ => None,
+        }
+    }
+
+    /// Attempts to compute remainder (modulo) of two constants.
+    #[must_use]
+    pub fn rem(&self, other: &Self) -> Option<Self> {
+        match (self, other) {
+            (Self::I8(a), Self::I8(b)) if *b != 0 => Some(Self::I8(a.wrapping_rem(*b))),
+            (Self::I16(a), Self::I16(b)) if *b != 0 => Some(Self::I16(a.wrapping_rem(*b))),
+            (Self::I32(a), Self::I32(b)) if *b != 0 => Some(Self::I32(a.wrapping_rem(*b))),
+            (Self::I64(a), Self::I64(b)) if *b != 0 => Some(Self::I64(a.wrapping_rem(*b))),
+            (Self::U8(a), Self::U8(b)) if *b != 0 => Some(Self::U8(a % b)),
+            (Self::U16(a), Self::U16(b)) if *b != 0 => Some(Self::U16(a % b)),
+            (Self::U32(a), Self::U32(b)) if *b != 0 => Some(Self::U32(a % b)),
+            (Self::U64(a), Self::U64(b)) if *b != 0 => Some(Self::U64(a % b)),
+            (Self::NativeInt(a), Self::NativeInt(b)) if *b != 0 => {
+                Some(Self::NativeInt(a.wrapping_rem(*b)))
+            }
+            (Self::NativeUInt(a), Self::NativeUInt(b)) if *b != 0 => Some(Self::NativeUInt(a % b)),
+            (Self::F32(a), Self::F32(b)) => Some(Self::F32(a % b)),
+            (Self::F64(a), Self::F64(b)) => Some(Self::F64(a % b)),
             _ => None,
         }
     }
@@ -201,38 +537,132 @@ impl ConstValue {
     #[allow(clippy::float_cmp)] // Exact comparison is correct for constant propagation
     pub fn ceq(&self, other: &Self) -> Option<Self> {
         match (self, other) {
+            (Self::I8(a), Self::I8(b)) => Some(Self::from_bool(a == b)),
+            (Self::I16(a), Self::I16(b)) => Some(Self::from_bool(a == b)),
             (Self::I32(a), Self::I32(b)) => Some(Self::from_bool(a == b)),
             (Self::I64(a), Self::I64(b)) => Some(Self::from_bool(a == b)),
+            (Self::U8(a), Self::U8(b)) => Some(Self::from_bool(a == b)),
+            (Self::U16(a), Self::U16(b)) => Some(Self::from_bool(a == b)),
+            (Self::U32(a), Self::U32(b)) => Some(Self::from_bool(a == b)),
+            (Self::U64(a), Self::U64(b)) => Some(Self::from_bool(a == b)),
+            (Self::NativeInt(a), Self::NativeInt(b)) => Some(Self::from_bool(a == b)),
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => Some(Self::from_bool(a == b)),
             (Self::F32(a), Self::F32(b)) => Some(Self::from_bool(a == b)),
             (Self::F64(a), Self::F64(b)) => Some(Self::from_bool(a == b)),
             (Self::Null, Self::Null) | (Self::True, Self::True) | (Self::False, Self::False) => {
                 Some(Self::True)
             }
             (Self::True, Self::False) | (Self::False, Self::True) => Some(Self::False),
+            // Cross-type comparisons with promotion
+            (Self::I32(a), Self::I64(b)) | (Self::I64(b), Self::I32(a)) => {
+                Some(Self::from_bool(*a as i64 == *b))
+            }
+            (Self::U32(a), Self::U64(b)) | (Self::U64(b), Self::U32(a)) => {
+                Some(Self::from_bool(*a as u64 == *b))
+            }
             _ => None,
         }
     }
 
-    /// Attempts to compare two constants for less-than.
+    /// Attempts to compare two constants for less-than (signed).
     #[must_use]
     pub fn clt(&self, other: &Self) -> Option<Self> {
         match (self, other) {
+            (Self::I8(a), Self::I8(b)) => Some(Self::from_bool(a < b)),
+            (Self::I16(a), Self::I16(b)) => Some(Self::from_bool(a < b)),
             (Self::I32(a), Self::I32(b)) => Some(Self::from_bool(a < b)),
             (Self::I64(a), Self::I64(b)) => Some(Self::from_bool(a < b)),
+            (Self::U8(a), Self::U8(b)) => Some(Self::from_bool(a < b)),
+            (Self::U16(a), Self::U16(b)) => Some(Self::from_bool(a < b)),
+            (Self::U32(a), Self::U32(b)) => Some(Self::from_bool(a < b)),
+            (Self::U64(a), Self::U64(b)) => Some(Self::from_bool(a < b)),
+            (Self::NativeInt(a), Self::NativeInt(b)) => Some(Self::from_bool(a < b)),
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => Some(Self::from_bool(a < b)),
             (Self::F32(a), Self::F32(b)) => Some(Self::from_bool(a < b)),
             (Self::F64(a), Self::F64(b)) => Some(Self::from_bool(a < b)),
+            (Self::I32(a), Self::I64(b)) => Some(Self::from_bool((*a as i64) < *b)),
+            (Self::I64(a), Self::I32(b)) => Some(Self::from_bool(*a < (*b as i64))),
+            (Self::U32(a), Self::U64(b)) => Some(Self::from_bool((*a as u64) < *b)),
+            (Self::U64(a), Self::U32(b)) => Some(Self::from_bool(*a < (*b as u64))),
             _ => None,
         }
     }
 
-    /// Attempts to compare two constants for greater-than.
+    /// Attempts to compare two constants for less-than (unsigned).
+    #[must_use]
+    pub fn clt_un(&self, other: &Self) -> Option<Self> {
+        // Treat values as unsigned for comparison
+        match (self, other) {
+            (Self::I8(a), Self::I8(b)) => Some(Self::from_bool((*a as u8) < (*b as u8))),
+            (Self::I16(a), Self::I16(b)) => Some(Self::from_bool((*a as u16) < (*b as u16))),
+            (Self::I32(a), Self::I32(b)) => Some(Self::from_bool((*a as u32) < (*b as u32))),
+            (Self::I64(a), Self::I64(b)) => Some(Self::from_bool((*a as u64) < (*b as u64))),
+            (Self::U8(a), Self::U8(b)) => Some(Self::from_bool(a < b)),
+            (Self::U16(a), Self::U16(b)) => Some(Self::from_bool(a < b)),
+            (Self::U32(a), Self::U32(b)) => Some(Self::from_bool(a < b)),
+            (Self::U64(a), Self::U64(b)) => Some(Self::from_bool(a < b)),
+            (Self::NativeInt(a), Self::NativeInt(b)) => {
+                Some(Self::from_bool((*a as u64) < (*b as u64)))
+            }
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => Some(Self::from_bool(a < b)),
+            // For floats, clt.un checks for unordered (NaN) or less than
+            (Self::F32(a), Self::F32(b)) => {
+                Some(Self::from_bool(a.is_nan() || b.is_nan() || a < b))
+            }
+            (Self::F64(a), Self::F64(b)) => {
+                Some(Self::from_bool(a.is_nan() || b.is_nan() || a < b))
+            }
+            _ => None,
+        }
+    }
+
+    /// Attempts to compare two constants for greater-than (signed).
     #[must_use]
     pub fn cgt(&self, other: &Self) -> Option<Self> {
         match (self, other) {
+            (Self::I8(a), Self::I8(b)) => Some(Self::from_bool(a > b)),
+            (Self::I16(a), Self::I16(b)) => Some(Self::from_bool(a > b)),
             (Self::I32(a), Self::I32(b)) => Some(Self::from_bool(a > b)),
             (Self::I64(a), Self::I64(b)) => Some(Self::from_bool(a > b)),
+            (Self::U8(a), Self::U8(b)) => Some(Self::from_bool(a > b)),
+            (Self::U16(a), Self::U16(b)) => Some(Self::from_bool(a > b)),
+            (Self::U32(a), Self::U32(b)) => Some(Self::from_bool(a > b)),
+            (Self::U64(a), Self::U64(b)) => Some(Self::from_bool(a > b)),
+            (Self::NativeInt(a), Self::NativeInt(b)) => Some(Self::from_bool(a > b)),
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => Some(Self::from_bool(a > b)),
             (Self::F32(a), Self::F32(b)) => Some(Self::from_bool(a > b)),
             (Self::F64(a), Self::F64(b)) => Some(Self::from_bool(a > b)),
+            (Self::I32(a), Self::I64(b)) => Some(Self::from_bool((*a as i64) > *b)),
+            (Self::I64(a), Self::I32(b)) => Some(Self::from_bool(*a > (*b as i64))),
+            (Self::U32(a), Self::U64(b)) => Some(Self::from_bool((*a as u64) > *b)),
+            (Self::U64(a), Self::U32(b)) => Some(Self::from_bool(*a > (*b as u64))),
+            _ => None,
+        }
+    }
+
+    /// Attempts to compare two constants for greater-than (unsigned).
+    #[must_use]
+    pub fn cgt_un(&self, other: &Self) -> Option<Self> {
+        match (self, other) {
+            (Self::I8(a), Self::I8(b)) => Some(Self::from_bool((*a as u8) > (*b as u8))),
+            (Self::I16(a), Self::I16(b)) => Some(Self::from_bool((*a as u16) > (*b as u16))),
+            (Self::I32(a), Self::I32(b)) => Some(Self::from_bool((*a as u32) > (*b as u32))),
+            (Self::I64(a), Self::I64(b)) => Some(Self::from_bool((*a as u64) > (*b as u64))),
+            (Self::U8(a), Self::U8(b)) => Some(Self::from_bool(a > b)),
+            (Self::U16(a), Self::U16(b)) => Some(Self::from_bool(a > b)),
+            (Self::U32(a), Self::U32(b)) => Some(Self::from_bool(a > b)),
+            (Self::U64(a), Self::U64(b)) => Some(Self::from_bool(a > b)),
+            (Self::NativeInt(a), Self::NativeInt(b)) => {
+                Some(Self::from_bool((*a as u64) > (*b as u64)))
+            }
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => Some(Self::from_bool(a > b)),
+            // For floats, cgt.un checks for unordered (NaN) or greater than
+            (Self::F32(a), Self::F32(b)) => {
+                Some(Self::from_bool(a.is_nan() || b.is_nan() || a > b))
+            }
+            (Self::F64(a), Self::F64(b)) => {
+                Some(Self::from_bool(a.is_nan() || b.is_nan() || a > b))
+            }
             _ => None,
         }
     }
@@ -241,8 +671,16 @@ impl ConstValue {
 impl fmt::Display for ConstValue {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
+            Self::I8(v) => write!(f, "{v}i8"),
+            Self::I16(v) => write!(f, "{v}i16"),
             Self::I32(v) => write!(f, "{v}"),
             Self::I64(v) => write!(f, "{v}L"),
+            Self::U8(v) => write!(f, "{v}u8"),
+            Self::U16(v) => write!(f, "{v}u16"),
+            Self::U32(v) => write!(f, "{v}u"),
+            Self::U64(v) => write!(f, "{v}UL"),
+            Self::NativeInt(v) => write!(f, "{v}n"),
+            Self::NativeUInt(v) => write!(f, "{v}un"),
             Self::F32(v) => write!(f, "{v}f"),
             Self::F64(v) => write!(f, "{v}"),
             Self::String(idx) => write!(f, "str@{idx}"),

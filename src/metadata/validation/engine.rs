@@ -197,7 +197,7 @@ impl ValidationEngine {
             .map(std::num::NonZero::get)
             .unwrap_or(4);
         let thread_pool = ThreadPoolBuilder::new()
-            .thread_name(|i| format!("validation-engine-{}", i))
+            .thread_name(|i| format!("validation-engine-{i}"))
             .num_threads(thread_count)
             .build()
             .map_err(|e| Error::ValidationEngineInitFailed {

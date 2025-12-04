@@ -601,7 +601,7 @@ impl std::fmt::Debug for MethodAccessFlags {
             0x0006 => "PUBLIC",
             _ => return write!(f, "MethodAccessFlags(0x{:04X})", self.bits()),
         };
-        write!(f, "MethodAccessFlags({})", name)
+        write!(f, "MethodAccessFlags({name})")
     }
 }
 

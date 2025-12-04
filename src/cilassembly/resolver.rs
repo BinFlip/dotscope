@@ -253,14 +253,12 @@ impl ConflictResolver for LastWriteWinsResolver {
                 } => {
                     if !insert_op.is_insert() {
                         return Err(Error::ConflictResolution(format!(
-                            "InsertDeleteConflict for RID {}: insert_op is not an Insert operation",
-                            rid
+                            "InsertDeleteConflict for RID {rid}: insert_op is not an Insert operation"
                         )));
                     }
                     if !delete_op.is_delete() {
                         return Err(Error::ConflictResolution(format!(
-                            "InsertDeleteConflict for RID {}: delete_op is not a Delete operation",
-                            rid
+                            "InsertDeleteConflict for RID {rid}: delete_op is not a Delete operation"
                         )));
                     }
 

@@ -3491,20 +3491,20 @@ impl std::fmt::Display for TypeSignature {
             TypeSignature::SzArray(inner) => write!(f, "{}[]", inner.base),
             TypeSignature::Array(arr) => write!(f, "{}[{}]", arr.base, arr.rank),
             TypeSignature::Ptr(ptr) => write!(f, "{}*", ptr.base),
-            TypeSignature::ByRef(inner) => write!(f, "ref {}", inner),
+            TypeSignature::ByRef(inner) => write!(f, "ref {inner}"),
             TypeSignature::GenericInst(base, args) => {
-                write!(f, "{}<", base)?;
+                write!(f, "{base}<")?;
                 for (i, arg) in args.iter().enumerate() {
                     if i > 0 {
                         write!(f, ", ")?;
                     }
-                    write!(f, "{}", arg)?;
+                    write!(f, "{arg}")?;
                 }
                 write!(f, ">")
             }
-            TypeSignature::GenericParamType(idx) => write!(f, "!{}", idx),
-            TypeSignature::GenericParamMethod(idx) => write!(f, "!!{}", idx),
-            TypeSignature::FnPtr(sig) => write!(f, "fnptr({})", sig),
+            TypeSignature::GenericParamType(idx) => write!(f, "!{idx}"),
+            TypeSignature::GenericParamMethod(idx) => write!(f, "!!{idx}"),
+            TypeSignature::FnPtr(sig) => write!(f, "fnptr({sig})"),
             TypeSignature::ModifiedRequired(modifiers) => {
                 write!(f, "modreq[")?;
                 for (i, m) in modifiers.iter().enumerate() {
@@ -3525,7 +3525,7 @@ impl std::fmt::Display for TypeSignature {
                 }
                 write!(f, "]")
             }
-            TypeSignature::Pinned(inner) => write!(f, "pinned {}", inner),
+            TypeSignature::Pinned(inner) => write!(f, "pinned {inner}"),
             TypeSignature::Sentinel => write!(f, "..."),
             TypeSignature::Unknown => write!(f, "<unknown>"),
             TypeSignature::Internal => write!(f, "<internal>"),
@@ -3558,7 +3558,7 @@ impl std::fmt::Display for SignatureMethod {
             if i > 0 {
                 write!(f, ", ")?;
             }
-            write!(f, "{}", param)?;
+            write!(f, "{param}")?;
         }
         if !self.varargs.is_empty() {
             if !self.params.is_empty() {

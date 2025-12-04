@@ -656,7 +656,7 @@ impl AssemblyIdentity {
         let _ = write!(result, ", Version={}", self.version);
 
         let culture_str = self.culture.as_deref().unwrap_or("neutral");
-        let _ = write!(result, ", Culture={}", culture_str);
+        let _ = write!(result, ", Culture={culture_str}");
 
         // For PubKey and EcmaKey variants, compute the token using SHA1 (the .NET standard)
         // Note: Tokens are stored as u64 little-endian internally, but displayed as hex bytes
@@ -698,7 +698,7 @@ impl AssemblyIdentity {
 
         // Add processor architecture if specified
         if let Some(arch) = &self.processor_architecture {
-            let _ = write!(result, ", ProcessorArchitecture={}", arch);
+            let _ = write!(result, ", ProcessorArchitecture={arch}");
         }
 
         result
@@ -1125,7 +1125,7 @@ impl fmt::Display for ProcessorArchitecture {
             Self::ARM => "ARM",
             Self::ARM64 => "ARM64",
         };
-        write!(f, "{}", arch_str)
+        write!(f, "{arch_str}")
     }
 }
 

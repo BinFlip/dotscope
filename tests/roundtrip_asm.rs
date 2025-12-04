@@ -129,7 +129,9 @@ fn test_branch_instructions_roundtrip() -> Result<()> {
 fn test_encoder_operand_types_roundtrip() -> Result<()> {
     let mut encoder = InstructionEncoder::new();
     encoder.emit_instruction("nop", None)?;
-    encoder.emit_instruction("ldarg.s", Some(Operand::Immediate(Immediate::Int8(1))))?;
+    // ldarg.s uses UInt8 for argument index (0-255 range)
+    encoder.emit_instruction("ldarg.s", Some(Operand::Immediate(Immediate::UInt8(1))))?;
+    // ldc.i4.s uses Int8 for the signed immediate value
     encoder.emit_instruction("ldc.i4.s", Some(Operand::Immediate(Immediate::Int8(42))))?;
     encoder.emit_instruction("ldc.i4", Some(Operand::Immediate(Immediate::Int32(12345))))?;
     encoder.emit_instruction(

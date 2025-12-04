@@ -336,7 +336,7 @@ impl CilPrimitiveData {
                     Some(ch.to_string())
                 } else {
                     // For surrogates or invalid values, show as Unicode escape
-                    Some(format!("\\u{{{:04X}}}", value))
+                    Some(format!("\\u{{{value:04X}}}"))
                 }
             }
             CilPrimitiveData::I1(value) => Some(value.to_string()),
@@ -1306,7 +1306,7 @@ impl fmt::Display for CilPrimitive {
                     write!(f, "'{ch}'")
                 } else {
                     // For surrogates or invalid values, show as Unicode escape
-                    write!(f, "'\\u{{{:04X}}}'", value)
+                    write!(f, "'\\u{{{value:04X}}}'")
                 }
             }
             CilPrimitiveData::I1(value) => write!(f, "{value}"),

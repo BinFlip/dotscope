@@ -421,7 +421,7 @@ impl File {
         let mut data = Vec::new();
         reader
             .read_to_end(&mut data)
-            .map_err(|e| Other(format!("Failed to read from reader: {}", e)))?;
+            .map_err(|e| Other(format!("Failed to read from reader: {e}")))?;
         Self::from_mem(data)
     }
 

@@ -1166,9 +1166,10 @@ mod tests {
         assert_eq!(result.mnemonic, "ldloc.s");
         assert_eq!(result.category, InstructionCategory::LoadStore);
         assert_eq!(result.flow_type, FlowType::Sequential);
+        // ldloc.s uses UInt8 for the local index (0-255 range, no sign needed)
         match &result.operand {
-            Operand::Immediate(Immediate::Int8(val)) => assert_eq!(*val, 0x10),
-            _ => panic!("Expected Operand::Immediate(Immediate::Int8)"),
+            Operand::Immediate(Immediate::UInt8(val)) => assert_eq!(*val, 0x10),
+            _ => panic!("Expected Operand::Immediate(Immediate::UInt8)"),
         }
     }
 
@@ -1448,15 +1449,16 @@ mod tests {
 
     #[test]
     fn decode_instruction_uint8_operand() {
-        let mut parser = Parser::new(&[0x11, 0xFF]); // ldloc.s with max u8 value
+        let mut parser = Parser::new(&[0x11, 0xFF]); // ldloc.s with max u8 value (255)
         let rva = 0x1000;
 
         let result = decode_instruction(&mut parser, rva).unwrap();
 
-        // Verify the operand is properly decoded
+        // ldloc.s uses UInt8 for local index (0-255 range, no sign needed)
+        // Verify the operand is properly decoded as unsigned
         match &result.operand {
-            Operand::Immediate(Immediate::Int8(val)) => assert_eq!(*val, -1), // 0xFF as signed
-            _ => panic!("Expected Operand::Immediate(Immediate::Int8)"),
+            Operand::Immediate(Immediate::UInt8(val)) => assert_eq!(*val, 255), // 0xFF as unsigned
+            _ => panic!("Expected Operand::Immediate(Immediate::UInt8)"),
         }
     }
 
