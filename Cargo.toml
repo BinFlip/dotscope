@@ -51,7 +51,7 @@ num_cpus = "1.17.0"
 flate2 = "1.1.5"
 
 [dev-dependencies]
-criterion = "0.8.0"
+criterion = "0.8.1"
 clap = { version = "4.5.53", features = ["derive"] }
 
 [features]
