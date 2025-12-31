@@ -106,7 +106,8 @@ pub mod AssemblyFlags {
 ///
 /// # Reference
 /// - [ECMA-335 II.23.1.1](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `AssemblyHashAlgorithm` enumeration
-// TODO: Microsoft has extended this enumeration in newer versions without updating ECMA-335
+///
+/// Note: Microsoft has extended this enumeration beyond ECMA-335 to include SHA-2 family algorithms.
 pub mod AssemblyHashAlgorithm {
     /// No hash algorithm specified
     ///
@@ -125,4 +126,22 @@ pub mod AssemblyHashAlgorithm {
     /// **Security Warning**: SHA1 is deprecated due to known collision vulnerabilities.
     /// While stronger than MD5, it should be avoided for new assemblies.
     pub const SHA1: u32 = 0x8004;
+
+    /// SHA256 hash algorithm (FIPS 180-2)
+    ///
+    /// Modern secure hash algorithm. Recommended for new assemblies.
+    /// Supported in .NET Framework 4.5+ and all .NET Core/.NET 5+ versions.
+    pub const SHA256: u32 = 0x800C;
+
+    /// SHA384 hash algorithm (FIPS 180-2)
+    ///
+    /// Modern secure hash algorithm with 384-bit output.
+    /// Supported in .NET Framework 4.5+ and all .NET Core/.NET 5+ versions.
+    pub const SHA384: u32 = 0x800D;
+
+    /// SHA512 hash algorithm (FIPS 180-2)
+    ///
+    /// Modern secure hash algorithm with 512-bit output.
+    /// Supported in .NET Framework 4.5+ and all .NET Core/.NET 5+ versions.
+    pub const SHA512: u32 = 0x800E;
 }

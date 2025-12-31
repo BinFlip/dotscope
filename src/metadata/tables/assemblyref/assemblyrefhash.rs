@@ -65,7 +65,8 @@ use crate::Result;
 #[cfg(feature = "legacy-crypto")]
 use md5::Md5;
 #[cfg(feature = "legacy-crypto")]
-use sha1::{Digest, Sha1};
+use sha1::{Digest as Sha1Digest, Sha1};
+use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::fmt::Write;
 
 /// Convert bytes to lowercase hexadecimal string representation
@@ -180,6 +181,9 @@ impl AssemblyRefHash {
     /// Algorithm detection is based on hash length:
     /// - 16 bytes: "MD5: {hex}"
     /// - 20 bytes: "SHA1: {hex}"
+    /// - 32 bytes: "SHA256: {hex}"
+    /// - 48 bytes: "SHA384: {hex}"
+    /// - 64 bytes: "SHA512: {hex}"
     /// - Other: "Unknown: {hex}"
     ///
     /// # Returns
@@ -190,6 +194,9 @@ impl AssemblyRefHash {
         let algorithm = match self.data.len() {
             16 => "MD5",
             20 => "SHA1",
+            32 => "SHA256",
+            48 => "SHA384",
+            64 => "SHA512",
             _ => "Unknown",
         };
 
@@ -253,7 +260,7 @@ impl AssemblyRefHash {
         }
 
         let mut hasher = Sha1::new();
-        hasher.update(expected);
+        Sha1Digest::update(&mut hasher, expected);
         let result = hasher.finalize();
 
         self.data == result.as_slice()
@@ -265,25 +272,104 @@ impl AssemblyRefHash {
     pub fn verify_sha1(&self, _expected: &[u8]) -> bool {
         false // Cannot verify without SHA1 support
     }
+
+    /// Verify if this hash matches input data using SHA256 algorithm
+    ///
+    /// Computes the SHA256 hash of the provided input data and compares it against
+    /// the stored hash value. Only valid for 32-byte (SHA256) hashes.
+    ///
+    /// # Arguments
+    /// * `expected` - Input data to hash and verify against stored hash
+    ///
+    /// # Returns
+    /// * `true` - Hash matches (stored hash is 32 bytes and SHA256 computation matches)
+    /// * `false` - Hash doesn't match or stored hash is not 32 bytes
+    #[must_use]
+    pub fn verify_sha256(&self, expected: &[u8]) -> bool {
+        if self.data.len() != 32 {
+            return false;
+        }
+
+        let mut hasher = Sha256::new();
+        Digest::update(&mut hasher, expected);
+        let result = hasher.finalize();
+
+        self.data == result.as_slice()
+    }
+
+    /// Verify if this hash matches input data using SHA384 algorithm
+    ///
+    /// Computes the SHA384 hash of the provided input data and compares it against
+    /// the stored hash value. Only valid for 48-byte (SHA384) hashes.
+    ///
+    /// # Arguments
+    /// * `expected` - Input data to hash and verify against stored hash
+    ///
+    /// # Returns
+    /// * `true` - Hash matches (stored hash is 48 bytes and SHA384 computation matches)
+    /// * `false` - Hash doesn't match or stored hash is not 48 bytes
+    #[must_use]
+    pub fn verify_sha384(&self, expected: &[u8]) -> bool {
+        if self.data.len() != 48 {
+            return false;
+        }
+
+        let mut hasher = Sha384::new();
+        Digest::update(&mut hasher, expected);
+        let result = hasher.finalize();
+
+        self.data == result.as_slice()
+    }
+
+    /// Verify if this hash matches input data using SHA512 algorithm
+    ///
+    /// Computes the SHA512 hash of the provided input data and compares it against
+    /// the stored hash value. Only valid for 64-byte (SHA512) hashes.
+    ///
+    /// # Arguments
+    /// * `expected` - Input data to hash and verify against stored hash
+    ///
+    /// # Returns
+    /// * `true` - Hash matches (stored hash is 64 bytes and SHA512 computation matches)
+    /// * `false` - Hash doesn't match or stored hash is not 64 bytes
+    #[must_use]
+    pub fn verify_sha512(&self, expected: &[u8]) -> bool {
+        if self.data.len() != 64 {
+            return false;
+        }
+
+        let mut hasher = Sha512::new();
+        Digest::update(&mut hasher, expected);
+        let result = hasher.finalize();
+
+        self.data == result.as_slice()
+    }
 }
 
-#[cfg(all(test, feature = "legacy-crypto"))]
+/// Tests that work without legacy-crypto (SHA-2 and basic functionality)
+#[cfg(test)]
 mod tests {
     use super::*;
-    use md5::Md5;
-    use sha1::{Digest, Sha1};
+    use sha2::{Digest, Sha256, Sha384, Sha512};
 
-    // Helper function to create test MD5 hash
-    fn create_test_md5_hash() -> Vec<u8> {
-        let mut hasher = Md5::new();
-        hasher.update(b"test data");
+    // Helper function to create test SHA256 hash
+    fn create_test_sha256_hash() -> Vec<u8> {
+        let mut hasher = Sha256::new();
+        Digest::update(&mut hasher, b"test data");
         hasher.finalize().to_vec()
     }
 
-    // Helper function to create test SHA1 hash
-    fn create_test_sha1_hash() -> Vec<u8> {
-        let mut hasher = Sha1::new();
-        hasher.update(b"test data");
+    // Helper function to create test SHA384 hash
+    fn create_test_sha384_hash() -> Vec<u8> {
+        let mut hasher = Sha384::new();
+        Digest::update(&mut hasher, b"test data");
+        hasher.finalize().to_vec()
+    }
+
+    // Helper function to create test SHA512 hash
+    fn create_test_sha512_hash() -> Vec<u8> {
+        let mut hasher = Sha512::new();
+        Digest::update(&mut hasher, b"test data");
         hasher.finalize().to_vec()
     }
 
@@ -324,18 +410,20 @@ mod tests {
     }
 
     #[test]
-    fn test_to_string_pretty_md5() {
-        let md5_hash = create_test_md5_hash();
-        let hash = AssemblyRefHash::new(&md5_hash).unwrap();
+    fn test_to_string_pretty_md5_length() {
+        // 16 bytes should be detected as MD5
+        let md5_length_hash = vec![0x42; 16];
+        let hash = AssemblyRefHash::new(&md5_length_hash).unwrap();
         let pretty = hash.to_string_pretty();
         assert!(pretty.starts_with("MD5: "));
         assert_eq!(pretty.len(), 5 + 32); // "MD5: " + 32 hex chars
     }
 
     #[test]
-    fn test_to_string_pretty_sha1() {
-        let sha1_hash = create_test_sha1_hash();
-        let hash = AssemblyRefHash::new(&sha1_hash).unwrap();
+    fn test_to_string_pretty_sha1_length() {
+        // 20 bytes should be detected as SHA1
+        let sha1_length_hash = vec![0x42; 20];
+        let hash = AssemblyRefHash::new(&sha1_length_hash).unwrap();
         let pretty = hash.to_string_pretty();
         assert!(pretty.starts_with("SHA1: "));
         assert_eq!(pretty.len(), 6 + 40); // "SHA1: " + 40 hex chars
@@ -343,11 +431,228 @@ mod tests {
 
     #[test]
     fn test_to_string_pretty_unknown_length() {
-        let unknown_hash = vec![1, 2, 3, 4, 5]; // 5 bytes, not MD5 or SHA1
+        let unknown_hash = vec![1, 2, 3, 4, 5]; // 5 bytes, not a recognized hash length
         let hash = AssemblyRefHash::new(&unknown_hash).unwrap();
         let pretty = hash.to_string_pretty();
         assert!(pretty.starts_with("Unknown: "));
         assert_eq!(pretty, "Unknown: 0102030405");
+    }
+
+    #[test]
+    fn test_to_string_pretty_sha256() {
+        let sha256_hash = create_test_sha256_hash();
+        let hash = AssemblyRefHash::new(&sha256_hash).unwrap();
+        let pretty = hash.to_string_pretty();
+        assert!(pretty.starts_with("SHA256: "));
+        assert_eq!(pretty.len(), 8 + 64); // "SHA256: " + 64 hex chars
+    }
+
+    #[test]
+    fn test_to_string_pretty_sha384() {
+        let sha384_hash = create_test_sha384_hash();
+        let hash = AssemblyRefHash::new(&sha384_hash).unwrap();
+        let pretty = hash.to_string_pretty();
+        assert!(pretty.starts_with("SHA384: "));
+        assert_eq!(pretty.len(), 8 + 96); // "SHA384: " + 96 hex chars
+    }
+
+    #[test]
+    fn test_to_string_pretty_sha512() {
+        let sha512_hash = create_test_sha512_hash();
+        let hash = AssemblyRefHash::new(&sha512_hash).unwrap();
+        let pretty = hash.to_string_pretty();
+        assert!(pretty.starts_with("SHA512: "));
+        assert_eq!(pretty.len(), 8 + 128); // "SHA512: " + 128 hex chars
+    }
+
+    #[test]
+    fn test_verify_sha256_success() {
+        let test_input = b"test data";
+        let expected_hash = create_test_sha256_hash();
+        let hash = AssemblyRefHash::new(&expected_hash).unwrap();
+
+        assert!(hash.verify_sha256(test_input));
+    }
+
+    #[test]
+    fn test_verify_sha256_failure_wrong_data() {
+        let expected_hash = create_test_sha256_hash();
+        let hash = AssemblyRefHash::new(&expected_hash).unwrap();
+
+        assert!(!hash.verify_sha256(b"wrong data"));
+    }
+
+    #[test]
+    fn test_verify_sha256_failure_wrong_length() {
+        // 20 bytes, not 32
+        let wrong_length_hash = vec![0x42; 20];
+        let hash = AssemblyRefHash::new(&wrong_length_hash).unwrap();
+
+        assert!(!hash.verify_sha256(b"test data"));
+    }
+
+    #[test]
+    fn test_verify_sha384_success() {
+        let test_input = b"test data";
+        let expected_hash = create_test_sha384_hash();
+        let hash = AssemblyRefHash::new(&expected_hash).unwrap();
+
+        assert!(hash.verify_sha384(test_input));
+    }
+
+    #[test]
+    fn test_verify_sha384_failure_wrong_data() {
+        let expected_hash = create_test_sha384_hash();
+        let hash = AssemblyRefHash::new(&expected_hash).unwrap();
+
+        assert!(!hash.verify_sha384(b"wrong data"));
+    }
+
+    #[test]
+    fn test_verify_sha384_failure_wrong_length() {
+        let sha256_hash = create_test_sha256_hash(); // 32 bytes, not 48
+        let hash = AssemblyRefHash::new(&sha256_hash).unwrap();
+
+        assert!(!hash.verify_sha384(b"test data"));
+    }
+
+    #[test]
+    fn test_verify_sha512_success() {
+        let test_input = b"test data";
+        let expected_hash = create_test_sha512_hash();
+        let hash = AssemblyRefHash::new(&expected_hash).unwrap();
+
+        assert!(hash.verify_sha512(test_input));
+    }
+
+    #[test]
+    fn test_verify_sha512_failure_wrong_data() {
+        let expected_hash = create_test_sha512_hash();
+        let hash = AssemblyRefHash::new(&expected_hash).unwrap();
+
+        assert!(!hash.verify_sha512(b"wrong data"));
+    }
+
+    #[test]
+    fn test_verify_sha512_failure_wrong_length() {
+        let sha384_hash = create_test_sha384_hash(); // 48 bytes, not 64
+        let hash = AssemblyRefHash::new(&sha384_hash).unwrap();
+
+        assert!(!hash.verify_sha512(b"test data"));
+    }
+
+    #[test]
+    fn test_with_real_sha256_hash() {
+        let input = b"The quick brown fox jumps over the lazy dog";
+        let mut hasher = Sha256::new();
+        Digest::update(&mut hasher, input);
+        let expected_hash = hasher.finalize().to_vec();
+
+        let hash = AssemblyRefHash::new(&expected_hash).unwrap();
+        assert_eq!(hash.data().len(), 32);
+        assert!(hash.verify_sha256(input));
+
+        let pretty = hash.to_string_pretty();
+        assert!(pretty.starts_with("SHA256: "));
+    }
+
+    #[test]
+    fn test_with_real_sha384_hash() {
+        let input = b"The quick brown fox jumps over the lazy dog";
+        let mut hasher = Sha384::new();
+        Digest::update(&mut hasher, input);
+        let expected_hash = hasher.finalize().to_vec();
+
+        let hash = AssemblyRefHash::new(&expected_hash).unwrap();
+        assert_eq!(hash.data().len(), 48);
+        assert!(hash.verify_sha384(input));
+        assert!(!hash.verify_sha256(input)); // Wrong algorithm
+
+        let pretty = hash.to_string_pretty();
+        assert!(pretty.starts_with("SHA384: "));
+    }
+
+    #[test]
+    fn test_with_real_sha512_hash() {
+        let input = b"The quick brown fox jumps over the lazy dog";
+        let mut hasher = Sha512::new();
+        Digest::update(&mut hasher, input);
+        let expected_hash = hasher.finalize().to_vec();
+
+        let hash = AssemblyRefHash::new(&expected_hash).unwrap();
+        assert_eq!(hash.data().len(), 64);
+        assert!(hash.verify_sha512(input));
+        assert!(!hash.verify_sha384(input)); // Wrong algorithm
+
+        let pretty = hash.to_string_pretty();
+        assert!(pretty.starts_with("SHA512: "));
+    }
+
+    #[test]
+    fn test_bytes_to_hex_helper() {
+        let bytes = vec![0x00, 0x01, 0x0a, 0x10, 0xff];
+        let hex = bytes_to_hex(&bytes);
+        assert_eq!(hex, "00010a10ff");
+    }
+
+    #[test]
+    fn test_bytes_to_hex_empty() {
+        let hex = bytes_to_hex(&[]);
+        assert_eq!(hex, "");
+    }
+
+    #[test]
+    fn test_edge_case_single_byte() {
+        let single_byte = vec![0x42];
+        let hash = AssemblyRefHash::new(&single_byte).unwrap();
+        assert_eq!(hash.hex(), "42");
+        assert_eq!(hash.to_string_pretty(), "Unknown: 42");
+    }
+
+    #[test]
+    fn test_edge_case_max_byte_values() {
+        // Use 31 bytes to get "Unknown" (not a recognized hash length)
+        let max_bytes = vec![0xff; 31];
+        let hash = AssemblyRefHash::new(&max_bytes).unwrap();
+        assert_eq!(hash.hex(), "f".repeat(62));
+        assert!(hash.to_string_pretty().starts_with("Unknown: "));
+    }
+
+    #[test]
+    fn test_case_sensitivity_in_hex() {
+        let test_data = vec![0xab, 0xcd, 0xef];
+        let hash = AssemblyRefHash::new(&test_data).unwrap();
+        let hex = hash.hex();
+        // Verify all hex characters are lowercase
+        assert_eq!(hex, "abcdef");
+        assert!(!hex.contains('A'));
+        assert!(!hex.contains('B'));
+        assert!(!hex.contains('C'));
+        assert!(!hex.contains('D'));
+        assert!(!hex.contains('E'));
+        assert!(!hex.contains('F'));
+    }
+}
+
+/// Tests that require legacy-crypto (MD5/SHA1 verification)
+#[cfg(all(test, feature = "legacy-crypto"))]
+mod legacy_tests {
+    use super::*;
+    use md5::Md5;
+    use sha1::{Digest as Sha1Digest, Sha1};
+
+    // Helper function to create test MD5 hash
+    fn create_test_md5_hash() -> Vec<u8> {
+        let mut hasher = Md5::new();
+        hasher.update(b"test data");
+        hasher.finalize().to_vec()
+    }
+
+    // Helper function to create test SHA1 hash
+    fn create_test_sha1_hash() -> Vec<u8> {
+        let mut hasher = Sha1::new();
+        Sha1Digest::update(&mut hasher, b"test data");
+        hasher.finalize().to_vec()
     }
 
     #[test]
@@ -401,21 +706,7 @@ mod tests {
     }
 
     #[test]
-    fn test_bytes_to_hex_helper() {
-        let bytes = vec![0x00, 0x01, 0x0a, 0x10, 0xff];
-        let hex = bytes_to_hex(&bytes);
-        assert_eq!(hex, "00010a10ff");
-    }
-
-    #[test]
-    fn test_bytes_to_hex_empty() {
-        let hex = bytes_to_hex(&[]);
-        assert_eq!(hex, "");
-    }
-
-    #[test]
     fn test_with_real_md5_hash() {
-        // Test with a known MD5 hash
         let input = b"The quick brown fox jumps over the lazy dog";
         let mut hasher = Md5::new();
         hasher.update(input);
@@ -432,10 +723,9 @@ mod tests {
 
     #[test]
     fn test_with_real_sha1_hash() {
-        // Test with a known SHA1 hash
         let input = b"The quick brown fox jumps over the lazy dog";
         let mut hasher = Sha1::new();
-        hasher.update(input);
+        Sha1Digest::update(&mut hasher, input);
         let expected_hash = hasher.finalize().to_vec();
 
         let hash = AssemblyRefHash::new(&expected_hash).unwrap();
@@ -448,35 +738,10 @@ mod tests {
     }
 
     #[test]
-    fn test_edge_case_single_byte() {
+    fn test_edge_case_single_byte_legacy() {
         let single_byte = vec![0x42];
         let hash = AssemblyRefHash::new(&single_byte).unwrap();
-        assert_eq!(hash.hex(), "42");
-        assert_eq!(hash.to_string_pretty(), "Unknown: 42");
         assert!(!hash.verify_md5(b"anything"));
         assert!(!hash.verify_sha1(b"anything"));
-    }
-
-    #[test]
-    fn test_edge_case_max_byte_values() {
-        let max_bytes = vec![0xff; 32];
-        let hash = AssemblyRefHash::new(&max_bytes).unwrap();
-        assert_eq!(hash.hex(), "f".repeat(64));
-        assert!(hash.to_string_pretty().starts_with("Unknown: "));
-    }
-
-    #[test]
-    fn test_case_sensitivity_in_hex() {
-        let test_data = vec![0xab, 0xcd, 0xef];
-        let hash = AssemblyRefHash::new(&test_data).unwrap();
-        let hex = hash.hex();
-        // Verify all hex characters are lowercase
-        assert_eq!(hex, "abcdef");
-        assert!(!hex.contains('A'));
-        assert!(!hex.contains('B'));
-        assert!(!hex.contains('C'));
-        assert!(!hex.contains('D'));
-        assert!(!hex.contains('E'));
-        assert!(!hex.contains('F'));
     }
 }

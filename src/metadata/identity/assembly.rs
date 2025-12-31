@@ -658,7 +658,7 @@ impl AssemblyIdentity {
         let culture_str = self.culture.as_deref().unwrap_or("neutral");
         let _ = write!(result, ", Culture={}", culture_str);
 
-        // For PubKey and EcmaKey variants, compute the token using SHA1 (the standard algorithm)
+        // For PubKey and EcmaKey variants, compute the token using SHA1 (the .NET standard)
         // Note: Tokens are stored as u64 little-endian internally, but displayed as hex bytes
         // in their natural order (first byte of the u64 comes first in the hex string).
         // This matches the .NET display name format where "b77a5c561934e089" represents
@@ -1585,8 +1585,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "legacy-crypto")]
     fn test_assembly_identity_display_name_with_pubkey() {
-        // Test that PubKey variants compute and display their token
+        // Test that PubKey variants compute and display their token using SHA1
+        // Note: This test requires legacy-crypto because token computation uses SHA1
         let pubkey_data = vec![
             1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20,
         ];
@@ -1614,8 +1616,10 @@ mod tests {
     }
 
     #[test]
+    #[cfg(feature = "legacy-crypto")]
     fn test_assembly_identity_display_name_with_ecma_key() {
-        // Test that EcmaKey variants compute and display their token
+        // Test that EcmaKey variants compute and display their token using SHA1
+        // Note: This test requires legacy-crypto because token computation uses SHA1
         let ecma_data = vec![
             0x06, 0x28, 0xAC, 0x03, 0x00, 0x06, 0x7A, 0x06, 0x6F, 0xAB, 0x02, 0x00, 0x0A, 0x0B,
             0x17, 0x6A,

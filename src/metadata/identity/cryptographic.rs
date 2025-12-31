@@ -71,11 +71,11 @@
 //! - Cross-assembly type reference resolution
 
 #[cfg(feature = "legacy-crypto")]
-use md5::{Digest, Md5};
+use md5::{Digest as Md5Digest, Md5};
 #[cfg(feature = "legacy-crypto")]
-use sha1::Sha1;
+use sha1::{Digest as Sha1Digest, Sha1};
+use sha2::{Digest, Sha256, Sha384, Sha512};
 
-#[cfg(feature = "legacy-crypto")]
 use crate::metadata::tables::AssemblyHashAlgorithm;
 use crate::{utils::read_le, Result};
 
@@ -319,41 +319,54 @@ impl Identity {
     ///
     /// # Errors
     /// Returns an error if:
-    /// - The hash algorithm is not supported (only MD5 and SHA1 are implemented)
+    /// - The hash algorithm is not supported
     /// - The hash result cannot be read as a little-endian u64
-    /// - The `legacy-crypto` feature is disabled (MD5 and SHA1 unavailable)
-    #[cfg(feature = "legacy-crypto")]
+    /// - The `legacy-crypto` feature is disabled and MD5/SHA1 is requested
     fn compute_token_from_data(data: &[u8], algo: u32) -> Result<u64> {
         match algo {
+            #[cfg(feature = "legacy-crypto")]
             AssemblyHashAlgorithm::MD5 => {
                 let mut hasher = Md5::new();
-                hasher.update(data);
+                Md5Digest::update(&mut hasher, data);
                 let result = hasher.finalize();
                 read_le::<u64>(&result[result.len() - 8..])
             }
+            #[cfg(feature = "legacy-crypto")]
             AssemblyHashAlgorithm::SHA1 => {
                 let mut hasher = Sha1::new();
-                hasher.update(data);
+                Sha1Digest::update(&mut hasher, data);
+                let result = hasher.finalize();
+                read_le::<u64>(&result[result.len() - 8..])
+            }
+            #[cfg(not(feature = "legacy-crypto"))]
+            AssemblyHashAlgorithm::MD5 | AssemblyHashAlgorithm::SHA1 => Err(malformed_error!(
+                "Hash algorithm 0x{:08X} requires the 'legacy-crypto' feature. \
+                 Compile with `features = [\"legacy-crypto\"]` to enable MD5/SHA1 support.",
+                algo
+            )),
+            AssemblyHashAlgorithm::SHA256 => {
+                let mut hasher = Sha256::new();
+                Digest::update(&mut hasher, data);
+                let result = hasher.finalize();
+                read_le::<u64>(&result[result.len() - 8..])
+            }
+            AssemblyHashAlgorithm::SHA384 => {
+                let mut hasher = Sha384::new();
+                Digest::update(&mut hasher, data);
+                let result = hasher.finalize();
+                read_le::<u64>(&result[result.len() - 8..])
+            }
+            AssemblyHashAlgorithm::SHA512 => {
+                let mut hasher = Sha512::new();
+                Digest::update(&mut hasher, data);
                 let result = hasher.finalize();
                 read_le::<u64>(&result[result.len() - 8..])
             }
             _ => Err(malformed_error!(
-                "Unsupported hash algorithm: 0x{:08X}. Only MD5 (0x{:08X}) and SHA1 (0x{:08X}) are supported.",
-                algo,
-                AssemblyHashAlgorithm::MD5,
-                AssemblyHashAlgorithm::SHA1
+                "Unsupported hash algorithm: 0x{:08X}",
+                algo
             )),
         }
-    }
-
-    /// Compute a token from raw key data - stub when legacy-crypto is disabled.
-    #[cfg(not(feature = "legacy-crypto"))]
-    fn compute_token_from_data(_data: &[u8], algo: u32) -> Result<u64> {
-        Err(malformed_error!(
-            "Hash algorithm 0x{:08X} requires the 'legacy-crypto' feature. \
-             Compile with `features = [\"legacy-crypto\"]` to enable MD5/SHA1 support.",
-            algo
-        ))
     }
 }
 
@@ -361,8 +374,9 @@ impl Identity {
 mod tests {
     use super::*;
     use crate::metadata::tables::AssemblyHashAlgorithm;
-    use md5::{Digest, Md5};
-    use sha1::Sha1;
+    use md5::{Digest as Md5Digest, Md5};
+    use sha1::{Digest as Sha1Digest, Sha1};
+    use sha2::{Digest, Sha256, Sha384, Sha512};
 
     #[test]
     fn test_identity_from_pubkey() {
@@ -435,7 +449,7 @@ mod tests {
 
         // Manually compute MD5 to verify
         let mut hasher = Md5::new();
-        hasher.update(&pubkey_data);
+        Md5Digest::update(&mut hasher, &pubkey_data);
         let result = hasher.finalize();
         let last_8_bytes = &result[result.len() - 8..];
         let expected_token = read_le::<u64>(last_8_bytes).unwrap();
@@ -452,7 +466,58 @@ mod tests {
 
         // Manually compute SHA1 to verify
         let mut hasher = Sha1::new();
-        hasher.update(&pubkey_data);
+        Sha1Digest::update(&mut hasher, &pubkey_data);
+        let result = hasher.finalize();
+        let last_8_bytes = &result[result.len() - 8..];
+        let expected_token = read_le::<u64>(last_8_bytes).unwrap();
+
+        assert_eq!(token, expected_token);
+    }
+
+    #[test]
+    fn test_to_token_from_pubkey_sha256() {
+        let pubkey_data = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let identity = Identity::PubKey(pubkey_data.clone());
+
+        let token = identity.to_token(AssemblyHashAlgorithm::SHA256).unwrap();
+
+        // Manually compute SHA256 to verify
+        let mut hasher = Sha256::new();
+        Digest::update(&mut hasher, &pubkey_data);
+        let result = hasher.finalize();
+        let last_8_bytes = &result[result.len() - 8..];
+        let expected_token = read_le::<u64>(last_8_bytes).unwrap();
+
+        assert_eq!(token, expected_token);
+    }
+
+    #[test]
+    fn test_to_token_from_pubkey_sha384() {
+        let pubkey_data = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let identity = Identity::PubKey(pubkey_data.clone());
+
+        let token = identity.to_token(AssemblyHashAlgorithm::SHA384).unwrap();
+
+        // Manually compute SHA384 to verify
+        let mut hasher = Sha384::new();
+        Digest::update(&mut hasher, &pubkey_data);
+        let result = hasher.finalize();
+        let last_8_bytes = &result[result.len() - 8..];
+        let expected_token = read_le::<u64>(last_8_bytes).unwrap();
+
+        assert_eq!(token, expected_token);
+    }
+
+    #[test]
+    fn test_to_token_from_pubkey_sha512() {
+        let pubkey_data = vec![1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16];
+        let identity = Identity::PubKey(pubkey_data.clone());
+
+        let token = identity.to_token(AssemblyHashAlgorithm::SHA512).unwrap();
+
+        // Manually compute SHA512 to verify
+        let mut hasher = Sha512::new();
+        Digest::update(&mut hasher, &pubkey_data);
         let result = hasher.finalize();
         let last_8_bytes = &result[result.len() - 8..];
         let expected_token = read_le::<u64>(last_8_bytes).unwrap();

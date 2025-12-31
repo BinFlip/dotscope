@@ -36,6 +36,7 @@ tempfile = "3.24.0"
 goblin = "0.10.4"
 ouroboros = "0.18.5"
 sha1 = { version = "0.10.6", optional = true }
+sha2 = "0.10.9"
 md-5 = { version = "0.10.6", optional = true }
 bitflags = "2.10.0"
 dashmap = "6.1.0"
