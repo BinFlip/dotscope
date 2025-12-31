@@ -1365,11 +1365,9 @@ mod tests {
                 assert!(core_ref.row > 0, "Core library RID should be > 0");
 
                 // Verify that the core library lookup is equivalent to the specific lookup
-                let specific_mscorlib = context.find_assembly_ref_by_name("mscorlib");
-                if specific_mscorlib.is_some() {
+                if let Some(specific_mscorlib) = context.find_assembly_ref_by_name("mscorlib") {
                     assert_eq!(
-                        core_ref.row,
-                        specific_mscorlib.unwrap().row,
+                        core_ref.row, specific_mscorlib.row,
                         "Core library lookup should match specific mscorlib lookup"
                     );
                 }

@@ -62,7 +62,9 @@
 //! - [RFC 3174](https://tools.ietf.org/html/rfc3174) - SHA-1 Hash Function (deprecated)
 
 use crate::Result;
+#[cfg(feature = "legacy-crypto")]
 use md5::Md5;
+#[cfg(feature = "legacy-crypto")]
 use sha1::{Digest, Sha1};
 use std::fmt::Write;
 
@@ -207,8 +209,9 @@ impl AssemblyRefHash {
     ///
     /// # Returns
     /// * `true` - Hash matches (stored hash is 16 bytes and MD5 computation matches)
-    /// * `false` - Hash doesn't match or stored hash is not 16 bytes
+    /// * `false` - Hash doesn't match, stored hash is not 16 bytes, or `legacy-crypto` feature is disabled
     #[must_use]
+    #[cfg(feature = "legacy-crypto")]
     pub fn verify_md5(&self, expected: &[u8]) -> bool {
         if self.data.len() != 16 {
             return false;
@@ -219,6 +222,13 @@ impl AssemblyRefHash {
         let result = hasher.finalize();
 
         self.data == result.as_slice()
+    }
+
+    /// Verify if this hash matches input data using MD5 algorithm - stub when legacy-crypto is disabled.
+    #[must_use]
+    #[cfg(not(feature = "legacy-crypto"))]
+    pub fn verify_md5(&self, _expected: &[u8]) -> bool {
+        false // Cannot verify without MD5 support
     }
 
     /// Verify if this hash matches input data using SHA1 algorithm
@@ -234,8 +244,9 @@ impl AssemblyRefHash {
     ///
     /// # Returns
     /// * `true` - Hash matches (stored hash is 20 bytes and SHA1 computation matches)
-    /// * `false` - Hash doesn't match or stored hash is not 20 bytes
+    /// * `false` - Hash doesn't match, stored hash is not 20 bytes, or `legacy-crypto` feature is disabled
     #[must_use]
+    #[cfg(feature = "legacy-crypto")]
     pub fn verify_sha1(&self, expected: &[u8]) -> bool {
         if self.data.len() != 20 {
             return false;
@@ -247,11 +258,20 @@ impl AssemblyRefHash {
 
         self.data == result.as_slice()
     }
+
+    /// Verify if this hash matches input data using SHA1 algorithm - stub when legacy-crypto is disabled.
+    #[must_use]
+    #[cfg(not(feature = "legacy-crypto"))]
+    pub fn verify_sha1(&self, _expected: &[u8]) -> bool {
+        false // Cannot verify without SHA1 support
+    }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-crypto"))]
 mod tests {
     use super::*;
+    use md5::Md5;
+    use sha1::{Digest, Sha1};
 
     // Helper function to create test MD5 hash
     fn create_test_md5_hash() -> Vec<u8> {

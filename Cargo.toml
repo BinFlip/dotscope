@@ -1,6 +1,6 @@
 [package]
 name = "dotscope"
-version = "0.5.1"
+version = "0.5.2"
 authors = ["Johann Kempter <admin@binflip.rs>"]
 edition = "2021"
 description = "A high-performance, cross-platform framework for analyzing and reverse engineering .NET PE executables"
@@ -32,13 +32,11 @@ uguid = "2.2.1"
 widestring = "1.2.1"
 strum = { version = "0.27.2", features = ["derive"]}
 memmap2 = "0.9.9"
-tempfile = "3.23.0"
-#goblin = "0.10.3"
-# Currently a fork of mine, that includes crash fixes which have not yet been merged into master
-goblin = { version = "0.10.3", git= "https://github.com/BinFlip/goblin.git", branch = "mono_resource_padding"}
+tempfile = "3.24.0"
+goblin = "0.10.4"
 ouroboros = "0.18.5"
-sha1 = "0.10.6"
-md-5 = "0.10.6"
+sha1 = { version = "0.10.6", optional = true }
+md-5 = { version = "0.10.6", optional = true }
 bitflags = "2.10.0"
 dashmap = "6.1.0"
 crossbeam-skiplist = "0.1.3"
@@ -48,12 +46,17 @@ boxcar = "0.2.14"
 quick-xml = "0.38.4"
 hex = "0.4.3"
 num_cpus = "1.17.0"
-flate2 = "1.0"
+flate2 = "1.1.5"
 
 [dev-dependencies]
-criterion = "0.7.0"
+criterion = "0.8.1"
 
 [features]
+default = ["legacy-crypto"]
+# Include SHA1 and MD5 hash algorithms for full .NET compatibility.
+# Required for: public key token computation, assembly hash verification.
+# Disable with `default-features = false` if you need to exclude these from your dependency tree.
+legacy-crypto = ["sha1", "md-5"]
 # Skip expensive validation tests that use ProjectLoader with dependency resolution.
 # These tests are slow on CI runners with limited cores/IO. Use this feature on slow runners (e.g., macOS/Windows CI).
 skip-expensive-tests = []
