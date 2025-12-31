@@ -70,10 +70,14 @@
 //! - Type loading and assembly isolation
 //! - Cross-assembly type reference resolution
 
+#[cfg(feature = "legacy-crypto")]
 use md5::{Digest, Md5};
+#[cfg(feature = "legacy-crypto")]
 use sha1::Sha1;
 
-use crate::{metadata::tables::AssemblyHashAlgorithm, utils::read_le, Result};
+#[cfg(feature = "legacy-crypto")]
+use crate::metadata::tables::AssemblyHashAlgorithm;
+use crate::{utils::read_le, Result};
 
 /// Assembly identity representation for .NET CIL assemblies.
 ///
@@ -317,6 +321,8 @@ impl Identity {
     /// Returns an error if:
     /// - The hash algorithm is not supported (only MD5 and SHA1 are implemented)
     /// - The hash result cannot be read as a little-endian u64
+    /// - The `legacy-crypto` feature is disabled (MD5 and SHA1 unavailable)
+    #[cfg(feature = "legacy-crypto")]
     fn compute_token_from_data(data: &[u8], algo: u32) -> Result<u64> {
         match algo {
             AssemblyHashAlgorithm::MD5 => {
@@ -339,12 +345,24 @@ impl Identity {
             )),
         }
     }
+
+    /// Compute a token from raw key data - stub when legacy-crypto is disabled.
+    #[cfg(not(feature = "legacy-crypto"))]
+    fn compute_token_from_data(_data: &[u8], algo: u32) -> Result<u64> {
+        Err(malformed_error!(
+            "Hash algorithm 0x{:08X} requires the 'legacy-crypto' feature. \
+             Compile with `features = [\"legacy-crypto\"]` to enable MD5/SHA1 support.",
+            algo
+        ))
+    }
 }
 
-#[cfg(test)]
+#[cfg(all(test, feature = "legacy-crypto"))]
 mod tests {
     use super::*;
     use crate::metadata::tables::AssemblyHashAlgorithm;
+    use md5::{Digest, Md5};
+    use sha1::Sha1;
 
     #[test]
     fn test_identity_from_pubkey() {
