@@ -52,7 +52,7 @@ flate2 = "1.1.5"
 
 [dev-dependencies]
 criterion = "0.8.0"
-clap = { version = "4.5.53", features = ["derive"] }
+clap = { version = "4.5.54", features = ["derive"] }
 
 [features]
 # Skip expensive validation tests that use ProjectLoader with dependency resolution.
