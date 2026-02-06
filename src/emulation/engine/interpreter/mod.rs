@@ -29,7 +29,7 @@ use crate::{
 ///
 /// The interpreter executes CIL instructions one at a time, managing the
 /// evaluation stack, local variables, and control flow. It uses a step-based
-/// execution model where each call to [`step`] executes a single instruction.
+/// execution model where each call to [`Self::step`] executes a single instruction.
 ///
 /// # Example
 ///

@@ -20,39 +20,39 @@
 //! # Key Components
 //!
 //! ## Process Model
-//! - [`EmulationProcess`] - Central emulation process coordinating all components
-//! - [`ProcessBuilder`] - Fluent API for configuring emulation processes
-//! - [`EmulationConfig`] - Comprehensive configuration with presets
+//! - [`crate::emulation::EmulationProcess`] - Central emulation process coordinating all components
+//! - [`crate::emulation::ProcessBuilder`] - Fluent API for configuring emulation processes
+//! - [`crate::emulation::EmulationConfig`] - Comprehensive configuration with presets
 //!
 //! ## Value System
-//! - [`EmValue`] - Runtime value representation for all CIL types
-//! - [`SymbolicValue`] - Tracks unknown/unresolved values during partial emulation
-//! - [`HeapRef`] - Reference to heap-allocated objects
+//! - [`crate::emulation::EmValue`] - Runtime value representation for all CIL types
+//! - [`crate::emulation::SymbolicValue`] - Tracks unknown/unresolved values during partial emulation
+//! - [`crate::emulation::HeapRef`] - Reference to heap-allocated objects
 //!
 //! ## Memory Model
-//! - [`EvaluationStack`] - CIL evaluation stack with overflow protection
-//! - [`LocalVariables`] - Local variable storage with type-aware initialization
-//! - [`ManagedHeap`] - Simulated managed heap with memory limits
-//! - [`AddressSpace`] - Process-wide memory management
+//! - [`crate::emulation::EvaluationStack`] - CIL evaluation stack with overflow protection
+//! - [`crate::emulation::LocalVariables`] - Local variable storage with type-aware initialization
+//! - [`crate::emulation::ManagedHeap`] - Simulated managed heap with memory limits
+//! - [`crate::emulation::AddressSpace`] - Process-wide memory management
 //!
 //! ## Execution Engine
-//! - [`Interpreter`] - Core instruction interpreter
-//! - [`EmulationController`] - High-level execution control with limits
-//! - [`StepResult`] - Result of executing a single instruction
+//! - [`crate::emulation::Interpreter`] - Core instruction interpreter
+//! - [`crate::emulation::EmulationController`] - High-level execution control with limits
+//! - [`crate::emulation::StepResult`] - Result of executing a single instruction
 //!
 //! ## Hook System
-//! - [`HookManager`] - Registry for method interception hooks
-//! - [`Hook`] - Builder for creating method hooks
-//! - [`HookContext`] - Information passed to hook handlers
+//! - [`crate::emulation::HookManager`] - Registry for method interception hooks
+//! - [`crate::emulation::Hook`] - Builder for creating method hooks
+//! - [`crate::emulation::HookContext`] - Information passed to hook handlers
 //!
 //! ## Result Capture
-//! - [`CaptureContext`] - Automatic result collection
-//! - [`CapturedAssembly`] - Captured Assembly.Load data
-//! - [`CapturedString`] - Captured decrypted strings
+//! - [`crate::emulation::CaptureContext`] - Automatic result collection
+//! - [`crate::emulation::CapturedAssembly`] - Captured Assembly.Load data
+//! - [`crate::emulation::CapturedString`] - Captured decrypted strings
 //!
 //! ## Loading
-//! - [`PeLoader`] - PE image loader for memory mapping
-//! - [`DataLoader`] - Raw data loader
+//! - [`crate::emulation::PeLoader`] - PE image loader for memory mapping
+//! - [`crate::emulation::DataLoader`] - Raw data loader
 //!
 //! # Usage Examples
 //!
@@ -118,7 +118,7 @@
 //! # Thread Safety
 //!
 //! The emulation types are designed for single-threaded use within an analysis
-//! context. The [`EmulationProcess`] and related types are `Send` but not
+//! context. The [`crate::emulation::EmulationProcess`] and related types are `Send` but not
 //! `Sync`, as emulation inherently involves mutable state.
 
 mod capture;

@@ -22,7 +22,7 @@
 //! let hash = TypeSignatureHash::new()
 //!     .add_flavor(&CilFlavor::GenericInstance)
 //!     .add_fullname("System.Collections.Generic", "List`1")
-//!     .add_source(&TypeSource::CurrentModule)
+//!     .add_source(&TypeSource::Primitive)
 //!     .add_component(&string_type.token)  // Generic argument
 //!     .finalize();
 //! ```

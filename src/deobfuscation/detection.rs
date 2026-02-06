@@ -247,7 +247,7 @@ pub enum DetectionEvidence {
 
     /// Found types/methods matching known patterns.
     TypePattern {
-        /// Pattern description (e.g., "<Module>*Confuser*").
+        /// Pattern description (e.g., `<Module>*Confuser*`).
         pattern: String,
         /// Number of matches found.
         match_count: usize,

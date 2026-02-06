@@ -538,7 +538,7 @@ pub enum SsaOp {
         false_target: usize,
     },
 
-    /// Switch statement: jump to targets[value] or default if out of range.
+    /// Switch statement: jump to `targets[value]` or default if out of range.
     Switch {
         value: SsaVarId,
         targets: Vec<usize>,

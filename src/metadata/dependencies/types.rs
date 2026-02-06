@@ -25,7 +25,7 @@ use crate::metadata::{
 /// # Thread Safety
 ///
 /// This type is [`Send`] and [`Sync`] as all contained data is either owned or
-/// reference-counted through [`Arc`]. It can be safely shared across threads
+/// reference-counted through `Arc`. It can be safely shared across threads
 /// and stored in concurrent collections.
 #[derive(Debug, Clone)]
 pub struct AssemblyDependency {

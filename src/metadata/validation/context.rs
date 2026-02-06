@@ -354,7 +354,7 @@ pub struct MethodTypeMapping {
     method_to_type: FxHashMap<usize, usize>,
     /// Maps type address to all method addresses it owns
     type_to_methods: FxHashMap<usize, Vec<usize>>,
-    /// Maps method address to Arc<Method> for lookup
+    /// Maps method address to `Arc<Method>` for lookup
     address_to_method: FxHashMap<usize, Arc<Method>>,
 }
 
@@ -533,7 +533,7 @@ impl ValidationCache {
 ///
 /// # Caching
 ///
-/// The context maintains a [`ValidationCache`] that lazily computes expensive
+/// The context maintains a `ValidationCache` that lazily computes expensive
 /// data structures on first access. This eliminates redundant computations
 /// across validators while ensuring unused caches have zero overhead.
 ///
@@ -566,7 +566,7 @@ impl<'a> OwnedValidationContext<'a> {
     ///
     /// # Caching
     ///
-    /// The context initializes an empty [`ValidationCache`] that will lazily
+    /// The context initializes an empty `ValidationCache` that will lazily
     /// compute expensive data structures on first access by any validator.
     pub fn new(
         object: &'a CilObject,

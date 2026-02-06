@@ -99,7 +99,7 @@ pub use cfg::SsaCfg;
 pub use constraints::{Constraint, PathConstraint};
 pub use consts::ConstEvaluator;
 pub use converter::SsaConverter;
-pub use evaluator::{ControlFlow, EvaluatorConfig, SsaEvaluator};
+pub use evaluator::{ControlFlow, EvaluatorConfig, ExecutionTrace, SsaEvaluator};
 pub use exception::SsaExceptionHandler;
 pub use function::{MethodPurity, ReturnInfo, SsaFunction};
 pub use instruction::SsaInstruction;

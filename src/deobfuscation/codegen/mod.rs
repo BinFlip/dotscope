@@ -217,7 +217,7 @@ impl SsaCodeGenerator {
     /// # Note
     ///
     /// This method does not support `DecryptedString` constants. If the SSA contains
-    /// decrypted strings, use [`generate_with_interner`](Self::generate_with_interner) instead
+    /// decrypted strings, use [`generate_with_assembly`](Self::generate_with_assembly) instead
     /// to properly intern strings into the assembly's #US heap.
     pub fn generate(&mut self, ssa: &SsaFunction) -> Result<(Vec<u8>, u16, u16)> {
         self.generate_internal(ssa, None)

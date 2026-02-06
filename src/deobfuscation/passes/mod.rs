@@ -140,4 +140,6 @@ pub use self::ranges::ValueRangePropagationPass;
 pub use self::reassociate::ReassociationPass;
 pub use self::strength::StrengthReductionPass;
 pub use self::threading::JumpThreadingPass;
-pub use self::unflattening::{trace_method_tree, CffReconstructionPass, UnflattenConfig};
+pub use self::unflattening::{
+    trace_method_tree, CffReconstructionPass, TraceTree, UnflattenConfig,
+};

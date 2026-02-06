@@ -107,7 +107,7 @@ use crate::{
 /// 1. [`HookManager::execute()`](super::HookManager::execute) checks for matching hooks
 /// 2. Pre-hooks can bypass the original method
 /// 3. Post-hooks can modify the return value
-/// 4. [`UnknownMethodBehavior`](super::UnknownMethodBehavior) applies if no hook matches
+/// 4. [`UnknownMethodBehavior`] applies if no hook matches
 ///
 /// # Examples
 ///

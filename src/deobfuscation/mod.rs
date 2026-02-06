@@ -111,7 +111,7 @@
 //! | Pass | Description |
 //! |------|-------------|
 //! | [`ControlFlowSimplificationPass`](crate::deobfuscation::passes::ControlFlowSimplificationPass) | Jump threading, branch simplification, dead tail removal |
-//! | [`ControlFlowUnflatteningPass`](crate::deobfuscation::passes::ControlFlowUnflatteningPass) | Z3-backed dispatcher analysis and CFG reconstruction |
+//! | [`CffReconstructionPass`](crate::deobfuscation::passes::CffReconstructionPass) | Z3-backed dispatcher analysis and CFG reconstruction |
 //! | [`LoopCanonicalizationPass`](crate::deobfuscation::passes::LoopCanonicalizationPass) | Ensures loops have single preheaders and latches |
 //!
 //! ## Dead Code Elimination
@@ -135,7 +135,7 @@
 //!
 //! Decryptors are registered via:
 //! - Obfuscator-specific detection (e.g., ConfuserEx pattern matching)
-//! - [`HeuristicDecryptorDetector`] for generic signature-based detection
+//! - Heuristic detection for generic signature-based detection
 //!
 //! ## Method Optimization
 //!

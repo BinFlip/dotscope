@@ -106,7 +106,7 @@
 //!
 //! All types in this module are thread-safe and implement [`Send`] and [`Sync`].
 //! Assembly identities can be safely shared across threads and used as keys in
-//! concurrent collections like [`DashMap`] and [`HashMap`].
+//! concurrent collections like `DashMap` and `HashMap`.
 
 use std::{fmt, fmt::Write as _, str::FromStr, sync::atomic::Ordering};
 

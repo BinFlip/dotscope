@@ -1340,7 +1340,7 @@ impl File {
         &mut self.pe
     }
 
-    /// Consumes the File and returns the underlying data as an owned Vec<u8>.
+    /// Consumes the File and returns the underlying data as an owned `Vec<u8>`.
     ///
     /// For files loaded via `from_mem()`, this transfers ownership without copying.
     /// For files loaded via `from_file()`, this makes a complete copy of the memory-mapped data.

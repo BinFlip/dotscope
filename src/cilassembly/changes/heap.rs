@@ -6,7 +6,7 @@
 //!
 //! # ChangeRef Integration
 //!
-//! All heap additions return [`ChangeRefRc`] (Arc<ChangeRef>) which provides stable
+//! All heap additions return [`ChangeRefRc`] (`Arc<ChangeRef>`) which provides stable
 //! references that survive heap rebuilding and deduplication. After the assembly is
 //! written, these references resolve to their final heap offsets.
 //!

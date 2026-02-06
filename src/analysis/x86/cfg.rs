@@ -246,7 +246,7 @@ impl X86Function {
     /// Returns true if this function has loops (back edges).
     ///
     /// A back edge is an edge where the target dominates the source.
-    /// Uses the shared [`has_back_edges`] function for consistency.
+    /// Uses the shared `has_back_edges` function for consistency.
     pub fn has_loops(&self) -> bool {
         has_back_edges(&self.graph, self.dominators())
     }

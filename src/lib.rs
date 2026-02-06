@@ -451,7 +451,7 @@ pub mod analysis;
 ///
 /// Control flow recovery:
 /// - [`deobfuscation::passes::ControlFlowSimplificationPass`] - Jump threading, branch simplification
-/// - [`deobfuscation::passes::ControlFlowUnflatteningPass`] - Z3-backed dispatcher analysis and CFG reconstruction
+/// - [`deobfuscation::passes::CffReconstructionPass`] - Z3-backed dispatcher analysis and CFG reconstruction
 /// - [`deobfuscation::passes::LoopCanonicalizationPass`] - Ensures single preheaders and latches
 ///
 /// Dead code elimination:
@@ -488,37 +488,37 @@ pub mod deobfuscation;
 /// # Key Components
 ///
 /// ## Process Model
-/// - [`crate::emulation::ProcessBuilder`] - Fluent API for configuring emulation processes
-/// - [`crate::emulation::EmulationProcess`] - Central coordinator for emulation execution
-/// - [`crate::emulation::EmulationConfig`] - Configuration with presets (`for_extraction`, `for_analysis`, etc.)
+/// - [`emulation::ProcessBuilder`] - Fluent API for configuring emulation processes
+/// - [`emulation::EmulationProcess`] - Central coordinator for emulation execution
+/// - [`emulation::EmulationConfig`] - Configuration with presets (`for_extraction`, `for_analysis`, etc.)
 ///
 /// ## Value System
-/// - [`crate::emulation::EmValue`] - Runtime value representation for all CIL types
-/// - [`crate::emulation::SymbolicValue`] - Tracks unknown/unresolved values during partial emulation
-/// - [`crate::emulation::HeapRef`] - Reference to heap-allocated objects
+/// - [`emulation::EmValue`] - Runtime value representation for all CIL types
+/// - [`emulation::SymbolicValue`] - Tracks unknown/unresolved values during partial emulation
+/// - [`emulation::HeapRef`] - Reference to heap-allocated objects
 ///
 /// ## Memory Model
-/// - [`crate::emulation::EvaluationStack`] - CIL evaluation stack with overflow protection
-/// - [`crate::emulation::LocalVariables`] - Method local variable storage
-/// - [`crate::emulation::ManagedHeap`] - Simulated managed heap for object allocation
-/// - [`crate::emulation::AddressSpace`] - Unified address space for heap, statics, and mapped regions
+/// - [`emulation::EvaluationStack`] - CIL evaluation stack with overflow protection
+/// - [`emulation::LocalVariables`] - Method local variable storage
+/// - [`emulation::ManagedHeap`] - Simulated managed heap for object allocation
+/// - [`emulation::AddressSpace`] - Unified address space for heap, statics, and mapped regions
 ///
 /// ## Execution Engine
-/// - [`crate::emulation::Interpreter`] - Core CIL instruction interpreter
-/// - [`crate::emulation::EmulationController`] - High-level execution control with limits
-/// - [`crate::emulation::StepResult`] - Result of executing a single instruction
-/// - [`crate::emulation::EmulationOutcome`] - Final result of method execution (return value, exception, or limit)
+/// - [`emulation::Interpreter`] - Core CIL instruction interpreter
+/// - [`emulation::EmulationController`] - High-level execution control with limits
+/// - [`emulation::StepResult`] - Result of executing a single instruction
+/// - [`emulation::EmulationOutcome`] - Final result of method execution (return value, exception, or limit)
 ///
 /// ## Hook System
-/// - [`crate::emulation::Hook`] - Builder for creating method hooks with matching criteria
-/// - [`crate::emulation::HookManager`] - Registry for method interception hooks
-/// - [`crate::emulation::PreHookResult`] - Pre-hook result: `Continue` or `Bypass(value)`
-/// - [`crate::emulation::PostHookResult`] - Post-hook result: `Keep` or `Replace(value)`
+/// - [`emulation::Hook`] - Builder for creating method hooks with matching criteria
+/// - [`emulation::HookManager`] - Registry for method interception hooks
+/// - [`emulation::PreHookResult`] - Pre-hook result: `Continue` or `Bypass(value)`
+/// - [`emulation::PostHookResult`] - Post-hook result: `Keep` or `Replace(value)`
 ///
 /// ## Result Capture
-/// - [`crate::emulation::CaptureContext`] - Automatic result collection during emulation
-/// - [`crate::emulation::CapturedAssembly`] - Captured `Assembly.Load` data
-/// - [`crate::emulation::CapturedString`] - Captured decrypted strings
+/// - [`emulation::CaptureContext`] - Automatic result collection during emulation
+/// - [`emulation::CapturedAssembly`] - Captured `Assembly.Load` data
+/// - [`emulation::CapturedString`] - Captured decrypted strings
 ///
 /// # Usage Examples
 ///
@@ -551,7 +551,7 @@ pub mod deobfuscation;
 ///
 /// ## Building an Emulation Process
 ///
-/// [`crate::emulation::ProcessBuilder`] provides a fluent API with configuration presets:
+/// [`emulation::ProcessBuilder`] provides a fluent API with configuration presets:
 ///
 /// ```rust,no_run
 /// use dotscope::emulation::ProcessBuilder;
@@ -778,10 +778,10 @@ pub mod metadata;
 ///
 /// # Key Components
 ///
-/// - [`crate::project::CilProject`] - Main multi-assembly container
-/// - [`crate::project::ProjectLoader`] - Builder-style loading API with flexible configuration
-/// - [`crate::project::ProjectResult`] - Unified result type with loading statistics
-/// - [`crate::project::ProjectContext`] - Internal coordination for parallel loading
+/// - [`project::CilProject`] - Main multi-assembly container
+/// - [`project::ProjectLoader`] - Builder-style loading API with flexible configuration
+/// - [`project::ProjectResult`] - Unified result type with loading statistics
+/// - `ProjectContext` - Internal coordination for parallel loading (crate-internal)
 ///
 /// # Examples
 ///

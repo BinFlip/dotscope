@@ -202,7 +202,7 @@ impl TypeBuilder {
     /// Creates a new type builder with the specified type registry.
     ///
     /// The builder is initialized with default settings:
-    /// - Source context set to [`TypeSource::CurrentModule`]
+    /// - Source context set to the current assembly ([`TypeSource::Assembly`])
     /// - No current type (must be set with a base type method)
     /// - No initial token
     ///
@@ -228,8 +228,6 @@ impl TypeBuilder {
     /// # Ok(())
     /// # }
     /// ```
-    ///
-    /// [`TypeSource::CurrentModule`]: crate::metadata::typesystem::TypeSource::CurrentModule
     pub fn new(registry: Arc<TypeRegistry>) -> Self {
         let source = registry.current_assembly_source();
         TypeBuilder {

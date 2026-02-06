@@ -191,7 +191,7 @@ impl CallGraph {
 
     /// Builds a call graph starting from the assembly's entry point.
     ///
-    /// Unlike [`build`], this method only includes methods that are reachable
+    /// Unlike [`Self::build`], this method only includes methods that are reachable
     /// from the assembly's entry point (typically `Main`). This produces a
     /// cleaner graph focused on the actual execution paths rather than
     /// including every method in the assembly.
@@ -860,7 +860,7 @@ impl CallGraph {
     ///
     /// # Returns
     ///
-    /// A reference to the underlying [`DirectedGraph`] structure.
+    /// A reference to the underlying `DirectedGraph` structure.
     #[must_use]
     pub fn graph(&self) -> &DirectedGraph<'static, CallGraphNode, CallType> {
         &self.graph

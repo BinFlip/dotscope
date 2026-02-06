@@ -102,14 +102,14 @@ impl TypeRefRaw {
     /// updates or side effects during parsing.
     ///
     /// ## Returns
-    /// Always returns [`Ok(())`] as `TypeRef` entries don't modify other tables directly.
+    /// Always returns `Ok(())` as `TypeRef` entries don't modify other tables directly.
     ///
     /// ## ECMA-335 Reference
     /// See ECMA-335, Partition II, Section 22.38 for `TypeRef` table semantics.
     ///
     /// ## Errors
     ///
-    /// This function will always return [`Ok(())`] as `TypeRef` entries don't modify other tables directly.
+    /// This function will always return `Ok(())` as `TypeRef` entries don't modify other tables directly.
     pub fn apply(&self) -> Result<()> {
         Ok(())
     }

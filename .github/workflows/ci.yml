@@ -46,19 +46,21 @@ jobs:
         dotnet new console -n warmup -o ${{ runner.temp }}/warmup
         dotnet build ${{ runner.temp }}/warmup
 
-    - name: Install Mono utilities (Linux)
+    - name: Install Mono and Z3 (Linux)
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y mono-utils
+        sudo apt-get install -y mono-utils libz3-dev
 
-    - name: Install Mono (macOS)
+    - name: Install Mono and Z3 (macOS)
       if: runner.os == 'macOS'
-      run: brew install mono
+      run: brew install mono z3
 
-    - name: Install dotnet-ildasm tool (Windows fallback)
+    - name: Install Z3 and dotnet-ildasm tool (Windows)
       if: runner.os == 'Windows'
-      run: dotnet tool install --global dotnet-ildasm
+      run: |
+        choco install z3 -y
+        dotnet tool install --global dotnet-ildasm
 
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
@@ -198,10 +200,10 @@ jobs:
         dotnet new console -n warmup -o ${{ runner.temp }}/warmup
         dotnet build ${{ runner.temp }}/warmup
 
-    - name: Install Mono utilities
+    - name: Install Mono and Z3
       run: |
         sudo apt-get update
-        sudo apt-get install -y mono-utils
+        sudo apt-get install -y mono-utils libz3-dev
 
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2

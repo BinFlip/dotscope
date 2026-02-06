@@ -133,7 +133,7 @@ pub fn parse_marshalling_descriptor(data: &[u8]) -> Result<MarshallingInfo> {
 ///
 /// `MarshallingParser` does not implement `Default` because it requires input data
 /// (a byte slice) to function. Use [`MarshallingParser::new`] to create instances.
-/// For encoding-focused workflows, use [`MarshallingEncoder`] which does implement `Default`.
+/// For encoding-focused workflows, use [`super::MarshallingEncoder`] which does implement `Default`.
 ///
 pub struct MarshallingParser<'a> {
     /// Underlying byte parser for low-level operations

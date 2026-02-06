@@ -173,7 +173,8 @@ mod validators;
 
 pub use config::ValidationConfig;
 pub use context::{
-    OwnedValidationContext, RawValidationContext, ValidationContext, ValidationStage,
+    MethodTypeMapping, OwnedValidationContext, RawValidationContext, ValidationContext,
+    ValidationStage,
 };
 pub use engine::{factory, EngineStatistics, ValidationEngine};
 pub use result::{TwoStageValidationResult, ValidationOutcome, ValidationResult};

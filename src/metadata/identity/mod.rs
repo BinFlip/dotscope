@@ -17,18 +17,18 @@
 //!
 //! # Module Structure
 //!
-//! - [`assembly`] - Complete assembly identity with name, version, culture, and strong name
-//! - [`cryptographic`] - Cryptographic identity and verification (public keys and tokens)
+//! - `assembly` - Complete assembly identity with name, version, culture, and strong name
+//! - `cryptographic` - Cryptographic identity and verification (public keys and tokens)
 //!
 //! # Key Components
 //!
 //! ## Assembly Identity
-//! - [`AssemblyIdentity`] - Complete assembly identification for multi-assembly scenarios
-//! - [`AssemblyVersion`] - Four-part version numbering with parsing and comparison
-//! - [`ProcessorArchitecture`] - Processor architecture specification
+//! - [`AssemblyIdentity`](crate::metadata::identity::AssemblyIdentity) - Complete assembly identification for multi-assembly scenarios
+//! - [`AssemblyVersion`](crate::metadata::identity::AssemblyVersion) - Four-part version numbering with parsing and comparison
+//! - [`ProcessorArchitecture`](crate::metadata::identity::ProcessorArchitecture) - Processor architecture specification
 //!
-//! ## Cryptographic Identity  
-//! - [`Identity`] - Public key and token-based cryptographic identity
+//! ## Cryptographic Identity
+//! - [`Identity`](crate::metadata::identity::Identity) - Public key and token-based cryptographic identity
 //! - Strong name verification and token generation
 //! - Support for MD5, SHA1, and custom hash algorithms
 //!

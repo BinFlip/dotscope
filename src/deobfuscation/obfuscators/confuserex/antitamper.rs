@@ -1323,6 +1323,7 @@ mod tests {
 
     /// Test that the maximum preset sample can be decrypted.
     #[test]
+    #[cfg(not(feature = "skip-expensive-tests"))]
     fn test_maximum_decryption() -> crate::Result<()> {
         let path = format!("{}/mkaring_maximum.exe", SAMPLES_DIR);
         let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())?;

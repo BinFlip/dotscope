@@ -131,7 +131,7 @@ impl EncMapRaw {
     /// infrastructure during Edit-and-Continue operations.
     ///
     /// ## Returns
-    /// Always returns [`Ok(())`] as `EncMap` entries don't modify other metadata directly.
+    /// Always returns `Ok(())` as `EncMap` entries don't modify other metadata directly.
     ///
     /// # Errors
     /// This method currently cannot fail as `EncMap` entries don't modify other metadata directly.

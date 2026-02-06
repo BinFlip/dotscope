@@ -35,7 +35,7 @@ mod statevar;
 mod tracer;
 
 pub use reconstruction::{apply_patch_plan, extract_patch_plan};
-pub use tracer::trace_method_tree;
+pub use tracer::{trace_method_tree, TraceTree};
 
 use std::sync::Arc;
 

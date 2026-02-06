@@ -1,6 +1,6 @@
 //! Multi-assembly project container and management system.
 //!
-//! This module provides the [`CilProject`] container for managing collections of related
+//! This module provides the [`crate::project::CilProject`] container for managing collections of related
 //! .NET assemblies with automatic dependency resolution, cross-assembly type resolution,
 //! and unified analysis capabilities. It serves as the foundation for comprehensive
 //! multi-assembly .NET project analysis.
@@ -17,12 +17,12 @@
 //! # Key Components
 //!
 //! ## Core Container
-//! - [`CilProject`] - Main multi-assembly container and coordinator
-//! - Assembly storage using [`AssemblyIdentity`] as primary key
+//! - [`crate::project::CilProject`] - Main multi-assembly container and coordinator
+//! - Assembly storage using [`crate::metadata::identity::AssemblyIdentity`] as primary key
 //! - Primary assembly tracking for entry point identification
 //!
 //! ## Loading and Resolution
-//! - Multiple assembly loading strategies via [`ProjectLoader`]
+//! - Multiple assembly loading strategies via [`crate::project::ProjectLoader`]
 //! - Automatic dependency discovery and resolution during loading
 //! - Cross-assembly type registry linking for unified analysis
 //!
@@ -436,7 +436,7 @@ impl CilProject {
     /// Iterate over all assemblies in the project.
     ///
     /// Provides direct iteration over all loaded assemblies without creating copies.
-    /// Returns an iterator that yields (AssemblyIdentity, Arc<CilObject>) pairs.
+    /// Returns an iterator that yields (AssemblyIdentity, `Arc<CilObject>`) pairs.
     ///
     /// # Returns
     /// Iterator over all assemblies in the project

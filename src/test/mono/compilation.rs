@@ -253,7 +253,7 @@ fn compile_with_dotnet(
     <OutputType>Exe</OutputType>
     <TargetFramework>net8.0</TargetFramework>
     <AssemblyName>{name}</AssemblyName>
-    <AssemblyVersion>1.0.0.0</AssemblyVersion>
+    <GenerateAssemblyInfo>false</GenerateAssemblyInfo>
     <ImplicitUsings>disable</ImplicitUsings>
     <Nullable>disable</Nullable>
 {optimize_setting}{platform_target}  </PropertyGroup>

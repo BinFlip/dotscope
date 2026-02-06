@@ -2264,9 +2264,9 @@ pub struct SignatureMethod {
     ///
     /// # Type Parameter Numbering
     /// Generic parameters are referenced by zero-based index:
-    /// - First parameter (`T`): [`TypeSignature::GenericParamMethod(0)`]
-    /// - Second parameter (`U`): [`TypeSignature::GenericParamMethod(1)`]
-    /// - Third parameter (`V`): [`TypeSignature::GenericParamMethod(2)`]
+    /// - First parameter (`T`): `TypeSignature::GenericParamMethod(0)`
+    /// - Second parameter (`U`): `TypeSignature::GenericParamMethod(1)`
+    /// - Third parameter (`V`): `TypeSignature::GenericParamMethod(2)`
     ///
     /// # Constraints and Bounds
     /// Type parameter constraints are stored in separate metadata tables

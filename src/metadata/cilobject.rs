@@ -1592,7 +1592,7 @@ impl CilObject {
         self.assembly_view.file()
     }
 
-    /// Converts this `CilObject` into a [`CilAssembly`](crate::CilAssembly) for modification.
+    /// Converts this `CilObject` into a [`CilAssembly`] for modification.
     ///
     /// This method efficiently transfers ownership of the internal assembly view
     /// to create a mutable assembly, avoiding unnecessary data copying. The resolved
@@ -1601,7 +1601,7 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// A [`CilAssembly`](crate::CilAssembly) ready for modification operations.
+    /// A [`CilAssembly`] ready for modification operations.
     ///
     /// # Usage Examples
     ///

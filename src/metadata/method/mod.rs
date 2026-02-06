@@ -441,7 +441,7 @@ impl From<MethodRc> for MethodRef {
 ///
 /// 1. **Basic construction** - Created from `MethodDef` table row with metadata fields populated
 /// 2. **[`Method::parse()`]** - Loads method body, local variables, and applies parameter signatures
-/// 3. **[`decode_method()`][crate::assembly::decode_method]** - Disassembles IL bytecode and builds basic blocks
+/// 3. **`decode_method()`** - Disassembles IL bytecode and builds basic blocks
 ///
 /// After phase 1, the method has metadata but no IL code. After phase 2, the body and local variables
 /// are available. After phase 3, instructions can be iterated via [`Method::instructions()`].

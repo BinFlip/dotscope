@@ -1359,7 +1359,7 @@ impl TypeRegistry {
     ///
     /// # Example
     ///
-    /// ```ignore
+    /// ```text
     /// // For struct CFGCtx { uint A; uint B; uint C; uint D; }
     /// // get_field_index_in_type(CFGCtx, CFGCtx::A) returns Some(0)
     /// // get_field_index_in_type(CFGCtx, CFGCtx::D) returns Some(3)

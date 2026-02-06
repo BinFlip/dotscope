@@ -364,7 +364,7 @@ impl TypeDefRaw {
     /// is resolved through separate table processing.
     ///
     /// ## Returns
-    /// Always returns [`Ok(())`] as `TypeDef` entries don't modify other tables directly.
+    /// Always returns `Ok(())` as `TypeDef` entries don't modify other tables directly.
     ///
     /// ## ECMA-335 Reference
     /// See ECMA-335, Partition II, Section 22.37 for `TypeDef` table semantics.

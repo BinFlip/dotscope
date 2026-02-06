@@ -69,13 +69,13 @@ use crate::{
 /// - **Arc**: Enables safe sharing across thread boundaries
 /// - **Atomic Operations**: State updates are atomic where possible
 pub struct AssemblyDependencyGraph {
-    /// Forward dependency mapping: assembly -> [dependencies]
+    /// Forward dependency mapping: assembly -> \[dependencies\]
     ///
     /// Maps each assembly to the list of assemblies it depends on.
     /// This is the primary data structure for dependency traversal.
     dependencies: Arc<DashMap<AssemblyIdentity, Vec<AssemblyDependency>>>,
 
-    /// Reverse dependency mapping: assembly -> [dependents]
+    /// Reverse dependency mapping: assembly -> \[dependents\]
     ///
     /// Maps each assembly to the list of assemblies that depend on it.
     /// This enables efficient "reverse lookup" queries and validation.

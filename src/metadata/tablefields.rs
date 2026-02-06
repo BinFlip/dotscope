@@ -22,8 +22,8 @@
 //!
 //! # Architecture
 //!
-//! The [`HeapFieldDescriptor`] describes a single heap reference field within a row.
-//! The [`get_heap_fields`] function returns all heap fields for a given table type,
+//! The [`HeapFieldDescriptor`](crate::metadata::tablefields::HeapFieldDescriptor) describes a single heap reference field within a row.
+//! The [`get_heap_fields`](crate::metadata::tablefields::get_heap_fields) function returns all heap fields for a given table type,
 //! computing their byte offsets based on the table's size information.
 //!
 //! ```text

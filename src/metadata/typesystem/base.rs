@@ -222,7 +222,7 @@ impl CilTypeRef {
     ///
     /// ## Returns
     ///
-    /// - [`Some(CilTypeRc)`] if the referenced type is still alive
+    /// - `Some(CilTypeRc)` if the referenced type is still alive
     /// - [`None`] if the referenced type has been dropped
     ///
     /// ## Example

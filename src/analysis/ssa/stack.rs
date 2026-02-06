@@ -375,7 +375,7 @@ impl StackSimulator {
     /// from bottom to top (index 0 is bottom of stack).
     /// Used to track stack state at block exits for creating PHI nodes.
     ///
-    /// For enhanced tracking with source information, use [`stack_snapshot_enhanced`].
+    /// For enhanced tracking with source information, use [`Self::stack_snapshot_enhanced`].
     #[must_use]
     pub fn stack_snapshot(&self) -> Vec<SsaVarId> {
         self.stack.iter().map(|slot| slot.var).collect()

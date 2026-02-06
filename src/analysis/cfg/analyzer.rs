@@ -22,7 +22,7 @@ use crate::{
 /// - Loop type classification
 /// - Loop nesting relationships
 ///
-/// This is a thin wrapper around the generic [`detect_loops`] function,
+/// This is a thin wrapper around the generic `detect_loops` function,
 /// providing a convenient SSA-specific interface.
 pub struct LoopAnalyzer<'a> {
     cfg: SsaCfg<'a>,
@@ -38,7 +38,7 @@ impl<'a> LoopAnalyzer<'a> {
 
     /// Analyzes all loops and returns a [`LoopForest`].
     ///
-    /// Uses the shared [`detect_loops`] function which implements dominance-based
+    /// Uses the shared `detect_loops` function which implements dominance-based
     /// back edge detection and computes preheaders, exits, loop types, and nesting.
     #[must_use]
     pub fn analyze(&self) -> LoopForest {

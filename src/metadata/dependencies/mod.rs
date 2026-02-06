@@ -11,10 +11,10 @@
 //!
 //! ## Core Components
 //!
-//! - [`AssemblyDependencyGraph`] - Central dependency graph with cycle detection
-//! - [`AssemblyDependency`] - Individual dependency relationship representation  
-//! - [`DependencyAnalyzer`] - Extracts dependencies from metadata tables
-//! - [`AssemblyIdentity`] - Unique assembly identification system
+//! - [`AssemblyDependencyGraph`](crate::metadata::dependencies::AssemblyDependencyGraph) - Central dependency graph with cycle detection
+//! - [`AssemblyDependency`](crate::metadata::dependencies::AssemblyDependency) - Individual dependency relationship representation
+//! - [`DependencyAnalyzer`](crate::metadata::dependencies::DependencyAnalyzer) - Extracts dependencies from metadata tables
+//! - [`AssemblyIdentity`](crate::metadata::identity::AssemblyIdentity) - Unique assembly identification system
 //!
 //! ## Dependency Sources
 //!

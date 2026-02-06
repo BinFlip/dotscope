@@ -1207,9 +1207,9 @@ impl EmValue {
 
     /// Tries to convert to `i64`, returning `None` for non-integer types.
     ///
-    /// Unlike [`to_i64_cil`], this returns `None` for types that cannot be
+    /// Unlike [`Self::to_i64_cil`], this returns `None` for types that cannot be
     /// meaningfully converted to an integer (objects, null, void, etc.).
-    /// Unlike [`as_i64`], this accepts all integer-like types including I32.
+    /// Unlike [`Self::as_i64`], this accepts all integer-like types including I32.
     #[must_use]
     #[allow(clippy::cast_sign_loss)]
     pub fn try_to_i64(&self) -> Option<i64> {

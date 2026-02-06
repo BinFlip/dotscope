@@ -12,16 +12,16 @@
 //! - **CilObject**: Reports resolution issues (invalid indices, parse failures)
 //! - **Validation**: Reports validation violations in lenient mode
 //!
-//! The [`Diagnostics`] container uses `boxcar::Vec` for thread-safe, lock-free
+//! The [`Diagnostics`](crate::metadata::diagnostics::Diagnostics) container uses `boxcar::Vec` for thread-safe, lock-free
 //! append operations, allowing diagnostics to be collected from parallel loading
 //! operations without synchronization overhead.
 //!
 //! # Key Components
 //!
-//! - [`Diagnostics`] - Thread-safe container for diagnostic entries
-//! - [`Diagnostic`] - Individual diagnostic entry with severity and context
-//! - [`DiagnosticSeverity`] - Severity level (Info, Warning, Error)
-//! - [`DiagnosticCategory`] - Category of the diagnostic source
+//! - [`Diagnostics`](crate::metadata::diagnostics::Diagnostics) - Thread-safe container for diagnostic entries
+//! - [`Diagnostic`](crate::metadata::diagnostics::Diagnostic) - Individual diagnostic entry with severity and context
+//! - [`DiagnosticSeverity`](crate::metadata::diagnostics::DiagnosticSeverity) - Severity level (Info, Warning, Error)
+//! - [`DiagnosticCategory`](crate::metadata::diagnostics::DiagnosticCategory) - Category of the diagnostic source
 //!
 //! # Usage Examples
 //!
@@ -76,7 +76,7 @@
 //!
 //! # Thread Safety
 //!
-//! All types in this module are [`Send`] and [`Sync`]. The [`Diagnostics`] container
+//! All types in this module are [`Send`] and [`Sync`]. The [`crate::metadata::diagnostics::Diagnostics`] container
 //! uses `boxcar::Vec` internally, which provides lock-free concurrent append operations.
 //! Multiple threads can safely add diagnostics simultaneously without coordination.
 //!

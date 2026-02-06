@@ -873,7 +873,7 @@ impl CilAssemblyView {
     ///
     /// # Returns
     ///
-    /// Reference to the shared [`Diagnostics`] container.
+    /// Reference to the shared [`crate::metadata::diagnostics::Diagnostics`] container.
     ///
     /// # Examples
     ///

@@ -295,7 +295,7 @@ impl X86Memory {
         }
     }
 
-    /// Creates a [disp] memory operand (absolute address).
+    /// Creates a `[disp]` memory operand (absolute address).
     pub fn absolute(displacement: i64, size: u8) -> Self {
         Self {
             base: None,

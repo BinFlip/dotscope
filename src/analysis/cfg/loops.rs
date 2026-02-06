@@ -306,7 +306,7 @@ impl LoopInfo {
 
     /// Finds all conditional blocks within the loop body.
     ///
-    /// Unlike [`find_condition_in_body`], this returns all blocks with
+    /// Unlike `find_condition_in_body`, this returns all blocks with
     /// conditional branches, useful for complex loops with multiple exit points.
     #[must_use]
     pub fn find_all_conditions_in_body(&self, ssa: &SsaFunction) -> Vec<NodeId> {

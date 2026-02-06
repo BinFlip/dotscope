@@ -1292,7 +1292,7 @@ impl DataDirectories {
 
     /// Creates a new empty `DataDirectories` structure.
     ///
-    /// Use [`update_entry`] to populate individual directory entries.
+    /// Use [`Self::update_entry`] to populate individual directory entries.
     #[must_use]
     pub fn new() -> Self {
         Self {

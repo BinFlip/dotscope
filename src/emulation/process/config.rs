@@ -531,7 +531,7 @@ pub struct CaptureConfig {
     /// Capture assemblies loaded via Assembly.Load.
     ///
     /// When enabled, byte arrays passed to Assembly.Load are captured
-    /// and can be retrieved via [`EmulationProcess::captured_assemblies`].
+    /// and can be retrieved via [`super::EmulationProcess::captured_assemblies`].
     pub assemblies: bool,
 
     /// Capture writes to specific memory regions.
