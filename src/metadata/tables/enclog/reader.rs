@@ -1,6 +1,6 @@
 use crate::{
     metadata::{
-        tables::{EncLogRaw, RowReadable, TableInfoRef},
+        tables::{EncLogRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::read_le_at,
@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for EncLogRaw {
+    const TABLE_ID: TableId = TableId::EncLog;
+
     /// Read and parse an `EncLog` table row from binary data
     ///
     /// Deserializes one `EncLog` table entry from the metadata tables stream.

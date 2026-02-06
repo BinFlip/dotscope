@@ -89,7 +89,7 @@ impl LocalScope {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::metadata::tables::LocalScope;
     /// # fn example(scope: &LocalScope) {
     /// println!("Scope covers IL offsets {} to {}",
@@ -169,7 +169,7 @@ impl LocalScope {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::metadata::tables::LocalScope;
     /// # fn example(scope: &LocalScope) {
     /// let il_offset = 42;
@@ -190,7 +190,7 @@ impl LocalScope {
     ///
     /// # Example
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::metadata::tables::LocalScope;
     /// # fn example(scope: &LocalScope) {
     /// println!("Scope covers {} bytes of IL code", scope.size());

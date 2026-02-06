@@ -26,7 +26,7 @@
 //!
 //! # Usage
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::test::analysis::{AnalysisTestRunner, AnalysisTestCase};
 //!
 //! let runner = AnalysisTestRunner::new()?;

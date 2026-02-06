@@ -50,6 +50,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::ClassLayoutRaw,
     },
@@ -108,18 +109,29 @@ impl MetadataLoader for ClassLayoutLoader {
     /// This method is thread-safe and uses parallel iteration for performance.
     /// Updates to type definitions are handled through atomic operations.
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<ClassLayoutRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(context.types)?;
-                    owned.apply()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<ClassLayoutRaw>() else {
+            return Ok(());
+        };
 
-                    context.class_layout.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("class layout 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned(context.types),
+                DiagnosticCategory::Type,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(owned.apply(), DiagnosticCategory::Type, token_msg)?;
+            context.class_layout.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `ClassLayout`

@@ -5,7 +5,7 @@
 //! in other assemblies or modules.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{CodedIndex, TableDataOwned, TableId, TypeRefRaw},
         token::Token,
@@ -21,20 +21,19 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{CodedIndex, TableId, TypeRefBuilder};
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create a reference to System.Object from mscorlib
 /// let system_object = TypeRefBuilder::new()
 ///     .name("Object")
 ///     .namespace("System")
 ///     .resolution_scope(CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope)) // mscorlib
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct TypeRefBuilder {
@@ -113,7 +112,7 @@ impl TypeRefBuilder {
     ///
     /// This method validates the configuration, adds required strings
     /// to the string heap, creates the TypeRefRaw entry, and adds it
-    /// to the assembly via the BuilderContext.
+    /// to the assembly via the CilAssembly.
     ///
     /// # Returns
     ///
@@ -125,7 +124,7 @@ impl TypeRefBuilder {
     /// - Required fields are missing (name, resolution_scope)
     /// - Heap operations fail
     /// - TypeRef table row creation fails
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Validate required fields
         let name = self
             .name
@@ -136,20 +135,20 @@ impl TypeRefBuilder {
             .ok_or_else(|| malformed_error!("TypeRef resolution_scope is required"))?;
 
         // Add strings to heaps and get indices
-        let name_index = context.string_add(&name)?;
+        let name_index = assembly.string_add(&name)?.placeholder();
 
         let namespace_index = if let Some(namespace) = &self.namespace {
             if namespace.is_empty() {
                 0 // Global namespace
             } else {
-                context.string_get_or_add(namespace)?
+                assembly.string_get_or_add(namespace)?.placeholder()
             }
         } else {
             0 // Default to global namespace
         };
 
         // Get the next RID for the TypeRef table
-        let rid = context.next_rid(TableId::TypeRef);
+        let rid = assembly.next_rid(TableId::TypeRef)?;
 
         // Create the TypeRefRaw entry
         let typeref_raw = TypeRefRaw {
@@ -162,7 +161,7 @@ impl TypeRefBuilder {
         };
 
         // Add the row to the assembly and return the token
-        context.table_row_add(TableId::TypeRef, TableDataOwned::TypeRef(typeref_raw))
+        assembly.table_row_add(TableId::TypeRef, TableDataOwned::TypeRef(typeref_raw))
     }
 }
 
@@ -170,7 +169,7 @@ impl TypeRefBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
+        cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
         prelude::CodedIndexType,
     };
@@ -180,21 +179,19 @@ mod tests {
     fn test_typeref_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let mscorlib_ref =
                 CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope);
-            let token = TypeRefBuilder::new()
+            let ref_ = TypeRefBuilder::new()
                 .name("String")
                 .namespace("System")
                 .resolution_scope(mscorlib_ref)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x01000000); // TypeRef table prefix
-            assert!(token.value() & 0x00FFFFFF > 0); // RID should be > 0
+            // Verify ref_ is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeRef));
         }
     }
 
@@ -202,21 +199,20 @@ mod tests {
     fn test_typeref_builder_system_object() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Manually specify the core library reference
             let mscorlib_ref =
                 CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope);
-            let token = TypeRefBuilder::new()
+            let ref_ = TypeRefBuilder::new()
                 .name("Object")
                 .namespace("System")
                 .resolution_scope(mscorlib_ref)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x01000000); // TypeRef table prefix
+            // Verify ref_ is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeRef));
         }
     }
 
@@ -224,21 +220,20 @@ mod tests {
     fn test_typeref_builder_system_value_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Manually specify the core library reference
             let mscorlib_ref =
                 CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope);
-            let token = TypeRefBuilder::new()
+            let ref_ = TypeRefBuilder::new()
                 .name("ValueType")
                 .namespace("System")
                 .resolution_scope(mscorlib_ref)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x01000000); // TypeRef table prefix
+            // Verify ref_ is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeRef));
         }
     }
 
@@ -246,21 +241,20 @@ mod tests {
     fn test_typeref_builder_from_mscorlib() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Manually specify the core library reference
             let mscorlib_ref =
                 CodedIndex::new(TableId::AssemblyRef, 1, CodedIndexType::ResolutionScope);
-            let token = TypeRefBuilder::new()
+            let ref_ = TypeRefBuilder::new()
                 .name("Int32")
                 .namespace("System")
                 .resolution_scope(mscorlib_ref)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x01000000); // TypeRef table prefix
+            // Verify ref_ is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeRef));
         }
     }
 
@@ -268,8 +262,7 @@ mod tests {
     fn test_typeref_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = TypeRefBuilder::new()
                 .namespace("System")
@@ -278,7 +271,7 @@ mod tests {
                     1,
                     CodedIndexType::ResolutionScope,
                 ))
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because name is required
             assert!(result.is_err());
@@ -289,13 +282,12 @@ mod tests {
     fn test_typeref_builder_missing_resolution_scope() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = TypeRefBuilder::new()
                 .name("String")
                 .namespace("System")
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because resolution_scope is required
             assert!(result.is_err());
@@ -306,10 +298,9 @@ mod tests {
     fn test_typeref_builder_global_namespace() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let token = TypeRefBuilder::new()
+            let ref_ = TypeRefBuilder::new()
                 .name("GlobalType")
                 .namespace("") // Empty namespace = global
                 .resolution_scope(CodedIndex::new(
@@ -317,11 +308,11 @@ mod tests {
                     1,
                     CodedIndexType::ResolutionScope,
                 ))
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x01000000); // TypeRef table prefix
+            // Verify ref_ is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeRef));
         }
     }
 }

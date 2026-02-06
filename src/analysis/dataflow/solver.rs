@@ -29,10 +29,10 @@ use std::collections::VecDeque;
 use crate::{
     analysis::{
         dataflow::{
-            framework::{AnalysisResults, DataFlowAnalysis, Direction},
+            framework::{AnalysisResults, DataFlowAnalysis, DataFlowCfg, Direction},
             lattice::MeetSemiLattice,
         },
-        ControlFlowGraph, SsaFunction,
+        SsaFunction,
     },
     utils::graph::NodeId,
 };
@@ -45,11 +45,11 @@ use crate::{
 /// # Usage
 ///
 /// ```rust,ignore
-/// use dotscope::analysis::dataflow::{DataFlowSolver, ReachingDefinitions};
+/// use dotscope::analysis::{DataFlowSolver, ReachingDefinitions};
 ///
 /// let analysis = ReachingDefinitions::new(&ssa);
 /// let mut solver = DataFlowSolver::new(analysis);
-/// let results = solver.solve(&ssa, &cfg);
+/// let results = solver.solve(&ssa, &graph);
 ///
 /// // Access results
 /// let in_state = results.in_state(block_id);
@@ -87,10 +87,10 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     ///
     /// Returns the analysis results containing input and output states
     /// for each basic block.
-    pub fn solve(
+    pub fn solve<C: DataFlowCfg>(
         mut self,
         ssa: &SsaFunction,
-        cfg: &ControlFlowGraph<'_>,
+        cfg: &C,
     ) -> AnalysisResults<A::Lattice>
     where
         A::Lattice: Clone,
@@ -108,7 +108,7 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
 
         // Finalize
         self.analysis
-            .finalize(&self.in_states, &self.out_states, ssa, cfg);
+            .finalize(&self.in_states, &self.out_states, ssa);
 
         AnalysisResults::new(self.in_states, self.out_states)
     }
@@ -120,7 +120,7 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     }
 
     /// Initializes the solver state.
-    fn initialize(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>)
+    fn initialize<C: DataFlowCfg>(&mut self, ssa: &SsaFunction, cfg: &C)
     where
         A::Lattice: Clone,
     {
@@ -144,7 +144,7 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
             }
             Direction::Backward => {
                 // Exit blocks get boundary value
-                for &exit in cfg.exits() {
+                for exit in cfg.exits() {
                     let idx = exit.index();
                     if idx < num_blocks {
                         self.out_states[idx] = boundary.clone();
@@ -169,7 +169,7 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     }
 
     /// Main iteration loop.
-    fn iterate(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>)
+    fn iterate<C: DataFlowCfg>(&mut self, ssa: &SsaFunction, cfg: &C)
     where
         A::Lattice: Clone,
     {
@@ -192,11 +192,11 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     /// Processes a block in forward direction.
     ///
     /// Returns `true` if the output state changed.
-    fn process_forward(
+    fn process_forward<C: DataFlowCfg>(
         &mut self,
         block_idx: usize,
         ssa: &SsaFunction,
-        cfg: &ControlFlowGraph,
+        cfg: &C,
     ) -> bool
     where
         A::Lattice: Clone,
@@ -240,11 +240,11 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     /// Processes a block in backward direction.
     ///
     /// Returns `true` if the input state changed.
-    fn process_backward(
+    fn process_backward<C: DataFlowCfg>(
         &mut self,
         block_idx: usize,
         ssa: &SsaFunction,
-        cfg: &ControlFlowGraph,
+        cfg: &C,
     ) -> bool
     where
         A::Lattice: Clone,
@@ -286,7 +286,7 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     }
 
     /// Adds affected blocks to the worklist after a change.
-    fn add_affected_to_worklist(&mut self, block_idx: usize, cfg: &ControlFlowGraph<'_>) {
+    fn add_affected_to_worklist<C: DataFlowCfg>(&mut self, block_idx: usize, cfg: &C) {
         let node = NodeId::new(block_idx);
 
         match A::DIRECTION {

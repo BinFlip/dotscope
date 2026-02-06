@@ -39,8 +39,8 @@ use crate::{
 /// # Examples
 ///
 /// ## Simple Type Encoding
-/// ```rust,ignore
-/// use dotscope::metadata::marshalling::{encode_marshalling_descriptor, NativeType, MarshallingInfo};
+/// ```rust,no_run
+/// use dotscope::metadata::marshalling::{encode_marshalling_descriptor, NativeType, MarshallingInfo, NATIVE_TYPE};
 ///
 /// // Encode a simple boolean type
 /// let info = MarshallingInfo {
@@ -49,10 +49,13 @@ use crate::{
 /// };
 /// let bytes = encode_marshalling_descriptor(&info)?;
 /// assert_eq!(bytes, vec![NATIVE_TYPE::BOOLEAN]);
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// ## String Type with Parameters
-/// ```rust,ignore
+/// ```rust,no_run
+/// use dotscope::metadata::marshalling::{encode_marshalling_descriptor, NativeType, MarshallingInfo, NATIVE_TYPE};
+///
 /// // Encode LPSTR with size parameter index 5
 /// let info = MarshallingInfo {
 ///     primary_type: NativeType::LPStr { size_param_index: Some(5) },
@@ -60,10 +63,13 @@ use crate::{
 /// };
 /// let bytes = encode_marshalling_descriptor(&info)?;
 /// assert_eq!(bytes, vec![NATIVE_TYPE::LPSTR, 0x05]);
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// ## Complex Array Type
-/// ```rust,ignore
+/// ```rust,no_run
+/// use dotscope::metadata::marshalling::{encode_marshalling_descriptor, NativeType, MarshallingInfo};
+///
 /// // Encode array of I4 with parameter and size info
 /// let info = MarshallingInfo {
 ///     primary_type: NativeType::Array {
@@ -75,6 +81,7 @@ use crate::{
 /// };
 /// let bytes = encode_marshalling_descriptor(&info)?;
 /// // Result will be [NATIVE_TYPE::ARRAY, NATIVE_TYPE::I4, 0x03, 0x0A]
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 pub fn encode_marshalling_descriptor(info: &MarshallingInfo) -> Result<Vec<u8>> {
@@ -98,7 +105,7 @@ pub fn encode_marshalling_descriptor(info: &MarshallingInfo) -> Result<Vec<u8>> 
 ///
 /// # Usage Pattern
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::marshalling::{MarshallingEncoder, NativeType, MarshallingInfo};
 ///
 /// let info = MarshallingInfo {
@@ -108,7 +115,7 @@ pub fn encode_marshalling_descriptor(info: &MarshallingInfo) -> Result<Vec<u8>> 
 ///
 /// let mut encoder = MarshallingEncoder::new();
 /// let bytes = encoder.encode_descriptor(&info)?;
-/// // Result: [NATIVE_TYPE::LPSTR, 0x05]
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// # Safety
@@ -137,7 +144,7 @@ impl MarshallingEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::marshalling::MarshallingEncoder;
     ///
     /// let mut encoder = MarshallingEncoder::new();
@@ -378,7 +385,7 @@ impl MarshallingEncoder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::marshalling::{MarshallingEncoder, MarshallingInfo, NativeType};
     ///
     /// let mut encoder = MarshallingEncoder::new();
@@ -391,6 +398,7 @@ impl MarshallingEncoder {
     ///
     /// encoder.encode_descriptor_into(&info, &mut buffer)?;
     /// // buffer now contains the encoded marshalling descriptor
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn encode_descriptor_into(
         &mut self,

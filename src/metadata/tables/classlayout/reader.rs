@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for ClassLayoutRaw {
+    const TABLE_ID: TableId = TableId::ClassLayout;
+
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 

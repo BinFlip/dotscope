@@ -339,6 +339,7 @@ impl FieldBuilder {
             layout: OnceLock::new(),
             marshal: OnceLock::new(),
             custom_attributes: Arc::new(boxcar::Vec::new()),
+            declaring_type: OnceLock::new(),
         };
 
         let field_rc = Arc::new(field);

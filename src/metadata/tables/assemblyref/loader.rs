@@ -60,6 +60,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{AssemblyRefRaw, TableId},
     },
@@ -108,18 +109,30 @@ impl MetadataLoader for AssemblyRefLoader {
     /// This method is thread-safe and uses parallel iteration for performance.
     /// Concurrent access to the context storage is handled through thread-safe collections.
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(blob), Some(strings)) =
+        let (Some(header), Some(blob), Some(strings)) =
             (context.meta, context.blobs, context.strings)
-        {
-            if let Some(table) = header.table::<AssemblyRefRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(strings, blob)?;
-                    context.assembly_ref.insert(row.token, res.clone());
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<AssemblyRefRaw>() else {
+            return Ok(());
+        };
+
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("assembly ref 0x{:08x}", row.token.value());
+
+            let Some(res) = context.handle_result(
+                row.to_owned(strings, blob),
+                DiagnosticCategory::Table,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.assembly_ref.insert(row.token, res.clone());
+            Ok(())
+        })
     }
 
     /// Get the metadata table identifier for `AssemblyRef`

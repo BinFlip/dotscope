@@ -132,13 +132,27 @@ impl ManifestResourceRaw {
 
         let source = if self.implementation.row == 0 {
             // Special case, this is actually 'NULL', means that the resource is embedded in the current assembly
-            data_offset += file.rva_to_offset(cor20.resource_rva as usize)?;
-            data_size = if let Some(next_res) = table.get(self.rid + 1) {
-                next_res.offset_field as usize - self.offset_field as usize
+            // The resource format is: [4-byte length prefix][data bytes]
+            // offset_field points to the length prefix
+            let section_start = file.rva_to_offset(cor20.resource_rva as usize)?;
+            let length_prefix_offset = section_start + self.offset_field as usize;
+
+            // Read the 4-byte length prefix to get actual data size
+            if let Ok(len_bytes) = file.data_slice(length_prefix_offset, 4) {
+                data_size =
+                    u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
+                        as usize;
             } else {
-                // Last resource, use resource section size from CLR header
-                cor20.resource_size as usize
-            };
+                // Fallback: calculate from offset differences (includes length prefix)
+                data_size = if let Some(next_res) = table.get(self.rid + 1) {
+                    (next_res.offset_field as usize - self.offset_field as usize).saturating_sub(4)
+                } else {
+                    (cor20.resource_size as usize - self.offset_field as usize).saturating_sub(4)
+                };
+            }
+
+            // data_offset points to actual data (after the 4-byte length prefix)
+            data_offset = length_prefix_offset + 4;
             None
         } else {
             let implementation = get_ref(&self.implementation);

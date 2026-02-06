@@ -41,17 +41,20 @@ use crate::{
 /// # Examples
 ///
 /// ## Simple Type Parsing
-/// ```rust,ignore
-/// use dotscope::metadata::marshalling::{parse_marshalling_descriptor, NATIVE_TYPE};
+/// ```rust,no_run
+/// use dotscope::metadata::marshalling::{parse_marshalling_descriptor, NativeType, NATIVE_TYPE};
 ///
 /// // Parse a simple boolean type
 /// let bytes = &[NATIVE_TYPE::BOOLEAN];
 /// let info = parse_marshalling_descriptor(bytes)?;
 /// assert_eq!(info.primary_type, NativeType::Boolean);
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// ## String Type with Parameters
-/// ```rust,ignore
+/// ```rust,no_run
+/// use dotscope::metadata::marshalling::{parse_marshalling_descriptor, NativeType, NATIVE_TYPE};
+///
 /// // Parse LPSTR with size parameter index 5
 /// let bytes = &[NATIVE_TYPE::LPSTR, 0x05];
 /// let info = parse_marshalling_descriptor(bytes)?;
@@ -62,10 +65,13 @@ use crate::{
 ///     }
 ///     _ => unreachable!(),
 /// }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// ## Complex Array Type
-/// ```rust,ignore
+/// ```rust,no_run
+/// use dotscope::metadata::marshalling::{parse_marshalling_descriptor, NativeType, NATIVE_TYPE};
+///
 /// // Parse array of I4 with parameter and size info
 /// let bytes = &[NATIVE_TYPE::ARRAY, NATIVE_TYPE::I4, 0x03, 0x0A];
 /// let info = parse_marshalling_descriptor(bytes)?;
@@ -77,6 +83,7 @@ use crate::{
 ///     }
 ///     _ => unreachable!(),
 /// }
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 pub fn parse_marshalling_descriptor(data: &[u8]) -> Result<MarshallingInfo> {
@@ -151,12 +158,13 @@ impl<'a> MarshallingParser<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::marshalling::MarshallingParser;
     ///
     /// let descriptor_bytes = &[0x14, 0x05]; // LPSTR with size param 5
     /// let mut parser = MarshallingParser::new(descriptor_bytes);
     /// let native_type = parser.parse_native_type()?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
     pub fn new(data: &'a [u8]) -> Self {

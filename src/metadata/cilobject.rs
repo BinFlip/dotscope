@@ -168,10 +168,12 @@ use std::{path::Path, sync::Arc};
 
 use crate::{
     analysis::CallGraph,
+    cilassembly::CilAssembly,
     file::File,
     metadata::{
         cilassemblyview::CilAssemblyView,
         cor20header::Cor20Header,
+        diagnostics::Diagnostics,
         exports::UnifiedExportContainer,
         identity::AssemblyIdentity,
         imports::UnifiedImportContainer,
@@ -345,7 +347,8 @@ impl CilObject {
         validation_config: ValidationConfig,
     ) -> Result<Self> {
         let assembly_view = CilAssemblyView::from_path(path)?;
-        let data = CilObjectData::from_assembly_view(&assembly_view, None)?;
+        let lenient = validation_config.lenient;
+        let data = CilObjectData::from_assembly_view(&assembly_view, None, lenient)?;
 
         let object = CilObject {
             assembly_view,
@@ -439,7 +442,8 @@ impl CilObject {
         validation_config: ValidationConfig,
     ) -> Result<Self> {
         let assembly_view = CilAssemblyView::from_mem(data)?;
-        let object_data = CilObjectData::from_assembly_view(&assembly_view, None)?;
+        let lenient = validation_config.lenient;
+        let object_data = CilObjectData::from_assembly_view(&assembly_view, None, lenient)?;
 
         let object = CilObject {
             assembly_view,
@@ -705,7 +709,9 @@ impl CilObject {
         assembly_view: CilAssemblyView,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
-        let object_data = CilObjectData::from_assembly_view(&assembly_view, None)?;
+        let lenient = validation_config.lenient;
+        let object_data = CilObjectData::from_assembly_view(&assembly_view, None, lenient)?;
+
         let object = CilObject {
             assembly_view,
             data: object_data,
@@ -755,7 +761,10 @@ impl CilObject {
         // Phase 1: Load all metadata with barrier synchronization.
         // The stage 4 barrier inside from_assembly_view ensures all assemblies complete
         // their metadata loaders before any assembly proceeds past this point.
-        let object_data = CilObjectData::from_assembly_view(&assembly_view, Some(project_context))?;
+        let lenient = validation_config.lenient;
+        let object_data =
+            CilObjectData::from_assembly_view(&assembly_view, Some(project_context), lenient)?;
+
         let object = CilObject {
             assembly_view,
             data: object_data,
@@ -987,6 +996,36 @@ impl CilObject {
     /// ```
     pub fn blob(&self) -> Option<&Blob<'_>> {
         self.assembly_view.blobs()
+    }
+
+    /// Returns the diagnostics collected during loading.
+    ///
+    /// Diagnostics include warnings about structural issues, parsing failures,
+    /// and other anomalies encountered during loading. These don't necessarily
+    /// prevent loading but may indicate obfuscation or malformed metadata.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the shared [`crate::metadata::diagnostics::Diagnostics`] container.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
+    ///
+    /// if assembly.diagnostics().has_any() {
+    ///     println!("Loading issues found:");
+    ///     for diag in assembly.diagnostics().iter() {
+    ///         println!("  {}", diag);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn diagnostics(&self) -> &Arc<Diagnostics> {
+        self.assembly_view.diagnostics()
     }
 
     /// Returns all assembly references used by this assembly.
@@ -1257,6 +1296,34 @@ impl CilObject {
             .map(|asm| AssemblyIdentity::from_assembly(asm))
     }
 
+    /// Checks if this is a netmodule (module without assembly manifest).
+    ///
+    /// A netmodule is a .NET module that lacks its own assembly identity.
+    /// It contains types and code but is designed to be linked into a
+    /// multi-file assembly. Netmodules have a Module table but no Assembly table.
+    ///
+    /// # Returns
+    ///
+    /// * `true` - This is a netmodule (no Assembly table)
+    /// * `false` - This is a full assembly with its own identity
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    ///
+    /// let module = CilObject::from_path("helper.netmodule")?;
+    /// if module.is_netmodule() {
+    ///     println!("This is a netmodule - part of a multi-file assembly");
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn is_netmodule(&self) -> bool {
+        // A netmodule has a module but no assembly identity
+        self.module().is_some() && self.assembly().is_none()
+    }
+
     /// Returns the imports container with all P/Invoke and COM import information.
     ///
     /// The imports container provides access to all external function imports
@@ -1468,7 +1535,7 @@ impl CilObject {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     ///
     /// let assembly = CilObject::from_path("tests/samples/mono_4.8/mscorlib.dll")?;
@@ -1523,6 +1590,44 @@ impl CilObject {
     /// ```
     pub fn file(&self) -> &Arc<File> {
         self.assembly_view.file()
+    }
+
+    /// Converts this `CilObject` into a [`CilAssembly`](crate::CilAssembly) for modification.
+    ///
+    /// This method efficiently transfers ownership of the internal assembly view
+    /// to create a mutable assembly, avoiding unnecessary data copying. The resolved
+    /// metadata (types, methods, etc.) is dropped since modifications work on the
+    /// raw assembly view level.
+    ///
+    /// # Returns
+    ///
+    /// A [`CilAssembly`](crate::CilAssembly) ready for modification operations.
+    ///
+    /// # Usage Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_path("input.dll")?;
+    ///
+    /// // Convert to mutable assembly for modifications
+    /// let mut mutable = assembly.into_assembly();
+    ///
+    /// // Perform modifications
+    /// mutable.string_add("NewString")?;
+    ///
+    /// // Write back and convert to CilObject
+    /// let modified = mutable.into_cilobject()?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Performance
+    ///
+    /// This operation is O(1) - it transfers ownership of the internal view
+    /// without copying the underlying assembly data.
+    #[must_use]
+    pub fn into_assembly(self) -> CilAssembly {
+        CilAssembly::new(self.assembly_view)
     }
 
     /// Validates the loaded assembly metadata using the specified configuration.

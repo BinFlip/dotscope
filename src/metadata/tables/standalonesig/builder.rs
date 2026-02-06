@@ -6,7 +6,7 @@
 //! scenarios like method pointers, local variables, and dynamic signature generation.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{StandAloneSigRaw, TableDataOwned, TableId},
         token::Token,
@@ -53,12 +53,11 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create a method signature for a function pointer
 /// let method_signature = vec![
@@ -71,7 +70,7 @@ use crate::{
 ///
 /// let method_sig_token = StandAloneSigBuilder::new()
 ///     .signature(&method_signature)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a local variable signature
 /// let locals_signature = vec![
@@ -84,7 +83,7 @@ use crate::{
 ///
 /// let locals_sig_token = StandAloneSigBuilder::new()
 ///     .signature(&locals_signature)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a complex generic method signature
 /// let generic_method_signature = vec![
@@ -100,7 +99,7 @@ use crate::{
 ///
 /// let generic_sig_token = StandAloneSigBuilder::new()
 ///     .signature(&generic_method_signature)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a delegate signature with multiple parameters
 /// let delegate_signature = vec![
@@ -115,7 +114,7 @@ use crate::{
 ///
 /// let delegate_sig_token = StandAloneSigBuilder::new()
 ///     .signature(&delegate_signature)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct StandAloneSigBuilder {
@@ -156,7 +155,7 @@ impl StandAloneSigBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::metadata::tables::StandAloneSigBuilder;
     /// let builder = StandAloneSigBuilder::new()
     ///     .signature(&[0x00, 0x01, 0x01]); // Simple void method signature
@@ -176,7 +175,7 @@ impl StandAloneSigBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - Builder context for heap and table management
+    /// * `assembly` - CilAssembly for heap and table management
     ///
     /// # Returns
     ///
@@ -193,19 +192,18 @@ impl StandAloneSigBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     /// let signature_data = vec![0x00, 0x01, 0x01]; // Simple method signature
     /// let token = StandAloneSigBuilder::new()
     ///     .signature(&signature_data)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let signature_data = self
             .signature
             .ok_or_else(|| Error::ModificationInvalid("signature field is required".to_string()))?;
@@ -216,48 +214,43 @@ impl StandAloneSigBuilder {
             ));
         }
 
-        let signature_index = context.blob_add(&signature_data)?;
-        let rid = context.next_rid(TableId::StandAloneSig);
-        let token = Token::new((TableId::StandAloneSig as u32) << 24 | rid);
+        let signature_index = assembly.blob_add(&signature_data)?.placeholder();
 
         let standalonesig_raw = StandAloneSigRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
             signature: signature_index,
         };
 
-        let table_data = TableDataOwned::StandAloneSig(standalonesig_raw);
-        context.table_row_add(TableId::StandAloneSig, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(
+            TableId::StandAloneSig,
+            TableDataOwned::StandAloneSig(standalonesig_raw),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{prelude::*, test::factories::table::assemblyref::get_test_assembly};
+    use crate::test::factories::table::assemblyref::get_test_assembly;
+    use std::sync::Arc;
 
     #[test]
     fn test_standalonesig_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let signature = vec![0x00, 0x01, 0x01]; // Simple method signature: DEFAULT, 1 param, VOID
-        let token = StandAloneSigBuilder::new()
+        let _change_ref = StandAloneSigBuilder::new()
             .signature(&signature)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert!(token.value() != 0);
-        assert_eq!(token.table() as u32, TableId::StandAloneSig as u32);
         Ok(())
     }
 
     #[test]
     fn test_standalonesig_builder_method_signature() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Method signature: DEFAULT calling convention, 2 params, returns I4, params: I4, STRING
         let method_signature = vec![
@@ -268,19 +261,16 @@ mod tests {
             0x0E, // Parameter 2: ELEMENT_TYPE_STRING
         ];
 
-        let token = StandAloneSigBuilder::new()
+        let _change_ref = StandAloneSigBuilder::new()
             .signature(&method_signature)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert!(token.value() != 0);
-        assert_eq!(token.table() as u32, TableId::StandAloneSig as u32);
         Ok(())
     }
 
     #[test]
     fn test_standalonesig_builder_locals_signature() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Local variable signature: 3 locals of types I4, STRING, OBJECT
         let locals_signature = vec![
@@ -291,19 +281,16 @@ mod tests {
             0x1C, // Local 2: ELEMENT_TYPE_OBJECT
         ];
 
-        let token = StandAloneSigBuilder::new()
+        let _change_ref = StandAloneSigBuilder::new()
             .signature(&locals_signature)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert!(token.value() != 0);
-        assert_eq!(token.table() as u32, TableId::StandAloneSig as u32);
         Ok(())
     }
 
     #[test]
     fn test_standalonesig_builder_generic_signature() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Generic method signature: GENERIC calling convention, 1 generic param, 2 params
         let generic_signature = vec![
@@ -317,19 +304,16 @@ mod tests {
             0x08, // Parameter 2: ELEMENT_TYPE_I4 (int32)
         ];
 
-        let token = StandAloneSigBuilder::new()
+        let _change_ref = StandAloneSigBuilder::new()
             .signature(&generic_signature)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert!(token.value() != 0);
-        assert_eq!(token.table() as u32, TableId::StandAloneSig as u32);
         Ok(())
     }
 
     #[test]
     fn test_standalonesig_builder_complex_signature() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Complex signature with arrays and pointers
         let complex_signature = vec![
@@ -343,21 +327,18 @@ mod tests {
             0x1C, // Parameter 3: ELEMENT_TYPE_OBJECT
         ];
 
-        let token = StandAloneSigBuilder::new()
+        let _change_ref = StandAloneSigBuilder::new()
             .signature(&complex_signature)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert!(token.value() != 0);
-        assert_eq!(token.table() as u32, TableId::StandAloneSig as u32);
         Ok(())
     }
 
     #[test]
     fn test_standalonesig_builder_missing_signature() {
-        let assembly = get_test_assembly().unwrap();
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly().unwrap();
 
-        let result = StandAloneSigBuilder::new().build(&mut context);
+        let result = StandAloneSigBuilder::new().build(&mut assembly);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("signature"));
@@ -365,12 +346,11 @@ mod tests {
 
     #[test]
     fn test_standalonesig_builder_empty_signature() {
-        let assembly = get_test_assembly().unwrap();
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly().unwrap();
 
         let result = StandAloneSigBuilder::new()
             .signature(&[])
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         assert!(result
@@ -381,54 +361,42 @@ mod tests {
 
     #[test]
     fn test_standalonesig_builder_default() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test Default trait implementation
         let signature = vec![0x00, 0x00, 0x01]; // No-param void method
-        let token = StandAloneSigBuilder::default()
+        let _change_ref = StandAloneSigBuilder::default()
             .signature(&signature)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert!(token.value() != 0);
-        assert_eq!(token.table() as u32, TableId::StandAloneSig as u32);
         Ok(())
     }
 
     #[test]
     fn test_standalonesig_builder_multiple_signatures() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create multiple different signatures
         let sig1 = vec![0x00, 0x00, 0x01]; // No-param void method
         let sig2 = vec![0x00, 0x01, 0x08, 0x08]; // One I4 param, returns I4
         let sig3 = vec![0x07, 0x02, 0x08, 0x0E]; // Two locals: I4, STRING
 
-        let token1 = StandAloneSigBuilder::new()
+        let ref1 = StandAloneSigBuilder::new()
             .signature(&sig1)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token2 = StandAloneSigBuilder::new()
+        let ref2 = StandAloneSigBuilder::new()
             .signature(&sig2)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token3 = StandAloneSigBuilder::new()
+        let ref3 = StandAloneSigBuilder::new()
             .signature(&sig3)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // All tokens should be valid and different
-        assert!(token1.value() != 0);
-        assert!(token2.value() != 0);
-        assert!(token3.value() != 0);
-        assert_ne!(token1.value(), token2.value());
-        assert_ne!(token2.value(), token3.value());
-        assert_ne!(token1.value(), token3.value());
-
-        // All should be StandAloneSig tokens
-        assert_eq!(token1.table() as u32, TableId::StandAloneSig as u32);
-        assert_eq!(token2.table() as u32, TableId::StandAloneSig as u32);
-        assert_eq!(token3.table() as u32, TableId::StandAloneSig as u32);
+        // All change refs should be different
+        assert!(!Arc::ptr_eq(&ref1, &ref2));
+        assert!(!Arc::ptr_eq(&ref2, &ref3));
+        assert!(!Arc::ptr_eq(&ref1, &ref3));
 
         Ok(())
     }

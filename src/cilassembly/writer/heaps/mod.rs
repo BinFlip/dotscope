@@ -1,309 +1,208 @@
-//! Heap builders for metadata heaps in the simplified assembly writer.
+//! Metadata heap writers for assembly serialization.
 //!
-//! This module provides specialized builders for reconstructing all .NET metadata heap types
-//! with precise size calculations and index mapping. It implements the same battle-tested
-//! algorithms from the legacy pipeline but in a cleaner, more maintainable structure that
-//! supports the revolutionary 3-stage assembly writer architecture.
+//! This module provides streaming heap writers that process entries directly to output
+//! without intermediate buffering.
+//!
+//! # Background
+//!
+//! .NET assemblies contain four metadata heaps as defined in ECMA-335 §II.24.2:
+//!
+//! - **#Strings**: Null-terminated UTF-8 strings for identifiers (type names, method names, etc.)
+//! - **#Blob**: Binary data with length-prefixed encoding (signatures, custom attribute values)
+//! - **#GUID**: Array of 16-byte GUIDs (module identifiers)
+//! - **#US (User Strings)**: Length-prefixed UTF-16 strings for string literals in code
 //!
 //! # Architecture
 //!
-//! The heap builder system provides deterministic heap reconstruction for layout planning:
+//! ## Streaming Writers (Preferred)
 //!
-//! ```text
-//! ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-//! │ Heap Changes    │───▶│ Heap Builders   │───▶│ Reconstructed   │
-//! │ & Original Data │    │ (Type-Specific) │    │ Heaps + Maps    │
-//! └─────────────────┘    └─────────────────┘    └─────────────────┘
-//!          │                       │                       │
-//!          ▼                       ▼                       ▼
-//! ┌─────────────────┐    ┌─────────────────┐    ┌─────────────────┐
-//! │ • Additions     │    │ • String Builder│    │ • Binary Data   │
-//! │ • Modifications │    │ • Blob Builder  │    │ • Index Maps    │
-//! │ • Removals      │    │ • GUID Builder  │    │ • Size Calc     │
-//! │ • Replacements  │    │ • UserStr Build │    │ • Validation    │
-//! └─────────────────┘    └─────────────────┘    └─────────────────┘
-//! ```
+//! The streaming writers in the [`streaming`] module provide zero-copy heap processing:
+//! - [`streaming::stream_strings_heap`] - Stream #Strings heap with deduplication
+//! - [`streaming::stream_blob_heap`] - Stream #Blob heap with deduplication
+//! - [`streaming::stream_guid_heap`] - Stream #GUID heap with deduplication
+//! - [`streaming::stream_userstring_heap`] - Stream #US heap with deduplication
 //!
-//! # Key Components
+//! These functions:
+//! 1. Iterate through source data without copying
+//! 2. Apply deletions, modifications, and appends
+//! 3. Deduplicate by content hash
+//! 4. Write directly to output
+//! 5. Return (bytes_written, remapping) for table patching
 //!
-//! - [`crate::cilassembly::writer::heaps::HeapBuilder`] - Common interface for all heap builders
-//! - [`crate::cilassembly::writer::heaps::StringHeapBuilder`] - #Strings heap with UTF-8 null-terminated strings
-//! - [`crate::cilassembly::writer::heaps::BlobHeapBuilder`] - #Blob heap with compressed length prefixes
-//! - [`crate::cilassembly::writer::heaps::GuidHeapBuilder`] - #GUID heap with 16-byte GUID values
-//! - [`crate::cilassembly::writer::heaps::UserStringHeapBuilder`] - #US heap with UTF-16 user strings
+//! # Module Structure
 //!
-//! # Design Principles
-//!
-//! ## Battle-Tested Compatibility
-//! - **Identical Algorithms**: Uses the exact same reconstruction logic as the legacy pipeline
-//! - **Proven Reliability**: Inherits years of production testing and edge case handling
-//! - **Tool Compatibility**: Ensures compatibility with dnSpy, ILSpy, and other .NET tools
-//!
-//! ## Deterministic Reconstruction
-//! - **Size Precision**: Calculates exact sizes before building to prevent buffer overruns
-//! - **Index Mapping**: Tracks original → final index mappings for table reference updates
-//! - **Reproducible Output**: Same input always produces identical heap reconstruction
-//!
-//! ## ECMA-335 Compliance
-//! - **Format Adherence**: Strict compliance with ECMA-335 heap format specifications
-//! - **Alignment Requirements**: Proper 4-byte alignment for all heap types
-//! - **Validation**: Comprehensive validation of heap structure and content
-//!
-//! # Heap Reconstruction Strategy
-//!
-//! ## Addition-Only Scenario (Most Efficient)
-//! ```text
-//! Original Heap:    [Entry1, Entry2, Entry3]
-//! New Entries:      [Entry4, Entry5]
-//! Result:          [Entry1, Entry2, Entry3, Entry4, Entry5]
-//! Index Mapping:    None needed (append-only)
-//! ```
-//!
-//! ## Modification/Removal Scenario (Complex)
-//! ```text
-//! Original Heap:    [Entry1, Entry2, Entry3]
-//! Operations:       Remove(Entry2), Modify(Entry1→NewEntry1), Add(Entry4)
-//! Reconstruction:   [NewEntry1, Entry3, Entry4]
-//! Index Mapping:    1→1, 2→removed, 3→2, new→3
-//! ```
-//!
-//! # Index Mapping System
-//!
-//! Index mappings are critical for updating table references after heap reconstruction:
-//!
-//! ```text
-//! Before Reconstruction:
-//! Table Row: [FieldName: 5, FieldSignature: 12, ...]
-//!                    ↓ Index Mapping ↓
-//! After Reconstruction:
-//! Table Row: [FieldName: 7, FieldSignature: 15, ...]
-//! ```
-//!
-//! # Thread Safety
-//!
-//! Heap builders are **not thread-safe** during construction:
-//! - Each builder maintains mutable state during reconstruction
-//! - Builders should be used on a single thread per assembly
-//! - Final heap data and mappings are immutable and can be shared
-//!
-//! # Performance Characteristics
-//!
-//! - **Memory Efficient**: Streams data during reconstruction without full duplication
-//! - **Incremental Building**: Processes entries incrementally to minimize peak memory usage
-//! - **Index Optimization**: Efficient HashMap-based index mapping with O(1) lookups
-//! - **Validation Overhead**: Comprehensive validation adds ~5-10% to build time
-//!
-//! # Integration
-//!
-//! This module integrates with:
-//!
-//! - [`crate::cilassembly::writer::layout::planner`] - Layout planning using calculated sizes
-//! - [`crate::cilassembly::writer::executor`] - Execution engine using built heaps
-//! - [`crate::cilassembly::HeapChanges`] - Change tracking for heap modifications
-//! - [`crate::cilassembly::CilAssembly`] - Source assembly analysis
-//! - [`crate::cilassembly::writer::layout::heaps`] - Size calculation functions
-//!
-//! # Examples
-//!
-//! ## Basic String Heap Building
-//!
-//! ```text
-//! use crate::cilassembly::writer::heaps::{StringHeapBuilder, HeapBuilder};
-//!
-//! let mut builder = StringHeapBuilder::new(&heap_changes, &assembly)?;
-//! let heap_data = builder.build()?;
-//! let index_mappings = builder.get_index_mappings();
-//! let heap_size = builder.calculate_size()?;
-//!
-//! println!(\"Built {} heap with {} bytes\", builder.heap_name(), heap_size);
-//! ```
-//!
-//! ## Comprehensive Heap Reconstruction
-//!
-//! ```text
-//! use crate::cilassembly::writer::heaps::*;
-//!
-//! // Build all heap types
-//! let mut string_builder = StringHeapBuilder::new(&changes.strings, &assembly)?;
-//! let mut blob_builder = BlobHeapBuilder::new(&changes.blobs, &assembly)?;
-//! let mut guid_builder = GuidHeapBuilder::new(&changes.guids, &assembly)?;
-//! let mut userstring_builder = UserStringHeapBuilder::new(&changes.userstrings, &assembly)?;
-//!
-//! // Calculate total size requirements
-//! let total_size = string_builder.calculate_size()? +
-//!                  blob_builder.calculate_size()? +
-//!                  guid_builder.calculate_size()? +
-//!                  userstring_builder.calculate_size()?;
-//!
-//! println!(\"Total heap size required: {} bytes\", total_size);
-//!
-//! // Build all heaps
-//! let string_data = string_builder.build()?;
-//! let blob_data = blob_builder.build()?;
-//! let guid_data = guid_builder.build()?;
-//! let userstring_data = userstring_builder.build()?;
-//! ```
-//!
-//! # References
-//!
-//! - [ECMA-335 II.24.2.2 - #Strings heap](https://www.ecma-international.org/publications/standards/Ecma-335.htm)
-//! - [ECMA-335 II.24.2.3 - #US and #Blob heaps](https://www.ecma-international.org/publications/standards/Ecma-335.htm)
-//! - [ECMA-335 II.24.2.4 - #GUID heap](https://www.ecma-international.org/publications/standards/Ecma-335.htm)
+//! - [`streaming`] - Zero-copy streaming heap writers (primary API)
+//! - [`rowpatch`] - Patching heap references in table rows
+
+mod rowpatch;
+mod streaming;
+
+// Streaming writers (primary API)
+pub use streaming::{
+    compute_blob_heap_offsets, compute_guid_heap_offsets, compute_strings_heap_offsets,
+    compute_userstring_heap_offsets, stream_blob_heap, stream_guid_heap, stream_strings_heap,
+    stream_userstring_heap,
+};
+
+// Row patching utilities
+pub(crate) use rowpatch::patch_row_heap_refs;
 
 use std::collections::HashMap;
 
-use crate::Result;
+use crate::{
+    cilassembly::{changes::AssemblyChanges, writer::context::WriteContext},
+    CilAssemblyView, Result,
+};
 
-mod blob;
-mod guid;
-mod string;
-mod userstring;
+/// Captures the mapping from old heap offsets to new offsets after heap rebuilding.
+///
+/// When heaps are rebuilt with deduplication, compaction, or modifications, entries
+/// may move to different offsets. This struct captures those mappings so that
+/// metadata table references and IL instructions can be updated.
+#[derive(Debug, Default, Clone)]
+pub struct HeapRemapping {
+    /// Mapping from old #Strings heap offset to new offset.
+    pub strings: HashMap<u32, u32>,
 
-pub(crate) use blob::BlobHeapBuilder;
-pub(crate) use guid::GuidHeapBuilder;
-pub(crate) use string::StringHeapBuilder;
-pub(crate) use userstring::UserStringHeapBuilder;
+    /// Mapping from old #Blob heap offset to new offset.
+    pub blobs: HashMap<u32, u32>,
 
-/// Common interface for all heap builders in the simplified assembly writer.
-///
-/// This trait provides a unified interface for building all .NET metadata heap types,
-/// ensuring consistent behavior across string, blob, GUID, and user string heaps.
-/// It supports the **"Complete Planning, Zero Decisions"** philosophy by providing
-/// exact size calculations before building and comprehensive index mapping.
-///
-/// # Design Principles
-///
-/// ## Predictable Building
-/// - **Size-First**: Always calculate exact size before building to prevent buffer issues
-/// - **Index Tracking**: Maintain complete mappings for table reference updates
-/// - **Validation**: Ensure ECMA-335 compliance throughout the building process
-///
-/// ## Consistent Interface
-/// - **Uniform API**: Same interface across all heap types for easy integration
-/// - **Error Handling**: Consistent error reporting across all builders
-/// - **State Management**: Predictable state transitions during building
-///
-/// # Building Process
-///
-/// The standard building process follows these steps:
-/// 1. **Initialization**: Create builder with heap changes and original data
-/// 2. **Size Calculation**: Calculate exact final heap size
-/// 3. **Building**: Construct the complete heap binary data
-/// 4. **Index Mapping**: Retrieve mappings for table reference updates
-///
-/// # Thread Safety
-///
-/// Implementations of this trait are **not thread-safe**:
-/// - Builders maintain mutable state during construction
-/// - Use separate builder instances for concurrent assemblies
-/// - Final results (heap data, mappings) are immutable and shareable
-///
-/// # Examples
-///
-/// ## Basic Builder Usage
-///
-/// ```rust,ignore
-/// use crate::cilassembly::writer::heaps::{StringHeapBuilder, HeapBuilder};
-///
-/// let mut builder = StringHeapBuilder::new(&heap_changes, &assembly)?;
-///
-/// // Calculate size first (recommended)
-/// let expected_size = builder.calculate_size()?;
-/// println!("Will build {} bytes for {}", expected_size, builder.heap_name());
-///
-/// // Build the heap
-/// let heap_data = builder.build()?;
-/// assert_eq!(heap_data.len() as u64, expected_size);
-///
-/// // Get index mappings for table updates
-/// let mappings = builder.get_index_mappings();
-/// for (old_index, new_index) in mappings {
-///     println!("Index {} -> {}", old_index, new_index);
-/// }
-/// ```
-///
-/// ## Generic Builder Processing
-///
-/// ```rust,ignore
-/// fn process_heap<T: HeapBuilder>(mut builder: T) -> Result<(Vec<u8>, HashMap<u32, u32>)> {
-///     println!("Processing {} heap", builder.heap_name());
-///     
-///     let size = builder.calculate_size()?;
-///     println!("Calculated size: {} bytes", size);
-///     
-///     let data = builder.build()?;
-///     let mappings = builder.get_index_mappings().clone();
-///     
-///     Ok((data, mappings))
-/// }
-/// ```
-pub(crate) trait HeapBuilder {
-    /// Builds the complete heap binary data with ECMA-335 compliance.
-    ///
-    /// Constructs the final heap binary data that will be written to the metadata stream.
-    /// This method consumes the builder state and should only be called once per builder.
-    /// The resulting data is ready for direct writing to the output file.
+    /// Mapping from old #GUID heap index to new index.
+    pub guids: HashMap<u32, u32>,
+
+    /// Mapping from old #US (User String) heap offset to new offset.
+    pub userstrings: HashMap<u32, u32>,
+}
+
+impl HeapRemapping {
+    /// Creates an empty remapping with no offset mappings.
     ///
     /// # Returns
     ///
-    /// Returns a [`Vec<u8>`] containing the complete heap binary data, including:
-    /// - Proper ECMA-335 format encoding
-    /// - Correct alignment padding
-    /// - All heap entries in their final positions
-    ///
-    /// # Errors
-    ///
-    /// Returns [`crate::Error`] if:
-    /// - Heap construction fails due to invalid data
-    /// - Memory allocation fails for large heaps
-    /// - ECMA-335 format validation fails
-    fn build(&mut self) -> Result<Vec<u8>>;
+    /// A new `HeapRemapping` with empty mappings for all heaps.
+    pub fn new() -> Self {
+        Self::default()
+    }
 
-    /// Calculates the exact size of the heap before building.
+    /// Returns true if there are any remappings in any heap.
     ///
-    /// Performs precise size calculation for the final heap, including all entries,
-    /// prefixes, alignment padding, and format overhead. This calculation must match
-    /// exactly with the size of the data returned by [`HeapBuilder::build`].
+    /// This is useful for optimization - if no remappings exist, table patching
+    /// can be skipped entirely.
     ///
     /// # Returns
     ///
-    /// Returns the exact size in bytes as a [`u64`] that the heap will occupy
-    /// when built. This includes all format overhead and alignment requirements.
-    ///
-    /// # Errors
-    ///
-    /// Returns [`crate::Error`] if:
-    /// - Size calculations overflow or produce invalid results
-    /// - Original heap data is corrupted or inaccessible
-    /// - Heap changes contain invalid entries
-    fn calculate_size(&self) -> Result<u64>;
+    /// `true` if any heap has at least one offset remapping, `false` otherwise.
+    pub fn has_changes(&self) -> bool {
+        !self.strings.is_empty()
+            || !self.blobs.is_empty()
+            || !self.guids.is_empty()
+            || !self.userstrings.is_empty()
+    }
 
-    /// Gets index mappings from original to final heap indices.
+    /// Remaps a string heap offset to its new location.
     ///
-    /// Provides the complete mapping table that shows how original heap indices
-    /// are mapped to final heap indices after reconstruction. This is essential
-    /// for updating table references that point into this heap.
+    /// # Arguments
+    ///
+    /// * `offset` - The original offset in the #Strings heap
     ///
     /// # Returns
     ///
-    /// Returns a reference to a [`HashMap<u32, u32>`] where:
-    /// - Key: Original heap index (before reconstruction)
-    /// - Value: Final heap index (after reconstruction)
-    ///
-    /// Indices not present in the map were removed during reconstruction.
-    fn get_index_mappings(&self) -> &HashMap<u32, u32>;
+    /// The new offset if a mapping exists, or the original offset unchanged.
+    pub fn remap_string(&self, offset: u32) -> u32 {
+        self.strings.get(&offset).copied().unwrap_or(offset)
+    }
 
-    /// Gets the heap name for identification and debugging.
+    /// Remaps a blob heap offset to its new location.
     ///
-    /// Returns the standard ECMA-335 heap name that will be used in the metadata
-    /// stream directory. This is used for logging, debugging, and stream identification.
+    /// # Arguments
+    ///
+    /// * `offset` - The original offset in the #Blob heap
     ///
     /// # Returns
     ///
-    /// Returns a string slice with the heap name:
-    /// - `"#Strings"` for string heap
-    /// - `"#Blob"` for blob heap
-    /// - `"#GUID"` for GUID heap
-    /// - `"#US"` for user string heap
-    fn heap_name(&self) -> &str;
+    /// The new offset if a mapping exists, or the original offset unchanged.
+    pub fn remap_blob(&self, offset: u32) -> u32 {
+        self.blobs.get(&offset).copied().unwrap_or(offset)
+    }
+
+    /// Remaps a GUID heap index to its new location.
+    ///
+    /// Note: GUID heap uses 1-based indices, not byte offsets.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The original 1-based index in the #GUID heap
+    ///
+    /// # Returns
+    ///
+    /// The new index if a mapping exists, or the original index unchanged.
+    pub fn remap_guid(&self, index: u32) -> u32 {
+        self.guids.get(&index).copied().unwrap_or(index)
+    }
+
+    /// Remaps a user string heap offset to its new location.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - The original offset in the #US heap
+    ///
+    /// # Returns
+    ///
+    /// The new offset if a mapping exists, or the original offset unchanged.
+    pub fn remap_userstring(&self, offset: u32) -> u32 {
+        self.userstrings.get(&offset).copied().unwrap_or(offset)
+    }
+}
+
+/// Pre-computes heap offsets and resolves ChangeRefs without writing.
+///
+/// This follows dnlib's approach: calculate all heap offsets first, so that when
+/// we write table rows, `resolve_placeholders()` can successfully resolve the
+/// placeholder values to actual offsets.
+///
+/// This function must be called early in the generation process (before method
+/// bodies are written) because:
+/// 1. Method bodies may contain `ldstr` instructions referencing newly added userstrings
+/// 2. Table rows reference heap entries via ChangeRef placeholders
+///
+/// # Arguments
+///
+/// * `view` - The assembly view providing source heap data
+/// * `ctx` - The write context where remapping will be stored
+/// * `changes` - The assembly changes containing heap modifications
+///
+/// # Returns
+///
+/// Returns `Ok(())` after populating `ctx.heap_remapping` with all offset mappings.
+///
+/// # Errors
+///
+/// Returns an error if heap offset computation fails due to:
+/// - Invalid heap data in the source assembly
+/// - Corrupted length-prefixed entries in blob or userstring heaps
+pub fn precompute_heap_offsets(
+    view: &CilAssemblyView,
+    ctx: &mut WriteContext,
+    changes: &AssemblyChanges,
+) -> Result<()> {
+    // Get source heap data
+    let empty: &[u8] = &[];
+    let strings_data = view.strings().map_or(empty, crate::Strings::data);
+    let blob_data = view.blobs().map_or(empty, crate::Blob::data);
+    let guid_data = view.guids().map_or(empty, crate::Guid::data);
+    let us_data = view.userstrings().map_or(empty, crate::UserStrings::data);
+
+    // Pre-compute offsets for each heap (this resolves ChangeRefs)
+    let strings_result = compute_strings_heap_offsets(strings_data, &changes.string_heap_changes)?;
+    let blob_result = compute_blob_heap_offsets(blob_data, &changes.blob_heap_changes)?;
+    let guid_result = compute_guid_heap_offsets(guid_data, &changes.guid_heap_changes)?;
+    let us_result = compute_userstring_heap_offsets(us_data, &changes.userstring_heap_changes)?;
+
+    // Store the remapping for later patching of existing table rows
+    ctx.heap_remapping.strings = strings_result.remapping;
+    ctx.heap_remapping.blobs = blob_result.remapping;
+    ctx.heap_remapping.guids = guid_result.remapping;
+    ctx.heap_remapping.userstrings = us_result.remapping;
+
+    Ok(())
 }

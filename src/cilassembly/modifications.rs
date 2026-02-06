@@ -61,9 +61,13 @@
 //! - [`crate::cilassembly::operation`] - Operation definitions and management
 //! - Assembly validation - Validation and conflict resolution
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
-use crate::{cilassembly::TableOperation, metadata::tables::TableDataOwned, Error, Result};
+use crate::{
+    cilassembly::{changes::ChangeRefRc, Operation, TableOperation},
+    metadata::tables::TableDataOwned,
+    Error, Result,
+};
 
 /// Represents modifications to a specific metadata table.
 ///
@@ -131,6 +135,12 @@ pub enum TableModifications {
         /// scanning through all operations.
         inserted_rows: HashSet<u32>,
 
+        /// ChangeRef tracking for inserted rows
+        ///
+        /// Maps RID to ChangeRefRc for rows that were inserted. This enables
+        /// the writer to resolve placeholders to final RIDs/tokens.
+        change_refs: HashMap<u32, ChangeRefRc>,
+
         /// Next available RID for new rows
         ///
         /// This tracks the next RID that would be assigned to a newly
@@ -173,6 +183,7 @@ impl TableModifications {
             operations: Vec::new(),
             deleted_rows: HashSet::new(),
             inserted_rows: HashSet::new(),
+            change_refs: HashMap::new(),
             next_rid,
             original_row_count,
         }
@@ -234,6 +245,13 @@ impl TableModifications {
                 next_rid,
                 ..
             } => {
+                // Check for duplicate delete operations - skip if already deleted
+                if let Operation::Delete(rid) = &op.operation {
+                    if deleted_rows.contains(rid) {
+                        return Ok(()); // Already deleted, no-op
+                    }
+                }
+
                 // Insert in chronological order, maintaining FIFO for equal timestamps.
                 // binary_search_by_key returns Ok(index) if found, which would insert BEFORE
                 // existing entries with the same timestamp. We need to insert AFTER all
@@ -256,17 +274,17 @@ impl TableModifications {
                 // Update auxiliary data structures
                 let inserted_op = &operations[insert_pos];
                 match &inserted_op.operation {
-                    super::Operation::Insert(rid, _) => {
+                    Operation::Insert(rid, _) => {
                         inserted_rows.insert(*rid);
                         if *rid >= *next_rid {
                             *next_rid = *rid + 1;
                         }
                     }
-                    super::Operation::Delete(rid) => {
+                    Operation::Delete(rid) => {
                         deleted_rows.insert(*rid);
                         inserted_rows.remove(rid);
                     }
-                    super::Operation::Update(rid, _) => {
+                    Operation::Update(rid, _) => {
                         deleted_rows.remove(rid);
                     }
                 }
@@ -324,13 +342,13 @@ impl TableModifications {
                 inserted_rows.clear();
                 for op in operations {
                     match &op.operation {
-                        super::Operation::Delete(rid) => {
+                        Operation::Delete(rid) => {
                             deleted_rows.insert(*rid);
                         }
-                        super::Operation::Insert(rid, _) => {
+                        Operation::Insert(rid, _) => {
                             inserted_rows.insert(*rid);
                         }
-                        super::Operation::Update(_, _) => {}
+                        Operation::Update(_, _) => {}
                     }
                 }
             }
@@ -346,7 +364,7 @@ impl TableModifications {
     /// can be safely applied without violating metadata integrity.
     pub fn validate_operation(&self, op: &TableOperation) -> Result<()> {
         match &op.operation {
-            super::Operation::Insert(rid, _) => {
+            Operation::Insert(rid, _) => {
                 if *rid == 0 {
                     return Err(Error::ModificationInvalid(format!(
                         "RID cannot be zero: {rid}"
@@ -362,7 +380,7 @@ impl TableModifications {
 
                 Ok(())
             }
-            super::Operation::Update(rid, _) => {
+            Operation::Update(rid, _) => {
                 if *rid == 0 {
                     return Err(Error::ModificationInvalid(format!(
                         "RID cannot be zero: {rid}"
@@ -378,7 +396,7 @@ impl TableModifications {
 
                 Ok(())
             }
-            super::Operation::Delete(rid) => {
+            Operation::Delete(rid) => {
                 if *rid == 0 {
                     return Err(Error::ModificationInvalid(format!(
                         "RID cannot be zero: {rid}"
@@ -447,6 +465,83 @@ impl TableModifications {
                 original_row_count, ..
             } => *original_row_count,
             Self::Replaced(_) => 0, // Not applicable for replaced tables
+        }
+    }
+
+    /// Registers a ChangeRef for an inserted row.
+    ///
+    /// This should be called after successfully inserting a row to track the
+    /// ChangeRef for later resolution during the write phase.
+    ///
+    /// # Arguments
+    ///
+    /// * `rid` - The RID of the inserted row
+    /// * `change_ref` - The ChangeRef to track for this row
+    pub fn register_change_ref(&mut self, rid: u32, change_ref: ChangeRefRc) {
+        if let Self::Sparse { change_refs, .. } = self {
+            change_refs.insert(rid, change_ref);
+        }
+    }
+
+    /// Gets the ChangeRef for a specific RID, if one exists.
+    ///
+    /// # Arguments
+    ///
+    /// * `rid` - The RID to look up
+    ///
+    /// # Returns
+    ///
+    /// The ChangeRef for the given RID if it was an inserted row with a tracked ChangeRef.
+    pub fn get_change_ref(&self, rid: u32) -> Option<&ChangeRefRc> {
+        match self {
+            Self::Sparse { change_refs, .. } => change_refs.get(&rid),
+            Self::Replaced(_) => None,
+        }
+    }
+
+    /// Returns an iterator over all tracked ChangeRefs for inserted rows.
+    ///
+    /// This is used during the write phase to resolve all table row ChangeRefs.
+    pub fn change_refs(&self) -> impl Iterator<Item = (&u32, &ChangeRefRc)> {
+        match self {
+            Self::Sparse { change_refs, .. } => {
+                Box::new(change_refs.iter()) as Box<dyn Iterator<Item = (&u32, &ChangeRefRc)>>
+            }
+            Self::Replaced(_) => Box::new(std::iter::empty()),
+        }
+    }
+
+    /// Returns an iterator over all deleted RIDs.
+    ///
+    /// This is used during the write phase to skip processing of deleted rows,
+    /// including skipping field data for deleted FieldRVA entries.
+    pub fn deleted_rids(&self) -> impl Iterator<Item = u32> + '_ {
+        match self {
+            Self::Sparse { deleted_rows, .. } => {
+                Box::new(deleted_rows.iter().copied()) as Box<dyn Iterator<Item = u32>>
+            }
+            Self::Replaced(_) => Box::new(std::iter::empty()),
+        }
+    }
+
+    /// Returns the next RID that will be assigned for new inserts.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the number of rows exceeds u32::MAX, which would indicate
+    /// an invalid assembly state (metadata tables use 32-bit RIDs per ECMA-335).
+    pub fn next_rid(&self) -> crate::Result<u32> {
+        match self {
+            Self::Sparse { next_rid, .. } => Ok(*next_rid),
+            Self::Replaced(rows) => {
+                let len = u32::try_from(rows.len()).map_err(|_| {
+                    crate::Error::LayoutFailed(format!(
+                        "Table row count {} exceeds maximum u32 value",
+                        rows.len()
+                    ))
+                })?;
+                Ok(len + 1)
+            }
         }
     }
 }

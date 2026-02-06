@@ -268,6 +268,7 @@ impl MethodBuilder {
             security: OnceLock::new(),
             blocks: OnceLock::new(),
             custom_attributes: Arc::new(boxcar::Vec::new()),
+            declaring_type: OnceLock::new(),
         })
     }
 }

@@ -7,13 +7,19 @@
 //!
 //! ```bash
 //! # View disassembly of a method
-//! cargo run --example analysis -- --file path/to/assembly.dll --method "Main" disasm
+//! cargo run --example analysis -- --file path/to/assembly.dll disasm --method "Main"
 //!
 //! # View SSA form of a method
-//! cargo run --example analysis -- --file path/to/assembly.dll --method "Main" ssa
+//! cargo run --example analysis -- --file path/to/assembly.dll ssa --method "Main"
+//!
+//! # View SSA form with deobfuscation passes applied
+//! cargo run --example analysis -- --file path/to/assembly.dll ssa --method "Main" --deobfuscate
+//!
+//! # View SSA form with lenient loading (continues on errors like custom attribute failures)
+//! cargo run --example analysis -- --file path/to/assembly.dll --lenient ssa --method "Main" --deobfuscate
 //!
 //! # Export CFG in DOT format
-//! cargo run --example analysis -- --file path/to/assembly.dll --method "Main" cfg
+//! cargo run --example analysis -- --file path/to/assembly.dll cfg --method "Main"
 //!
 //! # Export call graph in DOT format
 //! cargo run --example analysis -- --file path/to/assembly.dll callgraph
@@ -22,15 +28,23 @@
 //! cargo run --example analysis -- --file path/to/assembly.dll list
 //! ```
 
-use std::path::PathBuf;
-use std::sync::Arc;
+use std::{
+    path::{Path, PathBuf},
+    sync::Arc,
+};
 
 use clap::{Parser, Subcommand};
-use dotscope::analysis::{CallGraph, NodeId, SsaBuilder, SsaFunction};
-use dotscope::metadata::method::MethodRc;
-use dotscope::metadata::token::Token;
-use dotscope::project::ProjectLoader;
-use dotscope::CilObject;
+use dotscope::{
+    analysis::{CallGraph, NodeId, SsaFunction},
+    deobfuscation::{DeobfuscationEngine, EngineConfig, EventKind},
+    metadata::{
+        diagnostics::{DiagnosticSeverity, Diagnostics},
+        method::MethodRc,
+        token::Token,
+    },
+    project::ProjectLoader,
+    CilObject, ValidationConfig,
+};
 
 #[derive(Parser)]
 #[command(name = "analysis")]
@@ -43,6 +57,10 @@ struct Cli {
     /// Additional search paths for dependencies (can be repeated)
     #[arg(short, long, action = clap::ArgAction::Append)]
     search: Vec<PathBuf>,
+
+    /// Enable lenient loading mode (continue on errors, log to diagnostics)
+    #[arg(short, long)]
+    lenient: bool,
 
     #[command(subcommand)]
     command: Command,
@@ -73,6 +91,10 @@ enum Command {
         /// Method RVA in hex (e.g., 0x2050)
         #[arg(short, long, group = "target", value_parser = parse_hex)]
         rva: Option<u64>,
+
+        /// Run deobfuscation passes on the SSA before displaying
+        #[arg(short, long)]
+        deobfuscate: bool,
     },
 
     /// Export control flow graph in DOT format
@@ -107,9 +129,20 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     let cli = Cli::parse();
 
     eprintln!("Loading assembly: {}", cli.file.display());
+    if cli.lenient {
+        eprintln!("Lenient mode enabled - will continue on errors");
+    }
 
-    // Build the project using ProjectLoader
-    let mut loader = ProjectLoader::new().primary_file(&cli.file)?;
+    // Build the project using ProjectLoader with appropriate validation config
+    let validation_config = if cli.lenient {
+        ValidationConfig::analysis()
+    } else {
+        ValidationConfig::minimal()
+    };
+
+    let mut loader = ProjectLoader::new()
+        .primary_file(&cli.file)?
+        .with_validation(validation_config);
 
     for path in &cli.search {
         eprintln!("Adding search path: {}", path.display());
@@ -134,15 +167,28 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         .get_primary()
         .ok_or("Failed to get primary assembly")?;
 
+    // Display loading diagnostics in lenient mode
+    if cli.lenient {
+        display_diagnostics(primary.diagnostics());
+    }
+
     match cli.command {
         Command::List => list_methods(&primary),
         Command::Disasm { method, rva } => {
             let m = find_method(&primary, method.as_deref(), rva)?;
             display_disasm(&primary, &m)
         }
-        Command::Ssa { method, rva } => {
+        Command::Ssa {
+            method,
+            rva,
+            deobfuscate,
+        } => {
             let m = find_method(&primary, method.as_deref(), rva)?;
-            display_ssa_method(&primary, &m)
+            if deobfuscate {
+                display_ssa_deobfuscated(&cli.file, &m, cli.lenient)
+            } else {
+                display_ssa_method(&primary, &m)
+            }
         }
         Command::Cfg {
             method,
@@ -154,6 +200,48 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Command::Callgraph { output } => display_callgraph(&primary, output.as_deref()),
     }
+}
+
+fn display_diagnostics(diagnostics: &Arc<Diagnostics>) {
+    if !diagnostics.has_any() {
+        return;
+    }
+
+    eprintln!("\n=== Loading Diagnostics ===");
+    let mut error_count = 0;
+    let mut warning_count = 0;
+    let mut info_count = 0;
+
+    for entry in diagnostics.iter() {
+        let prefix = match entry.severity {
+            DiagnosticSeverity::Error => {
+                error_count += 1;
+                "ERROR"
+            }
+            DiagnosticSeverity::Warning => {
+                warning_count += 1;
+                "WARNING"
+            }
+            DiagnosticSeverity::Info => {
+                info_count += 1;
+                "INFO"
+            }
+        };
+
+        eprintln!("  [{}] {:?}: {}", prefix, entry.category, entry.message);
+        if let Some(token) = entry.token {
+            eprintln!("         Token: 0x{:08X}", token);
+        }
+        if let Some(offset) = entry.offset {
+            eprintln!("         Offset: 0x{:X}", offset);
+        }
+    }
+
+    eprintln!(
+        "\nSummary: {} errors, {} warnings, {} info",
+        error_count, warning_count, info_count
+    );
+    eprintln!();
 }
 
 fn find_method(
@@ -322,18 +410,97 @@ fn display_ssa_method(
     println!("Arguments: {} | Locals: {}", num_args, num_locals);
     println!("{}", "=".repeat(80));
 
-    let cfg = method
-        .cfg()
-        .ok_or("Method has no decoded blocks or CFG construction failed")?;
-
-    match SsaBuilder::build(&cfg, num_args, num_locals) {
-        Ok(ssa) => {
+    // Use method.ssa() which properly sets up TypeContext with the assembly
+    // for correct method signature resolution in call instructions
+    match method.ssa(assembly) {
+        Some(ssa) => {
             println!("\n--- SSA Form ---");
             display_ssa(&ssa);
         }
-        Err(e) => {
+        None => {
             println!("\n--- SSA Form ---");
-            println!("Failed to build SSA: {}", e);
+            println!(
+                "Failed to build SSA: Method has no decoded blocks or CFG construction failed"
+            );
+        }
+    }
+
+    Ok(())
+}
+
+fn display_ssa_deobfuscated(
+    file_path: &Path,
+    method: &MethodRc,
+    lenient: bool,
+) -> Result<(), Box<dyn std::error::Error>> {
+    // Load a fresh copy of the assembly for deobfuscation
+    // (process_method requires ownership as it may modify the assembly)
+    let assembly = if lenient {
+        CilObject::from_path_with_validation(file_path, ValidationConfig::analysis())?
+    } else {
+        CilObject::from_path(file_path)?
+    };
+    let type_name = get_method_type_name(&assembly, method.token);
+    let rva = method.rva.unwrap_or(0);
+    let num_args = method.signature.param_count as usize + usize::from(method.signature.has_this);
+    let num_locals = method.local_vars.count();
+
+    println!("\n{}", "=".repeat(80));
+    println!("Method: {}::{}", type_name, method.name);
+    println!("RVA: 0x{:08X} | Token: {:?}", rva, method.token);
+    println!("Arguments: {} | Locals: {}", num_args, num_locals);
+    println!("{}", "=".repeat(80));
+
+    // Show original SSA first
+    let original_ssa = method
+        .ssa(&assembly)
+        .ok_or("Method has no decoded blocks or SSA construction failed")?;
+
+    println!("\n--- Original SSA Form ---");
+    display_ssa(&original_ssa);
+
+    // Run deobfuscation using the engine
+    println!("\n{}", "=".repeat(80));
+    println!("Running deobfuscation passes...");
+    println!("{}", "=".repeat(80));
+
+    let config = EngineConfig::default();
+    let mut engine = DeobfuscationEngine::new(config);
+
+    let (deobfuscated_ssa, result) = engine.process_method(assembly, method.token)?;
+
+    println!("\n--- Deobfuscated SSA Form ---");
+    display_ssa(&deobfuscated_ssa);
+
+    // Display summary
+    println!("\n{}", "-".repeat(40));
+    println!("Deobfuscation Summary:");
+    println!("  Iterations: {}", result.iterations);
+    println!("  Total time: {:?}", result.total_time);
+    println!("  Total events: {}", result.events.len());
+
+    let counts = result.events.count_by_kind();
+    if let Some(&count) = counts.get(&EventKind::ConstantFolded) {
+        println!("  Constants folded: {}", count);
+    }
+    if let Some(&count) = counts.get(&EventKind::InstructionRemoved) {
+        println!("  Instructions removed: {}", count);
+    }
+    if let Some(&count) = counts.get(&EventKind::BranchSimplified) {
+        println!("  Branches simplified: {}", count);
+    }
+    if let Some(&count) = counts.get(&EventKind::PhiSimplified) {
+        println!("  Phi nodes simplified: {}", count);
+    }
+    if let Some(&count) = counts.get(&EventKind::ControlFlowRestructured) {
+        println!("  Control flow restructured: {}", count);
+    }
+
+    // Show detection results if any
+    if !result.detection.all().is_empty() {
+        println!("\n  Detected obfuscators:");
+        for (id, score) in result.detection.all() {
+            println!("    - {} (score: {})", id, score.score());
         }
     }
 

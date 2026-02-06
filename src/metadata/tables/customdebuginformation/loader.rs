@@ -60,6 +60,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{CustomDebugInformationRaw, TableId},
     },
@@ -119,21 +120,31 @@ impl MetadataLoader for CustomDebugInformationLoader {
     /// This method is thread-safe and uses parallel iteration for performance.
     /// Updates to storage collections are handled through atomic operations.
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(guids), Some(blobs)) =
-            (context.meta, context.guids, context.blobs)
-        {
-            if let Some(table) = header.table::<CustomDebugInformationRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let custom_debug_info =
-                        row.to_owned(|coded_index| context.get_ref(coded_index), guids, blobs)?;
-                    context
-                        .custom_debug_information
-                        .insert(custom_debug_info.token, custom_debug_info);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        let (Some(header), Some(guids), Some(blobs)) = (context.meta, context.guids, context.blobs)
+        else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<CustomDebugInformationRaw>() else {
+            return Ok(());
+        };
+
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("custom debug info 0x{:08x}", row.token.value());
+
+            let Some(custom_debug_info) = context.handle_result(
+                row.to_owned(|coded_index| context.get_ref(coded_index), guids, blobs),
+                DiagnosticCategory::Table,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context
+                .custom_debug_information
+                .insert(custom_debug_info.token, custom_debug_info);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `CustomDebugInformation`

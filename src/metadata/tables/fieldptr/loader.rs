@@ -21,6 +21,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{FieldPtrRaw, TableId},
     },
@@ -58,13 +59,23 @@ impl MetadataLoader for FieldPtrLoader {
     /// - Collection insertion operations fail
     /// - Memory allocation fails during processing
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<FieldPtrRaw>() {
-                for row in table {
-                    let owned = row.to_owned()?;
-                    context.field_ptr.insert(row.token, owned);
-                }
-            }
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<FieldPtrRaw>() else {
+            return Ok(());
+        };
+
+        for row in table {
+            let token_msg = || format!("field ptr 0x{:08x}", row.token.value());
+
+            let Some(owned) =
+                context.handle_result(row.to_owned(), DiagnosticCategory::Field, token_msg)?
+            else {
+                continue;
+            };
+
+            context.field_ptr.insert(row.token, owned);
         }
         Ok(())
     }

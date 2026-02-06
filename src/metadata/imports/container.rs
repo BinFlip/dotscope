@@ -21,10 +21,10 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::imports::ImportContainer;
+//! ```rust,no_run
+//! use dotscope::metadata::imports::{ImportEntry, UnifiedImportContainer};
 //!
-//! let container = ImportContainer::new();
+//! let container = UnifiedImportContainer::new();
 //!
 //! // Access existing CIL functionality
 //! let cil_imports = container.cil();
@@ -177,8 +177,9 @@ impl UnifiedImportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let container = ImportContainer::new();
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::UnifiedImportContainer;
+    /// let container = UnifiedImportContainer::new();
     /// let cil_imports = container.cil();
     ///
     /// // Use existing CIL functionality
@@ -196,8 +197,9 @@ impl UnifiedImportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let container = ImportContainer::new();
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::UnifiedImportContainer;
+    /// let container = UnifiedImportContainer::new();
     /// let native_imports = container.native();
     ///
     /// // Check native DLL dependencies
@@ -215,8 +217,9 @@ impl UnifiedImportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let mut container = ImportContainer::new();
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::UnifiedImportContainer;
+    /// let mut container = UnifiedImportContainer::new();
     /// container.native_mut().add_dll("kernel32.dll")?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -238,8 +241,9 @@ impl UnifiedImportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let container = ImportContainer::new();
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::{UnifiedImportContainer, ImportEntry};
+    /// let container = UnifiedImportContainer::new();
     /// let imports = container.find_by_name("MessageBox");
     ///
     /// for import in imports {
@@ -275,8 +279,9 @@ impl UnifiedImportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let container = ImportContainer::new();
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::UnifiedImportContainer;
+    /// let container = UnifiedImportContainer::new();
     /// let dependencies = container.get_all_dll_dependencies();
     ///
     /// for dep in dependencies {
@@ -309,8 +314,9 @@ impl UnifiedImportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let container = ImportContainer::new();
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::UnifiedImportContainer;
+    /// let container = UnifiedImportContainer::new();
     /// let dll_names = container.get_all_dll_names();
     /// println!("All DLL dependencies: {:?}", dll_names);
     /// ```
@@ -326,8 +332,9 @@ impl UnifiedImportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let container = ImportContainer::new();
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::UnifiedImportContainer;
+    /// let container = UnifiedImportContainer::new();
     /// if container.is_empty() {
     ///     println!("No imports found");
     /// }
@@ -340,8 +347,9 @@ impl UnifiedImportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let container = ImportContainer::new();
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::UnifiedImportContainer;
+    /// let container = UnifiedImportContainer::new();
     /// println!("Total imports: {}", container.total_count());
     /// ```
     pub fn total_count(&self) -> usize {
@@ -363,8 +371,9 @@ impl UnifiedImportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let mut container = ImportContainer::new();
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::UnifiedImportContainer;
+    /// let mut container = UnifiedImportContainer::new();
     /// container.add_native_function("user32.dll", "MessageBoxW")?;
     /// container.add_native_function("kernel32.dll", "GetCurrentProcessId")?;
     /// # Ok::<(), dotscope::Error>(())
@@ -390,8 +399,9 @@ impl UnifiedImportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let mut container = ImportContainer::new();
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::UnifiedImportContainer;
+    /// let mut container = UnifiedImportContainer::new();
     /// container.add_native_function_by_ordinal("user32.dll", 120)?; // MessageBoxW
     /// # Ok::<(), dotscope::Error>(())
     /// ```
@@ -418,8 +428,9 @@ impl UnifiedImportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let container = ImportContainer::new();
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::UnifiedImportContainer;
+    /// let container = UnifiedImportContainer::new();
     /// if let Some(import_data) = container.get_import_table_data(false)? { // PE32
     ///     // Write import_data to PE import directory
     /// }
@@ -446,8 +457,9 @@ impl UnifiedImportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let mut container = ImportContainer::new();
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::UnifiedImportContainer;
+    /// let mut container = UnifiedImportContainer::new();
     /// // Move import table up by 0x1000 bytes
     /// container.update_iat_rvas(0x1000)?;
     /// # Ok::<(), dotscope::Error>(())
@@ -650,7 +662,7 @@ impl Default for UnifiedImportContainer {
 // Implement common traits for convenience
 impl std::fmt::Debug for UnifiedImportContainer {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        f.debug_struct("ImportContainer")
+        f.debug_struct("UnifiedImportContainer")
             .field("cil_count", &self.cil.len())
             .field("native_dll_count", &self.native.dll_count())
             .field("native_function_count", &self.native.total_function_count())
@@ -662,6 +674,7 @@ impl std::fmt::Debug for UnifiedImportContainer {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::test::{create_method, create_module_ref};
 
     #[test]
     fn test_unified_import_container_new() {
@@ -860,7 +873,7 @@ mod tests {
             .unwrap();
 
         let debug_output = format!("{:?}", container);
-        assert!(debug_output.contains("ImportContainer"));
+        assert!(debug_output.contains("UnifiedImportContainer"));
         assert!(debug_output.contains("native_dll_count"));
         assert!(debug_output.contains("native_function_count"));
     }
@@ -1015,8 +1028,6 @@ mod tests {
 
     #[test]
     fn test_cil_pinvoke_dll_extraction() {
-        use crate::test::{create_method, create_module_ref};
-
         let container = UnifiedImportContainer::new();
         let module_ref = create_module_ref(1, "kernel32.dll");
         let method = create_method("GetProcessId");
@@ -1039,8 +1050,6 @@ mod tests {
 
     #[test]
     fn test_cil_pinvoke_functions_for_dll() {
-        use crate::test::{create_method, create_module_ref};
-
         let container = UnifiedImportContainer::new();
         let module_ref = create_module_ref(1, "kernel32.dll");
 
@@ -1105,8 +1114,6 @@ mod tests {
 
     #[test]
     fn test_cil_pinvoke_find_by_name() {
-        use crate::test::{create_method, create_module_ref};
-
         let container = UnifiedImportContainer::new();
         let module_ref = create_module_ref(1, "kernel32.dll");
         let method = create_method("TestPInvokeMethod");
@@ -1131,8 +1138,6 @@ mod tests {
 
     #[test]
     fn test_mixed_cil_and_native_same_dll() {
-        use crate::test::{create_method, create_module_ref};
-
         let mut container = UnifiedImportContainer::new();
 
         // Add native import from kernel32.dll
@@ -1179,8 +1184,6 @@ mod tests {
 
     #[test]
     fn test_cil_pinvoke_case_insensitive_dll_lookup() {
-        use crate::test::{create_method, create_module_ref};
-
         let container = UnifiedImportContainer::new();
 
         // Add with lowercase
@@ -1206,8 +1209,6 @@ mod tests {
 
     #[test]
     fn test_deduplication_cil_and_native_same_function() {
-        use crate::test::{create_method, create_module_ref};
-
         let mut container = UnifiedImportContainer::new();
 
         // Add native import for GetLastError from kernel32.dll
@@ -1246,8 +1247,6 @@ mod tests {
 
     #[test]
     fn test_deduplication_case_insensitive() {
-        use crate::test::{create_method, create_module_ref};
-
         let mut container = UnifiedImportContainer::new();
 
         // Add native import with different casing
@@ -1283,8 +1282,6 @@ mod tests {
 
     #[test]
     fn test_deduplication_preserves_non_duplicate_cil() {
-        use crate::test::{create_method, create_module_ref};
-
         let mut container = UnifiedImportContainer::new();
 
         // Add native import
@@ -1324,8 +1321,6 @@ mod tests {
 
     #[test]
     fn test_deduplication_dll_source_still_both() {
-        use crate::test::{create_method, create_module_ref};
-
         let mut container = UnifiedImportContainer::new();
 
         // Add native import

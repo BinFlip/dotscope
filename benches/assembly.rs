@@ -145,7 +145,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 .unwrap()
                 .ret()
                 .unwrap();
-            let (bytecode, _max_stack) = asm.finish().unwrap();
+            let (bytecode, _max_stack, _) = asm.finish().unwrap();
 
             // Disassemble
             let mut parser = dotscope::Parser::new(&bytecode);
@@ -234,7 +234,7 @@ pub fn criterion_benchmark(c: &mut Criterion) {
                 .unwrap()
                 .ret()
                 .unwrap();
-            let (bytecode, _max_stack) = asm.finish().unwrap();
+            let (bytecode, _max_stack, _) = asm.finish().unwrap();
 
             // Disassemble
             let mut parser = dotscope::Parser::new(&bytecode);

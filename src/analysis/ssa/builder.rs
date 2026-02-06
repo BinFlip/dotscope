@@ -1,1386 +1,1016 @@
-//! SSA construction algorithm (Cytron et al.).
+//! Builder pattern for programmatic SSA construction.
 //!
-//! This module implements the classic SSA construction algorithm from:
+//! This module provides a fluent API for building SSA functions without the
+//! boilerplate of manual block/variable ID management. It's useful for:
 //!
-//! > Cytron et al., "Efficiently Computing Static Single Assignment Form and the
-//! > Control Dependence Graph", ACM TOPLAS 1991
+//! - Writing unit tests for deobfuscation passes
+//! - Programmatic SSA construction in optimization passes
+//! - Creating test fixtures for SSA analysis
 //!
-//! # Algorithm Overview
+//! # Design
 //!
-//! SSA construction proceeds in three phases:
-//!
-//! 1. **Stack Simulation**: Convert implicit CIL stack operations to explicit variables
-//! 2. **Phi Placement**: Insert phi nodes at dominance frontiers for each variable
-//! 3. **Variable Renaming**: Rename variables using dominator tree traversal
-//!
-//! # Usage
+//! The builder uses a closure-based API where all blocks are defined within
+//! a single expression, making the CFG structure visually clear:
 //!
 //! ```rust,ignore
-//! use dotscope::analysis::{ControlFlowGraph, ssa::SsaBuilder};
-//! use dotscope::assembly::decode_blocks;
+//! let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
+//!     let cond = f.arg(0);
 //!
-//! // Build CFG from decoded blocks
-//! let blocks = decode_blocks(data, offset, rva, Some(size))?;
-//! let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
-//!
-//! // Construct SSA form
-//! let ssa = SsaBuilder::build(&cfg, 2, 3)?; // 2 args, 3 locals
-//!
-//! // Analyze the SSA form
-//! for block in ssa.blocks() {
-//!     for phi in block.phi_nodes() {
-//!         println!("{}", phi);
-//!     }
-//! }
+//!     f.block(0, |b| b.branch(cond, 1, 2));
+//!     f.block(1, |b| b.jump(3));
+//!     f.block(2, |b| b.jump(4));
+//!     f.block(3, |b| b.ret());
+//!     f.block(4, |b| b.ret());
+//! });
 //! ```
+//!
+//! # Variable Management
+//!
+//! Variables are automatically allocated when operations are performed.
+//! Operations that produce values (like `const_i32`, `add`) return the
+//! allocated `SsaVarId` which can be used in subsequent operations.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use crate::{
-    analysis::{
-        cfg::ControlFlowGraph,
-        ssa::{
-            decompose::decompose_instruction, DefSite, PhiNode, SimulationResult, SsaBlock,
-            SsaFunction, SsaInstruction, SsaVarId, SsaVariable, StackSimulator, UseSite,
-            VariableOrigin,
-        },
-    },
-    assembly::{Immediate, Instruction, Operand},
-    utils::graph::{algorithms::DominatorTree, NodeId},
-    Error, Result,
+use crate::analysis::ssa::{
+    ConstValue, DefSite, MethodRef, PhiNode, PhiOperand, SsaBlock, SsaFunction, SsaInstruction,
+    SsaOp, SsaType, SsaVarId, SsaVariable, VariableOrigin,
 };
 
-mod opcodes {
-    //! CIL opcode constants for SSA-relevant instructions.
-    //!
-    //! These are the opcodes that require special handling during SSA construction
-    //! because they load/store arguments, locals, or duplicate stack values.
-
-    pub const LDARG_0: u8 = 0x02;
-    pub const LDARG_1: u8 = 0x03;
-    pub const LDARG_2: u8 = 0x04;
-    pub const LDARG_3: u8 = 0x05;
-    pub const LDLOC_0: u8 = 0x06;
-    pub const LDLOC_1: u8 = 0x07;
-    pub const LDLOC_2: u8 = 0x08;
-    pub const LDLOC_3: u8 = 0x09;
-    pub const STLOC_0: u8 = 0x0A;
-    pub const STLOC_1: u8 = 0x0B;
-    pub const STLOC_2: u8 = 0x0C;
-    pub const STLOC_3: u8 = 0x0D;
-    pub const LDARG_S: u8 = 0x0E;
-    pub const LDARGA_S: u8 = 0x0F;
-    pub const STARG_S: u8 = 0x10;
-    pub const LDLOC_S: u8 = 0x11;
-    pub const LDLOCA_S: u8 = 0x12;
-    pub const STLOC_S: u8 = 0x13;
-    pub const DUP: u8 = 0x25;
-    pub const RET: u8 = 0x2A;
-
-    pub const FE_PREFIX: u8 = 0xFE;
-    pub const FE_LDARG: u8 = 0x09;
-    pub const FE_LDARGA: u8 = 0x0A;
-    pub const FE_STARG: u8 = 0x0B;
-    pub const FE_LDLOC: u8 = 0x0C;
-    pub const FE_LDLOCA: u8 = 0x0D;
-    pub const FE_STLOC: u8 = 0x0E;
-}
-
-/// A variable definition record during SSA construction.
-#[derive(Debug, Clone)]
-struct VarDef {
-    /// The original variable (argument index, local index, or stack slot).
-    origin: VariableOrigin,
-    /// The block where this definition occurs.
-    block: usize,
-    /// Whether this is from a phi node (vs an instruction).
-    is_phi: bool,
-}
-
-/// Builder for constructing SSA form from a control flow graph.
+/// Builder for constructing SSA functions programmatically.
 ///
-/// This implements the Cytron et al. algorithm with the following phases:
+/// Provides a closure-based API for building SSA functions where all
+/// blocks are defined within a single expression, making the CFG
+/// structure visually clear.
 ///
-/// 1. Simulate the stack to identify variable definitions
-/// 2. Compute dominance frontiers and place phi nodes
-/// 3. Rename variables using dominator tree traversal
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::analysis::SsaFunctionBuilder;
+///
+/// // Simple function: return arg0 + arg1
+/// let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
+///     let (a, b) = (f.arg(0), f.arg(1));
+///     f.block(0, |blk| {
+///         let sum = blk.add(a, b);
+///         blk.ret_val(sum);
+///     });
+/// });
+/// ```
 #[derive(Debug)]
-pub struct SsaBuilder<'a, 'cfg> {
-    /// The control flow graph being transformed.
-    cfg: &'a ControlFlowGraph<'cfg>,
-
-    /// Number of method arguments.
+pub struct SsaFunctionBuilder {
     num_args: usize,
-
-    /// Number of local variables.
     num_locals: usize,
-
-    /// The SSA function being built.
-    function: SsaFunction,
-
-    /// Definitions of each original variable (by origin) -> list of defining blocks.
-    /// Used for phi placement.
-    defs: HashMap<VariableOrigin, HashSet<usize>>,
-
-    /// Current version stack for each variable during renaming.
-    /// Maps origin -> stack of (version, `SsaVarId`).
-    version_stacks: HashMap<VariableOrigin, Vec<(u32, SsaVarId)>>,
-
-    /// Next version number for each variable origin.
-    next_version: HashMap<VariableOrigin, u32>,
-
-    /// Variables that have had their address taken.
-    address_taken: HashSet<VariableOrigin>,
+    /// Next stack slot number for temporaries
+    next_stack_slot: u32,
+    /// Pre-allocated argument variable IDs
+    arg_vars: Vec<SsaVarId>,
+    /// Pre-allocated local variable IDs
+    local_vars: Vec<SsaVarId>,
+    /// Variables created during building
+    variables: Vec<SsaVariable>,
+    /// Blocks indexed by ID (may have gaps)
+    blocks: HashMap<usize, SsaBlock>,
+    /// Highest block ID seen
+    max_block_id: usize,
 }
 
-impl<'a, 'cfg> SsaBuilder<'a, 'cfg> {
-    /// Converts a usize index to u16 with validation.
-    ///
-    /// Returns an error if the index exceeds `u16::MAX`.
-    fn idx_to_u16(idx: usize) -> Result<u16> {
-        u16::try_from(idx).map_err(|_| {
-            Error::SsaError(format!(
-                "Variable index {} exceeds maximum supported value of {}",
-                idx,
-                u16::MAX
-            ))
-        })
-    }
-
-    /// Builds SSA form from a control flow graph.
+impl SsaFunctionBuilder {
+    /// Creates a new builder with the specified number of arguments and locals.
     ///
     /// # Arguments
     ///
-    /// * `cfg` - The control flow graph to transform
     /// * `num_args` - Number of method arguments (including `this` for instance methods)
     /// * `num_locals` - Number of local variables
+    #[must_use]
+    pub fn new(num_args: usize, num_locals: usize) -> Self {
+        let mut builder = Self {
+            num_args,
+            num_locals,
+            next_stack_slot: 0,
+            arg_vars: Vec::with_capacity(num_args),
+            local_vars: Vec::with_capacity(num_locals),
+            variables: Vec::new(),
+            blocks: HashMap::new(),
+            max_block_id: 0,
+        };
+
+        // Pre-allocate argument variables (v0, v1, ... for each arg)
+        for i in 0..num_args {
+            // Argument indices are bounded by method signature limits (< 65535)
+            #[allow(clippy::cast_possible_truncation)]
+            let idx = i as u16;
+            let id = builder.alloc_var_with_origin(VariableOrigin::Argument(idx));
+            builder.arg_vars.push(id);
+        }
+
+        // Pre-allocate local variables
+        for i in 0..num_locals {
+            // Local indices are bounded by method body limits (< 65535)
+            #[allow(clippy::cast_possible_truncation)]
+            let idx = i as u16;
+            let id = builder.alloc_var_with_origin(VariableOrigin::Local(idx));
+            builder.local_vars.push(id);
+        }
+
+        builder
+    }
+
+    /// Allocates a fresh variable ID with the given origin.
+    fn alloc_var_with_origin(&mut self, origin: VariableOrigin) -> SsaVarId {
+        let var = SsaVariable::new(origin, 0, DefSite::entry());
+        let id = var.id();
+        self.variables.push(var);
+        id
+    }
+
+    /// Allocates a fresh variable ID for a stack temporary.
+    fn alloc_stack_var(&mut self) -> SsaVarId {
+        let slot = self.next_stack_slot;
+        self.next_stack_slot += 1;
+        self.alloc_var_with_origin(VariableOrigin::Stack(slot))
+    }
+
+    /// Allocates a fresh variable ID for a stack temporary with a known type.
+    fn alloc_stack_var_typed(&mut self, var_type: SsaType) -> SsaVarId {
+        let id = self.alloc_stack_var();
+        // Set the type on the last added variable
+        if let Some(var) = self.variables.last_mut() {
+            var.set_type(var_type);
+        }
+        id
+    }
+
+    /// Builds the SSA function using a closure that defines all blocks.
+    ///
+    /// This is the primary API - all blocks are defined within the closure,
+    /// making the control flow structure visually apparent.
+    ///
+    /// # Arguments
+    ///
+    /// * `f` - A closure that receives an `SsaFunctionContext` for defining blocks
     ///
     /// # Returns
     ///
-    /// The complete SSA representation, or an error if construction fails.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The CFG is empty
-    /// - Stack simulation encounters inconsistencies
-    /// - Internal invariants are violated
-    pub fn build(
-        cfg: &'a ControlFlowGraph<'cfg>,
-        num_args: usize,
-        num_locals: usize,
-    ) -> Result<SsaFunction> {
-        let block_count = cfg.block_count();
-        if block_count == 0 {
-            return Err(Error::SsaError(
-                "Cannot build SSA from empty CFG".to_string(),
-            ));
-        }
-
-        let mut builder = Self {
-            cfg,
-            num_args,
-            num_locals,
-            function: SsaFunction::with_capacity(num_args, num_locals, block_count, 0),
-            defs: HashMap::new(),
-            version_stacks: HashMap::new(),
-            next_version: HashMap::new(),
-            address_taken: HashSet::new(),
-        };
-
-        // Phase 1: Simulate stack and collect definitions
-        builder.simulate_all_blocks()?;
-
-        // Phase 2: Place phi nodes at dominance frontiers
-        builder.place_phi_nodes();
-
-        // Phase 3: Rename variables using dominator tree traversal
-        builder.rename_variables()?;
-
-        Ok(builder.function)
+    /// The constructed `SsaFunction`.
+    pub fn build_with<F>(mut self, f: F) -> SsaFunction
+    where
+        F: FnOnce(&mut SsaFunctionContext<'_>),
+    {
+        let mut ctx = SsaFunctionContext { builder: &mut self };
+        f(&mut ctx);
+        self.build()
     }
 
-    /// Phase 1: Simulates the stack for all blocks to identify variable definitions.
-    fn simulate_all_blocks(&mut self) -> Result<()> {
-        let rpo = self.cfg.reverse_postorder();
+    /// Consumes the builder and produces the SsaFunction.
+    fn build(self) -> SsaFunction {
+        let mut func = SsaFunction::new(self.num_args, self.num_locals);
 
-        for i in 0..self.cfg.block_count() {
-            self.function.add_block(SsaBlock::new(i));
+        // Add variables
+        for var in self.variables {
+            func.add_variable(var);
         }
 
-        for i in 0..self.num_args {
-            let origin = VariableOrigin::Argument(Self::idx_to_u16(i)?);
-            self.defs.entry(origin).or_default().insert(0);
-        }
-        for i in 0..self.num_locals {
-            let origin = VariableOrigin::Local(Self::idx_to_u16(i)?);
-            self.defs.entry(origin).or_default().insert(0);
-        }
-
-        // First pass: compute stack depths at block exits
-        let exit_depths = self.compute_stack_depths(&rpo)?;
-
-        // Create a single simulator for the entire method to ensure unique variable IDs
-        // across all blocks within this method. In well-formed CIL, the stack is always
-        // balanced at block boundaries.
-        let mut simulator = StackSimulator::new(self.num_args, self.num_locals);
-
-        // Second pass: simulate with correct starting stack depths
-        for &node_id in &rpo {
-            let block_idx = node_id.index();
-            let entry_depth = self.compute_entry_depth(block_idx, &exit_depths);
-            self.simulate_block(block_idx, entry_depth, &mut simulator)?;
-        }
-
-        Ok(())
-    }
-
-    /// Computes the stack depth at the exit of each block.
-    ///
-    /// This uses a lightweight simulation that only tracks stack depth changes,
-    /// not actual variable values.
-    fn compute_stack_depths(&self, rpo: &[NodeId]) -> Result<HashMap<usize, usize>> {
-        let mut exit_depths: HashMap<usize, usize> = HashMap::new();
-
-        for &node_id in rpo {
-            let block_idx = node_id.index();
-            let cfg_block = self
-                .cfg
-                .block(node_id)
-                .ok_or_else(|| Error::SsaError(format!("Block {block_idx} not found in CFG")))?;
-
-            // Compute entry depth from predecessors
-            let entry_depth = self.compute_entry_depth(block_idx, &exit_depths);
-            let mut depth = entry_depth;
-
-            // Apply stack effects of each instruction
-            for instr in &cfg_block.instructions {
-                let net_effect = instr.stack_behavior.net_effect;
-                // Apply effect, clamping to 0 if it would go negative (shouldn't happen in valid CIL)
-                #[allow(clippy::cast_sign_loss)] // Sign checked in condition
-                if net_effect < 0 {
-                    depth = depth.saturating_sub(net_effect.unsigned_abs() as usize);
-                } else {
-                    depth += net_effect as usize;
-                }
-            }
-
-            exit_depths.insert(block_idx, depth);
-        }
-
-        Ok(exit_depths)
-    }
-
-    /// Computes the stack depth at block entry based on predecessor exit depths.
-    fn compute_entry_depth(&self, block_idx: usize, exit_depths: &HashMap<usize, usize>) -> usize {
-        // Entry block always starts with empty stack
-        if block_idx == self.cfg.entry().index() {
-            return 0;
-        }
-
-        // Take the maximum of all predecessor exit depths
-        // (In well-formed CIL, all predecessors should agree, but we use max for safety)
-        let mut max_depth = 0;
-        for pred_id in self.cfg.predecessors(NodeId::new(block_idx)) {
-            if let Some(&pred_depth) = exit_depths.get(&pred_id.index()) {
-                max_depth = max_depth.max(pred_depth);
+        // Add blocks in order (filling gaps with empty blocks if needed)
+        for id in 0..=self.max_block_id {
+            if let Some(block) = self.blocks.get(&id) {
+                func.add_block(block.clone());
+            } else {
+                // Fill gap with empty block
+                func.add_block(SsaBlock::new(id));
             }
         }
-        max_depth
+
+        func
+    }
+}
+
+/// Context passed to the build closure for defining blocks.
+///
+/// This is the main interface used within `build_with()` to define
+/// the function's blocks and access pre-allocated variables.
+pub struct SsaFunctionContext<'a> {
+    builder: &'a mut SsaFunctionBuilder,
+}
+
+impl SsaFunctionContext<'_> {
+    /// Gets the argument variable at the specified index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if `index >= num_args`.
+    #[must_use]
+    pub fn arg(&self, index: usize) -> SsaVarId {
+        self.builder.arg_vars[index]
     }
 
-    /// Simulates a single block, converting CIL instructions to SSA.
+    /// Gets the local variable at the specified index.
     ///
-    /// Uses a shared simulator to ensure unique variable IDs across all blocks within this method.
-    /// In well-formed CIL, the stack is always balanced at block boundaries.
+    /// # Panics
+    ///
+    /// Panics if `index >= num_locals`.
+    #[must_use]
+    pub fn local(&self, index: usize) -> SsaVarId {
+        self.builder.local_vars[index]
+    }
+
+    /// Allocates a fresh variable ID.
+    ///
+    /// Use this when you need a variable ID before defining it
+    /// (e.g., for phi node placeholders that will be defined later).
+    #[must_use]
+    pub fn var(&mut self) -> SsaVarId {
+        self.builder.alloc_stack_var()
+    }
+
+    /// Defines a block with the given ID using a closure.
+    ///
+    /// The closure receives an `SsaBlockBuilder` for adding instructions.
     ///
     /// # Arguments
     ///
-    /// * `block_idx` - The index of the block to simulate.
-    /// * `entry_stack_depth` - The stack depth at block entry.
-    /// * `simulator` - The shared stack simulator for this method.
-    fn simulate_block(
-        &mut self,
-        block_idx: usize,
-        entry_stack_depth: usize,
-        simulator: &mut StackSimulator,
-    ) -> Result<()> {
-        let node_id = NodeId::new(block_idx);
-        let cfg_block = self
-            .cfg
-            .block(node_id)
-            .ok_or_else(|| Error::SsaError(format!("Block {block_idx} not found in CFG")))?;
-
-        // Reset the stack to the expected entry depth for this block
-        // This handles cases where control flow merges with different stack states
-        simulator.reset_stack_to_depth(entry_stack_depth);
-
-        // Get the block's successors for branch target resolution
-        let successors = &cfg_block.successors;
-
-        let instr_count = cfg_block.instructions.len();
-        for (instr_idx, cil_instr) in cfg_block.instructions.iter().enumerate() {
-            let result = Self::simulate_instruction(simulator, cil_instr)?;
-
-            // Create SSA instruction with uses and def
-            let mut ssa_instr =
-                SsaInstruction::new(cil_instr.clone(), result.uses.clone(), result.def);
-
-            // Pass successors only for the last instruction (terminator)
-            // Non-terminator instructions don't need successor information
-            let instr_successors = if instr_idx == instr_count - 1 {
-                successors.as_slice()
-            } else {
-                &[]
-            };
-
-            // Try to decompose the CIL instruction into an SsaOp
-            if let Some(op) =
-                decompose_instruction(cil_instr, &result.uses, result.def, instr_successors)
-            {
-                ssa_instr.set_op(op);
-            }
-
-            if let Some(block) = self.function.block_mut(block_idx) {
-                block.add_instruction(ssa_instr);
-            }
-
-            if let Some(origin) = Self::infer_origin(cil_instr)? {
-                self.defs.entry(origin).or_default().insert(block_idx);
-            }
+    /// * `id` - The block ID (should be sequential starting from 0)
+    /// * `f` - A closure that defines the block's contents
+    pub fn block<F>(&mut self, id: usize, f: F)
+    where
+        F: FnOnce(&mut SsaBlockBuilder<'_>),
+    {
+        // Track max block ID
+        if id > self.builder.max_block_id {
+            self.builder.max_block_id = id;
         }
 
-        for i in 0..self.num_args {
-            if simulator.is_arg_address_taken(i) {
-                self.address_taken
-                    .insert(VariableOrigin::Argument(Self::idx_to_u16(i)?));
-            }
-        }
-        for i in 0..self.num_locals {
-            if simulator.is_local_address_taken(i) {
-                self.address_taken
-                    .insert(VariableOrigin::Local(Self::idx_to_u16(i)?));
-            }
-        }
-
-        Ok(())
-    }
-
-    /// Simulates a single CIL instruction, returning the stack effects.
-    ///
-    /// All 257 CIL instructions are covered: specific handling for load/store instructions
-    /// that affect SSA variables, and generic stack effect simulation for all others.
-    fn simulate_instruction(
-        simulator: &mut StackSimulator,
-        instr: &Instruction,
-    ) -> Result<SimulationResult> {
-        let result = if instr.prefix == opcodes::FE_PREFIX {
-            match instr.opcode {
-                opcodes::FE_LDARG => Self::extract_index(&instr.operand)
-                    .and_then(|idx| simulator.simulate_ldarg(idx)),
-                opcodes::FE_LDARGA => Self::extract_index(&instr.operand)
-                    .and_then(|idx| simulator.simulate_ldarga(idx)),
-                opcodes::FE_STARG => Self::extract_index(&instr.operand)
-                    .and_then(|idx| simulator.simulate_starg(idx)),
-                opcodes::FE_LDLOC => Self::extract_index(&instr.operand)
-                    .and_then(|idx| simulator.simulate_ldloc(idx)),
-                opcodes::FE_LDLOCA => Self::extract_index(&instr.operand)
-                    .and_then(|idx| simulator.simulate_ldloca(idx)),
-                opcodes::FE_STLOC => Self::extract_index(&instr.operand)
-                    .and_then(|idx| simulator.simulate_stloc(idx)),
-                _ => simulator
-                    .simulate_stack_effect(instr.stack_behavior.pops, instr.stack_behavior.pushes),
-            }
-        } else {
-            match instr.opcode {
-                opcodes::LDARG_0 => simulator.simulate_ldarg(0),
-                opcodes::LDARG_1 => simulator.simulate_ldarg(1),
-                opcodes::LDARG_2 => simulator.simulate_ldarg(2),
-                opcodes::LDARG_3 => simulator.simulate_ldarg(3),
-                opcodes::LDLOC_0 => simulator.simulate_ldloc(0),
-                opcodes::LDLOC_1 => simulator.simulate_ldloc(1),
-                opcodes::LDLOC_2 => simulator.simulate_ldloc(2),
-                opcodes::LDLOC_3 => simulator.simulate_ldloc(3),
-                opcodes::STLOC_0 => simulator.simulate_stloc(0),
-                opcodes::STLOC_1 => simulator.simulate_stloc(1),
-                opcodes::STLOC_2 => simulator.simulate_stloc(2),
-                opcodes::STLOC_3 => simulator.simulate_stloc(3),
-                opcodes::LDARG_S => Self::extract_index(&instr.operand)
-                    .and_then(|idx| simulator.simulate_ldarg(idx)),
-                opcodes::LDARGA_S => Self::extract_index(&instr.operand)
-                    .and_then(|idx| simulator.simulate_ldarga(idx)),
-                opcodes::STARG_S => Self::extract_index(&instr.operand)
-                    .and_then(|idx| simulator.simulate_starg(idx)),
-                opcodes::LDLOC_S => Self::extract_index(&instr.operand)
-                    .and_then(|idx| simulator.simulate_ldloc(idx)),
-                opcodes::LDLOCA_S => Self::extract_index(&instr.operand)
-                    .and_then(|idx| simulator.simulate_ldloca(idx)),
-                opcodes::STLOC_S => Self::extract_index(&instr.operand)
-                    .and_then(|idx| simulator.simulate_stloc(idx)),
-                opcodes::DUP => simulator.simulate_dup(),
-                opcodes::RET => Some(simulator.simulate_ret()),
-                _ => simulator
-                    .simulate_stack_effect(instr.stack_behavior.pops, instr.stack_behavior.pushes),
-            }
+        let mut block = SsaBlock::new(id);
+        let mut block_builder = SsaBlockBuilder {
+            builder: self.builder,
+            block: &mut block,
+            block_id: id,
         };
 
-        result.ok_or_else(|| {
-            Error::SsaError(format!(
-                "Stack simulation failed for instruction: {}",
-                instr.mnemonic
-            ))
-        })
+        f(&mut block_builder);
+
+        self.builder.blocks.insert(id, block);
+    }
+}
+
+/// Builder for constructing individual SSA blocks.
+///
+/// Provides shorthand methods for adding instructions to a block.
+/// Operations that produce values return the allocated `SsaVarId`.
+pub struct SsaBlockBuilder<'a> {
+    builder: &'a mut SsaFunctionBuilder,
+    block: &'a mut SsaBlock,
+    block_id: usize,
+}
+
+impl SsaBlockBuilder<'_> {
+    /// Helper to allocate a variable and add an instruction.
+    fn add_op(&mut self, op: SsaOp) -> SsaVarId {
+        let dest = op.dest().unwrap_or_else(|| self.builder.alloc_stack_var());
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
     }
 
-    /// Extracts an index from an operand.
-    ///
-    /// Handles both the typed operand forms (Argument, Local) and immediate values
-    /// that are produced by the instruction assembler/decoder.
-    fn extract_index(operand: &Operand) -> Option<usize> {
-        match operand {
-            Operand::Argument(idx) | Operand::Local(idx) => Some(*idx as usize),
-            Operand::Immediate(imm) => match imm {
-                Immediate::Int8(v) => usize::try_from(*v).ok(),
-                Immediate::UInt8(v) => Some(*v as usize),
-                Immediate::Int16(v) => usize::try_from(*v).ok(),
-                Immediate::UInt16(v) => Some(*v as usize),
-                Immediate::Int32(v) => usize::try_from(*v).ok(),
-                Immediate::UInt32(v) => Some(*v as usize),
-                _ => None,
-            },
-            _ => None,
-        }
+    /// Helper to add an instruction without returning a var.
+    fn add_op_void(&mut self, op: SsaOp) {
+        self.block.add_instruction(SsaInstruction::synthetic(op));
     }
 
-    /// Infers the variable origin from an instruction.
-    fn infer_origin(instr: &Instruction) -> Result<Option<VariableOrigin>> {
-        if instr.prefix == opcodes::FE_PREFIX {
-            match instr.opcode {
-                opcodes::FE_STARG => match Self::extract_index(&instr.operand) {
-                    Some(idx) => Ok(Some(VariableOrigin::Argument(Self::idx_to_u16(idx)?))),
-                    None => Ok(None),
-                },
-                opcodes::FE_STLOC => match Self::extract_index(&instr.operand) {
-                    Some(idx) => Ok(Some(VariableOrigin::Local(Self::idx_to_u16(idx)?))),
-                    None => Ok(None),
-                },
-                _ => Ok(None),
-            }
-        } else {
-            match instr.opcode {
-                opcodes::STLOC_0 => Ok(Some(VariableOrigin::Local(0))),
-                opcodes::STLOC_1 => Ok(Some(VariableOrigin::Local(1))),
-                opcodes::STLOC_2 => Ok(Some(VariableOrigin::Local(2))),
-                opcodes::STLOC_3 => Ok(Some(VariableOrigin::Local(3))),
-                opcodes::STARG_S => match Self::extract_index(&instr.operand) {
-                    Some(idx) => Ok(Some(VariableOrigin::Argument(Self::idx_to_u16(idx)?))),
-                    None => Ok(None),
-                },
-                opcodes::STLOC_S => match Self::extract_index(&instr.operand) {
-                    Some(idx) => Ok(Some(VariableOrigin::Local(Self::idx_to_u16(idx)?))),
-                    None => Ok(None),
-                },
-                _ => Ok(None),
-            }
-        }
-    }
-
-    /// Phase 2: Places phi nodes at dominance frontiers.
-    ///
-    /// For each variable that has multiple definitions, we place phi nodes
-    /// at the iterated dominance frontier of its definition sites.
-    fn place_phi_nodes(&mut self) {
-        let dominance_frontiers = self.cfg.dominance_frontiers();
-
-        for (origin, def_blocks) in &self.defs {
-            if self.address_taken.contains(origin) {
-                continue;
-            }
-
-            // Compute iterated dominance frontier
-            let mut phi_blocks: HashSet<usize> = HashSet::new();
-            let mut worklist: Vec<usize> = def_blocks.iter().copied().collect();
-
-            while let Some(block_idx) = worklist.pop() {
-                let node_id = NodeId::new(block_idx);
-                if node_id.index() < dominance_frontiers.len() {
-                    for &frontier_node in &dominance_frontiers[node_id.index()] {
-                        let frontier_idx = frontier_node.index();
-                        if phi_blocks.insert(frontier_idx) {
-                            worklist.push(frontier_idx);
-                        }
-                    }
-                }
-            }
-
-            // Place phi nodes for this origin at each frontier block
-            for &phi_block_idx in &phi_blocks {
-                if let Some(block) = self.function.block_mut(phi_block_idx) {
-                    let phi = PhiNode::new(SsaVarId::new(0), *origin);
-                    block.add_phi(phi);
-                }
-            }
-        }
-    }
-
-    /// Phase 3: Renames variables using dominator tree traversal.
-    ///
-    /// This assigns unique SSA versions to each variable definition and
-    /// updates uses to reference the correct reaching definition.
-    fn rename_variables(&mut self) -> Result<()> {
-        // Initialize version stacks and create initial variables for args/locals
-        for i in 0..self.num_args {
-            let origin = VariableOrigin::Argument(Self::idx_to_u16(i)?);
-            let initial_var = SsaVarId::new(self.function.variable_count());
-            let var = SsaVariable::new(initial_var, origin, 0, DefSite::entry());
-            self.function.add_variable(var);
-            self.version_stacks.insert(origin, vec![(0, initial_var)]);
-            self.next_version.insert(origin, 1);
-        }
-        for i in 0..self.num_locals {
-            let origin = VariableOrigin::Local(Self::idx_to_u16(i)?);
-            let initial_var = SsaVarId::new(self.function.variable_count());
-            let var = SsaVariable::new(initial_var, origin, 0, DefSite::entry());
-            self.function.add_variable(var);
-            self.version_stacks.insert(origin, vec![(0, initial_var)]);
-            self.next_version.insert(origin, 1);
-        }
-
-        // Start renaming from entry block
-        let dom_tree = self.cfg.dominators();
-        self.rename_block(self.cfg.entry().index(), dom_tree)?;
-
-        Ok(())
-    }
-
-    /// Gets the current SSA variable for a given origin.
-    fn current_def(&self, origin: VariableOrigin) -> Option<SsaVarId> {
-        self.version_stacks
-            .get(&origin)
-            .and_then(|stack| stack.last())
-            .map(|(_, var_id)| *var_id)
-    }
-
-    /// Creates a new SSA variable for a definition and pushes it on the stack.
-    fn new_def(
-        &mut self,
-        origin: VariableOrigin,
-        block_idx: usize,
-        instr_idx: Option<usize>,
-    ) -> SsaVarId {
-        let version = *self.next_version.get(&origin).unwrap_or(&0);
-        *self.next_version.entry(origin).or_insert(0) += 1;
-
-        let var_id = SsaVarId::new(self.function.variable_count());
-        let def_site = match instr_idx {
-            Some(idx) => DefSite::instruction(block_idx, idx),
-            None => DefSite::phi(block_idx),
+    /// Adds: dest = const i32
+    #[must_use]
+    pub fn const_i32(&mut self, value: i32) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Const {
+            dest,
+            value: ConstValue::I32(value),
         };
-        let var = SsaVariable::new(var_id, origin, version, def_site);
-        self.function.add_variable(var);
-
-        self.version_stacks
-            .entry(origin)
-            .or_default()
-            .push((version, var_id));
-        var_id
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
     }
 
-    /// Records a use of an SSA variable at the given site.
-    fn record_use(&mut self, var_id: SsaVarId, use_site: UseSite) {
-        if let Some(var) = self.function.variable_mut(var_id) {
-            var.add_use(use_site);
-        }
+    /// Adds: dest = const i64
+    #[must_use]
+    pub fn const_i64(&mut self, value: i64) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Const {
+            dest,
+            value: ConstValue::I64(value),
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
     }
 
-    /// Recursively renames variables in a block and its dominated children.
-    fn rename_block(&mut self, block_idx: usize, dom_tree: &DominatorTree) -> Result<()> {
-        // Track how many definitions we push for each origin (for cleanup)
-        let mut pushed_counts: HashMap<VariableOrigin, usize> = HashMap::new();
+    /// Adds: dest = const f32
+    #[must_use]
+    pub fn const_f32(&mut self, value: f32) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Const {
+            dest,
+            value: ConstValue::F32(value),
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
 
-        // Step 1: Process phi nodes - they define new versions
-        let phi_count = self
-            .function
-            .block(block_idx)
-            .map_or(0, SsaBlock::phi_count);
-        for phi_idx in 0..phi_count {
-            if let Some(block) = self.function.block(block_idx) {
-                if let Some(phi) = block.phi(phi_idx) {
-                    let origin = phi.origin();
-                    // Create new definition for this phi
-                    let new_var = self.new_def(origin, block_idx, None);
-                    *pushed_counts.entry(origin).or_insert(0) += 1;
+    /// Adds: dest = const f64
+    #[must_use]
+    pub fn const_f64(&mut self, value: f64) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Const {
+            dest,
+            value: ConstValue::F64(value),
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
 
-                    // Update the phi's result
-                    if let Some(block) = self.function.block_mut(block_idx) {
-                        if let Some(phi) = block.phi_mut(phi_idx) {
-                            phi.set_result(new_var);
-                        }
-                    }
-                }
-            }
+    /// Adds: dest = null
+    #[must_use]
+    pub fn const_null(&mut self) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Const {
+            dest,
+            value: ConstValue::Null,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = true (i32 value 1)
+    #[must_use]
+    pub fn const_true(&mut self) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Const {
+            dest,
+            value: ConstValue::True,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = false (i32 value 0)
+    #[must_use]
+    pub fn const_false(&mut self) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Const {
+            dest,
+            value: ConstValue::False,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = const (generic ConstValue)
+    #[must_use]
+    pub fn const_val(&mut self, value: ConstValue) -> SsaVarId {
+        let var_type = value.ssa_type();
+        let dest = self.builder.alloc_stack_var_typed(var_type);
+        let op = SsaOp::Const { dest, value };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = left + right
+    #[must_use]
+    pub fn add(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Add { dest, left, right };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = left - right
+    #[must_use]
+    pub fn sub(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Sub { dest, left, right };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = left * right
+    #[must_use]
+    pub fn mul(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Mul { dest, left, right };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = left / right (signed)
+    #[must_use]
+    pub fn div(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Div {
+            dest,
+            left,
+            right,
+            unsigned: false,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = left / right (unsigned)
+    #[must_use]
+    pub fn div_un(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Div {
+            dest,
+            left,
+            right,
+            unsigned: true,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = left % right (signed)
+    #[must_use]
+    pub fn rem(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Rem {
+            dest,
+            left,
+            right,
+            unsigned: false,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = left % right (unsigned)
+    #[must_use]
+    pub fn rem_un(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Rem {
+            dest,
+            left,
+            right,
+            unsigned: true,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = left & right
+    #[must_use]
+    pub fn and(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::And { dest, left, right };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = left | right
+    #[must_use]
+    pub fn or(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Or { dest, left, right };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = left ^ right
+    #[must_use]
+    pub fn xor(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Xor { dest, left, right };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = value << amount
+    #[must_use]
+    pub fn shl(&mut self, value: SsaVarId, amount: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Shl {
+            dest,
+            value,
+            amount,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = value >> amount (signed)
+    #[must_use]
+    pub fn shr(&mut self, value: SsaVarId, amount: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Shr {
+            dest,
+            value,
+            amount,
+            unsigned: false,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = value >> amount (unsigned)
+    #[must_use]
+    pub fn shr_un(&mut self, value: SsaVarId, amount: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Shr {
+            dest,
+            value,
+            amount,
+            unsigned: true,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = -operand
+    #[must_use]
+    pub fn neg(&mut self, operand: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Neg { dest, operand };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = ~operand
+    #[must_use]
+    pub fn not(&mut self, operand: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Not { dest, operand };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = src (copy)
+    #[must_use]
+    pub fn copy(&mut self, src: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Copy { dest, src };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = (left == right) ? 1 : 0
+    #[must_use]
+    pub fn ceq(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Ceq { dest, left, right };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = (left < right) ? 1 : 0 (signed)
+    #[must_use]
+    pub fn clt(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Clt {
+            dest,
+            left,
+            right,
+            unsigned: false,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = (left < right) ? 1 : 0 (unsigned)
+    #[must_use]
+    pub fn clt_un(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Clt {
+            dest,
+            left,
+            right,
+            unsigned: true,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = (left > right) ? 1 : 0 (signed)
+    #[must_use]
+    pub fn cgt(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Cgt {
+            dest,
+            left,
+            right,
+            unsigned: false,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = (left > right) ? 1 : 0 (unsigned)
+    #[must_use]
+    pub fn cgt_un(&mut self, left: SsaVarId, right: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Cgt {
+            dest,
+            left,
+            right,
+            unsigned: true,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = conv(operand, target) - signed conversion
+    #[must_use]
+    pub fn conv(&mut self, operand: SsaVarId, target: SsaType) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Conv {
+            dest,
+            operand,
+            target,
+            overflow_check: false,
+            unsigned: false,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = conv.un(operand, target) - unsigned conversion
+    #[must_use]
+    pub fn conv_un(&mut self, operand: SsaVarId, target: SsaType) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Conv {
+            dest,
+            operand,
+            target,
+            overflow_check: false,
+            unsigned: true,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = conv.ovf(operand, target) - with overflow checking
+    #[must_use]
+    pub fn conv_ovf(&mut self, operand: SsaVarId, target: SsaType) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Conv {
+            dest,
+            operand,
+            target,
+            overflow_check: true,
+            unsigned: false,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: dest = conv.ovf.un(operand, target) - unsigned with overflow checking
+    #[must_use]
+    pub fn conv_ovf_un(&mut self, operand: SsaVarId, target: SsaType) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Conv {
+            dest,
+            operand,
+            target,
+            overflow_check: true,
+            unsigned: true,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: jump target
+    pub fn jump(&mut self, target: usize) {
+        let op = SsaOp::Jump { target };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+    }
+
+    /// Adds: branch condition, true_target, false_target
+    pub fn branch(&mut self, condition: SsaVarId, true_target: usize, false_target: usize) {
+        let op = SsaOp::Branch {
+            condition,
+            true_target,
+            false_target,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+    }
+
+    /// Adds: switch value, targets, default
+    pub fn switch(&mut self, value: SsaVarId, targets: Vec<usize>, default: usize) {
+        let op = SsaOp::Switch {
+            value,
+            targets,
+            default,
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+    }
+
+    /// Adds: return (void)
+    pub fn ret(&mut self) {
+        let op = SsaOp::Return { value: None };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+    }
+
+    /// Adds: return value
+    pub fn ret_val(&mut self, value: SsaVarId) {
+        let op = SsaOp::Return { value: Some(value) };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+    }
+
+    /// Adds: leave target (for exception handling)
+    pub fn leave(&mut self, target: usize) {
+        let op = SsaOp::Leave { target };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+    }
+
+    /// Adds: throw exception
+    pub fn throw(&mut self, exception: SsaVarId) {
+        let op = SsaOp::Throw { exception };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+    }
+
+    /// Adds: call method with return value
+    ///
+    /// Returns the variable holding the call result.
+    #[must_use]
+    pub fn call(&mut self, method: MethodRef, args: &[SsaVarId]) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::Call {
+            dest: Some(dest),
+            method,
+            args: args.to_vec(),
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: call method without return value (void)
+    pub fn call_void(&mut self, method: MethodRef, args: &[SsaVarId]) {
+        let op = SsaOp::Call {
+            dest: None,
+            method,
+            args: args.to_vec(),
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+    }
+
+    /// Adds: callvirt method with return value
+    ///
+    /// Returns the variable holding the call result.
+    #[must_use]
+    pub fn callvirt(&mut self, method: MethodRef, args: &[SsaVarId]) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::CallVirt {
+            dest: Some(dest),
+            method,
+            args: args.to_vec(),
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: callvirt method without return value (void)
+    pub fn callvirt_void(&mut self, method: MethodRef, args: &[SsaVarId]) {
+        let op = SsaOp::CallVirt {
+            dest: None,
+            method,
+            args: args.to_vec(),
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+    }
+
+    /// Adds: newobj ctor(args)
+    ///
+    /// Returns the variable holding the new object reference.
+    #[must_use]
+    pub fn newobj(&mut self, ctor: MethodRef, args: &[SsaVarId]) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::NewObj {
+            dest,
+            ctor,
+            args: args.to_vec(),
+        };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds: array.Length
+    ///
+    /// Returns the variable holding the array length.
+    #[must_use]
+    pub fn array_length(&mut self, array: SsaVarId) -> SsaVarId {
+        let dest = self.builder.alloc_stack_var();
+        let op = SsaOp::ArrayLength { dest, array };
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+        dest
+    }
+
+    /// Adds a phi node and returns the result variable.
+    ///
+    /// # Arguments
+    ///
+    /// * `operands` - Pairs of (predecessor_block_id, value) for each incoming edge
+    #[must_use]
+    pub fn phi(&mut self, operands: &[(usize, SsaVarId)]) -> SsaVarId {
+        let result = self.builder.alloc_stack_var();
+        // Variable indices are bounded by SSA instruction count which fits in u32
+        #[allow(clippy::cast_possible_truncation)]
+        let slot = result.index() as u32;
+        let mut phi = PhiNode::new(result, VariableOrigin::Stack(slot));
+
+        for &(pred, val) in operands {
+            phi.add_operand(PhiOperand::new(val, pred));
         }
 
-        // Step 2: Process instructions - update uses and create new defs
-        let instr_count = self
-            .function
-            .block(block_idx)
-            .map_or(0, SsaBlock::instruction_count);
+        self.block.add_phi(phi);
+        result
+    }
 
-        for instr_idx in 0..instr_count {
-            // Get instruction info
-            let instr_info = self.function.block(block_idx).and_then(|b| {
-                b.instruction(instr_idx)
-                    .map(|instr| (instr.original().clone(), instr.uses().to_vec(), instr.def()))
-            });
+    /// Adds a raw SsaOp (for cases not covered by helpers).
+    pub fn op(&mut self, op: SsaOp) {
+        self.block.add_instruction(SsaInstruction::synthetic(op));
+    }
 
-            if let Some((cil_instr, uses, _old_def)) = instr_info {
-                // Record uses for each operand
-                // The uses are SsaVarIds that were assigned during stack simulation
-                for &use_var in &uses {
-                    let use_site = UseSite::instruction(block_idx, instr_idx);
-                    self.record_use(use_var, use_site);
-                }
-
-                // Determine the origin this instruction defines (if any)
-                let def_origin = Self::infer_origin(&cil_instr)?;
-
-                // If this instruction defines a variable, create new version
-                if let Some(origin) = def_origin {
-                    let new_var = self.new_def(origin, block_idx, Some(instr_idx));
-                    *pushed_counts.entry(origin).or_insert(0) += 1;
-
-                    // Update the instruction's def
-                    if let Some(block) = self.function.block_mut(block_idx) {
-                        if let Some(instr) = block.instruction_mut(instr_idx) {
-                            instr.set_def(Some(new_var));
-                        }
-                    }
-                }
-            }
-        }
-
-        // Step 3: Fill in phi operands in successor blocks and record uses
-        let successors: Vec<usize> = self
-            .cfg
-            .successors(NodeId::new(block_idx))
-            .map(NodeId::index)
-            .collect();
-
-        for succ_idx in successors {
-            let succ_phi_count = self.function.block(succ_idx).map_or(0, SsaBlock::phi_count);
-
-            for phi_idx in 0..succ_phi_count {
-                // Get the origin for this phi
-                let origin = self
-                    .function
-                    .block(succ_idx)
-                    .and_then(|b| b.phi(phi_idx))
-                    .map(PhiNode::origin);
-
-                if let Some(origin) = origin {
-                    // Get current reaching definition for this origin
-                    let reaching_def = self.current_def(origin).unwrap_or(SsaVarId::new(0));
-
-                    // Add operand to phi
-                    if let Some(block) = self.function.block_mut(succ_idx) {
-                        if let Some(phi) = block.phi_mut(phi_idx) {
-                            phi.set_operand(block_idx, reaching_def);
-                        }
-                    }
-
-                    // Record that reaching_def is used by this phi operand
-                    let use_site = UseSite::phi_operand(succ_idx, phi_idx);
-                    self.record_use(reaching_def, use_site);
-                }
-            }
-        }
-
-        // Step 4: Recursively process dominated children
-        let children: Vec<_> = dom_tree
-            .children(NodeId::new(block_idx))
-            .into_iter()
-            .collect();
-        for child in children {
-            self.rename_block(child.index(), dom_tree)?;
-        }
-
-        // Step 5: Pop pushed definitions from stacks
-        for (origin, count) in pushed_counts {
-            if let Some(stack) = self.version_stacks.get_mut(&origin) {
-                for _ in 0..count {
-                    stack.pop();
-                }
-            }
-        }
-
-        Ok(())
+    /// Adds a nop instruction.
+    pub fn nop(&mut self) {
+        self.block
+            .add_instruction(SsaInstruction::synthetic(SsaOp::Nop));
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assembly::{decode_blocks, InstructionAssembler};
-
-    /// Helper to build a CFG from assembled bytecode.
-    fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph<'static> {
-        let (bytecode, _max_stack) = assembler.finish().expect("Failed to assemble bytecode");
-        let blocks =
-            decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len())).expect("Failed to decode");
-        ControlFlowGraph::from_basic_blocks(blocks).expect("Failed to build CFG")
-    }
 
     #[test]
     fn test_simple_function() {
-        // Simple method: return arg0 + arg1
-        let mut asm = InstructionAssembler::new();
-        asm.ldarg_0()
-            .unwrap()
-            .ldarg_1()
-            .unwrap()
-            .add()
-            .unwrap()
-            .ret()
-            .unwrap();
+        let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
+            let (a, b) = (f.arg(0), f.arg(1));
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 2, 0).expect("SSA construction failed");
+            f.block(0, |blk| {
+                let sum = blk.add(a, b);
+                blk.ret_val(sum);
+            });
+        });
 
-        // Should have 1 block
+        assert_eq!(ssa.num_args(), 2);
+        assert_eq!(ssa.num_locals(), 0);
         assert_eq!(ssa.block_count(), 1);
 
-        // Should have at least 2 variables (args)
-        assert!(ssa.variable_count() >= 2);
+        let block = ssa.block(0).unwrap();
+        assert_eq!(block.instruction_count(), 2); // add + ret
     }
 
     #[test]
-    fn test_local_variable() {
-        // Method: local0 = arg0; return local0
-        let mut asm = InstructionAssembler::new();
-        asm.ldarg_0()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            .ldloc_0()
-            .unwrap()
-            .ret()
-            .unwrap();
+    fn test_diamond_control_flow() {
+        let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
+            let cond = f.arg(0);
+            let (mut v_then, mut v_else) = (SsaVarId::new(), SsaVarId::new());
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 1, 1).expect("SSA construction failed");
+            f.block(0, |b| {
+                b.branch(cond, 1, 2);
+            });
 
-        // Should have 1 block
-        assert_eq!(ssa.block_count(), 1);
+            f.block(1, |b| {
+                v_then = b.const_i32(1);
+                b.jump(3);
+            });
 
-        // Should have variables for arg and local
-        assert!(ssa.variable_count() >= 2);
-    }
+            f.block(2, |b| {
+                v_else = b.const_i32(0);
+                b.jump(3);
+            });
 
-    #[test]
-    fn test_conditional_no_phi() {
-        // if (arg0) { return 1; } return 0;
-        // No phi needed because both paths return
-        let mut asm = InstructionAssembler::new();
-        asm.ldarg_0()
-            .unwrap()
-            .brfalse_s("else")
-            .unwrap()
-            .ldc_i4_1()
-            .unwrap()
-            .ret()
-            .unwrap()
-            .label("else")
-            .unwrap()
-            .ldc_i4_0()
-            .unwrap()
-            .ret()
-            .unwrap();
+            f.block(3, |b| {
+                let result = b.phi(&[(1, v_then), (2, v_else)]);
+                b.ret_val(result);
+            });
+        });
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 1, 0).expect("SSA construction failed");
-
-        // Should have 3 blocks: entry, then, else
-        assert_eq!(ssa.block_count(), 3);
-
-        // No phi nodes should be needed (no merge point)
-        assert_eq!(ssa.total_phi_count(), 0);
-    }
-
-    #[test]
-    fn test_diamond_with_merge() {
-        // if (arg0) { x = 1; } else { x = 0; } return x;
-        let mut asm = InstructionAssembler::new();
-        asm.ldarg_0()
-            .unwrap()
-            .brfalse_s("else")
-            .unwrap()
-            .ldc_i4_1()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            .br_s("merge")
-            .unwrap()
-            .label("else")
-            .unwrap()
-            .ldc_i4_0()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            .label("merge")
-            .unwrap()
-            .ldloc_0()
-            .unwrap()
-            .ret()
-            .unwrap();
-
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 1, 1).expect("SSA construction failed");
-
-        // Should have 4 blocks: entry, then, else, merge
         assert_eq!(ssa.block_count(), 4);
 
-        // Should have a phi node in the merge block
-        // (local0 is defined in both then and else branches)
-        assert!(ssa.total_phi_count() > 0);
+        // Check phi node exists in block 3
+        let block3 = ssa.block(3).unwrap();
+        assert_eq!(block3.phi_count(), 1);
     }
 
     #[test]
-    fn test_loop_phi() {
-        // i = 0; while (i < arg0) { i++; } return i;
-        let mut asm = InstructionAssembler::new();
-        asm.ldc_i4_0()
-            .unwrap()
-            .stloc_0()
-            .unwrap() // i = 0
-            .label("loop_header")
-            .unwrap()
-            .ldloc_0()
-            .unwrap()
-            .ldarg_0()
-            .unwrap()
-            .bge_s("loop_exit")
-            .unwrap() // if (i >= arg0) exit
-            .ldloc_0()
-            .unwrap()
-            .ldc_i4_1()
-            .unwrap()
-            .add()
-            .unwrap()
-            .stloc_0()
-            .unwrap() // i++
-            .br_s("loop_header")
-            .unwrap()
-            .label("loop_exit")
-            .unwrap()
-            .ldloc_0()
-            .unwrap()
-            .ret()
-            .unwrap();
+    fn test_jump_threading_pattern() {
+        let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
+            let cond = f.arg(0);
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 1, 1).expect("SSA construction failed");
+            f.block(0, |b| b.branch(cond, 1, 2));
+            f.block(1, |b| b.jump(3));
+            f.block(2, |b| b.jump(4));
+            f.block(3, |b| b.ret());
+            f.block(4, |b| b.ret());
+        });
 
-        // Should have multiple blocks
-        assert!(ssa.block_count() >= 2);
+        assert_eq!(ssa.block_count(), 5);
 
-        // Should have phi node(s) for the loop variable
-        // (i is modified in the loop body and merged at the header)
+        // Verify block 0 has branch
+        let block0 = ssa.block(0).unwrap();
+        assert!(matches!(block0.terminator_op(), Some(SsaOp::Branch { .. })));
     }
 
     #[test]
-    fn test_empty_cfg_error() {
-        // Create an empty CFG manually would require internal access
-        // For now, test that construction succeeds with minimal valid input
-        let mut asm = InstructionAssembler::new();
-        asm.ret().unwrap();
+    fn test_constant_propagation_pattern() {
+        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
+            f.block(0, |b| {
+                let v0 = b.const_i32(10);
+                let v1 = b.const_i32(32);
+                let sum = b.add(v0, v1);
+                b.ret_val(sum);
+            });
+        });
 
-        let cfg = build_cfg(asm);
-        let result = SsaBuilder::build(&cfg, 0, 0);
-        assert!(result.is_ok());
-    }
+        assert_eq!(ssa.block_count(), 1);
 
-    // ============================================================
-    // Variable Renaming Verification Tests
-    // ============================================================
-
-    #[test]
-    fn test_variable_versions_increment_correctly() {
-        // Test that multiple definitions of the same local create different versions
-        // local0 = 1; local0 = 2; local0 = 3; return local0;
-        let mut asm = InstructionAssembler::new();
-        asm.ldc_i4_1()
-            .unwrap()
-            .stloc_0()
-            .unwrap() // local0_0 = 1
-            .ldc_i4_2()
-            .unwrap()
-            .stloc_0()
-            .unwrap() // local0_1 = 2
-            .ldc_i4_3()
-            .unwrap()
-            .stloc_0()
-            .unwrap() // local0_2 = 3
-            .ldloc_0()
-            .unwrap()
-            .ret()
-            .unwrap();
-
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 0, 1).expect("SSA construction failed");
-
-        // Collect all versions of local0
-        let local0_vars: Vec<_> = ssa.variables_from_local(0).collect();
-
-        // Should have multiple versions: initial (version 0) plus 3 definitions
-        assert!(
-            local0_vars.len() >= 3,
-            "Expected at least 3 versions of local0, got {}",
-            local0_vars.len()
-        );
-
-        // Verify each version is unique
-        let mut versions: Vec<u32> = local0_vars.iter().map(|v| v.version()).collect();
-        versions.sort();
-        versions.dedup();
-        assert_eq!(
-            versions.len(),
-            local0_vars.len(),
-            "Not all versions are unique"
-        );
+        let block = ssa.block(0).unwrap();
+        assert_eq!(block.instruction_count(), 4); // const, const, add, ret
     }
 
     #[test]
-    fn test_phi_node_operands_from_correct_predecessors() {
-        // Diamond control flow: local0 defined differently in each branch
-        // if (arg0) { local0 = 1; } else { local0 = 2; }
-        // return local0;
-        let mut asm = InstructionAssembler::new();
-        asm.ldarg_0()
-            .unwrap()
-            .brfalse_s("else")
-            .unwrap()
-            // then branch: local0 = 1
-            .ldc_i4_1()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            .br_s("merge")
-            .unwrap()
-            // else branch: local0 = 2
-            .label("else")
-            .unwrap()
-            .ldc_i4_2()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            // merge point
-            .label("merge")
-            .unwrap()
-            .ldloc_0()
-            .unwrap()
-            .ret()
-            .unwrap();
+    fn test_switch_pattern() {
+        let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
+            let val = f.arg(0);
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 1, 1).expect("SSA construction failed");
+            f.block(0, |b| b.switch(val, vec![1, 2], 3));
+            f.block(1, |b| b.jump(4));
+            f.block(2, |b| b.jump(4));
+            f.block(3, |b| b.jump(4));
+            f.block(4, |b| b.ret());
+        });
 
-        // Find the merge block (block 3 in 0-indexed: entry=0, then=1, else=2, merge=3)
-        // There should be a phi node for local0 in the merge block
-        assert!(
-            ssa.total_phi_count() > 0,
-            "Expected phi nodes in merge block"
-        );
+        assert_eq!(ssa.block_count(), 5);
 
-        // Get all phi nodes
-        let phi_nodes: Vec<_> = ssa.all_phi_nodes().collect();
-        assert!(!phi_nodes.is_empty(), "No phi nodes found");
-
-        // Find phi node for local0
-        let local0_phi = phi_nodes
-            .iter()
-            .find(|phi| phi.origin() == VariableOrigin::Local(0));
-        assert!(
-            local0_phi.is_some(),
-            "No phi node found for local0 in merge block"
-        );
-
-        let phi = local0_phi.unwrap();
-
-        // Phi should have 2 operands (one from each predecessor)
-        assert_eq!(
-            phi.operand_count(),
-            2,
-            "Phi node should have exactly 2 operands, got {}",
-            phi.operand_count()
-        );
-
-        // Each operand should reference a different predecessor
-        let predecessors: Vec<_> = phi.operands().iter().map(|op| op.predecessor()).collect();
-        assert_ne!(
-            predecessors[0], predecessors[1],
-            "Phi operands should come from different predecessors"
-        );
+        // Verify block 0 has switch
+        let block0 = ssa.block(0).unwrap();
+        assert!(matches!(block0.terminator_op(), Some(SsaOp::Switch { .. })));
     }
 
     #[test]
-    fn test_loop_variable_renaming() {
-        // Loop with variable modified in body:
-        // i = 0; while (i < 10) { i = i + 1; } return i;
-        let mut asm = InstructionAssembler::new();
-        asm.ldc_i4_0()
-            .unwrap()
-            .stloc_0()
-            .unwrap() // i = 0
-            .label("loop_header")
-            .unwrap()
-            .ldloc_0()
-            .unwrap()
-            .ldc_i4_s(10)
-            .unwrap()
-            .bge_s("exit")
-            .unwrap() // if i >= 10 exit
-            // loop body: i = i + 1
-            .ldloc_0()
-            .unwrap()
-            .ldc_i4_1()
-            .unwrap()
-            .add()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            .br_s("loop_header")
-            .unwrap()
-            .label("exit")
-            .unwrap()
-            .ldloc_0()
-            .unwrap()
-            .ret()
-            .unwrap();
+    fn test_arithmetic_operations() {
+        let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
+            let (a, b) = (f.arg(0), f.arg(1));
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 0, 1).expect("SSA construction failed");
+            f.block(0, |blk| {
+                let sum = blk.add(a, b);
+                let diff = blk.sub(a, b);
+                let prod = blk.mul(sum, diff);
+                let quot = blk.div(prod, a);
+                let rem = blk.rem(quot, b);
+                blk.ret_val(rem);
+            });
+        });
 
-        // Loop header should have a phi node for local0 (merges initial value and loop value)
-        assert!(
-            ssa.total_phi_count() > 0,
-            "Expected phi node(s) for loop variable"
-        );
-
-        // Find phi node for local0
-        let local0_phis: Vec<_> = ssa
-            .all_phi_nodes()
-            .filter(|phi| phi.origin() == VariableOrigin::Local(0))
-            .collect();
-
-        assert!(
-            !local0_phis.is_empty(),
-            "Expected phi node for loop variable local0"
-        );
-
-        // The phi in the loop header should have 2 operands:
-        // one from entry block (initial value) and one from loop body (incremented value)
-        for phi in &local0_phis {
-            assert!(
-                phi.operand_count() >= 2,
-                "Loop phi should have at least 2 operands, got {}",
-                phi.operand_count()
-            );
-        }
-
-        // Verify we have multiple versions of local0
-        let local0_versions: Vec<_> = ssa.variables_from_local(0).collect();
-        assert!(
-            local0_versions.len() >= 2,
-            "Expected multiple versions of local0, got {}",
-            local0_versions.len()
-        );
+        let block = ssa.block(0).unwrap();
+        assert_eq!(block.instruction_count(), 6); // 5 ops + ret
     }
 
     #[test]
-    fn test_unique_ssa_variable_ids() {
-        // Test that all SSA variables have unique IDs
-        let mut asm = InstructionAssembler::new();
-        asm.ldarg_0()
-            .unwrap()
-            .ldarg_1()
-            .unwrap()
-            .add()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            .ldloc_0()
-            .unwrap()
-            .ldarg_0()
-            .unwrap()
-            .mul()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            .ldloc_0()
-            .unwrap()
-            .ret()
-            .unwrap();
+    fn test_bitwise_operations() {
+        let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
+            let (a, b) = (f.arg(0), f.arg(1));
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 2, 1).expect("SSA construction failed");
+            f.block(0, |blk| {
+                let v_and = blk.and(a, b);
+                let _v_or = blk.or(a, b);
+                let _v_xor = blk.xor(a, b);
+                let _v_shl = blk.shl(a, b);
+                let _v_shr = blk.shr(a, b);
+                let v_not = blk.not(v_and);
+                blk.ret_val(v_not);
+            });
+        });
 
-        // All variable IDs should be unique
-        let mut ids: Vec<_> = ssa.variables().iter().map(|v| v.id().index()).collect();
-        let original_len = ids.len();
-        ids.sort();
-        ids.dedup();
-        assert_eq!(
-            ids.len(),
-            original_len,
-            "All SSA variable IDs should be unique"
-        );
+        let block = ssa.block(0).unwrap();
+        assert_eq!(block.instruction_count(), 7);
     }
 
     #[test]
-    fn test_argument_variable_initial_version() {
-        // Arguments should have version 0 at function entry
-        let mut asm = InstructionAssembler::new();
-        asm.ldarg_0()
-            .unwrap()
-            .ldarg_1()
-            .unwrap()
-            .ldarg_2()
-            .unwrap()
-            .add()
-            .unwrap()
-            .add()
-            .unwrap()
-            .ret()
-            .unwrap();
+    fn test_comparisons() {
+        let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
+            let (a, b) = (f.arg(0), f.arg(1));
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 3, 0).expect("SSA construction failed");
+            f.block(0, |blk| {
+                let eq = blk.ceq(a, b);
+                let _lt = blk.clt(a, b);
+                let _gt = blk.cgt(a, b);
+                blk.ret_val(eq);
+            });
+        });
 
-        // Check that we have argument variables
-        let arg_vars: Vec<_> = ssa.argument_variables().collect();
-        assert_eq!(
-            arg_vars.len(),
-            3,
-            "Expected 3 argument variables (version 0), got {}",
-            arg_vars.len()
-        );
-
-        // All should have version 0
-        for var in arg_vars {
-            assert_eq!(
-                var.version(),
-                0,
-                "Initial argument should have version 0, got {}",
-                var.version()
-            );
-        }
+        let block = ssa.block(0).unwrap();
+        assert_eq!(block.instruction_count(), 4);
     }
 
     #[test]
-    fn test_stack_variable_across_branch() {
-        // Test that stack values flowing across branches are handled correctly
-        // dup; brtrue skip; pop; skip: ret
-        // This tests the stack depth propagation fix
-        let mut asm = InstructionAssembler::new();
-        asm.ldarg_0()
-            .unwrap()
-            .dup()
-            .unwrap() // stack: [arg0, arg0]
-            .brtrue_s("skip")
-            .unwrap() // pops one, stack: [arg0] if false, [arg0] if true
-            .pop()
-            .unwrap() // stack: [] if we reach here
-            .label("skip")
-            .unwrap()
-            .ret()
-            .unwrap();
+    fn test_locals() {
+        let ssa = SsaFunctionBuilder::new(1, 2).build_with(|f| {
+            let arg = f.arg(0);
+            let _local0 = f.local(0);
+            let _local1 = f.local(1);
 
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 1, 0).expect("SSA construction failed");
+            f.block(0, |blk| {
+                blk.ret_val(arg);
+            });
+        });
 
-        // Should succeed without error (this was failing before the stack depth fix)
-        assert!(ssa.block_count() >= 2);
-    }
-
-    #[test]
-    fn test_nested_conditionals_phi_placement() {
-        // Nested conditionals to test phi node placement at correct join points
-        // if (arg0) { if (arg1) { local0 = 1; } else { local0 = 2; } } else { local0 = 3; }
-        // return local0;
-        let mut asm = InstructionAssembler::new();
-        asm.ldarg_0()
-            .unwrap()
-            .brfalse_s("outer_else")
-            .unwrap()
-            // outer then
-            .ldarg_1()
-            .unwrap()
-            .brfalse_s("inner_else")
-            .unwrap()
-            // inner then: local0 = 1
-            .ldc_i4_1()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            .br_s("inner_merge")
-            .unwrap()
-            // inner else: local0 = 2
-            .label("inner_else")
-            .unwrap()
-            .ldc_i4_2()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            .label("inner_merge")
-            .unwrap()
-            .br_s("outer_merge")
-            .unwrap()
-            // outer else: local0 = 3
-            .label("outer_else")
-            .unwrap()
-            .ldc_i4_3()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            // final merge
-            .label("outer_merge")
-            .unwrap()
-            .ldloc_0()
-            .unwrap()
-            .ret()
-            .unwrap();
-
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 2, 1).expect("SSA construction failed");
-
-        // Should have phi nodes at merge points
-        assert!(
-            ssa.total_phi_count() >= 1,
-            "Expected phi nodes at merge points"
-        );
-
-        // Multiple versions of local0 should exist
-        let local0_vars: Vec<_> = ssa.variables_from_local(0).collect();
-        assert!(
-            local0_vars.len() >= 3,
-            "Expected at least 3 versions of local0 (one per definition path), got {}",
-            local0_vars.len()
-        );
-    }
-
-    #[test]
-    fn test_argument_reassignment_creates_new_version() {
-        // Test that storing to an argument creates a new version
-        // starg.0 after using arg0 should create arg0_1
-        let mut asm = InstructionAssembler::new();
-        asm.ldarg_0()
-            .unwrap() // load arg0_0
-            .ldc_i4_1()
-            .unwrap()
-            .add()
-            .unwrap()
-            .starg_s(0)
-            .unwrap() // arg0_1 = arg0_0 + 1
-            .ldarg_0()
-            .unwrap() // load arg0_1
-            .ret()
-            .unwrap();
-
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 1, 0).expect("SSA construction failed");
-
-        // Should have multiple versions of arg0
-        let arg0_vars: Vec<_> = ssa.variables_from_argument(0).collect();
-        assert!(
-            arg0_vars.len() >= 2,
-            "Expected at least 2 versions of arg0, got {}",
-            arg0_vars.len()
-        );
-
-        // Should have version 0 and version 1
-        let versions: Vec<u32> = arg0_vars.iter().map(|v| v.version()).collect();
-        assert!(versions.contains(&0), "Expected version 0 of arg0 to exist");
-    }
-
-    #[test]
-    fn test_phi_operands_reference_existing_variables() {
-        // Verify that phi node operands reference variables that actually exist
-        let mut asm = InstructionAssembler::new();
-        asm.ldarg_0()
-            .unwrap()
-            .brfalse_s("else")
-            .unwrap()
-            .ldc_i4_1()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            .br_s("merge")
-            .unwrap()
-            .label("else")
-            .unwrap()
-            .ldc_i4_0()
-            .unwrap()
-            .stloc_0()
-            .unwrap()
-            .label("merge")
-            .unwrap()
-            .ldloc_0()
-            .unwrap()
-            .ret()
-            .unwrap();
-
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 1, 1).expect("SSA construction failed");
-
-        // For each phi node, verify all operand values reference valid variables
-        let var_ids: std::collections::HashSet<_> =
-            ssa.variables().iter().map(|v| v.id()).collect();
-
-        for phi in ssa.all_phi_nodes() {
-            for operand in phi.operands() {
-                assert!(
-                    var_ids.contains(&operand.value()),
-                    "Phi operand references non-existent variable {}",
-                    operand.value()
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn test_def_site_correctness() {
-        // Verify that def_site accurately reflects where variables are defined
-        let mut asm = InstructionAssembler::new();
-        asm.ldc_i4_0()
-            .unwrap()
-            .stloc_0()
-            .unwrap() // local0 defined in block 0
-            .ldloc_0()
-            .unwrap()
-            .ret()
-            .unwrap();
-
-        let cfg = build_cfg(asm);
-        let ssa = SsaBuilder::build(&cfg, 0, 1).expect("SSA construction failed");
-
-        // Find the non-initial version of local0 (the one from stloc)
-        let local0_defs: Vec<_> = ssa
-            .variables_from_local(0)
-            .filter(|v| !v.def_site().is_phi()) // Skip phi/entry definitions
-            .collect();
-
-        // At least one should be defined by an instruction (not phi)
-        for var in local0_defs {
-            assert!(
-                var.def_site().instruction.is_some(),
-                "Non-phi variable should have instruction def site"
-            );
-            // def_site block should be valid
-            assert!(
-                var.def_site().block < ssa.block_count(),
-                "Def site block out of range"
-            );
-        }
+        assert_eq!(ssa.num_locals(), 2);
     }
 }

@@ -93,6 +93,7 @@ impl DominatorTree {
     /// Checks if node `a` dominates node `b`.
     ///
     /// A node dominates itself. The entry node dominates all reachable nodes.
+    /// Returns `false` if `b` is unreachable from the entry node.
     ///
     /// # Complexity
     ///
@@ -102,11 +103,24 @@ impl DominatorTree {
             return true;
         }
 
+        // Handle out-of-bounds node indices
+        if b.index() >= self.node_count {
+            return false;
+        }
+
         let mut current = b;
         while current != self.entry {
+            // Check for unreachable nodes (sentinel value) or out-of-bounds
+            if current.index() >= self.node_count {
+                return false;
+            }
             let idom = self.idom[current.index()];
             if idom == a {
                 return true;
+            }
+            // Detect infinite loop (unreachable node pointing to sentinel)
+            if idom == current {
+                return false;
             }
             current = idom;
         }
@@ -567,16 +581,21 @@ where
 
         for pred in preds {
             let mut runner = pred;
-            while Some(runner) != idom_node && runner != dom_tree.entry() {
+            // Guard against unreachable nodes (their index may be invalid/sentinel)
+            while Some(runner) != idom_node && runner != dom_tree.entry() && runner.index() < n {
                 frontiers[runner.index()].insert(node);
                 if let Some(idom) = dom_tree.immediate_dominator(runner) {
+                    // Check for sentinel value (unreachable node)
+                    if idom.index() >= n {
+                        break;
+                    }
                     runner = idom;
                 } else {
                     break;
                 }
             }
-            // Also check entry if needed
-            if Some(runner) != idom_node && runner == dom_tree.entry() {
+            // Also check entry if needed (guard against invalid index)
+            if Some(runner) != idom_node && runner == dom_tree.entry() && runner.index() < n {
                 frontiers[runner.index()].insert(node);
             }
         }

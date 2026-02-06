@@ -31,6 +31,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::GenericParamRaw,
     },
@@ -75,19 +76,29 @@ impl MetadataLoader for GenericParamLoader {
     /// - Collection insertion operations fail
     /// - Parallel processing encounters errors
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(generics) = header.table::<GenericParamRaw>() {
-                generics.par_iter().try_for_each(|row| {
-                    let owned =
-                        row.to_owned(|coded_index| context.get_ref(coded_index), strings)?;
-                    owned.apply()?;
+        let (Some(header), Some(strings)) = (context.meta, context.strings) else {
+            return Ok(());
+        };
+        let Some(generics) = header.table::<GenericParamRaw>() else {
+            return Ok(());
+        };
 
-                    context.generic_param.insert(row.token, owned.clone());
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        generics.par_iter().try_for_each(|row| {
+            let token_msg = || format!("generic param 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned(|coded_index| context.get_ref(coded_index), strings),
+                DiagnosticCategory::Type,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(owned.apply(), DiagnosticCategory::Type, token_msg)?;
+            context.generic_param.insert(row.token, owned.clone());
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for the `GenericParam` table.

@@ -160,6 +160,7 @@
 //! - **ECMA-335 II.24.2**: Complete metadata stream architecture overview
 
 use crate::{utils::read_le, Result};
+use std::io::Write;
 
 /// ECMA-335 compliant stream header providing metadata stream location and identification.
 ///
@@ -554,6 +555,111 @@ impl StreamHeader {
 
         Ok(StreamHeader { offset, size, name })
     }
+
+    /// Writes this stream header to a writer in ECMA-335 binary format.
+    ///
+    /// Serializes the stream header including offset, size, and null-terminated name
+    /// with proper 4-byte alignment padding according to ECMA-335 Section II.24.2.2.
+    ///
+    /// ## Binary Format Written
+    /// ```text
+    /// Offset | Size | Field  | Description
+    /// -------|------|--------|------------------------------------------
+    /// 0      | 4    | Offset | Stream data offset from metadata root (LE)
+    /// 4      | 4    | Size   | Stream size in bytes (LE)
+    /// 8      | N    | Name   | Null-terminated ASCII name
+    /// 8+N    | P    | Pad    | Zero padding to 4-byte boundary
+    /// ```
+    ///
+    /// # Arguments
+    /// * `writer` - Any type implementing [`std::io::Write`]
+    ///
+    /// # Returns
+    /// * `Ok(())` - Header written successfully
+    /// * `Err(Error)` - Write operation failed
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// use dotscope::metadata::streams::StreamHeader;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let header = StreamHeader {
+    ///     offset: 0x6C,
+    ///     size: 0x1000,
+    ///     name: "#~".to_string(),
+    /// };
+    ///
+    /// let mut buffer = Vec::new();
+    /// header.write_to(&mut buffer)?;
+    ///
+    /// // Buffer contains: offset (4) + size (4) + "#~\0" (3) + padding (1) = 12 bytes
+    /// assert_eq!(buffer.len(), 12);
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the writer fails.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
+        // Write offset (4 bytes, little-endian)
+        writer.write_all(&self.offset.to_le_bytes())?;
+
+        // Write size (4 bytes, little-endian)
+        writer.write_all(&self.size.to_le_bytes())?;
+
+        // Write null-terminated name
+        writer.write_all(self.name.as_bytes())?;
+        writer.write_all(&[0u8])?; // Null terminator
+
+        // Pad to 4-byte boundary
+        // Name length + 1 (null terminator), padded to multiple of 4
+        let name_with_null = self.name.len() + 1;
+        let padded_len = (name_with_null + 3) & !3;
+        let padding = padded_len - name_with_null;
+        if padding > 0 {
+            writer.write_all(&vec![0u8; padding])?;
+        }
+
+        Ok(())
+    }
+
+    /// Returns the total serialized size of this stream header in bytes.
+    ///
+    /// The size includes the fixed fields (offset + size = 8 bytes) plus the
+    /// null-terminated name padded to a 4-byte boundary.
+    ///
+    /// # Returns
+    /// The total size in bytes when written with [`write_to`](Self::write_to).
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::streams::StreamHeader;
+    ///
+    /// let header = StreamHeader {
+    ///     offset: 0x6C,
+    ///     size: 0x1000,
+    ///     name: "#~".to_string(),
+    /// };
+    ///
+    /// // 8 (fixed) + ceil4("#~\0") = 8 + 4 = 12
+    /// assert_eq!(header.serialized_size(), 12);
+    ///
+    /// let strings_header = StreamHeader {
+    ///     offset: 0x20,
+    ///     size: 0x500,
+    ///     name: "#Strings".to_string(),
+    /// };
+    ///
+    /// // 8 (fixed) + ceil4("#Strings\0") = 8 + 12 = 20
+    /// assert_eq!(strings_header.serialized_size(), 20);
+    /// ```
+    #[must_use]
+    pub fn serialized_size(&self) -> usize {
+        let name_with_null = self.name.len() + 1;
+        let padded_name = (name_with_null + 3) & !3;
+        8 + padded_name // offset (4) + size (4) + padded name
+    }
 }
 
 #[cfg(test)]
@@ -588,5 +694,112 @@ mod tests {
         if StreamHeader::from(&header_bytes).is_ok() {
             panic!("This should not be valid!")
         }
+    }
+
+    #[test]
+    fn test_write_to_short_name() {
+        let header = StreamHeader {
+            offset: 0x6C,
+            size: 0x45A4,
+            name: "#~".to_string(),
+        };
+
+        let mut buffer = Vec::new();
+        header.write_to(&mut buffer).unwrap();
+
+        // Expected: offset (4) + size (4) + "#~\0" (3) + padding (1) = 12 bytes
+        assert_eq!(buffer.len(), 12);
+
+        // Verify offset
+        assert_eq!(&buffer[0..4], &[0x6C, 0x00, 0x00, 0x00]);
+        // Verify size
+        assert_eq!(&buffer[4..8], &[0xA4, 0x45, 0x00, 0x00]);
+        // Verify name "#~" + null + padding
+        assert_eq!(&buffer[8..12], &[0x23, 0x7E, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn test_write_to_long_name() {
+        let header = StreamHeader {
+            offset: 0x20,
+            size: 0x1248,
+            name: "#Strings".to_string(),
+        };
+
+        let mut buffer = Vec::new();
+        header.write_to(&mut buffer).unwrap();
+
+        // Expected: offset (4) + size (4) + "#Strings\0" (9) + padding (3) = 20 bytes
+        assert_eq!(buffer.len(), 20);
+
+        // Verify offset
+        assert_eq!(&buffer[0..4], &[0x20, 0x00, 0x00, 0x00]);
+        // Verify size
+        assert_eq!(&buffer[4..8], &[0x48, 0x12, 0x00, 0x00]);
+        // Verify name "#Strings" + null + padding
+        assert_eq!(
+            &buffer[8..20],
+            &[0x23, 0x53, 0x74, 0x72, 0x69, 0x6E, 0x67, 0x73, 0x00, 0x00, 0x00, 0x00]
+        );
+    }
+
+    #[test]
+    fn test_serialized_size() {
+        // "#~" (2 chars) + null = 3, padded to 4
+        let header = StreamHeader {
+            offset: 0,
+            size: 0,
+            name: "#~".to_string(),
+        };
+        assert_eq!(header.serialized_size(), 12); // 8 + 4
+
+        // "#Strings" (8 chars) + null = 9, padded to 12
+        let header = StreamHeader {
+            offset: 0,
+            size: 0,
+            name: "#Strings".to_string(),
+        };
+        assert_eq!(header.serialized_size(), 20); // 8 + 12
+
+        // "#US" (3 chars) + null = 4, already aligned
+        let header = StreamHeader {
+            offset: 0,
+            size: 0,
+            name: "#US".to_string(),
+        };
+        assert_eq!(header.serialized_size(), 12); // 8 + 4
+
+        // "#GUID" (5 chars) + null = 6, padded to 8
+        let header = StreamHeader {
+            offset: 0,
+            size: 0,
+            name: "#GUID".to_string(),
+        };
+        assert_eq!(header.serialized_size(), 16); // 8 + 8
+
+        // "#Blob" (5 chars) + null = 6, padded to 8
+        let header = StreamHeader {
+            offset: 0,
+            size: 0,
+            name: "#Blob".to_string(),
+        };
+        assert_eq!(header.serialized_size(), 16); // 8 + 8
+    }
+
+    #[test]
+    fn test_write_read_roundtrip() {
+        let original = StreamHeader {
+            offset: 0x1234,
+            size: 0x5678,
+            name: "#Blob".to_string(),
+        };
+
+        let mut buffer = Vec::new();
+        original.write_to(&mut buffer).unwrap();
+
+        let parsed = StreamHeader::from(&buffer).unwrap();
+        assert_eq!(parsed.offset, original.offset);
+        assert_eq!(parsed.size, original.size);
+        assert_eq!(parsed.name, original.name);
     }
 }

@@ -49,6 +49,8 @@ use crate::{
 };
 
 impl RowReadable for PropertyPtrRaw {
+    const TABLE_ID: TableId = TableId::PropertyPtr;
+
     /// Reads a `PropertyPtr` table row from the metadata stream.
     ///
     /// Parses a single `PropertyPtr` entry from the raw metadata bytes,

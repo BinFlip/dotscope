@@ -19,7 +19,7 @@ use crate::{
     metadata::{
         tables::{
             types::{CodedIndex, CodedIndexType, TableInfoRef},
-            CustomDebugInformationRaw, RowReadable,
+            CustomDebugInformationRaw, RowReadable, TableId,
         },
         token::Token,
     },
@@ -28,6 +28,8 @@ use crate::{
 };
 
 impl RowReadable for CustomDebugInformationRaw {
+    const TABLE_ID: TableId = TableId::CustomDebugInformation;
+
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 

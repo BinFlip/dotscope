@@ -5,14 +5,13 @@
 //! low-level builders to provide a fluent, high-level API for enum creation.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         signatures::{encode_field_signature, SignatureField, TypeSignature},
         tables::{
             CodedIndex, CodedIndexType, ConstantBuilder, FieldAttributes, FieldBuilder, TableId,
             TypeAttributes, TypeDefBuilder, TypeRefBuilder,
         },
-        token::Token,
         typesystem::ELEMENT_TYPE,
     },
     Error, Result,
@@ -48,14 +47,13 @@ struct EnumValueDefinition {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let enum_token = EnumBuilder::new("Color")
 ///     .public()
 ///     .value("Red", 0)
 ///     .value("Green", 1)
 ///     .value("Blue", 2)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -67,15 +65,14 @@ struct EnumValueDefinition {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let enum_token = EnumBuilder::new("Status")
 ///     .public()
 ///     .underlying_type(TypeSignature::U8) // byte enum
 ///     .value("Unknown", 0)
 ///     .value("Pending", 1)
 ///     .value("Complete", 255)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -87,15 +84,14 @@ struct EnumValueDefinition {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let enum_token = EnumBuilder::new("FileAccess")
 ///     .public()
 ///     .value("None", 0)
 ///     .value("Read", 1)
 ///     .value("Write", 2)
 ///     .value("ReadWrite", 3)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -253,16 +249,16 @@ impl EnumBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - Builder context for managing the assembly
+    /// * `assembly` - CilAssembly for managing the assembly
     ///
     /// # Returns
     ///
-    /// A token representing the newly created enum definition.
+    /// A `ChangeRefRc` representing the newly created enum definition.
     ///
     /// # Errors
     ///
     /// Returns an error if enum creation fails at any step.
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Validate enum constraints
         if self.name.is_empty() {
             return Err(Error::ModificationInvalid(
@@ -281,24 +277,31 @@ impl EnumBuilder {
 
         // Set extends to System.Enum as required by ECMA-335
         // Find or create the core library reference and System.Enum TypeRef
-        if let Some(core_lib_ref) = context.find_core_library_ref() {
+        if let Some(core_lib_ref) = assembly.find_core_library_ref() {
             // Create TypeRef for System.Enum in the core library
             let system_enum_typeref = TypeRefBuilder::new()
                 .name("Enum")
                 .namespace("System")
                 .resolution_scope(core_lib_ref)
-                .build(context)?;
+                .build(assembly)?;
+
+            // Get placeholder token for the typeref row
+            let typeref_placeholder = system_enum_typeref.placeholder_token().ok_or_else(|| {
+                Error::ModificationInvalid(
+                    "Failed to get placeholder token for System.Enum typeref".to_string(),
+                )
+            })?;
 
             // Create coded index for TypeDefOrRef pointing to the System.Enum TypeRef
             let extends_index = CodedIndex::new(
                 TableId::TypeRef,
-                system_enum_typeref.row(),
+                typeref_placeholder.row(),
                 CodedIndexType::TypeDefOrRef,
             );
             typedef_builder = typedef_builder.extends(extends_index);
         }
 
-        let enum_token = typedef_builder.build(context)?;
+        let enum_ref = typedef_builder.build(assembly)?;
 
         // Create the special value__ field that holds the underlying enum value
         let value_field_signature = SignatureField {
@@ -315,7 +318,7 @@ impl EnumBuilder {
                     | FieldAttributes::RTSPECIAL_NAME,
             )
             .signature(&value_field_sig_bytes)
-            .build(context)?;
+            .build(assembly)?;
 
         // Create constant fields for each enum value
         for enum_value in self.values {
@@ -327,11 +330,18 @@ impl EnumBuilder {
             let enum_field_sig_bytes = encode_field_signature(&enum_field_signature)?;
 
             // Create the field
-            let field_token = FieldBuilder::new()
+            let field_ref = FieldBuilder::new()
                 .name(&enum_value.name)
                 .flags(FieldAttributes::PUBLIC | FieldAttributes::STATIC | FieldAttributes::LITERAL)
                 .signature(&enum_field_sig_bytes)
-                .build(context)?;
+                .build(assembly)?;
+
+            // Get placeholder token for the field row
+            let field_placeholder = field_ref.placeholder_token().ok_or_else(|| {
+                Error::ModificationInvalid(
+                    "Failed to get placeholder token for enum field".to_string(),
+                )
+            })?;
 
             // Create the constant value for this field
             // We need to convert the i64 value to the appropriate constant type
@@ -412,14 +422,14 @@ impl EnumBuilder {
                 .element_type(element_type)
                 .parent(CodedIndex::new(
                     TableId::Field,
-                    field_token.row(),
+                    field_placeholder.row(),
                     CodedIndexType::HasConstant,
                 ))
                 .value(&constant_value)
-                .build(context)?;
+                .build(assembly)?;
         }
 
-        Ok(enum_token)
+        Ok(enum_ref)
     }
 }
 
@@ -433,117 +443,118 @@ impl Default for EnumBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature},
+        cilassembly::{changes::ChangeRefKind, CilAssembly},
+        metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature, tables::TableId},
     };
     use std::path::PathBuf;
 
-    fn get_test_context() -> Result<BuilderContext> {
+    fn get_test_assembly() -> Result<CilAssembly> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         let view = CilAssemblyView::from_path(&path)?;
-        let assembly = CilAssembly::new(view);
-        Ok(BuilderContext::new(assembly))
+        Ok(CilAssembly::new(view))
     }
 
     #[test]
     fn test_simple_enum() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let enum_token = EnumBuilder::new("Color")
+        let enum_ref = EnumBuilder::new("Color")
             .public()
             .namespace("MyApp.Enums")
             .value("Red", 0)
             .value("Green", 1)
             .value("Blue", 2)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Should create a valid TypeDef token
-        assert_eq!(enum_token.value() & 0xFF000000, 0x02000000); // TypeDef table
+        // Should create a valid TypeDef reference
+        assert_eq!(enum_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_byte_enum() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let enum_token = EnumBuilder::new("Status")
+        let enum_ref = EnumBuilder::new("Status")
             .public()
             .underlying_type(TypeSignature::U1) // byte
             .value("Unknown", 0)
             .value("Pending", 1)
             .value("Complete", 255)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(enum_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(enum_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_flags_enum() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let enum_token = EnumBuilder::new("FileAccess")
+        let enum_ref = EnumBuilder::new("FileAccess")
             .public()
             .value("None", 0)
             .value("Read", 1)
             .value("Write", 2)
             .value("ReadWrite", 3)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(enum_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(enum_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_long_enum() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let enum_token = EnumBuilder::new("LargeValues")
+        let enum_ref = EnumBuilder::new("LargeValues")
             .public()
             .underlying_type(TypeSignature::I8) // long
             .value("Small", 1)
             .value("Large", 9223372036854775807) // i64::MAX
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(enum_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(enum_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_internal_enum() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let enum_token = EnumBuilder::new("InternalEnum")
+        let enum_ref = EnumBuilder::new("InternalEnum")
             .internal()
             .value("Value1", 10)
             .value("Value2", 20)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(enum_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(enum_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_empty_enum() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let enum_token = EnumBuilder::new("EmptyEnum").public().build(&mut context)?;
+        let enum_ref = EnumBuilder::new("EmptyEnum")
+            .public()
+            .build(&mut assembly)?;
 
-        assert_eq!(enum_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(enum_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_empty_name_fails() {
-        let mut context = get_test_context().unwrap();
+        let mut assembly = get_test_assembly().unwrap();
 
-        let result = EnumBuilder::new("").public().build(&mut context);
+        let result = EnumBuilder::new("").public().build(&mut assembly);
 
         assert!(result.is_err());
     }

@@ -418,8 +418,15 @@ impl VisitedMap {
 
         let mut counter = 0;
         while counter < len {
-            if let Some(bitfield) = self.data.get((element + counter) / self.bitfield_size) {
-                if len - counter > self.bitfield_size {
+            let current_pos = element + counter;
+            let bit_in_field = current_pos % self.bitfield_size;
+            let remaining = len - counter;
+
+            if let Some(bitfield) = self.data.get(current_pos / self.bitfield_size) {
+                // Only use bulk set if:
+                // 1. We're at a bitfield boundary (bit_in_field == 0), AND
+                // 2. We have at least one full bitfield worth of bits remaining
+                if bit_in_field == 0 && remaining >= self.bitfield_size {
                     if state {
                         bitfield.store(usize::MAX, Ordering::Release);
                     } else {
@@ -427,8 +434,7 @@ impl VisitedMap {
                     }
                     counter += self.bitfield_size;
                 } else {
-                    let shift_amount =
-                        u32::try_from((element + counter) % self.bitfield_size).unwrap_or(0);
+                    let shift_amount = u32::try_from(bit_in_field).unwrap_or(0);
                     let bit_mask = 1_usize.wrapping_shl(shift_amount);
 
                     if state {
@@ -702,6 +708,34 @@ mod tests {
         for i in 0..bitfield_size {
             map.set(i, true);
             assert!(map.get(i));
+        }
+    }
+
+    #[test]
+    fn set_range_non_aligned_start() {
+        // Test that set_range only sets the requested range, not bits before it
+        let bitfield_size = std::mem::size_of::<usize>() * 8;
+        let map = VisitedMap::new(bitfield_size * 3);
+
+        // Set a range that starts mid-bitfield and spans more than one bitfield
+        // e.g., on 64-bit: set bytes 10-110 (100 bytes)
+        let start = 10;
+        let len = bitfield_size + 40; // More than one bitfield worth
+        map.set_range(start, true, len);
+
+        // Bytes BEFORE the range should NOT be visited
+        for i in 0..start {
+            assert!(!map.get(i), "Byte {} before range should NOT be visited", i);
+        }
+
+        // Bytes IN the range should be visited
+        for i in start..(start + len) {
+            assert!(map.get(i), "Byte {} in range should be visited", i);
+        }
+
+        // Bytes AFTER the range should NOT be visited
+        for i in (start + len)..(bitfield_size * 3) {
+            assert!(!map.get(i), "Byte {} after range should NOT be visited", i);
         }
     }
 }

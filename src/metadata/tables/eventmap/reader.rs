@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for EventMapRaw {
+    const TABLE_ID: TableId = TableId::EventMap;
+
     /// Read an `EventMap` row from the metadata tables stream
     ///
     /// Parses one `EventMap` table row from the binary metadata stream, handling

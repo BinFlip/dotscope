@@ -6,21 +6,23 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::prelude::*;
 //!
-//! let builder_context = BuilderContext::new();
+//! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! let parent = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasCustomDebugInformation);  // Method with debug info
 //! let debug_token = CustomDebugInformationBuilder::new()
 //!     .parent(parent)                    // Element being debugged
 //!     .kind(42)                          // GUID heap index for debug type
 //!     .value(&[0x01, 0x02, 0x03])        // Raw debug blob data
-//!     .build(&mut builder_context)?;
+//!     .build(&mut assembly)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{CodedIndex, CodedIndexType, CustomDebugInformationRaw, TableDataOwned, TableId},
         token::Token,
@@ -52,16 +54,19 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::prelude::*;
 ///
+/// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+/// # let mut assembly = CilAssembly::new(view);
+/// # let source_bytes = vec![0x01, 0x02, 0x03];
 /// // Source link debug information for a method
 /// let method_parent = CodedIndex::new(TableId::MethodDef, 5, CodedIndexType::HasCustomDebugInformation);
 /// let source_link = CustomDebugInformationBuilder::new()
 ///     .parent(method_parent)
 ///     .kind(1)  // GUID heap index for Source Link type
 ///     .value(b"{\"documents\": {\"*\": \"https://github.com/...\"}}")
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Embedded source for a document
 /// let document_parent = CodedIndex::new(TableId::Document, 2, CodedIndexType::HasCustomDebugInformation);
@@ -69,7 +74,8 @@ use crate::{
 ///     .parent(document_parent)
 ///     .kind(2)  // GUID heap index for Embedded Source type
 ///     .value(&source_bytes)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct CustomDebugInformationBuilder {
@@ -92,7 +98,7 @@ impl CustomDebugInformationBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = CustomDebugInformationBuilder::new();
@@ -125,7 +131,7 @@ impl CustomDebugInformationBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Debug info for a method
@@ -157,7 +163,7 @@ impl CustomDebugInformationBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = CustomDebugInformationBuilder::new()
@@ -182,7 +188,7 @@ impl CustomDebugInformationBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // JSON data for Source Link
@@ -208,11 +214,11 @@ impl CustomDebugInformationBuilder {
     /// Builds and adds the `CustomDebugInformation` entry to the metadata
     ///
     /// Validates all required fields, creates the `CustomDebugInformation` table entry,
-    /// and adds it to the builder context. Returns a token that can be used
+    /// and adds it to the CilAssembly. Returns a token that can be used
     /// to reference this custom debug information.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the builder context
+    /// - `assembly`: Mutable reference to the CilAssembly
     ///
     /// # Returns
     /// - `Ok(Token)`: Token referencing the created custom debug information
@@ -225,19 +231,21 @@ impl CustomDebugInformationBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let mut context = BuilderContext::new();
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let parent = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasCustomDebugInformation);
     /// let debug_data = vec![0x01, 0x02, 0x03];
     /// let token = CustomDebugInformationBuilder::new()
     ///     .parent(parent)
     ///     .kind(42)
     ///     .value(&debug_data)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let parent = self.parent.ok_or_else(|| {
             Error::ModificationInvalid(
                 "Parent coded index is required for CustomDebugInformation".to_string(),
@@ -265,30 +273,25 @@ impl CustomDebugInformationBuilder {
             )));
         }
 
-        let next_rid = context.next_rid(TableId::CustomDebugInformation);
-        let token_value = ((TableId::CustomDebugInformation as u32) << 24) | next_rid;
-        let token = Token::new(token_value);
-
         let value_index = if value.is_empty() {
             0
         } else {
-            context.blob_add(&value)?
+            assembly.blob_add(&value)?.placeholder()
         };
 
         let custom_debug_info = CustomDebugInformationRaw {
-            rid: next_rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
             parent,
             kind,
             value: value_index,
         };
 
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::CustomDebugInformation,
             TableDataOwned::CustomDebugInformation(custom_debug_info),
-        )?;
-        Ok(token)
+        )
     }
 }
 
@@ -305,7 +308,7 @@ impl Default for CustomDebugInformationBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
@@ -328,78 +331,80 @@ mod tests {
 
     #[test]
     fn test_customdebuginformation_builder_method_parent() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let parent = CodedIndex::new(
             TableId::MethodDef,
             1,
             CodedIndexType::HasCustomDebugInformation,
         );
         let debug_data = vec![0x01, 0x02, 0x03];
-        let token = CustomDebugInformationBuilder::new()
+        let ref_ = CustomDebugInformationBuilder::new()
             .parent(parent)
             .kind(42)
             .value(&debug_data)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::CustomDebugInformation as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::CustomDebugInformation)
+        );
         Ok(())
     }
 
     #[test]
     fn test_customdebuginformation_builder_document_parent() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let parent = CodedIndex::new(
             TableId::Document,
             2,
             CodedIndexType::HasCustomDebugInformation,
         );
         let source_link_json = b"{\"documents\": {\"*\": \"https://github.com/repo/\"}}";
-        let token = CustomDebugInformationBuilder::new()
+        let ref_ = CustomDebugInformationBuilder::new()
             .parent(parent)
             .kind(1) // Source Link GUID index
             .value(source_link_json)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::CustomDebugInformation as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::CustomDebugInformation)
+        );
         Ok(())
     }
 
     #[test]
     fn test_customdebuginformation_builder_empty_value() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let parent = CodedIndex::new(
             TableId::TypeDef,
             1,
             CodedIndexType::HasCustomDebugInformation,
         );
-        let token = CustomDebugInformationBuilder::new()
+        let ref_ = CustomDebugInformationBuilder::new()
             .parent(parent)
             .kind(5)
             .value(&[]) // Empty value
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::CustomDebugInformation as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::CustomDebugInformation)
+        );
         Ok(())
     }
 
     #[test]
     fn test_customdebuginformation_builder_missing_parent() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let debug_data = vec![0x01, 0x02];
         let result = CustomDebugInformationBuilder::new()
             .kind(1)
             .value(&debug_data)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -413,8 +418,7 @@ mod tests {
 
     #[test]
     fn test_customdebuginformation_builder_missing_kind() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let parent = CodedIndex::new(
             TableId::MethodDef,
             1,
@@ -424,7 +428,7 @@ mod tests {
         let result = CustomDebugInformationBuilder::new()
             .parent(parent)
             .value(&debug_data)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -438,8 +442,7 @@ mod tests {
 
     #[test]
     fn test_customdebuginformation_builder_missing_value() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let parent = CodedIndex::new(
             TableId::MethodDef,
             1,
@@ -448,7 +451,7 @@ mod tests {
         let result = CustomDebugInformationBuilder::new()
             .parent(parent)
             .kind(1)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -501,28 +504,28 @@ mod tests {
 
     #[test]
     fn test_customdebuginformation_builder_fluent_interface() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let parent = CodedIndex::new(TableId::Field, 3, CodedIndexType::HasCustomDebugInformation);
         let debug_data = vec![0xFF, 0xEE, 0xDD];
 
         // Test method chaining
-        let token = CustomDebugInformationBuilder::new()
+        let ref_ = CustomDebugInformationBuilder::new()
             .parent(parent)
             .kind(99)
             .value(&debug_data)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::CustomDebugInformation as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::CustomDebugInformation)
+        );
         Ok(())
     }
 
     #[test]
     fn test_customdebuginformation_builder_multiple_builds() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let parent1 = CodedIndex::new(
             TableId::MethodDef,
             1,
@@ -537,24 +540,30 @@ mod tests {
         let data2 = vec![0x03, 0x04];
 
         // Build first debug info
-        let token1 = CustomDebugInformationBuilder::new()
+        let ref1 = CustomDebugInformationBuilder::new()
             .parent(parent1)
             .kind(1)
             .value(&data1)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build first debug info");
 
         // Build second debug info
-        let token2 = CustomDebugInformationBuilder::new()
+        let ref2 = CustomDebugInformationBuilder::new()
             .parent(parent2)
             .kind(2)
             .value(&data2)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build second debug info");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_ne!(token1, token2);
+        assert_eq!(
+            ref1.kind(),
+            ChangeRefKind::TableRow(TableId::CustomDebugInformation)
+        );
+        assert_eq!(
+            ref2.kind(),
+            ChangeRefKind::TableRow(TableId::CustomDebugInformation)
+        );
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
         Ok(())
     }
 }

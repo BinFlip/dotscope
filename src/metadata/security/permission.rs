@@ -140,7 +140,7 @@
 //!
 //! ## Extracting File Paths from `FileIOPermission`
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::security::Permission;
 //!
 //! # fn get_file_permission() -> Permission {

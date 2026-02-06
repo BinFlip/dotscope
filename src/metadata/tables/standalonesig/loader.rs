@@ -36,16 +36,19 @@
 
 use std::sync::Arc;
 
+use rayon::iter::{ParallelBridge, ParallelIterator};
+
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
+        streams::TablesHeader,
         tables::StandAloneSigRaw,
     },
     prelude::TableId,
     utils::VisitedMap,
     Result,
 };
-use rayon::iter::{ParallelBridge, ParallelIterator};
 
 /// Loader implementation for the `StandAloneSig` metadata table.
 ///
@@ -82,37 +85,31 @@ impl MetadataLoader for StandAloneSigLoader {
     /// with large assemblies while maintaining thread safety through shared state.
     ///
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(blobs) = context.blobs {
-            let shared_visited = Arc::new(VisitedMap::new(context.input.data().len()));
-            let standalonesig_table = if let Some(header) = context.meta {
-                header.table::<StandAloneSigRaw>()
-            } else {
-                None
-            };
+        let Some(blobs) = context.blobs else {
+            return Ok(());
+        };
 
-            let results: Vec<Result<()>> = context
-                .method_def
-                .iter()
-                .par_bridge()
-                .map(|row| {
-                    let method = row.value();
-                    method.parse(
-                        &context.input,
-                        blobs,
-                        standalonesig_table,
-                        context.types,
-                        shared_visited.clone(),
-                    )
-                })
-                .collect();
+        let shared_visited = Arc::new(VisitedMap::new(context.input.data().len()));
+        let standalonesig_table = context
+            .meta
+            .and_then(TablesHeader::table::<StandAloneSigRaw>);
 
-            // ToDo: We return only the first error encountered
-            for result in results {
-                result?;
-            }
-        }
+        context.method_def.iter().par_bridge().try_for_each(|row| {
+            let method = row.value();
+            let token_msg = || format!("method body 0x{:08x}", method.token.value());
 
-        Ok(())
+            context.handle_error(
+                method.parse(
+                    &context.input,
+                    blobs,
+                    standalonesig_table,
+                    context.types,
+                    shared_visited.clone(),
+                ),
+                DiagnosticCategory::Method,
+                token_msg,
+            )
+        })
     }
 
     /// Returns the table identifier for the `StandAloneSig` table.

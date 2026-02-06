@@ -6,9 +6,33 @@
 
 use std::fmt::Debug;
 
-use crate::analysis::{
-    dataflow::lattice::MeetSemiLattice, ControlFlowGraph, SsaBlock, SsaFunction,
+use crate::{
+    analysis::{
+        dataflow::lattice::MeetSemiLattice, ControlFlowGraph, SsaBlock, SsaCfg, SsaFunction,
+    },
+    utils::graph::{NodeId, Predecessors, RootedGraph, Successors},
 };
+
+/// Trait for control flow graphs usable with the dataflow solver.
+///
+/// This trait abstracts over different CFG implementations, allowing the solver
+/// to work with both [`ControlFlowGraph`] (CIL-level) and [`SsaCfg`] (SSA-level).
+///
+/// [`ControlFlowGraph`]: crate::analysis::ControlFlowGraph
+/// [`SsaCfg`]: crate::analysis::SsaCfg
+pub trait DataFlowCfg: Predecessors + Successors {
+    /// Returns the entry node of the CFG.
+    fn entry(&self) -> NodeId;
+
+    /// Returns the exit nodes of the CFG.
+    fn exits(&self) -> Vec<NodeId>;
+
+    /// Returns nodes in postorder (for backward analysis).
+    fn postorder(&self) -> Vec<NodeId>;
+
+    /// Returns nodes in reverse postorder (for forward analysis).
+    fn reverse_postorder(&self) -> Vec<NodeId>;
+}
 
 /// Direction of data flow analysis.
 ///
@@ -60,7 +84,7 @@ pub enum Direction {
 /// # Example
 ///
 /// ```rust,ignore
-/// use dotscope::analysis::dataflow::{DataFlowAnalysis, Direction, MeetSemiLattice};
+/// use dotscope::analysis::{DataFlowAnalysis, Direction, MeetSemiLattice};
 ///
 /// struct MyAnalysis;
 ///
@@ -149,7 +173,6 @@ pub trait DataFlowAnalysis {
         _in_states: &[Self::Lattice],
         _out_states: &[Self::Lattice],
         _ssa: &SsaFunction,
-        _cfg: &ControlFlowGraph<'_>,
     ) {
         // Default: no post-processing
     }
@@ -221,5 +244,43 @@ impl<L: Clone> AnalysisResults<L> {
     #[must_use]
     pub fn block_count(&self) -> usize {
         self.in_states.len()
+    }
+}
+
+// Implement DataFlowCfg for ControlFlowGraph
+impl DataFlowCfg for ControlFlowGraph<'_> {
+    fn entry(&self) -> NodeId {
+        RootedGraph::entry(self)
+    }
+
+    fn exits(&self) -> Vec<NodeId> {
+        self.exits().to_vec()
+    }
+
+    fn postorder(&self) -> Vec<NodeId> {
+        self.postorder()
+    }
+
+    fn reverse_postorder(&self) -> Vec<NodeId> {
+        self.reverse_postorder()
+    }
+}
+
+// Implement DataFlowCfg for SsaCfg
+impl DataFlowCfg for SsaCfg<'_> {
+    fn entry(&self) -> NodeId {
+        RootedGraph::entry(self)
+    }
+
+    fn exits(&self) -> Vec<NodeId> {
+        self.exits()
+    }
+
+    fn postorder(&self) -> Vec<NodeId> {
+        self.postorder()
+    }
+
+    fn reverse_postorder(&self) -> Vec<NodeId> {
+        self.reverse_postorder()
     }
 }

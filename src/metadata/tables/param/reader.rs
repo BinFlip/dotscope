@@ -62,7 +62,7 @@
 
 use crate::{
     metadata::{
-        tables::{ParamRaw, RowReadable, TableInfoRef},
+        tables::{ParamRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::{read_le_at, read_le_at_dyn},
@@ -70,6 +70,8 @@ use crate::{
 };
 
 impl RowReadable for ParamRaw {
+    const TABLE_ID: TableId = TableId::Param;
+
     /// Reads a single Param table row from binary data.
     ///
     /// Parses the binary representation according to ECMA-335 §II.22.33:

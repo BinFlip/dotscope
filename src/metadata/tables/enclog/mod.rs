@@ -22,7 +22,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::tables::{EncLog, EncLogMap};
 //! use dotscope::metadata::token::Token;
 //!

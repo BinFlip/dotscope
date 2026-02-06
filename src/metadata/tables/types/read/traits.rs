@@ -29,7 +29,7 @@
 //! - [`crate::metadata::tables::types::read::data`] - Low-level data deserialization
 
 use crate::{
-    metadata::tables::{TableInfoRef, TableRow},
+    metadata::tables::{TableId, TableInfoRef, TableRow},
     Result,
 };
 
@@ -44,7 +44,14 @@ use crate::{
 /// - Be `Send` to support parallel processing
 /// - Handle parsing errors gracefully
 /// - Support 1-based row indexing (as per CLI specification)
+/// - Specify their `TABLE_ID` for generic table access
 pub trait RowReadable: Sized + Send + TableRow {
+    /// The table ID for this row type.
+    ///
+    /// This constant enables generic code to identify which metadata table
+    /// a row type belongs to, enabling type-safe generic table operations.
+    const TABLE_ID: TableId;
+
     /// Reads and parses a single row from the provided byte buffer.
     ///
     /// This method extracts and parses one complete row from the metadata table data,

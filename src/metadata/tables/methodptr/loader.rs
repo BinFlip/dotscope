@@ -38,6 +38,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{MethodPtrRaw, TableId},
     },
@@ -66,15 +67,24 @@ impl MetadataLoader for MethodPtrLoader {
     /// * `Ok(())` - If all `MethodPtr` entries were processed successfully
     /// * `Err(_)` - If entry conversion or indirection mapping application fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<MethodPtrRaw>() {
-                for row in table {
-                    let owned = row.to_owned()?;
-                    row.apply()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<MethodPtrRaw>() else {
+            return Ok(());
+        };
 
-                    context.method_ptr.insert(row.token, owned);
-                }
-            }
+        for row in table {
+            let token_msg = || format!("method ptr 0x{:08x}", row.token.value());
+
+            let Some(owned) =
+                context.handle_result(row.to_owned(), DiagnosticCategory::Table, token_msg)?
+            else {
+                continue;
+            };
+
+            context.handle_error(row.apply(), DiagnosticCategory::Table, token_msg)?;
+            context.method_ptr.insert(row.token, owned);
         }
         Ok(())
     }

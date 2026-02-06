@@ -2,34 +2,33 @@
 //!
 //! This module provides [`NativeImportsBuilder`] for creating native PE import tables
 //! with a fluent API. The builder follows the established dotscope pattern of not holding
-//! references to BuilderContext and instead taking it as a parameter to the build() method.
+//! references to CilAssembly and instead taking it as a parameter to the build() method.
 
-use crate::{cilassembly::BuilderContext, Result};
+use crate::{cilassembly::CilAssembly, Result};
 
 /// Builder for creating native PE import tables.
 ///
 /// `NativeImportsBuilder` provides a fluent API for creating native PE import tables
 /// with validation and automatic integration into the assembly. The builder follows
-/// the established dotscope pattern where the context is passed to build() rather
+/// the established dotscope pattern where the assembly is passed to build() rather
 /// than being held by the builder.
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::imports::NativeImportsBuilder;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// NativeImportsBuilder::new()
-///     .add_dll("kernel32.dll")
-///     .add_function("kernel32.dll", "GetCurrentProcessId")
-///     .add_function("kernel32.dll", "ExitProcess")
-///     .add_dll("user32.dll")
-///     .add_function_by_ordinal("user32.dll", 120) // MessageBoxW
-///     .build(&mut context)?;
+///     .add_dll("kernel32.dll")?
+///     .add_function("kernel32.dll", "GetCurrentProcessId")?
+///     .add_function("kernel32.dll", "ExitProcess")?
+///     .add_dll("user32.dll")?
+///     .add_function_by_ordinal("user32.dll", 120)? // MessageBoxW
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
@@ -119,10 +118,12 @@ impl NativeImportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::NativeImportsBuilder;
     /// let builder = NativeImportsBuilder::new()
     ///     .add_dll("kernel32.dll")?
     ///     .add_dll("user32.dll")?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn add_dll(mut self, dll_name: impl Into<String>) -> Result<Self> {
         let dll_name = dll_name.into();
@@ -155,10 +156,12 @@ impl NativeImportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::NativeImportsBuilder;
     /// let builder = NativeImportsBuilder::new()
     ///     .add_function("kernel32.dll", "GetCurrentProcessId")?
     ///     .add_function("kernel32.dll", "ExitProcess")?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn add_function(
         mut self,
@@ -203,9 +206,11 @@ impl NativeImportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::imports::NativeImportsBuilder;
     /// let builder = NativeImportsBuilder::new()
     ///     .add_function_by_ordinal("user32.dll", 120)?; // MessageBoxW
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn add_function_by_ordinal(
         mut self,
@@ -232,12 +237,12 @@ impl NativeImportsBuilder {
     /// Builds the native imports and integrates them into the assembly.
     ///
     /// This method validates the configuration and integrates all specified DLLs and
-    /// functions into the assembly through the BuilderContext. The builder automatically
+    /// functions into the assembly through the CilAssembly. The builder automatically
     /// handles DLL dependency management and function import setup.
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for assembly modification
+    /// * `assembly` - The assembly for modification
     ///
     /// # Returns
     ///
@@ -254,31 +259,30 @@ impl NativeImportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use dotscope::metadata::imports::NativeImportsBuilder;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// let mut assembly = CilAssembly::new(view);
     ///
     /// NativeImportsBuilder::new()
-    ///     .add_dll("kernel32.dll")
-    ///     .add_function("kernel32.dll", "GetCurrentProcessId")
-    ///     .build(&mut context)?;
+    ///     .add_dll("kernel32.dll")?
+    ///     .add_function("kernel32.dll", "GetCurrentProcessId")?
+    ///     .build(&mut assembly)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<()> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<()> {
         for dll_name in &self.dlls {
-            context.add_native_import_dll(dll_name)?;
+            assembly.add_native_import_dll(dll_name)?;
         }
 
         for (dll_name, function_name) in &self.functions {
-            context.add_native_import_function(dll_name, function_name)?;
+            assembly.add_native_import_function(dll_name, function_name)?;
         }
 
         for (dll_name, ordinal) in &self.ordinal_functions {
-            context.add_native_import_function_by_ordinal(dll_name, *ordinal)?;
+            assembly.add_native_import_function_by_ordinal(dll_name, *ordinal)?;
         }
 
         Ok(())
@@ -294,24 +298,18 @@ impl Default for NativeImportsBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::cilassemblyview::CilAssemblyView,
-    };
+    use crate::cilassembly::CilAssembly;
     use std::path::PathBuf;
 
     #[test]
     fn test_native_imports_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             let result = NativeImportsBuilder::new()
                 .add_dll("kernel32.dll")
                 .and_then(|b| b.add_function("kernel32.dll", "GetCurrentProcessId"))
                 .and_then(|b| b.add_function("kernel32.dll", "ExitProcess"))
-                .and_then(|b| b.build(&mut context));
+                .and_then(|b| b.build(&mut assembly));
 
             assert!(result.is_ok());
         }
@@ -320,15 +318,12 @@ mod tests {
     #[test]
     fn test_native_imports_builder_with_ordinals() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             let result = NativeImportsBuilder::new()
                 .add_dll("user32.dll")
                 .and_then(|b| b.add_function_by_ordinal("user32.dll", 120))
                 .and_then(|b| b.add_function("user32.dll", "GetWindowTextW"))
-                .and_then(|b| b.build(&mut context));
+                .and_then(|b| b.build(&mut assembly));
 
             assert!(result.is_ok());
         }
@@ -337,14 +332,11 @@ mod tests {
     #[test]
     fn test_native_imports_builder_auto_dll_addition() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             let result = NativeImportsBuilder::new()
                 .add_function("kernel32.dll", "GetCurrentProcessId")
                 .and_then(|b| b.add_function_by_ordinal("user32.dll", 120))
-                .and_then(|b| b.build(&mut context));
+                .and_then(|b| b.build(&mut assembly));
 
             assert!(result.is_ok());
         }
@@ -353,11 +345,8 @@ mod tests {
     #[test]
     fn test_native_imports_builder_empty() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
-            let result = NativeImportsBuilder::new().build(&mut context);
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
+            let result = NativeImportsBuilder::new().build(&mut assembly);
 
             assert!(result.is_ok());
         }

@@ -50,10 +50,10 @@ use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
     analysis::{
-        dataflow::lattice::MeetSemiLattice, ConstValue, ControlFlowGraph, PhiNode, SsaBlock,
-        SsaFunction, SsaOp, SsaVarId,
+        dataflow::lattice::MeetSemiLattice, ConstValue, PhiNode, SsaBlock, SsaFunction, SsaOp,
+        SsaVarId,
     },
-    utils::graph::NodeId,
+    utils::graph::{NodeId, RootedGraph, Successors},
 };
 
 /// Sparse Conditional Constant Propagation analysis.
@@ -64,10 +64,10 @@ use crate::{
 /// # Example
 ///
 /// ```rust,ignore
-/// use dotscope::analysis::dataflow::ConstantPropagation;
+/// use dotscope::analysis::{ConstantPropagation, ScalarValue};
 ///
 /// let mut sccp = ConstantPropagation::new();
-/// let results = sccp.analyze(&ssa, &cfg);
+/// let results = sccp.analyze(&ssa, &graph);
 ///
 /// // Check if a variable is constant
 /// if let Some(ScalarValue::Constant(c)) = results.get_value(var_id) {
@@ -85,6 +85,9 @@ pub struct ConstantPropagation {
     ssa_worklist: VecDeque<SsaVarId>,
     /// CFG worklist: edges that have become executable.
     cfg_worklist: VecDeque<(usize, usize)>,
+    /// Back edges: edges where the target was already executable when the edge was added.
+    /// These represent loop back edges and their values should be treated as unknown.
+    back_edges: HashSet<(usize, usize)>,
 }
 
 impl ConstantPropagation {
@@ -97,13 +100,24 @@ impl ConstantPropagation {
             executable_blocks: HashSet::new(),
             ssa_worklist: VecDeque::new(),
             cfg_worklist: VecDeque::new(),
+            back_edges: HashSet::new(),
         }
     }
 
     /// Runs the SCCP algorithm on the given SSA function.
     ///
+    /// The CFG parameter can be any type that implements the required graph traits:
+    /// - `RootedGraph` for the entry point
+    /// - `Successors` for traversing outgoing edges
+    ///
+    /// This allows using both `ControlFlowGraph` (from CIL blocks) and `SsaCfg`
+    /// (from SSA function terminators).
+    ///
     /// Returns the analysis results containing the value for each variable.
-    pub fn analyze(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>) -> SccpResult {
+    pub fn analyze<G>(&mut self, ssa: &SsaFunction, cfg: &G) -> SccpResult
+    where
+        G: RootedGraph + Successors,
+    {
         self.initialize(ssa, cfg);
         self.propagate(ssa, cfg);
 
@@ -114,16 +128,37 @@ impl ConstantPropagation {
     }
 
     /// Initializes the analysis state.
-    fn initialize(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>) {
+    fn initialize<G>(&mut self, ssa: &SsaFunction, cfg: &G)
+    where
+        G: RootedGraph + Successors,
+    {
         self.values.clear();
         self.executable_edges.clear();
         self.executable_blocks.clear();
         self.ssa_worklist.clear();
         self.cfg_worklist.clear();
+        self.back_edges.clear();
 
-        // All variables start as Top (unknown)
+        // Initialize variable values:
+        // - Argument variables (version 0, defined at entry) start as Bottom (unknown input)
+        // - All other variables start as Top (no information yet)
+        //
+        // This distinction is critical: arguments are external inputs that could be anything,
+        // while other variables are defined by instructions that SCCP will evaluate.
+        // Without this, branch conditions depending on arguments stay at Top forever
+        // (since no instruction defines them), causing the branch to never add edges.
         for var in ssa.variables() {
-            self.values.insert(var.id(), ScalarValue::Top);
+            let initial_value = if var.origin().is_argument()
+                && var.version() == 0
+                && var.def_site().instruction.is_none()
+            {
+                // This is the initial definition of an argument - it's an unknown input
+                ScalarValue::Bottom
+            } else {
+                // Regular variable - will be evaluated by instructions
+                ScalarValue::Top
+            };
+            self.values.insert(var.id(), initial_value);
         }
 
         // Mark entry block as executable
@@ -143,12 +178,22 @@ impl ConstantPropagation {
     }
 
     /// Main propagation loop.
-    fn propagate(&mut self, ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>) {
+    fn propagate<G>(&mut self, ssa: &SsaFunction, cfg: &G)
+    where
+        G: RootedGraph + Successors,
+    {
         // Process until both worklists are empty
         loop {
             // Process CFG worklist first (to discover new blocks)
             while let Some((from, to)) = self.cfg_worklist.pop_front() {
                 if self.executable_edges.insert((from, to)) {
+                    // Detect back edges: if the target block was already executable
+                    // when this edge is being added, it's a back edge (loop).
+                    // PHI operands from back edges represent values that change
+                    // across loop iterations and should be treated as unknown.
+                    if self.executable_blocks.contains(&to) {
+                        self.back_edges.insert((from, to));
+                    }
                     // This edge became executable
                     self.process_edge(from, to, ssa, cfg);
                 }
@@ -172,13 +217,10 @@ impl ConstantPropagation {
     /// 2. Re-evaluate all phi nodes in `to` since they may now have a new operand
     ///    from the `from` block
     /// 3. If first visit, propagate outgoing edges based on the terminator
-    fn process_edge(
-        &mut self,
-        from: usize,
-        to: usize,
-        ssa: &SsaFunction,
-        cfg: &ControlFlowGraph<'_>,
-    ) {
+    fn process_edge<G>(&mut self, from: usize, to: usize, ssa: &SsaFunction, cfg: &G)
+    where
+        G: RootedGraph + Successors,
+    {
         let first_visit = !self.executable_blocks.contains(&to);
 
         if first_visit {
@@ -224,12 +266,10 @@ impl ConstantPropagation {
     }
 
     /// Processes uses of a variable whose value changed.
-    fn process_variable_uses(
-        &mut self,
-        var: SsaVarId,
-        ssa: &SsaFunction,
-        cfg: &ControlFlowGraph<'_>,
-    ) {
+    fn process_variable_uses<G>(&mut self, var: SsaVarId, ssa: &SsaFunction, cfg: &G)
+    where
+        G: RootedGraph + Successors,
+    {
         // Find all uses of this variable
         if let Some(ssa_var) = ssa.variable(var) {
             for use_site in ssa_var.uses() {
@@ -269,16 +309,12 @@ impl ConstantPropagation {
     }
 
     /// Propagates outgoing edges from a block based on terminator.
-    fn propagate_outgoing_edges(
-        &mut self,
-        block_id: usize,
-        block: &SsaBlock,
-        cfg: &ControlFlowGraph<'_>,
-    ) {
+    fn propagate_outgoing_edges<G>(&mut self, block_id: usize, block: &SsaBlock, cfg: &G)
+    where
+        G: RootedGraph + Successors,
+    {
         // Find the terminator instruction
-        let terminator = block.instructions().last();
-
-        match terminator.and_then(|t| t.op()) {
+        match block.terminator_op() {
             Some(SsaOp::Branch {
                 condition,
                 true_target,
@@ -324,11 +360,10 @@ impl ConstantPropagation {
                             self.add_cfg_edge(block_id, *default);
                         }
                     }
-                    ScalarValue::Top => {
-                        // Unknown - don't add edges yet
-                    }
-                    ScalarValue::Bottom => {
-                        // Could go anywhere
+                    ScalarValue::Top | ScalarValue::Bottom => {
+                        // Unknown or could be anything - conservatively add all edges.
+                        // This is critical for control flow obfuscation where the switch
+                        // value is computed dynamically and cannot be statically determined.
                         for &target in targets {
                             self.add_cfg_edge(block_id, target);
                         }
@@ -394,7 +429,21 @@ impl ConstantPropagation {
             }
 
             has_executable_operand = true;
-            let op_value = self.get_value(operand.value());
+
+            // For back edges (loop edges), treat the operand value as Bottom.
+            // Back edge values represent loop-carried dependencies that change
+            // across iterations. Using the first-iteration value would incorrectly
+            // mark the PHI as constant when it's actually varying.
+            //
+            // Example: Fibonacci loop where b = phi(1, temp)
+            // - First iteration: temp = 0 + 1 = 1, so b = phi(1, 1) looks constant
+            // - But iteration 2: temp = 1 + 1 = 2, so b should be 2
+            // Without this check, SCCP would incorrectly conclude b is always 1.
+            let op_value = if self.back_edges.contains(&(pred, block_id)) {
+                ScalarValue::Bottom
+            } else {
+                self.get_value(operand.value())
+            };
             result = result.meet(&op_value);
 
             // Early exit if already bottom
@@ -416,11 +465,7 @@ impl ConstantPropagation {
     /// This performs abstract interpretation of the instruction, computing
     /// what value the result would have given the current lattice values
     /// of the operands.
-    fn evaluate_instruction(&self, op: Option<&SsaOp>) -> ScalarValue {
-        let Some(op) = op else {
-            return ScalarValue::Bottom;
-        };
-
+    fn evaluate_instruction(&self, op: &SsaOp) -> ScalarValue {
         match op {
             SsaOp::Const { value, .. } => ScalarValue::Constant(value.clone()),
 
@@ -431,6 +476,36 @@ impl ConstantPropagation {
             SsaOp::Sub { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::sub),
 
             SsaOp::Mul { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::mul),
+
+            SsaOp::Div { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::div),
+
+            SsaOp::Rem { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::rem),
+
+            SsaOp::And { left, right, .. } => {
+                self.evaluate_binary(*left, *right, ConstValue::bitwise_and)
+            }
+
+            SsaOp::Or { left, right, .. } => {
+                self.evaluate_binary(*left, *right, ConstValue::bitwise_or)
+            }
+
+            SsaOp::Xor { left, right, .. } => {
+                self.evaluate_binary(*left, *right, ConstValue::bitwise_xor)
+            }
+
+            SsaOp::Shl { value, amount, .. } => {
+                self.evaluate_binary(*value, *amount, ConstValue::shl)
+            }
+
+            SsaOp::Shr {
+                value,
+                amount,
+                unsigned,
+                ..
+            } => {
+                let unsigned = *unsigned;
+                self.evaluate_binary(*value, *amount, |l, r| l.shr(r, unsigned))
+            }
 
             SsaOp::Ceq { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::ceq),
 
@@ -576,6 +651,17 @@ pub struct SccpResult {
 }
 
 impl SccpResult {
+    /// Creates an empty SCCP result.
+    ///
+    /// This is useful for testing or when no analysis has been performed.
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            values: HashMap::new(),
+            executable_blocks: HashSet::new(),
+        }
+    }
+
     /// Gets the value of an SSA variable.
     #[must_use]
     pub fn get_value(&self, var: SsaVarId) -> Option<&ScalarValue> {
@@ -689,10 +775,14 @@ mod tests {
 
     #[test]
     fn test_sccp_result() {
+        let v0 = SsaVarId::new();
+        let v1 = SsaVarId::new();
+        let v2 = SsaVarId::new();
+
         let mut values = HashMap::new();
-        values.insert(SsaVarId::new(0), ScalarValue::Constant(ConstValue::I32(42)));
-        values.insert(SsaVarId::new(1), ScalarValue::Bottom);
-        values.insert(SsaVarId::new(2), ScalarValue::Top);
+        values.insert(v0, ScalarValue::Constant(ConstValue::I32(42)));
+        values.insert(v1, ScalarValue::Bottom);
+        values.insert(v2, ScalarValue::Top);
 
         let mut executable_blocks = HashSet::new();
         executable_blocks.insert(0);
@@ -703,15 +793,12 @@ mod tests {
             executable_blocks,
         };
 
-        assert!(result.is_constant(SsaVarId::new(0)));
-        assert!(!result.is_constant(SsaVarId::new(1)));
-        assert!(!result.is_constant(SsaVarId::new(2)));
+        assert!(result.is_constant(v0));
+        assert!(!result.is_constant(v1));
+        assert!(!result.is_constant(v2));
 
-        assert_eq!(
-            result.constant_value(SsaVarId::new(0)),
-            Some(&ConstValue::I32(42))
-        );
-        assert_eq!(result.constant_value(SsaVarId::new(1)), None);
+        assert_eq!(result.constant_value(v0), Some(&ConstValue::I32(42)));
+        assert_eq!(result.constant_value(v1), None);
 
         assert!(result.is_block_executable(0));
         assert!(result.is_block_executable(1));

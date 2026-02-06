@@ -6,12 +6,15 @@
 //! by simple TypeDef or TypeRef entries.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
-        signatures::{SignatureMethod, SignatureTypeSpec, TypeSignature},
+        signatures::{
+            SignatureArray, SignatureMethod, SignaturePointer, SignatureSzArray, SignatureTypeSpec,
+            TypeSignature,
+        },
         tables::{TableDataOwned, TableId, TypeSpecRaw},
         token::Token,
-        typesystem::TypeSignatureEncoder,
+        typesystem::{ArrayDimensions, TypeSignatureEncoder},
     },
     Error, Result,
 };
@@ -51,40 +54,38 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::prelude::*;
-/// use std::path::Path;
 ///
 /// # fn main() -> Result<()> {
-/// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create a generic instantiation: List<int>
 /// let list_type = Token::new(0x02000001); // List<T> type definition
 /// let list_int = TypeSpecBuilder::new()
 ///     .generic_instantiation(list_type, vec![TypeSignature::I4])
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a single-dimensional array: string[]
 /// let string_array = TypeSpecBuilder::new()
 ///     .single_dimensional_array(TypeSignature::String)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a multi-dimensional array: int[,]
 /// let int_2d_array = TypeSpecBuilder::new()
 ///     .multi_dimensional_array(TypeSignature::I4, 2)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a pointer type: int*
 /// let int_pointer = TypeSpecBuilder::new()
 ///     .pointer(TypeSignature::I4)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a reference type: ref string
 /// let string_ref = TypeSpecBuilder::new()
 ///     .managed_reference(TypeSignature::String)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a complex nested generic: Dictionary<string, List<int>>
 /// let dict_type = Token::new(0x02000002); // Dictionary<K,V> type definition
@@ -96,7 +97,7 @@ use crate::{
 ///             vec![TypeSignature::I4]
 ///         )
 ///     ])
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -176,20 +177,18 @@ impl TypeSpecBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
-    /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let list_type = Token::new(0x02000001); // List<T>
     ///
     /// // Create List<int>
     /// let list_int = TypeSpecBuilder::new()
     ///     .generic_instantiation(list_type, vec![TypeSignature::I4])
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// // Create Dictionary<string, int>
     /// let dict_type = Token::new(0x02000002); // Dictionary<K,V>
@@ -198,7 +197,7 @@ impl TypeSpecBuilder {
     ///         TypeSignature::String,
     ///         TypeSignature::I4
     ///     ])
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -240,30 +239,26 @@ impl TypeSpecBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
-    /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// // Create int[]
     /// let int_array = TypeSpecBuilder::new()
     ///     .single_dimensional_array(TypeSignature::I4)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// // Create string[]
     /// let string_array = TypeSpecBuilder::new()
     ///     .single_dimensional_array(TypeSignature::String)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok(())
     /// # }
     /// ```
     #[must_use]
     pub fn single_dimensional_array(mut self, element_type: TypeSignature) -> Self {
-        use crate::metadata::signatures::SignatureSzArray;
-
         self.signature = Some(TypeSignature::SzArray(SignatureSzArray {
             base: Box::new(element_type),
             modifiers: Vec::new(),
@@ -296,30 +291,26 @@ impl TypeSpecBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
-    /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// // Create int[,] (2D array)
     /// let int_2d = TypeSpecBuilder::new()
     ///     .multi_dimensional_array(TypeSignature::I4, 2)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// // Create string[,,] (3D array)
     /// let string_3d = TypeSpecBuilder::new()
     ///     .multi_dimensional_array(TypeSignature::String, 3)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok(())
     /// # }
     /// ```
     #[must_use]
     pub fn multi_dimensional_array(mut self, element_type: TypeSignature, rank: u32) -> Self {
-        use crate::metadata::{signatures::SignatureArray, typesystem::ArrayDimensions};
-
         // Create default dimensions (no size or bound specifications)
         let dimensions = (0..rank)
             .map(|_| ArrayDimensions {
@@ -360,30 +351,26 @@ impl TypeSpecBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
-    /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// // Create int*
     /// let int_pointer = TypeSpecBuilder::new()
     ///     .pointer(TypeSignature::I4)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// // Create void*
     /// let void_pointer = TypeSpecBuilder::new()
     ///     .pointer(TypeSignature::Void)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok(())
     /// # }
     /// ```
     #[must_use]
     pub fn pointer(mut self, pointed_type: TypeSignature) -> Self {
-        use crate::metadata::signatures::SignaturePointer;
-
         self.signature = Some(TypeSignature::Ptr(SignaturePointer {
             base: Box::new(pointed_type),
             modifiers: Vec::new(),
@@ -415,23 +402,21 @@ impl TypeSpecBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
-    /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// // Create ref int
     /// let int_ref = TypeSpecBuilder::new()
     ///     .managed_reference(TypeSignature::I4)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// // Create ref string
     /// let string_ref = TypeSpecBuilder::new()
     ///     .managed_reference(TypeSignature::String)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -465,14 +450,12 @@ impl TypeSpecBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
-    /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Create a function pointer for: int Function(string, bool)
     /// let method_sig = SignatureMethod {
@@ -508,7 +491,7 @@ impl TypeSpecBuilder {
     ///
     /// let func_ptr = TypeSpecBuilder::new()
     ///     .function_pointer(method_sig)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -534,7 +517,7 @@ impl TypeSpecBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for metadata operations
+    /// * `assembly` - The CilAssembly for metadata operations
     ///
     /// # Returns
     ///
@@ -546,7 +529,7 @@ impl TypeSpecBuilder {
     /// - Invalid token references in the signature
     /// - Blob heap encoding failed
     /// - Signature validation failed
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let signature = self.signature.ok_or_else(|| {
             Error::ModificationInvalid("TypeSpecBuilder requires a type signature".to_string())
         })?;
@@ -557,9 +540,9 @@ impl TypeSpecBuilder {
         };
 
         let signature_blob = TypeSignatureEncoder::encode(&typespec_signature.base)?;
-        let signature_index = context.blob_add(&signature_blob)?;
+        let signature_index = assembly.blob_add(&signature_blob)?.placeholder();
 
-        let next_rid = context.next_rid(TableId::TypeSpec);
+        let next_rid = assembly.next_rid(TableId::TypeSpec)?;
         let token = Token::new(((TableId::TypeSpec as u32) << 24) | next_rid);
 
         let typespec_raw = TypeSpecRaw {
@@ -569,7 +552,7 @@ impl TypeSpecBuilder {
             signature: signature_index,
         };
 
-        context.table_row_add(TableId::TypeSpec, TableDataOwned::TypeSpec(typespec_raw))
+        assembly.table_row_add(TableId::TypeSpec, TableDataOwned::TypeSpec(typespec_raw))
     }
 }
 
@@ -577,7 +560,7 @@ impl TypeSpecBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
+        cilassembly::{ChangeRefKind, CilAssembly},
         metadata::{
             cilassemblyview::CilAssemblyView,
             signatures::{SignatureMethod, SignatureParameter},
@@ -601,19 +584,14 @@ mod tests {
     fn test_direct_signature() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            // Get the expected next RID for TypeSpec
-            let expected_rid = context.next_rid(TableId::TypeSpec);
-
-            let token = TypeSpecBuilder::new()
+            let ref_ = TypeSpecBuilder::new()
                 .signature(TypeSignature::I4)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build TypeSpec");
 
-            assert_eq!(token.value() & 0xFF000000, 0x1B000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeSpec));
         }
     }
 
@@ -621,19 +599,14 @@ mod tests {
     fn test_single_dimensional_array() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            // Get the expected next RID for TypeSpec
-            let expected_rid = context.next_rid(TableId::TypeSpec);
-
-            let token = TypeSpecBuilder::new()
+            let ref_ = TypeSpecBuilder::new()
                 .single_dimensional_array(TypeSignature::String)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build string array TypeSpec");
 
-            assert_eq!(token.value() & 0xFF000000, 0x1B000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeSpec));
         }
     }
 
@@ -641,19 +614,14 @@ mod tests {
     fn test_multi_dimensional_array() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            // Get the expected next RID for TypeSpec
-            let expected_rid = context.next_rid(TableId::TypeSpec);
-
-            let token = TypeSpecBuilder::new()
+            let ref_ = TypeSpecBuilder::new()
                 .multi_dimensional_array(TypeSignature::I4, 2)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build 2D int array TypeSpec");
 
-            assert_eq!(token.value() & 0xFF000000, 0x1B000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeSpec));
         }
     }
 
@@ -661,20 +629,15 @@ mod tests {
     fn test_generic_instantiation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
-            // Get the expected next RID for TypeSpec
-            let expected_rid = context.next_rid(TableId::TypeSpec);
+            let mut assembly = CilAssembly::new(view);
 
             let list_type = Token::new(0x02000001);
-            let token = TypeSpecBuilder::new()
+            let ref_ = TypeSpecBuilder::new()
                 .generic_instantiation(list_type, vec![TypeSignature::I4])
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build generic instantiation TypeSpec");
 
-            assert_eq!(token.value() & 0xFF000000, 0x1B000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeSpec));
         }
     }
 
@@ -682,19 +645,14 @@ mod tests {
     fn test_pointer_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            // Get the expected next RID for TypeSpec
-            let expected_rid = context.next_rid(TableId::TypeSpec);
-
-            let token = TypeSpecBuilder::new()
+            let ref_ = TypeSpecBuilder::new()
                 .pointer(TypeSignature::I4)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build pointer TypeSpec");
 
-            assert_eq!(token.value() & 0xFF000000, 0x1B000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeSpec));
         }
     }
 
@@ -702,19 +660,14 @@ mod tests {
     fn test_managed_reference() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            // Get the expected next RID for TypeSpec
-            let expected_rid = context.next_rid(TableId::TypeSpec);
-
-            let token = TypeSpecBuilder::new()
+            let ref_ = TypeSpecBuilder::new()
                 .managed_reference(TypeSignature::String)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build managed reference TypeSpec");
 
-            assert_eq!(token.value() & 0xFF000000, 0x1B000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeSpec));
         }
     }
 
@@ -722,11 +675,7 @@ mod tests {
     fn test_function_pointer() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
-            // Get the expected next RID for TypeSpec
-            let expected_rid = context.next_rid(TableId::TypeSpec);
+            let mut assembly = CilAssembly::new(view);
 
             let method_sig = SignatureMethod {
                 has_this: false,
@@ -752,13 +701,12 @@ mod tests {
                 }],
             };
 
-            let token = TypeSpecBuilder::new()
+            let ref_ = TypeSpecBuilder::new()
                 .function_pointer(method_sig)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build function pointer TypeSpec");
 
-            assert_eq!(token.value() & 0xFF000000, 0x1B000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeSpec));
         }
     }
 
@@ -766,11 +714,7 @@ mod tests {
     fn test_complex_nested_generic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
-            // Get the expected next RID for TypeSpec
-            let expected_rid = context.next_rid(TableId::TypeSpec);
+            let mut assembly = CilAssembly::new(view);
 
             let dict_type = Token::new(0x02000002);
             let list_type = Token::new(0x02000001);
@@ -781,13 +725,12 @@ mod tests {
                 vec![TypeSignature::I4],
             );
 
-            let token = TypeSpecBuilder::new()
+            let ref_ = TypeSpecBuilder::new()
                 .generic_instantiation(dict_type, vec![TypeSignature::String, nested_list])
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build complex nested generic TypeSpec");
 
-            assert_eq!(token.value() & 0xFF000000, 0x1B000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeSpec));
         }
     }
 
@@ -795,10 +738,9 @@ mod tests {
     fn test_build_without_signature_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let result = TypeSpecBuilder::new().build(&mut context);
+            let result = TypeSpecBuilder::new().build(&mut assembly);
             assert!(result.is_err());
             assert!(result
                 .unwrap_err()
@@ -811,24 +753,21 @@ mod tests {
     fn test_multiple_typespecs() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            // Get the expected first RID for TypeSpec
-            let expected_rid1 = context.next_rid(TableId::TypeSpec);
-
-            let token1 = TypeSpecBuilder::new()
+            let ref1 = TypeSpecBuilder::new()
                 .signature(TypeSignature::I4)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build first TypeSpec");
 
-            let token2 = TypeSpecBuilder::new()
+            let ref2 = TypeSpecBuilder::new()
                 .single_dimensional_array(TypeSignature::String)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build second TypeSpec");
 
-            assert_eq!(token1.value() & 0x00FFFFFF, expected_rid1);
-            assert_eq!(token2.value() & 0x00FFFFFF, expected_rid1 + 1);
+            assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::TypeSpec));
+            assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::TypeSpec));
+            assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
         }
     }
 }

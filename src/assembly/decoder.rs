@@ -58,12 +58,12 @@ use std::{
 
 use crate::{
     assembly::{
-        BasicBlock, FlowType, Immediate, Instruction, Operand, OperandType, StackBehavior,
-        INSTRUCTIONS, INSTRUCTIONS_FE,
+        BasicBlock, FlowType, HandlerEntryInfo, Immediate, Instruction, Operand, OperandType,
+        StackBehavior, INSTRUCTIONS, INSTRUCTIONS_FE,
     },
     file::{parser::Parser, File},
     metadata::{
-        method::{ExceptionHandler, Method},
+        method::{ExceptionHandler, ExceptionHandlerFlags, Method},
         token::Token,
     },
     utils::VisitedMap,
@@ -245,19 +245,60 @@ impl<'a> Decoder<'a> {
     fn decode_blocks(&mut self) -> Result<()> {
         let mut entry_points: HashSet<u64> = HashSet::new();
 
-        if let Some(exceptions) = self.exceptions {
-            for handler in exceptions {
-                entry_points.insert(self.rva_start as u64 + u64::from(handler.try_offset));
-                entry_points.insert(self.rva_start as u64 + u64::from(handler.handler_offset));
-                if handler.filter_offset > 0 {
-                    entry_points.insert(self.rva_start as u64 + u64::from(handler.filter_offset));
-                }
-            }
-        }
-
+        // Create the first block at method entry
         self.blocks
             .push(BasicBlock::new(0, self.rva_start as u64, self.offset_start));
         entry_points.insert(self.rva_start as u64);
+
+        // Create blocks for exception handler entry points
+        // These must be created explicitly as they may not be reachable via normal control flow
+        if let Some(exceptions) = self.exceptions {
+            for handler in exceptions {
+                // Handler entry block (catch/finally/fault)
+                let handler_rva = self.rva_start as u64 + u64::from(handler.handler_offset);
+                if !entry_points.contains(&handler_rva) {
+                    let handler_offset = self.offset_start + handler.handler_offset as usize;
+                    if handler_offset < self.parser.len() && !self.visited.get(handler_offset) {
+                        self.blocks.push(BasicBlock::new(
+                            self.blocks.len(),
+                            handler_rva,
+                            handler_offset,
+                        ));
+                        entry_points.insert(handler_rva);
+                    }
+                }
+
+                // Filter entry block (for filter handlers)
+                if handler.filter_offset > 0 {
+                    let filter_rva = self.rva_start as u64 + u64::from(handler.filter_offset);
+                    if !entry_points.contains(&filter_rva) {
+                        let filter_offset = self.offset_start + handler.filter_offset as usize;
+                        if filter_offset < self.parser.len() && !self.visited.get(filter_offset) {
+                            self.blocks.push(BasicBlock::new(
+                                self.blocks.len(),
+                                filter_rva,
+                                filter_offset,
+                            ));
+                            entry_points.insert(filter_rva);
+                        }
+                    }
+                }
+
+                // Try region entry block
+                // This must be created explicitly when try_offset > 0, otherwise the
+                // block starting at method entry will stop at this entry point but there
+                // will be no block to continue decoding the try region content.
+                let try_rva = self.rva_start as u64 + u64::from(handler.try_offset);
+                if !entry_points.contains(&try_rva) {
+                    let try_offset = self.offset_start + handler.try_offset as usize;
+                    if try_offset < self.parser.len() && !self.visited.get(try_offset) {
+                        self.blocks
+                            .push(BasicBlock::new(self.blocks.len(), try_rva, try_offset));
+                        entry_points.insert(try_rva);
+                    }
+                }
+            }
+        }
 
         while self.block_id < self.blocks.len() {
             self.decode_single_block(&mut entry_points)?;
@@ -273,6 +314,7 @@ impl<'a> Decoder<'a> {
 
         self.process_exception_handlers();
         self.wire_control_flow_edges();
+        self.wire_exception_edges();
 
         Ok(())
     }
@@ -359,10 +401,20 @@ impl<'a> Decoder<'a> {
 
                     break;
                 }
-                FlowType::UnconditionalBranch | FlowType::Switch | FlowType::Leave => {
+                FlowType::UnconditionalBranch | FlowType::Leave => {
                     for &target_rva in &instruction.branch_targets {
                         self.add_entry_point(target_rva, entry_points);
                     }
+                    break;
+                }
+                FlowType::Switch => {
+                    // Switch has branch targets AND a fall-through (default)
+                    for &target_rva in &instruction.branch_targets {
+                        self.add_entry_point(target_rva, entry_points);
+                    }
+                    // Add fall-through as entry point for the default case
+                    let fall_through_rva = current_rva + instruction.size;
+                    self.add_entry_point(fall_through_rva, entry_points);
                     break;
                 }
                 FlowType::Return | FlowType::Throw | FlowType::EndFinally => {
@@ -545,14 +597,20 @@ impl<'a> Decoder<'a> {
     /// Associate exception handlers with their corresponding basic blocks.
     ///
     /// This method iterates through all exception handlers defined for the method
-    /// and marks each block that falls within a try region with the handler's index.
-    /// This information is used later for control flow analysis and exception handling
-    /// semantics.
+    /// and performs two key tasks:
+    ///
+    /// 1. **Mark protected blocks**: Each block in a try region is marked with the
+    ///    handler's index in `block.exceptions`.
+    ///
+    /// 2. **Mark handler entry blocks**: The first block of each handler is marked
+    ///    with `HandlerEntryInfo` containing the handler type. This is crucial for
+    ///    stack simulation - catch/filter handlers start with the exception object
+    ///    on the stack, while finally/fault handlers start with an empty stack.
     ///
     /// # Handler Association
     ///
     /// A block is associated with an exception handler if the block's starting RVA
-    /// falls within the try region's address range `[try_offset, try_offset + try_length]`.
+    /// falls within the try region's address range `[try_offset, try_offset + try_length)`.
     /// Multiple handlers can be associated with a single block (nested try blocks).
     ///
     /// # Note
@@ -561,14 +619,98 @@ impl<'a> Decoder<'a> {
     /// control flow edges are wired, as the exception associations may affect
     /// control flow analysis.
     fn process_exception_handlers(&mut self) {
-        if let Some(exceptions) = self.exceptions {
-            for (handler_idx, handler) in exceptions.iter().enumerate() {
-                let try_start = u64::from(handler.try_offset);
-                let try_end = try_start + u64::from(handler.try_length);
+        let Some(exceptions) = self.exceptions else {
+            return;
+        };
 
-                for block in &mut self.blocks {
-                    if block.rva >= try_start && block.rva <= try_end {
-                        block.exceptions.push(handler_idx);
+        // Build a map from RVA to block index for handler entry detection
+        let rva_to_block: HashMap<u64, usize> = self
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(idx, block)| (block.rva, idx))
+            .collect();
+
+        // Exception handler offsets are relative to IL code start.
+        // Add base RVA to convert to absolute RVA for block lookup.
+        let base_rva = self.rva_start as u64;
+
+        for (handler_idx, handler) in exceptions.iter().enumerate() {
+            let try_start = base_rva + u64::from(handler.try_offset);
+            let try_end = try_start + u64::from(handler.try_length);
+
+            // Mark blocks in the try region
+            for block in &mut self.blocks {
+                if block.rva >= try_start && block.rva < try_end {
+                    block.exceptions.push(handler_idx);
+                }
+            }
+
+            // Mark handler entry block
+            let handler_rva = base_rva + u64::from(handler.handler_offset);
+            if let Some(&handler_block_idx) = rva_to_block.get(&handler_rva) {
+                self.blocks[handler_block_idx].handler_entry =
+                    Some(HandlerEntryInfo::new(handler_idx, handler.flags));
+            }
+
+            // Mark filter entry block (for filter handlers)
+            if handler.flags == ExceptionHandlerFlags::FILTER && handler.filter_offset > 0 {
+                let filter_rva = base_rva + u64::from(handler.filter_offset);
+                if let Some(&filter_block_idx) = rva_to_block.get(&filter_rva) {
+                    // Filter blocks also receive the exception object
+                    self.blocks[filter_block_idx].handler_entry = Some(HandlerEntryInfo::new(
+                        handler_idx,
+                        ExceptionHandlerFlags::FILTER,
+                    ));
+                }
+            }
+        }
+    }
+
+    /// Wire exception edges from protected blocks to their handler blocks.
+    ///
+    /// For each block in a protected (try) region, adds an exception successor
+    /// edge to the handler block. This represents the implicit control flow
+    /// that occurs when an instruction throws an exception.
+    ///
+    /// # Exception Control Flow
+    ///
+    /// Unlike normal control flow edges, exception edges are "implicit" - any
+    /// instruction in a protected region can potentially transfer control to
+    /// the handler. For analysis purposes, we model this as an edge from the
+    /// block to the handler entry block.
+    fn wire_exception_edges(&mut self) {
+        let Some(exceptions) = self.exceptions else {
+            return;
+        };
+
+        // Build a map from RVA to block index
+        let rva_to_block: HashMap<u64, usize> = self
+            .blocks
+            .iter()
+            .enumerate()
+            .map(|(idx, block)| (block.rva, idx))
+            .collect();
+
+        // Exception handler offsets are relative to IL code start.
+        // Add base RVA to convert to absolute RVA for block lookup.
+        let base_rva = self.rva_start as u64;
+
+        // For each handler, wire edges from protected blocks to handler blocks
+        for handler in exceptions {
+            let handler_rva = base_rva + u64::from(handler.handler_offset);
+            let Some(&handler_block_idx) = rva_to_block.get(&handler_rva) else {
+                continue;
+            };
+
+            let try_start = base_rva + u64::from(handler.try_offset);
+            let try_end = try_start + u64::from(handler.try_length);
+
+            for block in &mut self.blocks {
+                if block.rva >= try_start && block.rva < try_end {
+                    // Add exception successor if not already present
+                    if !block.exception_successors.contains(&handler_block_idx) {
+                        block.exception_successors.push(handler_block_idx);
                     }
                 }
             }
@@ -687,12 +829,20 @@ impl<'a> Decoder<'a> {
                 successors
             }
             FlowType::Switch => {
-                // Multiple successors from switch targets
-                last_instr
+                // Multiple successors from switch targets + fall-through (default)
+                let mut successors: Vec<usize> = last_instr
                     .branch_targets
                     .iter()
                     .filter_map(|&target_rva| rva_to_block.get(&target_rva).copied())
-                    .collect()
+                    .collect();
+
+                // Add fall-through as the default (last successor)
+                let fall_through_rva = block.rva + block.size as u64;
+                if let Some(&fall_through_idx) = rva_to_block.get(&fall_through_rva) {
+                    successors.push(fall_through_idx);
+                }
+
+                successors
             }
             FlowType::Leave => {
                 // Leave instruction jumps to target outside protected region
@@ -789,6 +939,14 @@ pub(crate) fn decode_method(
                 method_offset
             ));
         };
+
+        // Skip decoding if method has no code (e.g., abstract method or empty method body).
+        // Without this check, the decoder would start reading bytes after the header,
+        // which might be the next method's header or garbage data, causing invalid opcode errors.
+        if body.size_code == 0 {
+            let _ = method.blocks.set(Vec::new());
+            return Ok(());
+        }
 
         let mut parser = Parser::new(file.data());
         let mut decoder = Decoder::new(
@@ -1086,7 +1244,8 @@ pub fn decode_instruction(parser: &mut Parser, rva: u64) -> Result<Instruction> 
 
             let mut targets = Vec::with_capacity(case_count as usize);
             for _ in 0..case_count as usize {
-                targets.push(parser.read_le::<u32>()?);
+                // Switch offsets are SIGNED 32-bit integers (can be negative for backward jumps)
+                targets.push(parser.read_le::<i32>()?);
             }
 
             Operand::Switch(targets)
@@ -1115,7 +1274,9 @@ pub fn decode_instruction(parser: &mut Parser, rva: u64) -> Result<Instruction> 
     };
 
     match instruction.flow_type {
-        FlowType::ConditionalBranch | FlowType::UnconditionalBranch => {
+        FlowType::ConditionalBranch | FlowType::UnconditionalBranch | FlowType::Leave => {
+            // All branch-type instructions have their target computed from an immediate offset
+            // This includes leave/leave.s which exit protected regions to a specific target
             if let Operand::Immediate(value) = instruction.operand {
                 let next_instruction_rva = rva + instruction.size;
                 let branch_offset = <Immediate as Into<u64>>::into(value);
@@ -1128,9 +1289,11 @@ pub fn decode_instruction(parser: &mut Parser, rva: u64) -> Result<Instruction> 
             if let Operand::Switch(targets) = &instruction.operand {
                 let next_instruction_rva = rva + instruction.size;
                 for &target in targets {
-                    instruction
-                        .branch_targets
-                        .push(next_instruction_rva.wrapping_add(u64::from(target)));
+                    // Sign-extend i32 offset to i64 for proper signed arithmetic
+                    let offset = i64::from(target);
+                    #[allow(clippy::cast_sign_loss)]
+                    let abs_target = (next_instruction_rva as i64).wrapping_add(offset) as u64;
+                    instruction.branch_targets.push(abs_target);
                 }
             }
         }
@@ -1448,6 +1611,79 @@ mod tests {
     }
 
     #[test]
+    fn decode_blocks_conditional_fall_through() {
+        // This tests a pattern from ConfuserEx control-flow obfuscated code
+        // where ble.s branches FORWARD, and the fall-through should also be decoded
+        //
+        // IL layout:
+        // 0x00: 16       ldc.i4.0
+        // 0x01: 31 05    ble.s +5 (target = 0x08)
+        // 0x03: 06       ldloc.0  <- fall-through, MUST be decoded
+        // 0x04: 16       ldc.i4.0
+        // 0x05: 2B 01    br.s +1 (target = 0x08)
+        // 0x07: 16       ldc.i4.0
+        // 0x08: 0B       stloc.1  <- branch target
+        // 0x09: 2A       ret
+        let code = [
+            0x16, // 0x00: ldc.i4.0
+            0x31, 0x05, // 0x01: ble.s +5 (target = 0x08)
+            0x06, // 0x03: ldloc.0 (fall-through)
+            0x16, // 0x04: ldc.i4.0
+            0x2B, 0x01, // 0x05: br.s +1 (target = 0x08)
+            0x16, // 0x07: ldc.i4.0
+            0x0B, // 0x08: stloc.1
+            0x2A, // 0x09: ret
+        ];
+
+        let result = decode_blocks(&code, 0, 0x1000, None);
+        assert!(result.is_ok(), "decode_blocks failed: {:?}", result.err());
+        let blocks = result.unwrap();
+
+        // Debug print for investigation
+        eprintln!("=== Decoded blocks ===");
+        for block in &blocks {
+            eprintln!(
+                "Block {}: RVA 0x{:04X}, {} instructions",
+                block.id,
+                block.rva,
+                block.instructions.len()
+            );
+            for instr in &block.instructions {
+                eprintln!("  0x{:04X}: {}", instr.offset, instr.mnemonic);
+            }
+        }
+
+        // There should be blocks covering the fall-through path (0x03-0x06)
+        // Not just the branch target (0x08)
+        // Note: instruction.offset is the IL offset (from code start), not RVA
+        let has_fall_through = blocks.iter().any(|b| {
+            b.instructions.iter().any(|i| i.offset == 0x0003) // ldloc.0 at IL offset 3
+        });
+        assert!(
+            has_fall_through,
+            "Fall-through instruction at IL offset 0x03 was not decoded!"
+        );
+
+        // Check all expected instructions are present
+        let all_offsets: Vec<u64> = blocks
+            .iter()
+            .flat_map(|b| b.instructions.iter().map(|i| i.offset))
+            .collect();
+        eprintln!("All instruction offsets: {:?}", all_offsets);
+
+        // Verify key instructions are present (IL offsets, not RVAs)
+        assert!(all_offsets.contains(&0x0001), "ble.s at IL 0x01 missing");
+        assert!(
+            all_offsets.contains(&0x0003),
+            "fall-through ldloc.0 at IL 0x03 missing"
+        );
+        assert!(
+            all_offsets.contains(&0x0008),
+            "branch target at IL 0x08 missing"
+        );
+    }
+
+    #[test]
     fn decode_instruction_uint8_operand() {
         let mut parser = Parser::new(&[0x11, 0xFF]); // ldloc.s with max u8 value (255)
         let rva = 0x1000;
@@ -1591,5 +1827,76 @@ mod tests {
             assert!(!blocks.is_empty());
         }
         // Error is also acceptable
+    }
+
+    #[test]
+    fn decode_instruction_leave_s() {
+        // Test leave.s instruction (0xDE) - exits protected region with 1-byte offset
+        let mut parser = Parser::new(&[0xDE, 0x05]); // leave.s +5
+        let rva = 0x1000;
+
+        let result = decode_instruction(&mut parser, rva).unwrap();
+
+        assert_eq!(result.mnemonic, "leave.s");
+        assert_eq!(result.flow_type, FlowType::Leave);
+        assert_eq!(result.size, 2);
+        // Branch target should be computed: next_rva (0x1002) + offset (5) = 0x1007
+        assert_eq!(result.branch_targets.len(), 1);
+        assert_eq!(result.branch_targets[0], 0x1007);
+    }
+
+    #[test]
+    fn decode_instruction_leave() {
+        // Test leave instruction (0xDD) - exits protected region with 4-byte offset
+        let mut parser = Parser::new(&[0xDD, 0x0A, 0x00, 0x00, 0x00]); // leave +10
+        let rva = 0x1000;
+
+        let result = decode_instruction(&mut parser, rva).unwrap();
+
+        assert_eq!(result.mnemonic, "leave");
+        assert_eq!(result.flow_type, FlowType::Leave);
+        assert_eq!(result.size, 5);
+        // Branch target should be computed: next_rva (0x1005) + offset (10) = 0x100F
+        assert_eq!(result.branch_targets.len(), 1);
+        assert_eq!(result.branch_targets[0], 0x100F);
+    }
+
+    #[test]
+    fn decode_blocks_with_leave() {
+        // Test that blocks ending with leave.s have proper successors
+        let code = [
+            0x00, // nop at RVA 0x1000
+            0xDE, 0x01, // leave.s +1 at RVA 0x1001, target = 0x1004
+            0x00, // nop at RVA 0x1003 (unreachable)
+            0x2A, // ret at RVA 0x1004 (leave target)
+        ];
+
+        let blocks = decode_blocks(&code, 0, 0x1000, None).unwrap();
+
+        // Should have at least 2 blocks: one with nop+leave.s, one with ret
+        assert!(
+            blocks.len() >= 2,
+            "Expected at least 2 blocks, got {}",
+            blocks.len()
+        );
+
+        // Find the block that ends with leave.s
+        let leave_block = blocks.iter().find(|b| {
+            b.instructions
+                .last()
+                .is_some_and(|i| i.mnemonic == "leave.s")
+        });
+
+        assert!(
+            leave_block.is_some(),
+            "Should have a block ending with leave.s"
+        );
+        let leave_block = leave_block.unwrap();
+
+        // The leave.s block should have a successor (the block at RVA 0x1004)
+        assert!(
+            !leave_block.successors.is_empty(),
+            "Block ending with leave.s should have successors"
+        );
     }
 }

@@ -39,7 +39,7 @@
 //!
 //! ## Basic Import Analysis
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::imports::{Imports, ImportType};
 //!
 //! let imports = Imports::new();

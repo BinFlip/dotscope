@@ -1,6 +1,6 @@
 use crate::{
     metadata::{
-        tables::{CodedIndex, CodedIndexType, MemberRefRaw, RowReadable, TableInfoRef},
+        tables::{CodedIndex, CodedIndexType, MemberRefRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::read_le_at_dyn,
@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for MemberRefRaw {
+    const TABLE_ID: TableId = TableId::MemberRef;
+
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(MemberRefRaw {
             rid,

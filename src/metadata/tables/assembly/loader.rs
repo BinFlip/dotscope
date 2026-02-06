@@ -19,6 +19,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{AssemblyRaw, TableId},
     },
@@ -46,22 +47,37 @@ impl MetadataLoader for AssemblyLoader {
     /// * `Ok(())` - Assembly successfully loaded or table not present
     /// * `Err(`[`crate::Error`]`)` - Malformed data or duplicate assembly information
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings), Some(blob)) =
+        let (Some(header), Some(strings), Some(blob)) =
             (context.meta, context.strings, context.blobs)
-        {
-            if let Some(table) = header.table::<AssemblyRaw>() {
-                if let Some(row) = table.get(1) {
-                    let owned = row.to_owned(strings, blob)?;
+        else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<AssemblyRaw>() else {
+            return Ok(());
+        };
+        let Some(row) = table.get(1) else {
+            return Ok(());
+        };
 
-                    context
-                        .assembly
-                        .set(owned)
-                        .map_err(|_| malformed_error!("Assembly has already been set"))?;
-                    return Ok(());
-                }
-            }
-        }
-        Ok(())
+        let token_msg = || format!("assembly 0x{:08x}", row.token.value());
+
+        let Some(owned) = context.handle_result(
+            row.to_owned(strings, blob),
+            DiagnosticCategory::Table,
+            token_msg,
+        )?
+        else {
+            return Ok(());
+        };
+
+        context.handle_error(
+            context
+                .assembly
+                .set(owned)
+                .map_err(|_| malformed_error!("Assembly has already been set")),
+            DiagnosticCategory::Table,
+            token_msg,
+        )
     }
 
     /// Returns the table identifier for the Assembly table

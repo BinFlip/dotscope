@@ -5,7 +5,7 @@
 //! the existing low-level builders to provide a fluent, high-level API.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         method::{MethodAccessFlags, MethodImplCodeType, MethodModifiers},
         signatures::{encode_method_signature, SignatureMethod, SignatureParameter, TypeSignature},
@@ -31,7 +31,7 @@ use super::method_body::MethodBodyBuilder;
 /// - Uses existing `MethodDefBuilder` for metadata table creation
 /// - Uses `MethodBodyBuilder` for CIL implementation
 /// - Uses existing signature builders for method signatures
-/// - Orchestrates all components through `BuilderContext`
+/// - Orchestrates all components through `CilAssembly`
 ///
 /// # Examples
 ///
@@ -43,8 +43,7 @@ use super::method_body::MethodBodyBuilder;
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let method_token = MethodBuilder::new("Add")
 ///     .public()
 ///     .static_method()
@@ -60,7 +59,7 @@ use super::method_body::MethodBodyBuilder;
 ///             Ok(())
 ///         })
 ///     })
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -74,8 +73,7 @@ use super::method_body::MethodBodyBuilder;
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = dotscope::CilAssembly::new(view);
-/// # let mut context = dotscope::BuilderContext::new(assembly);
+/// # let mut assembly = dotscope::CilAssembly::new(view);
 /// let ctor_token = MethodBuilder::constructor()
 ///     .parameter("name", TypeSignature::String)
 ///     .parameter("age", TypeSignature::I4)
@@ -89,7 +87,7 @@ use super::method_body::MethodBodyBuilder;
 ///             Ok(())
 ///         })
 ///     })
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -103,8 +101,7 @@ use super::method_body::MethodBodyBuilder;
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = dotscope::CilAssembly::new(view);
-/// # let mut context = dotscope::BuilderContext::new(assembly);
+/// # let mut assembly = dotscope::CilAssembly::new(view);
 /// let getter_token = MethodBuilder::property_getter("Name", TypeSignature::String)
 ///     .implementation(|body| {
 ///         body.implementation(|asm| {
@@ -114,7 +111,7 @@ use super::method_body::MethodBodyBuilder;
 ///             Ok(())
 ///         })
 ///     })
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -128,15 +125,14 @@ use super::method_body::MethodBodyBuilder;
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = dotscope::CilAssembly::new(view);
-/// # let mut context = dotscope::BuilderContext::new(assembly);
+/// # let mut assembly = dotscope::CilAssembly::new(view);
 /// let pinvoke_token = MethodBuilder::new("GetLastError")
 ///     .public()
 ///     .static_method()
 ///     .calling_convention_stdcall() // Windows API calling convention
 ///     .returns(TypeSignature::I4)
 ///     .extern_method() // No IL implementation - native code
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -150,8 +146,7 @@ use super::method_body::MethodBodyBuilder;
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = dotscope::CilAssembly::new(view);
-/// # let mut context = dotscope::BuilderContext::new(assembly);
+/// # let mut assembly = dotscope::CilAssembly::new(view);
 /// let printf_token = MethodBuilder::new("printf")
 ///     .public()
 ///     .static_method()
@@ -159,7 +154,7 @@ use super::method_body::MethodBodyBuilder;
 ///     .parameter("format", TypeSignature::String)
 ///     .returns(TypeSignature::I4)
 ///     .extern_method()
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -729,8 +724,7 @@ impl MethodBuilder {
     ///
     /// # fn example() -> dotscope::Result<()> {
     /// # let view = dotscope::metadata::cilassemblyview::CilAssemblyView::from_path("test.dll")?;
-    /// # let assembly = dotscope::CilAssembly::new(view);
-    /// # let mut context = dotscope::BuilderContext::new(assembly);
+    /// # let mut assembly = dotscope::CilAssembly::new(view);
     /// let method = MethodBuilder::new("Test")
     ///     .implementation(|body| {
     ///         body.local("temp", dotscope::metadata::signatures::TypeSignature::I4)
@@ -742,7 +736,7 @@ impl MethodBuilder {
     ///                 Ok(())
     ///             })
     ///     })
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -784,7 +778,7 @@ impl MethodBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - Builder context for managing the assembly
+    /// * `assembly` - CIL assembly for managing the metadata
     ///
     /// # Returns
     ///
@@ -793,7 +787,7 @@ impl MethodBuilder {
     /// # Errors
     ///
     /// Returns an error if method creation fails at any step.
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Extract values needed for both signature and parameter creation
         let return_type = self.return_type.clone();
         let parameters = self.parameters.clone();
@@ -832,12 +826,12 @@ impl MethodBuilder {
 
         // Create method body if we have an implementation
         let (rva, _local_sig_token) = if let Some(body_builder) = self.body_builder {
-            let (body_bytes, local_sig_token) = body_builder.build(context)?;
+            let (body_bytes, local_sig_token) = body_builder.build(assembly)?;
 
-            // Store method body through BuilderContext and get a placeholder RVA.
+            // Store method body through CilAssembly and get a placeholder RVA.
             // This placeholder will be resolved to the actual RVA during PE writing
             // when the real code section layout is determined.
-            let placeholder_rva = context.store_method_body(body_bytes);
+            let placeholder_rva = assembly.store_method_body(body_bytes);
 
             (placeholder_rva, local_sig_token)
         } else {
@@ -849,17 +843,8 @@ impl MethodBuilder {
         let combined_flags = self.access_flags.bits() | self.modifiers.bits();
 
         // Get the next parameter table index (where our parameters will start)
-        let param_start_index = context.next_rid(TableId::Param);
+        let param_start_index = assembly.next_rid(TableId::Param)?;
 
-        // Create parameter table entries
-        // Always create a return type parameter (sequence 0) for every method,
-        // even if it returns void. This is required by ECMA-335 and expected by mono runtime.
-        ParamBuilder::new()
-            .flags(0) // No special flags for return type
-            .sequence(0) // Return type is always sequence 0
-            .build(context)?;
-
-        // Create parameter entries for each method parameter
         for (sequence, (name, _param_type)) in parameters.iter().enumerate() {
             let param_sequence = u32::try_from(sequence + 1)
                 .map_err(|_| malformed_error!("Parameter sequence exceeds u32 range"))?; // Parameters start at sequence 1
@@ -868,7 +853,7 @@ impl MethodBuilder {
                 .name(name)
                 .flags(ParamAttributes::IN) // Default to IN parameter
                 .sequence(param_sequence)
-                .build(context)?;
+                .build(assembly)?;
         }
 
         // Create the method definition with the correct parameter list index
@@ -879,7 +864,7 @@ impl MethodBuilder {
             .signature(&signature_bytes)
             .rva(rva)
             .param_list(param_start_index) // Point to our parameter table entries
-            .build(context)?;
+            .build(assembly)?;
 
         Ok(method_token)
     }
@@ -907,23 +892,22 @@ impl Default for MethodBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature},
+        cilassembly::{ChangeRefKind, CilAssembly},
+        metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature, tables::TableId},
     };
     use std::path::PathBuf;
 
-    fn get_test_context() -> Result<BuilderContext> {
+    fn get_test_assembly() -> Result<CilAssembly> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         let view = CilAssemblyView::from_path(&path)?;
-        let assembly = CilAssembly::new(view);
-        Ok(BuilderContext::new(assembly))
+        Ok(CilAssembly::new(view))
     }
 
     #[test]
     fn test_method_builder_basic() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let method_token = MethodBuilder::new("TestMethod")
+        let method_ref = MethodBuilder::new("TestMethod")
             .public()
             .static_method()
             .returns(TypeSignature::Void)
@@ -934,19 +918,22 @@ mod tests {
                     Ok(())
                 })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Should create a valid method token
-        assert_eq!(method_token.value() & 0xFF000000, 0x06000000); // MethodDef table
+        // Should create a valid method reference
+        assert_eq!(
+            method_ref.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_method_builder_with_parameters() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let method_token = MethodBuilder::new("Add")
+        let method_ref = MethodBuilder::new("Add")
             .public()
             .static_method()
             .parameter("a", TypeSignature::I4)
@@ -958,18 +945,21 @@ mod tests {
                     Ok(())
                 })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(method_token.value() & 0xFF000000, 0x06000000);
+        assert_eq!(
+            method_ref.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_constructor_builder() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let ctor_token = MethodBuilder::constructor()
+        let ctor_ref = MethodBuilder::constructor()
             .parameter("name", TypeSignature::String)
             .implementation(|body| {
                 body.implementation(|asm| {
@@ -979,36 +969,39 @@ mod tests {
                     Ok(())
                 })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(ctor_token.value() & 0xFF000000, 0x06000000);
+        assert_eq!(ctor_ref.kind(), ChangeRefKind::TableRow(TableId::MethodDef));
 
         Ok(())
     }
 
     #[test]
     fn test_property_getter() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let getter_token = MethodBuilder::property_getter("Name", TypeSignature::String)
+        let getter_ref = MethodBuilder::property_getter("Name", TypeSignature::String)
             .implementation(|body| {
                 body.implementation(|asm| {
                     asm.ldarg_0()?.ldfld(Token::new(0x04000001))?.ret()?;
                     Ok(())
                 })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(getter_token.value() & 0xFF000000, 0x06000000);
+        assert_eq!(
+            getter_ref.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_property_setter() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let setter_token = MethodBuilder::property_setter("Name", TypeSignature::String)
+        let setter_ref = MethodBuilder::property_setter("Name", TypeSignature::String)
             .implementation(|body| {
                 body.implementation(|asm| {
                     asm.ldarg_0()? // this
@@ -1018,35 +1011,41 @@ mod tests {
                     Ok(())
                 })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(setter_token.value() & 0xFF000000, 0x06000000);
+        assert_eq!(
+            setter_ref.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_abstract_method() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let method_token = MethodBuilder::new("AbstractMethod")
+        let method_ref = MethodBuilder::new("AbstractMethod")
             .public()
             .abstract_method()
             .virtual_method()
             .returns(TypeSignature::I4)
             .extern_method() // No implementation
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(method_token.value() & 0xFF000000, 0x06000000);
+        assert_eq!(
+            method_ref.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_static_constructor() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let static_ctor_token = MethodBuilder::static_constructor()
+        let static_ctor_ref = MethodBuilder::static_constructor()
             .implementation(|body| {
                 body.implementation(|asm| {
                     // Initialize static fields
@@ -1056,18 +1055,21 @@ mod tests {
                     Ok(())
                 })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(static_ctor_token.value() & 0xFF000000, 0x06000000);
+        assert_eq!(
+            static_ctor_ref.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_method_with_locals() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let method_token = MethodBuilder::new("ComplexMethod")
+        let method_ref = MethodBuilder::new("ComplexMethod")
             .public()
             .static_method()
             .parameter("input", TypeSignature::I4)
@@ -1087,16 +1089,19 @@ mod tests {
                         Ok(())
                     })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(method_token.value() & 0xFF000000, 0x06000000);
+        assert_eq!(
+            method_ref.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_method_builder_calling_conventions() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
         // Test cdecl calling convention
         let cdecl_method = MethodBuilder::new("CdeclMethod")
@@ -1106,9 +1111,12 @@ mod tests {
             .parameter("x", TypeSignature::I4)
             .returns(TypeSignature::I4)
             .extern_method() // No implementation for P/Invoke
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(cdecl_method.value() & 0xFF000000, 0x06000000);
+        assert_eq!(
+            cdecl_method.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        );
 
         // Test stdcall calling convention
         let stdcall_method = MethodBuilder::new("StdcallMethod")
@@ -1118,9 +1126,12 @@ mod tests {
             .parameter("x", TypeSignature::I4)
             .returns(TypeSignature::I4)
             .extern_method()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(stdcall_method.value() & 0xFF000000, 0x06000000);
+        assert_eq!(
+            stdcall_method.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        );
 
         // Test default calling convention (should work for managed methods)
         let default_method = MethodBuilder::new("DefaultMethod")
@@ -1135,16 +1146,19 @@ mod tests {
                     Ok(())
                 })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(default_method.value() & 0xFF000000, 0x06000000);
+        assert_eq!(
+            default_method.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_method_builder_vararg_calling_convention() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
         let vararg_method = MethodBuilder::new("VarargMethod")
             .public()
@@ -1153,16 +1167,19 @@ mod tests {
             .parameter("format", TypeSignature::String)
             .returns(TypeSignature::Void)
             .extern_method() // Vararg methods are typically extern
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(vararg_method.value() & 0xFF000000, 0x06000000);
+        assert_eq!(
+            vararg_method.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_method_builder_explicit_this() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
         let explicit_this_method = MethodBuilder::new("ExplicitThisMethod")
             .public()
@@ -1178,16 +1195,19 @@ mod tests {
                     Ok(())
                 })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(explicit_this_method.value() & 0xFF000000, 0x06000000);
+        assert_eq!(
+            explicit_this_method.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_method_builder_calling_convention_switching() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
         // Test that setting a new calling convention clears the previous one
         let method = MethodBuilder::new("SwitchingMethod")
@@ -1198,16 +1218,16 @@ mod tests {
             .parameter("x", TypeSignature::I4)
             .returns(TypeSignature::I4)
             .extern_method()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(method.value() & 0xFF000000, 0x06000000);
+        assert_eq!(method.kind(), ChangeRefKind::TableRow(TableId::MethodDef));
 
         Ok(())
     }
 
     #[test]
     fn test_event_add_method() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
         let add_method = MethodBuilder::event_add("OnClick", TypeSignature::Object)
             .implementation(|body| {
@@ -1221,16 +1241,19 @@ mod tests {
                     Ok(())
                 })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(add_method.value() & 0xFF000000, 0x06000000); // MethodDef table
+        assert_eq!(
+            add_method.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        ); // MethodDef table
 
         Ok(())
     }
 
     #[test]
     fn test_event_remove_method() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
         let remove_method = MethodBuilder::event_remove("OnClick", TypeSignature::Object)
             .implementation(|body| {
@@ -1244,9 +1267,12 @@ mod tests {
                     Ok(())
                 })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(remove_method.value() & 0xFF000000, 0x06000000); // MethodDef table
+        assert_eq!(
+            remove_method.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDef)
+        ); // MethodDef table
 
         Ok(())
     }

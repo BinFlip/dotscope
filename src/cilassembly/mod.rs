@@ -55,22 +55,22 @@
 //! # Usage Patterns
 //!
 //! ## **Basic Heap Modification**
-//! ```rust,ignore
+//! ```rust,no_run
 //! # use dotscope::{CilAssemblyView, CilAssembly};
 //! # let view = CilAssemblyView::from_mem(vec![])?;
 //! let mut assembly = CilAssembly::new(view);
 //!
 //! // Heap operations return indices for cross-referencing
-//! let string_idx = assembly.add_string("MyString")?;
-//! let blob_idx = assembly.add_blob(&[0x01, 0x02, 0x03])?;
-//! let guid_idx = assembly.add_guid(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,
+//! let string_idx = assembly.string_add("MyString")?;
+//! let blob_idx = assembly.blob_add(&[0x01, 0x02, 0x03])?;
+//! let guid_idx = assembly.guid_add(&[0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,
 //!                                    0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88])?;
-//! let userstring_idx = assembly.add_userstring("User String Literal")?;
+//! let userstring_idx = assembly.userstring_add("User String Literal")?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## **Table Row Operations**
-//! ```rust,ignore
+//! ```rust,no_run
 //! # use dotscope::{CilAssemblyView, CilAssembly, metadata::tables::{TableId, TableDataOwned}};
 //! # let view = CilAssemblyView::from_mem(vec![])?;
 //! let mut assembly = CilAssembly::new(view);
@@ -82,15 +82,16 @@
 //! ```
 //!
 //! ## **Validation and Consistency**
-//! ```rust,ignore
+//! ```rust,no_run
 //! # use dotscope::{CilAssemblyView, CilAssembly};
 //! # let view = CilAssemblyView::from_mem(vec![])?;
 //! let mut assembly = CilAssembly::new(view);
 //!
 //! // Make modifications...
 //!
-//! // Validate all changes before generating binary
-//! assembly.validate_and_apply_changes()?;
+//! // Write to file or memory
+//! assembly.to_file("output.dll")?;
+//! // Or: let bytes = assembly.to_memory()?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -112,13 +113,9 @@
 //! - [`crate::cilassembly::resolver::LastWriteWinsResolver`] - Default timestamp-based resolver
 //! - [`crate::cilassembly::resolver::Conflict`] & [`crate::cilassembly::resolver::Resolution`] - Conflict types and results
 //!
-//! ## **Remapping ([`crate::cilassembly::remapping`])**
-//! - [`crate::cilassembly::remapping::IndexRemapper`] - Master index/RID remapping
-//! - [`crate::cilassembly::remapping::RidRemapper`] - Per-table RID management
-//!
 //! # Examples
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::{CilAssemblyView, CilAssembly};
 //! use std::path::Path;
 //!
@@ -127,45 +124,52 @@
 //! let mut assembly = CilAssembly::new(view);
 //!
 //! // Add a string to the heap
-//! let string_index = assembly.add_string("Hello, World!")?;
+//! let string_index = assembly.string_add("Hello, World!")?;
 //!
 //! // Write modified assembly to new file
-//! assembly.write_to_file(Path::new("modified.dll"))?;
+//! assembly.to_file(Path::new("modified.dll"))?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
+use std::path::Path;
+
 use crate::{
     file::File,
     metadata::{
         cilassemblyview::CilAssemblyView,
         exports::UnifiedExportContainer,
         imports::UnifiedImportContainer,
-        tables::{TableDataOwned, TableId},
-        validation::{ValidationConfig, ValidationEngine},
+        signatures::{
+            encode_field_signature, encode_local_var_signature, encode_method_signature,
+            encode_property_signature, encode_typespec_signature, SignatureField,
+            SignatureLocalVariables, SignatureMethod, SignatureProperty, SignatureTypeSpec,
+        },
+        tables::{AssemblyRefRaw, CodedIndex, CodedIndexType, TableDataOwned, TableId},
+        token::Token,
     },
-    utils::compressed_uint_size,
-    Result,
+    CilObject, Result, ValidationConfig,
 };
 
-mod builder;
 mod builders;
 mod changes;
+mod cleanup;
 mod modifications;
 mod operation;
-mod remapping;
 mod resolver;
 mod writer;
 
-pub use builder::*;
 pub use builders::{
     ClassBuilder, EnumBuilder, EventBuilder, InterfaceBuilder, MethodBodyBuilder, MethodBuilder,
     PropertyBuilder,
 };
-pub use changes::{AssemblyChanges, HeapChanges, ReferenceHandlingStrategy};
+pub use changes::{AssemblyChanges, ChangeRef, ChangeRefKind, ChangeRefRc, HeapChanges};
+pub use cleanup::CleanupRequest;
 pub use modifications::TableModifications;
 pub use operation::{Operation, TableOperation};
 pub use resolver::LastWriteWinsResolver;
+pub use writer::GeneratorConfig;
+pub(crate) use writer::ResolvePlaceholders;
 
-use self::remapping::IndexRemapper;
+use writer::PeGenerator;
 
 /// A mutable view of a .NET assembly that tracks changes for editing operations.
 ///
@@ -180,6 +184,7 @@ use self::remapping::IndexRemapper;
 pub struct CilAssembly {
     view: CilAssemblyView,
     changes: AssemblyChanges,
+    pending_cleanup: cleanup::CleanupRequest,
 }
 
 impl CilAssembly {
@@ -194,7 +199,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::{CilAssemblyView, CilAssembly};
     /// use std::path::Path;
     ///
@@ -205,9 +210,148 @@ impl CilAssembly {
     #[must_use]
     pub fn new(view: CilAssemblyView) -> Self {
         Self {
-            changes: AssemblyChanges::new(&view),
+            changes: AssemblyChanges::new(),
             view,
+            pending_cleanup: cleanup::CleanupRequest::new(),
         }
+    }
+
+    /// Creates a new mutable assembly by loading from a file path.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - Path to the .NET assembly file to load
+    ///
+    /// # Returns
+    ///
+    /// Returns a `CilAssembly` ready for modification operations.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilAssembly;
+    /// use std::path::Path;
+    ///
+    /// let mut assembly = CilAssembly::from_path(Path::new("assembly.dll"))?;
+    ///
+    /// // Now ready to modify
+    /// let string_index = assembly.string_add("Hello, World!")?;
+    /// assembly.to_file(Path::new("modified.dll"))?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be loaded or parsed as a valid
+    /// .NET assembly.
+    pub fn from_path<P: AsRef<Path>>(path: P) -> Result<Self> {
+        let view = CilAssemblyView::from_path(path)?;
+        Ok(Self::new(view))
+    }
+
+    /// Creates a new mutable assembly by loading from a byte vector.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - The raw bytes of the .NET assembly
+    ///
+    /// # Returns
+    ///
+    /// Returns a `CilAssembly` ready for modification operations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bytes cannot be parsed as a valid .NET assembly.
+    pub fn from_bytes(bytes: Vec<u8>) -> Result<Self> {
+        let view = CilAssemblyView::from_mem(bytes)?;
+        Ok(Self::new(view))
+    }
+
+    /// Creates a new mutable assembly by loading from a byte vector with custom validation.
+    ///
+    /// # Arguments
+    ///
+    /// * `bytes` - The raw bytes of the .NET assembly
+    /// * `validation_config` - Validation configuration
+    ///
+    /// # Returns
+    ///
+    /// Returns a `CilAssembly` ready for modification operations.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the bytes cannot be parsed as a valid .NET assembly.
+    pub fn from_bytes_with_validation(
+        bytes: Vec<u8>,
+        validation_config: ValidationConfig,
+    ) -> Result<Self> {
+        let view = CilAssemblyView::from_mem_with_validation(bytes, validation_config)?;
+        Ok(Self::new(view))
+    }
+
+    /// Adds a cleanup request to be executed before PE generation.
+    ///
+    /// Multiple cleanup requests can be added and will be merged together.
+    /// The cleanup is executed once when `to_file()`, `to_memory()`, or similar
+    /// generation methods are called.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The cleanup request specifying what to remove
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use dotscope::CilAssembly;
+    /// # use dotscope::metadata::token::Token;
+    /// # let mut assembly = CilAssembly::from_path("input.dll")?;
+    /// # let protection_type_token = Token::new(0x02000001);
+    /// # let decryptor_method_token = Token::new(0x06000001);
+    /// let mut request = dotscope::CleanupRequest::new();
+    /// request.add_type(protection_type_token);
+    /// request.add_method(decryptor_method_token);
+    ///
+    /// assembly.add_cleanup(request);
+    ///
+    /// // Cleanup executes automatically during generation
+    /// assembly.to_file("output.dll")?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn add_cleanup(&mut self, request: cleanup::CleanupRequest) {
+        self.pending_cleanup.merge(&request);
+    }
+
+    /// Returns a reference to the pending cleanup request.
+    ///
+    /// This can be used to inspect what cleanup operations are queued.
+    #[must_use]
+    pub fn pending_cleanup(&self) -> &cleanup::CleanupRequest {
+        &self.pending_cleanup
+    }
+
+    /// Executes pending cleanup, adding deletions to AssemblyChanges.
+    ///
+    /// This is called internally before PE generation. It can only be called
+    /// once because row deletions cause RID shifting.
+    ///
+    /// # Returns
+    ///
+    /// Statistics about what was removed during cleanup.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if cleanup execution fails.
+    fn finalize_for_generation(&mut self) -> Result<cleanup::CleanupStats> {
+        if self.pending_cleanup.is_empty() {
+            return Ok(cleanup::CleanupStats::new());
+        }
+
+        // Take ownership of the request (clears pending_cleanup and avoids borrow conflict)
+        let request = std::mem::take(&mut self.pending_cleanup);
+
+        // Execute cleanup ONCE - this adds all deletions to self.changes
+        let stats = cleanup::execute_cleanup(self, &request)?;
+        Ok(stats)
     }
 
     /// Adds a string to the string heap (#Strings) and returns its index.
@@ -231,16 +375,17 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
-    /// let hello_index = assembly.add_string("Hello")?;
-    /// let world_index = assembly.add_string("World")?;
+    /// let hello_ref = assembly.string_add("Hello")?;
+    /// let world_ref = assembly.string_add("World")?;
     ///
-    /// assert!(world_index > hello_index);
+    /// // Each addition returns a unique reference
+    /// assert_ne!(hello_ref, world_ref);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
@@ -248,14 +393,9 @@ impl CilAssembly {
     ///
     /// Currently this function does not return errors, but the Result type is
     /// reserved for future enhancements that may require error handling.
-    pub fn string_add(&mut self, value: &str) -> Result<u32> {
-        let string_changes = &mut self.changes.string_heap_changes;
-        let index = string_changes.next_index;
-        string_changes.appended_items.push(value.to_string());
-        // Strings are null-terminated, so increment by string length + 1 for null terminator
-        string_changes.next_index += u32::try_from(value.len()).unwrap_or(0) + 1;
-
-        Ok(index)
+    pub fn string_add(&mut self, value: &str) -> Result<ChangeRefRc> {
+        let change_ref = self.changes.string_heap_changes.append(value.to_string());
+        Ok(change_ref)
     }
 
     /// Adds a blob to the blob heap and returns its index.
@@ -276,18 +416,9 @@ impl CilAssembly {
     /// # Errors
     ///
     /// Returns an error if the blob cannot be added to the heap.
-    pub fn blob_add(&mut self, data: &[u8]) -> Result<u32> {
-        let blob_changes = &mut self.changes.blob_heap_changes;
-        let index = blob_changes.next_index;
-        blob_changes.appended_items.push(data.to_vec());
-
-        // Blobs have compressed length prefix + data
-        let length = data.len();
-        let prefix_size = compressed_uint_size(length);
-        blob_changes.next_index +=
-            u32::try_from(prefix_size).unwrap_or(0) + u32::try_from(length).unwrap_or(0);
-
-        Ok(index)
+    pub fn blob_add(&mut self, data: &[u8]) -> Result<ChangeRefRc> {
+        let change_ref = self.changes.blob_heap_changes.append(data.to_vec());
+        Ok(change_ref)
     }
 
     /// Adds a GUID to the GUID heap and returns its index.
@@ -307,7 +438,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
@@ -315,32 +446,16 @@ impl CilAssembly {
     ///
     /// let guid = [0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,
     ///             0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88];
-    /// let guid_index = assembly.add_guid(&guid)?;
+    /// let guid_index = assembly.guid_add(&guid)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors
     ///
     /// Returns an error if the GUID cannot be added to the heap.
-    pub fn guid_add(&mut self, guid: &[u8; 16]) -> Result<u32> {
-        let guid_changes = &mut self.changes.guid_heap_changes;
-
-        // GUID heap indices are sequential (1-based), not byte-based
-        // Calculate the current GUID count from the original heap size and additions
-        let original_heap_size = guid_changes.next_index
-            - (u32::try_from(guid_changes.appended_items.len()).unwrap_or(0) * 16);
-        let existing_guid_count = original_heap_size / 16;
-        let added_guid_count = u32::try_from(guid_changes.appended_items.len()).unwrap_or(0);
-        let sequential_index = existing_guid_count + added_guid_count + 1;
-
-        // Store the byte offset for the heap builder to use
-        // byte_offset = (sequential_index - 1) * 16 = (existing_guid_count + added_guid_count) * 16
-        let byte_offset = guid_changes.next_index;
-        guid_changes.append_item_with_index(*guid, byte_offset);
-        // GUIDs are fixed 16 bytes each
-        guid_changes.next_index += 16;
-
-        Ok(sequential_index)
+    pub fn guid_add(&mut self, guid: &[u8; 16]) -> Result<ChangeRefRc> {
+        let change_ref = self.changes.guid_heap_changes.append(*guid);
+        Ok(change_ref)
     }
 
     /// Adds a user string to the user string heap (#US) and returns its index.
@@ -366,36 +481,66 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
-    /// let userstring_index = assembly.add_userstring("Hello, World!")?;
+    /// let userstring_index = assembly.userstring_add("Hello, World!")?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors
     ///
     /// Returns an error if the user string cannot be added to the heap.
-    pub fn userstring_add(&mut self, value: &str) -> Result<u32> {
-        let userstring_changes = &mut self.changes.userstring_heap_changes;
-        let index = userstring_changes.next_index;
+    pub fn userstring_add(&mut self, value: &str) -> Result<ChangeRefRc> {
+        let change_ref = self
+            .changes
+            .userstring_heap_changes
+            .append(value.to_string());
+        Ok(change_ref)
+    }
 
-        userstring_changes.append_item_with_index(value.to_string(), index);
+    /// Adds resource data to the CLR resources section and returns its offset.
+    ///
+    /// This stores the resource data in the CLR resources section (not the blob heap)
+    /// with the proper .NET format: 4-byte little-endian length prefix followed by the data.
+    /// The returned offset should be used as the `offset_field` in ManifestResource table entries.
+    ///
+    /// The offset is automatically adjusted to account for any existing resources in the
+    /// original assembly, since new resources are appended after original ones.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The raw resource data bytes to store
+    ///
+    /// # Returns
+    ///
+    /// Returns the offset within the resources section where this resource starts.
+    /// This offset points to the length prefix, which is how ManifestResource.offset_field works.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use dotscope::{CilAssemblyView, CilAssembly};
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
+    /// let mut assembly = CilAssembly::new(view);
+    ///
+    /// let resource_data = b"Hello, Resource!";
+    /// let offset = assembly.resource_data_add(resource_data);
+    /// // Use offset as ManifestResource.offset_field
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn resource_data_add(&mut self, data: &[u8]) -> u32 {
+        // Get the offset within our new resource data buffer
+        let new_offset = self.changes.store_resource_data(data);
 
-        // Calculate size increment for next index (using original string size for API index stability)
-        let utf16_bytes: Vec<u8> = value.encode_utf16().flat_map(u16::to_le_bytes).collect();
-        let utf16_length = utf16_bytes.len();
-        let total_length = utf16_length + 1; // +1 for terminator byte
-
-        // Calculate compressed length prefix size + UTF-16 data length + terminator
-        let prefix_size = compressed_uint_size(total_length);
-        userstring_changes.next_index +=
-            u32::try_from(prefix_size).unwrap_or(0) + u32::try_from(total_length).unwrap_or(0);
-
-        Ok(index)
+        // Add the original resource size since new resources are appended after original ones
+        // This ensures ManifestResource.offset_field points to the correct location
+        let original_size = self.view.cor20header().resource_size;
+        new_offset + original_size
     }
 
     /// Updates an existing string in the string heap at the specified index.
@@ -414,14 +559,14 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
     /// // Modify an existing string at index 42
-    /// assembly.update_string(42, "Updated String")?;
+    /// assembly.string_update(42, "Updated String")?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
@@ -437,13 +582,11 @@ impl CilAssembly {
 
     /// Removes a string from the string heap at the specified index.
     ///
-    /// This marks the string at the given heap index for removal. The strategy
-    /// parameter controls how existing references to this string are handled.
+    /// This marks the string at the given heap index for removal.
     ///
     /// # Arguments
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
-    /// * `strategy` - How to handle existing references to this string
     ///
     /// # Returns
     ///
@@ -451,25 +594,21 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssembly, CilAssemblyView};
-    /// # use dotscope::cilassembly::ReferenceHandlingStrategy;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
     /// let mut assembly = CilAssembly::new(view);
     ///
-    /// // Remove string at index 42, fail if references exist
-    /// assembly.remove_string(42, ReferenceHandlingStrategy::FailIfReferenced)?;
-    ///
-    /// // Remove string at index 43, nullify all references
-    /// assembly.remove_string(43, ReferenceHandlingStrategy::NullifyReferences)?;
+    /// // Remove string at index 42
+    /// assembly.string_remove(42)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
     /// # Errors
     ///
-    /// Returns an error if the string cannot be removed or if references exist when using FailIfReferenced strategy.
-    pub fn string_remove(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
+    /// Returns an error if the string cannot be removed.
+    pub fn string_remove(&mut self, index: u32) -> Result<()> {
         let original_heap_size = self
             .view()
             .streams()
@@ -482,9 +621,7 @@ impl CilAssembly {
                 .string_heap_changes
                 .mark_appended_for_removal(index);
         } else {
-            self.changes
-                .string_heap_changes
-                .add_removal(index, strategy);
+            self.changes.string_heap_changes.add_removal(index);
         }
         Ok(())
     }
@@ -511,13 +648,12 @@ impl CilAssembly {
     /// # Arguments
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
-    /// * `strategy` - How to handle existing references to this blob
     ///
     /// # Errors
     ///
-    /// Returns an error if the blob cannot be removed or if references exist when using FailIfReferenced strategy.
-    pub fn blob_remove(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
-        self.changes.blob_heap_changes.add_removal(index, strategy);
+    /// Returns an error if the blob cannot be removed.
+    pub fn blob_remove(&mut self, index: u32) -> Result<()> {
+        self.changes.blob_heap_changes.add_removal(index);
         Ok(())
     }
 
@@ -525,19 +661,28 @@ impl CilAssembly {
     ///
     /// # Arguments
     ///
-    /// * `index` - The heap index to modify (1-based sequential index, following ECMA-335 conventions)
+    /// * `index` - The heap index to modify. This can be either:
+    ///   - A 1-based sequential index (following ECMA-335 conventions) for existing GUIDs
+    ///   - A placeholder value from a ChangeRef for newly added GUIDs
     /// * `new_guid` - The new 16-byte GUID to store at that index
     ///
     /// # Errors
     ///
     /// Currently always succeeds, but returns `Result` for future extensibility.
     pub fn guid_update(&mut self, index: u32, new_guid: &[u8; 16]) -> Result<()> {
-        // Convert 1-based sequential index to byte offset for HeapChanges lookup
-        // GUID heap uses byte offsets internally: byte_offset = (index - 1) * 16
-        let byte_offset = (index.saturating_sub(1)) * 16;
+        // Check if this is a placeholder value (from a newly added GUID)
+        // Placeholders have the high bit or marker bit set
+        let lookup_key = if ChangeRef::is_placeholder(index) {
+            // For placeholders, use directly - the streaming code looks up by placeholder
+            index
+        } else {
+            // For existing GUIDs, convert 1-based sequential index to byte offset
+            // GUID heap uses byte offsets internally: byte_offset = (index - 1) * 16
+            index.saturating_sub(1).saturating_mul(16)
+        };
         self.changes
             .guid_heap_changes
-            .add_modification(byte_offset, *new_guid);
+            .add_modification(lookup_key, *new_guid);
         Ok(())
     }
 
@@ -545,19 +690,22 @@ impl CilAssembly {
     ///
     /// # Arguments
     ///
-    /// * `index` - The heap index to remove (1-based sequential index, following ECMA-335 conventions)
-    /// * `strategy` - How to handle existing references to this GUID
+    /// * `index` - The heap index to remove. This can be either:
+    ///   - A 1-based sequential index (following ECMA-335 conventions) for existing GUIDs
+    ///   - A placeholder value from a ChangeRef for newly added GUIDs
     ///
     /// # Errors
     ///
     /// Currently always succeeds, but returns `Result` for future extensibility.
-    pub fn guid_remove(&mut self, index: u32, strategy: ReferenceHandlingStrategy) -> Result<()> {
-        // Convert 1-based sequential index to byte offset for HeapChanges lookup
-        // GUID heap uses byte offsets internally: byte_offset = (index - 1) * 16
-        let byte_offset = (index.saturating_sub(1)) * 16;
-        self.changes
-            .guid_heap_changes
-            .add_removal(byte_offset, strategy);
+    pub fn guid_remove(&mut self, index: u32) -> Result<()> {
+        // Check if this is a placeholder value (from a newly added GUID)
+        let lookup_key = if ChangeRef::is_placeholder(index) {
+            index
+        } else {
+            // Convert 1-based sequential index to byte offset
+            index.saturating_sub(1).saturating_mul(16)
+        };
+        self.changes.guid_heap_changes.add_removal(lookup_key);
         Ok(())
     }
 
@@ -583,19 +731,12 @@ impl CilAssembly {
     /// # Arguments
     ///
     /// * `index` - The heap index to remove (1-based, following ECMA-335 conventions)
-    /// * `strategy` - How to handle existing references to this user string
     ///
     /// # Errors
     ///
     /// Currently always succeeds, but returns `Result` for future extensibility.
-    pub fn userstring_remove(
-        &mut self,
-        index: u32,
-        strategy: ReferenceHandlingStrategy,
-    ) -> Result<()> {
-        self.changes
-            .userstring_heap_changes
-            .add_removal(index, strategy);
+    pub fn userstring_remove(&mut self, index: u32) -> Result<()> {
+        self.changes.userstring_heap_changes.add_removal(index);
         Ok(())
     }
 
@@ -612,7 +753,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
@@ -645,7 +786,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
@@ -678,7 +819,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
@@ -712,7 +853,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(&Path::new("assembly.dll"))?;
@@ -770,14 +911,12 @@ impl CilAssembly {
 
     /// Removes a table row at the specified RID.
     ///
-    /// This marks the row at the given RID for deletion. The strategy parameter
-    /// controls how existing references to this row are handled.
+    /// This marks the row at the given RID for deletion.
     ///
     /// # Arguments
     ///
     /// * `table_id` - The table containing the row to remove
     /// * `rid` - The Row ID to remove (1-based, following ECMA-335 conventions)
-    /// * `strategy` - How to handle existing references to this row
     ///
     /// # Returns
     ///
@@ -786,12 +925,7 @@ impl CilAssembly {
     /// # Errors
     ///
     /// Returns an error if the table operation fails or the specified row does not exist.
-    pub fn table_row_remove(
-        &mut self,
-        table_id: TableId,
-        rid: u32,
-        _strategy: ReferenceHandlingStrategy,
-    ) -> Result<()> {
+    pub fn table_row_remove(&mut self, table_id: TableId, rid: u32) -> Result<()> {
         let original_count = self.original_table_row_count(table_id);
         let table_changes = self
             .changes
@@ -817,12 +951,14 @@ impl CilAssembly {
     ///
     /// # Returns
     ///
-    /// Returns the RID (Row ID) of the newly added row. RIDs are 1-based.
+    /// Returns a [`ChangeRefRc`] that will be resolved to the final token/RID after
+    /// the assembly is written. Use `placeholder()` on the returned reference to get
+    /// a value that can be stored in other table rows and will be resolved at write time.
     ///
     /// # Errors
     ///
     /// Returns an error if the table cannot be converted to sparse mode.
-    pub fn table_row_add(&mut self, table_id: TableId, row: TableDataOwned) -> Result<u32> {
+    pub fn table_row_add(&mut self, table_id: TableId, row: TableDataOwned) -> Result<ChangeRefRc> {
         let original_count = self.original_table_row_count(table_id);
         let table_changes = self
             .changes
@@ -830,103 +966,218 @@ impl CilAssembly {
             .entry(table_id)
             .or_insert_with(|| TableModifications::new_sparse(original_count + 1));
 
-        match table_changes {
-            TableModifications::Sparse { next_rid, .. } => {
-                let new_rid = *next_rid;
-                let operation = Operation::Insert(new_rid, row);
-                let table_operation = TableOperation::new(operation);
-                table_changes.apply_operation(table_operation)?;
-                Ok(new_rid)
-            }
-            TableModifications::Replaced(rows) => {
-                let new_rid = u32::try_from(rows.len()).unwrap_or(0) + 1;
-                rows.push(row);
-                Ok(new_rid)
-            }
-        }
+        let new_rid = table_changes.next_rid()?;
+        let operation = Operation::Insert(new_rid, row);
+        let table_operation = TableOperation::new(operation);
+        table_changes.apply_operation(table_operation)?;
+
+        // Create and register the ChangeRef for this inserted row
+        // Resolve the token immediately since we know both the table ID and RID
+        let change_ref = ChangeRef::new_table_row(table_id);
+        let token = Token::from_parts(table_id, new_rid);
+        change_ref.resolve_to_token(token);
+        let change_ref_rc = change_ref.into_rc();
+        table_changes.register_change_ref(new_rid, change_ref_rc.clone());
+
+        Ok(change_ref_rc)
     }
 
-    /// Validates all pending changes and applies index remapping.
-    ///
-    /// This method runs the unified validation engine to validate all pending
-    /// modifications and resolves any conflicts found. It should be called before
-    /// writing the assembly to ensure metadata consistency.
-    ///
-    /// This is equivalent to calling [`Self::validate_and_apply_changes_with_config`]
-    /// with [`ValidationConfig::production()`].
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` if all validations pass and conflicts are resolved,
-    /// or an error describing the first validation failure.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if validation fails or conflicts cannot be resolved.
-    pub fn validate_and_apply_changes(&mut self) -> Result<()> {
-        self.validate_and_apply_changes_with_config(ValidationConfig::production())
-    }
-
-    /// Validates and applies changes using a custom validation configuration.
-    ///
-    /// This method allows you to specify custom validation settings for different
-    /// validation strategies. This is useful when you need different validation
-    /// levels (minimal, comprehensive, strict, etc.).
-    ///
-    /// # Arguments
-    ///
-    /// * `config` - The [`ValidationConfig`] to use for validation
-    ///
-    /// # Returns
-    ///
-    /// Returns `Ok(())` if all validations pass and conflicts are resolved,
-    /// or an error describing the first validation failure.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// use crate::metadata::validation::ValidationConfig;
-    ///
-    /// # let mut assembly = CilAssembly::from_view(view);
-    /// // Use comprehensive validation
-    /// assembly.validate_and_apply_changes_with_config(ValidationConfig::comprehensive())?;
-    /// # Ok::<(), crate::Error>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if validation fails or conflicts cannot be resolved with the specified configuration.
-    pub fn validate_and_apply_changes_with_config(
-        &mut self,
-        config: ValidationConfig,
-    ) -> Result<()> {
-        let remapper = {
-            let engine = ValidationEngine::new(&self.view, config)?;
-            let result = engine.execute_stage1_validation(&self.view, Some(&self.changes))?;
-
-            result.into_result()?;
-            IndexRemapper::build_from_changes(&self.changes, &self.view)?
-        };
-
-        remapper.apply_to_assembly(&mut self.changes);
-
-        Ok(())
-    }
-
-    /// Writes the modified assembly to a file.
+    /// Writes the assembly to a file.
     ///
     /// This method generates a complete PE file with all modifications applied.
-    /// The assembly should already be validated before calling this method.
+    /// Uses default generator configuration.
     ///
     /// # Arguments
     ///
-    /// * `path` - The path where the modified assembly should be written
+    /// * `path` - The path where the assembly should be written
     ///
     /// # Errors
     ///
     /// Returns an error if the file cannot be written or if the assembly is invalid.
-    pub fn write_to_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
-        writer::write_assembly_to_file(self, path)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{CilAssemblyView, CilAssembly};
+    /// use std::path::Path;
+    ///
+    /// let view = CilAssemblyView::from_path(Path::new("input.dll"))?;
+    /// let mut assembly = CilAssembly::new(view);
+    /// assembly.to_file("output.dll")?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn to_file<P: AsRef<std::path::Path>>(&mut self, path: P) -> Result<()> {
+        self.finalize_for_generation()?;
+        PeGenerator::new(self).to_file(path)
+    }
+
+    /// Writes the assembly to a file with custom configuration.
+    ///
+    /// This method generates a complete PE file with all modifications applied,
+    /// using the specified generator configuration for heap optimization and
+    /// other settings.
+    ///
+    /// # Arguments
+    ///
+    /// * `path` - The path where the assembly should be written
+    /// * `config` - Configuration options for the generator
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be written or if the assembly is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{CilAssemblyView, CilAssembly};
+    /// use dotscope::prelude::GeneratorConfig;
+    /// use std::path::Path;
+    ///
+    /// let view = CilAssemblyView::from_path(Path::new("input.dll"))?;
+    /// let mut assembly = CilAssembly::new(view);
+    /// assembly.to_file_with_config("output.dll", GeneratorConfig::default())?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn to_file_with_config<P: AsRef<std::path::Path>>(
+        &mut self,
+        path: P,
+        config: GeneratorConfig,
+    ) -> Result<()> {
+        self.finalize_for_generation()?;
+        PeGenerator::with_config(self, config).to_file(path)
+    }
+
+    /// Generates the assembly to memory as a byte vector.
+    ///
+    /// This method generates a complete PE file in memory, useful for:
+    /// - In-memory assembly manipulation pipelines
+    /// - Testing and validation without file I/O
+    /// - Streaming assembly data to network or other outputs
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(Vec<u8>)` containing the complete PE file bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if generation fails or the assembly is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{CilAssemblyView, CilAssembly};
+    /// use std::path::Path;
+    ///
+    /// let view = CilAssemblyView::from_path(Path::new("input.dll"))?;
+    /// let mut assembly = CilAssembly::new(view);
+    /// let pe_bytes = assembly.to_memory()?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn to_memory(&mut self) -> Result<Vec<u8>> {
+        self.finalize_for_generation()?;
+        PeGenerator::new(self).to_memory()
+    }
+
+    /// Generates the assembly to memory with custom configuration.
+    ///
+    /// This method generates a complete PE file in memory using the specified
+    /// generator configuration.
+    ///
+    /// # Arguments
+    ///
+    /// * `config` - Configuration options for the generator
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(Vec<u8>)` containing the complete PE file bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if generation fails or the assembly is invalid.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{CilAssemblyView, CilAssembly};
+    /// use dotscope::prelude::GeneratorConfig;
+    /// use std::path::Path;
+    ///
+    /// let view = CilAssemblyView::from_path(Path::new("input.dll"))?;
+    /// let mut assembly = CilAssembly::new(view);
+    /// let pe_bytes = assembly.to_memory_with_config(GeneratorConfig::default())?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn to_memory_with_config(&mut self, config: GeneratorConfig) -> Result<Vec<u8>> {
+        self.finalize_for_generation()?;
+        PeGenerator::with_config(self, config).to_memory()
+    }
+
+    /// Converts this `CilAssembly` into a [`CilObject`](crate::CilObject) for analysis.
+    ///
+    /// This method writes all modifications to memory, then parses the result
+    /// as a `CilObject`. Use this after making modifications to obtain a
+    /// fully-parsed assembly ready for analysis.
+    ///
+    /// # Returns
+    ///
+    /// A [`CilObject`](crate::CilObject) containing the modified assembly.
+    ///
+    /// # Usage Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_path("input.dll")?;
+    /// let mut mutable = assembly.into_assembly();
+    ///
+    /// // Perform modifications
+    /// mutable.string_add("NewString")?;
+    ///
+    /// // Convert back to CilObject for analysis
+    /// let modified = mutable.into_cilobject()?;
+    ///
+    /// // Now we can analyze the modified assembly
+    /// println!("Types: {}", modified.types().len());
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing modifications fails or if the result
+    /// cannot be parsed as a valid .NET assembly.
+    pub fn into_cilobject(mut self) -> Result<CilObject> {
+        self.finalize_for_generation()?;
+        let bytes = PeGenerator::new(&self).to_memory()?;
+        CilObject::from_mem_with_validation(bytes, ValidationConfig::production())
+    }
+
+    /// Converts this `CilAssembly` into a [`CilObject`](crate::CilObject) with custom options.
+    ///
+    /// Like [`into_cilobject`](Self::into_cilobject) but allows specifying both
+    /// the validation configuration and generator configuration for the resulting assembly.
+    ///
+    /// # Arguments
+    ///
+    /// * `validation_config` - Validation configuration for the output
+    /// * `generator_config` - Generator configuration for PE file creation (controls optimizations
+    ///   like heap deduplication, dead reference elimination, and section exclusion)
+    ///
+    /// # Returns
+    ///
+    /// A [`CilObject`](crate::CilObject) containing the modified assembly.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing modifications fails or if the result
+    /// fails validation.
+    pub fn into_cilobject_with(
+        mut self,
+        validation_config: ValidationConfig,
+        generator_config: GeneratorConfig,
+    ) -> Result<CilObject> {
+        self.finalize_for_generation()?;
+        let bytes = PeGenerator::with_config(&self, generator_config).to_memory()?;
+        CilObject::from_mem_with_validation(bytes, validation_config)
     }
 
     /// Gets the original row count for a table
@@ -935,6 +1186,31 @@ impl CilAssembly {
             tables.table_row_count(table_id)
         } else {
             0
+        }
+    }
+
+    /// Gets the next available RID for a table.
+    ///
+    /// This returns the RID that will be assigned to the next row added to the table.
+    /// It accounts for both the original table size and any modifications that have been made.
+    ///
+    /// # Arguments
+    ///
+    /// * `table_id` - The table to query
+    ///
+    /// # Returns
+    ///
+    /// The next RID that would be assigned (1-based).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the row count exceeds u32::MAX.
+    pub fn next_rid(&self, table_id: TableId) -> Result<u32> {
+        if let Some(modifications) = self.changes.table_changes.get(&table_id) {
+            modifications.next_rid()
+        } else {
+            // No modifications yet - next RID is original count + 1
+            Ok(self.original_table_row_count(table_id) + 1)
         }
     }
 
@@ -953,6 +1229,11 @@ impl CilAssembly {
     /// Gets a reference to the changes for write operations.
     pub fn changes(&self) -> &AssemblyChanges {
         &self.changes
+    }
+
+    /// Gets a mutable reference to the changes for write operations.
+    pub fn changes_mut(&mut self) -> &mut AssemblyChanges {
+        &mut self.changes
     }
 
     /// Adds a DLL to the native import table.
@@ -975,7 +1256,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
@@ -1014,7 +1295,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
@@ -1062,7 +1343,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
@@ -1106,7 +1387,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
@@ -1149,7 +1430,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
@@ -1195,7 +1476,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
@@ -1228,16 +1509,16 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let assembly = CilAssembly::new(view);
     ///
-    /// if let Some(imports) = assembly.native_imports() {
-    ///     let dll_names = imports.get_all_dll_names();
-    ///     println!("DLL dependencies: {:?}", dll_names);
-    /// }
+    /// let imports = assembly.native_imports();
+    /// let dll_names = imports.get_all_dll_names();
+    /// println!("DLL dependencies: {:?}", dll_names);
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn native_imports(&self) -> &UnifiedImportContainer {
         self.changes.native_imports()
@@ -1254,16 +1535,16 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
     /// let assembly = CilAssembly::new(view);
     ///
-    /// if let Some(exports) = assembly.native_exports() {
-    ///     let function_names = exports.get_native_function_names();
-    ///     println!("Exported functions: {:?}", function_names);
-    /// }
+    /// let exports = assembly.native_exports();
+    /// let function_names = exports.get_native_function_names();
+    /// println!("Exported functions: {:?}", function_names);
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn native_exports(&self) -> &UnifiedExportContainer {
         self.changes.native_exports()
@@ -1286,7 +1567,7 @@ impl CilAssembly {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::{CilAssemblyView, CilAssembly};
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
@@ -1299,6 +1580,246 @@ impl CilAssembly {
     /// ```
     pub fn store_method_body(&mut self, body_bytes: Vec<u8>) -> u32 {
         self.changes.store_method_body(body_bytes)
+    }
+
+    /// Stores field initialization data and returns a placeholder RVA.
+    ///
+    /// The returned placeholder RVA is a temporary identifier that will later
+    /// be resolved to the actual RVA during PE writing when the section layout
+    /// is determined. This is used for FieldRVA entries that point to static
+    /// field initialization data.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The field initialization data bytes
+    ///
+    /// # Returns
+    ///
+    /// A placeholder RVA that will be resolved to the actual RVA during binary writing.
+    pub fn store_field_data(&mut self, data: Vec<u8>) -> u32 {
+        self.changes.store_field_data(data)
+    }
+
+    /// Gets or adds a string to the string heap, reusing existing strings when possible.
+    ///
+    /// This method first checks if the string already exists in the heap changes
+    /// and reuses it if found. This helps avoid duplicate namespace strings and
+    /// other common strings.
+    ///
+    /// # Arguments
+    ///
+    /// * `value` - The string to get or add to the heap
+    ///
+    /// # Returns
+    ///
+    /// A ChangeRef that will resolve to the string offset after write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the string cannot be added to the heap.
+    pub fn string_get_or_add(&mut self, value: &str) -> Result<ChangeRefRc> {
+        if let Some(existing_ref) = self.string_find(value) {
+            return Ok(existing_ref);
+        }
+        self.string_add(value)
+    }
+
+    /// Helper method to find an existing string in the current heap changes.
+    ///
+    /// This searches through the strings added in the current session
+    /// to avoid duplicates within the same session.
+    fn string_find(&self, value: &str) -> Option<ChangeRefRc> {
+        let heap_changes = &self.changes.string_heap_changes;
+        for (existing_string, change_ref) in heap_changes.appended_iter() {
+            if existing_string == value {
+                return Some(change_ref.clone());
+            }
+        }
+        None
+    }
+
+    /// Finds an AssemblyRef by its name.
+    ///
+    /// This method searches the AssemblyRef table to find an assembly reference
+    /// with the specified name. This is useful for locating specific dependencies
+    /// or core libraries.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The exact name of the assembly to find (case-sensitive)
+    ///
+    /// # Returns
+    ///
+    /// A [`CodedIndex`] pointing to the matching AssemblyRef, or None if not found.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// # use dotscope::{CilAssemblyView, CilAssembly};
+    /// # use std::path::Path;
+    /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
+    /// let assembly = CilAssembly::new(view);
+    ///
+    /// // Find a specific library
+    /// if let Some(newtonsoft_ref) = assembly.find_assembly_ref_by_name("Newtonsoft.Json") {
+    ///     println!("Found Newtonsoft.Json reference");
+    /// }
+    ///
+    /// // Find core library
+    /// if let Some(mscorlib_ref) = assembly.find_assembly_ref_by_name("mscorlib") {
+    ///     println!("Found mscorlib reference");
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn find_assembly_ref_by_name(&self, name: &str) -> Option<CodedIndex> {
+        if let (Some(assembly_ref_table), Some(strings)) = (
+            self.view.tables()?.table::<AssemblyRefRaw>(),
+            self.view.strings(),
+        ) {
+            for (index, assemblyref) in assembly_ref_table.iter().enumerate() {
+                if let Ok(assembly_name) = strings.get(assemblyref.name as usize) {
+                    if assembly_name == name {
+                        // Convert 0-based index to 1-based RID
+                        return Some(CodedIndex::new(
+                            TableId::AssemblyRef,
+                            u32::try_from(index + 1).unwrap_or(u32::MAX),
+                            CodedIndexType::Implementation,
+                        ));
+                    }
+                }
+            }
+        }
+        None
+    }
+
+    /// Finds the AssemblyRef for the core library.
+    ///
+    /// This method searches the AssemblyRef table to find the core library
+    /// reference, which can be any of:
+    /// - "mscorlib" (classic .NET Framework)
+    /// - "System.Runtime" (.NET Core/.NET 5+)
+    /// - "System.Private.CoreLib" (some .NET implementations)
+    ///
+    /// # Returns
+    ///
+    /// A [`CodedIndex`] pointing to the core library AssemblyRef, or None if not found.
+    pub fn find_core_library_ref(&self) -> Option<CodedIndex> {
+        self.find_assembly_ref_by_name("mscorlib")
+            .or_else(|| self.find_assembly_ref_by_name("System.Runtime"))
+            .or_else(|| self.find_assembly_ref_by_name("System.Private.CoreLib"))
+    }
+
+    /// Adds a method signature to the blob heap and returns its index.
+    ///
+    /// This encodes the method signature using the dedicated method signature encoder.
+    /// The encoder handles all ECMA-335 method signature format requirements including
+    /// calling conventions, parameter counts, and type encoding.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - The method signature to encode and store
+    ///
+    /// # Returns
+    ///
+    /// A ChangeRef that will resolve to the blob heap offset after write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
+    pub fn add_method_signature(&mut self, signature: &SignatureMethod) -> Result<ChangeRefRc> {
+        let encoded_data = encode_method_signature(signature)?;
+        self.blob_add(&encoded_data)
+    }
+
+    /// Adds a field signature to the blob heap and returns its index.
+    ///
+    /// This encodes the field signature using the dedicated field signature encoder.
+    /// The encoder handles ECMA-335 field signature format requirements including
+    /// custom modifiers and field type encoding.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - The field signature to encode and store
+    ///
+    /// # Returns
+    ///
+    /// A ChangeRef that will resolve to the blob heap offset after write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
+    pub fn add_field_signature(&mut self, signature: &SignatureField) -> Result<ChangeRefRc> {
+        let encoded_data = encode_field_signature(signature)?;
+        self.blob_add(&encoded_data)
+    }
+
+    /// Adds a property signature to the blob heap and returns its index.
+    ///
+    /// This encodes the property signature using the dedicated property signature encoder.
+    /// The encoder handles ECMA-335 property signature format requirements including
+    /// instance/static properties and indexer parameters.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - The property signature to encode and store
+    ///
+    /// # Returns
+    ///
+    /// A ChangeRef that will resolve to the blob heap offset after write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
+    pub fn add_property_signature(&mut self, signature: &SignatureProperty) -> Result<ChangeRefRc> {
+        let encoded_data = encode_property_signature(signature)?;
+        self.blob_add(&encoded_data)
+    }
+
+    /// Adds a local variable signature to the blob heap and returns its index.
+    ///
+    /// This encodes the local variable signature using the dedicated local variable encoder.
+    /// The encoder handles ECMA-335 local variable signature format requirements including
+    /// pinned and byref modifiers.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - The local variable signature to encode and store
+    ///
+    /// # Returns
+    ///
+    /// A ChangeRef that will resolve to the blob heap offset after write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
+    pub fn add_local_var_signature(
+        &mut self,
+        signature: &SignatureLocalVariables,
+    ) -> Result<ChangeRefRc> {
+        let encoded_data = encode_local_var_signature(signature)?;
+        self.blob_add(&encoded_data)
+    }
+
+    /// Adds a type specification signature to the blob heap and returns its index.
+    ///
+    /// This encodes the type specification signature using the dedicated type specification
+    /// encoder. Type specification signatures encode complex type signatures for generic
+    /// instantiations, arrays, pointers, and other complex types.
+    ///
+    /// # Arguments
+    ///
+    /// * `signature` - The type specification signature to encode and store
+    ///
+    /// # Returns
+    ///
+    /// A ChangeRef that will resolve to the blob heap offset after write.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the signature cannot be encoded or added to the blob heap.
+    pub fn add_typespec_signature(&mut self, signature: &SignatureTypeSpec) -> Result<ChangeRefRc> {
+        let encoded_data = encode_typespec_signature(signature)?;
+        self.blob_add(&encoded_data)
     }
 }
 
@@ -1331,8 +1852,7 @@ mod tests {
     #[test]
     fn test_convert_from_view() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let _assembly = CilAssembly::new(view);
+        if let Ok(_assembly) = CilAssembly::from_path(&path) {
             // Basic smoke test - conversion should succeed
         }
     }
@@ -1340,37 +1860,31 @@ mod tests {
     #[test]
     fn test_add_string() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let mut assembly = CilAssembly::new(view);
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
+            let ref1 = assembly.string_add("Hello").unwrap();
+            let ref2 = assembly.string_add("World").unwrap();
 
-            let index1 = assembly.string_add("Hello").unwrap();
-            let index2 = assembly.string_add("World").unwrap();
-
-            assert_ne!(index1, index2);
-            assert!(index2 > index1);
+            assert_ne!(ref1.placeholder(), ref2.placeholder());
+            assert!(ref2.placeholder() > ref1.placeholder());
         }
     }
 
     #[test]
     fn test_add_blob() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let mut assembly = CilAssembly::new(view);
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
+            let ref1 = assembly.blob_add(&[1, 2, 3]).unwrap();
+            let ref2 = assembly.blob_add(&[4, 5, 6]).unwrap();
 
-            let index1 = assembly.blob_add(&[1, 2, 3]).unwrap();
-            let index2 = assembly.blob_add(&[4, 5, 6]).unwrap();
-
-            assert_ne!(index1, index2);
-            assert!(index2 > index1);
+            assert_ne!(ref1.placeholder(), ref2.placeholder());
+            assert!(ref2.placeholder() > ref1.placeholder());
         }
     }
 
     #[test]
     fn test_add_guid() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let mut assembly = CilAssembly::new(view);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             let guid1 = [
                 0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
                 0x77, 0x88,
@@ -1380,54 +1894,55 @@ mod tests {
                 0x88, 0x99,
             ];
 
-            let index1 = assembly.guid_add(&guid1).unwrap();
-            let index2 = assembly.guid_add(&guid2).unwrap();
+            let ref1 = assembly.guid_add(&guid1).unwrap();
+            let ref2 = assembly.guid_add(&guid2).unwrap();
 
-            assert_ne!(index1, index2);
-            assert!(index2 > index1);
+            assert_ne!(ref1.placeholder(), ref2.placeholder());
+            assert!(ref2.placeholder() > ref1.placeholder());
         }
     }
 
     #[test]
     fn test_add_userstring() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let mut assembly = CilAssembly::new(view);
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
+            let ref1 = assembly.userstring_add("Hello").unwrap();
+            let ref2 = assembly.userstring_add("World").unwrap();
 
-            let index1 = assembly.userstring_add("Hello").unwrap();
-            let index2 = assembly.userstring_add("World").unwrap();
-
-            assert_ne!(index1, index2);
-            assert!(index2 > index1);
+            assert_ne!(ref1.placeholder(), ref2.placeholder());
+            assert!(ref2.placeholder() > ref1.placeholder());
         }
     }
 
     #[test]
     fn test_table_row_assignment_uses_correct_rid() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let mut assembly = CilAssembly::new(view);
-
-            // Get original table size to verify RID calculation
-            let original_typedef_count = assembly.original_table_row_count(TableId::TypeDef);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             // Create a minimal TypeDef row for testing
             if let Ok(typedef_row) = create_test_typedef_row() {
-                // Add table row should assign RID = original_count + 1
-                if let Ok(rid) = assembly.table_row_add(TableId::TypeDef, typedef_row) {
+                // Add table row should return a ChangeRefRc
+                if let Ok(change_ref) = assembly.table_row_add(TableId::TypeDef, typedef_row) {
+                    // Verify the ChangeRef is for the TypeDef table
+                    assert!(
+                        change_ref.kind().is_table(),
+                        "ChangeRef should be a table row reference"
+                    );
                     assert_eq!(
-                        rid,
-                        original_typedef_count + 1,
-                        "RID should be original count + 1"
+                        change_ref.kind().table_id(),
+                        Some(TableId::TypeDef),
+                        "ChangeRef should be for TypeDef table"
                     );
 
-                    // Add another row should get sequential RID
+                    // Add another row should get a different ChangeRef
                     if let Ok(typedef_row2) = create_test_typedef_row() {
-                        if let Ok(rid2) = assembly.table_row_add(TableId::TypeDef, typedef_row2) {
-                            assert_eq!(
-                                rid2,
-                                original_typedef_count + 2,
-                                "Second RID should be sequential"
+                        if let Ok(change_ref2) =
+                            assembly.table_row_add(TableId::TypeDef, typedef_row2)
+                        {
+                            // The two ChangeRefs should have different IDs
+                            assert_ne!(
+                                change_ref.id(),
+                                change_ref2.id(),
+                                "Different rows should have different ChangeRef IDs"
                             );
                         }
                     }
@@ -1437,62 +1952,18 @@ mod tests {
     }
 
     #[test]
-    fn test_validation_pipeline_catches_errors() {
+    fn test_heap_changes_initialized() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let mut assembly = CilAssembly::new(view);
-
-            // Try to add an invalid RID (should be caught by validation)
-            if let Ok(typedef_row) = create_test_typedef_row() {
-                let table_id = TableId::TypeDef;
-                let invalid_operation = Operation::Insert(0, typedef_row); // RID 0 is invalid
-                let table_operation = TableOperation::new(invalid_operation);
-
-                // Get changes and manually add the invalid operation
-                let table_changes = assembly
-                    .changes
-                    .table_changes
-                    .entry(table_id)
-                    .or_insert_with(|| TableModifications::new_sparse(1));
-
-                // This should be caught by validation
-                if table_changes.apply_operation(table_operation).is_ok() {
-                    // Now try to validate - this should fail
-                    let result = assembly.validate_and_apply_changes();
-                    assert!(result.is_err(), "Validation should catch RID 0 error");
-
-                    if let Err(e) = result {
-                        // Verify it's the right kind of error
-                        let error_str = format!("{e:?}");
-                        assert!(
-                            error_str.contains("invalid RID 0")
-                                || error_str.contains("Invalid RID")
-                                || error_str.contains("RID 0 is reserved"),
-                            "Should be RID validation error: {e}"
-                        );
-                    }
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn test_heap_sizes_are_real() {
-        let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-
-            // Check that heap changes are properly initialized with correct next_index values
-            // next_index should be original_heap_size (where the next item will be placed)
-            let string_next_index = assembly.changes.string_heap_changes.next_index;
-            let blob_next_index = assembly.changes.blob_heap_changes.next_index;
-            let guid_next_index = assembly.changes.guid_heap_changes.next_index;
-            let userstring_next_index = assembly.changes.userstring_heap_changes.next_index;
-
-            assert_eq!(string_next_index, 203732);
-            assert_eq!(blob_next_index, 77816);
-            assert_eq!(guid_next_index, 16);
-            assert_eq!(userstring_next_index, 53288);
+        if let Ok(assembly) = CilAssembly::from_path(&path) {
+            // Verify heap changes are properly initialized
+            // The additions count should be 0 initially
+            assert_eq!(assembly.changes.string_heap_changes.additions_count(), 0);
+            assert_eq!(assembly.changes.blob_heap_changes.additions_count(), 0);
+            assert_eq!(assembly.changes.guid_heap_changes.additions_count(), 0);
+            assert_eq!(
+                assembly.changes.userstring_heap_changes.additions_count(),
+                0
+            );
         }
     }
 
@@ -1514,7 +1985,7 @@ mod tests {
             let runner = TestRunner::new()?;
 
             // Define the assembly modification that adds a simple method
-            let modify_assembly = |context: &mut BuilderContext| -> Result<()> {
+            let modify_assembly = |assembly: &mut CilAssembly| -> Result<()> {
                 let _method_token = MethodBuilder::new("DotScopeAddedMethod")
                     .public()
                     .static_method()
@@ -1527,7 +1998,7 @@ mod tests {
                             Ok(())
                         })
                     })
-                    .build(context)?;
+                    .build(assembly)?;
                 Ok(())
             };
 
@@ -1593,17 +2064,18 @@ mod tests {
             let runner = TestRunner::new()?;
 
             // Test string modification by adding a simple method
-            let modify_assembly = |context: &mut BuilderContext| -> Result<()> {
+            let modify_assembly = |assembly: &mut CilAssembly| -> Result<()> {
                 // Create method that prints the modified message using Console.WriteLine
                 let new_string = "MODIFIED: Hello from enhanced dotscope test!";
-                let new_string_index = context.userstring_add(new_string)?;
-                let new_string_token = Token::new(0x70000000 | new_string_index);
+                let new_string_ref = assembly.userstring_add(new_string)?;
+                // Use placeholder value - bit 31 marks it as placeholder, resolved during write
+                let new_string_token = Token::new(0x70000000 | new_string_ref.placeholder());
 
                 // Find the assembly reference containing System.Console
                 // .NET 8+ uses separate System.Console assembly, while older frameworks use mscorlib
-                let console_assembly_ref = context
+                let console_assembly_ref = assembly
                     .find_assembly_ref_by_name("System.Console")
-                    .or_else(|| context.find_core_library_ref())
+                    .or_else(|| assembly.find_core_library_ref())
                     .ok_or_else(|| {
                         Error::TypeError(
                             "Could not find System.Console or core library reference".to_string(),
@@ -1612,7 +2084,7 @@ mod tests {
                 let console_assembly_token =
                     Token::new((TableId::AssemblyRef as u32) << 24 | console_assembly_ref.row);
                 let console_writeline_ref =
-                    create_console_writeline_ref(context, console_assembly_token)?;
+                    create_console_writeline_ref(assembly, console_assembly_token)?;
 
                 // Add a method that prints the modified string
                 let new_string_token_copy = new_string_token;
@@ -1629,7 +2101,7 @@ mod tests {
                             Ok(())
                         })
                     })
-                    .build(context)?;
+                    .build(assembly)?;
 
                 Ok(())
             };
@@ -1683,11 +2155,11 @@ mod tests {
         }
 
         fn create_console_writeline_ref(
-            context: &mut BuilderContext,
+            assembly: &mut CilAssembly,
             mscorlib_ref: Token,
         ) -> Result<Token> {
             // Create TypeRef for System.Console
-            let console_typeref = TypeRefBuilder::new()
+            let console_typeref_ref = TypeRefBuilder::new()
                 .name("Console")
                 .namespace("System")
                 .resolution_scope(CodedIndex::new(
@@ -1695,23 +2167,24 @@ mod tests {
                     mscorlib_ref.row(),
                     CodedIndexType::ResolutionScope,
                 ))
-                .build(context)?;
+                .build(assembly)?;
+            let console_typeref_token = console_typeref_ref.placeholder_token().unwrap();
 
             // Create method signature for Console.WriteLine(string) using the working implementation
             let writeline_signature = create_writeline_signature()?;
 
             // Create MemberRef for Console.WriteLine method
-            let memberref_token = MemberRefBuilder::new()
+            let memberref_ref = MemberRefBuilder::new()
                 .name("WriteLine")
                 .class(CodedIndex::new(
                     TableId::TypeRef,
-                    console_typeref.row(),
+                    console_typeref_token.row(),
                     CodedIndexType::MemberRefParent,
                 ))
                 .signature(&writeline_signature)
-                .build(context)?;
+                .build(assembly)?;
 
-            Ok(memberref_token)
+            Ok(memberref_ref.placeholder_token().unwrap())
         }
 
         #[test]
@@ -1719,7 +2192,7 @@ mod tests {
             // Test advanced mathematical operations and complex arithmetic
             let runner = TestRunner::new()?;
 
-            let modify_assembly = |context: &mut BuilderContext| -> Result<()> {
+            let modify_assembly = |assembly: &mut CilAssembly| -> Result<()> {
                 // Create method that performs multiple arithmetic operations
                 // ComplexMath: (x * y) + (x - y) * 2
                 let _complex_math_method = MethodBuilder::new("ComplexMath")
@@ -1743,7 +2216,7 @@ mod tests {
                             Ok(())
                         })
                     })
-                    .build(context)?;
+                    .build(assembly)?;
 
                 // DivideAndRemainder: (dividend / divisor) + (dividend % divisor)
                 let _division_method = MethodBuilder::new("DivideAndRemainder")
@@ -1765,7 +2238,7 @@ mod tests {
                             Ok(())
                         })
                     })
-                    .build(context)?;
+                    .build(assembly)?;
 
                 Ok(())
             };
@@ -1824,7 +2297,7 @@ mod tests {
             // Test local variable manipulation and stack operations
             let runner = TestRunner::new()?;
 
-            let modify_assembly = |context: &mut BuilderContext| -> Result<()> {
+            let modify_assembly = |assembly: &mut CilAssembly| -> Result<()> {
                 // TestLocalVariables: temp1=input*2, temp2=temp1+5, return temp2-temp1 (always 5)
                 let _local_vars_method = MethodBuilder::new("TestLocalVariables")
                     .public()
@@ -1850,7 +2323,7 @@ mod tests {
                                 Ok(())
                             })
                     })
-                    .build(context)?;
+                    .build(assembly)?;
 
                 // StackOperations: 2a + b (uses dup to duplicate 'a' on stack)
                 let _stack_ops_method = MethodBuilder::new("StackOperations")
@@ -1865,7 +2338,7 @@ mod tests {
                             Ok(())
                         })
                     })
-                    .build(context)?;
+                    .build(assembly)?;
 
                 Ok(())
             };
@@ -1922,7 +2395,7 @@ mod tests {
             // Test multiple methods that call each other
             let runner = TestRunner::new()?;
 
-            let modify_assembly = |context: &mut BuilderContext| -> Result<()> {
+            let modify_assembly = |assembly: &mut CilAssembly| -> Result<()> {
                 // DoubleNumber: value * 2
                 let double_method = MethodBuilder::new("DoubleNumber")
                     .public()
@@ -1935,7 +2408,7 @@ mod tests {
                             Ok(())
                         })
                     })
-                    .build(context)?;
+                    .build(assembly)?;
 
                 // AddTen: value + 10
                 let add_ten_method = MethodBuilder::new("AddTen")
@@ -1949,9 +2422,11 @@ mod tests {
                             Ok(())
                         })
                     })
-                    .build(context)?;
+                    .build(assembly)?;
 
                 // ProcessNumber: calls DoubleNumber then AddTen => (input * 2) + 10
+                let double_token = double_method.placeholder_token().unwrap();
+                let add_ten_token = add_ten_method.placeholder_token().unwrap();
                 let _main_method = MethodBuilder::new("ProcessNumber")
                     .public()
                     .static_method()
@@ -1960,13 +2435,13 @@ mod tests {
                     .implementation(move |body| {
                         body.implementation(move |asm| {
                             asm.ldarg_0()?
-                                .call(double_method)?
-                                .call(add_ten_method)?
+                                .call(double_token)?
+                                .call(add_ten_token)?
                                 .ret()?;
                             Ok(())
                         })
                     })
-                    .build(context)?;
+                    .build(assembly)?;
 
                 // Factorial: iterative implementation with loop
                 let _factorial_method = MethodBuilder::new("Factorial")
@@ -2001,7 +2476,7 @@ mod tests {
                                 Ok(())
                             })
                     })
-                    .build(context)?;
+                    .build(assembly)?;
 
                 Ok(())
             };
@@ -2081,7 +2556,7 @@ mod tests {
             let results = run_complete_test_with_reflection(
                 &runner,
                 compilation::templates::HELLO_WORLD,
-                |context: &mut BuilderContext| -> Result<()> {
+                |assembly: &mut CilAssembly| -> Result<()> {
                     // ComplexMethod with mixed parameter types (int, string, bool)
                     let _complex_method = MethodBuilder::new("ComplexMethod")
                         .public()
@@ -2100,11 +2575,12 @@ mod tests {
                                     Ok(())
                                 })
                         })
-                        .build(context)?;
+                        .build(assembly)?;
 
-                    let result_string_index =
-                        context.userstring_add("ComplexMethod executed successfully")?;
-                    let _result_string_token = Token::new(0x70000000 | result_string_index);
+                    let result_string_ref =
+                        assembly.userstring_add("ComplexMethod executed successfully")?;
+                    let _result_string_token =
+                        Token::new(0x70000000 | result_string_ref.placeholder());
 
                     // TestParameters: (a + b) * c
                     let _param_test_method = MethodBuilder::new("TestParameters")
@@ -2120,7 +2596,7 @@ mod tests {
                                 Ok(())
                             })
                         })
-                        .build(context)?;
+                        .build(assembly)?;
 
                     // BooleanLogic: flag1 AND flag2
                     let _bool_method = MethodBuilder::new("BooleanLogic")
@@ -2135,7 +2611,7 @@ mod tests {
                                 Ok(())
                             })
                         })
-                        .build(context)?;
+                        .build(assembly)?;
 
                     Ok(())
                 },
@@ -2209,7 +2685,7 @@ mod tests {
             let results = run_complete_test_with_reflection(
                 &runner,
                 compilation::templates::HELLO_WORLD,
-                |context: &mut BuilderContext| -> Result<()> {
+                |assembly: &mut CilAssembly| -> Result<()> {
                     let _add_method = MethodBuilder::new("Add")
                         .public()
                         .static_method()
@@ -2222,7 +2698,7 @@ mod tests {
                                 Ok(())
                             })
                         })
-                        .build(context)?;
+                        .build(assembly)?;
                     Ok(())
                 },
                 |_assembly_path| {

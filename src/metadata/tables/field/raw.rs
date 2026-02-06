@@ -124,6 +124,7 @@ impl FieldRaw {
             layout: OnceLock::new(),
             marshal: OnceLock::new(),
             custom_attributes: Arc::new(boxcar::Vec::new()),
+            declaring_type: OnceLock::new(),
         }))
     }
 

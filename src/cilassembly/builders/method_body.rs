@@ -7,7 +7,7 @@
 
 use crate::{
     assembly::InstructionAssembler,
-    cilassembly::BuilderContext,
+    cilassembly::CilAssembly,
     metadata::{
         method::{encode_exception_handlers, ExceptionHandler, ExceptionHandlerFlags},
         signatures::{
@@ -223,8 +223,7 @@ fn validate_exception_handler_ranges(handlers: &[ExceptionHandler], code_size: u
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = dotscope::CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = dotscope::CilAssembly::new(view);
-/// # let mut context = dotscope::BuilderContext::new(assembly);
+/// # let mut assembly = dotscope::CilAssembly::new(view);
 /// let (body_bytes, _token) = MethodBodyBuilder::new()
 ///     .max_stack(2)
 ///     .implementation(|asm| {
@@ -234,7 +233,7 @@ fn validate_exception_handler_ranges(handlers: &[ExceptionHandler], code_size: u
 ///            .ret()?;
 ///         Ok(())
 ///     })
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -247,8 +246,7 @@ fn validate_exception_handler_ranges(handlers: &[ExceptionHandler], code_size: u
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = dotscope::CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = dotscope::CilAssembly::new(view);
-/// # let mut context = dotscope::BuilderContext::new(assembly);
+/// # let mut assembly = dotscope::CilAssembly::new(view);
 /// let (body_bytes, _token) = MethodBodyBuilder::new()
 ///     .local("temp", TypeSignature::I4)
 ///     .local("result", TypeSignature::I4)
@@ -261,7 +259,7 @@ fn validate_exception_handler_ranges(handlers: &[ExceptionHandler], code_size: u
 ///            .ret()?;
 ///         Ok(())
 ///     })
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -664,15 +662,14 @@ impl MethodBodyBuilder {
     ///
     /// # fn example() -> dotscope::Result<()> {
     /// # let view = dotscope::CilAssemblyView::from_path("test.dll")?;
-    /// # let assembly = dotscope::CilAssembly::new(view);
-    /// # let mut context = dotscope::BuilderContext::new(assembly);
+    /// # let mut assembly = dotscope::CilAssembly::new(view);
     /// let (body_bytes, _token) = MethodBodyBuilder::new()
     ///     .implementation(|asm| {
     ///         asm.ldc_i4_const(42)?
     ///            .ret()?;
     ///         Ok(())
     ///     })
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -687,17 +684,17 @@ impl MethodBodyBuilder {
 
     /// Build the method body and return the encoded bytes with local variable signature token.
     ///
-    /// This method integrates with [`crate::cilassembly::BuilderContext`] to properly
+    /// This method integrates with [`crate::cilassembly::CilAssembly`] to properly
     /// handle local variable signatures and heap management. It performs the following steps:
     /// 1. Execute the implementation closure to generate CIL bytecode
     /// 2. Calculate max stack depth if not explicitly set
-    /// 3. Generate proper local variable signature tokens using BuilderContext
+    /// 3. Generate proper local variable signature tokens using CilAssembly
     /// 4. Choose between tiny and fat method body format
     /// 5. Encode the complete method body according to ECMA-335
     ///
     /// # Arguments
     ///
-    /// * `context` - Builder context for heap and table management
+    /// * `assembly` - CIL assembly for heap and table management
     ///
     /// # Returns
     ///
@@ -718,7 +715,7 @@ impl MethodBodyBuilder {
     /// use dotscope::MethodBodyBuilder;
     /// use dotscope::metadata::signatures::TypeSignature;
     ///
-    /// # fn example(context: &mut dotscope::BuilderContext) -> dotscope::Result<()> {
+    /// # fn example(assembly: &mut dotscope::CilAssembly) -> dotscope::Result<()> {
     /// let (body_bytes, local_sig_token) = MethodBodyBuilder::new()
     ///     .local("temp", TypeSignature::I4)
     ///     .implementation(|asm| {
@@ -728,15 +725,15 @@ impl MethodBodyBuilder {
     ///            .ret()?;
     ///         Ok(())
     ///     })
-    ///     .build(context)?;
+    ///     .build(assembly)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<(Vec<u8>, Token)> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<(Vec<u8>, Token)> {
         // Extract values from self to avoid borrow issues
         let MethodBodyBuilder {
             max_stack,
-            init_locals: _init_locals,
+            init_locals,
             locals,
             implementation,
             exception_handlers,
@@ -760,15 +757,15 @@ impl MethodBodyBuilder {
             all_exception_handlers.push(resolved_handler);
         }
 
-        let (code_bytes, calculated_max_stack) = assembler.finish()?;
+        let (code_bytes, calculated_max_stack, _) = assembler.finish()?;
 
         // Use calculated max stack from assembler if not explicitly set
         // The assembler now provides accurate real-time stack tracking
         let max_stack = max_stack.unwrap_or(calculated_max_stack);
 
         // Generate local variable signature token if we have locals
-        let local_var_sig_token = if locals.is_empty() {
-            Token::new(0)
+        let local_var_sig_token_value = if locals.is_empty() {
+            0u32
         } else {
             // Create proper SignatureLocalVariable entries from the simple type pairs
             let signature_locals: Vec<SignatureLocalVariable> = locals
@@ -788,9 +785,12 @@ impl MethodBodyBuilder {
             let sig_bytes = encode_local_var_signature(&local_sig)?;
 
             // Create the StandAloneSig table entry using the builder
-            StandAloneSigBuilder::new()
+            let local_sig_ref = StandAloneSigBuilder::new()
                 .signature(&sig_bytes)
-                .build(context)?
+                .build(assembly)?;
+
+            // Get the placeholder token value for the method header
+            local_sig_ref.placeholder_token().map_or(0, |t| t.value())
         };
 
         // Determine if we have exception handlers
@@ -802,8 +802,9 @@ impl MethodBodyBuilder {
         let header = encode_method_body_header(
             code_size,
             max_stack,
-            local_var_sig_token.value(),
+            local_var_sig_token_value,
             has_exceptions,
+            init_locals,
         )?;
 
         // Combine header + code
@@ -825,7 +826,7 @@ impl MethodBodyBuilder {
             body.extend_from_slice(&eh_section);
         }
 
-        Ok((body, local_var_sig_token))
+        Ok((body, Token::new(local_var_sig_token_value)))
     }
 }
 
@@ -838,26 +839,25 @@ impl Default for MethodBodyBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::cilassembly::{BuilderContext, CilAssembly};
+    use crate::cilassembly::CilAssembly;
     use crate::metadata::cilassemblyview::CilAssemblyView;
     use std::path::PathBuf;
 
-    fn get_test_context() -> Result<BuilderContext> {
+    fn get_test_assembly() -> Result<CilAssembly> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         let view = CilAssemblyView::from_path(&path)?;
-        let assembly = CilAssembly::new(view);
-        Ok(BuilderContext::new(assembly))
+        Ok(CilAssembly::new(view))
     }
 
     #[test]
     fn test_method_body_builder_basic() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
         let (body_bytes, _local_sig_token) = MethodBodyBuilder::new()
             .implementation(|asm| {
                 asm.ldc_i4_1()?.ret()?;
                 Ok(())
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Should have at least header + 2 instruction bytes
         assert!(body_bytes.len() >= 3);
@@ -874,14 +874,14 @@ mod tests {
 
     #[test]
     fn test_method_body_builder_with_max_stack() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
         let (body_bytes, _local_sig_token) = MethodBodyBuilder::new()
             .max_stack(10)
             .implementation(|asm| {
                 asm.nop()?.ret()?;
                 Ok(())
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // With max_stack > 8, should use fat format (12 byte header + code)
         assert!(body_bytes.len() >= 14); // 12 byte header + 2 instruction bytes
@@ -895,7 +895,7 @@ mod tests {
 
     #[test]
     fn test_method_body_builder_with_locals() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
         let (body_bytes, local_sig_token) = MethodBodyBuilder::new()
             .local("temp", TypeSignature::I4)
             .local("result", TypeSignature::String)
@@ -903,7 +903,7 @@ mod tests {
                 asm.ldarg_0()?.stloc_0()?.ldloc_0()?.ret()?;
                 Ok(())
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Should have created a local variable signature token
         assert_ne!(local_sig_token.value(), 0);
@@ -916,7 +916,7 @@ mod tests {
 
     #[test]
     fn test_method_body_builder_complex_method() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
         let (body_bytes, _local_sig_token) = MethodBodyBuilder::new()
             .local("counter", TypeSignature::I4)
             .implementation(|asm| {
@@ -936,7 +936,7 @@ mod tests {
                     .br_s("loop")?; // Continue loop
                 Ok(())
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Should successfully create a method body with branching
         assert!(body_bytes.len() > 10);
@@ -946,15 +946,15 @@ mod tests {
 
     #[test]
     fn test_method_body_builder_no_implementation_fails() {
-        let mut context = get_test_context().unwrap();
-        let result = MethodBodyBuilder::new().build(&mut context);
+        let mut assembly = get_test_assembly().unwrap();
+        let result = MethodBodyBuilder::new().build(&mut assembly);
 
         assert!(result.is_err());
     }
 
     #[test]
     fn test_method_body_with_exception_handlers() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
         // Create a method with enough code to accommodate exception handlers
         // Try block: offset 0, length 5 (covers nop, nop, nop, nop, nop)
         // Handler block: offset 5, length 3 (covers nop, nop, nop for finally)
@@ -976,7 +976,7 @@ mod tests {
                 asm.ret()?; // offset 8 - return point
                 Ok(())
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Should create method body with fat format due to exception handlers
         assert!(!body_bytes.is_empty());
@@ -988,7 +988,7 @@ mod tests {
 
     #[test]
     fn test_filter_handler_with_labels() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
         // Create a method with a filter exception handler
         // Note: This test verifies the filter handler structure is built correctly.
@@ -1028,7 +1028,7 @@ mod tests {
                 asm.ret()?;
                 Ok(())
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Should create method body with fat format due to exception handlers
         assert!(!body_bytes.is_empty());
@@ -1039,7 +1039,7 @@ mod tests {
 
     #[test]
     fn test_accurate_stack_tracking() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
         let (body_bytes, _local_sig_token) = MethodBodyBuilder::new()
             .implementation(|asm| {
                 // This sequence has a known stack pattern:
@@ -1051,7 +1051,7 @@ mod tests {
                 asm.ldc_i4_1()?.ldc_i4_2()?.add()?.dup()?.ret()?;
                 Ok(())
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Should have created method body successfully
         assert!(!body_bytes.is_empty());

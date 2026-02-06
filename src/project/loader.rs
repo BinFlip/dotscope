@@ -25,40 +25,46 @@ use std::{
 /// dependency addition. This addresses the common scenario where individual assemblies
 /// fail to load due to missing dependencies.
 ///
-/// # Design Goals
-///
-/// - **Single Binary Support**: Handle individual assemblies gracefully when dependencies are missing
-/// - **Progressive Loading**: Allow step-by-step addition of dependencies as they become available
-/// - **Automatic Discovery**: Discover and load dependencies automatically when possible
-/// - **Graceful Degradation**: Fall back to single-assembly analysis when cross-assembly resolution fails
-///
 /// # Usage Examples
 ///
 /// ## Basic Single Assembly Loading
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::project::ProjectLoader;
 ///
+/// # fn main() -> dotscope::Result<()> {
 /// let result = ProjectLoader::new()
 ///     .primary_file("MyApp.exe")?
 ///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// ## Multi-Assembly with Manual Dependencies
-/// ```rust,ignore
+/// ```rust,no_run
+/// use dotscope::project::ProjectLoader;
+///
+/// # fn main() -> dotscope::Result<()> {
 /// let result = ProjectLoader::new()
 ///     .primary_file("MyApp.exe")?
 ///     .with_dependency("MyLib.dll")?
 ///     .with_dependency("System.Core.dll")?
 ///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// ## Automatic Discovery with Search Path
-/// ```rust,ignore
+/// ```rust,no_run
+/// use dotscope::project::ProjectLoader;
+///
+/// # fn main() -> dotscope::Result<()> {
 /// let result = ProjectLoader::new()
 ///     .primary_file("MyApp.exe")?
 ///     .with_search_path("/path/to/dependencies")?
 ///     .auto_discover(true)
 ///     .build()?;
+/// # Ok(())
+/// # }
 /// ```
 pub struct ProjectLoader {
     /// Primary assembly file path - the main entry point
@@ -314,7 +320,7 @@ impl ProjectLoader {
 
         let view =
             CilAssemblyView::from_dotscope_file_with_validation(file, validation_config).ok()?;
-        let identity = view.identity().ok()?;
+        let identity = view.identity().ok().flatten()?;
         Some((view, identity))
     }
 
@@ -381,7 +387,16 @@ impl ProjectLoader {
             .collect();
 
         for handle in handles {
-            let (identity, load_result) = handle.join().unwrap();
+            let (identity, load_result) = match handle.join() {
+                Ok(val) => val,
+                Err(_) => {
+                    result.record_failure(
+                        "unknown".to_string(),
+                        "assembly loading thread panicked".to_string(),
+                    );
+                    continue;
+                }
+            };
             match load_result {
                 Ok(cil_object) => {
                     let is_primary = primary_identity
@@ -454,7 +469,7 @@ impl ProjectLoader {
                 continue;
             };
 
-            let Ok(identity) = view.identity() else {
+            let Ok(Some(identity)) = view.identity() else {
                 continue;
             };
 

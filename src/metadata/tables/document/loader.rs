@@ -13,11 +13,16 @@
 //! All loading operations use parallel processing with proper synchronization,
 //! enabling concurrent processing of multiple document entries.
 
-use crate::metadata::loader::{LoaderContext, MetadataLoader};
-use crate::metadata::tables::types::TableId;
-use crate::metadata::tables::DocumentRaw;
-use crate::prelude::*;
 use rayon::prelude::*;
+
+use crate::{
+    metadata::{
+        diagnostics::DiagnosticCategory,
+        loader::{LoaderContext, MetadataLoader},
+        tables::{types::TableId, DocumentRaw},
+    },
+    prelude::*,
+};
 
 /// Loader implementation for the Document table in Portable PDB format.
 ///
@@ -47,20 +52,33 @@ pub struct DocumentLoader;
 
 impl MetadataLoader for DocumentLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings), Some(blob), Some(guid)) =
+        let (Some(header), Some(strings), Some(blob), Some(guid)) =
             (context.meta, context.strings, context.blobs, context.guids)
-        {
-            if let Some(table) = header.table::<DocumentRaw>() {
-                table
-                    .par_iter()
-                    .map(|row| {
-                        let document = row.to_owned(strings, blob, guid)?;
-                        context.document.insert(document.token, document);
-                        Ok(())
-                    })
-                    .collect::<Result<Vec<_>>>()?;
-            }
-        }
+        else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<DocumentRaw>() else {
+            return Ok(());
+        };
+
+        table
+            .par_iter()
+            .map(|row| {
+                let token_msg = || format!("document 0x{:08x}", row.token.value());
+
+                let Some(document) = context.handle_result(
+                    row.to_owned(strings, blob, guid),
+                    DiagnosticCategory::Table,
+                    token_msg,
+                )?
+                else {
+                    return Ok(());
+                };
+
+                context.document.insert(document.token, document);
+                Ok(())
+            })
+            .collect::<Result<Vec<_>>>()?;
         Ok(())
     }
 

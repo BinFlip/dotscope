@@ -7,10 +7,10 @@
 //! ## Overview
 //!
 //! The `FieldRVABuilder` enables creation of field RVA entries with:
-//! - Field reference specification (required)
+//! - Field row index specification (required)
 //! - RVA location for initial data (required)
-//! - Validation of field tokens and RVA values
-//! - Automatic token generation and metadata management
+//! - Validation of field row indices and RVA values
+//! - Automatic metadata management
 //!
 //! ## Usage
 //!
@@ -18,22 +18,21 @@
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! # let mut assembly = CilAssembly::new(view);
 //!
 //! // Create a field signature for static data
 //! let field_sig = vec![0x06]; // Simple type signature
 //!
 //! // Create a field first
-//! let field_token = FieldBuilder::new()
+//! let field_ref = FieldBuilder::new()
 //!     .name("StaticData")
 //!     .flags(FieldAttributes::STATIC | FieldAttributes::PRIVATE)
 //!     .signature(&field_sig)
 //!     .build(&mut context)?;
 //!
 //! // Create a field RVA entry for static field initialization
-//! let field_rva_token = FieldRVABuilder::new()
-//!     .field(field_token)
+//! let field_rva_ref = FieldRVABuilder::new()
+//!     .field(field_ref.placeholder())
 //!     .rva(0x2000) // RVA pointing to initial data
 //!     .build(&mut context)?;
 //! # Ok::<(), dotscope::Error>(())
@@ -42,13 +41,13 @@
 //! ## Design
 //!
 //! The builder follows the established pattern with:
-//! - **Validation**: Field token and RVA are required and validated
-//! - **Field Verification**: Ensures field token is valid and points to Field table
-//! - **Token Generation**: Metadata tokens are created automatically
+//! - **Validation**: Field row index and RVA are required and validated
+//! - **Field Verification**: Ensures field row index is valid and non-zero
+//! - **Automatic Management**: Metadata entries are created automatically
 //! - **RVA Validation**: Ensures RVA values are non-zero and valid
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{FieldRvaRaw, TableDataOwned, TableId},
         token::Token,
@@ -79,12 +78,11 @@ use crate::{
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
-/// # let field_token = Token::new(0x04000001);
+/// # let mut assembly = CilAssembly::new(view);
+/// # let field_ref = context.field_add(...)?;
 ///
-/// let field_rva_token = FieldRVABuilder::new()
-///     .field(field_token)
+/// let field_rva_ref = FieldRVABuilder::new()
+///     .field(field_ref.placeholder())
 ///     .rva(0x2000)
 ///     .build(&mut context)?;
 /// # Ok::<(), dotscope::Error>(())
@@ -93,11 +91,10 @@ use crate::{
 /// # Validation
 ///
 /// The builder enforces the following constraints:
-/// - **Field Required**: A field token must be provided
-/// - **Field Validation**: Field token must be a valid Field table token
+/// - **Field Required**: A field row index must be provided
+/// - **Field Validation**: Field row index must be non-zero
 /// - **RVA Required**: An RVA value must be provided
 /// - **RVA Validation**: RVA values must be greater than 0
-/// - **Token Validation**: Field token row cannot be 0
 ///
 /// # Integration
 ///
@@ -107,8 +104,8 @@ use crate::{
 /// - **Static Data**: Enables runtime access to pre-initialized field values
 #[derive(Debug, Clone)]
 pub struct FieldRVABuilder {
-    /// The token of the field with initial data
-    field: Option<Token>,
+    /// The row index of the field with initial data
+    field: Option<u32>,
     /// The RVA pointing to the field's initial data
     rva: Option<u32>,
 }
@@ -139,37 +136,36 @@ impl FieldRVABuilder {
         }
     }
 
-    /// Sets the field token for the field with initial data.
+    /// Sets the field row index for the field with initial data.
     ///
-    /// The field must be a valid Field token that represents the field
-    /// that has initial data stored at the specified RVA location.
+    /// The field must be a valid Field table row index or placeholder that represents
+    /// the field that has initial data stored at the specified RVA location.
     ///
     /// # Arguments
     ///
-    /// * `field_token` - Token of the Field table entry
+    /// * `field` - Row index or placeholder of the Field table entry
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     /// let field_sig = vec![0x06]; // Simple type signature
-    /// let field_token = FieldBuilder::new()
+    /// let field_ref = FieldBuilder::new()
     ///     .name("StaticArray")
     ///     .flags(FieldAttributes::STATIC | FieldAttributes::PRIVATE)
     ///     .signature(&field_sig)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// let builder = FieldRVABuilder::new()
-    ///     .field(field_token);
+    ///     .field(field_ref.placeholder());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
-    pub fn field(mut self, field_token: Token) -> Self {
-        self.field = Some(field_token);
+    pub fn field(mut self, field: u32) -> Self {
+        self.field = Some(field);
         self
     }
 
@@ -198,24 +194,23 @@ impl FieldRVABuilder {
 
     /// Builds the FieldRVA entry and adds it to the assembly.
     ///
-    /// This method validates all required fields, verifies the field token is valid,
-    /// validates the RVA value, creates the FieldRVA table entry, and returns the
-    /// metadata token for the new entry.
+    /// This method validates all required fields, verifies the field row index is valid,
+    /// validates the RVA value, creates the FieldRVA table entry, and returns a
+    /// reference to the new entry.
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for the assembly being modified
+    /// * `assembly` - The assembly being modified
     ///
     /// # Returns
     ///
-    /// Returns the metadata token for the newly created FieldRVA entry.
+    /// Returns a reference to the newly created FieldRVA entry.
     ///
     /// # Errors
     ///
     /// Returns an error if:
-    /// - The field token is not set
-    /// - The field token is not a valid Field token
-    /// - The field token row is 0
+    /// - The field row index is not set
+    /// - The field row index is 0
     /// - The RVA is not set
     /// - The RVA value is 0
     /// - There are issues adding the table row
@@ -226,37 +221,29 @@ impl FieldRVABuilder {
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
-    /// # let field_token = Token::new(0x04000001);
+    /// # let mut assembly = CilAssembly::new(view);
+    /// # let field_ref = assembly.field_add(...)?;
     ///
-    /// let field_rva_token = FieldRVABuilder::new()
-    ///     .field(field_token)
+    /// let field_rva_ref = FieldRVABuilder::new()
+    ///     .field(field_ref.placeholder())
     ///     .rva(0x2000)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
-    /// println!("Created FieldRVA with token: {}", field_rva_token);
+    /// println!("Created FieldRVA entry");
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let field_token = self.field.ok_or_else(|| {
-            Error::ModificationInvalid("Field token is required for FieldRVA".to_string())
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
+        let field = self.field.ok_or_else(|| {
+            Error::ModificationInvalid("Field row index is required for FieldRVA".to_string())
         })?;
 
         let rva = self.rva.ok_or_else(|| {
             Error::ModificationInvalid("RVA is required for FieldRVA".to_string())
         })?;
 
-        if field_token.table() != TableId::Field as u8 {
-            return Err(Error::ModificationInvalid(format!(
-                "Field token must be a Field token, got table ID: {}",
-                field_token.table()
-            )));
-        }
-
-        if field_token.row() == 0 {
+        if field == 0 {
             return Err(Error::ModificationInvalid(
-                "Field token row cannot be 0".to_string(),
+                "Field row index cannot be 0".to_string(),
             ));
         }
 
@@ -264,21 +251,15 @@ impl FieldRVABuilder {
             return Err(Error::ModificationInvalid("RVA cannot be 0".to_string()));
         }
 
-        let rid = context.next_rid(TableId::FieldRVA);
-        let token = Token::from_parts(TableId::FieldRVA, rid);
-
         let field_rva = FieldRvaRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
             rva,
-            field: field_token.row(),
+            field,
         };
 
-        let table_data = TableDataOwned::FieldRVA(field_rva);
-        context.table_row_add(TableId::FieldRVA, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(TableId::FieldRVA, TableDataOwned::FieldRVA(field_rva))
     }
 }
 
@@ -286,30 +267,29 @@ impl FieldRVABuilder {
 mod tests {
     use super::*;
     use crate::{
+        cilassembly::ChangeRefKind,
         metadata::tables::{FieldAttributes, TableId},
         test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
     fn test_field_rva_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a Field for testing
-        let field_token = crate::metadata::tables::FieldBuilder::new()
+        let field_ref = crate::metadata::tables::FieldBuilder::new()
             .name("StaticData")
             .flags(FieldAttributes::STATIC | FieldAttributes::PRIVATE)
             .signature(&[0x06]) // Simple signature
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token = FieldRVABuilder::new()
-            .field(field_token)
+        let rva_ref = FieldRVABuilder::new()
+            .field(field_ref.placeholder())
             .rva(0x2000)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify the token has the correct table ID
-        assert_eq!(token.table(), TableId::FieldRVA as u8);
-        assert!(token.row() > 0);
+        // Verify the ref has the correct kind
+        assert_eq!(rva_ref.kind(), ChangeRefKind::TableRow(TableId::FieldRVA));
 
         Ok(())
     }
@@ -324,33 +304,31 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_missing_field() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let result = FieldRVABuilder::new().rva(0x2000).build(&mut context);
+        let result = FieldRVABuilder::new().rva(0x2000).build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Field token is required"));
+        assert!(error_msg.contains("Field row index is required"));
 
         Ok(())
     }
 
     #[test]
     fn test_field_rva_builder_missing_rva() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a Field for testing
-        let field_token = crate::metadata::tables::FieldBuilder::new()
+        let field_ref = crate::metadata::tables::FieldBuilder::new()
             .name("StaticData")
             .flags(FieldAttributes::STATIC | FieldAttributes::PRIVATE)
             .signature(&[0x06])
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         let result = FieldRVABuilder::new()
-            .field(field_token)
-            .build(&mut context);
+            .field(field_ref.placeholder())
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -360,61 +338,37 @@ mod tests {
     }
 
     #[test]
-    fn test_field_rva_builder_invalid_field_token() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+    fn test_field_rva_builder_zero_field() -> Result<()> {
+        let mut assembly = get_test_assembly()?;
 
-        // Use an invalid token (not Field)
-        let invalid_token = Token::new(0x02000001); // TypeDef token instead of Field
-
+        // Use a zero field row index (invalid)
         let result = FieldRVABuilder::new()
-            .field(invalid_token)
+            .field(0)
             .rva(0x2000)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Field token must be a Field token"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_field_rva_builder_zero_row_field() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-
-        // Use a zero row token
-        let zero_token = Token::new(0x04000000);
-
-        let result = FieldRVABuilder::new()
-            .field(zero_token)
-            .rva(0x2000)
-            .build(&mut context);
-
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Field token row cannot be 0"));
+        assert!(error_msg.contains("Field row index cannot be 0"));
 
         Ok(())
     }
 
     #[test]
     fn test_field_rva_builder_zero_rva() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a Field for testing
-        let field_token = crate::metadata::tables::FieldBuilder::new()
+        let field_ref = crate::metadata::tables::FieldBuilder::new()
             .name("StaticData")
             .flags(FieldAttributes::STATIC | FieldAttributes::PRIVATE)
             .signature(&[0x06])
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         let result = FieldRVABuilder::new()
-            .field(field_token)
+            .field(field_ref.placeholder())
             .rva(0) // Zero RVA is invalid
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -425,63 +379,59 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_multiple_entries() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create Fields for testing
-        let field1_token = crate::metadata::tables::FieldBuilder::new()
+        let field1_ref = crate::metadata::tables::FieldBuilder::new()
             .name("StaticData1")
             .flags(FieldAttributes::STATIC | FieldAttributes::PRIVATE)
             .signature(&[0x06])
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let field2_token = crate::metadata::tables::FieldBuilder::new()
+        let field2_ref = crate::metadata::tables::FieldBuilder::new()
             .name("StaticData2")
             .flags(FieldAttributes::STATIC | FieldAttributes::PRIVATE)
             .signature(&[0x06])
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let rva1_token = FieldRVABuilder::new()
-            .field(field1_token)
+        let rva1_ref = FieldRVABuilder::new()
+            .field(field1_ref.placeholder())
             .rva(0x2000)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let rva2_token = FieldRVABuilder::new()
-            .field(field2_token)
+        let rva2_ref = FieldRVABuilder::new()
+            .field(field2_ref.placeholder())
             .rva(0x3000)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify tokens are different and sequential
-        assert_ne!(rva1_token, rva2_token);
-        assert_eq!(rva1_token.table(), TableId::FieldRVA as u8);
-        assert_eq!(rva2_token.table(), TableId::FieldRVA as u8);
-        assert_eq!(rva2_token.row(), rva1_token.row() + 1);
+        // Verify refs are different
+        assert!(!std::sync::Arc::ptr_eq(&rva1_ref, &rva2_ref));
+        assert_eq!(rva1_ref.kind(), ChangeRefKind::TableRow(TableId::FieldRVA));
+        assert_eq!(rva2_ref.kind(), ChangeRefKind::TableRow(TableId::FieldRVA));
 
         Ok(())
     }
 
     #[test]
     fn test_field_rva_builder_various_rva_values() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test with different RVA values
         let test_rvas = [0x1000, 0x2000, 0x4000, 0x8000, 0x10000];
 
         for (i, &rva) in test_rvas.iter().enumerate() {
-            let field_token = crate::metadata::tables::FieldBuilder::new()
+            let field_ref = crate::metadata::tables::FieldBuilder::new()
                 .name(format!("StaticData{i}"))
                 .flags(FieldAttributes::STATIC | FieldAttributes::PRIVATE)
                 .signature(&[0x06])
-                .build(&mut context)?;
+                .build(&mut assembly)?;
 
-            let rva_token = FieldRVABuilder::new()
-                .field(field_token)
+            let rva_ref = FieldRVABuilder::new()
+                .field(field_ref.placeholder())
                 .rva(rva)
-                .build(&mut context)?;
+                .build(&mut assembly)?;
 
-            assert_eq!(rva_token.table(), TableId::FieldRVA as u8);
-            assert!(rva_token.row() > 0);
+            assert_eq!(rva_ref.kind(), ChangeRefKind::TableRow(TableId::FieldRVA));
         }
 
         Ok(())
@@ -489,33 +439,29 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_fluent_api() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a Field for testing
-        let field_token = crate::metadata::tables::FieldBuilder::new()
+        let field_ref = crate::metadata::tables::FieldBuilder::new()
             .name("FluentTestField")
             .flags(FieldAttributes::STATIC | FieldAttributes::PRIVATE)
             .signature(&[0x06])
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Test fluent API chaining
-        let token = FieldRVABuilder::new()
-            .field(field_token)
+        let rva_ref = FieldRVABuilder::new()
+            .field(field_ref.placeholder())
             .rva(0x5000)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::FieldRVA as u8);
-        assert!(token.row() > 0);
+        assert_eq!(rva_ref.kind(), ChangeRefKind::TableRow(TableId::FieldRVA));
 
         Ok(())
     }
 
     #[test]
     fn test_field_rva_builder_clone() {
-        let field_token = Token::new(0x04000001);
-
-        let builder1 = FieldRVABuilder::new().field(field_token).rva(0x2000);
+        let builder1 = FieldRVABuilder::new().field(1).rva(0x2000);
         let builder2 = builder1.clone();
 
         assert_eq!(builder1.field, builder2.field);
@@ -524,9 +470,7 @@ mod tests {
 
     #[test]
     fn test_field_rva_builder_debug() {
-        let field_token = Token::new(0x04000001);
-
-        let builder = FieldRVABuilder::new().field(field_token).rva(0x2000);
+        let builder = FieldRVABuilder::new().field(1).rva(0x2000);
         let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("FieldRVABuilder"));
     }

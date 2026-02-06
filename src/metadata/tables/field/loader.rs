@@ -24,6 +24,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::FieldRaw,
     },
@@ -55,19 +56,30 @@ impl MetadataLoader for FieldLoader {
     /// - Field signature parsing fails
     /// - Entry registration fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings), Some(blob)) =
+        let (Some(header), Some(strings), Some(blob)) =
             (context.meta, context.strings, context.blobs)
-        {
-            if let Some(table) = header.table::<FieldRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(blob, strings)?;
+        else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<FieldRaw>() else {
+            return Ok(());
+        };
 
-                    context.field.insert(row.token, res.clone());
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("field 0x{:08x}", row.token.value());
+
+            let Some(res) = context.handle_result(
+                row.to_owned(blob, strings),
+                DiagnosticCategory::Field,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.field.insert(row.token, res.clone());
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for Field table

@@ -40,7 +40,7 @@
 //!
 //! ## Flag Extraction from Raw Metadata
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::method::{
 //!     MethodImplCodeType, MethodImplManagement, MethodImplOptions,
 //!     MethodAccessFlags, MethodVtableFlags, MethodModifiers
@@ -61,7 +61,7 @@
 //!
 //! ## Flag Testing and Analysis
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::{CilObject, metadata::method::{MethodAccessFlags, MethodModifiers}};
 //! use std::path::Path;
 //!
@@ -96,7 +96,7 @@
 //!
 //! for entry in assembly.methods().iter().take(10) {
 //!     let method = entry.value();
-//!     
+//!
 //!     // Analyze local variables
 //!     if !method.local_vars.is_empty() {
 //!         println!("Method '{}' has {} local variables:", method.name, method.local_vars.len());
@@ -105,7 +105,7 @@
 //!                      i, local.base.name(), local.is_byref, local.is_pinned);
 //!         }
 //!     }
-//!     
+//!
 //!     // Analyze varargs
 //!     if !method.varargs.is_empty() {
 //!         println!("Method '{}' has {} varargs:", method.name, method.varargs.len());
@@ -151,7 +151,10 @@
 
 use bitflags::bitflags;
 
-use crate::metadata::typesystem::{CilTypeRef, CilTypeRefList};
+use crate::metadata::{
+    signatures::{CustomModifier, SignatureLocalVariable, TypeSignature},
+    typesystem::{CilFlavor, CilModifier, CilTypeRef, CilTypeRefList},
+};
 
 /// Bitmask for extracting code type from [`crate::metadata::method::MethodImplCodeType`] implementation flags.
 ///
@@ -194,7 +197,7 @@ bitflags! {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::MethodImplCodeType;
     ///
     /// // Extract from raw implementation flags
@@ -252,7 +255,7 @@ impl MethodImplCodeType {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::MethodImplCodeType;
     ///
     /// let raw_flags = 0x1001; // RUNTIME + some other flags
@@ -276,7 +279,7 @@ bitflags! {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::MethodImplManagement;
     ///
     /// // Extract from raw implementation flags
@@ -313,7 +316,7 @@ impl MethodImplManagement {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::MethodImplManagement;
     ///
     /// // Managed method (default)
@@ -343,7 +346,7 @@ bitflags! {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::MethodImplOptions;
     ///
     /// // Extract from raw implementation flags
@@ -414,7 +417,7 @@ impl MethodImplOptions {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::MethodImplOptions;
     ///
     /// // Synchronized P/Invoke method
@@ -455,7 +458,7 @@ impl MethodImplOptions {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::method::MethodAccessFlags;
 ///
 /// // Extract from raw method attributes
@@ -647,7 +650,7 @@ bitflags! {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::MethodVtableFlags;
     ///
     /// // Extract from raw method attributes
@@ -695,7 +698,7 @@ impl MethodVtableFlags {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::MethodVtableFlags;
     ///
     /// // Method override (reuses existing vtable slot)
@@ -746,7 +749,7 @@ bitflags! {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::MethodModifiers;
     ///
     /// // Abstract virtual method
@@ -867,7 +870,7 @@ impl MethodModifiers {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::MethodModifiers;
     ///
     /// // Virtual abstract method with special name
@@ -913,7 +916,7 @@ bitflags! {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::MethodBodyFlags;
     ///
     /// // Simple method with tiny header
@@ -987,7 +990,7 @@ bitflags! {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::SectionFlags;
     ///
     /// // Simple exception handling section
@@ -1066,11 +1069,11 @@ bitflags! {
 ///
 /// for entry in assembly.methods().iter().take(10) {
 ///     let method = entry.value();
-///     
+///
 ///     if !method.local_vars.is_empty() {
 ///         println!("Method '{}' has {} local variables:",
 ///                  method.name, method.local_vars.len());
-///         
+///
 ///         for (i, local_var) in method.local_vars.iter().enumerate() {
 ///             let var_info = format!("  [{}] Type: {}, ByRef: {}, Pinned: {}, Modifiers: {}",
 ///                                   i,
@@ -1098,10 +1101,15 @@ bitflags! {
 pub struct LocalVariable {
     /// Custom modifiers applied to the variable type.
     ///
-    /// These are optional and required modifiers that change the semantic meaning
-    /// of the base type, such as `const`, `volatile`, or custom attribute-based
-    /// modifiers. Each modifier is a resolved type reference.
-    pub modifiers: CilTypeRefList,
+    /// These are required (`modreq`) or optional (`modopt`) modifiers that change
+    /// the semantic meaning of the base type, such as `const`, `volatile`, or
+    /// custom attribute-based modifiers. Each modifier includes both the resolved
+    /// type reference and whether it is required or optional.
+    ///
+    /// The `required` flag is important for .NET type compatibility:
+    /// - Required modifiers (`modreq`) must be understood by the compiler/runtime
+    /// - Optional modifiers (`modopt`) can be safely ignored if not recognized
+    pub modifiers: Vec<CilModifier>,
 
     /// Whether the variable is passed by reference.
     ///
@@ -1122,6 +1130,103 @@ pub struct LocalVariable {
     /// been resolved to concrete type references. The type includes full namespace
     /// and assembly qualification for unambiguous identification.
     pub base: CilTypeRef,
+}
+
+impl LocalVariable {
+    /// Converts this resolved local variable back to a signature local variable.
+    ///
+    /// This is useful for code generation where the original signature format is
+    /// needed. The conversion preserves modifier semantics (required vs optional)
+    /// and reconstructs the type signature from the resolved type.
+    ///
+    /// # Returns
+    ///
+    /// `Some(SignatureLocalVariable)` if the conversion succeeds, `None` if the
+    /// type reference is no longer valid (weak reference expired).
+    #[must_use]
+    pub fn to_signature_local(&self) -> Option<SignatureLocalVariable> {
+        // Convert modifiers - preserve the required/optional distinction
+        let modifiers: Vec<CustomModifier> = self
+            .modifiers
+            .iter()
+            .filter_map(|m| {
+                m.modifier.token().map(|token| CustomModifier {
+                    is_required: m.required,
+                    modifier_type: token,
+                })
+            })
+            .collect();
+
+        // Convert base type
+        let base = Self::type_ref_to_signature(&self.base)?;
+
+        Some(SignatureLocalVariable {
+            modifiers,
+            is_byref: self.is_byref,
+            is_pinned: self.is_pinned,
+            base,
+        })
+    }
+
+    /// Converts a `CilTypeRef` to a `TypeSignature`.
+    ///
+    /// This handles the conversion from resolved type references back to the
+    /// signature encoding format needed for metadata generation.
+    fn type_ref_to_signature(type_ref: &CilTypeRef) -> Option<TypeSignature> {
+        let cil_type = type_ref.upgrade()?;
+        let token = cil_type.token;
+        let flavor = cil_type.flavor();
+
+        Some(match flavor {
+            // Primitive types
+            CilFlavor::Void => TypeSignature::Void,
+            CilFlavor::Boolean => TypeSignature::Boolean,
+            CilFlavor::Char => TypeSignature::Char,
+            CilFlavor::I1 => TypeSignature::I1,
+            CilFlavor::U1 => TypeSignature::U1,
+            CilFlavor::I2 => TypeSignature::I2,
+            CilFlavor::U2 => TypeSignature::U2,
+            CilFlavor::I4 => TypeSignature::I4,
+            CilFlavor::U4 => TypeSignature::U4,
+            CilFlavor::I8 => TypeSignature::I8,
+            CilFlavor::U8 => TypeSignature::U8,
+            CilFlavor::R4 => TypeSignature::R4,
+            CilFlavor::R8 => TypeSignature::R8,
+            CilFlavor::I => TypeSignature::I,
+            CilFlavor::U => TypeSignature::U,
+            CilFlavor::Object => TypeSignature::Object,
+            CilFlavor::String => TypeSignature::String,
+
+            // Reference types (classes, interfaces, generic instances)
+            CilFlavor::Class | CilFlavor::Interface | CilFlavor::GenericInstance => {
+                TypeSignature::Class(token)
+            }
+
+            // Value types
+            CilFlavor::ValueType => TypeSignature::ValueType(token),
+
+            // Generic parameters
+            CilFlavor::GenericParameter { index, method } => {
+                if *method {
+                    TypeSignature::GenericParamMethod(*index)
+                } else {
+                    TypeSignature::GenericParamType(*index)
+                }
+            }
+
+            // TypedReference is a special value type
+            CilFlavor::TypedRef { .. } => TypeSignature::TypedByRef,
+
+            // Complex types - use Object as fallback since we can't fully reconstruct
+            // these without additional context (array bounds, pointed-to types, etc.)
+            CilFlavor::Array { .. }
+            | CilFlavor::Pointer
+            | CilFlavor::ByRef
+            | CilFlavor::Pinned
+            | CilFlavor::FnPtr { .. }
+            | CilFlavor::Unknown => TypeSignature::Object,
+        })
+    }
 }
 
 /// Variable argument parameter used in method signatures to describe vararg parameters.
@@ -1152,11 +1257,11 @@ pub struct LocalVariable {
 ///
 /// for entry in assembly.methods().iter() {
 ///     let method = entry.value();
-///     
+///
 ///     if !method.varargs.is_empty() {
 ///         println!("Method '{}' has {} vararg parameters:",
 ///                  method.name, method.varargs.len());
-///         
+///
 ///         for (i, vararg) in method.varargs.iter().enumerate() {
 ///             let arg_info = format!("  VarArg[{}] Type: {}, ByRef: {}, Modifiers: {}",
 ///                                   i,

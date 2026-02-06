@@ -46,7 +46,7 @@
 //!
 //! ## Creating Custom Attribute Values
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::customattributes::{
 //!     CustomAttributeValue, CustomAttributeArgument, CustomAttributeNamedArgument
 //! };
@@ -73,7 +73,7 @@
 //!
 //! ## Working with Different Argument Types
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::customattributes::CustomAttributeArgument;
 //!
 //! // Different argument types
@@ -157,7 +157,7 @@ pub type CustomAttributeValueList = Arc<boxcar::Vec<CustomAttributeValueRc>>;
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::customattributes::{CustomAttributeValue, CustomAttributeArgument};
 ///
 /// let custom_attr = CustomAttributeValue {
@@ -202,7 +202,7 @@ pub struct CustomAttributeValue {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::customattributes::CustomAttributeArgument;
 ///
 /// // Different argument types
@@ -282,7 +282,7 @@ pub enum CustomAttributeArgument {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::customattributes::{CustomAttributeNamedArgument, CustomAttributeArgument};
 ///
 /// // Property assignment
@@ -341,7 +341,7 @@ pub struct CustomAttributeNamedArgument {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::customattributes::SERIALIZATION_TYPE;
 ///
 /// // Check type tags during parsing
@@ -399,7 +399,7 @@ pub mod SERIALIZATION_TYPE {
 ///
 /// # Usage
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::customattributes::NAMED_ARG_TYPE;
 ///
 /// let indicator = 0x53;

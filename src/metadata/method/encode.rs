@@ -21,6 +21,7 @@ use crate::Result;
 /// * `max_stack` - Maximum evaluation stack depth required
 /// * `local_var_sig_tok` - Token for local variable signature (0 if no locals)
 /// * `has_exceptions` - Whether the method has exception handlers
+/// * `init_locals` - Whether to initialize local variables to zero
 ///
 /// # Returns
 ///
@@ -35,11 +36,11 @@ use crate::Result;
 /// ```rust
 /// # use dotscope::metadata::method::encode_method_body_header;
 /// // Simple method with no locals or exceptions
-/// let header = encode_method_body_header(2, 1, 0, false)?;
+/// let header = encode_method_body_header(2, 1, 0, false, false)?;
 /// assert_eq!(header.len(), 1); // Tiny format
 ///
 /// // Complex method requiring fat format
-/// let header = encode_method_body_header(100, 16, 0x11000001, true)?;
+/// let header = encode_method_body_header(100, 16, 0x11000001, true, true)?;
 /// assert_eq!(header.len(), 12); // Fat format
 /// # Ok::<(), dotscope::Error>(())
 /// ```
@@ -54,7 +55,7 @@ use crate::Result;
 ///
 /// ## Fat Format (12 bytes)
 /// ```text
-/// Bytes 0-1: Flags (format=3, more_sects=has_exceptions, init_locals=true)
+/// Bytes 0-1: Flags (format=3, more_sects, init_locals)
 /// Bytes 2-3: Max stack depth
 /// Bytes 4-7: Code size
 /// Bytes 8-11: Local variable signature token
@@ -64,6 +65,7 @@ pub fn encode_method_body_header(
     max_stack: u16,
     local_var_sig_tok: u32,
     has_exceptions: bool,
+    init_locals: bool,
 ) -> Result<Vec<u8>> {
     // Use tiny format if possible (code size <= 63, max_stack <= 8, no locals, no exceptions)
     if code_size <= 63 && max_stack <= 8 && local_var_sig_tok == 0 && !has_exceptions {
@@ -75,8 +77,18 @@ pub fn encode_method_body_header(
         // Fat format: 12 byte header
         let mut header = Vec::with_capacity(12);
 
-        // Flags (2 bytes): format=3, more_sects=has_exceptions, init_locals=true
-        let flags = 0x3003u16 | if has_exceptions { 0x0008 } else { 0x0000 };
+        // Flags layout (ECMA-335 II.25.4.4):
+        // Bits 0-1: Format (0x03 for fat)
+        // Bit 3: CorILMethod_MoreSects (0x08)
+        // Bit 4: CorILMethod_InitLocals (0x10)
+        // Bits 12-15: Size in dwords (3 for fat header = 12 bytes)
+        let mut flags: u16 = 0x3003; // Size (3 << 12) | FAT_FORMAT (0x03)
+        if has_exceptions {
+            flags |= 0x0008; // MORE_SECTS
+        }
+        if init_locals {
+            flags |= 0x0010; // INIT_LOCALS
+        }
         header.extend_from_slice(&flags.to_le_bytes());
 
         // Max stack (2 bytes)
@@ -99,7 +111,7 @@ mod tests {
 
     #[test]
     fn test_tiny_format_encoding() -> Result<()> {
-        let header = encode_method_body_header(2, 1, 0, false)?;
+        let header = encode_method_body_header(2, 1, 0, false, false)?;
 
         // Should be 1 byte for tiny format
         assert_eq!(header.len(), 1);
@@ -123,7 +135,7 @@ mod tests {
 
     #[test]
     fn test_fat_format_encoding() -> Result<()> {
-        let header = encode_method_body_header(100, 16, 0x11000001, false)?;
+        let header = encode_method_body_header(100, 16, 0x11000001, false, true)?;
 
         // Should be 12 bytes for fat format
         assert_eq!(header.len(), 12);
@@ -141,13 +153,14 @@ mod tests {
         assert_eq!(parsed.local_var_sig_token, 0x11000001);
         assert!(parsed.is_fat);
         assert!(!parsed.is_exception_data); // We set has_exceptions=false
+        assert!(parsed.is_init_local); // We set init_locals=true
 
         Ok(())
     }
 
     #[test]
     fn test_fat_format_without_exceptions() -> Result<()> {
-        let header = encode_method_body_header(70, 12, 0x11000002, false)?;
+        let header = encode_method_body_header(70, 12, 0x11000002, false, true)?;
 
         // Create a complete method body with dummy code
         let dummy_code = vec![0x00; 70]; // 70 bytes of nop instructions
@@ -168,14 +181,14 @@ mod tests {
 
     #[test]
     fn test_format_selection() -> Result<()> {
-        // Tiny format conditions
-        assert_eq!(encode_method_body_header(63, 8, 0, false)?.len(), 1);
+        // Tiny format conditions (init_locals ignored for tiny format)
+        assert_eq!(encode_method_body_header(63, 8, 0, false, false)?.len(), 1);
 
         // Fat format triggers
-        assert_eq!(encode_method_body_header(64, 8, 0, false)?.len(), 12); // code_size > 63
-        assert_eq!(encode_method_body_header(63, 9, 0, false)?.len(), 12); // max_stack > 8
-        assert_eq!(encode_method_body_header(63, 8, 1, false)?.len(), 12); // has locals
-        assert_eq!(encode_method_body_header(63, 8, 0, true)?.len(), 12); // has exceptions
+        assert_eq!(encode_method_body_header(64, 8, 0, false, true)?.len(), 12); // code_size > 63
+        assert_eq!(encode_method_body_header(63, 9, 0, false, true)?.len(), 12); // max_stack > 8
+        assert_eq!(encode_method_body_header(63, 8, 1, false, true)?.len(), 12); // has locals
+        assert_eq!(encode_method_body_header(63, 8, 0, true, true)?.len(), 12); // has exceptions
 
         Ok(())
     }
@@ -184,8 +197,8 @@ mod tests {
     fn test_fat_format_exception_flag() -> Result<()> {
         // Test that the exception flag is properly encoded in the header
         // Use code_size > 63 to force fat format regardless of other parameters
-        let header_with_exceptions = encode_method_body_header(100, 5, 0, true)?;
-        let header_without_exceptions = encode_method_body_header(100, 5, 0, false)?;
+        let header_with_exceptions = encode_method_body_header(100, 5, 0, true, true)?;
+        let header_without_exceptions = encode_method_body_header(100, 5, 0, false, true)?;
 
         // Both should be fat format (12 bytes)
         assert_eq!(header_with_exceptions.len(), 12);
@@ -204,9 +217,30 @@ mod tests {
     }
 
     #[test]
+    fn test_fat_format_init_locals_flag() -> Result<()> {
+        // Test that the init_locals flag is properly encoded in the header
+        let header_with_init = encode_method_body_header(100, 5, 0, false, true)?;
+        let header_without_init = encode_method_body_header(100, 5, 0, false, false)?;
+
+        // Both should be fat format (12 bytes)
+        assert_eq!(header_with_init.len(), 12);
+        assert_eq!(header_without_init.len(), 12);
+
+        // The flags should differ - check the init_locals bit (bit 4) in the flags
+        let flags_with = u16::from_le_bytes([header_with_init[0], header_with_init[1]]);
+        let flags_without = u16::from_le_bytes([header_without_init[0], header_without_init[1]]);
+
+        // Bit 4 (0x0010) should be set when init_locals=true
+        assert_eq!(flags_with & 0x0010, 0x0010); // Should have init_locals bit set
+        assert_eq!(flags_without & 0x0010, 0x0000); // Should not have init_locals bit set
+
+        Ok(())
+    }
+
+    #[test]
     fn test_tiny_format_boundary_conditions() -> Result<()> {
         // Test exactly at the boundary of tiny format
-        let header = encode_method_body_header(63, 8, 0, false)?;
+        let header = encode_method_body_header(63, 8, 0, false, false)?;
         let dummy_code = vec![0x00; 63]; // Exactly 63 bytes
         let mut method_body = header;
         method_body.extend_from_slice(&dummy_code);
@@ -223,7 +257,7 @@ mod tests {
     fn test_real_method_simulation() -> Result<()> {
         // Simulate a real simple method: ldc.i4.1; ret;
         let code = vec![0x17, 0x2A]; // ldc.i4.1, ret
-        let header = encode_method_body_header(code.len() as u32, 1, 0, false)?;
+        let header = encode_method_body_header(code.len() as u32, 1, 0, false, false)?;
 
         let mut method_body = header;
         method_body.extend_from_slice(&code);

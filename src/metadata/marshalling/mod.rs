@@ -53,9 +53,10 @@
 //!
 //! ## Parsing Simple Types
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::marshalling::{parse_marshalling_descriptor, NATIVE_TYPE};
+//! ```rust,no_run
+//! use dotscope::metadata::marshalling::{parse_marshalling_descriptor, NativeType, NATIVE_TYPE};
 //!
+//! # fn main() -> dotscope::Result<()> {
 //! // Parse a simple LPSTR marshalling descriptor
 //! let descriptor_bytes = &[NATIVE_TYPE::LPSTR, 0x05]; // LPSTR with size param 5
 //! let info = parse_marshalling_descriptor(descriptor_bytes)?;
@@ -66,13 +67,16 @@
 //!     }
 //!     _ => unreachable!(),
 //! }
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Parsing Complex Arrays
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::marshalling::{MarshallingParser, NATIVE_TYPE};
+//! ```rust,no_run
+//! use dotscope::metadata::marshalling::{MarshallingParser, NativeType, NATIVE_TYPE};
 //!
+//! # fn main() -> dotscope::Result<()> {
 //! // Parse an array descriptor: Array<I4>[param=3, size=10]
 //! let descriptor_bytes = &[
 //!     NATIVE_TYPE::ARRAY,
@@ -91,13 +95,16 @@
 //!     }
 //!     _ => unreachable!(),
 //! }
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Working with Custom Marshalers
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::marshalling::NativeType;
 //!
+//! # fn example(native_type: &NativeType) {
 //! match native_type {
 //!     NativeType::CustomMarshaler { guid, native_type_name, cookie, type_reference } => {
 //!         println!("Custom marshaler: GUID={}, Type={}, Cookie={}, Ref={}",
@@ -105,13 +112,15 @@
 //!     }
 //!     _ => { /* Handle other types */ }
 //! }
+//! # }
 //! ```
 //!
 //! ## Encoding Marshalling Descriptors
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::marshalling::{encode_marshalling_descriptor, NativeType, MarshallingInfo};
 //!
+//! # fn main() -> dotscope::Result<()> {
 //! // Create a marshalling descriptor
 //! let info = MarshallingInfo {
 //!     primary_type: NativeType::LPStr { size_param_index: Some(5) },
@@ -121,6 +130,8 @@
 //! // Encode to binary format
 //! let bytes = encode_marshalling_descriptor(&info)?;
 //! // Result: [NATIVE_TYPE::LPSTR, 0x05]
+//! # Ok(())
+//! # }
 //! ```
 
 mod encoder;

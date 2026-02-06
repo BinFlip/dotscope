@@ -10,9 +10,9 @@
 //! resolving their targets. For virtual calls, Class Hierarchy Analysis (CHA)
 //! is used to determine possible runtime targets.
 //!
-//! The implementation uses the generic [`DirectedGraph`](crate::utils::graph::DirectedGraph)
-//! infrastructure, providing access to standard graph algorithms like SCC
-//! computation, topological sorting, and traversal.
+//! The implementation uses generic graph infrastructure, providing access
+//! to standard graph algorithms like SCC computation, topological sorting,
+//! and traversal.
 //!
 //! # Components
 //!
@@ -25,7 +25,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use dotscope::analysis::callgraph::CallGraph;
+//! use dotscope::analysis::CallGraph;
 //! use dotscope::CilObject;
 //!
 //! let assembly = CilObject::from_path("assembly.dll")?;

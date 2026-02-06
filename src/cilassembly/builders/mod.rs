@@ -22,8 +22,7 @@
 //!
 //! # fn example() -> dotscope::Result<()> {
 //! # let view = CilAssemblyView::from_path("test.dll")?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! # let mut assembly = CilAssembly::new(view);
 //! // Create a complete class with properties and methods
 //! let class_token = ClassBuilder::new("Person")
 //!     .public()
@@ -41,7 +40,7 @@
 //!             })
 //!         }))
 //!     .default_constructor()
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -53,8 +52,7 @@
 //!
 //! # fn example() -> dotscope::Result<()> {
 //! # let view = CilAssemblyView::from_path("test.dll")?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! # let mut assembly = CilAssembly::new(view);
 //! // Create a simple addition method
 //! let method_token = MethodBuilder::new("Add")
 //!     .public()
@@ -71,7 +69,7 @@
 //!             Ok(())
 //!         })
 //!     })
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //! # Ok(())
 //! # }
 //! ```

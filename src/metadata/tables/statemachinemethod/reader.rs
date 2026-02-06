@@ -48,6 +48,8 @@ use crate::{
 };
 
 impl RowReadable for StateMachineMethodRaw {
+    const TABLE_ID: TableId = TableId::StateMachineMethod;
+
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(StateMachineMethodRaw {
             rid,

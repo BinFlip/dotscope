@@ -4,26 +4,19 @@
 //! and simple modifications to verify the core write pipeline works correctly.
 
 use dotscope::prelude::*;
-use std::path::Path;
-use tempfile::NamedTempFile;
 
 const TEST_ASSEMBLY_PATH: &str = "tests/samples/crafted_2.exe";
 
 #[test]
 fn test_write_unmodified_assembly() -> Result<()> {
     // Load assembly without modifications
-    let view = CilAssemblyView::from_path(Path::new(TEST_ASSEMBLY_PATH))?;
-    let mut assembly = CilAssembly::new(view);
+    let mut assembly = CilAssembly::from_path(TEST_ASSEMBLY_PATH)?;
 
-    // Validate and apply changes
-    assembly.validate_and_apply_changes()?;
+    // Write to memory
+    let bytes = assembly.to_memory()?;
 
-    // Write to temporary file
-    let temp_file = NamedTempFile::new()?;
-    assembly.write_to_file(temp_file.path())?;
-
-    // Verify the written file can be loaded
-    let written_view = CilAssemblyView::from_path(temp_file.path())?;
+    // Verify the written bytes can be loaded
+    let written_view = CilAssemblyView::from_mem(bytes)?;
 
     // Basic integrity checks
     assert!(
@@ -56,35 +49,26 @@ fn test_write_unmodified_assembly() -> Result<()> {
 #[test]
 fn test_write_with_minimal_modification() -> Result<()> {
     // Load assembly and make a minimal modification
-    let view = CilAssemblyView::from_path(Path::new(TEST_ASSEMBLY_PATH))?;
-    let assembly = view.to_owned();
-    let mut context = BuilderContext::new(assembly);
+    let mut assembly = CilAssembly::from_path(TEST_ASSEMBLY_PATH)?;
 
     // Add a single string - minimal modification to trigger write pipeline
     let test_string = "MinimalTestString";
-    let string_index = context.string_add(test_string)?;
-    assert!(string_index > 0, "String index should be positive");
+    let _string_ref = assembly.string_add(test_string)?;
+    // ChangeRef is valid if we got here without error
 
-    let mut assembly = context.finish();
+    // Write to memory
+    let bytes = assembly.to_memory()?;
 
-    // Validate and apply changes
-    assembly.validate_and_apply_changes()?;
-
-    // Write to temporary file
-    let temp_file = NamedTempFile::new()?;
-    assembly.write_to_file(temp_file.path())?;
-
-    // Verify the written file can be loaded and contains our modification
-    let written_view = CilAssemblyView::from_path(temp_file.path())?;
+    // Verify the written bytes can be loaded and contains our modification
+    let written_view = CilAssemblyView::from_mem(bytes)?;
 
     let strings = written_view
         .strings()
         .ok_or_else(|| Error::Other("Written assembly should have strings heap".to_string()))?;
 
     // Verify our modification is present
-    let found = strings.iter().any(|(_, s)| s == test_string);
     assert!(
-        found,
+        strings.contains(test_string),
         "Added string '{test_string}' should be present in written assembly"
     );
 
@@ -100,28 +84,26 @@ fn test_write_with_minimal_modification() -> Result<()> {
 #[test]
 fn test_write_preserves_existing_data() -> Result<()> {
     // Test that writing preserves existing assembly data
-    let view = CilAssemblyView::from_path(Path::new(TEST_ASSEMBLY_PATH))?;
+    let mut assembly = CilAssembly::from_path(TEST_ASSEMBLY_PATH)?;
 
     // Capture some original data
-    let original_strings_count = view.strings().map(|s| s.iter().count()).unwrap_or(0);
-    let original_method_count = view
+    let original_strings_count = assembly
+        .view()
+        .strings()
+        .map(|s| s.iter().count())
+        .unwrap_or(0);
+    let original_method_count = assembly
+        .view()
         .tables()
         .map(|t| t.table_row_count(TableId::MethodDef))
         .unwrap_or(0);
 
     // Make a modification
-    let assembly = view.to_owned();
-    let mut context = BuilderContext::new(assembly);
-    let _string_idx = context.string_add("PreservationTestString")?;
-    let mut assembly = context.finish();
+    let string_idx = assembly.string_add("PreservationTestString")?;
 
-    // Validate and apply changes
-    assembly.validate_and_apply_changes()?;
-
-    // Write and reload
-    let temp_file = NamedTempFile::new()?;
-    assembly.write_to_file(temp_file.path())?;
-    let written_view = CilAssemblyView::from_path(temp_file.path())?;
+    // Write to memory and reload
+    let bytes = assembly.to_memory()?;
+    let written_view = CilAssemblyView::from_mem(bytes)?;
 
     // Verify existing data is preserved
     let new_strings_count = written_view
@@ -143,11 +125,12 @@ fn test_write_preserves_existing_data() -> Result<()> {
         "String count should increase or stay the same"
     );
 
-    // Verify some known existing data is still there
+    // Verify the added string can be retrieved
     let strings = written_view.strings().unwrap();
-    assert!(
-        strings.iter().any(|(_, s)| s == "Task`1"),
-        "Standard type 'Task`1' should be preserved"
+    let retrieved_string = strings.get(string_idx.offset().unwrap() as usize)?;
+    assert_eq!(
+        retrieved_string, "PreservationTestString",
+        "Added string should be retrievable after write"
     );
 
     Ok(())
@@ -156,23 +139,17 @@ fn test_write_preserves_existing_data() -> Result<()> {
 #[test]
 fn test_multiple_write_operations() -> Result<()> {
     // Test that an assembly can be written multiple times
-    let view = CilAssemblyView::from_path(Path::new(TEST_ASSEMBLY_PATH))?;
-    let mut assembly = CilAssembly::new(view);
-
-    // Validate and apply changes
-    assembly.validate_and_apply_changes()?;
+    let mut assembly = CilAssembly::from_path(TEST_ASSEMBLY_PATH)?;
 
     // Write first time
-    let temp_file1 = NamedTempFile::new()?;
-    assembly.write_to_file(temp_file1.path())?;
+    let bytes1 = assembly.to_memory()?;
 
     // Write second time (should work without issues)
-    let temp_file2 = NamedTempFile::new()?;
-    assembly.write_to_file(temp_file2.path())?;
+    let bytes2 = assembly.to_memory()?;
 
-    // Both files should be valid and loadable
-    let written_view1 = CilAssemblyView::from_path(temp_file1.path())?;
-    let written_view2 = CilAssemblyView::from_path(temp_file2.path())?;
+    // Both should be valid and loadable
+    let written_view1 = CilAssemblyView::from_mem(bytes1)?;
+    let written_view2 = CilAssemblyView::from_mem(bytes2)?;
 
     // Both should have the same basic structure
     assert_eq!(

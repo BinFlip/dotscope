@@ -650,7 +650,9 @@ mod tests {
             cilassemblyview::CilAssemblyView,
             tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
             token::Token,
-            validation::ValidationConfig,
+            validation::{
+                context::RawValidationContext, scanner::ReferenceScanner, ValidationConfig,
+            },
         },
         test::{
             factories::validation::raw_modification_integrity::{
@@ -662,7 +664,7 @@ mod tests {
         Error,
     };
     use rayon::ThreadPoolBuilder;
-    use std::collections::HashSet;
+    use std::collections::{HashMap, HashSet};
 
     /// Direct corruption testing for RawChangeIntegrityValidator bypassing file I/O.
     ///
@@ -675,15 +677,10 @@ mod tests {
     /// - Operation chronology violations
     #[test]
     fn test_raw_change_integrity_validator_direct_corruption() -> Result<()> {
-        let Some(clean_testfile) = get_testfile_wb() else {
-            return Err(Error::Other("WindowsBase.dll not available".to_string()));
-        };
-
-        let view = CilAssemblyView::from_path(&clean_testfile)?;
         let validator = RawChangeIntegrityValidator::new();
 
         {
-            let mut corrupted_changes = AssemblyChanges::new(&view);
+            let mut corrupted_changes = AssemblyChanges::new();
 
             let typedef_data = create_dummy_typedef(1)?;
             let operation = TableOperation::new_with_timestamp(
@@ -699,6 +696,7 @@ mod tests {
                 original_row_count: 1,
                 deleted_rows: HashSet::new(),
                 inserted_rows: HashSet::new(),
+                change_refs: HashMap::new(),
             };
 
             corrupted_changes
@@ -709,7 +707,7 @@ mod tests {
         }
 
         {
-            let mut corrupted_changes = AssemblyChanges::new(&view);
+            let mut corrupted_changes = AssemblyChanges::new();
 
             let typedef_data = create_dummy_typedef(100)?;
             let operation = TableOperation::new_with_timestamp(
@@ -725,6 +723,7 @@ mod tests {
                 original_row_count: 1,
                 deleted_rows: HashSet::new(),
                 inserted_rows: HashSet::new(),
+                change_refs: HashMap::new(),
             };
 
             corrupted_changes
@@ -735,7 +734,7 @@ mod tests {
         }
 
         {
-            let mut corrupted_changes = AssemblyChanges::new(&view);
+            let mut corrupted_changes = AssemblyChanges::new();
 
             let typedef_data = create_dummy_typedef(5)?;
             let operation = TableOperation::new_with_timestamp(
@@ -751,6 +750,7 @@ mod tests {
                 original_row_count: 1,
                 deleted_rows: HashSet::new(),
                 inserted_rows: HashSet::new(),
+                change_refs: HashMap::new(),
             };
 
             corrupted_changes
@@ -761,7 +761,7 @@ mod tests {
         }
 
         {
-            let mut corrupted_changes = AssemblyChanges::new(&view);
+            let mut corrupted_changes = AssemblyChanges::new();
 
             let mut deleted_rows = HashSet::new();
             deleted_rows.insert(1);
@@ -772,6 +772,7 @@ mod tests {
                 original_row_count: 1,
                 deleted_rows,
                 inserted_rows: HashSet::new(),
+                change_refs: HashMap::new(),
             };
 
             corrupted_changes
@@ -782,7 +783,7 @@ mod tests {
         }
 
         {
-            let mut corrupted_changes = AssemblyChanges::new(&view);
+            let mut corrupted_changes = AssemblyChanges::new();
 
             let replaced_modifications = TableModifications::Replaced(Vec::new());
             corrupted_changes
@@ -793,7 +794,7 @@ mod tests {
         }
 
         {
-            let mut corrupted_changes = AssemblyChanges::new(&view);
+            let mut corrupted_changes = AssemblyChanges::new();
 
             let mut huge_table = Vec::new();
             for _ in 0..1_000_001 {
@@ -816,7 +817,7 @@ mod tests {
 
         // Test 11: Orphaned fields (fields exist but no TypeDef entries)
         {
-            let mut corrupted_changes = AssemblyChanges::new(&view);
+            let mut corrupted_changes = AssemblyChanges::new();
 
             let typedef_modifications = TableModifications::Replaced(Vec::new());
             corrupted_changes
@@ -835,6 +836,7 @@ mod tests {
                 original_row_count: 0,
                 deleted_rows: HashSet::new(),
                 inserted_rows: HashSet::new(),
+                change_refs: HashMap::new(),
             };
 
             corrupted_changes
@@ -845,7 +847,7 @@ mod tests {
         }
 
         {
-            let mut corrupted_changes = AssemblyChanges::new(&view);
+            let mut corrupted_changes = AssemblyChanges::new();
 
             let typedef_modifications = TableModifications::Replaced(Vec::new());
             corrupted_changes
@@ -864,6 +866,7 @@ mod tests {
                 original_row_count: 0,
                 deleted_rows: HashSet::new(),
                 inserted_rows: HashSet::new(),
+                change_refs: HashMap::new(),
             };
 
             corrupted_changes
@@ -874,7 +877,7 @@ mod tests {
         }
 
         {
-            let mut corrupted_changes = AssemblyChanges::new(&view);
+            let mut corrupted_changes = AssemblyChanges::new();
 
             let operation1 = TableOperation::new_with_timestamp(
                 Operation::Insert(2, TableDataOwned::TypeDef(create_dummy_typedef(2)?)),
@@ -892,6 +895,7 @@ mod tests {
                 original_row_count: 1,
                 deleted_rows: HashSet::new(),
                 inserted_rows: HashSet::new(),
+                change_refs: HashMap::new(),
             };
 
             corrupted_changes
@@ -902,7 +906,7 @@ mod tests {
         }
 
         {
-            let mut corrupted_changes = AssemblyChanges::new(&view);
+            let mut corrupted_changes = AssemblyChanges::new();
 
             let mut operations = Vec::new();
             for i in 0..10_001 {
@@ -919,6 +923,7 @@ mod tests {
                 original_row_count: 1,
                 deleted_rows: HashSet::new(),
                 inserted_rows: HashSet::new(),
+                change_refs: HashMap::new(),
             };
 
             corrupted_changes
@@ -930,7 +935,7 @@ mod tests {
 
         // Test 12: Field ownership validation - TypeDef points to deleted field
         {
-            let mut corrupted_changes = AssemblyChanges::new(&view);
+            let mut corrupted_changes = AssemblyChanges::new();
 
             // Insert a TypeDef that points to field RID 100
             let typedef_operation = TableOperation::new(Operation::Insert(
@@ -954,6 +959,7 @@ mod tests {
                 original_row_count: 0,
                 deleted_rows: HashSet::new(),
                 inserted_rows: HashSet::new(),
+                change_refs: HashMap::new(),
             };
 
             corrupted_changes
@@ -967,6 +973,7 @@ mod tests {
                 original_row_count: 0,
                 deleted_rows: HashSet::new(),
                 inserted_rows: HashSet::new(),
+                change_refs: HashMap::new(),
             };
 
             corrupted_changes
@@ -991,10 +998,6 @@ mod tests {
         validator: &RawChangeIntegrityValidator,
         corrupted_changes: AssemblyChanges,
     ) -> Result<()> {
-        use crate::metadata::validation::{
-            context::RawValidationContext, scanner::ReferenceScanner,
-        };
-
         let Some(clean_testfile) = get_testfile_wb() else {
             return Err(Error::Other("WindowsBase.dll not available".to_string()));
         };

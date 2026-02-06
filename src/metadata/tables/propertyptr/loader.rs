@@ -28,6 +28,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{PropertyPtrRaw, TableId},
     },
@@ -60,13 +61,23 @@ impl MetadataLoader for PropertyPtrLoader {
     /// * `Ok(())` - All property pointer entries loaded and validated successfully
     /// * `Err(_)` - Property pointer loading or validation failed
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<PropertyPtrRaw>() {
-                for row in table {
-                    let owned = row.to_owned()?;
-                    context.property_ptr.insert(row.token, owned);
-                }
-            }
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<PropertyPtrRaw>() else {
+            return Ok(());
+        };
+
+        for row in table {
+            let token_msg = || format!("property ptr 0x{:08x}", row.token.value());
+
+            let Some(owned) =
+                context.handle_result(row.to_owned(), DiagnosticCategory::Table, token_msg)?
+            else {
+                continue;
+            };
+
+            context.property_ptr.insert(row.token, owned);
         }
         Ok(())
     }

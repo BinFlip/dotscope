@@ -30,6 +30,7 @@
 //! See ECMA-335, Partition II, §22.22 for the `ImplMap` table specification.
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{ImplMapRaw, TableId},
     },
@@ -57,27 +58,42 @@ impl MetadataLoader for ImplMapLoader {
     /// * `Ok(())` - If all `ImplMap` entries were processed successfully
     /// * `Err(_)` - If reference resolution or mapping application fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<ImplMapRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(
-                        |coded_index| context.get_ref(coded_index),
-                        strings,
-                        context.module_ref,
-                    )?;
-                    owned.apply()?;
+        let (Some(header), Some(strings)) = (context.meta, context.strings) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<ImplMapRaw>() else {
+            return Ok(());
+        };
 
-                    context.imports.add_method(
-                        owned.import_name.clone(),
-                        &owned.token,
-                        owned.member_forwarded.clone(),
-                        &owned.import_scope,
-                    )?;
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("impl map 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned(
+                    |coded_index| context.get_ref(coded_index),
+                    strings,
+                    context.module_ref,
+                ),
+                DiagnosticCategory::Method,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(owned.apply(), DiagnosticCategory::Method, token_msg)?;
+            context.handle_error(
+                context.imports.add_method(
+                    owned.import_name.clone(),
+                    &owned.token,
+                    owned.member_forwarded.clone(),
+                    &owned.import_scope,
+                ),
+                DiagnosticCategory::Method,
+                token_msg,
+            )?;
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `ImplMap`.

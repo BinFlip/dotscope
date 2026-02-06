@@ -6,13 +6,26 @@
 //! overrides, enabling polymorphic dispatch and interface implementation contracts.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{CodedIndex, CodedIndexType, MethodImplRaw, TableDataOwned, TableId},
         token::Token,
     },
     Error, Result,
 };
+
+/// Represents a method reference target for MethodImpl entries.
+///
+/// This enum captures both the row index (which can be a placeholder or actual row ID)
+/// and the target table type. The `CodedIndex` is constructed at write time, not at
+/// builder time, to ensure proper placeholder resolution.
+#[derive(Debug, Clone, Copy)]
+enum MethodRefTarget {
+    /// Reference to a MethodDef table entry
+    MethodDef(u32),
+    /// Reference to a MemberRef table entry
+    MemberRef(u32),
+}
 
 /// Builder for creating MethodImpl metadata entries.
 ///
@@ -48,54 +61,58 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::prelude::*;
-/// use std::path::Path;
 ///
 /// # fn main() -> Result<()> {
-/// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create interface implementation mapping
-/// let implementing_class = Token::new(0x02000001); // MyClass
-/// let implementation_method = Token::new(0x06000001); // MyClass.DoWork()
-/// let interface_method = Token::new(0x0A000001); // IWorker.DoWork()
+/// let implementing_class = 1; // MyClass row index
+/// let implementation_method = 1; // MyClass.DoWork() row index
+/// let interface_method = 1; // IWorker.DoWork() row index
 ///
 /// let method_impl = MethodImplBuilder::new()
 ///     .class(implementing_class)
 ///     .method_body_from_method_def(implementation_method)
 ///     .method_declaration_from_member_ref(interface_method)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create virtual method override mapping
-/// let derived_class = Token::new(0x02000002); // DerivedClass
-/// let override_method = Token::new(0x06000002); // DerivedClass.VirtualMethod()
-/// let base_method = Token::new(0x06000003); // BaseClass.VirtualMethod()
+/// let derived_class = 2; // DerivedClass row index
+/// let override_method = 2; // DerivedClass.VirtualMethod() row index
+/// let base_method = 3; // BaseClass.VirtualMethod() row index
 ///
 /// let override_impl = MethodImplBuilder::new()
 ///     .class(derived_class)
 ///     .method_body_from_method_def(override_method)
 ///     .method_declaration_from_method_def(base_method)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create explicit interface implementation
-/// let explicit_class = Token::new(0x02000003); // ExplicitImpl
-/// let explicit_method = Token::new(0x06000004); // ExplicitImpl.IInterface.Method()
-/// let interface_decl = Token::new(0x0A000002); // IInterface.Method()
+/// let explicit_class = 3; // ExplicitImpl row index
+/// let explicit_method = 4; // ExplicitImpl.IInterface.Method() row index
+/// let interface_decl = 2; // IInterface.Method() row index
 ///
 /// let explicit_impl = MethodImplBuilder::new()
 ///     .class(explicit_class)
 ///     .method_body_from_method_def(explicit_method)
 ///     .method_declaration_from_member_ref(interface_decl)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
 pub struct MethodImplBuilder {
-    class: Option<Token>,
-    method_body: Option<CodedIndex>,
-    method_declaration: Option<CodedIndex>,
+    /// Row index of the implementing class in the TypeDef table.
+    /// Can be a placeholder or actual row ID.
+    class: Option<u32>,
+    /// Method body target capturing the row index and target table type.
+    /// The `CodedIndex` is constructed at write time.
+    method_body: Option<MethodRefTarget>,
+    /// Method declaration target capturing the row index and target table type.
+    /// The `CodedIndex` is constructed at write time.
+    method_declaration: Option<MethodRefTarget>,
 }
 
 impl Default for MethodImplBuilder {
@@ -135,7 +152,7 @@ impl MethodImplBuilder {
     ///
     /// # Arguments
     ///
-    /// * `class_token` - Token referencing the TypeDef containing the implementation
+    /// * `row` - Row index (RID) in the TypeDef table
     ///
     /// # Returns
     ///
@@ -143,16 +160,14 @@ impl MethodImplBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
-    /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     ///
-    /// let my_class = Token::new(0x02000001); // MyClass TypeDef
+    /// let my_class = 1; // MyClass TypeDef row index
     ///
     /// let method_impl = MethodImplBuilder::new()
     ///     .class(my_class)
@@ -162,8 +177,8 @@ impl MethodImplBuilder {
     /// # }
     /// ```
     #[must_use]
-    pub fn class(mut self, class_token: Token) -> Self {
-        self.class = Some(class_token);
+    pub fn class(mut self, row: u32) -> Self {
+        self.class = Some(row);
         self
     }
 
@@ -183,7 +198,7 @@ impl MethodImplBuilder {
     ///
     /// # Arguments
     ///
-    /// * `method_token` - Token referencing the MethodDef with the implementation
+    /// * `row` - Row index (RID) in the MethodDef table
     ///
     /// # Returns
     ///
@@ -191,16 +206,14 @@ impl MethodImplBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
-    /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     ///
-    /// let implementation_method = Token::new(0x06000001); // MyClass.DoWork()
+    /// let implementation_method = 1; // MyClass.DoWork() row index
     ///
     /// let method_impl = MethodImplBuilder::new()
     ///     .method_body_from_method_def(implementation_method)
@@ -210,22 +223,16 @@ impl MethodImplBuilder {
     /// # }
     /// ```
     #[must_use]
-    pub fn method_body_from_method_def(mut self, method_token: Token) -> Self {
-        // Extract RID from MethodDef token (0x06xxxxxx)
-        let rid = method_token.value() & 0x00FF_FFFF;
-        self.method_body = Some(CodedIndex::new(
-            TableId::MethodDef,
-            rid,
-            CodedIndexType::MethodDefOrRef,
-        ));
+    pub fn method_body_from_method_def(mut self, row: u32) -> Self {
+        self.method_body = Some(MethodRefTarget::MethodDef(row));
         self
     }
 
-    /// Sets the method body from a MemberRef token.
+    /// Sets the method body from a MemberRef row index or placeholder.
     ///
-    /// Specifies the concrete method implementation using a MemberRef token.
-    /// This is used when the implementation method is defined in an external
-    /// assembly or module, requiring cross-assembly method resolution.
+    /// Stores the MemberRef row index for later construction of a MethodDefOrRef coded index
+    /// during the write phase. The `CodedIndex` is NOT created at builder time to ensure
+    /// proper placeholder resolution.
     ///
     /// # Member Reference Characteristics
     ///
@@ -237,7 +244,7 @@ impl MethodImplBuilder {
     ///
     /// # Arguments
     ///
-    /// * `member_token` - Token referencing the MemberRef with the implementation
+    /// * `row` - Row index or placeholder in the MemberRef table
     ///
     /// # Returns
     ///
@@ -245,16 +252,14 @@ impl MethodImplBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
-    /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     ///
-    /// let external_method = Token::new(0x0A000001); // External.DoWork()
+    /// let external_method = 1; // External.DoWork() row index
     ///
     /// let method_impl = MethodImplBuilder::new()
     ///     .method_body_from_member_ref(external_method)
@@ -264,22 +269,16 @@ impl MethodImplBuilder {
     /// # }
     /// ```
     #[must_use]
-    pub fn method_body_from_member_ref(mut self, member_token: Token) -> Self {
-        // Extract RID from MemberRef token (0x0Axxxxxx)
-        let rid = member_token.value() & 0x00FF_FFFF;
-        self.method_body = Some(CodedIndex::new(
-            TableId::MemberRef,
-            rid,
-            CodedIndexType::MethodDefOrRef,
-        ));
+    pub fn method_body_from_member_ref(mut self, row: u32) -> Self {
+        self.method_body = Some(MethodRefTarget::MemberRef(row));
         self
     }
 
-    /// Sets the method declaration from a MethodDef token.
+    /// Sets the method declaration from a MethodDef row index or placeholder.
     ///
-    /// Specifies the method declaration being implemented using a MethodDef token.
-    /// This is typically used for virtual method overrides where both the declaration
-    /// and implementation are defined within the current assembly.
+    /// Stores the MethodDef row index for later construction of a MethodDefOrRef coded index
+    /// during the write phase. The `CodedIndex` is NOT created at builder time to ensure
+    /// proper placeholder resolution.
     ///
     /// # Method Declaration Characteristics
     ///
@@ -291,7 +290,7 @@ impl MethodImplBuilder {
     ///
     /// # Arguments
     ///
-    /// * `method_token` - Token referencing the MethodDef being implemented
+    /// * `row` - Row index or placeholder in the MethodDef table
     ///
     /// # Returns
     ///
@@ -299,16 +298,14 @@ impl MethodImplBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
-    /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     ///
-    /// let base_method = Token::new(0x06000002); // BaseClass.VirtualMethod()
+    /// let base_method = 2; // BaseClass.VirtualMethod() row index
     ///
     /// let method_impl = MethodImplBuilder::new()
     ///     .method_declaration_from_method_def(base_method)
@@ -318,22 +315,16 @@ impl MethodImplBuilder {
     /// # }
     /// ```
     #[must_use]
-    pub fn method_declaration_from_method_def(mut self, method_token: Token) -> Self {
-        // Extract RID from MethodDef token (0x06xxxxxx)
-        let rid = method_token.value() & 0x00FF_FFFF;
-        self.method_declaration = Some(CodedIndex::new(
-            TableId::MethodDef,
-            rid,
-            CodedIndexType::MethodDefOrRef,
-        ));
+    pub fn method_declaration_from_method_def(mut self, row: u32) -> Self {
+        self.method_declaration = Some(MethodRefTarget::MethodDef(row));
         self
     }
 
-    /// Sets the method declaration from a MemberRef token.
+    /// Sets the method declaration from a MemberRef row index or placeholder.
     ///
-    /// Specifies the method declaration being implemented using a MemberRef token.
-    /// This is commonly used for interface implementations where the interface
-    /// method is defined in an external assembly or module.
+    /// Stores the MemberRef row index for later construction of a MethodDefOrRef coded index
+    /// during the write phase. The `CodedIndex` is NOT created at builder time to ensure
+    /// proper placeholder resolution.
     ///
     /// # Interface Declaration Characteristics
     ///
@@ -345,7 +336,7 @@ impl MethodImplBuilder {
     ///
     /// # Arguments
     ///
-    /// * `member_token` - Token referencing the MemberRef being implemented
+    /// * `row` - Row index or placeholder in the MemberRef table
     ///
     /// # Returns
     ///
@@ -353,16 +344,14 @@ impl MethodImplBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
-    /// use std::path::Path;
     ///
     /// # fn main() -> Result<()> {
-    /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     ///
-    /// let interface_method = Token::new(0x0A000002); // IWorker.DoWork()
+    /// let interface_method = 2; // IWorker.DoWork() row index
     ///
     /// let method_impl = MethodImplBuilder::new()
     ///     .method_declaration_from_member_ref(interface_method)
@@ -372,68 +361,8 @@ impl MethodImplBuilder {
     /// # }
     /// ```
     #[must_use]
-    pub fn method_declaration_from_member_ref(mut self, member_token: Token) -> Self {
-        // Extract RID from MemberRef token (0x0Axxxxxx)
-        let rid = member_token.value() & 0x00FF_FFFF;
-        self.method_declaration = Some(CodedIndex::new(
-            TableId::MemberRef,
-            rid,
-            CodedIndexType::MethodDefOrRef,
-        ));
-        self
-    }
-
-    /// Sets the method body using a coded index directly.
-    ///
-    /// Allows setting the method body implementation using any valid MethodDefOrRef
-    /// coded index for maximum flexibility. This method provides complete control
-    /// over the method body reference and can handle both local and external methods.
-    ///
-    /// # Coded Index Flexibility
-    ///
-    /// Direct coded index usage supports:
-    /// - **MethodDef References**: Local method implementations
-    /// - **MemberRef References**: External method implementations
-    /// - **Complex Scenarios**: Advanced implementation mapping patterns
-    /// - **Tool Integration**: Support for external metadata tools
-    ///
-    /// # Arguments
-    ///
-    /// * `coded_index` - MethodDefOrRef coded index for the implementation method
-    ///
-    /// # Returns
-    ///
-    /// Self for method chaining.
-    #[must_use]
-    pub fn method_body(mut self, coded_index: CodedIndex) -> Self {
-        self.method_body = Some(coded_index);
-        self
-    }
-
-    /// Sets the method declaration using a coded index directly.
-    ///
-    /// Allows setting the method declaration using any valid MethodDefOrRef
-    /// coded index for maximum flexibility. This method provides complete control
-    /// over the method declaration reference and can handle both local and external declarations.
-    ///
-    /// # Coded Index Flexibility
-    ///
-    /// Direct coded index usage supports:
-    /// - **MethodDef References**: Local method declarations (virtual methods)
-    /// - **MemberRef References**: External method declarations (interface methods)
-    /// - **Complex Scenarios**: Advanced declaration mapping patterns
-    /// - **Tool Integration**: Support for external metadata tools
-    ///
-    /// # Arguments
-    ///
-    /// * `coded_index` - MethodDefOrRef coded index for the declaration method
-    ///
-    /// # Returns
-    ///
-    /// Self for method chaining.
-    #[must_use]
-    pub fn method_declaration(mut self, coded_index: CodedIndex) -> Self {
-        self.method_declaration = Some(coded_index);
+    pub fn method_declaration_from_member_ref(mut self, row: u32) -> Self {
+        self.method_declaration = Some(MethodRefTarget::MemberRef(row));
         self
     }
 
@@ -454,7 +383,7 @@ impl MethodImplBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for metadata operations
+    /// * `assembly` - The CilAssembly for metadata operations
     ///
     /// # Returns
     ///
@@ -466,25 +395,43 @@ impl MethodImplBuilder {
     /// - Invalid token references in the coded indices
     /// - Table operations fail due to metadata constraints
     /// - Implementation mapping validation failed
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let class = self.class.ok_or_else(|| {
-            Error::ModificationInvalid("MethodImplBuilder requires a class token".to_string())
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
+        let class_rid = self.class.ok_or_else(|| {
+            Error::ModificationInvalid("MethodImplBuilder requires a class row index".to_string())
         })?;
 
-        let method_body = self.method_body.ok_or_else(|| {
+        let method_body_target = self.method_body.ok_or_else(|| {
             Error::ModificationInvalid("MethodImplBuilder requires a method body".to_string())
         })?;
 
-        let method_declaration = self.method_declaration.ok_or_else(|| {
+        let method_declaration_target = self.method_declaration.ok_or_else(|| {
             Error::ModificationInvalid(
                 "MethodImplBuilder requires a method declaration".to_string(),
             )
         })?;
 
-        // Extract RID from class token (should be TypeDef: 0x02xxxxxx)
-        let class_rid = class.value() & 0x00FF_FFFF;
+        // Construct the CodedIndex from the stored target information.
+        // The row value may be a placeholder that will be resolved at write time
+        // by the ResolvePlaceholders implementation.
+        let method_body = match method_body_target {
+            MethodRefTarget::MethodDef(row) => {
+                CodedIndex::new(TableId::MethodDef, row, CodedIndexType::MethodDefOrRef)
+            }
+            MethodRefTarget::MemberRef(row) => {
+                CodedIndex::new(TableId::MemberRef, row, CodedIndexType::MethodDefOrRef)
+            }
+        };
 
-        let next_rid = context.next_rid(TableId::MethodImpl);
+        let method_declaration = match method_declaration_target {
+            MethodRefTarget::MethodDef(row) => {
+                CodedIndex::new(TableId::MethodDef, row, CodedIndexType::MethodDefOrRef)
+            }
+            MethodRefTarget::MemberRef(row) => {
+                CodedIndex::new(TableId::MemberRef, row, CodedIndexType::MethodDefOrRef)
+            }
+        };
+
+        let next_rid = assembly.next_rid(TableId::MethodImpl)?;
         let token = Token::new(((TableId::MethodImpl as u32) << 24) | next_rid);
 
         let method_impl_raw = MethodImplRaw {
@@ -496,7 +443,7 @@ impl MethodImplBuilder {
             method_declaration,
         };
 
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::MethodImpl,
             TableDataOwned::MethodImpl(method_impl_raw),
         )
@@ -507,7 +454,7 @@ impl MethodImplBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
+        cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
@@ -532,25 +479,23 @@ mod tests {
     fn test_interface_implementation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Get the expected next RID for MethodImpl
-            let expected_rid = context.next_rid(TableId::MethodImpl);
+            let _expected_rid = assembly.next_rid(TableId::MethodImpl).unwrap();
 
-            let implementing_class = Token::new(0x02000001); // MyClass
-            let implementation_method = Token::new(0x06000001); // MyClass.DoWork()
-            let interface_method = Token::new(0x0A000001); // IWorker.DoWork()
+            let implementing_class = 1; // MyClass
+            let implementation_method = 1; // MyClass.DoWork()
+            let interface_method = 1; // IWorker.DoWork()
 
-            let token = MethodImplBuilder::new()
+            let ref_ = MethodImplBuilder::new()
                 .class(implementing_class)
                 .method_body_from_method_def(implementation_method)
                 .method_declaration_from_member_ref(interface_method)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build MethodImpl");
 
-            assert_eq!(token.value() & 0xFF000000, 0x19000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodImpl));
         }
     }
 
@@ -558,25 +503,23 @@ mod tests {
     fn test_virtual_method_override() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Get the expected next RID for MethodImpl
-            let expected_rid = context.next_rid(TableId::MethodImpl);
+            let _expected_rid = assembly.next_rid(TableId::MethodImpl).unwrap();
 
-            let derived_class = Token::new(0x02000002); // DerivedClass
-            let override_method = Token::new(0x06000002); // DerivedClass.VirtualMethod()
-            let base_method = Token::new(0x06000003); // BaseClass.VirtualMethod()
+            let derived_class = 2; // DerivedClass
+            let override_method = 2; // DerivedClass.VirtualMethod()
+            let base_method = 3; // BaseClass.VirtualMethod()
 
-            let token = MethodImplBuilder::new()
+            let ref_ = MethodImplBuilder::new()
                 .class(derived_class)
                 .method_body_from_method_def(override_method)
                 .method_declaration_from_method_def(base_method)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build virtual override MethodImpl");
 
-            assert_eq!(token.value() & 0xFF000000, 0x19000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodImpl));
         }
     }
 
@@ -584,25 +527,23 @@ mod tests {
     fn test_explicit_interface_implementation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Get the expected next RID for MethodImpl
-            let expected_rid = context.next_rid(TableId::MethodImpl);
+            let _expected_rid = assembly.next_rid(TableId::MethodImpl).unwrap();
 
-            let explicit_class = Token::new(0x02000003); // ExplicitImpl
-            let explicit_method = Token::new(0x06000004); // ExplicitImpl.IInterface.Method()
-            let interface_decl = Token::new(0x0A000002); // IInterface.Method()
+            let explicit_class = 3; // ExplicitImpl
+            let explicit_method = 4; // ExplicitImpl.IInterface.Method()
+            let interface_decl = 2; // IInterface.Method()
 
-            let token = MethodImplBuilder::new()
+            let ref_ = MethodImplBuilder::new()
                 .class(explicit_class)
                 .method_body_from_method_def(explicit_method)
                 .method_declaration_from_member_ref(interface_decl)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build explicit interface MethodImpl");
 
-            assert_eq!(token.value() & 0xFF000000, 0x19000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodImpl));
         }
     }
 
@@ -610,53 +551,46 @@ mod tests {
     fn test_external_method_body() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Get the expected next RID for MethodImpl
-            let expected_rid = context.next_rid(TableId::MethodImpl);
+            let _expected_rid = assembly.next_rid(TableId::MethodImpl).unwrap();
 
-            let implementing_class = Token::new(0x02000001);
-            let external_method = Token::new(0x0A000003); // External method implementation
-            let interface_method = Token::new(0x0A000004);
+            let implementing_class = 1;
+            let external_method = 3; // External method implementation
+            let interface_method = 4;
 
-            let token = MethodImplBuilder::new()
+            let ref_ = MethodImplBuilder::new()
                 .class(implementing_class)
                 .method_body_from_member_ref(external_method)
                 .method_declaration_from_member_ref(interface_method)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build external method MethodImpl");
 
-            assert_eq!(token.value() & 0xFF000000, 0x19000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodImpl));
         }
     }
 
     #[test]
-    fn test_direct_coded_index() {
+    fn test_mixed_method_refs() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Get the expected next RID for MethodImpl
-            let expected_rid = context.next_rid(TableId::MethodImpl);
+            let _expected_rid = assembly.next_rid(TableId::MethodImpl).unwrap();
 
-            let implementing_class = Token::new(0x02000001);
-            let method_body_idx =
-                CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
-            let method_decl_idx =
-                CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::MethodDefOrRef);
+            // Test using direct row indices with both MethodDef and MemberRef tables
+            let implementing_class = 1;
 
-            let token = MethodImplBuilder::new()
+            let ref_ = MethodImplBuilder::new()
                 .class(implementing_class)
-                .method_body(method_body_idx)
-                .method_declaration(method_decl_idx)
-                .build(&mut context)
-                .expect("Should build direct coded index MethodImpl");
+                .method_body_from_method_def(1)
+                .method_declaration_from_member_ref(1)
+                .build(&mut assembly)
+                .expect("Should build mixed method ref MethodImpl");
 
-            assert_eq!(token.value() & 0xFF000000, 0x19000000);
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodImpl));
         }
     }
 
@@ -664,19 +598,18 @@ mod tests {
     fn test_build_without_class_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = MethodImplBuilder::new()
-                .method_body_from_method_def(Token::new(0x06000001))
-                .method_declaration_from_member_ref(Token::new(0x0A000001))
-                .build(&mut context);
+                .method_body_from_method_def(1)
+                .method_declaration_from_member_ref(1)
+                .build(&mut assembly);
 
             assert!(result.is_err());
             assert!(result
                 .unwrap_err()
                 .to_string()
-                .contains("requires a class token"));
+                .contains("requires a class row index"));
         }
     }
 
@@ -684,13 +617,12 @@ mod tests {
     fn test_build_without_method_body_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = MethodImplBuilder::new()
-                .class(Token::new(0x02000001))
-                .method_declaration_from_member_ref(Token::new(0x0A000001))
-                .build(&mut context);
+                .class(1)
+                .method_declaration_from_member_ref(1)
+                .build(&mut assembly);
 
             assert!(result.is_err());
             assert!(result
@@ -704,13 +636,12 @@ mod tests {
     fn test_build_without_method_declaration_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = MethodImplBuilder::new()
-                .class(Token::new(0x02000001))
-                .method_body_from_method_def(Token::new(0x06000001))
-                .build(&mut context);
+                .class(1)
+                .method_body_from_method_def(1)
+                .build(&mut assembly);
 
             assert!(result.is_err());
             assert!(result
@@ -724,28 +655,25 @@ mod tests {
     fn test_multiple_method_impls() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            // Get the expected first RID for MethodImpl
-            let expected_rid1 = context.next_rid(TableId::MethodImpl);
-
-            let token1 = MethodImplBuilder::new()
-                .class(Token::new(0x02000001))
-                .method_body_from_method_def(Token::new(0x06000001))
-                .method_declaration_from_member_ref(Token::new(0x0A000001))
-                .build(&mut context)
+            let ref1 = MethodImplBuilder::new()
+                .class(1)
+                .method_body_from_method_def(1)
+                .method_declaration_from_member_ref(1)
+                .build(&mut assembly)
                 .expect("Should build first MethodImpl");
 
-            let token2 = MethodImplBuilder::new()
-                .class(Token::new(0x02000001))
-                .method_body_from_method_def(Token::new(0x06000002))
-                .method_declaration_from_member_ref(Token::new(0x0A000002))
-                .build(&mut context)
+            let ref2 = MethodImplBuilder::new()
+                .class(1)
+                .method_body_from_method_def(2)
+                .method_declaration_from_member_ref(2)
+                .build(&mut assembly)
                 .expect("Should build second MethodImpl");
 
-            assert_eq!(token1.value() & 0x00FFFFFF, expected_rid1);
-            assert_eq!(token2.value() & 0x00FFFFFF, expected_rid1 + 1);
+            assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::MethodImpl));
+            assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::MethodImpl));
+            assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
         }
     }
 }

@@ -23,14 +23,14 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::{CilObject, metadata::typesystem::TypeRegistry};
 //!
 //! let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
 //! let type_registry = assembly.types();
 //!
 //! // Look up a specific type
-//! if let Some(string_type) = type_registry.get_by_fullname_first("System.String", true) {
+//! if let Some(string_type) = type_registry.get_by_fullname("System.String", true) {
 //!     println!("String type: {} (Token: 0x{:08X})",
 //!         string_type.name, string_type.token.value());
 //! }
@@ -64,7 +64,7 @@ pub use resolver::TypeResolver;
 use crate::{
     metadata::{
         customattributes::CustomAttributeValueList,
-        method::MethodRefList,
+        method::{MethodAccessFlags, MethodRefList},
         security::Security,
         tables::{
             EventList, FieldList, GenericParamList, MethodSpec, MethodSpecList, PropertyList,
@@ -192,7 +192,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::{
     ///     typesystem::{CilType, CilFlavor},
     ///     token::Token,
@@ -371,7 +371,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::metadata::typesystem::CilType;
     /// # fn example(cil_type: &CilType) {
     /// if let Some(base) = cil_type.base() {
@@ -548,7 +548,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::typesystem::{CilType, CilFlavor};
     ///
     /// # fn example(cil_type: &CilType) {
@@ -585,15 +585,26 @@ impl CilType {
         }
 
         // 2. System primitive types (exact namespace/name matching)
-        // Keep these for performance - they're well-defined and unchanging
+        // Return specific CilFlavor for primitives to enable proper element sizing
         if self.namespace == "System" {
-            // Check primitive value types and special value types
             match self.name.as_str() {
-                // Primitive value types
-                "Boolean" | "Char" | "SByte" | "Byte" | "Int16" | "UInt16" | "Int32" | "UInt32"
-                | "Int64" | "UInt64" | "Single" | "Double" | "IntPtr" | "UIntPtr" | "Decimal" => {
-                    return CilFlavor::ValueType;
-                }
+                // Primitive types with specific flavors
+                "Boolean" => return CilFlavor::Boolean,
+                "Char" => return CilFlavor::Char,
+                "SByte" => return CilFlavor::I1,
+                "Byte" => return CilFlavor::U1,
+                "Int16" => return CilFlavor::I2,
+                "UInt16" => return CilFlavor::U2,
+                "Int32" => return CilFlavor::I4,
+                "UInt32" => return CilFlavor::U4,
+                "Int64" => return CilFlavor::I8,
+                "UInt64" => return CilFlavor::U8,
+                "Single" => return CilFlavor::R4,
+                "Double" => return CilFlavor::R8,
+                "IntPtr" => return CilFlavor::I,
+                "UIntPtr" => return CilFlavor::U,
+                // Decimal is a special value type (not a primitive flavor)
+                "Decimal" => return CilFlavor::ValueType,
                 // Special value types (base types themselves)
                 "ValueType" | "Enum" => return CilFlavor::ValueType,
                 // Well-known reference types
@@ -858,6 +869,71 @@ impl CilType {
         has_invoke && has_async_methods
     }
 
+    /// Returns true if this type is publicly visible.
+    ///
+    /// A type is considered public if it has `Public` visibility (for top-level types)
+    /// or `NestedPublic` visibility (for nested types).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// if cil_type.is_public() {
+    ///     println!("Type {} is publicly accessible", cil_type.name);
+    /// }
+    /// ```
+    pub fn is_public(&self) -> bool {
+        let vis = self.flags & TypeAttributes::VISIBILITY_MASK;
+        vis == TypeAttributes::PUBLIC || vis == TypeAttributes::NESTED_PUBLIC
+    }
+
+    /// Returns true if this type has internal/assembly-only visibility.
+    ///
+    /// Returns true for:
+    /// - Top-level types with `NotPublic` visibility (internal to assembly)
+    /// - Nested types with `NestedAssembly` visibility
+    pub fn is_internal(&self) -> bool {
+        let vis = self.flags & TypeAttributes::VISIBILITY_MASK;
+        vis == TypeAttributes::NOT_PUBLIC || vis == TypeAttributes::NESTED_ASSEMBLY
+    }
+
+    /// Returns true if this is a nested type with private or internal visibility.
+    ///
+    /// This includes:
+    /// - `NestedPrivate` - Only accessible within the declaring type
+    /// - `NestedAssembly` - Only accessible within the same assembly
+    /// - `NestedFamANDAssem` - Only accessible to derived types within the same assembly
+    ///
+    /// Useful for detecting obfuscation infrastructure types that are intentionally hidden.
+    pub fn is_nested_internal(&self) -> bool {
+        let vis = self.flags & TypeAttributes::VISIBILITY_MASK;
+        vis == TypeAttributes::NESTED_PRIVATE
+            || vis == TypeAttributes::NESTED_ASSEMBLY
+            || vis == TypeAttributes::NESTED_FAM_AND_ASSEM
+    }
+
+    /// Returns true if any method in this type has public access.
+    ///
+    /// Iterates through all methods declared by this type and checks if any
+    /// have `Public` accessibility.
+    pub fn has_public_methods(&self) -> bool {
+        self.methods.iter().any(|(_, method_ref)| {
+            method_ref
+                .upgrade()
+                .map(|m| m.flags_access == MethodAccessFlags::PUBLIC)
+                .unwrap_or(false)
+        })
+    }
+
+    /// Returns true if any field in this type has public access.
+    ///
+    /// Iterates through all fields declared by this type and checks if any
+    /// have `Public` accessibility (flag value 0x06).
+    pub fn has_public_fields(&self) -> bool {
+        self.fields.iter().any(|(_, field)| {
+            (field.flags & 0x07) == 0x06 // FieldAttributes.Public
+        })
+    }
+
     /// Returns the full name (Namespace.Name) of the type.
     ///
     /// Combines the namespace and name to create a fully qualified type name,
@@ -969,7 +1045,7 @@ impl CilType {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::typesystem::CilType;
     /// use dotscope::metadata::token::Token;
     ///
@@ -1013,6 +1089,15 @@ impl CilType {
     fn is_assignable_to(&self, target: &CilType) -> bool {
         if self.flavor().is_primitive() && target.flavor().is_primitive() {
             return self.flavor().is_compatible_with(target.flavor());
+        }
+
+        // Generic type parameters are compatible with any type since we don't have
+        // runtime type substitution. This allows operations like unbox/castclass
+        // to succeed when the target is a generic method parameter (TM0, TM1, etc.)
+        if matches!(target.flavor(), CilFlavor::GenericParameter { .. })
+            || matches!(self.flavor(), CilFlavor::GenericParameter { .. })
+        {
+            return true;
         }
 
         // Handle System.Object (can accept any reference type)

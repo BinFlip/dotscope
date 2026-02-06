@@ -23,6 +23,8 @@ use crate::{
 };
 
 impl RowReadable for FieldLayoutRaw {
+    const TABLE_ID: TableId = TableId::FieldLayout;
+
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 

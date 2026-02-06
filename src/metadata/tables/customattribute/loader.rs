@@ -57,6 +57,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::CustomAttributeRaw,
     },
@@ -117,22 +118,37 @@ impl MetadataLoader for CustomAttributeLoader {
     /// This method is thread-safe and uses parallel iteration for performance.
     /// Updates to target elements are handled through atomic operations.
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<CustomAttributeRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(
-                        |coded_index| context.get_ref(coded_index),
-                        blob,
-                        Some(context.types),
-                    )?;
-                    owned.apply()?;
+        let (Some(header), Some(blob)) = (context.meta, context.blobs) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<CustomAttributeRaw>() else {
+            return Ok(());
+        };
 
-                    context.custom_attribute.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("custom attribute 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned(
+                    |coded_index| context.get_ref(coded_index),
+                    blob,
+                    Some(context.types),
+                ),
+                DiagnosticCategory::CustomAttribute,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(
+                owned.apply(),
+                DiagnosticCategory::CustomAttribute,
+                token_msg,
+            )?;
+            context.custom_attribute.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `CustomAttribute`

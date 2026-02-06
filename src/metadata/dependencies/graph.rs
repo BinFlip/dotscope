@@ -260,14 +260,18 @@ impl AssemblyDependencyGraph {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::metadata::dependencies::AssemblyDependencyGraph;
+    ///
+    /// # fn example(graph: &AssemblyDependencyGraph) -> dotscope::Result<()> {
     /// if let Some(cycle) = graph.find_cycles()? {
     ///     eprintln!("Circular dependency: {:?}", cycle);
     ///     for assembly in cycle {
     ///         eprintln!("  -> {}", assembly.display_name());
     ///     }
     /// }
-    /// # Ok::<(), dotscope::Error>(())
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Errors
@@ -322,12 +326,16 @@ impl AssemblyDependencyGraph {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::metadata::dependencies::AssemblyDependencyGraph;
+    ///
+    /// # fn example(graph: &AssemblyDependencyGraph) -> dotscope::Result<()> {
     /// let load_order = graph.topological_order()?;
     /// for (index, assembly) in load_order.iter().enumerate() {
     ///     println!("Load order {}: {}", index + 1, assembly.display_name());
     /// }
-    /// # Ok::<(), dotscope::Error>(())
+    /// # Ok(())
+    /// # }
     /// ```
     ///
     /// # Errors
@@ -642,7 +650,10 @@ impl AssemblyDependencyGraph {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::metadata::dependencies::AssemblyDependencyGraph;
+    /// use dotscope::metadata::identity::AssemblyIdentity;
+    ///
     /// let graph = AssemblyDependencyGraph::new();
     /// let identity = AssemblyIdentity::parse("MyLib, Version=1.0.0.0")?;
     ///
@@ -668,9 +679,10 @@ impl AssemblyDependencyGraph {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::metadata::dependencies::AssemblyDependencyGraph;
+    ///
     /// let graph = AssemblyDependencyGraph::new();
-    /// // ... add assemblies to graph ...
     ///
     /// for identity in graph.all_assemblies() {
     ///     println!("Assembly: {}", identity.display_name());

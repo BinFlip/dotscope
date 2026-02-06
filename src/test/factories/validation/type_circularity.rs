@@ -4,20 +4,17 @@
 //! for creating test assemblies with various type circularity validation scenarios.
 
 use crate::{
-    cilassembly::{BuilderContext, CilAssembly},
+    cilassembly::ChangeRefRc,
     metadata::{
-        cilassemblyview::CilAssemblyView,
         tables::{
-            CodedIndex, CodedIndexType, InterfaceImplBuilder, NestedClassBuilder, TableDataOwned,
+            CodedIndex, CodedIndexType, InterfaceImplRaw, NestedClassBuilder, TableDataOwned,
             TableId, TypeAttributes, TypeDefBuilder, TypeDefRaw,
         },
         token::Token,
-        validation::ValidationConfig,
     },
-    test::{get_testfile_mscorlib, TestAssembly},
+    test::{create_test_assembly_with_error, get_testfile_mscorlib, TestAssembly},
     Error, Result,
 };
-use tempfile::NamedTempFile;
 
 /// File factory function for OwnedTypeCircularityValidator testing.
 ///
@@ -34,42 +31,22 @@ pub fn owned_type_circularity_validator_file_factory() -> Result<Vec<TestAssembl
     assemblies.push(TestAssembly::new(&clean_testfile, true));
 
     match create_assembly_with_inheritance_circularity() {
-        Ok(temp_file) => {
-            assemblies.push(TestAssembly::from_temp_file_with_error(
-                temp_file,
-                "Circular inheritance",
-            ));
-        }
+        Ok(test_assembly) => assemblies.push(test_assembly),
         Err(e) => eprintln!("Warning: Could not create inheritance test assembly: {e}"),
     }
 
     match create_assembly_with_nested_type_circularity() {
-        Ok(temp_file) => {
-            assemblies.push(TestAssembly::from_temp_file_with_error(
-                temp_file,
-                "Circular nested type relationship detected",
-            ));
-        }
+        Ok(test_assembly) => assemblies.push(test_assembly),
         Err(e) => eprintln!("Warning: Could not create nested type test assembly: {e}"),
     }
 
     match create_assembly_with_interface_circularity() {
-        Ok(temp_file) => {
-            assemblies.push(TestAssembly::from_temp_file_with_error(
-                temp_file,
-                "Circular interface implementation detected",
-            ));
-        }
+        Ok(test_assembly) => assemblies.push(test_assembly),
         Err(e) => eprintln!("Warning: Could not create interface test assembly: {e}"),
     }
 
     match create_assembly_with_depth_limit_violation() {
-        Ok(temp_file) => {
-            assemblies.push(TestAssembly::from_temp_file_with_error(
-                temp_file,
-                "Inheritance chain depth exceeds maximum nesting depth limit",
-            ));
-        }
+        Ok(test_assembly) => assemblies.push(test_assembly),
         Err(e) => eprintln!("Warning: Could not create depth limit violation test: {e}"),
     }
 
@@ -85,69 +62,57 @@ pub fn owned_type_circularity_validator_file_factory() -> Result<Vec<TestAssembl
 /// in a way that will be detected by the validator when the assembly is reloaded.
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/circularity.rs`
-pub fn create_assembly_with_inheritance_circularity() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_mscorlib()
-        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_path(&clean_testfile)?;
-    let assembly = CilAssembly::new(view);
-    let mut context = BuilderContext::new(assembly);
+pub fn create_assembly_with_inheritance_circularity() -> Result<TestAssembly> {
+    create_test_assembly_with_error(get_testfile_mscorlib, "Circular inheritance", |assembly| {
+        let class_a_name_index = assembly.string_add("CircularClassA")?;
+        let class_b_name_index = assembly.string_add("CircularClassB")?;
+        let test_namespace_index = assembly.string_add("Test")?;
+        let current_typedef_count = assembly.original_table_row_count(TableId::TypeDef);
 
-    let class_a_name_index = context.string_add("CircularClassA")?;
-    let class_b_name_index = context.string_add("CircularClassB")?;
-    let test_namespace_index = context.string_add("Test")?;
+        let class_a_row = current_typedef_count + 1;
+        let class_b_row = current_typedef_count + 2;
+        let class_a_token = Token::new(0x02000000 | class_a_row);
+        let class_b_token = Token::new(0x02000000 | class_b_row);
 
-    let mut assembly = context.finish();
-    let current_typedef_count = assembly.original_table_row_count(TableId::TypeDef);
+        let class_a_raw = TypeDefRaw {
+            rid: class_a_token.row(),
+            token: class_a_token,
+            offset: 0,
+            flags: TypeAttributes::PUBLIC | TypeAttributes::CLASS,
+            type_name: class_a_name_index.placeholder(),
+            type_namespace: test_namespace_index.placeholder(),
+            extends: CodedIndex::new(
+                TableId::TypeDef,
+                class_b_token.row(),
+                CodedIndexType::TypeDefOrRef,
+            ),
+            field_list: 1,
+            method_list: 1,
+        };
 
-    let class_a_row = current_typedef_count + 1;
-    let class_b_row = current_typedef_count + 2;
-    let class_a_token = Token::new(0x02000000 | class_a_row);
-    let class_b_token = Token::new(0x02000000 | class_b_row);
+        let class_b_raw = TypeDefRaw {
+            rid: class_b_token.row(),
+            token: class_b_token,
+            offset: 0,
+            flags: TypeAttributes::PUBLIC | TypeAttributes::CLASS,
+            type_name: class_b_name_index.placeholder(),
+            type_namespace: test_namespace_index.placeholder(),
+            extends: CodedIndex::new(
+                TableId::TypeDef,
+                class_a_token.row(),
+                CodedIndexType::TypeDefOrRef,
+            ),
+            field_list: 1,
+            method_list: 1,
+        };
 
-    let class_a_raw = TypeDefRaw {
-        rid: class_a_token.row(),
-        token: class_a_token,
-        offset: 0,
-        flags: TypeAttributes::PUBLIC | TypeAttributes::CLASS,
-        type_name: class_a_name_index,
-        type_namespace: test_namespace_index,
-        extends: CodedIndex::new(
-            TableId::TypeDef,
-            class_b_token.row(),
-            CodedIndexType::TypeDefOrRef,
-        ),
-        field_list: 1,
-        method_list: 1,
-    };
+        let _actual_class_a_row =
+            assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(class_a_raw))?;
+        let _actual_class_b_row =
+            assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(class_b_raw))?;
 
-    let class_b_raw = TypeDefRaw {
-        rid: class_b_token.row(),
-        token: class_b_token,
-        offset: 0,
-        flags: TypeAttributes::PUBLIC | TypeAttributes::CLASS,
-        type_name: class_b_name_index,
-        type_namespace: test_namespace_index,
-        extends: CodedIndex::new(
-            TableId::TypeDef,
-            class_a_token.row(),
-            CodedIndexType::TypeDefOrRef,
-        ),
-        field_list: 1,
-        method_list: 1,
-    };
-
-    let _actual_class_a_row =
-        assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(class_a_raw))?;
-    let _actual_class_b_row =
-        assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(class_b_raw))?;
-
-    assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
-
-    let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-    assembly.write_to_file(temp_file.path())?;
-
-    Ok(temp_file)
+        Ok(())
+    })
 }
 
 /// Creates an assembly with nested type circularity.
@@ -155,43 +120,36 @@ pub fn create_assembly_with_inheritance_circularity() -> Result<NamedTempFile> {
 /// Creates types that contain each other as nested types through the NestedClass table.
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/circularity.rs`
-pub fn create_assembly_with_nested_type_circularity() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_mscorlib()
-        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_path(&clean_testfile)?;
-    let assembly = CilAssembly::new(view);
-    let mut context = BuilderContext::new(assembly);
+pub fn create_assembly_with_nested_type_circularity() -> Result<TestAssembly> {
+    create_test_assembly_with_error(
+        get_testfile_mscorlib,
+        "Circular nested type relationship detected",
+        |assembly| {
+            let outer_token = TypeDefBuilder::new()
+                .name("CircularOuter")
+                .namespace("Test")
+                .flags(TypeAttributes::PUBLIC | TypeAttributes::CLASS)
+                .build(assembly)?;
 
-    let outer_token = TypeDefBuilder::new()
-        .name("CircularOuter")
-        .namespace("Test")
-        .flags(TypeAttributes::PUBLIC | TypeAttributes::CLASS)
-        .build(&mut context)?;
+            let inner_token = TypeDefBuilder::new()
+                .name("CircularInner")
+                .namespace("Test")
+                .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
+                .build(assembly)?;
 
-    let inner_token = TypeDefBuilder::new()
-        .name("CircularInner")
-        .namespace("Test")
-        .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
-        .build(&mut context)?;
+            NestedClassBuilder::new()
+                .nested_class(inner_token.placeholder())
+                .enclosing_class(outer_token.placeholder())
+                .build(assembly)?;
 
-    NestedClassBuilder::new()
-        .nested_class(inner_token)
-        .enclosing_class(outer_token)
-        .build(&mut context)?;
+            NestedClassBuilder::new()
+                .nested_class(outer_token.placeholder())
+                .enclosing_class(inner_token.placeholder())
+                .build(assembly)?;
 
-    NestedClassBuilder::new()
-        .nested_class(outer_token)
-        .enclosing_class(inner_token)
-        .build(&mut context)?;
-
-    let mut assembly = context.finish();
-    assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
-
-    let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-    assembly.write_to_file(temp_file.path())?;
-
-    Ok(temp_file)
+            Ok(())
+        },
+    )
 }
 
 /// Creates an assembly with interface implementation circularity.
@@ -199,51 +157,65 @@ pub fn create_assembly_with_nested_type_circularity() -> Result<NamedTempFile> {
 /// Creates interfaces that implement each other through InterfaceImpl entries.
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/circularity.rs`
-pub fn create_assembly_with_interface_circularity() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_mscorlib()
-        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_path(&clean_testfile)?;
-    let assembly = CilAssembly::new(view);
-    let mut context = BuilderContext::new(assembly);
+pub fn create_assembly_with_interface_circularity() -> Result<TestAssembly> {
+    create_test_assembly_with_error(
+        get_testfile_mscorlib,
+        "Circular interface implementation detected",
+        |assembly| {
+            let interface_a_token = TypeDefBuilder::new()
+                .name("ICircularA")
+                .namespace("Test")
+                .flags(
+                    TypeAttributes::PUBLIC | TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT,
+                )
+                .build(assembly)?;
 
-    let interface_a_token = TypeDefBuilder::new()
-        .name("ICircularA")
-        .namespace("Test")
-        .flags(TypeAttributes::PUBLIC | TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT)
-        .build(&mut context)?;
+            let interface_b_token = TypeDefBuilder::new()
+                .name("ICircularB")
+                .namespace("Test")
+                .flags(
+                    TypeAttributes::PUBLIC | TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT,
+                )
+                .build(assembly)?;
 
-    let interface_b_token = TypeDefBuilder::new()
-        .name("ICircularB")
-        .namespace("Test")
-        .flags(TypeAttributes::PUBLIC | TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT)
-        .build(&mut context)?;
+            // Create InterfaceImpl entries manually using raw table API
+            let impl_a_rid = assembly.original_table_row_count(TableId::InterfaceImpl) + 1;
+            let impl_a = InterfaceImplRaw {
+                rid: impl_a_rid,
+                token: Token::new(0x09000000 + impl_a_rid),
+                offset: 0,
+                class: interface_a_token.placeholder(),
+                interface: CodedIndex::new(
+                    TableId::TypeDef,
+                    interface_b_token.placeholder(),
+                    CodedIndexType::TypeDefOrRef,
+                ),
+            };
+            assembly.table_row_add(
+                TableId::InterfaceImpl,
+                TableDataOwned::InterfaceImpl(impl_a),
+            )?;
 
-    InterfaceImplBuilder::new()
-        .class(interface_a_token.0)
-        .interface(CodedIndex::new(
-            TableId::TypeDef,
-            interface_b_token.row(),
-            CodedIndexType::TypeDefOrRef,
-        ))
-        .build(&mut context)?;
+            let impl_b_rid = assembly.original_table_row_count(TableId::InterfaceImpl) + 1;
+            let impl_b = InterfaceImplRaw {
+                rid: impl_b_rid,
+                token: Token::new(0x09000000 + impl_b_rid),
+                offset: 0,
+                class: interface_b_token.placeholder(),
+                interface: CodedIndex::new(
+                    TableId::TypeDef,
+                    interface_a_token.placeholder(),
+                    CodedIndexType::TypeDefOrRef,
+                ),
+            };
+            assembly.table_row_add(
+                TableId::InterfaceImpl,
+                TableDataOwned::InterfaceImpl(impl_b),
+            )?;
 
-    InterfaceImplBuilder::new()
-        .class(interface_b_token.0)
-        .interface(CodedIndex::new(
-            TableId::TypeDef,
-            interface_a_token.row(),
-            CodedIndexType::TypeDefOrRef,
-        ))
-        .build(&mut context)?;
-
-    let mut assembly = context.finish();
-    assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
-
-    let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-    assembly.write_to_file(temp_file.path())?;
-
-    Ok(temp_file)
+            Ok(())
+        },
+    )
 }
 
 /// Creates an assembly with inheritance chain that exceeds max depth.
@@ -251,40 +223,33 @@ pub fn create_assembly_with_interface_circularity() -> Result<NamedTempFile> {
 /// Creates a long inheritance chain that should trigger depth limit validation.
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/circularity.rs`
-pub fn create_assembly_with_depth_limit_violation() -> Result<NamedTempFile> {
-    let clean_testfile = get_testfile_mscorlib()
-        .ok_or_else(|| Error::Other("mscorlib.dll not available".to_string()))?;
-    let view = CilAssemblyView::from_path(&clean_testfile)?;
-    let assembly = CilAssembly::new(view);
-    let mut context = BuilderContext::new(assembly);
+pub fn create_assembly_with_depth_limit_violation() -> Result<TestAssembly> {
+    create_test_assembly_with_error(
+        get_testfile_mscorlib,
+        "Inheritance chain depth exceeds maximum nesting depth limit",
+        |assembly| {
+            let mut previous_token: Option<ChangeRefRc> = None;
+            let chain_length = 120; // Should exceed max depth limit of 100
 
-    let mut previous_token: Option<Token> = None;
-    let chain_length = 120; // Should exceed max depth limit of 100
+            for i in 0..chain_length {
+                let mut builder = TypeDefBuilder::new()
+                    .name(format!("DeepClass{i}"))
+                    .namespace("Test")
+                    .flags(TypeAttributes::PUBLIC | TypeAttributes::CLASS);
 
-    for i in 0..chain_length {
-        let mut builder = TypeDefBuilder::new()
-            .name(format!("DeepClass{i}"))
-            .namespace("Test")
-            .flags(TypeAttributes::PUBLIC | TypeAttributes::CLASS);
+                if let Some(parent_token) = previous_token {
+                    builder = builder.extends(CodedIndex::new(
+                        TableId::TypeDef,
+                        parent_token.placeholder(),
+                        CodedIndexType::TypeDefOrRef,
+                    ));
+                }
 
-        if let Some(parent_token) = previous_token {
-            builder = builder.extends(CodedIndex::new(
-                TableId::TypeDef,
-                parent_token.row(),
-                CodedIndexType::TypeDefOrRef,
-            ));
-        }
+                let current_token = builder.build(assembly)?;
+                previous_token = Some(current_token);
+            }
 
-        let current_token = builder.build(&mut context)?;
-        previous_token = Some(current_token);
-    }
-
-    let mut assembly = context.finish();
-    assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
-
-    let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-    assembly.write_to_file(temp_file.path())?;
-
-    Ok(temp_file)
+            Ok(())
+        },
+    )
 }

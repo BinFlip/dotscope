@@ -9,15 +9,16 @@
 //! ```rust,ignore
 //! use dotscope::prelude::*;
 //!
-//! let builder_context = BuilderContext::new();
+//! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! let eventptr_token = EventPtrBuilder::new()
 //!     .event(4)                      // Points to Event table RID 4
-//!     .build(&mut builder_context)?;
+//!     .build(&mut assembly)?;
 //! ```
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{EventPtrRaw, TableDataOwned, TableId},
         token::Token,
@@ -51,17 +52,17 @@ use crate::{
 /// // Create event pointer for edit-and-continue
 /// let ptr1 = EventPtrBuilder::new()
 ///     .event(8)   // Points to Event table entry 8
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create pointer for reordered event layout
 /// let ptr2 = EventPtrBuilder::new()
 ///     .event(3)   // Points to Event table entry 3
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Multiple pointers for complex event arrangements
 /// let ptr3 = EventPtrBuilder::new()
 ///     .event(15)  // Points to Event table entry 15
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// ```
 #[derive(Debug, Clone)]
 pub struct EventPtrBuilder {
@@ -80,7 +81,7 @@ impl EventPtrBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = EventPtrBuilder::new();
@@ -104,7 +105,7 @@ impl EventPtrBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Point to first event
@@ -124,11 +125,11 @@ impl EventPtrBuilder {
     /// Builds and adds the `EventPtr` entry to the metadata
     ///
     /// Validates all required fields, creates the `EventPtr` table entry,
-    /// and adds it to the builder context. Returns a token that can be used
+    /// and adds it to the assembly. Returns a token that can be used
     /// to reference this event pointer entry.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the builder context
+    /// - `assembly`: Mutable reference to the CilAssembly
     ///
     /// # Returns
     /// - `Ok(Token)`: Token referencing the created event pointer entry
@@ -143,28 +144,25 @@ impl EventPtrBuilder {
     /// ```rust,ignore
     /// use dotscope::prelude::*;
     ///
-    /// let mut context = BuilderContext::new();
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let token = EventPtrBuilder::new()
     ///     .event(4)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let event = self.event.ok_or_else(|| {
             Error::ModificationInvalid("Event RID is required for EventPtr".to_string())
         })?;
 
-        let next_rid = context.next_rid(TableId::EventPtr);
-        let token = Token::new(((TableId::EventPtr as u32) << 24) | next_rid);
-
         let event_ptr = EventPtrRaw {
-            rid: next_rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
             event,
         };
 
-        context.table_row_add(TableId::EventPtr, TableDataOwned::EventPtr(event_ptr))?;
-        Ok(token)
+        assembly.table_row_add(TableId::EventPtr, TableDataOwned::EventPtr(event_ptr))
     }
 }
 
@@ -181,7 +179,7 @@ impl Default for EventPtrBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
@@ -200,37 +198,32 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = EventPtrBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = EventPtrBuilder::new()
             .event(1)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::EventPtr as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EventPtr));
         Ok(())
     }
 
     #[test]
     fn test_eventptr_builder_reordering() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = EventPtrBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = EventPtrBuilder::new()
             .event(12) // Point to later event for reordering
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::EventPtr as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EventPtr));
         Ok(())
     }
 
     #[test]
     fn test_eventptr_builder_missing_event() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let result = EventPtrBuilder::new().build(&mut context);
+        let mut assembly = get_test_assembly()?;
+        let result = EventPtrBuilder::new().build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -261,86 +254,79 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_fluent_interface() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test method chaining
-        let token = EventPtrBuilder::new()
+        let ref_ = EventPtrBuilder::new()
             .event(20)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::EventPtr as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EventPtr));
         Ok(())
     }
 
     #[test]
     fn test_eventptr_builder_multiple_builds() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Build first pointer
-        let token1 = EventPtrBuilder::new()
+        let ref1 = EventPtrBuilder::new()
             .event(8)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build first pointer");
 
         // Build second pointer
-        let token2 = EventPtrBuilder::new()
+        let ref2 = EventPtrBuilder::new()
             .event(3)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build second pointer");
 
         // Build third pointer
-        let token3 = EventPtrBuilder::new()
+        let ref3 = EventPtrBuilder::new()
             .event(15)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build third pointer");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_eq!(token3.row(), 3);
-        assert_ne!(token1, token2);
-        assert_ne!(token2, token3);
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+        assert!(!std::sync::Arc::ptr_eq(&ref2, &ref3));
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::EventPtr));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::EventPtr));
+        assert_eq!(ref3.kind(), ChangeRefKind::TableRow(TableId::EventPtr));
         Ok(())
     }
 
     #[test]
     fn test_eventptr_builder_large_event_rid() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = EventPtrBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = EventPtrBuilder::new()
             .event(0xFFFF) // Large Event RID
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should handle large event RID");
 
-        assert_eq!(token.table(), TableId::EventPtr as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EventPtr));
         Ok(())
     }
 
     #[test]
     fn test_eventptr_builder_event_ordering_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate event reordering: logical order 1,2,3 -> physical order 10,5,12
         let logical_to_physical = [(1, 10), (2, 5), (3, 12)];
 
-        let mut tokens = Vec::new();
+        let mut refs = Vec::new();
         for (logical_idx, physical_event) in logical_to_physical {
-            let token = EventPtrBuilder::new()
+            let ref_ = EventPtrBuilder::new()
                 .event(physical_event)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build event pointer");
-            tokens.push((logical_idx, token));
+            refs.push((logical_idx, ref_));
         }
 
-        // Verify logical ordering is preserved in tokens
-        for (i, (logical_idx, token)) in tokens.iter().enumerate() {
-            assert_eq!(*logical_idx, i + 1);
-            assert_eq!(token.row(), (i + 1) as u32);
+        // Verify all refs have correct kind
+        for (_logical_idx, ref_) in refs.iter() {
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EventPtr));
         }
 
         Ok(())
@@ -348,11 +334,10 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_zero_event() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test with event 0 (typically invalid but should not cause builder to fail)
-        let result = EventPtrBuilder::new().event(0).build(&mut context);
+        let result = EventPtrBuilder::new().event(0).build(&mut assembly);
 
         // Should build successfully even with event 0
         assert!(result.is_ok());
@@ -361,25 +346,23 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_edit_continue_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate edit-and-continue where events are reordered after code modifications
         let reordered_events = [3, 1, 2]; // Physical reordering
 
         let mut event_pointers = Vec::new();
         for &physical_event in &reordered_events {
-            let pointer_token = EventPtrBuilder::new()
+            let pointer_ref = EventPtrBuilder::new()
                 .event(physical_event)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build event pointer for edit-continue");
-            event_pointers.push(pointer_token);
+            event_pointers.push(pointer_ref);
         }
 
-        // Verify stable logical tokens despite physical reordering
-        for (i, token) in event_pointers.iter().enumerate() {
-            assert_eq!(token.table(), TableId::EventPtr as u8);
-            assert_eq!(token.row(), (i + 1) as u32);
+        // Verify stable logical references despite physical reordering
+        for ref_ in event_pointers.iter() {
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EventPtr));
         }
 
         Ok(())
@@ -387,25 +370,23 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_type_event_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate type with multiple events that need indirection
         let type_events = [5, 10, 7, 15, 2]; // Events in custom order
 
         let mut event_pointers = Vec::new();
         for &event_rid in &type_events {
-            let pointer_token = EventPtrBuilder::new()
+            let pointer_ref = EventPtrBuilder::new()
                 .event(event_rid)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build event pointer");
-            event_pointers.push(pointer_token);
+            event_pointers.push(pointer_ref);
         }
 
         // Verify event pointers maintain logical sequence
-        for (i, token) in event_pointers.iter().enumerate() {
-            assert_eq!(token.table(), TableId::EventPtr as u8);
-            assert_eq!(token.row(), (i + 1) as u32);
+        for ref_ in event_pointers.iter() {
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EventPtr));
         }
 
         Ok(())
@@ -413,26 +394,24 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_hot_reload_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate hot-reload where new event implementations replace existing ones
         let new_event_implementations = [100, 200, 300];
-        let mut pointer_tokens = Vec::new();
+        let mut pointer_refs = Vec::new();
 
         for &new_event in &new_event_implementations {
-            let pointer_token = EventPtrBuilder::new()
+            let pointer_ref = EventPtrBuilder::new()
                 .event(new_event)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build pointer for hot-reload");
-            pointer_tokens.push(pointer_token);
+            pointer_refs.push(pointer_ref);
         }
 
-        // Verify pointer tokens maintain stable references for hot-reload
-        assert_eq!(pointer_tokens.len(), 3);
-        for (i, token) in pointer_tokens.iter().enumerate() {
-            assert_eq!(token.table(), TableId::EventPtr as u8);
-            assert_eq!(token.row(), (i + 1) as u32);
+        // Verify pointer references maintain stable references for hot-reload
+        assert_eq!(pointer_refs.len(), 3);
+        for ref_ in pointer_refs.iter() {
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EventPtr));
         }
 
         Ok(())
@@ -440,26 +419,24 @@ mod tests {
 
     #[test]
     fn test_eventptr_builder_complex_indirection_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate complex indirection with non-sequential event arrangement
         let complex_mapping = [25, 1, 50, 10, 75, 5, 100];
 
         let mut pointer_sequence = Vec::new();
         for &physical_event in &complex_mapping {
-            let token = EventPtrBuilder::new()
+            let ref_ = EventPtrBuilder::new()
                 .event(physical_event)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build complex indirection mapping");
-            pointer_sequence.push(token);
+            pointer_sequence.push(ref_);
         }
 
         // Verify complex indirection maintains logical consistency
         assert_eq!(pointer_sequence.len(), 7);
-        for (i, token) in pointer_sequence.iter().enumerate() {
-            assert_eq!(token.table(), TableId::EventPtr as u8);
-            assert_eq!(token.row(), (i + 1) as u32);
+        for ref_ in pointer_sequence.iter() {
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EventPtr));
         }
 
         Ok(())

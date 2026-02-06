@@ -4,13 +4,13 @@
 //! for creating test assemblies with various assembly validation scenarios.
 
 use crate::{
-    cilassembly::CilAssembly,
     metadata::{
-        cilassemblyview::CilAssemblyView,
         tables::{AssemblyRaw, TableDataOwned, TableId},
         token::Token,
     },
-    test::{get_testfile_mscorlib, TestAssembly},
+    test::{
+        create_passing_test_assembly, create_test_assembly, get_testfile_mscorlib, TestAssembly,
+    },
     Error, Result,
 };
 
@@ -62,213 +62,161 @@ pub fn owned_assembly_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/system/assembly.rs`
 pub fn create_assembly_with_empty_name() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
-    let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
+    create_test_assembly(get_testfile_mscorlib, |assembly| {
+        // Create assembly with empty name
+        let empty_name_index = assembly
+            .string_add("")
+            .map_err(|e| Error::Other(format!("Failed to add empty assembly name: {e}")))?;
 
-    let mut assembly = CilAssembly::new(view);
+        let assembly_rid = 1; // Assembly table always has RID 1
 
-    // Create assembly with empty name
-    let empty_name_index = assembly
-        .string_add("")
-        .map_err(|e| Error::Other(format!("Failed to add empty assembly name: {e}")))?;
+        let invalid_assembly = AssemblyRaw {
+            rid: assembly_rid,
+            token: Token::new(0x20000000 + assembly_rid),
+            offset: 0,
+            hash_alg_id: 0x8004, // SHA1
+            major_version: 1,
+            minor_version: 0,
+            build_number: 0,
+            revision_number: 0,
+            flags: 0,
+            public_key: 0,
+            name: empty_name_index.placeholder(), // Empty name - should trigger validation failure
+            culture: 0,
+        };
 
-    let assembly_rid = 1; // Assembly table always has RID 1
+        assembly
+            .table_row_update(
+                TableId::Assembly,
+                1,
+                TableDataOwned::Assembly(invalid_assembly),
+            )
+            .map_err(|e| Error::Other(format!("Failed to update invalid assembly: {e}")))?;
 
-    let invalid_assembly = AssemblyRaw {
-        rid: assembly_rid,
-        token: Token::new(0x20000000 + assembly_rid),
-        offset: 0,
-        hash_alg_id: 0x8004, // SHA1
-        major_version: 1,
-        minor_version: 0,
-        build_number: 0,
-        revision_number: 0,
-        flags: 0,
-        public_key: 0,
-        name: empty_name_index, // Empty name - should trigger validation failure
-        culture: 0,
-    };
-
-    assembly
-        .table_row_update(
-            TableId::Assembly,
-            1,
-            TableDataOwned::Assembly(invalid_assembly),
-        )
-        .map_err(|e| Error::Other(format!("Failed to update invalid assembly: {e}")))?;
-
-    let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-
-    assembly
-        .write_to_file(temp_file.path())
-        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
-
-    Ok(TestAssembly::from_temp_file(temp_file, false))
+        Ok(())
+    })
 }
 
 /// Creates an assembly with invalid name format (invalid characters) - validation should fail
 ///
 /// Originally from: `src/metadata/validation/validators/owned/system/assembly.rs`
 pub fn create_assembly_with_invalid_name_format() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
-    let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
+    create_test_assembly(get_testfile_mscorlib, |assembly| {
+        // Create assembly name with invalid characters (contains /)
+        let invalid_name = "Invalid/Assembly*Name";
+        let invalid_name_index = assembly
+            .string_add(invalid_name)
+            .map_err(|e| Error::Other(format!("Failed to add invalid assembly name: {e}")))?;
 
-    let mut assembly = CilAssembly::new(view);
+        let assembly_rid = 1;
 
-    // Create assembly name with invalid characters (contains /)
-    let invalid_name = "Invalid/Assembly*Name";
-    let invalid_name_index = assembly
-        .string_add(invalid_name)
-        .map_err(|e| Error::Other(format!("Failed to add invalid assembly name: {e}")))?;
+        let invalid_assembly = AssemblyRaw {
+            rid: assembly_rid,
+            token: Token::new(0x20000000 + assembly_rid),
+            offset: 0,
+            hash_alg_id: 0x8004, // SHA1
+            major_version: 1,
+            minor_version: 0,
+            build_number: 0,
+            revision_number: 0,
+            flags: 0,
+            public_key: 0,
+            name: invalid_name_index.placeholder(), // Invalid name format - should trigger validation failure
+            culture: 0,
+        };
 
-    let assembly_rid = 1;
+        assembly
+            .table_row_update(
+                TableId::Assembly,
+                1,
+                TableDataOwned::Assembly(invalid_assembly),
+            )
+            .map_err(|e| Error::Other(format!("Failed to update invalid assembly: {e}")))?;
 
-    let invalid_assembly = AssemblyRaw {
-        rid: assembly_rid,
-        token: Token::new(0x20000000 + assembly_rid),
-        offset: 0,
-        hash_alg_id: 0x8004, // SHA1
-        major_version: 1,
-        minor_version: 0,
-        build_number: 0,
-        revision_number: 0,
-        flags: 0,
-        public_key: 0,
-        name: invalid_name_index, // Invalid name format - should trigger validation failure
-        culture: 0,
-    };
-
-    assembly
-        .table_row_update(
-            TableId::Assembly,
-            1,
-            TableDataOwned::Assembly(invalid_assembly),
-        )
-        .map_err(|e| Error::Other(format!("Failed to update invalid assembly: {e}")))?;
-
-    let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-
-    assembly
-        .write_to_file(temp_file.path())
-        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
-
-    Ok(TestAssembly::from_temp_file(temp_file, false))
+        Ok(())
+    })
 }
 
 /// Creates an assembly with maximum valid version numbers - validation should pass
 ///
 /// Originally from: `src/metadata/validation/validators/owned/system/assembly.rs`
 pub fn create_assembly_with_maximum_version_numbers() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
-    let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
+    create_passing_test_assembly(get_testfile_mscorlib, |assembly| {
+        // Create valid assembly name
+        let assembly_name_index = assembly
+            .string_add("ValidAssemblyName")
+            .map_err(|e| Error::Other(format!("Failed to add assembly name: {e}")))?;
 
-    let mut assembly = CilAssembly::new(view);
+        let assembly_rid = 1;
 
-    // Create valid assembly name
-    let assembly_name_index = assembly
-        .string_add("ValidAssemblyName")
-        .map_err(|e| Error::Other(format!("Failed to add assembly name: {e}")))?;
+        let valid_assembly = AssemblyRaw {
+            rid: assembly_rid,
+            token: Token::new(0x20000000 + assembly_rid),
+            offset: 0,
+            hash_alg_id: 0x8004, // SHA1
+            major_version: 999,  // Max before suspicious threshold - should be valid
+            minor_version: 0,
+            build_number: 0,
+            revision_number: 0,
+            flags: 0,
+            public_key: 0,
+            name: assembly_name_index.placeholder(),
+            culture: 0,
+        };
 
-    let assembly_rid = 1;
+        assembly
+            .table_row_update(
+                TableId::Assembly,
+                1,
+                TableDataOwned::Assembly(valid_assembly),
+            )
+            .map_err(|e| Error::Other(format!("Failed to update assembly: {e}")))?;
 
-    let invalid_assembly = AssemblyRaw {
-        rid: assembly_rid,
-        token: Token::new(0x20000000 + assembly_rid),
-        offset: 0,
-        hash_alg_id: 0x8004, // SHA1
-        major_version: 999,  // Max before suspicious threshold - should be valid
-        minor_version: 0,
-        build_number: 0,
-        revision_number: 0,
-        flags: 0,
-        public_key: 0,
-        name: assembly_name_index,
-        culture: 0,
-    };
-
-    assembly
-        .table_row_update(
-            TableId::Assembly,
-            1,
-            TableDataOwned::Assembly(invalid_assembly),
-        )
-        .map_err(|e| Error::Other(format!("Failed to update invalid assembly: {e}")))?;
-
-    let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-
-    assembly
-        .write_to_file(temp_file.path())
-        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
-
-    Ok(TestAssembly::from_temp_file(temp_file, true))
+        Ok(())
+    })
 }
 
 /// Creates an assembly with invalid culture format - validation should fail
 ///
 /// Originally from: `src/metadata/validation/validators/owned/system/assembly.rs`
 pub fn create_assembly_with_invalid_culture_format() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
-    let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
+    create_test_assembly(get_testfile_mscorlib, |assembly| {
+        // Create valid assembly name
+        let assembly_name_index = assembly
+            .string_add("ValidAssemblyName")
+            .map_err(|e| Error::Other(format!("Failed to add assembly name: {e}")))?;
 
-    let mut assembly = CilAssembly::new(view);
+        // Create invalid culture format (too many parts)
+        let invalid_culture = "en-US-extra-invalid";
+        let invalid_culture_index = assembly
+            .string_add(invalid_culture)
+            .map_err(|e| Error::Other(format!("Failed to add invalid culture: {e}")))?;
 
-    // Create valid assembly name
-    let assembly_name_index = assembly
-        .string_add("ValidAssemblyName")
-        .map_err(|e| Error::Other(format!("Failed to add assembly name: {e}")))?;
+        let assembly_rid = 1;
 
-    // Create invalid culture format (too many parts)
-    let invalid_culture = "en-US-extra-invalid";
-    let invalid_culture_index = assembly
-        .string_add(invalid_culture)
-        .map_err(|e| Error::Other(format!("Failed to add invalid culture: {e}")))?;
+        let invalid_assembly = AssemblyRaw {
+            rid: assembly_rid,
+            token: Token::new(0x20000000 + assembly_rid),
+            offset: 0,
+            hash_alg_id: 0x8004, // SHA1
+            major_version: 1,
+            minor_version: 0,
+            build_number: 0,
+            revision_number: 0,
+            flags: 0,
+            public_key: 0,
+            name: assembly_name_index.placeholder(),
+            culture: invalid_culture_index.placeholder(), // Invalid culture format - should trigger validation failure
+        };
 
-    let assembly_rid = 1;
+        assembly
+            .table_row_update(
+                TableId::Assembly,
+                1,
+                TableDataOwned::Assembly(invalid_assembly),
+            )
+            .map_err(|e| Error::Other(format!("Failed to update invalid assembly: {e}")))?;
 
-    let invalid_assembly = AssemblyRaw {
-        rid: assembly_rid,
-        token: Token::new(0x20000000 + assembly_rid),
-        offset: 0,
-        hash_alg_id: 0x8004, // SHA1
-        major_version: 1,
-        minor_version: 0,
-        build_number: 0,
-        revision_number: 0,
-        flags: 0,
-        public_key: 0,
-        name: assembly_name_index,
-        culture: invalid_culture_index, // Invalid culture format - should trigger validation failure
-    };
-
-    assembly
-        .table_row_update(
-            TableId::Assembly,
-            1,
-            TableDataOwned::Assembly(invalid_assembly),
-        )
-        .map_err(|e| Error::Other(format!("Failed to update invalid assembly: {e}")))?;
-
-    let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-
-    assembly
-        .write_to_file(temp_file.path())
-        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
-
-    Ok(TestAssembly::from_temp_file(temp_file, false))
+        Ok(())
+    })
 }

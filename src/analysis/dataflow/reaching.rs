@@ -44,11 +44,11 @@ use crate::{
 /// # Example
 ///
 /// ```rust,ignore
-/// use dotscope::analysis::dataflow::{ReachingDefinitions, DataFlowSolver};
+/// use dotscope::analysis::{ReachingDefinitions, DataFlowSolver};
 ///
 /// let analysis = ReachingDefinitions::new(&ssa);
 /// let mut solver = DataFlowSolver::new(analysis);
-/// let results = solver.solve(&ssa, &cfg);
+/// let results = solver.solve(&ssa, &graph);
 ///
 /// // Check which definitions reach a block
 /// if let Some(reaching) = results.in_state(block_id) {
@@ -79,8 +79,7 @@ impl ReachingDefinitions {
 
             // Phi nodes define variables
             for phi in block.phi_nodes() {
-                let idx = phi.result().index();
-                if idx < num_vars {
+                if let Some(idx) = ssa.var_index(phi.result()) {
                     gen.insert(idx);
                 }
             }
@@ -88,8 +87,7 @@ impl ReachingDefinitions {
             // Instructions may define variables
             for instr in block.instructions() {
                 if let Some(def) = instr.def() {
-                    let idx = def.index();
-                    if idx < num_vars {
+                    if let Some(idx) = ssa.var_index(def) {
                         gen.insert(idx);
                     }
                 }
@@ -117,9 +115,9 @@ impl DataFlowAnalysis for ReachingDefinitions {
         let mut defs = BitSet::new(self.num_vars);
 
         // Arguments and locals have initial definitions (version 0)
-        for var in ssa.variables() {
+        for (idx, var) in ssa.variables().iter().enumerate() {
             if var.version() == 0 && (var.origin().is_argument() || var.origin().is_local()) {
-                defs.insert(var.id().index());
+                defs.insert(idx);
             }
         }
 
@@ -172,7 +170,7 @@ impl ReachingDefsResult {
 
     /// Returns an iterator over all reaching definitions.
     pub fn definitions(&self) -> impl Iterator<Item = SsaVarId> + '_ {
-        self.defs.iter().map(SsaVarId::new)
+        self.defs.iter().map(SsaVarId::from_index)
     }
 
     /// Returns the number of reaching definitions.
@@ -227,17 +225,17 @@ mod tests {
         let mut result = ReachingDefsResult::new(10);
         assert!(result.is_empty());
 
-        result.add(SsaVarId::new(0));
-        result.add(SsaVarId::new(5));
+        result.add(SsaVarId::from_index(0));
+        result.add(SsaVarId::from_index(5));
 
         assert!(!result.is_empty());
         assert_eq!(result.count(), 2);
-        assert!(result.reaches(SsaVarId::new(0)));
-        assert!(result.reaches(SsaVarId::new(5)));
-        assert!(!result.reaches(SsaVarId::new(1)));
+        assert!(result.reaches(SsaVarId::from_index(0)));
+        assert!(result.reaches(SsaVarId::from_index(5)));
+        assert!(!result.reaches(SsaVarId::from_index(1)));
 
-        result.remove(SsaVarId::new(0));
-        assert!(!result.reaches(SsaVarId::new(0)));
+        result.remove(SsaVarId::from_index(0));
+        assert!(!result.reaches(SsaVarId::from_index(0)));
         assert_eq!(result.count(), 1);
     }
 
@@ -246,29 +244,29 @@ mod tests {
         let mut a = ReachingDefsResult::new(10);
         let mut b = ReachingDefsResult::new(10);
 
-        a.add(SsaVarId::new(0));
-        a.add(SsaVarId::new(1));
-        b.add(SsaVarId::new(1));
-        b.add(SsaVarId::new(2));
+        a.add(SsaVarId::from_index(0));
+        a.add(SsaVarId::from_index(1));
+        b.add(SsaVarId::from_index(1));
+        b.add(SsaVarId::from_index(2));
 
         let result = a.meet(&b);
-        assert!(result.reaches(SsaVarId::new(0)));
-        assert!(result.reaches(SsaVarId::new(1)));
-        assert!(result.reaches(SsaVarId::new(2)));
+        assert!(result.reaches(SsaVarId::from_index(0)));
+        assert!(result.reaches(SsaVarId::from_index(1)));
+        assert!(result.reaches(SsaVarId::from_index(2)));
         assert_eq!(result.count(), 3);
     }
 
     #[test]
     fn test_reaching_defs_iterator() {
         let mut result = ReachingDefsResult::new(100);
-        result.add(SsaVarId::new(5));
-        result.add(SsaVarId::new(42));
-        result.add(SsaVarId::new(99));
+        result.add(SsaVarId::from_index(5));
+        result.add(SsaVarId::from_index(42));
+        result.add(SsaVarId::from_index(99));
 
         let defs: Vec<_> = result.definitions().collect();
         assert_eq!(defs.len(), 3);
-        assert!(defs.contains(&SsaVarId::new(5)));
-        assert!(defs.contains(&SsaVarId::new(42)));
-        assert!(defs.contains(&SsaVarId::new(99)));
+        assert!(defs.contains(&SsaVarId::from_index(5)));
+        assert!(defs.contains(&SsaVarId::from_index(42)));
+        assert!(defs.contains(&SsaVarId::from_index(99)));
     }
 }

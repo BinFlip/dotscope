@@ -59,6 +59,8 @@ use crate::{
 };
 
 impl RowReadable for TypeDefRaw {
+    const TABLE_ID: TableId = TableId::TypeDef;
+
     /// Reads a `TypeDef` table row from binary metadata.
     ///
     /// Parses the binary representation of a `TypeDef` table row according to the

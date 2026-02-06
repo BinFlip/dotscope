@@ -6,7 +6,7 @@
 //! signatures, parameters, and implementation details.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{MethodDefRaw, TableDataOwned, TableId},
         token::Token,
@@ -23,13 +23,13 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::MethodDefBuilder;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
+///
 ///
 /// // Create a method signature for void method with no parameters
 /// let void_signature = &[0x00, 0x00, 0x01]; // DEFAULT calling convention, 0 params, VOID return
@@ -41,7 +41,7 @@ use crate::{
 ///     .impl_flags(0x0000) // IL
 ///     .signature(void_signature)
 ///     .rva(0) // No implementation yet
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct MethodDefBuilder {
@@ -235,12 +235,12 @@ impl MethodDefBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for managing the assembly
+    /// * `assembly` - The CilAssembly for managing the assembly
     ///
     /// # Returns
     ///
-    /// A [`crate::metadata::token::Token`] representing the newly created method, or an error if
-    /// validation fails or required fields are missing.
+    /// A [`ChangeRefRc`] that will resolve to the method's token after the assembly is written.
+    /// Use `token()` on the returned reference after writing to get the actual token value.
     ///
     /// # Errors
     ///
@@ -250,7 +250,7 @@ impl MethodDefBuilder {
     /// - Returns error if signature is not set
     /// - Returns error if heap operations fail
     /// - Returns error if table operations fail
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let name = self
             .name
             .ok_or_else(|| Error::ModificationInvalid("Method name is required".to_string()))?;
@@ -269,15 +269,16 @@ impl MethodDefBuilder {
 
         let rva = self.rva.unwrap_or(0); // Default to 0 (abstract/interface method)
         let param_list = self.param_list.unwrap_or(0); // Default to 0 (no parameters)
-        let name_index = context.string_get_or_add(&name)?;
-        let signature_index = context.blob_add(&signature)?;
-        let rid = context.next_rid(TableId::MethodDef);
+        let name_index = assembly.string_get_or_add(&name)?.placeholder();
+        let signature_index = assembly.blob_add(&signature)?.placeholder();
+        let rid = assembly.next_rid(TableId::MethodDef)?;
 
-        let token = Token::from_parts(TableId::MethodDef, rid);
+        // Create a placeholder token - will be updated when ChangeRef is resolved
+        let placeholder_token = Token::from_parts(TableId::MethodDef, rid);
 
         let method_raw = MethodDefRaw {
             rid,
-            token,
+            token: placeholder_token,
             offset: 0, // Will be set during binary generation
             rva,
             impl_flags,
@@ -287,8 +288,8 @@ impl MethodDefBuilder {
             param_list,
         };
 
-        // Add the method to the table
-        context.table_row_add(TableId::MethodDef, TableDataOwned::MethodDef(method_raw))
+        // Add the method to the table and return the ChangeRefRc
+        assembly.table_row_add(TableId::MethodDef, TableDataOwned::MethodDef(method_raw))
     }
 }
 
@@ -302,56 +303,46 @@ impl Default for MethodDefBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::{
-            cilassemblyview::CilAssemblyView,
-            method::{MethodAccessFlags, MethodImplCodeType, MethodModifiers},
-        },
+        cilassembly::{ChangeRefKind, CilAssembly},
+        metadata::method::{MethodAccessFlags, MethodImplCodeType, MethodModifiers},
     };
     use std::path::PathBuf;
 
     #[test]
     fn test_method_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             // Check existing MethodDef table count
             let existing_method_count = assembly.original_table_row_count(TableId::MethodDef);
-            let expected_rid = existing_method_count + 1;
-
-            let mut context = BuilderContext::new(assembly);
+            let _expected_rid = existing_method_count + 1;
 
             // Create a void method signature with no parameters
             // Format: [calling_convention, param_count, return_type]
             let void_signature = &[0x00, 0x00, 0x01]; // DEFAULT, 0 params, VOID
 
-            let token = MethodDefBuilder::new()
+            let ref_ = MethodDefBuilder::new()
                 .name("TestMethod")
                 .flags(MethodAccessFlags::PUBLIC.bits() | MethodModifiers::HIDE_BY_SIG.bits())
                 .impl_flags(MethodImplCodeType::IL.bits())
                 .signature(void_signature)
                 .rva(0) // No implementation
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert!(token.is_table(TableId::MethodDef)); // MethodDef table
-            assert_eq!(token.row(), expected_rid); // RID should be existing + 1
+            // Verify reference is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodDef));
+            // MethodDef table
         }
     }
 
     #[test]
     fn test_method_builder_static_constructor() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             // Static constructor signature
             let static_ctor_sig = &[0x00, 0x00, 0x01]; // DEFAULT, 0 params, VOID
 
-            let token = MethodDefBuilder::new()
+            let ref_ = MethodDefBuilder::new()
                 .name(".cctor")
                 .flags(
                     MethodAccessFlags::PRIVATE.bits()
@@ -361,25 +352,22 @@ mod tests {
                 )
                 .impl_flags(MethodImplCodeType::IL.bits())
                 .signature(static_ctor_sig)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert!(token.is_table(TableId::MethodDef));
+            // Verify reference is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodDef));
         }
     }
 
     #[test]
     fn test_method_builder_instance_constructor() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             // Instance constructor signature
             let instance_ctor_sig = &[0x20, 0x00, 0x01]; // HASTHIS, 0 params, VOID
 
-            let token = MethodDefBuilder::new()
+            let ref_ = MethodDefBuilder::new()
                 .name(".ctor")
                 .flags(
                     MethodAccessFlags::PUBLIC.bits()
@@ -388,25 +376,22 @@ mod tests {
                 )
                 .impl_flags(MethodImplCodeType::IL.bits())
                 .signature(instance_ctor_sig)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert!(token.is_table(TableId::MethodDef));
+            // Verify reference is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodDef));
         }
     }
 
     #[test]
     fn test_method_builder_with_return_value() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             // Method with return value (int32)
             let method_with_return_sig = &[0x00, 0x00, 0x08]; // DEFAULT, 0 params, I4
 
-            let token = MethodDefBuilder::new()
+            let ref_ = MethodDefBuilder::new()
                 .name("GetValue")
                 .flags(
                     MethodAccessFlags::PUBLIC.bits()
@@ -415,26 +400,23 @@ mod tests {
                 )
                 .impl_flags(MethodImplCodeType::IL.bits())
                 .signature(method_with_return_sig)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert!(token.is_table(TableId::MethodDef));
+            // Verify reference is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodDef));
         }
     }
 
     #[test]
     fn test_method_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             let result = MethodDefBuilder::new()
                 .flags(MethodAccessFlags::PUBLIC.bits())
                 .impl_flags(MethodImplCodeType::IL.bits())
                 .signature(&[0x00, 0x00, 0x01])
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because name is required
             assert!(result.is_err());
@@ -444,15 +426,12 @@ mod tests {
     #[test]
     fn test_method_builder_missing_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             let result = MethodDefBuilder::new()
                 .name("TestMethod")
                 .impl_flags(MethodImplCodeType::IL.bits())
                 .signature(&[0x00, 0x00, 0x01])
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because flags are required
             assert!(result.is_err());
@@ -462,15 +441,12 @@ mod tests {
     #[test]
     fn test_method_builder_missing_impl_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             let result = MethodDefBuilder::new()
                 .name("TestMethod")
                 .flags(MethodAccessFlags::PUBLIC.bits())
                 .signature(&[0x00, 0x00, 0x01])
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because impl_flags are required
             assert!(result.is_err());
@@ -480,15 +456,12 @@ mod tests {
     #[test]
     fn test_method_builder_missing_signature() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             let result = MethodDefBuilder::new()
                 .name("TestMethod")
                 .flags(MethodAccessFlags::PUBLIC.bits())
                 .impl_flags(MethodImplCodeType::IL.bits())
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because signature is required
             assert!(result.is_err());
@@ -498,55 +471,49 @@ mod tests {
     #[test]
     fn test_method_builder_multiple_methods() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             let void_signature = &[0x00, 0x00, 0x01]; // void return
 
             // Create multiple methods
-            let method1 = MethodDefBuilder::new()
+            let ref1 = MethodDefBuilder::new()
                 .name("Method1")
                 .flags(MethodAccessFlags::PRIVATE.bits())
                 .impl_flags(MethodImplCodeType::IL.bits())
                 .signature(void_signature)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let method2 = MethodDefBuilder::new()
+            let ref2 = MethodDefBuilder::new()
                 .name("Method2")
                 .flags(MethodAccessFlags::PUBLIC.bits())
                 .impl_flags(MethodImplCodeType::IL.bits())
                 .signature(void_signature)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Both should succeed and have different RIDs
-            assert_ne!(method1.row(), method2.row());
-            assert!(method1.is_table(TableId::MethodDef));
-            assert!(method2.is_table(TableId::MethodDef));
+            // Both should succeed and be different references
+            assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+            assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::MethodDef));
+            assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::MethodDef));
         }
     }
 
     #[test]
     fn test_method_builder_default_values() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             // Test that optional fields default correctly
-            let token = MethodDefBuilder::new()
+            let ref_ = MethodDefBuilder::new()
                 .name("AbstractMethod")
                 .flags(MethodAccessFlags::PUBLIC.bits() | MethodModifiers::ABSTRACT.bits())
                 .impl_flags(MethodImplCodeType::IL.bits())
                 .signature(&[0x00, 0x00, 0x01])
                 // Not setting RVA or param_list - should default to 0
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Should succeed with default values
-            assert!(token.is_table(TableId::MethodDef));
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodDef));
         }
     }
 }

@@ -29,6 +29,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::EventRaw,
     },
@@ -66,17 +67,28 @@ impl MetadataLoader for EventLoader {
     /// - Returns [`crate::Error`] if event type coded indices cannot be resolved
     /// - Returns [`crate::Error`] if context storage operations fail
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<EventRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(strings, context.types)?;
+        let (Some(header), Some(strings)) = (context.meta, context.strings) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<EventRaw>() else {
+            return Ok(());
+        };
 
-                    context.event.insert(row.token, owned.clone());
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("event 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned(strings, context.types),
+                DiagnosticCategory::Table,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.event.insert(row.token, owned.clone());
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for the Event table

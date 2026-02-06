@@ -64,7 +64,7 @@
 //!     .ldarg_1()?
 //!     .add()?
 //!     .ret()?;
-//! let bytecode = assembler.finish()?;
+//! let (bytecode, max_stack, handlers) = assembler.finish()?;
 //!
 //! // Low-level encoder API
 //! let mut encoder = InstructionEncoder::new();
@@ -72,9 +72,9 @@
 //! encoder.emit_instruction("ldarg.1", None)?;
 //! encoder.emit_instruction("add", None)?;
 //! encoder.emit_instruction("ret", None)?;
-//! let bytecode2 = encoder.finalize()?;
+//! let (bytecode2, _, _) = encoder.finalize()?;
 //!
-//! assert_eq!(bytecode, bytecode2); // Both produce identical results
+//! assert_eq!(bytecode, bytecode2); // Both produce identical IL bytecode
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -99,7 +99,7 @@ mod encoder;
 mod instruction;
 mod instructions;
 
-pub use block::BasicBlock;
+pub use block::{BasicBlock, HandlerEntryInfo};
 pub use builder::InstructionAssembler;
 pub(crate) use decoder::decode_method;
 pub use decoder::{decode_blocks, decode_instruction, decode_stream};

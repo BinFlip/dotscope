@@ -23,6 +23,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{EventPtrRaw, TableId},
     },
@@ -62,13 +63,23 @@ impl MetadataLoader for EventPtrLoader {
     /// modified through edit-and-continue operations. When present, they provide
     /// the necessary indirection to maintain logical event ordering.
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<EventPtrRaw>() {
-                for row in table {
-                    let owned = row.to_owned()?;
-                    context.event_ptr.insert(row.token, owned);
-                }
-            }
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<EventPtrRaw>() else {
+            return Ok(());
+        };
+
+        for row in table {
+            let token_msg = || format!("event ptr 0x{:08x}", row.token.value());
+
+            let Some(owned) =
+                context.handle_result(row.to_owned(), DiagnosticCategory::Table, token_msg)?
+            else {
+                continue;
+            };
+
+            context.event_ptr.insert(row.token, owned);
         }
         Ok(())
     }

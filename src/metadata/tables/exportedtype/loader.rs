@@ -24,6 +24,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::ExportedTypeRaw,
     },
@@ -61,30 +62,52 @@ impl MetadataLoader for ExportedTypeLoader {
     /// - String heap lookup fails
     /// - Entry registration fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<ExportedTypeRaw>() {
-                table.par_iter().try_for_each(|row| -> Result<()> {
-                    let owned =
-                        row.to_owned(|coded_index| context.get_ref(coded_index), strings, true)?;
+        let (Some(header), Some(strings)) = (context.meta, context.strings) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<ExportedTypeRaw>() else {
+            return Ok(());
+        };
 
-                    context.exported_type.insert(row.token, owned.clone())?;
-                    Ok(())
-                })?;
+        // First pass: create exported type entries
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("exported type 0x{:08x}", row.token.value());
 
-                table.par_iter().try_for_each(|row| -> Result<()> {
-                    if let Some(implementation) =
-                        row.resolve_implementation(|coded_index| context.get_ref(coded_index))
-                    {
-                        if let Some(exported_type_entry) = context.exported_type.get(&row.token) {
-                            let exported_type = exported_type_entry.value();
-                            exported_type.set_implementation(implementation)?;
-                        }
-                    }
-                    Ok(())
-                })?;
+            let Some(owned) = context.handle_result(
+                row.to_owned(|coded_index| context.get_ref(coded_index), strings, true),
+                DiagnosticCategory::Type,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_result(
+                context.exported_type.insert(row.token, owned.clone()),
+                DiagnosticCategory::Type,
+                token_msg,
+            )?;
+            Ok(())
+        })?;
+
+        // Second pass: resolve implementations
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("exported type impl 0x{:08x}", row.token.value());
+
+            if let Some(implementation) =
+                row.resolve_implementation(|coded_index| context.get_ref(coded_index))
+            {
+                if let Some(exported_type_entry) = context.exported_type.get(&row.token) {
+                    let exported_type = exported_type_entry.value();
+                    context.handle_error(
+                        exported_type.set_implementation(implementation),
+                        DiagnosticCategory::Type,
+                        token_msg,
+                    )?;
+                }
             }
-        }
-        Ok(())
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `ExportedType` table

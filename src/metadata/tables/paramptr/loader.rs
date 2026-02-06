@@ -19,6 +19,7 @@
 //! - [`crate::metadata::tables::ParamPtr`] - Owned table entry type
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{ParamPtrRaw, TableId},
     },
@@ -49,13 +50,23 @@ impl MetadataLoader for ParamPtrLoader {
     /// * `Ok(())` - All entries loaded successfully
     /// * `Err(Error)` - Conversion or storage error occurred
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<ParamPtrRaw>() {
-                for row in table {
-                    let owned = row.to_owned()?;
-                    context.param_ptr.insert(row.token, owned);
-                }
-            }
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<ParamPtrRaw>() else {
+            return Ok(());
+        };
+
+        for row in table {
+            let token_msg = || format!("param ptr 0x{:08x}", row.token.value());
+
+            let Some(owned) =
+                context.handle_result(row.to_owned(), DiagnosticCategory::Table, token_msg)?
+            else {
+                continue;
+            };
+
+            context.param_ptr.insert(row.token, owned);
         }
         Ok(())
     }

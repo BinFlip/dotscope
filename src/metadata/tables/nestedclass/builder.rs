@@ -14,33 +14,32 @@
 //!
 //! ## Usage
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
 //! # fn main() -> dotscope::Result<()> {
 //! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! # let mut assembly = CilAssembly::new(view);
 //!
 //! // Create an enclosing type first
 //! let outer_class_token = TypeDefBuilder::new()
 //!     .name("OuterClass")
 //!     .namespace("MyApp.Models")
 //!     .public_class()
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! // Create a nested type
 //! let inner_class_token = TypeDefBuilder::new()
 //!     .name("InnerClass")
 //!     .namespace("MyApp.Models")
 //!     .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! // Establish the nesting relationship
 //! let nesting_token = NestedClassBuilder::new()
-//!     .nested_class(inner_class_token)
-//!     .enclosing_class(outer_class_token)
-//!     .build(&mut context)?;
+//!     .nested_class(inner_class_token.row())
+//!     .enclosing_class(outer_class_token.row())
+//!     .build(&mut assembly)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -54,7 +53,7 @@
 //! - **Type Safety**: Ensures proper TypeDef token validation
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{NestedClassRaw, TableDataOwned, TableId},
         token::Token,
@@ -81,19 +80,18 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing NestedClass entries:
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
-/// # let outer_token = Token::new(0x02000001);
-/// # let inner_token = Token::new(0x02000002);
+/// # let mut assembly = CilAssembly::new(view);
+/// # let outer_row: u32 = 1;
+/// # let inner_row: u32 = 2;
 ///
 /// let nesting_token = NestedClassBuilder::new()
-///     .nested_class(inner_token)
-///     .enclosing_class(outer_token)
-///     .build(&mut context)?;
+///     .nested_class(inner_row)
+///     .enclosing_class(outer_row)
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
@@ -113,10 +111,10 @@ use crate::{
 /// - **Visibility Rules**: Nested types inherit accessibility from their context
 #[derive(Debug, Clone)]
 pub struct NestedClassBuilder {
-    /// The token of the nested type
-    nested_class: Option<Token>,
-    /// The token of the enclosing type
-    enclosing_class: Option<Token>,
+    /// The row index (or placeholder) of the nested type
+    nested_class: Option<u32>,
+    /// The row index (or placeholder) of the enclosing type
+    enclosing_class: Option<u32>,
 }
 
 impl Default for NestedClassBuilder {
@@ -145,71 +143,69 @@ impl NestedClassBuilder {
         }
     }
 
-    /// Sets the token of the nested type.
+    /// Sets the row index of the nested type.
     ///
-    /// The nested type must be a valid TypeDef token that represents
+    /// The nested type must be a valid TypeDef row index or placeholder that represents
     /// the type being nested within the enclosing type.
     ///
     /// # Arguments
     ///
-    /// * `nested_class_token` - Token of the TypeDef for the nested type
+    /// * `nested_class_row` - Row index (or placeholder) of the TypeDef for the nested type
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # fn main() -> dotscope::Result<()> {
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     /// let inner_token = TypeDefBuilder::new()
     ///     .name("InnerClass")
     ///     .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// let builder = NestedClassBuilder::new()
-    ///     .nested_class(inner_token);
+    ///     .nested_class(inner_token.placeholder());
     /// # Ok(())
     /// # }
     /// ```
     #[must_use]
-    pub fn nested_class(mut self, nested_class_token: Token) -> Self {
-        self.nested_class = Some(nested_class_token);
+    pub fn nested_class(mut self, nested_class_row: u32) -> Self {
+        self.nested_class = Some(nested_class_row);
         self
     }
 
-    /// Sets the token of the enclosing type.
+    /// Sets the row index of the enclosing type.
     ///
-    /// The enclosing type must be a valid TypeDef token that represents
+    /// The enclosing type must be a valid TypeDef row index or placeholder that represents
     /// the type containing the nested type.
     ///
     /// # Arguments
     ///
-    /// * `enclosing_class_token` - Token of the TypeDef for the enclosing type
+    /// * `enclosing_class_row` - Row index (or placeholder) of the TypeDef for the enclosing type
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # fn main() -> dotscope::Result<()> {
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     /// let outer_token = TypeDefBuilder::new()
     ///     .name("OuterClass")
     ///     .public_class()
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// let builder = NestedClassBuilder::new()
-    ///     .enclosing_class(outer_token);
+    ///     .enclosing_class(outer_token.placeholder());
     /// # Ok(())
     /// # }
     /// ```
     #[must_use]
-    pub fn enclosing_class(mut self, enclosing_class_token: Token) -> Self {
-        self.enclosing_class = Some(enclosing_class_token);
+    pub fn enclosing_class(mut self, enclosing_class_row: u32) -> Self {
+        self.enclosing_class = Some(enclosing_class_row);
         self
     }
 
@@ -221,7 +217,7 @@ impl NestedClassBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for the assembly being modified
+    /// * `assembly` - The CilAssembly being modified
     ///
     /// # Returns
     ///
@@ -238,82 +234,66 @@ impl NestedClassBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
-    /// # let outer_token = Token::new(0x02000001);
-    /// # let inner_token = Token::new(0x02000002);
+    /// # let mut assembly = CilAssembly::new(view);
+    /// # let outer_row: u32 = 1;
+    /// # let inner_row: u32 = 2;
     ///
     /// let nesting_token = NestedClassBuilder::new()
-    ///     .nested_class(inner_token)
-    ///     .enclosing_class(outer_token)
-    ///     .build(&mut context)?;
+    ///     .nested_class(inner_row)
+    ///     .enclosing_class(outer_row)
+    ///     .build(&mut assembly)?;
     ///
-    /// println!("Created NestedClass with token: {}", nesting_token);
+    /// println!("Created NestedClass with token: {:?}", nesting_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let nested_class_token = self.nested_class.ok_or_else(|| {
-            Error::ModificationInvalid("Nested class token is required for NestedClass".to_string())
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
+        let nested_class_row = self.nested_class.ok_or_else(|| {
+            Error::ModificationInvalid("Nested class row is required for NestedClass".to_string())
         })?;
 
-        let enclosing_class_token = self.enclosing_class.ok_or_else(|| {
+        let enclosing_class_row = self.enclosing_class.ok_or_else(|| {
             Error::ModificationInvalid(
-                "Enclosing class token is required for NestedClass".to_string(),
+                "Enclosing class row is required for NestedClass".to_string(),
             )
         })?;
 
-        if nested_class_token.table() != TableId::TypeDef as u8 {
-            return Err(Error::ModificationInvalid(format!(
-                "Nested class token must be a TypeDef token, got table ID: {}",
-                nested_class_token.table()
-            )));
-        }
-
-        if enclosing_class_token.table() != TableId::TypeDef as u8 {
-            return Err(Error::ModificationInvalid(format!(
-                "Enclosing class token must be a TypeDef token, got table ID: {}",
-                enclosing_class_token.table()
-            )));
-        }
-
-        if nested_class_token.row() == 0 {
+        // Note: Row validation is skipped for placeholders (high bit set)
+        // Placeholders will be resolved during the write phase
+        if nested_class_row == 0 {
             return Err(Error::ModificationInvalid(
-                "Nested class token row cannot be 0".to_string(),
+                "Nested class row cannot be 0".to_string(),
             ));
         }
 
-        if enclosing_class_token.row() == 0 {
+        if enclosing_class_row == 0 {
             return Err(Error::ModificationInvalid(
-                "Enclosing class token row cannot be 0".to_string(),
+                "Enclosing class row cannot be 0".to_string(),
             ));
         }
 
-        // Prevent self-nesting
-        if nested_class_token == enclosing_class_token {
+        // Prevent self-nesting (only for non-placeholder values)
+        if nested_class_row == enclosing_class_row {
             return Err(Error::ModificationInvalid(
                 "A type cannot be nested within itself".to_string(),
             ));
         }
 
-        let rid = context.next_rid(TableId::NestedClass);
-        let token = Token::new(((TableId::NestedClass as u32) << 24) | rid);
-
         let nested_class = NestedClassRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
-            nested_class: nested_class_token.row(),
-            enclosing_class: enclosing_class_token.row(),
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
+            nested_class: nested_class_row,
+            enclosing_class: enclosing_class_row,
         };
 
-        let table_data = TableDataOwned::NestedClass(nested_class);
-        context.table_row_add(TableId::NestedClass, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(
+            TableId::NestedClass,
+            TableDataOwned::NestedClass(nested_class),
+        )
     }
 }
 
@@ -321,34 +301,37 @@ impl NestedClassBuilder {
 mod tests {
     use super::*;
     use crate::{
+        cilassembly::ChangeRefKind,
         metadata::tables::{TableId, TypeAttributes},
         test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
     fn test_nested_class_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create TypeDefs for testing
-        let outer_token = crate::metadata::tables::TypeDefBuilder::new()
+        let outer_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("OuterClass")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let inner_token = crate::metadata::tables::TypeDefBuilder::new()
+        let inner_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("InnerClass")
             .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token = NestedClassBuilder::new()
-            .nested_class(inner_token)
-            .enclosing_class(outer_token)
-            .build(&mut context)?;
+        // Use placeholder values for the NestedClass builder
+        let nested_ref = NestedClassBuilder::new()
+            .nested_class(inner_ref.placeholder())
+            .enclosing_class(outer_ref.placeholder())
+            .build(&mut assembly)?;
 
-        // Verify the token has the correct table ID
-        assert_eq!(token.table(), TableId::NestedClass as u8);
-        assert!(token.row() > 0);
+        // Verify the reference has the correct table ID
+        assert_eq!(
+            nested_ref.kind(),
+            ChangeRefKind::TableRow(TableId::NestedClass)
+        );
 
         Ok(())
     }
@@ -363,116 +346,109 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_missing_nested_class() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create an enclosing type
-        let outer_token = crate::metadata::tables::TypeDefBuilder::new()
+        let outer_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("OuterClass")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         let result = NestedClassBuilder::new()
-            .enclosing_class(outer_token)
-            .build(&mut context);
+            .enclosing_class(outer_ref.placeholder())
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Nested class token is required"));
+        assert!(error_msg.contains("Nested class row is required"));
 
         Ok(())
     }
 
     #[test]
     fn test_nested_class_builder_missing_enclosing_class() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a nested type
-        let inner_token = crate::metadata::tables::TypeDefBuilder::new()
+        let inner_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("InnerClass")
             .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         let result = NestedClassBuilder::new()
-            .nested_class(inner_token)
-            .build(&mut context);
+            .nested_class(inner_ref.placeholder())
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Enclosing class token is required"));
+        assert!(error_msg.contains("Enclosing class row is required"));
 
         Ok(())
     }
 
     #[test]
-    fn test_nested_class_builder_invalid_nested_token() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+    fn test_nested_class_builder_zero_nested_row() -> Result<()> {
+        let mut assembly = get_test_assembly()?;
 
         // Create valid enclosing type
-        let outer_token = crate::metadata::tables::TypeDefBuilder::new()
+        let outer_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("OuterClass")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Use an invalid token (not TypeDef)
-        let invalid_token = Token::new(0x01000001); // Module token instead of TypeDef
-
+        // Use zero row index which is invalid
         let result = NestedClassBuilder::new()
-            .nested_class(invalid_token)
-            .enclosing_class(outer_token)
-            .build(&mut context);
+            .nested_class(0)
+            .enclosing_class(outer_ref.placeholder())
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Nested class token must be a TypeDef token"));
+        assert!(error_msg.contains("Nested class row cannot be 0"));
 
         Ok(())
     }
 
     #[test]
-    fn test_nested_class_builder_invalid_enclosing_token() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+    fn test_nested_class_builder_zero_enclosing_row() -> Result<()> {
+        let mut assembly = get_test_assembly()?;
 
         // Create valid nested type
-        let inner_token = crate::metadata::tables::TypeDefBuilder::new()
+        let inner_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("InnerClass")
             .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Use an invalid token (not TypeDef)
-        let invalid_token = Token::new(0x01000001); // Module token instead of TypeDef
-
+        // Use zero row index which is invalid
         let result = NestedClassBuilder::new()
-            .nested_class(inner_token)
-            .enclosing_class(invalid_token)
-            .build(&mut context);
+            .nested_class(inner_ref.placeholder())
+            .enclosing_class(0)
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Enclosing class token must be a TypeDef token"));
+        assert!(error_msg.contains("Enclosing class row cannot be 0"));
 
         Ok(())
     }
 
     #[test]
     fn test_nested_class_builder_self_nesting() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a type
-        let type_token = crate::metadata::tables::TypeDefBuilder::new()
+        let type_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("SelfNestingClass")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
+
+        let type_placeholder = type_ref.placeholder();
 
         // Try to nest it within itself
         let result = NestedClassBuilder::new()
-            .nested_class(type_token)
-            .enclosing_class(type_token)
-            .build(&mut context);
+            .nested_class(type_placeholder)
+            .enclosing_class(type_placeholder)
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -483,174 +459,176 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_zero_row_nested() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create valid enclosing type
-        let outer_token = crate::metadata::tables::TypeDefBuilder::new()
+        let outer_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("OuterClass")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Use a zero row token
-        let zero_token = Token::new(0x02000000);
-
+        // Use a zero row value
         let result = NestedClassBuilder::new()
-            .nested_class(zero_token)
-            .enclosing_class(outer_token)
-            .build(&mut context);
+            .nested_class(0)
+            .enclosing_class(outer_ref.placeholder())
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Nested class token row cannot be 0"));
+        assert!(error_msg.contains("Nested class row cannot be 0"));
 
         Ok(())
     }
 
     #[test]
     fn test_nested_class_builder_zero_row_enclosing() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create valid nested type
-        let inner_token = crate::metadata::tables::TypeDefBuilder::new()
+        let inner_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("InnerClass")
             .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Use a zero row token
-        let zero_token = Token::new(0x02000000);
-
+        // Use a zero row value
         let result = NestedClassBuilder::new()
-            .nested_class(inner_token)
-            .enclosing_class(zero_token)
-            .build(&mut context);
+            .nested_class(inner_ref.placeholder())
+            .enclosing_class(0)
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Enclosing class token row cannot be 0"));
+        assert!(error_msg.contains("Enclosing class row cannot be 0"));
 
         Ok(())
     }
 
     #[test]
     fn test_nested_class_builder_multiple_relationships() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create an outer class
-        let outer_token = crate::metadata::tables::TypeDefBuilder::new()
+        let outer_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("OuterClass")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Create two inner classes
-        let inner1_token = crate::metadata::tables::TypeDefBuilder::new()
+        let inner1_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("InnerClass1")
             .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let inner2_token = crate::metadata::tables::TypeDefBuilder::new()
+        let inner2_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("InnerClass2")
             .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Create nesting relationships
-        let nesting1_token = NestedClassBuilder::new()
-            .nested_class(inner1_token)
-            .enclosing_class(outer_token)
-            .build(&mut context)?;
+        let nesting1_ref = NestedClassBuilder::new()
+            .nested_class(inner1_ref.placeholder())
+            .enclosing_class(outer_ref.placeholder())
+            .build(&mut assembly)?;
 
-        let nesting2_token = NestedClassBuilder::new()
-            .nested_class(inner2_token)
-            .enclosing_class(outer_token)
-            .build(&mut context)?;
+        let nesting2_ref = NestedClassBuilder::new()
+            .nested_class(inner2_ref.placeholder())
+            .enclosing_class(outer_ref.placeholder())
+            .build(&mut assembly)?;
 
-        // Verify tokens are different and sequential
-        assert_ne!(nesting1_token, nesting2_token);
-        assert_eq!(nesting1_token.table(), TableId::NestedClass as u8);
-        assert_eq!(nesting2_token.table(), TableId::NestedClass as u8);
-        assert_eq!(nesting2_token.row(), nesting1_token.row() + 1);
+        // Verify references are different and have correct kind
+        assert!(!std::sync::Arc::ptr_eq(&nesting1_ref, &nesting2_ref));
+        assert_eq!(
+            nesting1_ref.kind(),
+            ChangeRefKind::TableRow(TableId::NestedClass)
+        );
+        assert_eq!(
+            nesting2_ref.kind(),
+            ChangeRefKind::TableRow(TableId::NestedClass)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_nested_class_builder_deep_nesting() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a hierarchy: Outer -> Middle -> Inner
-        let outer_token = crate::metadata::tables::TypeDefBuilder::new()
+        let outer_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("OuterClass")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let middle_token = crate::metadata::tables::TypeDefBuilder::new()
+        let middle_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("MiddleClass")
             .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let inner_token = crate::metadata::tables::TypeDefBuilder::new()
+        let inner_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("InnerClass")
             .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Create the nesting relationships
-        let nesting1_token = NestedClassBuilder::new()
-            .nested_class(middle_token)
-            .enclosing_class(outer_token)
-            .build(&mut context)?;
+        let nesting1_ref = NestedClassBuilder::new()
+            .nested_class(middle_ref.placeholder())
+            .enclosing_class(outer_ref.placeholder())
+            .build(&mut assembly)?;
 
-        let nesting2_token = NestedClassBuilder::new()
-            .nested_class(inner_token)
-            .enclosing_class(middle_token)
-            .build(&mut context)?;
+        let nesting2_ref = NestedClassBuilder::new()
+            .nested_class(inner_ref.placeholder())
+            .enclosing_class(middle_ref.placeholder())
+            .build(&mut assembly)?;
 
-        assert_eq!(nesting1_token.table(), TableId::NestedClass as u8);
-        assert_eq!(nesting2_token.table(), TableId::NestedClass as u8);
-        assert!(nesting1_token.row() > 0);
-        assert!(nesting2_token.row() > 0);
+        assert_eq!(
+            nesting1_ref.kind(),
+            ChangeRefKind::TableRow(TableId::NestedClass)
+        );
+        assert_eq!(
+            nesting2_ref.kind(),
+            ChangeRefKind::TableRow(TableId::NestedClass)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_nested_class_builder_fluent_api() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create types for testing
-        let outer_token = crate::metadata::tables::TypeDefBuilder::new()
+        let outer_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("FluentOuter")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let inner_token = crate::metadata::tables::TypeDefBuilder::new()
+        let inner_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("FluentInner")
             .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Test fluent API chaining
-        let token = NestedClassBuilder::new()
-            .nested_class(inner_token)
-            .enclosing_class(outer_token)
-            .build(&mut context)?;
+        let nested_ref = NestedClassBuilder::new()
+            .nested_class(inner_ref.placeholder())
+            .enclosing_class(outer_ref.placeholder())
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::NestedClass as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            nested_ref.kind(),
+            ChangeRefKind::TableRow(TableId::NestedClass)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_nested_class_builder_clone() {
-        let nested_token = Token::new(0x02000001);
-        let enclosing_token = Token::new(0x02000002);
+        let nested_row = 1u32;
+        let enclosing_row = 2u32;
 
         let builder1 = NestedClassBuilder::new()
-            .nested_class(nested_token)
-            .enclosing_class(enclosing_token);
+            .nested_class(nested_row)
+            .enclosing_class(enclosing_row);
         let builder2 = builder1.clone();
 
         assert_eq!(builder1.nested_class, builder2.nested_class);
@@ -659,12 +637,12 @@ mod tests {
 
     #[test]
     fn test_nested_class_builder_debug() {
-        let nested_token = Token::new(0x02000001);
-        let enclosing_token = Token::new(0x02000002);
+        let nested_row = 1u32;
+        let enclosing_row = 2u32;
 
         let builder = NestedClassBuilder::new()
-            .nested_class(nested_token)
-            .enclosing_class(enclosing_token);
+            .nested_class(nested_row)
+            .enclosing_class(enclosing_row);
         let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("NestedClassBuilder"));
     }

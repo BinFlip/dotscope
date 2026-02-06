@@ -1,0 +1,7 @@
+<project outputDir="./protected" baseDir="." xmlns="http://confuser.codeplex.com">
+  <rule pattern="true" preset="none" inherit="false">
+    <!-- Anti-tamper protection ONLY - for isolation testing -->
+    <protection id="anti tamper" />
+  </rule>
+  <module path="TestApp.exe" />
+</project>

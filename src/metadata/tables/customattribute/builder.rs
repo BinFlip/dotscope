@@ -6,7 +6,7 @@
 //! methods, fields, assemblies, and other metadata entities.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{CodedIndex, CodedIndexType, CustomAttributeRaw, TableDataOwned, TableId},
         token::Token,
@@ -37,13 +37,12 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{CustomAttributeBuilder, CodedIndex, TableId};
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create coded indices for the custom attribute
 /// let target_type = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute); // Target class
@@ -57,7 +56,7 @@ use crate::{
 ///     .parent(target_type)
 ///     .constructor(constructor.clone())
 ///     .value(empty_blob)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a custom attribute with values  
 /// let attribute_blob = &[0x01, 0x00, 0x00, 0x00]; // Prolog + no arguments
@@ -66,7 +65,7 @@ use crate::{
 ///     .parent(target_method)
 ///     .constructor(constructor)
 ///     .value(attribute_blob)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct CustomAttributeBuilder {
@@ -190,7 +189,7 @@ impl CustomAttributeBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for managing the assembly
+    /// * `assembly` - The CilAssembly for managing the assembly
     ///
     /// # Returns
     ///
@@ -205,7 +204,7 @@ impl CustomAttributeBuilder {
     /// - Returns error if constructor is not a valid CustomAttributeType coded index
     /// - Returns error if heap operations fail
     /// - Returns error if table operations fail
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let parent = self.parent.ok_or_else(|| {
             Error::ModificationInvalid("CustomAttribute parent is required".to_string())
         })?;
@@ -234,13 +233,13 @@ impl CustomAttributeBuilder {
             if value.is_empty() {
                 0 // Empty blob
             } else {
-                context.blob_add(&value)?
+                assembly.blob_add(&value)?.placeholder()
             }
         } else {
             0 // No value provided
         };
 
-        let rid = context.next_rid(TableId::CustomAttribute);
+        let rid = assembly.next_rid(TableId::CustomAttribute)?;
 
         let token = Token::from_parts(TableId::CustomAttribute, rid);
 
@@ -253,7 +252,7 @@ impl CustomAttributeBuilder {
             value: value_index,
         };
 
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::CustomAttribute,
             TableDataOwned::CustomAttribute(custom_attribute_raw),
         )
@@ -264,7 +263,7 @@ impl CustomAttributeBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
+        cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
@@ -273,13 +272,7 @@ mod tests {
     fn test_custom_attribute_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-
-            // Check existing CustomAttribute table count
-            let existing_count = assembly.original_table_row_count(TableId::CustomAttribute);
-            let expected_rid = existing_count + 1;
-
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Create coded indices for HasCustomAttribute and CustomAttributeType
             let target_type =
@@ -287,16 +280,18 @@ mod tests {
             let constructor =
                 CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::CustomAttributeType); // CustomAttributeType
 
-            let token = CustomAttributeBuilder::new()
+            let ref_ = CustomAttributeBuilder::new()
                 .parent(target_type)
                 .constructor(constructor)
                 .value(&[]) // Empty value
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x0C000000); // CustomAttribute table prefix
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid); // RID should be existing + 1
+            // Verify the ref has the correct table ID
+            assert_eq!(
+                ref_.kind(),
+                ChangeRefKind::TableRow(TableId::CustomAttribute)
+            );
         }
     }
 
@@ -304,8 +299,7 @@ mod tests {
     fn test_custom_attribute_builder_with_value() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let target_field =
                 CodedIndex::new(TableId::Field, 1, CodedIndexType::HasCustomAttribute); // HasCustomAttribute
@@ -315,15 +309,18 @@ mod tests {
             // Create a custom attribute with a simple value blob
             let attribute_blob = &[0x01, 0x00, 0x00, 0x00]; // Prolog + no named args
 
-            let token = CustomAttributeBuilder::new()
+            let ref_ = CustomAttributeBuilder::new()
                 .parent(target_field)
                 .constructor(constructor)
                 .value(attribute_blob)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x0C000000);
+            // Verify the ref has the correct table ID
+            assert_eq!(
+                ref_.kind(),
+                ChangeRefKind::TableRow(TableId::CustomAttribute)
+            );
         }
     }
 
@@ -331,8 +328,7 @@ mod tests {
     fn test_custom_attribute_builder_no_value() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let target_method =
                 CodedIndex::new(TableId::MethodDef, 2, CodedIndexType::HasCustomAttribute); // HasCustomAttribute
@@ -340,14 +336,17 @@ mod tests {
                 CodedIndex::new(TableId::MethodDef, 3, CodedIndexType::CustomAttributeType); // CustomAttributeType
 
             // Create a custom attribute with no value (will use 0 blob index)
-            let token = CustomAttributeBuilder::new()
+            let ref_ = CustomAttributeBuilder::new()
                 .parent(target_method)
                 .constructor(constructor)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x0C000000);
+            // Verify the ref has the correct table ID
+            assert_eq!(
+                ref_.kind(),
+                ChangeRefKind::TableRow(TableId::CustomAttribute)
+            );
         }
     }
 
@@ -355,15 +354,14 @@ mod tests {
     fn test_custom_attribute_builder_missing_parent() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let constructor =
                 CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::CustomAttributeType);
 
             let result = CustomAttributeBuilder::new()
                 .constructor(constructor)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because parent is required
             assert!(result.is_err());
@@ -374,15 +372,14 @@ mod tests {
     fn test_custom_attribute_builder_missing_constructor() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let target_type =
                 CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute);
 
             let result = CustomAttributeBuilder::new()
                 .parent(target_type)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because constructor is required
             assert!(result.is_err());
@@ -393,8 +390,7 @@ mod tests {
     fn test_custom_attribute_builder_invalid_parent_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Use a table type that's not valid for HasCustomAttribute
             let invalid_parent =
@@ -405,7 +401,7 @@ mod tests {
             let result = CustomAttributeBuilder::new()
                 .parent(invalid_parent)
                 .constructor(constructor)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because parent type is not valid for HasCustomAttribute
             assert!(result.is_err());
@@ -416,8 +412,7 @@ mod tests {
     fn test_custom_attribute_builder_invalid_constructor_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let target_type =
                 CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute);
@@ -428,7 +423,7 @@ mod tests {
             let result = CustomAttributeBuilder::new()
                 .parent(target_type)
                 .constructor(invalid_constructor)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because constructor type is not valid for CustomAttributeType
             assert!(result.is_err());
@@ -439,8 +434,7 @@ mod tests {
     fn test_custom_attribute_builder_multiple_attributes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let target1 = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasCustomAttribute);
             let target2 =
@@ -453,35 +447,44 @@ mod tests {
                 CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::CustomAttributeType);
 
             // Create multiple custom attributes
-            let attr1 = CustomAttributeBuilder::new()
+            let ref1 = CustomAttributeBuilder::new()
                 .parent(target1)
                 .constructor(constructor1.clone())
                 .value(&[0x01, 0x00])
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let attr2 = CustomAttributeBuilder::new()
+            let ref2 = CustomAttributeBuilder::new()
                 .parent(target2)
                 .constructor(constructor2.clone())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let attr3 = CustomAttributeBuilder::new()
+            let ref3 = CustomAttributeBuilder::new()
                 .parent(target3)
                 .constructor(constructor1)
                 .value(&[0x01, 0x00, 0x00, 0x00])
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // All should succeed and have different RIDs
-            assert_ne!(attr1.value() & 0x00FFFFFF, attr2.value() & 0x00FFFFFF);
-            assert_ne!(attr1.value() & 0x00FFFFFF, attr3.value() & 0x00FFFFFF);
-            assert_ne!(attr2.value() & 0x00FFFFFF, attr3.value() & 0x00FFFFFF);
+            // All should succeed and have different Arc pointers
+            assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+            assert!(!std::sync::Arc::ptr_eq(&ref1, &ref3));
+            assert!(!std::sync::Arc::ptr_eq(&ref2, &ref3));
 
-            // All should have CustomAttribute table prefix
-            assert_eq!(attr1.value() & 0xFF000000, 0x0C000000);
-            assert_eq!(attr2.value() & 0xFF000000, 0x0C000000);
-            assert_eq!(attr3.value() & 0xFF000000, 0x0C000000);
+            // All should have CustomAttribute table ID
+            assert_eq!(
+                ref1.kind(),
+                ChangeRefKind::TableRow(TableId::CustomAttribute)
+            );
+            assert_eq!(
+                ref2.kind(),
+                ChangeRefKind::TableRow(TableId::CustomAttribute)
+            );
+            assert_eq!(
+                ref3.kind(),
+                ChangeRefKind::TableRow(TableId::CustomAttribute)
+            );
         }
     }
 }

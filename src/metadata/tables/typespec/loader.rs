@@ -25,7 +25,10 @@
 //! * [ECMA-335 Partition II, Section 22.39](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `TypeSpec` Table
 
 use crate::{
-    metadata::loader::{LoaderContext, MetadataLoader},
+    metadata::{
+        diagnostics::DiagnosticCategory,
+        loader::{LoaderContext, MetadataLoader},
+    },
     prelude::{TableId, TypeResolver, TypeSpecRaw},
     Result,
 };
@@ -59,23 +62,33 @@ impl MetadataLoader for TypeSpecLoader {
     /// - [`crate::Error::TypeNotFound`] - Referenced type cannot be resolved
     /// - [`crate::Error::TypeError`] - Type specification violates semantic rules
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(blobs)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<TypeSpecRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(blobs)?;
+        let (Some(header), Some(blobs)) = (context.meta, context.blobs) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<TypeSpecRaw>() else {
+            return Ok(());
+        };
 
-                    let mut resolver =
-                        TypeResolver::new(context.types.clone()).with_token_init(row.token);
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("type spec 0x{:08x}", row.token.value());
 
-                    resolver.resolve(&owned.signature.base)?;
+            let Some(owned) =
+                context.handle_result(row.to_owned(blobs), DiagnosticCategory::Type, token_msg)?
+            else {
+                return Ok(());
+            };
 
-                    context.type_spec.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
+            let mut resolver = TypeResolver::new(context.types.clone()).with_token_init(row.token);
 
-        Ok(())
+            context.handle_result(
+                resolver.resolve(&owned.signature.base),
+                DiagnosticCategory::Type,
+                token_msg,
+            )?;
+
+            context.type_spec.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for the `TypeSpec` table.

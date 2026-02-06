@@ -52,6 +52,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::ConstantRaw,
     },
@@ -111,18 +112,29 @@ impl MetadataLoader for ConstantLoader {
     /// This method is thread-safe and uses parallel iteration for performance.
     /// Updates to parent elements are handled through atomic operations.
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<ConstantRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
-                    owned.apply()?;
+        let (Some(header), Some(blob)) = (context.meta, context.blobs) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<ConstantRaw>() else {
+            return Ok(());
+        };
 
-                    context.constant.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("constant 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned(|coded_index| context.get_ref(coded_index), blob),
+                DiagnosticCategory::Table,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(owned.apply(), DiagnosticCategory::Table, token_msg)?;
+            context.constant.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for Constant

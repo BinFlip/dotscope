@@ -59,6 +59,8 @@ use crate::{
 };
 
 impl RowReadable for NestedClassRaw {
+    const TABLE_ID: TableId = TableId::NestedClass;
+
     /// Reads a single `NestedClass` table row from binary data.
     ///
     /// Parses the binary representation according to ECMA-335 §II.22.32:

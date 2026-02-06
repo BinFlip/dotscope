@@ -9,7 +9,7 @@
 //! The `PropertyMapBuilder` enables creation of property map entries with:
 //! - Parent type specification (required)
 //! - Property list starting index specification (required)
-//! - Validation of type tokens and property indices
+//! - Validation of type row indices and property indices
 //! - Automatic token generation and metadata management
 //!
 //! ## Usage
@@ -19,36 +19,35 @@
 //! # use std::path::Path;
 //! # fn main() -> dotscope::Result<()> {
 //! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! # let mut assembly = CilAssembly::new(view);
 //!
 //! // Create a type first
-//! let type_token = TypeDefBuilder::new()
+//! let type_ref = TypeDefBuilder::new()
 //!     .name("MyClass")
 //!     .namespace("MyApp")
 //!     .public_class()
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! // Create property signatures
 //! let string_property_sig = &[0x08, 0x1C]; // PROPERTY calling convention + ELEMENT_TYPE_OBJECT
 //! let int_property_sig = &[0x08, 0x08]; // PROPERTY calling convention + ELEMENT_TYPE_I4
 //!
 //! // Create properties
-//! let prop1_token = PropertyBuilder::new()
+//! let prop1_ref = PropertyBuilder::new()
 //!     .name("Name")
 //!     .signature(string_property_sig)
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
-//! let prop2_token = PropertyBuilder::new()
+//! let prop2_ref = PropertyBuilder::new()
 //!     .name("Count")
 //!     .signature(int_property_sig)
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! // Create a property map entry for the type
-//! let property_map_token = PropertyMapBuilder::new()
-//!     .parent(type_token)
-//!     .property_list(prop1_token.row()) // Starting property index
-//!     .build(&mut context)?;
+//! let property_map_ref = PropertyMapBuilder::new()
+//!     .parent(type_ref.placeholder())
+//!     .property_list(prop1_ref.placeholder()) // Starting property index
+//!     .build(&mut assembly)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -62,7 +61,7 @@
 //! - **Range Support**: Supports defining contiguous property ranges for efficient lookup
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{PropertyMapRaw, TableDataOwned, TableId},
         token::Token,
@@ -93,25 +92,23 @@ use crate::{
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
-/// # let type_token = Token::new(0x02000001);
+/// # let mut assembly = CilAssembly::new(view);
+/// # let type_ref = assembly.placeholder();
 ///
-/// let property_map_token = PropertyMapBuilder::new()
-///     .parent(type_token)
+/// let property_map_ref = PropertyMapBuilder::new()
+///     .parent(type_ref.placeholder())
 ///     .property_list(1) // Starting property index
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// # Validation
 ///
 /// The builder enforces the following constraints:
-/// - **Parent Required**: A parent type token must be provided
-/// - **Parent Validation**: Parent token must be a valid TypeDef table token
+/// - **Parent Required**: A parent type row index must be provided
+/// - **Parent Validation**: Parent row index cannot be 0
 /// - **Property List Required**: A property list starting index must be provided
 /// - **Index Validation**: Property list index must be greater than 0
-/// - **Token Validation**: Parent token row cannot be 0
 ///
 /// # Integration
 ///
@@ -122,8 +119,8 @@ use crate::{
 /// - **Metadata Loading**: Establishes property ownership during type loading
 #[derive(Debug, Clone)]
 pub struct PropertyMapBuilder {
-    /// The token of the parent type that owns the properties
-    parent: Option<Token>,
+    /// The row index or placeholder of the parent type that owns the properties
+    parent: Option<u32>,
     /// The starting index in the Property table for this type's properties
     property_list: Option<u32>,
 }
@@ -154,36 +151,35 @@ impl PropertyMapBuilder {
         }
     }
 
-    /// Sets the parent type token that owns the properties.
+    /// Sets the parent type row index that owns the properties.
     ///
-    /// The parent must be a valid TypeDef token that represents the type
+    /// The parent must be a valid TypeDef row index that represents the type
     /// that declares and owns the properties in the specified range.
     ///
     /// # Arguments
     ///
-    /// * `parent_token` - Token of the TypeDef table entry
+    /// * `parent_row` - Row index or placeholder of the TypeDef table entry
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
-    /// let type_token = TypeDefBuilder::new()
+    /// # let mut assembly = CilAssembly::new(view);
+    /// let type_ref = TypeDefBuilder::new()
     ///     .name("PropertyfulClass")
     ///     .namespace("MyApp")
     ///     .public_class()
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// let builder = PropertyMapBuilder::new()
-    ///     .parent(type_token);
+    ///     .parent(type_ref.placeholder());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
-    pub fn parent(mut self, parent_token: Token) -> Self {
-        self.parent = Some(parent_token);
+    pub fn parent(mut self, parent_row: u32) -> Self {
+        self.parent = Some(parent_row);
         self
     }
 
@@ -212,24 +208,23 @@ impl PropertyMapBuilder {
 
     /// Builds the PropertyMap entry and adds it to the assembly.
     ///
-    /// This method validates all required fields, verifies the parent token is valid,
+    /// This method validates all required fields, verifies the parent row is valid,
     /// validates the property list index, creates the PropertyMap table entry, and returns the
-    /// metadata token for the new entry.
+    /// change reference for the new entry.
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for the assembly being modified
+    /// * `assembly` - The CilAssembly being modified
     ///
     /// # Returns
     ///
-    /// Returns the metadata token for the newly created PropertyMap entry.
+    /// Returns the change reference for the newly created PropertyMap entry.
     ///
     /// # Errors
     ///
     /// Returns an error if:
-    /// - The parent token is not set
-    /// - The parent token is not a valid TypeDef token
-    /// - The parent token row is 0
+    /// - The parent row index is not set
+    /// - The parent row index is 0
     /// - The property list index is not set
     /// - The property list index is 0
     /// - There are issues adding the table row
@@ -240,21 +235,20 @@ impl PropertyMapBuilder {
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
-    /// # let type_token = Token::new(0x02000001);
+    /// # let mut assembly = CilAssembly::new(view);
+    /// # let type_ref = assembly.placeholder();
     ///
-    /// let property_map_token = PropertyMapBuilder::new()
-    ///     .parent(type_token)
+    /// let property_map_ref = PropertyMapBuilder::new()
+    ///     .parent(type_ref.placeholder())
     ///     .property_list(1)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
-    /// println!("Created PropertyMap with token: {}", property_map_token);
+    /// println!("Created PropertyMap with placeholder: {}", property_map_ref.placeholder());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let parent_token = self.parent.ok_or_else(|| {
-            Error::ModificationInvalid("Parent token is required for PropertyMap".to_string())
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
+        let parent_row = self.parent.ok_or_else(|| {
+            Error::ModificationInvalid("Parent row index is required for PropertyMap".to_string())
         })?;
 
         let property_list_index = self.property_list.ok_or_else(|| {
@@ -263,16 +257,9 @@ impl PropertyMapBuilder {
             )
         })?;
 
-        if parent_token.table() != TableId::TypeDef as u8 {
-            return Err(Error::ModificationInvalid(format!(
-                "Parent token must be a TypeDef token, got table ID: {}",
-                parent_token.table()
-            )));
-        }
-
-        if parent_token.row() == 0 {
+        if parent_row == 0 {
             return Err(Error::ModificationInvalid(
-                "Parent token row cannot be 0".to_string(),
+                "Parent row index cannot be 0".to_string(),
             ));
         }
 
@@ -282,51 +269,38 @@ impl PropertyMapBuilder {
             ));
         }
 
-        let rid = context.next_rid(TableId::PropertyMap);
-        let token = Token::from_parts(TableId::PropertyMap, rid);
-
         let property_map = PropertyMapRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
-            parent: parent_token.row(),
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
+            parent: parent_row,
             property_list: property_list_index,
         };
 
-        let table_data = TableDataOwned::PropertyMap(property_map);
-        context.table_row_add(TableId::PropertyMap, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(
+            TableId::PropertyMap,
+            TableDataOwned::PropertyMap(property_map),
+        )
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        metadata::tables::TableId, test::factories::table::assemblyref::get_test_assembly,
-    };
+    use crate::test::factories::table::assemblyref::get_test_assembly;
+    use std::sync::Arc;
 
     #[test]
     fn test_property_map_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        // Create a TypeDef for testing
-        let type_token = crate::metadata::tables::TypeDefBuilder::new()
-            .name("PropertyfulClass")
-            .namespace("MyApp")
-            .public_class()
-            .build(&mut context)?;
+        // Use a valid TypeDef row index for testing
+        let type_row = 1u32;
 
-        let token = PropertyMapBuilder::new()
-            .parent(type_token)
+        let _change_ref = PropertyMapBuilder::new()
+            .parent(type_row)
             .property_list(1)
-            .build(&mut context)?;
-
-        // Verify the token has the correct table ID
-        assert_eq!(token.table(), TableId::PropertyMap as u8);
-        assert!(token.row() > 0);
+            .build(&mut assembly)?;
 
         Ok(())
     }
@@ -341,35 +315,29 @@ mod tests {
 
     #[test]
     fn test_property_map_builder_missing_parent() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let result = PropertyMapBuilder::new()
             .property_list(1)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Parent token is required"));
+        assert!(error_msg.contains("Parent row index is required"));
 
         Ok(())
     }
 
     #[test]
     fn test_property_map_builder_missing_property_list() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        // Create a TypeDef for testing
-        let type_token = crate::metadata::tables::TypeDefBuilder::new()
-            .name("PropertyfulClass")
-            .namespace("MyApp")
-            .public_class()
-            .build(&mut context)?;
+        // Use a valid TypeDef row index
+        let type_row = 1u32;
 
         let result = PropertyMapBuilder::new()
-            .parent(type_token)
-            .build(&mut context);
+            .parent(type_row)
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -379,61 +347,35 @@ mod tests {
     }
 
     #[test]
-    fn test_property_map_builder_invalid_parent_token() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-
-        // Use an invalid token (not TypeDef)
-        let invalid_token = Token::new(0x04000001); // Field token instead of TypeDef
-
-        let result = PropertyMapBuilder::new()
-            .parent(invalid_token)
-            .property_list(1)
-            .build(&mut context);
-
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Parent token must be a TypeDef token"));
-
-        Ok(())
-    }
-
-    #[test]
     fn test_property_map_builder_zero_row_parent() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        // Use a zero row token
-        let zero_token = Token::new(0x02000000);
+        // Use a zero row index
+        let zero_row = 0u32;
 
         let result = PropertyMapBuilder::new()
-            .parent(zero_token)
+            .parent(zero_row)
             .property_list(1)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Parent token row cannot be 0"));
+        assert!(error_msg.contains("Parent row index cannot be 0"));
 
         Ok(())
     }
 
     #[test]
     fn test_property_map_builder_zero_property_list() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        // Create a TypeDef for testing
-        let type_token = crate::metadata::tables::TypeDefBuilder::new()
-            .name("PropertyfulClass")
-            .namespace("MyApp")
-            .public_class()
-            .build(&mut context)?;
+        // Use a valid TypeDef row index
+        let type_row = 1u32;
 
         let result = PropertyMapBuilder::new()
-            .parent(type_token)
+            .parent(type_row)
             .property_list(0) // Zero property list index is invalid
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -444,63 +386,42 @@ mod tests {
 
     #[test]
     fn test_property_map_builder_multiple_entries() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        // Create TypeDefs for testing
-        let type1_token = crate::metadata::tables::TypeDefBuilder::new()
-            .name("PropertyfulClass1")
-            .namespace("MyApp")
-            .public_class()
-            .build(&mut context)?;
+        // Use valid TypeDef row indices
+        let type1_row = 1u32;
+        let type2_row = 2u32;
 
-        let type2_token = crate::metadata::tables::TypeDefBuilder::new()
-            .name("PropertyfulClass2")
-            .namespace("MyApp")
-            .public_class()
-            .build(&mut context)?;
-
-        let map1_token = PropertyMapBuilder::new()
-            .parent(type1_token)
+        let ref1 = PropertyMapBuilder::new()
+            .parent(type1_row)
             .property_list(1)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let map2_token = PropertyMapBuilder::new()
-            .parent(type2_token)
+        let ref2 = PropertyMapBuilder::new()
+            .parent(type2_row)
             .property_list(3)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify tokens are different and sequential
-        assert_ne!(map1_token, map2_token);
-        assert_eq!(map1_token.table(), TableId::PropertyMap as u8);
-        assert_eq!(map2_token.table(), TableId::PropertyMap as u8);
-        assert_eq!(map2_token.row(), map1_token.row() + 1);
+        // Verify change refs are different
+        assert!(!Arc::ptr_eq(&ref1, &ref2));
 
         Ok(())
     }
 
     #[test]
     fn test_property_map_builder_various_property_indices() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test with different property list indices
         let test_indices = [1, 5, 10, 20, 100];
 
         for (i, &index) in test_indices.iter().enumerate() {
-            let type_token = crate::metadata::tables::TypeDefBuilder::new()
-                .name(format!("PropertyfulClass{i}"))
-                .namespace("MyApp")
-                .public_class()
-                .build(&mut context)?;
+            let type_row = 1u32 + i as u32;
 
-            let map_token = PropertyMapBuilder::new()
-                .parent(type_token)
+            let _change_ref = PropertyMapBuilder::new()
+                .parent(type_row)
                 .property_list(index)
-                .build(&mut context)?;
-
-            assert_eq!(map_token.table(), TableId::PropertyMap as u8);
-            assert!(map_token.row() > 0);
+                .build(&mut assembly)?;
         }
 
         Ok(())
@@ -508,34 +429,26 @@ mod tests {
 
     #[test]
     fn test_property_map_builder_fluent_api() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        // Create a TypeDef for testing
-        let type_token = crate::metadata::tables::TypeDefBuilder::new()
-            .name("FluentTestClass")
-            .namespace("MyApp")
-            .public_class()
-            .build(&mut context)?;
+        // Use a valid TypeDef row index
+        let type_row = 1u32;
 
         // Test fluent API chaining
-        let token = PropertyMapBuilder::new()
-            .parent(type_token)
+        let _change_ref = PropertyMapBuilder::new()
+            .parent(type_row)
             .property_list(5)
-            .build(&mut context)?;
-
-        assert_eq!(token.table(), TableId::PropertyMap as u8);
-        assert!(token.row() > 0);
+            .build(&mut assembly)?;
 
         Ok(())
     }
 
     #[test]
     fn test_property_map_builder_clone() {
-        let parent_token = Token::new(0x02000001);
+        let parent_row = 1u32;
 
         let builder1 = PropertyMapBuilder::new()
-            .parent(parent_token)
+            .parent(parent_row)
             .property_list(1);
         let builder2 = builder1.clone();
 
@@ -545,10 +458,10 @@ mod tests {
 
     #[test]
     fn test_property_map_builder_debug() {
-        let parent_token = Token::new(0x02000001);
+        let parent_row = 1u32;
 
         let builder = PropertyMapBuilder::new()
-            .parent(parent_token)
+            .parent(parent_row)
             .property_list(1);
         let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("PropertyMapBuilder"));

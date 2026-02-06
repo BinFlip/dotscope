@@ -5,7 +5,7 @@
 //! low-level builders to provide a fluent, high-level API for interface creation.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         method::{MethodAccessFlags, MethodModifiers},
         signatures::{encode_method_signature, SignatureMethod, SignatureParameter, TypeSignature},
@@ -14,7 +14,6 @@ use crate::{
             MethodSemanticsAttributes, MethodSemanticsBuilder, TableId, TypeAttributes,
             TypeDefBuilder,
         },
-        token::Token,
     },
     Error, Result,
 };
@@ -61,8 +60,7 @@ struct InterfacePropertyDefinition {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let interface_token = InterfaceBuilder::new("ICalculator")
 ///     .public()
 ///     .method_signature("Add", TypeSignature::I4, vec![
@@ -73,7 +71,7 @@ struct InterfacePropertyDefinition {
 ///         ("a".to_string(), TypeSignature::I4),
 ///         ("b".to_string(), TypeSignature::I4)
 ///     ])
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -85,8 +83,7 @@ struct InterfacePropertyDefinition {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let interface_token = InterfaceBuilder::new("IRepository")
 ///     .public()
 ///     .property("Count", TypeSignature::I4, true, false) // getter only
@@ -94,7 +91,7 @@ struct InterfacePropertyDefinition {
 ///     .method_signature("GetItem", TypeSignature::Object, vec![
 ///         ("id".to_string(), TypeSignature::I4)
 ///     ])
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -106,17 +103,21 @@ struct InterfacePropertyDefinition {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
-/// # let base_interface = Token::new(0x02000001);
+/// # let mut assembly = CilAssembly::new(view);
+/// // First create the base interface
+/// let base_interface_ref = InterfaceBuilder::new("ICalculator")
+///     .public()
+///     .build(&mut assembly)?;
+///
+/// // Then use its placeholder to reference it in the derived interface
 /// let derived_interface = InterfaceBuilder::new("IAdvancedCalculator")
 ///     .public()
-///     .extends_token(base_interface) // Inherit from ICalculator
+///     .extends_row(base_interface_ref.placeholder()) // Inherit from ICalculator
 ///     .method_signature("Power", TypeSignature::R8, vec![
 ///         ("base".to_string(), TypeSignature::R8),
 ///         ("exponent".to_string(), TypeSignature::R8)
 ///     ])
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -243,26 +244,27 @@ impl InterfaceBuilder {
         self
     }
 
-    /// Add interface inheritance using a token.
+    /// Add interface inheritance using a row index or placeholder.
     ///
     /// # Arguments
     ///
-    /// * `interface_token` - Token of the interface to extend
+    /// * `interface_row` - Row index or placeholder of the interface to extend (use `placeholder()` from `ChangeRefRc`)
     ///
     /// # Examples
     ///
     /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// # let base_token = Token::new(0x02000001);
+    /// # fn example(base_ref: ChangeRefRc) {
     /// let builder = InterfaceBuilder::new("IDerived")
-    ///     .extends_token(base_token);
+    ///     .extends_row(base_ref.placeholder());
+    /// # }
     /// ```
     #[must_use]
-    pub fn extends_token(mut self, interface_token: Token) -> Self {
+    pub fn extends_row(mut self, interface_row: u32) -> Self {
         let coded_index = CodedIndex::new(
             TableId::TypeDef,
-            interface_token.row(),
+            interface_row,
             CodedIndexType::TypeDefOrRef,
         );
         self.extends.push(coded_index);
@@ -411,7 +413,7 @@ impl InterfaceBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - Builder context for managing the assembly
+    /// * `assembly` - CIL assembly for managing the metadata
     ///
     /// # Returns
     ///
@@ -420,7 +422,7 @@ impl InterfaceBuilder {
     /// # Errors
     ///
     /// Returns an error if interface creation fails at any step.
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Validate interface constraints
         if self.name.is_empty() {
             return Err(Error::ModificationInvalid(
@@ -437,7 +439,7 @@ impl InterfaceBuilder {
             typedef_builder = typedef_builder.namespace(namespace);
         }
 
-        let interface_token = typedef_builder.build(context)?;
+        let interface_ref = typedef_builder.build(assembly)?;
 
         // Create method signatures
         for method_def in self.methods {
@@ -481,13 +483,13 @@ impl InterfaceBuilder {
                 .flags(method_def.attributes)
                 .impl_flags(0x0000) // MANAGED | IL
                 .signature(&signature_bytes)
-                .build(context)?;
+                .build(assembly)?;
         }
 
         // Create properties with abstract accessors
         for prop_def in self.properties {
-            let mut getter_token: Option<Token> = None;
-            let mut setter_token: Option<Token> = None;
+            let mut getter_placeholder: Option<u32> = None;
+            let mut setter_placeholder: Option<u32> = None;
 
             if prop_def.has_getter {
                 // Create abstract getter
@@ -515,19 +517,19 @@ impl InterfaceBuilder {
                 };
                 let getter_signature_bytes = encode_method_signature(&getter_signature)?;
 
-                getter_token = Some(
-                    MethodDefBuilder::new()
-                        .name(&getter_name)
-                        .flags(
-                            MethodModifiers::ABSTRACT.bits()
-                                | MethodAccessFlags::PUBLIC.bits()
-                                | MethodModifiers::HIDE_BY_SIG.bits()
-                                | MethodModifiers::SPECIAL_NAME.bits(),
-                        )
-                        .impl_flags(0x0000) // MANAGED | IL
-                        .signature(&getter_signature_bytes)
-                        .build(context)?,
-                );
+                let getter_ref = MethodDefBuilder::new()
+                    .name(&getter_name)
+                    .flags(
+                        MethodModifiers::ABSTRACT.bits()
+                            | MethodAccessFlags::PUBLIC.bits()
+                            | MethodModifiers::HIDE_BY_SIG.bits()
+                            | MethodModifiers::SPECIAL_NAME.bits(),
+                    )
+                    .impl_flags(0x0000) // MANAGED | IL
+                    .signature(&getter_signature_bytes)
+                    .build(assembly)?;
+
+                getter_placeholder = Some(getter_ref.placeholder());
             }
 
             if prop_def.has_setter {
@@ -560,51 +562,53 @@ impl InterfaceBuilder {
                 };
                 let setter_signature_bytes = encode_method_signature(&setter_signature)?;
 
-                setter_token = Some(
-                    MethodDefBuilder::new()
-                        .name(&setter_name)
-                        .flags(
-                            MethodModifiers::ABSTRACT.bits()
-                                | MethodAccessFlags::PUBLIC.bits()
-                                | MethodModifiers::HIDE_BY_SIG.bits()
-                                | MethodModifiers::SPECIAL_NAME.bits(),
-                        )
-                        .impl_flags(0x0000) // MANAGED | IL
-                        .signature(&setter_signature_bytes)
-                        .build(context)?,
-                );
+                let setter_ref = MethodDefBuilder::new()
+                    .name(&setter_name)
+                    .flags(
+                        MethodModifiers::ABSTRACT.bits()
+                            | MethodAccessFlags::PUBLIC.bits()
+                            | MethodModifiers::HIDE_BY_SIG.bits()
+                            | MethodModifiers::SPECIAL_NAME.bits(),
+                    )
+                    .impl_flags(0x0000) // MANAGED | IL
+                    .signature(&setter_signature_bytes)
+                    .build(assembly)?;
+
+                setter_placeholder = Some(setter_ref.placeholder());
             }
 
             // Create property entry using PropertyBuilder
-            let property_token =
-                PropertyBuilder::new(&prop_def.name, prop_def.property_type).build(context)?;
+            let property_ref =
+                PropertyBuilder::new(&prop_def.name, prop_def.property_type).build(assembly)?;
 
-            if let Some(getter) = getter_token {
+            let property_placeholder = property_ref.placeholder();
+
+            if let Some(getter_row) = getter_placeholder {
                 MethodSemanticsBuilder::new()
                     .semantics(MethodSemanticsAttributes::GETTER)
-                    .method(getter)
-                    .association_from_property(property_token)
-                    .build(context)?;
+                    .method(getter_row)
+                    .association_from_property(property_placeholder)
+                    .build(assembly)?;
             }
 
-            if let Some(setter) = setter_token {
+            if let Some(setter_row) = setter_placeholder {
                 MethodSemanticsBuilder::new()
                     .semantics(MethodSemanticsAttributes::SETTER)
-                    .method(setter)
-                    .association_from_property(property_token)
-                    .build(context)?;
+                    .method(setter_row)
+                    .association_from_property(property_placeholder)
+                    .build(assembly)?;
             }
         }
 
         // Create InterfaceImpl entries for inheritance
         for interface_index in self.extends {
             InterfaceImplBuilder::new()
-                .class(interface_token.row())
+                .class(interface_ref.placeholder())
                 .interface(interface_index)
-                .build(context)?;
+                .build(assembly)?;
         }
 
-        Ok(interface_token)
+        Ok(interface_ref)
     }
 }
 
@@ -618,23 +622,22 @@ impl Default for InterfaceBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature},
+        cilassembly::{ChangeRefKind, CilAssembly},
+        metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature, tables::TableId},
     };
     use std::path::PathBuf;
 
-    fn get_test_context() -> Result<BuilderContext> {
+    fn get_test_assembly() -> Result<CilAssembly> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         let view = CilAssemblyView::from_path(&path)?;
-        let assembly = CilAssembly::new(view);
-        Ok(BuilderContext::new(assembly))
+        Ok(CilAssembly::new(view))
     }
 
     #[test]
     fn test_simple_interface() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let interface_token = InterfaceBuilder::new("ICalculator")
+        let interface_ref = InterfaceBuilder::new("ICalculator")
             .public()
             .namespace("MyApp.Interfaces")
             .method_signature(
@@ -645,84 +648,102 @@ mod tests {
                     ("b".to_string(), TypeSignature::I4),
                 ],
             )
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Should create a valid TypeDef token
-        assert_eq!(interface_token.value() & 0xFF000000, 0x02000000); // TypeDef table
+        // Should create a valid TypeDef reference
+        assert_eq!(
+            interface_ref.kind(),
+            ChangeRefKind::TableRow(TableId::TypeDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_interface_with_properties() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let interface_token = InterfaceBuilder::new("IRepository")
+        let interface_ref = InterfaceBuilder::new("IRepository")
             .public()
             .readonly_property("Count", TypeSignature::I4)
             .readwrite_property("IsEnabled", TypeSignature::Boolean)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(interface_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(
+            interface_ref.kind(),
+            ChangeRefKind::TableRow(TableId::TypeDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_interface_inheritance() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
         // Create base interface
-        let base_token = InterfaceBuilder::new("IBase")
+        let base_ref = InterfaceBuilder::new("IBase")
             .public()
             .simple_method("BaseMethod", TypeSignature::Void)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
+
+        // Get placeholder for use in extends_row
+        let base_placeholder = base_ref.placeholder();
 
         // Create derived interface
-        let derived_token = InterfaceBuilder::new("IDerived")
+        let derived_ref = InterfaceBuilder::new("IDerived")
             .public()
-            .extends_token(base_token)
+            .extends_row(base_placeholder)
             .simple_method("DerivedMethod", TypeSignature::Void)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(base_token.value() & 0xFF000000, 0x02000000);
-        assert_eq!(derived_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(base_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
+        assert_eq!(
+            derived_ref.kind(),
+            ChangeRefKind::TableRow(TableId::TypeDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_internal_interface() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let interface_token = InterfaceBuilder::new("IInternalInterface")
+        let interface_ref = InterfaceBuilder::new("IInternalInterface")
             .internal()
             .simple_method("InternalMethod", TypeSignature::Void)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(interface_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(
+            interface_ref.kind(),
+            ChangeRefKind::TableRow(TableId::TypeDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_empty_interface() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let interface_token = InterfaceBuilder::new("IMarker")
+        let interface_ref = InterfaceBuilder::new("IMarker")
             .public()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(interface_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(
+            interface_ref.kind(),
+            ChangeRefKind::TableRow(TableId::TypeDef)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_empty_name_fails() {
-        let mut context = get_test_context().unwrap();
+        let mut assembly = get_test_assembly().unwrap();
 
-        let result = InterfaceBuilder::new("").public().build(&mut context);
+        let result = InterfaceBuilder::new("").public().build(&mut assembly);
 
         assert!(result.is_err());
     }

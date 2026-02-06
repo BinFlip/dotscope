@@ -50,15 +50,17 @@
 //!
 //! ## Basic Type Resolution
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::{
+//!     identity::AssemblyIdentity,
 //!     typesystem::{TypeResolver, TypeRegistry},
 //!     signatures::TypeSignature
 //! };
 //! use std::sync::Arc;
 //!
 //! # fn example() -> dotscope::Result<()> {
-//! let registry = Arc::new(TypeRegistry::new()?);
+//! let identity = AssemblyIdentity::parse("Test, Version=1.0.0.0")?;
+//! let registry = Arc::new(TypeRegistry::new(identity)?);
 //! let mut resolver = TypeResolver::new(registry.clone());
 //!
 //! // Resolve a primitive type
@@ -77,7 +79,7 @@
 //! ```rust,ignore
 //! use dotscope::metadata::{
 //!     typesystem::{TypeResolver, ArrayDimensions},
-//!     signatures::{TypeSignature, ArraySpecification}
+//!     signatures::{TypeSignature, SignatureArray}
 //! };
 //!
 //! # fn example(mut resolver: TypeResolver) -> dotscope::Result<()> {
@@ -96,7 +98,7 @@
 //!
 //! ## Context-Aware Resolution
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::{
 //!     typesystem::{TypeResolver, TypeSource},
 //!     token::Token
@@ -189,8 +191,9 @@ const MAX_RECURSION_DEPTH: usize = 100;
 ///
 /// ## Basic Usage
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::{
+///     identity::AssemblyIdentity,
 ///     typesystem::{TypeResolver, TypeRegistry},
 ///     signatures::TypeSignature
 /// };
@@ -211,7 +214,7 @@ const MAX_RECURSION_DEPTH: usize = 100;
 ///
 /// ## Context Configuration
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::{
 ///     typesystem::{TypeResolver, TypeSource},
 ///     token::Token
@@ -251,7 +254,8 @@ impl TypeResolver {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::metadata::identity::AssemblyIdentity;
     /// use dotscope::metadata::typesystem::{TypeResolver, TypeRegistry};
     /// use std::sync::Arc;
     ///
@@ -285,7 +289,7 @@ impl TypeResolver {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::typesystem::{TypeResolver, TypeSource};
     /// use dotscope::metadata::token::Token;
     ///
@@ -300,12 +304,13 @@ impl TypeResolver {
     /// # }
     /// # fn example2() -> dotscope::Result<()> {
     /// # use std::sync::Arc;
+    /// # use dotscope::metadata::identity::AssemblyIdentity;
     /// # use dotscope::metadata::typesystem::TypeRegistry;
     /// let test_identity = AssemblyIdentity::parse("TestAssembly, Version=1.0.0.0").unwrap();
     /// let registry = Arc::new(TypeRegistry::new(test_identity)?);
     /// let resolver = TypeResolver::new(registry);
     /// let local_resolver = resolver
-    ///     .with_source(TypeSource::CurrentModule);
+    ///     .with_source(TypeSource::Primitive);
     /// # Ok(())
     /// # }
     /// ```
@@ -335,7 +340,7 @@ impl TypeResolver {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::{typesystem::TypeResolver, token::Token};
     ///
     /// # fn example(resolver: TypeResolver) {
@@ -369,7 +374,7 @@ impl TypeResolver {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::{typesystem::TypeResolver, token::Token};
     ///
     /// # fn example(resolver: TypeResolver) {
@@ -419,7 +424,7 @@ impl TypeResolver {
     ///
     /// ## Primitive Type Resolution
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::{
     ///     typesystem::TypeResolver,
     ///     signatures::TypeSignature
@@ -441,7 +446,7 @@ impl TypeResolver {
     ///
     /// ```rust,ignore
     /// use dotscope::metadata::{
-    ///     signatures::{TypeSignature, ArraySpecification},
+    ///     signatures::{TypeSignature, SignatureArray},
     ///     typesystem::ArrayDimensions,
     ///     token::Token
     /// };
@@ -628,6 +633,7 @@ impl TypeResolver {
                 let element_type = self.resolve_with_depth(&array.base, depth + 1)?;
 
                 let array_flavor = CilFlavor::Array {
+                    element_type: Box::new(element_type.flavor().clone()),
                     rank: array.rank,
                     dimensions: array.dimensions.clone(),
                 };
@@ -668,6 +674,7 @@ impl TypeResolver {
                 let name = format!("{}[]", element_type.name);
 
                 let array_flavor = CilFlavor::Array {
+                    element_type: Box::new(element_type.flavor().clone()),
                     rank: 1,
                     dimensions: vec![ArrayDimensions {
                         size: None,

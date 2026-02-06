@@ -6,19 +6,21 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::prelude::*;
 //!
-//! let builder_context = BuilderContext::new();
+//! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! let mapping_token = StateMachineMethodBuilder::new()
 //!     .move_next_method(123)         // MethodDef RID for MoveNext method
 //!     .kickoff_method(45)            // MethodDef RID for original method
-//!     .build(&mut builder_context)?;
+//!     .build(&mut assembly)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{StateMachineMethodRaw, TableDataOwned, TableId},
         token::Token,
@@ -45,20 +47,23 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::prelude::*;
 ///
+/// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+/// # let mut assembly = CilAssembly::new(view);
 /// // Map async method to its state machine
 /// let async_mapping = StateMachineMethodBuilder::new()
 ///     .move_next_method(123)  // Compiler-generated MoveNext method
 ///     .kickoff_method(45)     // Original async method
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Map iterator method to its state machine
 /// let iterator_mapping = StateMachineMethodBuilder::new()
 ///     .move_next_method(200)  // Compiler-generated MoveNext method
 ///     .kickoff_method(78)     // Original iterator method
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct StateMachineMethodBuilder {
@@ -79,7 +84,7 @@ impl StateMachineMethodBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = StateMachineMethodBuilder::new();
@@ -105,7 +110,7 @@ impl StateMachineMethodBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = StateMachineMethodBuilder::new()
@@ -130,7 +135,7 @@ impl StateMachineMethodBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = StateMachineMethodBuilder::new()
@@ -145,11 +150,11 @@ impl StateMachineMethodBuilder {
     /// Builds and adds the `StateMachineMethod` entry to the metadata
     ///
     /// Validates all required fields, creates the `StateMachineMethod` table entry,
-    /// and adds it to the builder context. Returns a token that can be used
+    /// and adds it to the assembly. Returns a token that can be used
     /// to reference this state machine method mapping.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the builder context
+    /// - `assembly`: Mutable reference to the CilAssembly
     ///
     /// # Returns
     /// - `Ok(Token)`: Token referencing the created state machine method mapping
@@ -162,16 +167,18 @@ impl StateMachineMethodBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let mut context = BuilderContext::new();
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let token = StateMachineMethodBuilder::new()
     ///     .move_next_method(123)
     ///     .kickoff_method(45)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let move_next_method = self.move_next_method.ok_or_else(|| {
             Error::ModificationInvalid(
                 "MoveNext method RID is required for StateMachineMethod".to_string(),
@@ -184,23 +191,18 @@ impl StateMachineMethodBuilder {
             )
         })?;
 
-        let next_rid = context.next_rid(TableId::StateMachineMethod);
-        let token_value = ((TableId::StateMachineMethod as u32) << 24) | next_rid;
-        let token = Token::new(token_value);
-
         let state_machine_method = StateMachineMethodRaw {
-            rid: next_rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
             move_next_method,
             kickoff_method,
         };
 
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::StateMachineMethod,
             TableDataOwned::StateMachineMethod(state_machine_method),
-        )?;
-        Ok(token)
+        )
     }
 }
 
@@ -216,9 +218,8 @@ impl Default for StateMachineMethodBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
-    };
+    use crate::test::factories::table::assemblyref::get_test_assembly;
+    use std::sync::Arc;
 
     #[test]
     fn test_statemachinemethod_builder_new() {
@@ -238,56 +239,46 @@ mod tests {
 
     #[test]
     fn test_statemachinemethod_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = StateMachineMethodBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let _change_ref = StateMachineMethodBuilder::new()
             .move_next_method(123)
             .kickoff_method(45)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::StateMachineMethod as u8);
-        assert_eq!(token.row(), 1);
         Ok(())
     }
 
     #[test]
     fn test_statemachinemethod_builder_async_mapping() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = StateMachineMethodBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let _change_ref = StateMachineMethodBuilder::new()
             .move_next_method(200) // Async state machine MoveNext
             .kickoff_method(78) // Original async method
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::StateMachineMethod as u8);
-        assert_eq!(token.row(), 1);
         Ok(())
     }
 
     #[test]
     fn test_statemachinemethod_builder_iterator_mapping() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = StateMachineMethodBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let _change_ref = StateMachineMethodBuilder::new()
             .move_next_method(300) // Iterator state machine MoveNext
             .kickoff_method(99) // Original iterator method
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::StateMachineMethod as u8);
-        assert_eq!(token.row(), 1);
         Ok(())
     }
 
     #[test]
     fn test_statemachinemethod_builder_missing_move_next() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let result = StateMachineMethodBuilder::new()
             .kickoff_method(45)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -301,11 +292,10 @@ mod tests {
 
     #[test]
     fn test_statemachinemethod_builder_missing_kickoff() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let result = StateMachineMethodBuilder::new()
             .move_next_method(123)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -342,60 +332,52 @@ mod tests {
 
     #[test]
     fn test_statemachinemethod_builder_fluent_interface() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test method chaining
-        let token = StateMachineMethodBuilder::new()
+        let _change_ref = StateMachineMethodBuilder::new()
             .move_next_method(456)
             .kickoff_method(789)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::StateMachineMethod as u8);
-        assert_eq!(token.row(), 1);
         Ok(())
     }
 
     #[test]
     fn test_statemachinemethod_builder_multiple_builds() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Build first mapping
-        let token1 = StateMachineMethodBuilder::new()
+        let ref1 = StateMachineMethodBuilder::new()
             .move_next_method(100)
             .kickoff_method(50)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build first mapping");
 
         // Build second mapping
-        let token2 = StateMachineMethodBuilder::new()
+        let ref2 = StateMachineMethodBuilder::new()
             .move_next_method(200)
             .kickoff_method(60)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build second mapping");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_ne!(token1, token2);
+        // Verify change refs are different
+        assert!(!Arc::ptr_eq(&ref1, &ref2));
         Ok(())
     }
 
     #[test]
     fn test_statemachinemethod_builder_large_method_ids() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test with large method RIDs
-        let token = StateMachineMethodBuilder::new()
+        let _change_ref = StateMachineMethodBuilder::new()
             .move_next_method(0xFFFF) // Large method RID
             .kickoff_method(0xFFFE) // Large method RID
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should handle large method RIDs");
 
-        assert_eq!(token.table(), TableId::StateMachineMethod as u8);
-        assert_eq!(token.row(), 1);
         Ok(())
     }
 }

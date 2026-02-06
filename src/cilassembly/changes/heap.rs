@@ -1,193 +1,125 @@
 //! Heap change tracking for metadata heaps.
 //!
-//! This module provides the [`crate::cilassembly::changes::heap::HeapChanges`] structure
-//! for tracking additions to .NET metadata heaps during assembly modification operations.
-//! It supports all standard .NET metadata heaps: #Strings, #Blob, #GUID, and #US (user strings).
+//! This module provides the [`HeapChanges`] structure for tracking additions to .NET
+//! metadata heaps during assembly modification operations. It supports all standard
+//! .NET metadata heaps: #Strings, #Blob, #GUID, and #US (user strings).
 //!
-//! # Key Components
+//! # ChangeRef Integration
 //!
-//! - [`crate::cilassembly::changes::heap::HeapChanges`] - Generic heap change tracker with specialized implementations for different heap types
+//! All heap additions return [`ChangeRefRc`] (Arc<ChangeRef>) which provides stable
+//! references that survive heap rebuilding and deduplication. After the assembly is
+//! written, these references resolve to their final heap offsets.
+//!
+//! ```rust,ignore
+//! use dotscope::cilassembly::changes::{HeapChanges, ChangeRefKind};
+//!
+//! let mut changes = HeapChanges::<String>::new_strings(100);
+//! let string_ref = changes.append("MyString".to_string());
+//!
+//! // After assembly write, the ref resolves to final offset
+//! // let final_offset = string_ref.offset().unwrap();
+//! ```
 //!
 //! # Architecture
 //!
-//! .NET metadata heaps are append-only during editing to maintain existing index references.
-//! This module tracks only new additions, which are appended to the original heap during
-//! binary generation. Each heap type has specialized sizing and indexing behavior:
+//! Each heap type has specialized sizing and indexing behavior:
 //!
 //! - **#Strings heap**: UTF-8 null-terminated strings
 //! - **#Blob heap**: Length-prefixed binary data with compressed lengths
 //! - **#GUID heap**: Raw 16-byte GUIDs
 //! - **#US heap**: Length-prefixed UTF-16 strings with compressed lengths
 //!
-//! # Usage Examples
-//!
-//! ```rust,ignore
-//! use crate::cilassembly::changes::heap::HeapChanges;
-//!
-//! // Track string heap additions
-//! let mut string_changes = HeapChanges::<String>::new(100); // Original heap size
-//! string_changes.appended_items.push("NewString".to_string());
-//!
-//! // Check modification status
-//! if string_changes.has_additions() {
-//!     let count = string_changes.additions_count();
-//!     println!("Added {} strings", count);
-//! }
-//!
-//! // Calculate binary size impact
-//! let added_bytes = string_changes.binary_string_heap_size();
-//! println!("Will add {} bytes to binary", added_bytes);
-//! ```
-//!
 //! # Thread Safety
 //!
-//! This type is [`Send`] and [`Sync`] when `T` is [`Send`] and [`Sync`], as it only contains
-//! owned data without interior mutability.
+//! This type is [`Send`] and [`Sync`] when `T` is [`Send`] and [`Sync`].
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
-use crate::utils::compressed_uint_size;
+use crate::{
+    cilassembly::changes::{
+        hash_blob, hash_guid, hash_string, ChangeRef, ChangeRefKind, ChangeRefRc,
+    },
+    utils::compressed_uint_size,
+};
 
 /// Reference handling strategy for heap item removal operations.
 ///
-/// Defines how the system should handle existing references when a heap item
-/// is removed or modified. This gives users control over the behavior when
-/// dependencies exist.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ReferenceHandlingStrategy {
-    /// Fail the operation if any references exist to the item
-    FailIfReferenced,
-    /// Remove all references when deleting the item (cascade deletion)
-    RemoveReferences,
-    /// Replace references with a default/null value (typically index 0)
-    NullifyReferences,
-}
-
 /// Tracks changes to metadata heaps (strings, blobs, GUIDs, user strings).
 ///
 /// This structure tracks additions, modifications, and removals to .NET metadata heaps.
-/// While heaps were traditionally append-only, this extended version supports
-/// user-requested modifications and removals with configurable reference handling.
-/// [`crate::cilassembly::changes::AssemblyChanges`] to provide comprehensive
-/// modification tracking.
+/// All additions return [`ChangeRefRc`] which provides stable references that resolve
+/// to final heap offsets after assembly write.
 ///
 /// # Type Parameters
 ///
 /// * `T` - The type of items stored in this heap:
 ///   - [`String`] for #Strings and #US heaps
-///   - [`Vec<u8>`] for #Blob heap  
+///   - [`Vec<u8>`] for #Blob heap
 ///   - `[u8; 16]` for #GUID heap
-///
-/// # Index Management
-///
-/// Heap indices are byte offsets following .NET runtime conventions:
-/// - Index 0 is reserved (points to empty string for #Strings, empty blob for #Blob)
-/// - `next_index` starts from `original_heap_byte_size` (where new data begins)
-/// - Each addition increments `next_index` by the actual byte size of the added data
-///
-/// # Usage Examples
-///
-/// ```rust,ignore
-/// use crate::cilassembly::changes::heap::HeapChanges;
-///
-/// // Create heap tracker for strings
-/// let mut changes = HeapChanges::<String>::new(256);
-/// changes.appended_items.push("MyString".to_string());
-///
-/// // Get proper byte indices for added items
-/// for (index, string) in changes.string_items_with_indices() {
-///     println!("String '{}' at index {}", string, index);
-/// }
-/// ```
 ///
 /// # Thread Safety
 ///
 /// This type is [`Send`] and [`Sync`] when `T` is [`Send`] and [`Sync`].
 #[derive(Debug, Clone)]
 pub struct HeapChanges<T> {
-    /// Items appended to the heap
+    /// Items appended to the heap with their ChangeRef references
     ///
-    /// These items will be serialized after the original heap content
-    /// during binary generation. The order is preserved to maintain
-    /// index assignments.
-    pub appended_items: Vec<T>,
-
-    /// Original heap indices for appended items
-    ///
-    /// Maps each appended item (by Vec index) to its original heap index that was
-    /// assigned during userstring_add(). This eliminates the need for backwards
-    /// calculation and ensures correct placement during heap building.
-    pub appended_item_indices: Vec<u32>,
+    /// Each tuple contains the item value and its associated ChangeRef.
+    /// The ChangeRef will be resolved to the final heap offset after write.
+    appended: Vec<(T, ChangeRefRc)>,
 
     /// Items modified in the original heap
     ///
     /// Maps heap index to new value. These modifications override the
     /// original heap content at the specified indices during binary generation.
-    pub modified_items: HashMap<u32, T>,
+    modified_items: HashMap<u32, T>,
 
     /// Indices of items removed from the original heap
     ///
     /// Items at these indices will be skipped during binary generation.
-    /// The reference handling strategy determines how existing references
-    /// to these indices are managed.
-    pub removed_indices: HashSet<u32>,
-
-    /// Reference handling strategy for each removed index
-    ///
-    /// Maps removed heap index to the strategy that should be used when
-    /// handling references to that index. This allows per-removal control
-    /// over how dependencies are managed.
-    pub removal_strategies: HashMap<u32, ReferenceHandlingStrategy>,
-
-    /// Next byte offset to assign (continues from original heap byte size)
-    ///
-    /// This offset is incremented by the actual byte size of each new item added
-    /// to ensure proper heap indexing following .NET runtime conventions.
-    pub next_index: u32,
+    removed_indices: HashSet<u32>,
 
     /// Complete heap replacement data
     ///
-    /// When set, this raw data completely replaces the entire heap, ignoring
-    /// the original heap content. All append/modify/remove operations are
-    /// applied to this replacement heap instead of the original.
-    pub replacement_heap: Option<Vec<u8>>,
+    /// When set, this raw data completely replaces the entire heap.
+    replacement_heap: Option<Vec<u8>>,
+
+    /// The kind of heap this tracks changes for
+    heap_kind: ChangeRefKind,
 }
 
 impl<T> HeapChanges<T> {
     /// Creates a new heap changes tracker.
     ///
-    /// Initializes a new [`crate::cilassembly::changes::heap::HeapChanges`] instance
-    /// with the specified original heap size. This size determines where new
-    /// additions will begin in the heap index space.
-    ///
     /// # Arguments
     ///
-    /// * `original_byte_size` - The byte size of the original heap.
-    ///   The next index will be `original_byte_size` (where new data starts).
-    ///
-    /// # Returns
-    ///
-    /// A new [`crate::cilassembly::changes::heap::HeapChanges`] instance ready for tracking additions.
-    pub fn new(original_byte_size: u32) -> Self {
+    /// * `heap_kind` - The kind of heap this tracks changes for.
+    fn new(heap_kind: ChangeRefKind) -> Self {
         Self {
-            appended_items: Vec::new(),
-            appended_item_indices: Vec::new(),
+            appended: Vec::new(),
             modified_items: HashMap::new(),
             removed_indices: HashSet::new(),
-            removal_strategies: HashMap::new(),
-            next_index: original_byte_size,
             replacement_heap: None,
+            heap_kind,
         }
+    }
+
+    /// Returns the heap kind this tracker is for.
+    pub fn heap_kind(&self) -> ChangeRefKind {
+        self.heap_kind
     }
 
     /// Returns the number of items that have been added to this heap.
     pub fn additions_count(&self) -> usize {
-        self.appended_items.len()
+        self.appended.len()
     }
 
     /// Returns true if any items have been added to this heap.
     pub fn has_additions(&self) -> bool {
-        !self.appended_items.is_empty()
+        !self.appended.is_empty()
     }
 
     /// Returns the number of items that have been modified in this heap.
@@ -210,7 +142,7 @@ impl<T> HeapChanges<T> {
         !self.removed_indices.is_empty()
     }
 
-    /// Returns true if any changes (additions, modifications, or removals) have been made.
+    /// Returns true if any changes have been made.
     pub fn has_changes(&self) -> bool {
         self.has_additions()
             || self.has_modifications()
@@ -225,30 +157,19 @@ impl<T> HeapChanges<T> {
 
     /// Replaces the entire heap with the provided raw data.
     ///
-    /// This completely replaces the heap content, ignoring the original heap.
-    /// All subsequent append/modify/remove operations will be applied to this
-    /// replacement heap instead of the original.
+    /// This completely replaces the heap content. All subsequent operations
+    /// will be applied to this replacement heap instead of the original.
     ///
     /// # Arguments
     ///
     /// * `heap_data` - The raw bytes that will form the new heap
-    ///
-    /// # Note
-    ///
-    /// This resets the next_index to the size of the replacement heap, as
-    /// new additions will be appended after the replacement data.
     pub fn replace_heap(&mut self, heap_data: Vec<u8>) {
-        self.next_index = u32::try_from(heap_data.len()).unwrap_or(0);
         self.replacement_heap = Some(heap_data);
 
         // Clear existing changes since they would apply to the original heap
-        // which is now being replaced. Any future operations will apply to
-        // the replacement heap.
-        self.appended_items.clear();
-        self.appended_item_indices.clear();
+        self.appended.clear();
         self.modified_items.clear();
         self.removed_indices.clear();
-        self.removal_strategies.clear();
     }
 
     /// Gets a reference to the replacement heap data, if any.
@@ -257,29 +178,12 @@ impl<T> HeapChanges<T> {
     }
 
     /// Adds a modification to the heap at the specified index.
-    ///
-    /// # Arguments
-    ///
-    /// * `index` - The heap index to modify
-    /// * `new_value` - The new value to store at that index
     pub fn add_modification(&mut self, index: u32, new_value: T) {
         self.modified_items.insert(index, new_value);
     }
 
     /// Adds a removal to the heap at the specified index.
-    ///
-    /// # Arguments
-    ///
-    /// * `index` - The heap index to remove
-    /// * `strategy` - The reference handling strategy for this removal
-    pub fn add_removal(&mut self, index: u32, strategy: ReferenceHandlingStrategy) {
-        self.removed_indices.insert(index);
-        self.removal_strategies.insert(index, strategy);
-    }
-
-    /// Marks an appended item for removal by not including it in the final write.
-    /// This is used when removing a newly added string before it's written to disk.
-    pub fn mark_appended_for_removal(&mut self, index: u32) {
+    pub fn add_removal(&mut self, index: u32) {
         self.removed_indices.insert(index);
     }
 
@@ -293,36 +197,9 @@ impl<T> HeapChanges<T> {
         self.removed_indices.contains(&index)
     }
 
-    /// Gets the removal strategy for the specified index, if it's been removed.
-    pub fn get_removal_strategy(&self, index: u32) -> Option<ReferenceHandlingStrategy> {
-        self.removal_strategies.get(&index).copied()
-    }
-
-    /// Appends an item with its original heap index.
-    ///
-    /// This method should be used instead of directly pushing to appended_items
-    /// to ensure the index tracking remains consistent.
-    ///
-    /// # Arguments
-    ///
-    /// * `item` - The item to append
-    /// * `original_index` - The original heap index assigned to this item
-    pub fn append_item_with_index(&mut self, item: T, original_index: u32) {
-        self.appended_items.push(item);
-        self.appended_item_indices.push(original_index);
-    }
-
-    /// Gets the original heap index for an appended item by its vector index.
-    ///
-    /// # Arguments
-    ///
-    /// * `vec_index` - The index in the appended_items vector
-    ///
-    /// # Returns
-    ///
-    /// The original heap index if the vector index is valid.
-    pub fn get_appended_item_index(&self, vec_index: usize) -> Option<u32> {
-        self.appended_item_indices.get(vec_index).copied()
+    /// Returns an iterator over all appended items with their ChangeRefs.
+    pub fn appended_iter(&self) -> impl Iterator<Item = &(T, ChangeRefRc)> {
+        self.appended.iter()
     }
 
     /// Returns an iterator over all modified items and their indices.
@@ -335,218 +212,148 @@ impl<T> HeapChanges<T> {
         self.removed_indices.iter()
     }
 
-    /// Returns the index that would be assigned to the next added item.
-    pub fn next_index(&self) -> u32 {
-        self.next_index
+    /// Marks a ChangeRef as removed (won't be written to output).
+    ///
+    /// This finds the appended item by its ChangeRef ID and marks it for removal.
+    pub fn mark_ref_removed(&mut self, change_ref: &ChangeRefRc) {
+        // We track removal by ChangeRef ID - the write pipeline will skip these
+        // For now we use the id as a pseudo-index in removed_indices
+        // ToDo: This is a temporary solution until we refactor the removal system
+        let pseudo_index = (change_ref.id() & 0xFFFF_FFFF) as u32 | 0x8000_0000;
+        self.removed_indices.insert(pseudo_index);
     }
 
-    /// Returns an iterator over all added items with their assigned indices.
-    ///
-    /// Note: This default implementation assumes each item takes exactly 1 byte,
-    /// which is incorrect for heaps with variable-sized entries. Use the specialized
-    /// implementations for string and blob heaps that calculate proper byte positions.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// let changes = HeapChanges::new(100);
-    /// // ... add some items ...
-    ///
-    /// for (index, item) in changes.items_with_indices() {
-    ///     println!("Item at index {}: {:?}", index, item);
-    /// }
-    /// ```
-    pub fn items_with_indices(&self) -> impl Iterator<Item = (u32, &T)> {
-        let start_index = self.next_index - u32::try_from(self.appended_items.len()).unwrap_or(0);
-        self.appended_items
-            .iter()
-            .enumerate()
-            .map(move |(i, item)| (start_index + u32::try_from(i).unwrap_or(0), item))
+    /// Checks if a ChangeRef has been marked for removal.
+    pub fn is_ref_removed(&self, change_ref: &ChangeRefRc) -> bool {
+        let pseudo_index = (change_ref.id() & 0xFFFF_FFFF) as u32 | 0x8000_0000;
+        self.removed_indices.contains(&pseudo_index)
     }
 
-    /// Calculates the size these changes will add to the binary heap.
+    /// Marks an appended item for removal by its index.
     ///
-    /// This method calculates the actual bytes that would be added to the heap
-    /// when writing the binary. The default implementation assumes each item contributes its
-    /// size_of value, but specialized implementations should override this for accurate sizing.
-    pub fn binary_heap_size(&self) -> usize
-    where
-        T: Sized,
-    {
-        self.appended_items.len() * std::mem::size_of::<T>()
+    /// This is used when removing an item that was appended (index >= original heap size).
+    /// The index should be the position within the appended items list, not the heap offset.
+    pub fn mark_appended_for_removal(&mut self, index: u32) {
+        // For appended items, we just track the index with a special flag
+        // The write pipeline will skip these when rebuilding the heap
+        self.removed_indices.insert(index | 0x8000_0000);
+    }
+
+    /// Checks if an appended item at the given index is marked for removal.
+    pub fn is_appended_removed(&self, index: u32) -> bool {
+        self.removed_indices.contains(&(index | 0x8000_0000))
     }
 }
 
-/// Specialized implementation for string heap changes.
+// =============================================================================
+// String heap specialization
+// =============================================================================
+
 impl HeapChanges<String> {
-    /// Calculates the size these string additions will add to the binary #Strings heap.
+    /// Creates a new string heap changes tracker.
+    pub fn new_strings() -> Self {
+        Self::new(ChangeRefKind::String)
+    }
+
+    /// Creates a new user string heap changes tracker.
+    pub fn new_userstrings() -> Self {
+        Self::new(ChangeRefKind::UserString)
+    }
+
+    /// Appends a string and returns a ChangeRef for it.
     ///
-    /// The #Strings heap stores UTF-8 encoded null-terminated strings with no length prefixes.
+    /// The ChangeRef will be resolved to the final heap offset after
+    /// the assembly is written.
+    pub fn append(&mut self, value: String) -> ChangeRefRc {
+        let content_hash = hash_string(&value);
+        let change_ref = Arc::new(ChangeRef::new_heap(self.heap_kind, content_hash));
+        self.appended.push((value, Arc::clone(&change_ref)));
+        change_ref
+    }
+
+    /// Calculates the binary size for #Strings heap additions.
+    ///
     /// Each string contributes: UTF-8 byte length + 1 null terminator
     pub fn binary_string_heap_size(&self) -> usize {
-        self.appended_items
-            .iter()
-            .map(|s| s.len() + 1) // UTF-8 bytes + null terminator
-            .sum()
+        self.appended.iter().map(|(s, _)| s.len() + 1).sum()
     }
 
-    /// Returns the total character count of all added strings.
-    pub fn total_character_count(&self) -> usize {
-        self.appended_items
-            .iter()
-            .map(std::string::String::len)
-            .sum()
-    }
-
-    /// Returns an iterator over all added strings with their correct byte indices.
+    /// Calculates the binary size for #US heap additions.
     ///
-    /// This properly calculates byte positions for string heap entries by tracking
-    /// the cumulative size of each string including null terminators.
-    /// When strings are modified, this uses the FINAL modified sizes for proper indexing.
-    pub fn string_items_with_indices(&self) -> impl Iterator<Item = (u32, &String)> {
-        let mut current_index = self.next_index;
-
-        // Calculate total size of all items using FINAL sizes (after modifications)
-        let total_size: u32 = self
-            .appended_items
-            .iter()
-            .enumerate()
-            .map(|(vec_index, original_string)| {
-                // Get the API index from pre-computed indices
-                let api_index = self
-                    .appended_item_indices
-                    .get(vec_index)
-                    .copied()
-                    .unwrap_or(0);
-
-                // Check if this string is modified and use the final size
-                if let Some(modified_string) = self.get_modification(api_index) {
-                    u32::try_from(modified_string.len() + 1).unwrap_or(0)
-                } else {
-                    u32::try_from(original_string.len() + 1).unwrap_or(0)
-                }
-            })
-            .sum();
-        current_index -= total_size;
-
-        self.appended_items.iter().enumerate().scan(
-            current_index,
-            move |index, (vec_index, item)| {
-                let current = *index;
-
-                let api_index = self
-                    .appended_item_indices
-                    .get(vec_index)
-                    .copied()
-                    .unwrap_or(0);
-
-                // Use final size (modified or original) for index advancement
-                let final_size = if let Some(modified_string) = self.get_modification(api_index) {
-                    u32::try_from(modified_string.len() + 1).unwrap_or(0)
-                } else {
-                    u32::try_from(item.len() + 1).unwrap_or(0)
-                };
-
-                *index += final_size;
-                Some((current, item))
-            },
-        )
-    }
-
-    /// Returns an iterator over all added user strings with their correct byte indices.
-    ///
-    /// This properly calculates byte positions for user string heap entries by tracking
-    /// the cumulative size of each string including length prefix, UTF-16 data, null terminator, and terminal byte.
-    pub fn userstring_items_with_indices(&self) -> impl Iterator<Item = (u32, &String)> {
-        let mut current_index = self.next_index;
-        // Calculate total size of all items to find the starting index
-        let total_size: u32 = self
-            .appended_items
-            .iter()
-            .map(|s| {
-                // UTF-16 encoding: each code unit is 2 bytes (encode_utf16 handles surrogate pairs)
-                let utf16_bytes: usize = s.encode_utf16().count() * 2;
-
-                // Total length includes UTF-16 data + terminal byte (1 byte)
-                let total_length = utf16_bytes + 1;
-
-                let compressed_length_size = compressed_uint_size(total_length);
-
-                u32::try_from(usize::try_from(compressed_length_size).unwrap_or(0) + total_length)
-                    .unwrap_or(0)
-            })
-            .sum();
-        current_index -= total_size;
-
-        self.appended_items
-            .iter()
-            .scan(current_index, |index, item| {
-                let current = *index;
-                // Calculate the size of this userstring entry
-                let utf16_bytes: usize = item.encode_utf16().count() * 2;
-                let total_length = utf16_bytes + 1;
-                let compressed_length_size = compressed_uint_size(total_length);
-                *index += u32::try_from(
-                    usize::try_from(compressed_length_size).unwrap_or(0) + total_length,
-                )
-                .unwrap_or(0);
-                Some((current, item))
-            })
-    }
-
-    /// Calculates the size these userstring additions will add to the binary #US heap.
-    ///
-    /// The #US heap stores UTF-16 encoded strings with compressed length prefixes (ECMA-335 II.24.2.4).
-    /// Each string contributes: compressed_length_size + UTF-16_byte_length + terminal_byte(1)
+    /// Each string contributes: compressed_length + UTF-16 bytes + terminal byte
     pub fn binary_userstring_heap_size(&self) -> usize {
-        self.appended_items
+        self.appended
             .iter()
-            .map(|s| {
-                // UTF-16 encoding: each code unit is 2 bytes (encode_utf16 handles surrogate pairs)
-                let utf16_bytes: usize = s.encode_utf16().count() * 2;
-
-                // Total length includes UTF-16 data + terminal byte (1 byte)
+            .map(|(s, _)| {
+                let utf16_bytes = s.encode_utf16().count() * 2;
                 let total_length = utf16_bytes + 1;
-
-                let compressed_length_size = compressed_uint_size(total_length);
-
-                usize::try_from(compressed_length_size).unwrap_or(0) + total_length
+                // compressed_uint_size returns at most 4, so cast is always safe
+                #[allow(clippy::cast_possible_truncation)]
+                let compressed_length_size = compressed_uint_size(total_length) as usize;
+                compressed_length_size + total_length
             })
             .sum()
     }
 }
 
-/// Specialized implementation for blob heap changes.
+// =============================================================================
+// Blob heap specialization
+// =============================================================================
+
 impl HeapChanges<Vec<u8>> {
-    /// Calculates the size these blob additions will add to the binary #Blob heap.
+    /// Creates a new blob heap changes tracker.
+    pub fn new_blobs() -> Self {
+        Self::new(ChangeRefKind::Blob)
+    }
+
+    /// Appends a blob and returns a ChangeRef for it.
+    pub fn append(&mut self, value: Vec<u8>) -> ChangeRefRc {
+        let content_hash = hash_blob(&value);
+        let change_ref = Arc::new(ChangeRef::new_heap(self.heap_kind, content_hash));
+        self.appended.push((value, Arc::clone(&change_ref)));
+        change_ref
+    }
+
+    /// Calculates the binary size for #Blob heap additions.
     ///
-    /// The #Blob heap stores length-prefixed binary data using compressed integer lengths.
-    /// Each blob contributes: compressed_length_size + blob_data_length
+    /// Each blob contributes: compressed_length + blob data
     pub fn binary_blob_heap_size(&self) -> usize {
-        self.appended_items
+        self.appended
             .iter()
-            .map(|blob| {
+            .map(|(blob, _)| {
                 let length = blob.len();
-                let compressed_length_size = compressed_uint_size(length);
-                usize::try_from(compressed_length_size).unwrap_or(0) + length
+                // compressed_uint_size returns at most 4, so cast is always safe
+                #[allow(clippy::cast_possible_truncation)]
+                let compressed_length_size = compressed_uint_size(length) as usize;
+                compressed_length_size + length
             })
             .sum()
     }
-
-    /// Returns the total byte count of all added blobs.
-    pub fn total_byte_count(&self) -> usize {
-        self.appended_items.iter().map(std::vec::Vec::len).sum()
-    }
 }
 
-/// Specialized implementation for GUID heap changes.
+// =============================================================================
+// GUID heap specialization
+// =============================================================================
+
 impl HeapChanges<[u8; 16]> {
-    /// Calculates the size these GUID additions will add to the binary #GUID heap.
+    /// Creates a new GUID heap changes tracker.
+    pub fn new_guids() -> Self {
+        Self::new(ChangeRefKind::Guid)
+    }
+
+    /// Appends a GUID and returns a ChangeRef for it.
+    pub fn append(&mut self, value: [u8; 16]) -> ChangeRefRc {
+        let content_hash = hash_guid(&value);
+        let change_ref = Arc::new(ChangeRef::new_heap(self.heap_kind, content_hash));
+        self.appended.push((value, Arc::clone(&change_ref)));
+        change_ref
+    }
+
+    /// Calculates the binary size for #GUID heap additions.
     ///
-    /// The #GUID heap stores raw 16-byte GUIDs with no length prefixes or terminators.
     /// Each GUID contributes exactly 16 bytes.
     pub fn binary_guid_heap_size(&self) -> usize {
-        self.appended_items.len() * 16
+        self.appended.len() * 16
     }
 }
 
@@ -555,66 +362,128 @@ mod tests {
     use super::*;
 
     #[test]
-    fn test_heap_changes_indexing() {
-        let mut changes = HeapChanges::new(100);
-        assert_eq!(changes.next_index(), 100);
+    fn test_string_heap_changes() {
+        let mut changes = HeapChanges::<String>::new_strings();
         assert!(!changes.has_additions());
         assert!(!changes.has_changes());
 
-        changes.appended_items.push("test".to_string());
-        changes.next_index += 5; // "test" + null terminator = 5 bytes
+        let ref1 = changes.append("hello".to_string());
+        let ref2 = changes.append("world".to_string());
 
         assert!(changes.has_additions());
         assert!(changes.has_changes());
-        assert_eq!(changes.additions_count(), 1);
-        assert_eq!(changes.next_index(), 105);
+        assert_eq!(changes.additions_count(), 2);
+
+        // ChangeRefs should be unique
+        assert_ne!(ref1.id(), ref2.id());
+
+        // Binary size: "hello\0" (6) + "world\0" (6) = 12
+        assert_eq!(changes.binary_string_heap_size(), 12);
     }
 
     #[test]
-    fn test_heap_changes_modifications() {
-        let mut changes = HeapChanges::<String>::new(100);
+    fn test_blob_heap_changes() {
+        let mut changes = HeapChanges::<Vec<u8>>::new_blobs();
+
+        let ref1 = changes.append(vec![1, 2, 3]);
+        let ref2 = changes.append(vec![4, 5, 6, 7]);
+
+        assert_eq!(changes.additions_count(), 2);
+        assert_ne!(ref1.id(), ref2.id());
+
+        // Binary size: 1 (length) + 3 (data) + 1 (length) + 4 (data) = 9
+        assert_eq!(changes.binary_blob_heap_size(), 9);
+    }
+
+    #[test]
+    fn test_guid_heap_changes() {
+        let mut changes = HeapChanges::<[u8; 16]>::new_guids();
+
+        let guid1 = [0u8; 16];
+        let guid2 = [1u8; 16];
+        let ref1 = changes.append(guid1);
+        let ref2 = changes.append(guid2);
+
+        assert_eq!(changes.additions_count(), 2);
+        assert_ne!(ref1.id(), ref2.id());
+
+        // Binary size: 16 + 16 = 32
+        assert_eq!(changes.binary_guid_heap_size(), 32);
+    }
+
+    #[test]
+    fn test_userstring_heap_changes() {
+        let mut changes = HeapChanges::<String>::new_userstrings();
+        assert_eq!(changes.heap_kind(), ChangeRefKind::UserString);
+
+        let _ref1 = changes.append("test".to_string());
+        assert_eq!(changes.additions_count(), 1);
+
+        // "test" = 4 UTF-16 code units = 8 bytes + 1 terminal = 9 bytes
+        // Length 9 fits in 1 byte compressed = 1 + 9 = 10
+        assert_eq!(changes.binary_userstring_heap_size(), 10);
+    }
+
+    #[test]
+    fn test_modifications() {
+        let mut changes = HeapChanges::<String>::new_strings();
         assert!(!changes.has_modifications());
-        assert!(!changes.has_changes());
 
         changes.add_modification(50, "modified".to_string());
 
         assert!(changes.has_modifications());
-        assert!(changes.has_changes());
         assert_eq!(changes.modifications_count(), 1);
         assert_eq!(changes.get_modification(50), Some(&"modified".to_string()));
         assert_eq!(changes.get_modification(99), None);
     }
 
     #[test]
-    fn test_heap_changes_removals() {
-        let mut changes = HeapChanges::<String>::new(100);
+    fn test_removals() {
+        let mut changes = HeapChanges::<String>::new_strings();
         assert!(!changes.has_removals());
-        assert!(!changes.has_changes());
 
-        changes.add_removal(25, ReferenceHandlingStrategy::FailIfReferenced);
+        changes.add_removal(25);
 
         assert!(changes.has_removals());
-        assert!(changes.has_changes());
         assert_eq!(changes.removals_count(), 1);
         assert!(changes.is_removed(25));
         assert!(!changes.is_removed(30));
-        assert_eq!(
-            changes.get_removal_strategy(25),
-            Some(ReferenceHandlingStrategy::FailIfReferenced)
-        );
-        assert_eq!(changes.get_removal_strategy(30), None);
     }
 
     #[test]
-    fn test_heap_changes_items_with_indices() {
-        let mut changes = HeapChanges::new(50);
-        changes.appended_items.push("first".to_string());
-        changes.appended_items.push("second".to_string());
-        changes.next_index = 63; // Simulating 2 additions: 50 + 6 ("first" + null) + 7 ("second" + null)
+    fn test_replacement_heap() {
+        let mut changes = HeapChanges::<String>::new_strings();
+        let _ref1 = changes.append("will be cleared".to_string());
+        assert_eq!(changes.additions_count(), 1);
 
-        let items: Vec<_> = changes.string_items_with_indices().collect();
+        changes.replace_heap(vec![0, b'h', b'i', 0]);
+
+        assert!(changes.has_replacement());
+        assert_eq!(changes.additions_count(), 0); // Cleared
+        assert_eq!(changes.replacement_heap().unwrap(), &vec![0, b'h', b'i', 0]);
+    }
+
+    #[test]
+    fn test_mark_ref_removed() {
+        let mut changes = HeapChanges::<String>::new_strings();
+        let ref1 = changes.append("test".to_string());
+
+        assert!(!changes.is_ref_removed(&ref1));
+
+        changes.mark_ref_removed(&ref1);
+
+        assert!(changes.is_ref_removed(&ref1));
+    }
+
+    #[test]
+    fn test_appended_iter() {
+        let mut changes = HeapChanges::<String>::new_strings();
+        changes.append("one".to_string());
+        changes.append("two".to_string());
+
+        let items: Vec<_> = changes.appended_iter().collect();
         assert_eq!(items.len(), 2);
-        assert_eq!(items[0], (50, &"first".to_string())); // Starts at original byte size
-        assert_eq!(items[1], (56, &"second".to_string())); // 50 + 6 bytes for "first\0"
+        assert_eq!(items[0].0, "one");
+        assert_eq!(items[1].0, "two");
     }
 }

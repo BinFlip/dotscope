@@ -10,8 +10,11 @@
 use std::sync::OnceLock;
 
 use crate::metadata::{
-    customattributes::CustomAttributeValueList, marshalling::MarshallingInfo,
-    signatures::SignatureField, token::Token, typesystem::CilPrimitive,
+    customattributes::CustomAttributeValueList,
+    marshalling::MarshallingInfo,
+    signatures::SignatureField,
+    token::Token,
+    typesystem::{CilPrimitive, CilTypeRef},
 };
 
 /// Represents a field definition with resolved indexes and owned data.
@@ -117,4 +120,11 @@ pub struct Field {
     /// for this field, such as serialization hints, validation attributes,
     /// or framework-specific annotations.
     pub custom_attributes: CustomAttributeValueList,
+
+    /// The type that declares this field (lazy-loaded).
+    ///
+    /// Contains a weak reference to the [`crate::metadata::typesystem::CilType`] that owns this field.
+    /// This is set during TypeDef loading after the owning type is constructed.
+    /// Use [`CilTypeRef::upgrade()`] to obtain a strong reference when needed.
+    pub declaring_type: OnceLock<CilTypeRef>,
 }

@@ -343,8 +343,7 @@ impl MethodDefRaw {
             security: OnceLock::new(),
             blocks: OnceLock::new(),
             custom_attributes: Arc::new(boxcar::Vec::new()),
-            // cfg: RwLock::new(None),
-            // ssa: RwLock::new(None),
+            declaring_type: OnceLock::new(),
         }))
     }
 

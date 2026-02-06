@@ -6,13 +6,26 @@
 //! enabling the .NET runtime to understand accessor patterns and event handling mechanisms.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{CodedIndex, CodedIndexType, MethodSemanticsRaw, TableDataOwned, TableId},
         token::Token,
     },
     Error, Result,
 };
+
+/// Represents the association target for a method semantic entry.
+///
+/// This enum captures both the row index (which can be a placeholder or actual row ID)
+/// and the target table type. The `CodedIndex` is constructed at write time, not at
+/// builder time, to ensure proper placeholder resolution.
+#[derive(Debug, Clone, Copy)]
+enum AssociationTarget {
+    /// Association to a Property table entry
+    Property(u32),
+    /// Association to an Event table entry
+    Event(u32),
+}
 
 /// Builder for creating MethodSemantics metadata entries.
 ///
@@ -49,46 +62,46 @@ use crate::{
 ///
 /// ## Property Getter/Setter Relationship
 ///
-/// ```rust
+/// ```rust,no_run
 /// use dotscope::prelude::*;
 ///
-/// # fn example(context: &mut BuilderContext) -> Result<()> {
+/// # fn example(assembly: &mut CilAssembly) -> Result<()> {
 /// // Create getter semantic relationship
 /// let getter_semantic = MethodSemanticsBuilder::new()
 ///     .semantics(MethodSemanticsAttributes::GETTER)
-///     .method(Token::new(0x06000001)) // MethodDef token
-///     .association_from_property(Token::new(0x17000001)) // Property token
-///     .build(context)?;
+///     .method(1) // MethodDef row index
+///     .association_from_property(1) // Property row index
+///     .build(assembly)?;
 ///
-/// // Create setter semantic relationship  
+/// // Create setter semantic relationship
 /// let setter_semantic = MethodSemanticsBuilder::new()
 ///     .semantics(MethodSemanticsAttributes::SETTER)
-///     .method(Token::new(0x06000002)) // MethodDef token
-///     .association_from_property(Token::new(0x17000001)) // Same property
-///     .build(context)?;
+///     .method(2) // MethodDef row index
+///     .association_from_property(1) // Same property
+///     .build(assembly)?;
 /// # Ok(())
 /// # }
 /// ```
 ///
 /// ## Event Add/Remove Relationship
 ///
-/// ```rust
+/// ```rust,no_run
 /// use dotscope::prelude::*;
 ///
-/// # fn example(context: &mut BuilderContext) -> Result<()> {
+/// # fn example(assembly: &mut CilAssembly) -> Result<()> {
 /// // Create event add handler relationship
 /// let add_semantic = MethodSemanticsBuilder::new()
 ///     .semantics(MethodSemanticsAttributes::ADD_ON)
-///     .method(Token::new(0x06000003)) // Add method token
-///     .association_from_event(Token::new(0x14000001)) // Event token
-///     .build(context)?;
+///     .method(3) // Add method row index
+///     .association_from_event(1) // Event row index
+///     .build(assembly)?;
 ///
 /// // Create event remove handler relationship
 /// let remove_semantic = MethodSemanticsBuilder::new()
 ///     .semantics(MethodSemanticsAttributes::REMOVE_ON)
-///     .method(Token::new(0x06000004)) // Remove method token
-///     .association_from_event(Token::new(0x14000001)) // Same event
-///     .build(context)?;
+///     .method(4) // Remove method row index
+///     .association_from_event(1) // Same event
+///     .build(assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -109,15 +122,15 @@ pub struct MethodSemanticsBuilder {
 
     /// Method that implements the semantic behavior.
     ///
-    /// Token referencing a MethodDef entry that provides the concrete implementation
-    /// for the semantic relationship.
-    method: Option<Token>,
+    /// Row index referencing a MethodDef entry that provides the concrete implementation
+    /// for the semantic relationship. Can be a placeholder or actual row ID.
+    method: Option<u32>,
 
-    /// HasSemantics coded index to the associated property or event.
+    /// Association target capturing the row index and target table type.
     ///
-    /// References either an Event or Property table entry that this method
-    /// provides semantic behavior for.
-    association: Option<CodedIndex>,
+    /// The row index can be a placeholder or actual row ID. The `CodedIndex`
+    /// is constructed at write time, not at builder time.
+    association: Option<AssociationTarget>,
 }
 
 impl MethodSemanticsBuilder {
@@ -179,12 +192,12 @@ impl MethodSemanticsBuilder {
 
     /// Sets the method that implements the semantic behavior.
     ///
-    /// Specifies the MethodDef token for the method that provides the concrete
+    /// Specifies the MethodDef row index for the method that provides the concrete
     /// implementation of the semantic relationship.
     ///
     /// # Arguments
     ///
-    /// * `method` - Token referencing a MethodDef table entry
+    /// * `method` - Row index referencing a MethodDef table entry
     ///
     /// # Returns
     ///
@@ -196,22 +209,23 @@ impl MethodSemanticsBuilder {
     /// use dotscope::prelude::*;
     ///
     /// let builder = MethodSemanticsBuilder::new()
-    ///     .method(Token::new(0x06000001)); // MethodDef token
+    ///     .method(1); // MethodDef row index
     /// ```
     #[must_use]
-    pub fn method(mut self, method: Token) -> Self {
+    pub fn method(mut self, method: u32) -> Self {
         self.method = Some(method);
         self
     }
 
-    /// Sets the association to a property using its token.
+    /// Sets the association to a property using its row index or placeholder.
     ///
-    /// Creates a HasSemantics coded index referencing a Property table entry
-    /// that this method provides semantic behavior for.
+    /// Stores the property row index for later construction of a HasSemantics coded index
+    /// during the write phase. The `CodedIndex` is NOT created at builder time to ensure
+    /// proper placeholder resolution.
     ///
     /// # Arguments
     ///
-    /// * `property` - Token referencing a Property table entry
+    /// * `property` - Row index or placeholder referencing a Property table entry
     ///
     /// # Returns
     ///
@@ -223,26 +237,23 @@ impl MethodSemanticsBuilder {
     /// use dotscope::prelude::*;
     ///
     /// let builder = MethodSemanticsBuilder::new()
-    ///     .association_from_property(Token::new(0x17000001)); // Property token
+    ///     .association_from_property(1); // Property row index
     /// ```
     #[must_use]
-    pub fn association_from_property(mut self, property: Token) -> Self {
-        self.association = Some(CodedIndex::new(
-            TableId::Property,
-            property.row(),
-            CodedIndexType::HasSemantics,
-        ));
+    pub fn association_from_property(mut self, property: u32) -> Self {
+        self.association = Some(AssociationTarget::Property(property));
         self
     }
 
-    /// Sets the association to an event using its token.
+    /// Sets the association to an event using its row index or placeholder.
     ///
-    /// Creates a HasSemantics coded index referencing an Event table entry
-    /// that this method provides semantic behavior for.
+    /// Stores the event row index for later construction of a HasSemantics coded index
+    /// during the write phase. The `CodedIndex` is NOT created at builder time to ensure
+    /// proper placeholder resolution.
     ///
     /// # Arguments
     ///
-    /// * `event` - Token referencing an Event table entry
+    /// * `event` - Row index or placeholder referencing an Event table entry
     ///
     /// # Returns
     ///
@@ -254,60 +265,23 @@ impl MethodSemanticsBuilder {
     /// use dotscope::prelude::*;
     ///
     /// let builder = MethodSemanticsBuilder::new()
-    ///     .association_from_event(Token::new(0x14000001)); // Event token
+    ///     .association_from_event(1); // Event row index
     /// ```
     #[must_use]
-    pub fn association_from_event(mut self, event: Token) -> Self {
-        self.association = Some(CodedIndex::new(
-            TableId::Event,
-            event.row(),
-            CodedIndexType::HasSemantics,
-        ));
-        self
-    }
-
-    /// Sets the association using a pre-constructed coded index.
-    ///
-    /// Allows direct specification of a HasSemantics coded index for advanced
-    /// scenarios where the coded index is constructed externally.
-    ///
-    /// # Arguments
-    ///
-    /// * `association` - HasSemantics coded index to property or event
-    ///
-    /// # Returns
-    ///
-    /// Updated builder instance for method chaining.
-    ///
-    /// # Examples
-    ///
-    /// ```rust
-    /// use dotscope::prelude::*;
-    ///
-    /// let coded_index = CodedIndex::new(
-    ///     TableId::Property,
-    ///     1,
-    ///     CodedIndexType::HasSemantics
-    /// );
-    ///
-    /// let builder = MethodSemanticsBuilder::new()
-    ///     .association(coded_index);
-    /// ```
-    #[must_use]
-    pub fn association(mut self, association: CodedIndex) -> Self {
-        self.association = Some(association);
+    pub fn association_from_event(mut self, event: u32) -> Self {
+        self.association = Some(AssociationTarget::Event(event));
         self
     }
 
     /// Builds the MethodSemantics entry and adds it to the assembly.
     ///
     /// Validates all required fields, creates the raw MethodSemantics entry,
-    /// and adds it to the MethodSemantics table through the builder context.
+    /// and adds it to the MethodSemantics table through the builder assembly.
     /// Returns the token for the newly created entry.
     ///
     /// # Arguments
     ///
-    /// * `context` - Mutable reference to the builder context for assembly modification
+    /// * `assembly` - Mutable reference to the CilAssembly for assembly modification
     ///
     /// # Returns
     ///
@@ -323,19 +297,19 @@ impl MethodSemanticsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// # fn example(context: &mut BuilderContext) -> Result<()> {
-    /// let semantic_token = MethodSemanticsBuilder::new()
+    /// # fn example(assembly: &mut CilAssembly) -> Result<()> {
+    /// let semantic_ref = MethodSemanticsBuilder::new()
     ///     .semantics(MethodSemanticsAttributes::GETTER)
-    ///     .method(Token::new(0x06000001))
-    ///     .association_from_property(Token::new(0x17000001))
-    ///     .build(context)?;
+    ///     .method(1)
+    ///     .association_from_property(1)
+    ///     .build(assembly)?;
     /// # Ok(())
     /// # }
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Validate required fields
         let semantics = self.semantics.ok_or_else(|| {
             Error::ModificationInvalid("MethodSemantics semantics field is required".to_string())
@@ -345,31 +319,35 @@ impl MethodSemanticsBuilder {
             Error::ModificationInvalid("MethodSemantics method field is required".to_string())
         })?;
 
-        let association = self.association.ok_or_else(|| {
+        let association_target = self.association.ok_or_else(|| {
             Error::ModificationInvalid("MethodSemantics association field is required".to_string())
         })?;
 
-        // Get the next RID for MethodSemantics table
-        let rid = context.next_rid(TableId::MethodSemantics);
-        let token = Token::new(((TableId::MethodSemantics as u32) << 24) | rid);
+        // Construct the CodedIndex from the stored target information.
+        // The row value may be a placeholder that will be resolved at write time
+        // by the ResolvePlaceholders implementation.
+        let association = match association_target {
+            AssociationTarget::Property(row) => {
+                CodedIndex::new(TableId::Property, row, CodedIndexType::HasSemantics)
+            }
+            AssociationTarget::Event(row) => {
+                CodedIndex::new(TableId::Event, row, CodedIndexType::HasSemantics)
+            }
+        };
 
-        // Create the raw MethodSemantics entry
         let method_semantics_raw = MethodSemanticsRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
             semantics,
-            method: method.row(),
+            method,
             association,
         };
 
-        // Add to the MethodSemantics table
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::MethodSemantics,
             TableDataOwned::MethodSemantics(method_semantics_raw),
-        )?;
-
-        Ok(token)
+        )
     }
 }
 
@@ -383,7 +361,7 @@ impl Default for MethodSemanticsBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
+        cilassembly::{ChangeRefKind, CilAssembly},
         metadata::{cilassemblyview::CilAssemblyView, tables::MethodSemanticsAttributes},
     };
     use std::{env, path::PathBuf};
@@ -408,17 +386,18 @@ mod tests {
     fn test_property_getter_semantic() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let semantic_token = MethodSemanticsBuilder::new()
+            let semantic_ref = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::GETTER)
-                .method(Token::new(0x06000001))
-                .association_from_property(Token::new(0x17000001))
-                .build(&mut context)?;
+                .method(1)
+                .association_from_property(1)
+                .build(&mut assembly)?;
 
-            assert!(semantic_token.row() > 0);
-            assert_eq!(semantic_token.table(), TableId::MethodSemantics as u8);
+            assert_eq!(
+                semantic_ref.kind(),
+                ChangeRefKind::TableRow(TableId::MethodSemantics)
+            );
         }
         Ok(())
     }
@@ -427,17 +406,18 @@ mod tests {
     fn test_property_setter_semantic() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let semantic_token = MethodSemanticsBuilder::new()
+            let semantic_ref = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::SETTER)
-                .method(Token::new(0x06000002))
-                .association_from_property(Token::new(0x17000001))
-                .build(&mut context)?;
+                .method(2)
+                .association_from_property(1)
+                .build(&mut assembly)?;
 
-            assert!(semantic_token.row() > 0);
-            assert_eq!(semantic_token.table(), TableId::MethodSemantics as u8);
+            assert_eq!(
+                semantic_ref.kind(),
+                ChangeRefKind::TableRow(TableId::MethodSemantics)
+            );
         }
         Ok(())
     }
@@ -446,17 +426,18 @@ mod tests {
     fn test_event_add_semantic() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let semantic_token = MethodSemanticsBuilder::new()
+            let semantic_ref = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::ADD_ON)
-                .method(Token::new(0x06000003))
-                .association_from_event(Token::new(0x14000001))
-                .build(&mut context)?;
+                .method(3)
+                .association_from_event(1)
+                .build(&mut assembly)?;
 
-            assert!(semantic_token.row() > 0);
-            assert_eq!(semantic_token.table(), TableId::MethodSemantics as u8);
+            assert_eq!(
+                semantic_ref.kind(),
+                ChangeRefKind::TableRow(TableId::MethodSemantics)
+            );
         }
         Ok(())
     }
@@ -465,17 +446,18 @@ mod tests {
     fn test_event_remove_semantic() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let semantic_token = MethodSemanticsBuilder::new()
+            let semantic_ref = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::REMOVE_ON)
-                .method(Token::new(0x06000004))
-                .association_from_event(Token::new(0x14000001))
-                .build(&mut context)?;
+                .method(4)
+                .association_from_event(1)
+                .build(&mut assembly)?;
 
-            assert!(semantic_token.row() > 0);
-            assert_eq!(semantic_token.table(), TableId::MethodSemantics as u8);
+            assert_eq!(
+                semantic_ref.kind(),
+                ChangeRefKind::TableRow(TableId::MethodSemantics)
+            );
         }
         Ok(())
     }
@@ -484,17 +466,18 @@ mod tests {
     fn test_event_fire_semantic() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let semantic_token = MethodSemanticsBuilder::new()
+            let semantic_ref = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::FIRE)
-                .method(Token::new(0x06000005))
-                .association_from_event(Token::new(0x14000001))
-                .build(&mut context)?;
+                .method(5)
+                .association_from_event(1)
+                .build(&mut assembly)?;
 
-            assert!(semantic_token.row() > 0);
-            assert_eq!(semantic_token.table(), TableId::MethodSemantics as u8);
+            assert_eq!(
+                semantic_ref.kind(),
+                ChangeRefKind::TableRow(TableId::MethodSemantics)
+            );
         }
         Ok(())
     }
@@ -503,38 +486,39 @@ mod tests {
     fn test_combined_semantics() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let semantic_token = MethodSemanticsBuilder::new()
+            let semantic_ref = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::GETTER | MethodSemanticsAttributes::OTHER)
-                .method(Token::new(0x06000006))
-                .association_from_property(Token::new(0x17000002))
-                .build(&mut context)?;
+                .method(6)
+                .association_from_property(2)
+                .build(&mut assembly)?;
 
-            assert!(semantic_token.row() > 0);
-            assert_eq!(semantic_token.table(), TableId::MethodSemantics as u8);
+            assert_eq!(
+                semantic_ref.kind(),
+                ChangeRefKind::TableRow(TableId::MethodSemantics)
+            );
         }
         Ok(())
     }
 
     #[test]
-    fn test_direct_coded_index() -> Result<()> {
+    fn test_association_with_row_index() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let coded_index = CodedIndex::new(TableId::Property, 1, CodedIndexType::HasSemantics);
-
-            let semantic_token = MethodSemanticsBuilder::new()
+            // Test using direct row index (not a placeholder)
+            let semantic_ref = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::GETTER)
-                .method(Token::new(0x06000007))
-                .association(coded_index)
-                .build(&mut context)?;
+                .method(7)
+                .association_from_property(1)
+                .build(&mut assembly)?;
 
-            assert!(semantic_token.row() > 0);
-            assert_eq!(semantic_token.table(), TableId::MethodSemantics as u8);
+            assert_eq!(
+                semantic_ref.kind(),
+                ChangeRefKind::TableRow(TableId::MethodSemantics)
+            );
         }
         Ok(())
     }
@@ -543,33 +527,41 @@ mod tests {
     fn test_multiple_method_semantics() -> Result<()> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Create multiple semantic relationships for the same property
-            let getter_token = MethodSemanticsBuilder::new()
+            let getter_ref = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::GETTER)
-                .method(Token::new(0x06000001))
-                .association_from_property(Token::new(0x17000001))
-                .build(&mut context)?;
+                .method(1)
+                .association_from_property(1)
+                .build(&mut assembly)?;
 
-            let setter_token = MethodSemanticsBuilder::new()
+            let setter_ref = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::SETTER)
-                .method(Token::new(0x06000002))
-                .association_from_property(Token::new(0x17000001))
-                .build(&mut context)?;
+                .method(2)
+                .association_from_property(1)
+                .build(&mut assembly)?;
 
-            let other_token = MethodSemanticsBuilder::new()
+            let other_ref = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::OTHER)
-                .method(Token::new(0x06000003))
-                .association_from_property(Token::new(0x17000001))
-                .build(&mut context)?;
+                .method(3)
+                .association_from_property(1)
+                .build(&mut assembly)?;
 
-            assert!(getter_token.row() > 0);
-            assert!(setter_token.row() > 0);
-            assert!(other_token.row() > 0);
-            assert!(getter_token.row() != setter_token.row());
-            assert!(setter_token.row() != other_token.row());
+            assert_eq!(
+                getter_ref.kind(),
+                ChangeRefKind::TableRow(TableId::MethodSemantics)
+            );
+            assert_eq!(
+                setter_ref.kind(),
+                ChangeRefKind::TableRow(TableId::MethodSemantics)
+            );
+            assert_eq!(
+                other_ref.kind(),
+                ChangeRefKind::TableRow(TableId::MethodSemantics)
+            );
+            assert!(!std::sync::Arc::ptr_eq(&getter_ref, &setter_ref));
+            assert!(!std::sync::Arc::ptr_eq(&setter_ref, &other_ref));
         }
         Ok(())
     }
@@ -578,13 +570,12 @@ mod tests {
     fn test_build_without_semantics_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = MethodSemanticsBuilder::new()
-                .method(Token::new(0x06000001))
-                .association_from_property(Token::new(0x17000001))
-                .build(&mut context);
+                .method(1)
+                .association_from_property(1)
+                .build(&mut assembly);
 
             assert!(result.is_err());
             assert!(result
@@ -598,13 +589,12 @@ mod tests {
     fn test_build_without_method_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::GETTER)
-                .association_from_property(Token::new(0x17000001))
-                .build(&mut context);
+                .association_from_property(1)
+                .build(&mut assembly);
 
             assert!(result.is_err());
             assert!(result
@@ -618,13 +608,12 @@ mod tests {
     fn test_build_without_association_fails() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = MethodSemanticsBuilder::new()
                 .semantics(MethodSemanticsAttributes::GETTER)
-                .method(Token::new(0x06000001))
-                .build(&mut context);
+                .method(1)
+                .build(&mut assembly);
 
             assert!(result.is_err());
             assert!(result

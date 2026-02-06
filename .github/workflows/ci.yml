@@ -89,6 +89,29 @@ jobs:
     - name: Check documentation
       run: cargo doc --no-deps
 
+  # Ensures the crate compiles and tests pass without legacy-crypto feature (Linux only)
+  minimal-features:
+    name: Minimal Features
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Setup Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: minimal-features
+
+    - name: Check compilation (no default features)
+      run: cargo check --no-default-features
+
+    - name: Run tests (no default features)
+      run: cargo test --no-default-features --release --verbose
+
   # Fuzzing on pushes to master or PRs targeting master
   fuzzing:
     name: Quick Fuzzing

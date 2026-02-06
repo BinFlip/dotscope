@@ -30,6 +30,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::DeclSecurityRaw,
     },
@@ -81,18 +82,29 @@ impl MetadataLoader for DeclSecurityLoader {
     /// - Type inheritance security constraints
     /// - JIT-time security validation
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<DeclSecurityRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
-                    owned.apply()?;
+        let (Some(header), Some(blob)) = (context.meta, context.blobs) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<DeclSecurityRaw>() else {
+            return Ok(());
+        };
 
-                    context.decl_security.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("decl security 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned(|coded_index| context.get_ref(coded_index), blob),
+                DiagnosticCategory::Table,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(owned.apply(), DiagnosticCategory::Table, token_msg)?;
+            context.decl_security.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for the `DeclSecurity` table

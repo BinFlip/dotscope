@@ -29,7 +29,7 @@
 //!
 //! ## Basic Permission Set Analysis
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::{CilObject, metadata::security::PermissionSet};
 //!
 //! let assembly = CilObject::from_path("legacy_app.dll")?;
@@ -48,7 +48,7 @@
 //!
 //! ## Detailed Permission Analysis
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::security::{PermissionSet, Permission, SecurityAction};
 //!
 //! # let permission_set_data = &[0u8; 100]; // placeholder
@@ -131,7 +131,7 @@ mod tests {
     use crate::{
         metadata::security::{
             encode_permission_set, ArgumentType, ArgumentValue, NamedArgument, Permission,
-            PermissionSet, PermissionSetBuilder, PermissionSetFormat,
+            PermissionSet, PermissionSetBuilder, PermissionSetFormat, SecurityAction,
         },
         Result,
     };
@@ -449,8 +449,6 @@ mod tests {
     /// Test security action conversion works correctly.
     #[test]
     fn test_security_actions() {
-        use crate::metadata::security::SecurityAction;
-
         let actions = vec![
             SecurityAction::Demand,
             SecurityAction::Assert,

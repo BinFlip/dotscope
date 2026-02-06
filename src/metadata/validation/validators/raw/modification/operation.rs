@@ -606,8 +606,12 @@ mod tests {
     use super::*;
     use crate::{
         cilassembly::AssemblyChanges,
-        metadata::cilassemblyview::CilAssemblyView,
-        metadata::validation::ValidationConfig,
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            validation::{
+                context::RawValidationContext, scanner::ReferenceScanner, ValidationConfig,
+            },
+        },
         test::{
             factories::validation::raw_modification_operation::*, get_testfile_wb, validator_test,
         },
@@ -732,10 +736,6 @@ mod tests {
         validator: &RawOperationValidator,
         corrupted_changes: AssemblyChanges,
     ) -> Result<()> {
-        use crate::metadata::validation::{
-            context::RawValidationContext, scanner::ReferenceScanner,
-        };
-
         let Some(clean_testfile) = get_testfile_wb() else {
             return Err(Error::Other("WindowsBase.dll not available".to_string()));
         };

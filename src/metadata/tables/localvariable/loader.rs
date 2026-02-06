@@ -6,6 +6,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::TableId,
     },
@@ -37,20 +38,30 @@ pub struct LocalVariableLoader;
 
 impl MetadataLoader for LocalVariableLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<crate::metadata::tables::LocalVariableRaw>() {
-                if let Some(strings) = context.strings {
-                    table.par_iter().try_for_each(|row| {
-                        let local_variable = row.to_owned(strings)?;
-                        context
-                            .local_variable
-                            .insert(local_variable.token, local_variable);
-                        Ok(())
-                    })?;
-                }
-            }
-        }
-        Ok(())
+        let (Some(header), Some(strings)) = (context.meta, context.strings) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<crate::metadata::tables::LocalVariableRaw>() else {
+            return Ok(());
+        };
+
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("local variable 0x{:08x}", row.token.value());
+
+            let Some(local_variable) = context.handle_result(
+                row.to_owned(strings),
+                DiagnosticCategory::Method,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context
+                .local_variable
+                .insert(local_variable.token, local_variable);
+            Ok(())
+        })
     }
 
     fn table_id(&self) -> Option<TableId> {

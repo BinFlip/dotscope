@@ -35,7 +35,7 @@
 //!     .add()?
 //!     .ret()?;
 //!
-//! let bytecode = assembler.finish()?;
+//! let (bytecode, max_stack, handlers) = assembler.finish()?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -56,7 +56,7 @@
 //!     .label("end")?
 //!     .ret()?;
 //!
-//! let bytecode = assembler.finish()?;
+//! let (bytecode, max_stack, handlers) = assembler.finish()?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -74,15 +74,59 @@
 //!     .add()?     // Add them
 //!     .ret()?;    // Return result
 //!
-//! let method_body = assembler.finish()?;
+//! let (bytecode, max_stack, handlers) = assembler.finish()?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 
+use std::collections::HashMap;
+
 use crate::{
     assembly::{encoder::InstructionEncoder, Immediate, Operand},
-    metadata::token::Token,
-    Result,
+    metadata::{
+        method::{ExceptionHandler, ExceptionHandlerFlags},
+        token::Token,
+    },
+    Error, Result,
 };
+
+/// Types of exception handlers that can be attached to a try block.
+#[derive(Debug, Clone)]
+enum HandlerKind {
+    /// A catch handler that catches a specific exception type.
+    /// The token is a TypeDef, TypeRef, or TypeSpec for the exception type.
+    Catch(Token),
+    /// A filter handler with custom filter logic.
+    /// The filter expression evaluates to determine if the handler should run.
+    Filter,
+    /// A finally handler that always executes.
+    Finally,
+    /// A fault handler that executes only on exceptions.
+    Fault,
+}
+
+/// Information about a handler block being built.
+#[derive(Debug, Clone)]
+struct HandlerInfo {
+    /// The kind of handler (catch, filter, finally, fault).
+    kind: HandlerKind,
+    /// Label marking the start of the handler.
+    start_label: String,
+    /// Label marking the end of the handler (optional, set when handler ends).
+    end_label: Option<String>,
+    /// For filter handlers, the label marking the filter expression start.
+    filter_label: Option<String>,
+}
+
+/// Information about a try block being built.
+#[derive(Debug, Clone)]
+struct TryBlockInfo {
+    /// Label marking the start of the try block.
+    start_label: String,
+    /// Label marking the end of the try block (set when try block ends).
+    end_label: Option<String>,
+    /// Handlers attached to this try block.
+    handlers: Vec<HandlerInfo>,
+}
 
 /// High-level fluent API for assembling CIL instructions.
 ///
@@ -121,7 +165,7 @@ use crate::{
 ///    .add()?
 ///    .ret()?;
 ///
-/// let bytecode = asm.finish()?;
+/// let (bytecode, max_stack, handlers) = asm.finish()?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
@@ -141,12 +185,16 @@ use crate::{
 ///    .ldc_i4_1()?
 ///    .ret()?;
 ///
-/// let bytecode = asm.finish()?;
+/// let (bytecode, max_stack, handlers) = asm.finish()?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct InstructionAssembler {
     /// Core encoder for instruction generation with built-in stack tracking
     encoder: InstructionEncoder,
+    /// Try blocks being built, keyed by their name
+    try_blocks: HashMap<String, TryBlockInfo>,
+    /// Counter for generating unique internal labels
+    label_counter: u32,
 }
 
 impl InstructionAssembler {
@@ -168,20 +216,23 @@ impl InstructionAssembler {
     pub fn new() -> Self {
         Self {
             encoder: InstructionEncoder::new(),
+            try_blocks: HashMap::new(),
+            label_counter: 0,
         }
     }
 
-    /// Finalize assembly and return the complete bytecode with stack information.
+    /// Finalize assembly and return the complete bytecode with stack and handler info.
     ///
-    /// This method completes the assembly process by resolving all label references
-    /// and generating the final CIL bytecode. After calling this method, the
-    /// assembler cannot be used for further instruction emission.
+    /// This method completes the assembly process by resolving all label references,
+    /// generating the final CIL bytecode, and building exception handler metadata
+    /// from any try/catch/finally blocks defined using the structured API.
     ///
     /// # Returns
     ///
     /// A tuple containing:
     /// - The complete CIL bytecode with all labels resolved
     /// - The maximum stack depth required during execution
+    /// - Exception handlers built from structured try/catch/finally blocks (empty if none)
     ///
     /// # Errors
     ///
@@ -189,8 +240,11 @@ impl InstructionAssembler {
     /// - Any referenced labels are undefined
     /// - Branch offsets exceed the allowed range for their instruction type
     /// - Stack underflow occurred during assembly (negative stack depth)
+    /// - Exception handlers are incomplete (missing end labels)
     ///
     /// # Examples
+    ///
+    /// ## Simple method without exception handlers
     ///
     /// ```rust,no_run
     /// use dotscope::assembly::InstructionAssembler;
@@ -198,13 +252,98 @@ impl InstructionAssembler {
     /// let mut assembler = InstructionAssembler::new();
     /// assembler.ldc_i4_1()?.ret()?; // Pushes 1, then returns
     ///
-    /// let (bytecode, max_stack) = assembler.finish()?;
+    /// let (bytecode, max_stack, handlers) = assembler.finish()?;
     /// assert_eq!(bytecode, vec![0x17, 0x2A]); // ldc.i4.1, ret
     /// assert_eq!(max_stack, 1); // Maximum stack depth was 1
+    /// assert!(handlers.is_empty()); // No exception handlers
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn finish(self) -> Result<(Vec<u8>, u16)> {
-        self.encoder.finalize()
+    ///
+    /// ## Method with try/catch
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionAssembler;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let mut asm = InstructionAssembler::new();
+    /// let exception_type = Token::new(0x01000001); // TypeRef for System.Exception
+    ///
+    /// asm.try_start("my_try")?
+    ///     .ldarg_0()?
+    ///     .leave_s("end")?
+    ///     .try_end("my_try")?
+    ///     .catch_start("my_try", exception_type)?
+    ///     .pop()?  // Pop the exception object
+    ///     .ldc_i4_0()?
+    ///     .leave_s("end")?
+    ///     .catch_end("my_try")?
+    ///     .label("end")?
+    ///     .ret()?;
+    ///
+    /// let (bytecode, max_stack, handlers) = asm.finish()?;
+    /// assert_eq!(handlers.len(), 1);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn finish(self) -> Result<(Vec<u8>, u16, Vec<ExceptionHandler>)> {
+        // Finalize encoder and get label positions
+        let (bytecode, max_stack, labels) = self.encoder.finalize()?;
+
+        // Build exception handlers from try block info
+        let mut handlers = Vec::new();
+        for try_block in self.try_blocks.values() {
+            let try_start = labels
+                .get(&try_block.start_label)
+                .ok_or_else(|| Error::UndefinedLabel(try_block.start_label.clone()))?;
+            let try_end_label = try_block
+                .end_label
+                .as_ref()
+                .ok_or_else(|| malformed_error!("Try block has no end label"))?;
+            let try_end = labels
+                .get(try_end_label)
+                .ok_or_else(|| Error::UndefinedLabel(try_end_label.clone()))?;
+
+            for handler in &try_block.handlers {
+                let handler_start = labels
+                    .get(&handler.start_label)
+                    .ok_or_else(|| Error::UndefinedLabel(handler.start_label.clone()))?;
+                let handler_end_label = handler
+                    .end_label
+                    .as_ref()
+                    .ok_or_else(|| malformed_error!("Handler has no end label"))?;
+                let handler_end = labels
+                    .get(handler_end_label)
+                    .ok_or_else(|| Error::UndefinedLabel(handler_end_label.clone()))?;
+
+                let (flags, filter_offset, class_token) = match &handler.kind {
+                    HandlerKind::Catch(token) => {
+                        (ExceptionHandlerFlags::EXCEPTION, token.value(), None)
+                    }
+                    HandlerKind::Filter => {
+                        let filter_label = handler.filter_label.as_ref().ok_or_else(|| {
+                            malformed_error!("Filter handler has no filter label")
+                        })?;
+                        let filter_offset = labels
+                            .get(filter_label)
+                            .ok_or_else(|| Error::UndefinedLabel(filter_label.clone()))?;
+                        (ExceptionHandlerFlags::FILTER, *filter_offset, None)
+                    }
+                    HandlerKind::Finally => (ExceptionHandlerFlags::FINALLY, 0, None),
+                    HandlerKind::Fault => (ExceptionHandlerFlags::FAULT, 0, None),
+                };
+
+                handlers.push(ExceptionHandler {
+                    flags,
+                    try_offset: *try_start,
+                    try_length: try_end - try_start,
+                    handler_offset: *handler_start,
+                    handler_length: handler_end - handler_start,
+                    handler: class_token,
+                    filter_offset,
+                });
+            }
+        }
+
+        Ok((bytecode, max_stack, handlers))
     }
 
     /// Get the current maximum stack depth without finalizing the assembly.
@@ -325,6 +464,647 @@ impl InstructionAssembler {
     pub fn label(&mut self, name: &str) -> Result<&mut Self> {
         self.encoder.define_label(name)?;
         Ok(self)
+    }
+
+    /// Generate a unique internal label name.
+    fn generate_label(&mut self, prefix: &str) -> String {
+        self.label_counter += 1;
+        format!("__{}_{}", prefix, self.label_counter)
+    }
+
+    /// Start a try block with the given name.
+    ///
+    /// This marks the beginning of a protected region. The try block must be
+    /// ended with [`try_end`](Self::try_end) before adding handlers.
+    ///
+    /// # Parameters
+    ///
+    /// * `name` - Unique name for this try block (used to attach handlers)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a try block with the same name already exists.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionAssembler;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let mut asm = InstructionAssembler::new();
+    /// let exception_type = Token::new(0x01000001);
+    ///
+    /// asm.try_start("my_try")?
+    ///     .ldarg_0()?
+    ///     .leave_s("end")?
+    ///     .try_end("my_try")?
+    ///     .catch_start("my_try", exception_type)?
+    ///     .pop()?
+    ///     .ldc_i4_0()?
+    ///     .leave_s("end")?
+    ///     .catch_end("my_try")?
+    ///     .label("end")?
+    ///     .ret()?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn try_start(&mut self, name: &str) -> Result<&mut Self> {
+        if self.try_blocks.contains_key(name) {
+            return Err(malformed_error!("Try block '{}' already exists", name));
+        }
+
+        let start_label = self.generate_label(&format!("try_{name}_start"));
+        self.encoder.define_label(&start_label)?;
+
+        self.try_blocks.insert(
+            name.to_string(),
+            TryBlockInfo {
+                start_label,
+                end_label: None,
+                handlers: Vec::new(),
+            },
+        );
+
+        Ok(self)
+    }
+
+    /// End a try block.
+    ///
+    /// This marks the end of the protected region. After calling this, you can
+    /// attach handlers using [`catch_start`](Self::catch_start),
+    /// [`finally_start`](Self::finally_start), [`fault_start`](Self::fault_start),
+    /// or [`filter_start`](Self::filter_start).
+    ///
+    /// # Parameters
+    ///
+    /// * `name` - The name of the try block to end
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the try block doesn't exist or was already ended.
+    pub fn try_end(&mut self, name: &str) -> Result<&mut Self> {
+        // Check that try block exists and is not already ended
+        {
+            let try_block = self
+                .try_blocks
+                .get(name)
+                .ok_or_else(|| malformed_error!("Try block '{}' not found", name))?;
+
+            if try_block.end_label.is_some() {
+                return Err(malformed_error!("Try block '{}' already ended", name));
+            }
+        }
+
+        // Generate label and define it (requires mutable self)
+        let end_label = self.generate_label(&format!("try_{name}_end"));
+        self.encoder.define_label(&end_label)?;
+
+        // Update try block with end label
+        if let Some(try_block) = self.try_blocks.get_mut(name) {
+            try_block.end_label = Some(end_label);
+        }
+
+        Ok(self)
+    }
+
+    /// Start a catch handler for a try block.
+    ///
+    /// The catch handler catches exceptions of the specified type. At the start
+    /// of a catch handler, the CLR pushes the exception object onto the stack,
+    /// so the stack depth is automatically bumped by 1.
+    ///
+    /// # Parameters
+    ///
+    /// * `try_name` - The name of the try block this handler belongs to
+    /// * `exception_type` - Token for the exception type to catch (TypeDef/TypeRef/TypeSpec)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the try block doesn't exist or hasn't been ended.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionAssembler;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let mut asm = InstructionAssembler::new();
+    /// let exception_type = Token::new(0x01000001);
+    ///
+    /// asm.try_start("try1")?
+    ///     .ldarg_0()?
+    ///     .leave_s("end")?
+    ///     .try_end("try1")?
+    ///     .catch_start("try1", exception_type)?
+    ///     // Exception object is on the stack here
+    ///     .pop()?  // Remove it if not needed
+    ///     .ldc_i4_m1()?
+    ///     .leave_s("end")?
+    ///     .catch_end("try1")?
+    ///     .label("end")?
+    ///     .ret()?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn catch_start(&mut self, try_name: &str, exception_type: Token) -> Result<&mut Self> {
+        // Check that try block exists and is ended
+        {
+            let try_block = self
+                .try_blocks
+                .get(try_name)
+                .ok_or_else(|| malformed_error!("Try block '{}' not found", try_name))?;
+
+            if try_block.end_label.is_none() {
+                return Err(malformed_error!(
+                    "Try block '{}' must be ended before adding handlers",
+                    try_name
+                ));
+            }
+        }
+
+        // Generate label and set up stack (requires mutable self)
+        let start_label = self.generate_label(&format!("catch_{try_name}"));
+        self.encoder.define_label(&start_label)?;
+
+        // Catch handlers have the exception object pushed by the CLR
+        // Set stack depth to 1 at this label
+        self.encoder.set_stack_depth(1);
+        self.encoder.set_label_stack_depth(&start_label, 1);
+
+        // Add handler to try block
+        if let Some(try_block) = self.try_blocks.get_mut(try_name) {
+            try_block.handlers.push(HandlerInfo {
+                kind: HandlerKind::Catch(exception_type),
+                start_label,
+                end_label: None,
+                filter_label: None,
+            });
+        }
+
+        Ok(self)
+    }
+
+    /// End a catch handler.
+    ///
+    /// # Parameters
+    ///
+    /// * `try_name` - The name of the try block whose catch handler to end
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no catch handler is active for this try block.
+    pub fn catch_end(&mut self, try_name: &str) -> Result<&mut Self> {
+        // Find the handler index (immutable borrow)
+        let handler_idx = {
+            let try_block = self
+                .try_blocks
+                .get(try_name)
+                .ok_or_else(|| malformed_error!("Try block '{}' not found", try_name))?;
+
+            try_block
+                .handlers
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, h)| matches!(h.kind, HandlerKind::Catch(_)) && h.end_label.is_none())
+                .map(|(i, _)| i)
+                .ok_or_else(|| {
+                    malformed_error!("No active catch handler for try block '{}'", try_name)
+                })?
+        };
+
+        // Generate label (requires mutable self)
+        let end_label = self.generate_label(&format!("catch_{try_name}_end"));
+        self.encoder.define_label(&end_label)?;
+
+        // Update handler (mutable borrow)
+        if let Some(try_block) = self.try_blocks.get_mut(try_name) {
+            try_block.handlers[handler_idx].end_label = Some(end_label);
+        }
+
+        Ok(self)
+    }
+
+    /// Start a finally handler for a try block.
+    ///
+    /// Finally handlers always execute, whether the try block completes normally
+    /// or throws an exception. Finally handlers do not have the exception object
+    /// on the stack - they execute with an empty evaluation stack.
+    ///
+    /// # Parameters
+    ///
+    /// * `try_name` - The name of the try block this handler belongs to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the try block doesn't exist or hasn't been ended.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionAssembler;
+    ///
+    /// let mut asm = InstructionAssembler::new();
+    ///
+    /// asm.try_start("try1")?
+    ///     .ldarg_0()?
+    ///     .leave_s("end")?
+    ///     .try_end("try1")?
+    ///     .finally_start("try1")?
+    ///     // Cleanup code here - stack is empty
+    ///     .endfinally()?
+    ///     .finally_end("try1")?
+    ///     .label("end")?
+    ///     .ret()?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn finally_start(&mut self, try_name: &str) -> Result<&mut Self> {
+        // Check that try block exists and is ended
+        {
+            let try_block = self
+                .try_blocks
+                .get(try_name)
+                .ok_or_else(|| malformed_error!("Try block '{}' not found", try_name))?;
+
+            if try_block.end_label.is_none() {
+                return Err(malformed_error!(
+                    "Try block '{}' must be ended before adding handlers",
+                    try_name
+                ));
+            }
+        }
+
+        // Generate label and set up stack (requires mutable self)
+        let start_label = self.generate_label(&format!("finally_{try_name}"));
+        self.encoder.define_label(&start_label)?;
+
+        // Finally handlers have an empty stack
+        self.encoder.set_stack_depth(0);
+        self.encoder.set_label_stack_depth(&start_label, 0);
+
+        // Add handler to try block
+        if let Some(try_block) = self.try_blocks.get_mut(try_name) {
+            try_block.handlers.push(HandlerInfo {
+                kind: HandlerKind::Finally,
+                start_label,
+                end_label: None,
+                filter_label: None,
+            });
+        }
+
+        Ok(self)
+    }
+
+    /// End a finally handler.
+    ///
+    /// # Parameters
+    ///
+    /// * `try_name` - The name of the try block whose finally handler to end
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no finally handler is active for this try block.
+    pub fn finally_end(&mut self, try_name: &str) -> Result<&mut Self> {
+        // Find the handler index (immutable borrow)
+        let handler_idx = {
+            let try_block = self
+                .try_blocks
+                .get(try_name)
+                .ok_or_else(|| malformed_error!("Try block '{}' not found", try_name))?;
+
+            try_block
+                .handlers
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, h)| matches!(h.kind, HandlerKind::Finally) && h.end_label.is_none())
+                .map(|(i, _)| i)
+                .ok_or_else(|| {
+                    malformed_error!("No active finally handler for try block '{}'", try_name)
+                })?
+        };
+
+        // Generate label (requires mutable self)
+        let end_label = self.generate_label(&format!("finally_{try_name}_end"));
+        self.encoder.define_label(&end_label)?;
+
+        // Update handler (mutable borrow)
+        if let Some(try_block) = self.try_blocks.get_mut(try_name) {
+            try_block.handlers[handler_idx].end_label = Some(end_label);
+        }
+
+        Ok(self)
+    }
+
+    /// Start a fault handler for a try block.
+    ///
+    /// Fault handlers only execute when an exception is thrown. Like finally
+    /// handlers, they do not have the exception object on the stack.
+    ///
+    /// # Parameters
+    ///
+    /// * `try_name` - The name of the try block this handler belongs to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the try block doesn't exist or hasn't been ended.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionAssembler;
+    ///
+    /// let mut asm = InstructionAssembler::new();
+    ///
+    /// asm.try_start("try1")?
+    ///     .ldarg_0()?
+    ///     .leave_s("end")?
+    ///     .try_end("try1")?
+    ///     .fault_start("try1")?
+    ///     // Error cleanup code here - only runs on exception
+    ///     .endfinally()?  // Note: endfinally is used for both finally and fault
+    ///     .fault_end("try1")?
+    ///     .label("end")?
+    ///     .ret()?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn fault_start(&mut self, try_name: &str) -> Result<&mut Self> {
+        // Check that try block exists and is ended
+        {
+            let try_block = self
+                .try_blocks
+                .get(try_name)
+                .ok_or_else(|| malformed_error!("Try block '{}' not found", try_name))?;
+
+            if try_block.end_label.is_none() {
+                return Err(malformed_error!(
+                    "Try block '{}' must be ended before adding handlers",
+                    try_name
+                ));
+            }
+        }
+
+        // Generate label and set up stack (requires mutable self)
+        let start_label = self.generate_label(&format!("fault_{try_name}"));
+        self.encoder.define_label(&start_label)?;
+
+        // Fault handlers have an empty stack
+        self.encoder.set_stack_depth(0);
+        self.encoder.set_label_stack_depth(&start_label, 0);
+
+        // Add handler to try block
+        if let Some(try_block) = self.try_blocks.get_mut(try_name) {
+            try_block.handlers.push(HandlerInfo {
+                kind: HandlerKind::Fault,
+                start_label,
+                end_label: None,
+                filter_label: None,
+            });
+        }
+
+        Ok(self)
+    }
+
+    /// End a fault handler.
+    ///
+    /// # Parameters
+    ///
+    /// * `try_name` - The name of the try block whose fault handler to end
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no fault handler is active for this try block.
+    pub fn fault_end(&mut self, try_name: &str) -> Result<&mut Self> {
+        // Find the handler index (immutable borrow)
+        let handler_idx = {
+            let try_block = self
+                .try_blocks
+                .get(try_name)
+                .ok_or_else(|| malformed_error!("Try block '{}' not found", try_name))?;
+
+            try_block
+                .handlers
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, h)| matches!(h.kind, HandlerKind::Fault) && h.end_label.is_none())
+                .map(|(i, _)| i)
+                .ok_or_else(|| {
+                    malformed_error!("No active fault handler for try block '{}'", try_name)
+                })?
+        };
+
+        // Generate label (requires mutable self)
+        let end_label = self.generate_label(&format!("fault_{try_name}_end"));
+        self.encoder.define_label(&end_label)?;
+
+        // Update handler (mutable borrow)
+        if let Some(try_block) = self.try_blocks.get_mut(try_name) {
+            try_block.handlers[handler_idx].end_label = Some(end_label);
+        }
+
+        Ok(self)
+    }
+
+    /// Start a filter handler for a try block.
+    ///
+    /// Filter handlers use custom logic to determine whether to handle an exception.
+    /// At the filter expression entry, the exception object is on the stack.
+    /// The filter expression must leave a value on the stack (non-zero to handle,
+    /// zero to continue searching). Use [`endfilter`](Self::endfilter) to end the
+    /// filter expression, then the actual handler code follows.
+    ///
+    /// # Parameters
+    ///
+    /// * `try_name` - The name of the try block this handler belongs to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the try block doesn't exist or hasn't been ended.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionAssembler;
+    ///
+    /// let mut asm = InstructionAssembler::new();
+    ///
+    /// asm.try_start("try1")?
+    ///     .ldarg_0()?
+    ///     .leave_s("end")?
+    ///     .try_end("try1")?
+    ///     .filter_start("try1")?
+    ///     // Filter expression: exception object is on stack
+    ///     .pop()?  // Pop exception, push filter decision
+    ///     .ldc_i4_1()?  // Always handle (return true)
+    ///     .filter_handler("try1")?  // End filter, start handler
+    ///     // Handler code: exception object is on stack again
+    ///     .pop()?
+    ///     .ldc_i4_m1()?
+    ///     .leave_s("end")?
+    ///     .filter_end("try1")?
+    ///     .label("end")?
+    ///     .ret()?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn filter_start(&mut self, try_name: &str) -> Result<&mut Self> {
+        // Check that try block exists and is ended
+        {
+            let try_block = self
+                .try_blocks
+                .get(try_name)
+                .ok_or_else(|| malformed_error!("Try block '{}' not found", try_name))?;
+
+            if try_block.end_label.is_none() {
+                return Err(malformed_error!(
+                    "Try block '{}' must be ended before adding handlers",
+                    try_name
+                ));
+            }
+        }
+
+        // Generate label and set up stack (requires mutable self)
+        let filter_label = self.generate_label(&format!("filter_{try_name}"));
+        self.encoder.define_label(&filter_label)?;
+
+        // Filter expression entry: exception object is on stack
+        self.encoder.set_stack_depth(1);
+        self.encoder.set_label_stack_depth(&filter_label, 1);
+
+        // Add handler to try block
+        if let Some(try_block) = self.try_blocks.get_mut(try_name) {
+            try_block.handlers.push(HandlerInfo {
+                kind: HandlerKind::Filter,
+                start_label: String::new(), // Will be set in filter_handler
+                end_label: None,
+                filter_label: Some(filter_label),
+            });
+        }
+
+        Ok(self)
+    }
+
+    /// End filter expression and start the handler code.
+    ///
+    /// This method emits the `endfilter` instruction and marks the start of
+    /// the actual handler code. At this point, the exception object is pushed
+    /// onto the stack again.
+    ///
+    /// # Parameters
+    ///
+    /// * `try_name` - The name of the try block whose filter handler to transition
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no filter handler is active for this try block.
+    pub fn filter_handler(&mut self, try_name: &str) -> Result<&mut Self> {
+        // Emit endfilter instruction (pops the filter result)
+        self.encoder.emit_instruction("endfilter", None)?;
+
+        // Find the handler index (immutable borrow)
+        let handler_idx = {
+            let try_block = self
+                .try_blocks
+                .get(try_name)
+                .ok_or_else(|| malformed_error!("Try block '{}' not found", try_name))?;
+
+            try_block
+                .handlers
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, h)| matches!(h.kind, HandlerKind::Filter) && h.start_label.is_empty())
+                .map(|(i, _)| i)
+                .ok_or_else(|| {
+                    malformed_error!("No active filter expression for try block '{}'", try_name)
+                })?
+        };
+
+        // Generate label and set up stack (requires mutable self)
+        let start_label = self.generate_label(&format!("filter_{try_name}_handler"));
+        self.encoder.define_label(&start_label)?;
+
+        // Handler entry: exception object is on stack again
+        self.encoder.set_stack_depth(1);
+        self.encoder.set_label_stack_depth(&start_label, 1);
+
+        // Update handler (mutable borrow)
+        if let Some(try_block) = self.try_blocks.get_mut(try_name) {
+            try_block.handlers[handler_idx].start_label = start_label;
+        }
+
+        Ok(self)
+    }
+
+    /// End a filter handler.
+    ///
+    /// # Parameters
+    ///
+    /// * `try_name` - The name of the try block whose filter handler to end
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no filter handler is active for this try block.
+    pub fn filter_end(&mut self, try_name: &str) -> Result<&mut Self> {
+        // Find the handler index (immutable borrow)
+        let handler_idx = {
+            let try_block = self
+                .try_blocks
+                .get(try_name)
+                .ok_or_else(|| malformed_error!("Try block '{}' not found", try_name))?;
+
+            try_block
+                .handlers
+                .iter()
+                .enumerate()
+                .rev()
+                .find(|(_, h)| {
+                    matches!(h.kind, HandlerKind::Filter)
+                        && !h.start_label.is_empty()
+                        && h.end_label.is_none()
+                })
+                .map(|(i, _)| i)
+                .ok_or_else(|| {
+                    malformed_error!("No active filter handler for try block '{}'", try_name)
+                })?
+        };
+
+        // Generate label (requires mutable self)
+        let end_label = self.generate_label(&format!("filter_{try_name}_end"));
+        self.encoder.define_label(&end_label)?;
+
+        // Update handler (mutable borrow)
+        if let Some(try_block) = self.try_blocks.get_mut(try_name) {
+            try_block.handlers[handler_idx].end_label = Some(end_label);
+        }
+
+        Ok(self)
+    }
+
+    /// Check if a try block with the given name exists.
+    ///
+    /// # Parameters
+    ///
+    /// * `name` - The name of the try block to check
+    ///
+    /// # Returns
+    ///
+    /// `true` if a try block with the given name exists, `false` otherwise.
+    #[must_use]
+    pub fn has_try_block(&self, name: &str) -> bool {
+        self.try_blocks.contains_key(name)
+    }
+
+    /// Get the number of handlers attached to a try block.
+    ///
+    /// # Parameters
+    ///
+    /// * `name` - The name of the try block
+    ///
+    /// # Returns
+    ///
+    /// The number of handlers, or 0 if the try block doesn't exist.
+    #[must_use]
+    pub fn handler_count(&self, name: &str) -> usize {
+        self.try_blocks.get(name).map_or(0, |tb| tb.handlers.len())
     }
 
     /// Emit a NOP (no operation) instruction.
@@ -988,6 +1768,110 @@ impl InstructionAssembler {
     /// Returns an error if instruction encoding fails.
     pub fn rem(&mut self) -> Result<&mut Self> {
         self.encoder.emit_instruction("rem", None)?;
+        Ok(self)
+    }
+
+    /// Divide two unsigned values.
+    ///
+    /// **Opcode**: `0x5D`
+    /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn div_un(&mut self) -> Result<&mut Self> {
+        self.encoder.emit_instruction("div.un", None)?;
+        Ok(self)
+    }
+
+    /// Compute unsigned remainder of value1 divided by value2.
+    ///
+    /// **Opcode**: `0x5E`
+    /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn rem_un(&mut self) -> Result<&mut Self> {
+        self.encoder.emit_instruction("rem.un", None)?;
+        Ok(self)
+    }
+
+    /// Add two values with overflow check (signed).
+    ///
+    /// **Opcode**: `0xD6`
+    /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn add_ovf(&mut self) -> Result<&mut Self> {
+        self.encoder.emit_instruction("add.ovf", None)?;
+        Ok(self)
+    }
+
+    /// Add two unsigned values with overflow check.
+    ///
+    /// **Opcode**: `0xD7`
+    /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn add_ovf_un(&mut self) -> Result<&mut Self> {
+        self.encoder.emit_instruction("add.ovf.un", None)?;
+        Ok(self)
+    }
+
+    /// Multiply two values with overflow check (signed).
+    ///
+    /// **Opcode**: `0xD8`
+    /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn mul_ovf(&mut self) -> Result<&mut Self> {
+        self.encoder.emit_instruction("mul.ovf", None)?;
+        Ok(self)
+    }
+
+    /// Multiply two unsigned values with overflow check.
+    ///
+    /// **Opcode**: `0xD9`
+    /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn mul_ovf_un(&mut self) -> Result<&mut Self> {
+        self.encoder.emit_instruction("mul.ovf.un", None)?;
+        Ok(self)
+    }
+
+    /// Subtract two values with overflow check (signed).
+    ///
+    /// **Opcode**: `0xDA`
+    /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn sub_ovf(&mut self) -> Result<&mut Self> {
+        self.encoder.emit_instruction("sub.ovf", None)?;
+        Ok(self)
+    }
+
+    /// Subtract two unsigned values with overflow check.
+    ///
+    /// **Opcode**: `0xDB`
+    /// **Stack**: `..., value1, value2 → ..., result`
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    pub fn sub_ovf_un(&mut self) -> Result<&mut Self> {
+        self.encoder.emit_instruction("sub.ovf.un", None)?;
         Ok(self)
     }
 
@@ -1881,6 +2765,47 @@ impl InstructionAssembler {
         Ok(self)
     }
 
+    /// Multi-way branch (switch statement).
+    ///
+    /// **Opcode**: `0x45`
+    /// **Stack**: `..., value → ...`
+    ///
+    /// Pops an unsigned integer from the stack and uses it as an index into a table
+    /// of branch targets. If the value is within range (0 to n-1), execution transfers
+    /// to the corresponding label. If out of range, execution continues to the next
+    /// instruction (fall-through).
+    ///
+    /// # Parameters
+    ///
+    /// * `labels` - Target label names for each switch case (0-indexed)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionAssembler;
+    ///
+    /// let mut asm = InstructionAssembler::new();
+    /// asm.ldarg_0()?                      // Load switch value
+    ///    .switch(&["case0", "case1"])?   // Switch on value
+    ///    .ldc_i4_m1()?                   // Default: return -1
+    ///    .ret()?
+    ///    .label("case0")?
+    ///    .ldc_i4_0()?                    // Case 0: return 0
+    ///    .ret()?
+    ///    .label("case1")?
+    ///    .ldc_i4_1()?                    // Case 1: return 1
+    ///    .ret()?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn switch(&mut self, labels: &[&str]) -> Result<&mut Self> {
+        self.encoder.emit_switch(labels)?;
+        Ok(self)
+    }
+
     /// Branch if equal (long form).
     ///
     /// **Opcode**: `0x3B`
@@ -2043,6 +2968,7 @@ impl Default for InstructionAssembler {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::token::Token;
 
     #[test]
     fn test_fluent_api_basic() -> Result<()> {
@@ -2050,7 +2976,7 @@ mod tests {
 
         asm.nop()?.ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         assert_eq!(bytecode, vec![0x00, 0x2A]); // nop, ret
 
         Ok(())
@@ -2063,7 +2989,7 @@ mod tests {
         // Simple addition: return arg0 + arg1
         asm.ldarg_0()?.ldarg_1()?.add()?.ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         assert_eq!(bytecode, vec![0x02, 0x03, 0x58, 0x2A]); // ldarg.0, ldarg.1, add, ret
 
         Ok(())
@@ -2083,7 +3009,7 @@ mod tests {
             .ldc_i4_1()?
             .ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         // ldarg.0 (0x02), ldc.i4.0 (0x16), bgt.s (0x30) + offset, ldc.i4.0 (0x16), ret (0x2A), ldc.i4.1 (0x17), ret (0x2A)
         assert_eq!(bytecode.len(), 8); // Total should be 8 bytes
         assert_eq!(bytecode[0], 0x02); // ldarg.0
@@ -2102,7 +3028,7 @@ mod tests {
             .ldc_i4_const(42)? // ldc.i4.s 42
             .ldc_i4_const(1000)?; // ldc.i4 1000
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         assert_eq!(bytecode[0], 0x15); // ldc.i4.m1
         assert_eq!(bytecode[1], 0x1B); // ldc.i4.5
         assert_eq!(bytecode[2], 0x1F); // ldc.i4.s
@@ -2121,7 +3047,7 @@ mod tests {
             .ldarg_auto(5)? // ldarg.s 5
             .ldarg_auto(500)?; // ldarg 500
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         assert_eq!(bytecode[0], 0x02); // ldarg.0
         assert_eq!(bytecode[1], 0x03); // ldarg.1
         assert_eq!(bytecode[2], 0x0E); // ldarg.s
@@ -2143,7 +3069,7 @@ mod tests {
             .ldloc_0()? // Load local 0
             .ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         assert_eq!(bytecode, vec![0x02, 0x0A, 0x06, 0x2A]); // ldarg.0, stloc.0, ldloc.0, ret
 
         Ok(())
@@ -2158,7 +3084,7 @@ mod tests {
             .pop()? // Remove one copy
             .ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         assert_eq!(bytecode, vec![0x02, 0x25, 0x26, 0x2A]); // ldarg.0, dup, pop, ret
 
         Ok(())
@@ -2177,7 +3103,7 @@ mod tests {
             .xor()? // XOR the results
             .ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         // ldarg.0 (0x02), ldarg.1 (0x03), and (0x5F), ldarg.0 (0x02), ldarg.1 (0x03), or (0x60), xor (0x61), ret (0x2A)
         assert_eq!(
             bytecode,
@@ -2196,7 +3122,7 @@ mod tests {
             .ceq()? // Compare equal
             .ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         // ldarg.0 (0x02), ldarg.1 (0x03), ceq (0xFE 0x01), ret (0x2A)
         assert_eq!(bytecode, vec![0x02, 0x03, 0xFE, 0x01, 0x2A]);
 
@@ -2212,7 +3138,7 @@ mod tests {
             .conv_r8()? // Convert to double
             .ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         // ldarg.0 (0x02), conv.i4 (0x69), conv.r8 (0x6C), ret (0x2A)
         assert_eq!(bytecode, vec![0x02, 0x69, 0x6C, 0x2A]);
 
@@ -2227,7 +3153,7 @@ mod tests {
             .ldc_bool(false)? // Should use ldc.i4.0
             .ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         // ldc.i4.1 (0x17), ldc.i4.0 (0x16), ret (0x2A)
         assert_eq!(bytecode, vec![0x17, 0x16, 0x2A]);
 
@@ -2243,7 +3169,7 @@ mod tests {
             .ceq()? // Compare with argument
             .ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         // ldnull (0x14), ldarg.0 (0x02), ceq (0xFE 0x01), ret (0x2A)
         assert_eq!(bytecode, vec![0x14, 0x02, 0xFE, 0x01, 0x2A]);
 
@@ -2251,19 +3177,25 @@ mod tests {
     }
 
     #[test]
-    fn test_long_form_branches() -> Result<()> {
+    fn test_branch_optimization() -> Result<()> {
         let mut asm = InstructionAssembler::new();
 
-        asm.ldarg_0()?
-            .brfalse("end")? // Long form branch
-            .ldc_i4_1()?
-            .label("end")?
+        // Even when using long-form branch API, the encoder optimizes to short form
+        // when the offset fits in a signed byte.
+        // Valid CIL: both paths must have same stack depth at join point.
+        asm.ldarg_0()? // depth: 0→1
+            .brfalse("else")? // depth: 1→0, records 'else' expects 0
+            .ldc_i4_1()? // depth: 0→1
+            .ret()? // terminates this path
+            .label("else")? // depth: 0 (from branch, after ret is unreachable)
+            .ldc_i4_0()? // depth: 0→1
             .ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
-        assert_eq!(bytecode.len(), 8); // Should have correct length with long branch
+        let (bytecode, _max_stack, _) = asm.finish()?;
+        // Optimized: ldarg.0(1) + brfalse.s+offset(2) + ldc.i4.1(1) + ret(1) + ldc.i4.0(1) + ret(1) = 7 bytes
+        assert_eq!(bytecode.len(), 7);
         assert_eq!(bytecode[0], 0x02); // ldarg.0
-        assert_eq!(bytecode[1], 0x39); // brfalse (long form)
+        assert_eq!(bytecode[1], 0x2C); // brfalse.s (short form - optimized!)
 
         Ok(())
     }
@@ -2280,7 +3212,7 @@ mod tests {
             .ldc_i4_1()? // not null case
             .ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         assert_eq!(bytecode[0], 0x02); // ldarg.0
         assert_eq!(bytecode[1], 0x14); // ldnull
         assert_eq!(bytecode[2], 0x33); // bne.un.s
@@ -2290,8 +3222,6 @@ mod tests {
 
     #[test]
     fn test_field_operations_with_tokens() -> Result<()> {
-        use crate::metadata::token::Token;
-
         let field_token = Token::new(0x04000001); // Example field token
         let mut asm = InstructionAssembler::new();
 
@@ -2299,9 +3229,226 @@ mod tests {
             .ldfld(field_token)? // Load field
             .ret()?;
 
-        let (bytecode, _max_stack) = asm.finish()?;
+        let (bytecode, _max_stack, _) = asm.finish()?;
         assert_eq!(bytecode[0], 0x02); // ldarg.0
         assert_eq!(bytecode[1], 0x7B); // ldfld
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_try_catch_basic() -> Result<()> {
+        let mut asm = InstructionAssembler::new();
+        let exception_type = Token::new(0x01000001); // TypeRef for System.Exception
+
+        // Note: leave clears the evaluation stack, so we must not have values
+        // on the stack before leave. Use stloc/ldloc pattern if needed.
+        asm.try_start("try1")?
+            .nop()? // Some code in try block
+            .leave_s("end")?
+            .try_end("try1")?
+            .catch_start("try1", exception_type)?
+            .pop()? // Pop the exception object pushed by CLR
+            .leave_s("end")?
+            .catch_end("try1")?
+            .label("end")?
+            .ldc_i4_0()?
+            .ret()?;
+
+        let (bytecode, max_stack, handlers) = asm.finish()?;
+
+        // Verify we have one handler
+        assert_eq!(handlers.len(), 1);
+
+        // Verify it's a catch handler
+        let handler = &handlers[0];
+        assert!(handler.is_catch());
+        assert!(!handler.is_finally());
+        assert!(!handler.is_fault());
+        assert!(!handler.is_filter());
+
+        // Verify offsets are reasonable
+        assert!(handler.try_offset < handler.handler_offset);
+        assert!(handler.try_length > 0);
+        assert!(handler.handler_length > 0);
+
+        // Verify type token is stored in filter_offset for EXCEPTION handlers
+        assert_eq!(handler.filter_offset, exception_type.value());
+
+        // Verify bytecode is generated
+        assert!(!bytecode.is_empty());
+        assert!(max_stack > 0);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_try_finally_basic() -> Result<()> {
+        let mut asm = InstructionAssembler::new();
+
+        // leave clears the stack, so we must not have values before leave
+        asm.try_start("try1")?
+            .nop()? // Some code in try block
+            .leave_s("end")?
+            .try_end("try1")?
+            .finally_start("try1")?
+            .nop()? // Some cleanup code
+            .endfinally()?
+            .finally_end("try1")?
+            .label("end")?
+            .ldc_i4_0()?
+            .ret()?;
+
+        let (bytecode, _max_stack, handlers) = asm.finish()?;
+
+        assert_eq!(handlers.len(), 1);
+
+        let handler = &handlers[0];
+        assert!(handler.is_finally());
+        assert!(!handler.is_catch());
+
+        assert!(!bytecode.is_empty());
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_nested_try_blocks() -> Result<()> {
+        let mut asm = InstructionAssembler::new();
+        let exception_type1 = Token::new(0x01000001);
+        let exception_type2 = Token::new(0x01000002);
+
+        // Outer try
+        asm.try_start("outer")?
+            // Inner try
+            .try_start("inner")?
+            .nop()?
+            .leave_s("inner_end")?
+            .try_end("inner")?
+            .catch_start("inner", exception_type2)?
+            .pop()?
+            .leave_s("inner_end")?
+            .catch_end("inner")?
+            .label("inner_end")?
+            .leave_s("outer_end")?
+            .try_end("outer")?
+            .catch_start("outer", exception_type1)?
+            .pop()?
+            .leave_s("outer_end")?
+            .catch_end("outer")?
+            .label("outer_end")?
+            .ldc_i4_0()?
+            .ret()?;
+
+        let (_bytecode, _max_stack, handlers) = asm.finish()?;
+
+        // We should have 2 handlers (inner and outer)
+        assert_eq!(handlers.len(), 2);
+
+        // Both should be catch handlers
+        for handler in &handlers {
+            assert!(handler.is_catch());
+        }
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_multiple_handlers_same_try() -> Result<()> {
+        let mut asm = InstructionAssembler::new();
+        let exception_type1 = Token::new(0x01000001);
+        let exception_type2 = Token::new(0x01000002);
+
+        asm.try_start("try1")?
+            .nop()?
+            .leave_s("end")?
+            .try_end("try1")?
+            // First catch for exception_type1
+            .catch_start("try1", exception_type1)?
+            .pop()?
+            .leave_s("end")?
+            .catch_end("try1")?
+            // Second catch for exception_type2
+            .catch_start("try1", exception_type2)?
+            .pop()?
+            .leave_s("end")?
+            .catch_end("try1")?
+            .label("end")?
+            .ldc_i4_0()?
+            .ret()?;
+
+        let (_bytecode, _max_stack, handlers) = asm.finish()?;
+
+        // We should have 2 handlers for the same try block
+        assert_eq!(handlers.len(), 2);
+
+        // Both should be catch handlers with the same try region
+        assert!(handlers[0].is_catch());
+        assert!(handlers[1].is_catch());
+        assert_eq!(handlers[0].try_offset, handlers[1].try_offset);
+        assert_eq!(handlers[0].try_length, handlers[1].try_length);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_has_try_block() -> Result<()> {
+        let mut asm = InstructionAssembler::new();
+
+        assert!(!asm.has_try_block("test"));
+
+        asm.try_start("test")?;
+        assert!(asm.has_try_block("test"));
+        assert!(!asm.has_try_block("other"));
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_handler_count() -> Result<()> {
+        let mut asm = InstructionAssembler::new();
+        let exception_type = Token::new(0x01000001);
+
+        assert_eq!(asm.handler_count("test"), 0);
+
+        asm.try_start("test")?
+            .nop()?
+            .leave_s("end")?
+            .try_end("test")?;
+
+        assert_eq!(asm.handler_count("test"), 0);
+
+        asm.catch_start("test", exception_type)?
+            .pop()?
+            .leave_s("end")?
+            .catch_end("test")?;
+
+        assert_eq!(asm.handler_count("test"), 1);
+
+        asm.finally_start("test")?
+            .nop()?
+            .endfinally()?
+            .finally_end("test")?
+            .label("end")?
+            .ldc_i4_0()?
+            .ret()?;
+
+        assert_eq!(asm.handler_count("test"), 2);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_try_block_errors() -> Result<()> {
+        let mut asm = InstructionAssembler::new();
+        let exception_type = Token::new(0x01000001);
+
+        // Cannot add handler before ending try
+        asm.try_start("test")?.ldarg_0()?;
+        assert!(asm.catch_start("test", exception_type).is_err());
+
+        // Cannot end non-existent try
+        assert!(asm.try_end("nonexistent").is_err());
 
         Ok(())
     }

@@ -38,12 +38,12 @@ fn main() -> Result<()> {
         eprintln!("Usage: {} <input-assembly> <output-assembly>", args[0]);
         eprintln!();
         eprintln!("This example demonstrates .NET assembly code injection:");
-        eprintln!("  • Finding or creating external assembly references");
-        eprintln!("  • Creating type and member references for BCL types");
-        eprintln!("  • Adding user strings for string literals");
-        eprintln!("  • Injecting new static methods with CIL implementation");
-        eprintln!("  • Finding suitable injection targets in existing types");
-        eprintln!("  • Complete workflow with validation and PE generation");
+        eprintln!("  - Finding or creating external assembly references");
+        eprintln!("  - Creating type and member references for BCL types");
+        eprintln!("  - Adding user strings for string literals");
+        eprintln!("  - Injecting new static methods with CIL implementation");
+        eprintln!("  - Finding suitable injection targets in existing types");
+        eprintln!("  - Complete workflow with validation and PE generation");
         eprintln!();
         eprintln!("Example:");
         eprintln!("  {} input.dll injected.dll", args[0]);
@@ -59,115 +59,140 @@ fn main() -> Result<()> {
     let input_path = Path::new(&args[1]);
     let output_path = Path::new(&args[2]);
 
-    println!("🚀 .NET Assembly Code Injection Tool");
-    println!("📖 Input:  {}", input_path.display());
-    println!("📝 Output: {}", output_path.display());
+    println!(".NET Assembly Code Injection Tool");
+    println!("Input:  {}", input_path.display());
+    println!("Output: {}", output_path.display());
     println!();
 
     // Step 1: Load the assembly for modification
-    println!("📂 Loading assembly for modification...");
+    println!("Loading assembly for modification...");
     let view = CilAssemblyView::from_path(input_path).map_err(|e| {
-        eprintln!("❌ Failed to load assembly: {e}");
-        eprintln!("   Make sure the file is a valid .NET assembly");
+        eprintln!("x Failed to load assembly: {e}");
+        eprintln!("  Make sure the file is a valid .NET assembly");
         e
     })?;
 
-    // Create mutable assembly and builder context
-    let assembly = CilAssembly::new(view);
-    let mut context = BuilderContext::new(assembly);
-    println!("✅ Assembly loaded successfully");
+    // Create mutable assembly
+    let mut assembly = CilAssembly::new(view);
+    println!("  Assembly loaded successfully");
     println!();
 
     // Step 2: Find injection target using CilObject for type discovery
-    println!("🔍 Finding suitable injection target...");
-    let target_type_token = find_injection_target(&context)?;
+    println!("Finding suitable injection target...");
+    let target_type_token = find_injection_target(&assembly)?;
     println!(
-        "✅ Selected injection target: TypeDef token {:#08X}",
+        "  Selected injection target: TypeDef token {:#08X}",
         target_type_token.value()
     );
     println!();
 
     // Step 3: Add user string for the hello world message
-    println!("📝 Adding user string for hello world message...");
-    let hello_index = context.userstring_add("Hello World from dotscope!")?;
-    let hello_string_token = Token::new(0x70000000 | hello_index); // UserString table prefix
-    println!(
-        "✅ Added user string at index {}, token: {:#08X}",
-        hello_index,
-        hello_string_token.value()
-    );
+    // Note: The actual heap offset will be resolved when the file is written.
+    // We store the ChangeRef to track the pending addition.
+    println!("Adding user string for hello world message...");
+    let hello_ref = assembly.userstring_add("Hello World from dotscope!")?;
+    // Use placeholder() to get a temporary value for use in IL generation.
+    // This will be resolved to the actual offset during the write phase.
+    let hello_placeholder = hello_ref.placeholder();
+    let hello_string_token = Token::new(0x70000000 | hello_placeholder);
+    println!("  User string queued for addition");
     println!();
 
     // Step 4: Create external references for System.Console.WriteLine
-    println!("🔗 Creating external references for System.Console.WriteLine...");
-    let mscorlib_ref = find_or_create_mscorlib_ref(&mut context)?;
-    let console_writeline_ref = create_console_writeline_ref(&mut context, mscorlib_ref)?;
-    println!(
-        "✅ Created mscorlib reference: {:#08X}",
-        mscorlib_ref.value()
-    );
-    println!(
-        "✅ Created Console.WriteLine reference: {:#08X}",
-        console_writeline_ref.value()
-    );
+    println!("Creating external references for System.Console.WriteLine...");
+
+    // Create System.Runtime assembly reference
+    let mscorlib_ref = AssemblyRefBuilder::new()
+        .name("System.Runtime")
+        .version(8, 0, 0, 0) // .NET 8 version
+        .public_key_token(&[
+            0xb0, 0x3f, 0x5f, 0x7f, 0x11, 0xd5, 0x0a, 0x3a, // System.Runtime public key token
+        ])
+        .build(&mut assembly)?;
+
+    // Create TypeRef for System.Console
+    let console_typeref = TypeRefBuilder::new()
+        .name("Console")
+        .namespace("System")
+        .resolution_scope(CodedIndex::new(
+            TableId::AssemblyRef,
+            mscorlib_ref.placeholder(),
+            CodedIndexType::ResolutionScope,
+        ))
+        .build(&mut assembly)?;
+
+    // Create method signature for Console.WriteLine(string)
+    let writeline_signature = create_writeline_signature()?;
+
+    // Create MemberRef for Console.WriteLine method
+    let console_writeline_ref = MemberRefBuilder::new()
+        .name("WriteLine")
+        .class(CodedIndex::new(
+            TableId::TypeRef,
+            console_typeref.placeholder(),
+            CodedIndexType::MemberRefParent,
+        ))
+        .signature(&writeline_signature)
+        .build(&mut assembly)?;
+
+    // Get placeholder token for use in IL instructions
+    let console_writeline_token = console_writeline_ref
+        .placeholder_token()
+        .expect("Console.WriteLine ChangeRef should be a table row");
+    println!("  Created mscorlib reference");
+    println!("  Created Console.WriteLine reference");
     println!();
 
     // Step 5: Create the hello world method
-    println!("🛠️  Injecting PrintHelloWorld method...");
-    let method_token = MethodBuilder::new("PrintHelloWorld")
+    println!("Injecting PrintHelloWorld method...");
+    MethodBuilder::new("PrintHelloWorld")
         .public()
         .static_method()
         .returns(TypeSignature::Void)
         .implementation(move |body| {
             body.implementation(move |asm| {
                 asm.ldstr(hello_string_token)? // Load the hello world string
-                    .call(console_writeline_ref)? // Call Console.WriteLine
+                    .call(console_writeline_token)? // Call Console.WriteLine
                     .ret()?; // Return void
                 Ok(())
             })
         })
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    println!(
-        "✅ Injected method with token: {:#08X}",
-        method_token.value()
-    );
+    println!("  Method definition created");
     println!();
 
-    // Step 6: Validate and write the modified assembly
-    println!("💾 Writing modified assembly...");
-    let mut assembly = context.finish();
-    assembly.validate_and_apply_changes().map_err(|e| {
-        eprintln!("❌ Validation failed: {e}");
-        e
-    })?;
+    // Step 6: Write the modified assembly
+    println!("Writing modified assembly...");
 
-    assembly.write_to_file(output_path).map_err(|e| {
-        eprintln!("❌ Failed to write assembly: {e}");
+    assembly.to_file(output_path).map_err(|e| {
+        eprintln!("x Failed to write assembly: {e}");
         e
     })?;
 
     println!(
-        "✅ Successfully wrote modified assembly to {}",
+        "  Successfully wrote modified assembly to {}",
         output_path.display()
     );
     println!();
-    println!("🎉 Code injection completed successfully!");
+
+    // After write, we can report final resolved values
+    println!("Summary:");
+    if let Some(offset) = hello_ref.offset() {
+        println!("  - User string at heap offset: {:#x}", offset);
+    }
+    println!("  - Injected static method: PrintHelloWorld()");
+    println!("  - Created external references to System.Console.WriteLine");
+    println!("  - Generated valid PE file with proper metadata");
     println!();
-    println!("📋 Summary:");
-    println!("   • Added 1 user string");
-    println!("   • Created external references to System.Console.WriteLine");
-    println!("   • Injected 1 static method: PrintHelloWorld()");
-    println!("   • Generated valid PE file with proper metadata");
-    println!();
-    println!("💡 You can now call the injected method from other .NET code:");
-    println!("   YourAssembly.YourType.PrintHelloWorld();");
+    println!("You can now call the injected method from other .NET code:");
+    println!("  YourAssembly.YourType.PrintHelloWorld();");
 
     Ok(())
 }
 
 /// Find a suitable type for method injection using the assembly's TypeDef table
-fn find_injection_target(_context: &BuilderContext) -> Result<Token> {
+fn find_injection_target(_assembly: &CilAssembly) -> Result<Token> {
     // For this example, we'll use a simple approach and just use the first TypeDef
     // In a real implementation, you could:
     // 1. Load the assembly with CilObject to get rich type information
@@ -178,64 +203,12 @@ fn find_injection_target(_context: &BuilderContext) -> Result<Token> {
     let first_typedef_token = Token::new(0x02000001); // TypeDef table, RID 1
 
     println!(
-        "   Using TypeDef token: {:#08X}",
+        "  Using TypeDef token: {:#08X}",
         first_typedef_token.value()
     );
-    println!(
-        "   💡 In a real implementation, you could use CilObject to find ideal injection targets"
-    );
+    println!("  (In a real implementation, use CilObject to find ideal injection targets)");
 
     Ok(first_typedef_token)
-}
-
-/// Find existing mscorlib/System.Runtime reference or create a new one
-fn find_or_create_mscorlib_ref(context: &mut BuilderContext) -> Result<Token> {
-    // In a real implementation, we would search existing AssemblyRef table
-    // for mscorlib, System.Runtime, System.Console, etc.
-    // For this example, we'll create a new reference to System.Runtime
-
-    let mscorlib_token = AssemblyRefBuilder::new()
-        .name("System.Runtime")
-        .version(8, 0, 0, 0) // .NET 8 version
-        .public_key_token(&[
-            0xb0, 0x3f, 0x5f, 0x7f, 0x11, 0xd5, 0x0a, 0x3a, // System.Runtime public key token
-        ])
-        .build(context)?;
-
-    Ok(mscorlib_token)
-}
-
-/// Create TypeRef for System.Console and MemberRef for WriteLine method
-fn create_console_writeline_ref(
-    context: &mut BuilderContext,
-    mscorlib_ref: Token,
-) -> Result<Token> {
-    // Create TypeRef for System.Console
-    let console_typeref = TypeRefBuilder::new()
-        .name("Console")
-        .namespace("System")
-        .resolution_scope(CodedIndex::new(
-            TableId::AssemblyRef,
-            mscorlib_ref.row(),
-            CodedIndexType::ResolutionScope,
-        ))
-        .build(context)?;
-
-    // Create method signature for Console.WriteLine(string)
-    let writeline_signature = create_writeline_signature()?;
-
-    // Create MemberRef for Console.WriteLine method
-    let memberref_token = MemberRefBuilder::new()
-        .name("WriteLine")
-        .class(CodedIndex::new(
-            TableId::TypeRef,
-            console_typeref.row(),
-            CodedIndexType::MemberRefParent,
-        ))
-        .signature(&writeline_signature)
-        .build(context)?;
-
-    Ok(memberref_token)
 }
 
 /// Create method signature for Console.WriteLine(string)

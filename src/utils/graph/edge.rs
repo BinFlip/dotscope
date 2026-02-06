@@ -137,6 +137,7 @@ impl From<EdgeId> for usize {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::utils::graph::NodeId;
     use std::collections::{HashMap, HashSet};
 
     #[test]
@@ -256,7 +257,7 @@ mod tests {
 
     #[test]
     fn test_edge_id_array_indexing() {
-        let weights = vec![1.5, 2.5, 3.5, 4.5];
+        let weights = [1.5, 2.5, 3.5, 4.5];
         let edge = EdgeId::new(2);
 
         assert_eq!(weights[edge.index()], 3.5);
@@ -266,8 +267,6 @@ mod tests {
     fn test_edge_id_distinct_from_node_id() {
         // This test demonstrates that EdgeId and NodeId are distinct types
         // and cannot be accidentally mixed (verified at compile time)
-        use crate::utils::graph::NodeId;
-
         let node = NodeId::new(5);
         let edge = EdgeId::new(5);
 

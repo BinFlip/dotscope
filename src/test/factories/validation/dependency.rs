@@ -4,16 +4,13 @@
 //! for creating test assemblies with various dependency validation scenarios.
 
 use crate::{
-    cilassembly::CilAssembly,
-    metadata::{
-        tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
-        token::Token,
-        validation::ValidationConfig,
+    metadata::tables::{
+        CodedIndex, CodedIndexType, InterfaceImplBuilder, NestedClassBuilder, TableId,
+        TypeAttributes, TypeDefBuilder,
     },
-    test::{get_testfile_mscorlib, TestAssembly},
-    CilAssemblyView, Error, Result,
+    test::{create_test_assembly_with_error, get_testfile_mscorlib, TestAssembly},
+    Error, Result,
 };
-use tempfile::NamedTempFile;
 
 /// Main factory method for creating dependency validation test assemblies
 ///
@@ -30,211 +27,127 @@ pub fn owned_dependency_validator_file_factory() -> Result<Vec<TestAssembly>> {
     // 1. REQUIRED: Clean assembly - should pass all dependency validation
     assemblies.push(TestAssembly::new(&clean_testfile, true));
 
-    // 2. NEGATIVE TEST: Assembly with broken dependency chain in type hierarchy
-    assemblies.push(TestAssembly::new(
-        create_assembly_with_broken_dependency_chain()?.path(),
-        false,
-    ));
+    // 2. NEGATIVE TEST: Type with base type that has empty name
+    assemblies.push(create_assembly_with_empty_name_base_type()?);
 
-    // 3. NEGATIVE TEST: Assembly with unsatisfied transitive dependencies
-    assemblies.push(TestAssembly::new(
-        create_assembly_with_unsatisfied_transitive_dependencies()?.path(),
-        false,
-    ));
+    // 3. NEGATIVE TEST: Type that implements an interface with empty name
+    assemblies.push(create_assembly_with_empty_name_interface()?);
 
-    // 4. NEGATIVE TEST: Assembly with invalid dependency ordering
-    assemblies.push(TestAssembly::new(
-        create_assembly_with_invalid_dependency_ordering()?.path(),
-        false,
-    ));
-
-    // 5. NEGATIVE TEST: Assembly with self-referential dependencies
-    assemblies.push(TestAssembly::new(
-        create_assembly_with_self_referential_dependencies()?.path(),
-        false,
-    ));
+    // 4. NEGATIVE TEST: Type with a nested type that has empty name
+    assemblies.push(create_assembly_with_empty_name_nested_type()?);
 
     Ok(assemblies)
 }
 
-/// Creates an assembly with a broken dependency chain in type hierarchy.
+/// Creates an assembly where a type extends a base type with an empty name.
 ///
-/// This test creates a TypeDef that references a non-existent base type,
-/// causing dependency validation to fail when trying to resolve the inheritance chain.
-///
-/// Originally from: `src/metadata/validation/validators/owned/relationships/dependency.rs`
-pub fn create_assembly_with_broken_dependency_chain() -> Result<NamedTempFile> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
+/// This triggers the validator check: "Type 'X' has broken base type dependency (empty name)"
+pub fn create_assembly_with_empty_name_base_type() -> Result<TestAssembly> {
+    create_test_assembly_with_error(
+        get_testfile_mscorlib,
+        "broken base type dependency",
+        |assembly| {
+            // Create a base type with empty name
+            let empty_base = TypeDefBuilder::new()
+                .name("") // Empty name triggers the validator
+                .namespace("Test.Dependency")
+                .flags(TypeAttributes::CLASS)
+                .build(assembly)?;
 
-    let view = CilAssemblyView::from_path(&clean_testfile)?;
-    let mut assembly = CilAssembly::new(view);
+            // Create a derived type that extends the empty-named base
+            TypeDefBuilder::new()
+                .name("DerivedType")
+                .namespace("Test.Dependency")
+                .flags(TypeAttributes::CLASS | TypeAttributes::PUBLIC)
+                .extends(CodedIndex::new(
+                    TableId::TypeDef,
+                    empty_base
+                        .token()
+                        .expect("TypeDef token should be resolved")
+                        .row(),
+                    CodedIndexType::TypeDefOrRef,
+                ))
+                .build(assembly)?;
 
-    // Create a TypeDef that extends a non-existent TypeRef (RID 9999)
-    let broken_typedef = TypeDefRaw {
-        rid: 1,
-        token: Token::new(0x02000001),
-        offset: 0,
-        flags: 0x00100000, // Class, not interface
-        type_name: 1,      // Assuming string index 1 exists
-        type_namespace: 0, // No namespace
-        extends: CodedIndex::new(TableId::TypeRef, 9999, CodedIndexType::TypeDefOrRef), // Non-existent TypeRef
-        field_list: 1,
-        method_list: 1,
-    };
-
-    assembly.table_row_update(TableId::TypeDef, 1, TableDataOwned::TypeDef(broken_typedef))?;
-
-    assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
-
-    let temp_file = NamedTempFile::new()?;
-    assembly.write_to_file(temp_file.path())?;
-
-    Ok(temp_file)
+            Ok(())
+        },
+    )
 }
 
-/// Creates an assembly with unsatisfied transitive dependencies.
+/// Creates an assembly where a type has a nested type with an empty name.
 ///
-/// This test creates circular dependencies where TypeDef A depends on TypeDef B,
-/// which depends on a non-existent external type, breaking the transitive chain.
-///
-/// Originally from: `src/metadata/validation/validators/owned/relationships/dependency.rs`
-pub fn create_assembly_with_unsatisfied_transitive_dependencies() -> Result<NamedTempFile> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
+/// This triggers the validator check: "Type 'X' has broken nested type dependency (empty name)"
+pub fn create_assembly_with_empty_name_nested_type() -> Result<TestAssembly> {
+    create_test_assembly_with_error(
+        get_testfile_mscorlib,
+        "broken nested type dependency",
+        |assembly| {
+            // Create an enclosing type
+            let enclosing_type = TypeDefBuilder::new()
+                .name("EnclosingType")
+                .namespace("Test.Dependency")
+                .flags(TypeAttributes::CLASS | TypeAttributes::PUBLIC)
+                .build(assembly)?;
 
-    let view = CilAssemblyView::from_path(&clean_testfile)?;
-    let mut assembly = CilAssembly::new(view);
+            // Create a nested type with empty name
+            let empty_nested = TypeDefBuilder::new()
+                .name("") // Empty name triggers the validator
+                .namespace("Test.Dependency")
+                .flags(TypeAttributes::NESTED_PUBLIC | TypeAttributes::CLASS)
+                .build(assembly)?;
 
-    // Create TypeDef A that extends TypeDef B
-    let typedef_a = TypeDefRaw {
-        rid: 1,
-        token: Token::new(0x02000001),
-        offset: 0,
-        flags: 0x00100000, // Class
-        type_name: 1,
-        type_namespace: 0,
-        extends: CodedIndex::new(TableId::TypeDef, 2, CodedIndexType::TypeDefOrRef), // Extends TypeDef B
-        field_list: 1,
-        method_list: 1,
-    };
+            // Add NestedClass entry
+            NestedClassBuilder::new()
+                .nested_class(empty_nested.placeholder())
+                .enclosing_class(enclosing_type.placeholder())
+                .build(assembly)?;
 
-    // Create TypeDef B that extends a non-existent TypeRef
-    let typedef_b = TypeDefRaw {
-        rid: 2,
-        token: Token::new(0x02000002),
-        offset: 0,
-        flags: 0x00100000, // Class
-        type_name: 2,
-        type_namespace: 0,
-        extends: CodedIndex::new(TableId::TypeRef, 8888, CodedIndexType::TypeDefOrRef), // Non-existent TypeRef
-        field_list: 1,
-        method_list: 1,
-    };
-
-    assembly.table_row_update(TableId::TypeDef, 1, TableDataOwned::TypeDef(typedef_a))?;
-
-    assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(typedef_b))?;
-
-    assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
-
-    let temp_file = NamedTempFile::new()?;
-    assembly.write_to_file(temp_file.path())?;
-
-    Ok(temp_file)
+            Ok(())
+        },
+    )
 }
 
-/// Creates an assembly with invalid dependency ordering.
+/// Creates an assembly where a type implements an interface with an empty name.
 ///
-/// This test creates a circular inheritance where TypeDef A extends TypeDef B,
-/// and TypeDef B extends TypeDef A, creating an invalid dependency loop.
-///
-/// Originally from: `src/metadata/validation/validators/owned/relationships/dependency.rs`
-pub fn create_assembly_with_invalid_dependency_ordering() -> Result<NamedTempFile> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
+/// This triggers the validator check: "Type 'X' has broken interface dependency (empty name)"
+pub fn create_assembly_with_empty_name_interface() -> Result<TestAssembly> {
+    create_test_assembly_with_error(
+        get_testfile_mscorlib,
+        "broken interface dependency",
+        |assembly| {
+            // Create an interface with empty name
+            let empty_interface = TypeDefBuilder::new()
+                .name("") // Empty name triggers the validator
+                .namespace("Test.Dependency")
+                .flags(TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT)
+                .build(assembly)?;
 
-    let view = CilAssemblyView::from_path(&clean_testfile)?;
-    let mut assembly = CilAssembly::new(view);
+            // Create a class that implements the empty-named interface
+            let implementing_class = TypeDefBuilder::new()
+                .name("ImplementingClass")
+                .namespace("Test.Dependency")
+                .flags(TypeAttributes::CLASS | TypeAttributes::PUBLIC)
+                .build(assembly)?;
 
-    // Create TypeDef A that extends TypeDef B
-    let typedef_a = TypeDefRaw {
-        rid: 1,
-        token: Token::new(0x02000001),
-        offset: 0,
-        flags: 0x00100000, // Class
-        type_name: 1,
-        type_namespace: 0,
-        extends: CodedIndex::new(TableId::TypeDef, 2, CodedIndexType::TypeDefOrRef), // Extends TypeDef B
-        field_list: 1,
-        method_list: 1,
-    };
+            // Add InterfaceImpl entry
+            InterfaceImplBuilder::new()
+                .class(
+                    implementing_class
+                        .token()
+                        .expect("TypeDef token should be resolved")
+                        .row(),
+                )
+                .interface(CodedIndex::new(
+                    TableId::TypeDef,
+                    empty_interface
+                        .token()
+                        .expect("TypeDef token should be resolved")
+                        .row(),
+                    CodedIndexType::TypeDefOrRef,
+                ))
+                .build(assembly)?;
 
-    // Create TypeDef B that extends TypeDef A (circular dependency)
-    let typedef_b = TypeDefRaw {
-        rid: 2,
-        token: Token::new(0x02000002),
-        offset: 0,
-        flags: 0x00100000, // Class
-        type_name: 2,
-        type_namespace: 0,
-        extends: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeDefOrRef), // Extends TypeDef A
-        field_list: 1,
-        method_list: 1,
-    };
-
-    assembly.table_row_update(TableId::TypeDef, 1, TableDataOwned::TypeDef(typedef_a))?;
-
-    assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(typedef_b))?;
-
-    assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
-
-    let temp_file = NamedTempFile::new()?;
-    assembly.write_to_file(temp_file.path())?;
-
-    Ok(temp_file)
-}
-
-/// Creates an assembly with self-referential dependencies.
-///
-/// This test creates a TypeDef that extends itself, creating an immediate
-/// self-referential dependency that should be detected and rejected.
-///
-/// Originally from: `src/metadata/validation/validators/owned/relationships/dependency.rs`
-pub fn create_assembly_with_self_referential_dependencies() -> Result<NamedTempFile> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
-
-    let view = CilAssemblyView::from_path(&clean_testfile)?;
-    let mut assembly = CilAssembly::new(view);
-
-    // Create a TypeDef that extends itself
-    let self_referential_typedef = TypeDefRaw {
-        rid: 1,
-        token: Token::new(0x02000001),
-        offset: 0,
-        flags: 0x00100000, // Class
-        type_name: 1,
-        type_namespace: 0,
-        extends: CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeDefOrRef), // Extends itself
-        field_list: 1,
-        method_list: 1,
-    };
-
-    assembly.table_row_update(
-        TableId::TypeDef,
-        1,
-        TableDataOwned::TypeDef(self_referential_typedef),
-    )?;
-
-    assembly.validate_and_apply_changes_with_config(ValidationConfig::disabled())?;
-
-    let temp_file = NamedTempFile::new()?;
-    assembly.write_to_file(temp_file.path())?;
-
-    Ok(temp_file)
+            Ok(())
+        },
+    )
 }

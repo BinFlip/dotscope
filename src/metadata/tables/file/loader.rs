@@ -32,6 +32,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::FileRaw,
     },
@@ -75,19 +76,30 @@ impl MetadataLoader for FileLoader {
     /// - Collection insertion operations fail
     /// - Parallel processing encounters errors
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(blob), Some(strings)) =
+        let (Some(header), Some(blob), Some(strings)) =
             (context.meta, context.blobs, context.strings)
-        {
-            if let Some(table) = header.table::<FileRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(blob, strings)?;
+        else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<FileRaw>() else {
+            return Ok(());
+        };
 
-                    context.file.insert(row.token, res.clone());
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("file 0x{:08x}", row.token.value());
+
+            let Some(res) = context.handle_result(
+                row.to_owned(blob, strings),
+                DiagnosticCategory::Table,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.file.insert(row.token, res.clone());
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for the File table.

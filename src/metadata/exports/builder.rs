@@ -2,33 +2,32 @@
 //!
 //! This module provides [`NativeExportsBuilder`] for creating native PE export tables
 //! with a fluent API. The builder follows the established dotscope pattern of not holding
-//! references to BuilderContext and instead taking it as a parameter to the build() method.
+//! references to CilAssembly and instead taking it as a parameter to the build() method.
 
-use crate::{cilassembly::BuilderContext, Result};
+use crate::{cilassembly::CilAssembly, Result};
 
 /// Builder for creating native PE export tables.
 ///
 /// `NativeExportsBuilder` provides a fluent API for creating native PE export tables
 /// with validation and automatic integration into the assembly. The builder follows
-/// the established dotscope pattern where the context is passed to build() rather
+/// the established dotscope pattern where the assembly is passed to build() rather
 /// than being held by the builder.
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::exports::NativeExportsBuilder;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// NativeExportsBuilder::new("MyLibrary.dll")
 ///     .add_function("MyFunction", 1, 0x1000)
 ///     .add_function("AnotherFunction", 2, 0x2000)
 ///     .add_function_by_ordinal(3, 0x3000)
 ///     .add_forwarder("ForwardedFunc", 4, "kernel32.dll.GetCurrentProcessId")
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
@@ -62,7 +61,8 @@ impl NativeExportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// # use dotscope::metadata::exports::NativeExportsBuilder;
     /// let builder = NativeExportsBuilder::new("MyLibrary.dll");
     /// ```
     pub fn new(dll_name: impl Into<String>) -> Self {
@@ -93,7 +93,8 @@ impl NativeExportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// # use dotscope::metadata::exports::NativeExportsBuilder;
     /// let builder = NativeExportsBuilder::new("MyLibrary.dll")
     ///     .add_function("MyFunction", 1, 0x1000)
     ///     .add_function("AnotherFunc", 2, 0x2000);
@@ -123,7 +124,8 @@ impl NativeExportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// # use dotscope::metadata::exports::NativeExportsBuilder;
     /// let builder = NativeExportsBuilder::new("MyLibrary.dll")
     ///     .add_function_auto("MyFunction", 0x1000)
     ///     .add_function_auto("AnotherFunc", 0x2000);
@@ -153,7 +155,8 @@ impl NativeExportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// # use dotscope::metadata::exports::NativeExportsBuilder;
     /// let builder = NativeExportsBuilder::new("MyLibrary.dll")
     ///     .add_function_by_ordinal(100, 0x1000)
     ///     .add_function_by_ordinal(101, 0x2000);
@@ -182,7 +185,8 @@ impl NativeExportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// # use dotscope::metadata::exports::NativeExportsBuilder;
     /// let builder = NativeExportsBuilder::new("MyLibrary.dll")
     ///     .add_function_by_ordinal_auto(0x1000)
     ///     .add_function_by_ordinal_auto(0x2000);
@@ -213,7 +217,8 @@ impl NativeExportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// # use dotscope::metadata::exports::NativeExportsBuilder;
     /// let builder = NativeExportsBuilder::new("MyLibrary.dll")
     ///     .add_forwarder("GetProcessId", 1, "kernel32.dll.GetCurrentProcessId")
     ///     .add_forwarder("MessageBox", 2, "user32.dll.#120");
@@ -248,7 +253,8 @@ impl NativeExportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// # use dotscope::metadata::exports::NativeExportsBuilder;
     /// let builder = NativeExportsBuilder::new("MyLibrary.dll")
     ///     .add_forwarder_auto("GetProcessId", "kernel32.dll.GetCurrentProcessId")
     ///     .add_forwarder_auto("MessageBox", "user32.dll.MessageBoxW");
@@ -279,7 +285,8 @@ impl NativeExportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust
+    /// # use dotscope::metadata::exports::NativeExportsBuilder;
     /// let builder = NativeExportsBuilder::new("temp.dll")
     ///     .dll_name("MyLibrary.dll");
     /// ```
@@ -292,12 +299,12 @@ impl NativeExportsBuilder {
     /// Builds the native exports and integrates them into the assembly.
     ///
     /// This method validates the configuration and integrates all specified functions
-    /// and forwarders into the assembly through the BuilderContext. The builder
+    /// and forwarders into the assembly through the CilAssembly. The builder
     /// automatically handles ordinal management and export table setup.
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for assembly modification
+    /// * `assembly` - The assembly for modification
     ///
     /// # Returns
     ///
@@ -314,33 +321,32 @@ impl NativeExportsBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use dotscope::metadata::exports::NativeExportsBuilder;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// let assembly = CilAssembly::new(view);
-    /// let mut context = BuilderContext::new(assembly);
+    /// let mut assembly = CilAssembly::new(view);
     ///
     /// NativeExportsBuilder::new("MyLibrary.dll")
     ///     .add_function("MyFunction", 1, 0x1000)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<()> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<()> {
         // Add all named functions
         for (name, ordinal, address) in &self.functions {
-            context.add_native_export_function(name, *ordinal, *address)?;
+            assembly.add_native_export_function(name, *ordinal, *address)?;
         }
 
         // Add all ordinal-only functions
         for (ordinal, address) in &self.ordinal_functions {
-            context.add_native_export_function_by_ordinal(*ordinal, *address)?;
+            assembly.add_native_export_function_by_ordinal(*ordinal, *address)?;
         }
 
         // Add all forwarders
         for (name, ordinal, target) in &self.forwarders {
-            context.add_native_export_forwarder(name, *ordinal, target)?;
+            assembly.add_native_export_forwarder(name, *ordinal, target)?;
         }
 
         Ok(())
@@ -356,23 +362,17 @@ impl Default for NativeExportsBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::cilassemblyview::CilAssemblyView,
-    };
+    use crate::cilassembly::CilAssembly;
     use std::path::PathBuf;
 
     #[test]
     fn test_native_exports_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             let result = NativeExportsBuilder::new("TestLibrary.dll")
                 .add_function("MyFunction", 1, 0x1000)
                 .add_function("AnotherFunction", 2, 0x2000)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should succeed with current placeholder implementation
             assert!(result.is_ok());
@@ -382,14 +382,11 @@ mod tests {
     #[test]
     fn test_native_exports_builder_with_ordinals() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             let result = NativeExportsBuilder::new("TestLibrary.dll")
                 .add_function_by_ordinal(100, 0x1000)
                 .add_function("NamedFunction", 101, 0x2000)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should succeed with current placeholder implementation
             assert!(result.is_ok());
@@ -399,15 +396,12 @@ mod tests {
     #[test]
     fn test_native_exports_builder_with_forwarders() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
             let result = NativeExportsBuilder::new("TestLibrary.dll")
                 .add_function("RegularFunction", 1, 0x1000)
                 .add_forwarder("ForwardedFunc", 2, "kernel32.dll.GetCurrentProcessId")
                 .add_forwarder("OrdinalForward", 3, "user32.dll.#120")
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should succeed with current placeholder implementation
             assert!(result.is_ok());
@@ -467,11 +461,8 @@ mod tests {
     #[test]
     fn test_native_exports_builder_empty() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-        if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
-
-            let result = NativeExportsBuilder::new("EmptyLibrary.dll").build(&mut context);
+        if let Ok(mut assembly) = CilAssembly::from_path(&path) {
+            let result = NativeExportsBuilder::new("EmptyLibrary.dll").build(&mut assembly);
 
             // Should succeed even with no exports
             assert!(result.is_ok());

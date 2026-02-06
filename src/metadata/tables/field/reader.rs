@@ -1,6 +1,6 @@
 use crate::{
     metadata::{
-        tables::{FieldRaw, RowReadable, TableInfoRef},
+        tables::{FieldRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::{read_le_at, read_le_at_dyn},
@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for FieldRaw {
+    const TABLE_ID: TableId = TableId::Field;
+
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(FieldRaw {
             rid,

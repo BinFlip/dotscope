@@ -1,6 +1,6 @@
 use crate::{
     metadata::{
-        tables::{FileRaw, RowReadable, TableInfoRef},
+        tables::{FileRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::{read_le_at, read_le_at_dyn},
@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for FileRaw {
+    const TABLE_ID: TableId = TableId::File;
+
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(FileRaw {
             rid,

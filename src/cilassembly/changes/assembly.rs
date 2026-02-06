@@ -25,11 +25,8 @@
 //!
 //! ```rust,ignore
 //! use crate::cilassembly::changes::AssemblyChanges;
-//! use crate::metadata::cilassemblyview::CilAssemblyView;
-//! use std::path::Path;
 //!
-//! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-//! let mut changes = AssemblyChanges::new(&view);
+//! let mut changes = AssemblyChanges::new();
 //!
 //! // Check if any changes have been made
 //! if changes.has_changes() {
@@ -42,15 +39,11 @@
 //! # Ok::<(), crate::Error>(())
 //! ```
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use crate::{
-    cilassembly::{HeapChanges, TableModifications},
-    metadata::{
-        cilassemblyview::CilAssemblyView, exports::UnifiedExportContainer,
-        imports::UnifiedImportContainer, tables::TableId,
-    },
-    utils::compressed_uint_size,
+    cilassembly::{ChangeRef, HeapChanges, TableModifications},
+    metadata::{exports::UnifiedExportContainer, imports::UnifiedImportContainer, tables::TableId},
 };
 
 /// Internal structure for tracking all modifications to an assembly.
@@ -71,11 +64,8 @@ use crate::{
 ///
 /// ```rust,ignore
 /// use crate::cilassembly::changes::AssemblyChanges;
-/// use crate::metadata::cilassemblyview::CilAssemblyView;
-/// use std::path::Path;
 ///
-/// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let changes = AssemblyChanges::new(&view);
+/// let changes = AssemblyChanges::new();
 ///
 /// // Check modification status
 /// if changes.has_changes() {
@@ -122,6 +112,15 @@ pub struct AssemblyChanges {
     /// are typically Unicode string literals used by IL instructions.
     pub userstring_heap_changes: HeapChanges<String>,
 
+    /// Referenced string heap offsets for substring remapping.
+    ///
+    /// When heap compaction is enabled, this stores all string offsets that are
+    /// actually referenced by metadata tables. This is needed because .NET allows
+    /// "substring references" - pointing to any offset within a string entry.
+    /// During streaming, these offsets are used to build proper remappings for
+    /// substring references when strings shift positions.
+    pub referenced_string_offsets: HashSet<u32>,
+
     /// Native import/export containers for PE import/export tables
     ///
     /// Contains unified containers that manage user modifications to native imports/exports.
@@ -141,91 +140,58 @@ pub struct AssemblyChanges {
     /// Tracks the next sequential placeholder ID for method bodies. These placeholders
     /// will be resolved to real RVAs during PE writing based on actual section layout.
     pub next_method_placeholder: u32,
+
+    /// CLR resource data section for embedded managed resources
+    ///
+    /// This stores the actual resource data bytes that will be written to the
+    /// CLR resources section (pointed to by COR20 header's resource_rva/resource_size).
+    /// Each resource is stored with a 4-byte length prefix followed by the data.
+    /// ManifestResource.offset_field points to offsets within this section.
+    pub resource_data: Vec<u8>,
+
+    /// Field initialization data storage for FieldRVA entries
+    ///
+    /// Maps placeholder RVAs to field data bytes for fields created through builders
+    /// or extracted from anti-tamper protected assemblies. The placeholder RVAs are
+    /// sequential IDs that will be resolved to actual RVAs during PE writing when
+    /// the real .sdata section layout is determined.
+    pub field_data: HashMap<u32, Vec<u8>>,
+
+    /// Next available placeholder RVA for field data allocation
+    ///
+    /// Tracks the next sequential placeholder ID for field data. These placeholders
+    /// will be resolved to real RVAs during PE writing based on actual section layout.
+    /// Uses a different range than method bodies to avoid conflicts.
+    pub next_field_placeholder: u32,
 }
 
 impl AssemblyChanges {
-    /// Creates a new change tracking structure initialized with proper heap sizes from the view.
+    /// Creates a new change tracking structure.
     ///
-    /// All heap changes are initialized with the proper original heap byte sizes
-    /// from the view to ensure correct index calculations.
-    /// Table changes remain an empty HashMap and are allocated on first use.
-    pub fn new(view: &CilAssemblyView) -> Self {
-        let string_heap_size = Self::get_heap_byte_size(view, "#Strings");
-        let blob_heap_size = Self::get_heap_byte_size(view, "#Blob");
-        let guid_heap_size = Self::get_heap_byte_size(view, "#GUID");
-        let userstring_heap_size = Self::get_heap_byte_size(view, "#US");
-
+    /// Initializes all heap change trackers and table change maps to empty state.
+    pub fn new() -> Self {
         Self {
             table_changes: HashMap::new(),
-            string_heap_changes: HeapChanges::new(string_heap_size),
-            blob_heap_changes: HeapChanges::new(blob_heap_size),
-            guid_heap_changes: HeapChanges::new(guid_heap_size),
-            userstring_heap_changes: HeapChanges::new(userstring_heap_size),
+            string_heap_changes: HeapChanges::new_strings(),
+            blob_heap_changes: HeapChanges::new_blobs(),
+            guid_heap_changes: HeapChanges::new_guids(),
+            userstring_heap_changes: HeapChanges::new_userstrings(),
+            referenced_string_offsets: HashSet::new(),
             native_imports: UnifiedImportContainer::new(),
             native_exports: UnifiedExportContainer::new(),
             method_bodies: HashMap::new(),
             next_method_placeholder: 0xF000_0000, // Start placeholders at high address range
+            resource_data: Vec::new(),
+            field_data: HashMap::new(),
+            next_field_placeholder: 0xE000_0000, // Different range than method bodies
         }
     }
 
     /// Creates an empty change tracking structure for testing purposes.
     ///
-    /// All heap changes start with default sizes (1) for proper indexing.
+    /// This is an alias for [`Self::new()`].
     pub fn empty() -> Self {
-        Self {
-            table_changes: HashMap::new(),
-            string_heap_changes: HeapChanges::new(1),
-            blob_heap_changes: HeapChanges::new(1),
-            guid_heap_changes: HeapChanges::new(1),
-            userstring_heap_changes: HeapChanges::new(1),
-            native_imports: UnifiedImportContainer::new(),
-            native_exports: UnifiedExportContainer::new(),
-            method_bodies: HashMap::new(),
-            next_method_placeholder: 0xF000_0000,
-        }
-    }
-
-    /// Helper method to get the byte size of a heap by stream name.
-    fn get_heap_byte_size(view: &CilAssemblyView, stream_name: &str) -> u32 {
-        if stream_name == "#Strings" {
-            // For strings heap, calculate actual end of content, not padded stream size
-            if let Some(strings) = view.strings() {
-                let mut actual_end = 1u32; // Start after mandatory null byte at index 0
-                for (offset, string) in strings.iter() {
-                    let string_end = u32::try_from(offset).unwrap_or(0)
-                        + u32::try_from(string.len()).unwrap_or(0)
-                        + 1; // +1 for null terminator
-                    actual_end = actual_end.max(string_end);
-                }
-                actual_end
-            } else {
-                1
-            }
-        } else if stream_name == "#US" {
-            // For UserString heap, calculate actual end of content, not padded stream size
-            if let Some(userstrings) = view.userstrings() {
-                let mut actual_end = 1u32; // Start after mandatory null byte at index 0
-                for (offset, userstring) in userstrings.iter() {
-                    let string_val = userstring.to_string_lossy();
-                    let utf16_bytes = string_val.encode_utf16().count() * 2;
-                    let total_length = utf16_bytes + 1; // +1 for terminator
-                    let compressed_length_size = compressed_uint_size(total_length);
-                    let entry_end = u32::try_from(offset).unwrap_or(0)
-                        + u32::try_from(compressed_length_size).unwrap_or(0)
-                        + u32::try_from(total_length).unwrap_or(0);
-                    actual_end = actual_end.max(entry_end);
-                }
-                actual_end
-            } else {
-                1
-            }
-        } else {
-            // For other heaps, use the stream header size
-            view.streams()
-                .iter()
-                .find(|stream| stream.name == stream_name)
-                .map_or(1, |stream| stream.size)
-        }
+        Self::new()
     }
 
     /// Returns true if any changes have been made to the assembly.
@@ -240,6 +206,7 @@ impl AssemblyChanges {
             || self.userstring_heap_changes.has_changes()
             || !self.native_imports.is_empty()
             || !self.native_exports.is_empty()
+            || !self.resource_data.is_empty()
     }
 
     /// Returns the number of tables that have been modified.
@@ -249,22 +216,22 @@ impl AssemblyChanges {
 
     /// Returns the total number of string heap additions.
     pub fn string_additions_count(&self) -> usize {
-        self.string_heap_changes.appended_items.len()
+        self.string_heap_changes.additions_count()
     }
 
     /// Returns the total number of blob heap additions.
     pub fn blob_additions_count(&self) -> usize {
-        self.blob_heap_changes.appended_items.len()
+        self.blob_heap_changes.additions_count()
     }
 
     /// Returns the total number of GUID heap additions.
     pub fn guid_additions_count(&self) -> usize {
-        self.guid_heap_changes.appended_items.len()
+        self.guid_heap_changes.additions_count()
     }
 
     /// Returns the total number of user string heap additions.
     pub fn userstring_additions_count(&self) -> usize {
-        self.userstring_heap_changes.appended_items.len()
+        self.userstring_heap_changes.additions_count()
     }
 
     /// Returns an iterator over all modified table IDs.
@@ -359,6 +326,121 @@ impl AssemblyChanges {
         (string_size, blob_size, guid_size, userstring_size)
     }
 
+    /// Returns an iterator over all string heap ChangeRefs.
+    ///
+    /// This is used during the write phase to resolve all string placeholders.
+    pub fn string_change_refs(&self) -> impl Iterator<Item = &super::ChangeRefRc> {
+        self.string_heap_changes
+            .appended_iter()
+            .map(|(_, change_ref)| change_ref)
+    }
+
+    /// Returns an iterator over all blob heap ChangeRefs.
+    ///
+    /// This is used during the write phase to resolve all blob placeholders.
+    pub fn blob_change_refs(&self) -> impl Iterator<Item = &super::ChangeRefRc> {
+        self.blob_heap_changes
+            .appended_iter()
+            .map(|(_, change_ref)| change_ref)
+    }
+
+    /// Returns an iterator over all GUID heap ChangeRefs.
+    ///
+    /// This is used during the write phase to resolve all GUID placeholders.
+    pub fn guid_change_refs(&self) -> impl Iterator<Item = &super::ChangeRefRc> {
+        self.guid_heap_changes
+            .appended_iter()
+            .map(|(_, change_ref)| change_ref)
+    }
+
+    /// Returns an iterator over all user string heap ChangeRefs.
+    ///
+    /// This is used during the write phase to resolve all user string placeholders.
+    pub fn userstring_change_refs(&self) -> impl Iterator<Item = &super::ChangeRefRc> {
+        self.userstring_heap_changes
+            .appended_iter()
+            .map(|(_, change_ref)| change_ref)
+    }
+
+    /// Returns an iterator over all table row ChangeRefs for a specific table.
+    ///
+    /// This is used during the write phase to resolve all table row placeholders.
+    pub fn table_change_refs(
+        &self,
+        table_id: TableId,
+    ) -> impl Iterator<Item = (&u32, &super::ChangeRefRc)> {
+        self.table_changes
+            .get(&table_id)
+            .map(crate::cilassembly::TableModifications::change_refs)
+            .into_iter()
+            .flatten()
+    }
+
+    /// Returns an iterator over all ChangeRefs from all tables.
+    ///
+    /// This is used during the write phase to resolve all table row placeholders.
+    pub fn all_table_change_refs(
+        &self,
+    ) -> impl Iterator<Item = (TableId, &u32, &super::ChangeRefRc)> {
+        self.table_changes.iter().flat_map(|(table_id, mods)| {
+            mods.change_refs()
+                .map(move |(rid, change_ref)| (*table_id, rid, change_ref))
+        })
+    }
+
+    /// Looks up a ChangeRef by its placeholder value.
+    ///
+    /// This searches through all heap and table changes to find the ChangeRef
+    /// that corresponds to the given placeholder.
+    ///
+    /// # Arguments
+    ///
+    /// * `placeholder` - A placeholder value (must have high bit set)
+    ///
+    /// # Returns
+    ///
+    /// `Some(&ChangeRefRc)` if found, `None` otherwise.
+    pub fn lookup_by_placeholder(&self, placeholder: u32) -> Option<&super::ChangeRefRc> {
+        if !ChangeRef::is_placeholder(placeholder) {
+            return None;
+        }
+
+        let id = ChangeRef::id_from_placeholder(placeholder)?;
+
+        // Search heap changes
+        for (_, change_ref) in self.string_heap_changes.appended_iter() {
+            if change_ref.id() == id {
+                return Some(change_ref);
+            }
+        }
+        for (_, change_ref) in self.blob_heap_changes.appended_iter() {
+            if change_ref.id() == id {
+                return Some(change_ref);
+            }
+        }
+        for (_, change_ref) in self.guid_heap_changes.appended_iter() {
+            if change_ref.id() == id {
+                return Some(change_ref);
+            }
+        }
+        for (_, change_ref) in self.userstring_heap_changes.appended_iter() {
+            if change_ref.id() == id {
+                return Some(change_ref);
+            }
+        }
+
+        // Search table changes
+        for mods in self.table_changes.values() {
+            for (_, change_ref) in mods.change_refs() {
+                if change_ref.id() == id {
+                    return Some(change_ref);
+                }
+            }
+        }
+
+        None
+    }
+
     /// Stores a method body and allocates a placeholder RVA for it.
     ///
     /// This method stores the method body with a sequential placeholder RVA that will
@@ -447,11 +529,152 @@ impl AssemblyChanges {
     pub fn is_method_body_placeholder(&self, rva: u32) -> bool {
         rva >= 0xF000_0000 && self.method_bodies.contains_key(&rva)
     }
+
+    /// Stores resource data in the CLR resources section and returns its offset.
+    ///
+    /// This method appends the resource data to the CLR resources section with
+    /// the proper .NET format: 4-byte little-endian length prefix followed by the data.
+    /// The returned offset is used in the ManifestResource table's offset_field.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The raw resource data bytes to store
+    ///
+    /// # Returns
+    ///
+    /// The offset within the resources section where this resource starts.
+    /// This offset points to the length prefix, not the data itself.
+    pub fn store_resource_data(&mut self, data: &[u8]) -> u32 {
+        // Record the current offset before adding the new resource
+        let offset = self.resource_data.len() as u32;
+
+        // Write 4-byte little-endian length prefix
+        let len = data.len() as u32;
+        self.resource_data.extend_from_slice(&len.to_le_bytes());
+
+        // Write the actual resource data
+        self.resource_data.extend_from_slice(data);
+
+        offset
+    }
+
+    /// Returns the total size of all stored resource data.
+    ///
+    /// This includes all length prefixes and data bytes.
+    pub fn resource_data_size(&self) -> usize {
+        self.resource_data.len()
+    }
+
+    /// Returns true if there is any new resource data to write.
+    pub fn has_resource_data(&self) -> bool {
+        !self.resource_data.is_empty()
+    }
+
+    /// Returns a reference to the stored resource data bytes.
+    ///
+    /// This is used during PE writing to emit the CLR resources section.
+    pub fn resource_data_bytes(&self) -> &[u8] {
+        &self.resource_data
+    }
+
+    /// Stores field initialization data and returns a placeholder RVA.
+    ///
+    /// The returned placeholder RVA is a temporary identifier that will later
+    /// be resolved to the actual RVA during PE writing when the .sdata section
+    /// layout is determined. This enables building assemblies with field data
+    /// before the final layout is known.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The field initialization data bytes
+    ///
+    /// # Returns
+    ///
+    /// A placeholder RVA that will be resolved to the actual RVA during binary writing.
+    pub fn store_field_data(&mut self, data: Vec<u8>) -> u32 {
+        let placeholder_rva = self.next_field_placeholder;
+
+        // Store the field data with placeholder RVA
+        self.field_data.insert(placeholder_rva, data);
+
+        // Increment to next placeholder (simple sequential allocation)
+        self.next_field_placeholder += 1;
+
+        placeholder_rva
+    }
+
+    /// Retrieves stored field data by its placeholder RVA.
+    ///
+    /// # Arguments
+    ///
+    /// * `placeholder_rva` - The placeholder RVA of the field data to retrieve
+    ///
+    /// # Returns
+    ///
+    /// Optional reference to the field data bytes if found.
+    pub fn get_field_data(&self, placeholder_rva: u32) -> Option<&Vec<u8>> {
+        self.field_data.get(&placeholder_rva)
+    }
+
+    /// Gets the total size of all stored field data.
+    ///
+    /// This is used for calculating the size of the .text section during PE writing.
+    /// Includes 4-byte alignment padding between data entries.
+    ///
+    /// # Returns
+    ///
+    /// Total size in bytes of all field data including alignment padding.
+    pub fn field_data_total_size(&self) -> crate::Result<u32> {
+        self.field_data
+            .values()
+            .map(|data| {
+                let size = u32::try_from(data.len())
+                    .map_err(|_| malformed_error!("Field data size exceeds u32 range"))?;
+                // Align each entry to 4-byte boundary (same as method bodies)
+                Ok((size + 3) & !3)
+            })
+            .sum()
+    }
+
+    /// Gets all field data with their placeholder RVAs.
+    ///
+    /// This is used during PE writing to layout the .sdata section and resolve
+    /// placeholder RVAs to actual RVAs based on the final section layout.
+    ///
+    /// # Returns
+    ///
+    /// Iterator over (placeholder_rva, field_data_bytes) pairs for all stored field data.
+    pub fn field_data_entries(&self) -> impl Iterator<Item = (u32, &Vec<u8>)> + '_ {
+        self.field_data
+            .iter()
+            .map(|(placeholder_rva, data)| (*placeholder_rva, data))
+    }
+
+    /// Checks if a placeholder RVA represents field data managed by this system.
+    ///
+    /// This is used during PE writing to identify which RVAs in the metadata tables
+    /// are placeholders that need to be resolved to actual RVAs.
+    ///
+    /// # Arguments
+    ///
+    /// * `rva` - The RVA to check
+    ///
+    /// # Returns
+    ///
+    /// True if this RVA is a field data placeholder managed by this system.
+    pub fn is_field_data_placeholder(&self, rva: u32) -> bool {
+        (0xE000_0000..0xF000_0000).contains(&rva) && self.field_data.contains_key(&rva)
+    }
+
+    /// Returns true if there is any field data to write.
+    pub fn has_field_data(&self) -> bool {
+        !self.field_data.is_empty()
+    }
 }
 
 impl Default for AssemblyChanges {
     fn default() -> Self {
-        AssemblyChanges::empty()
+        Self::new()
     }
 }
 
@@ -480,21 +703,21 @@ mod tests {
         assert_eq!(userstring_size, 0);
 
         // Add some string heap changes
-        let mut string_changes = HeapChanges::new(100);
-        string_changes.appended_items.push("Hello".to_string()); // 5 + 1 = 6 bytes
-        string_changes.appended_items.push("World".to_string()); // 5 + 1 = 6 bytes
+        let mut string_changes = HeapChanges::new_strings();
+        let _ = string_changes.append("Hello".to_string()); // 5 + 1 = 6 bytes
+        let _ = string_changes.append("World".to_string()); // 5 + 1 = 6 bytes
         changes.string_heap_changes = string_changes;
 
         // Add some blob heap changes
-        let mut blob_changes = HeapChanges::new(50);
-        blob_changes.appended_items.push(vec![1, 2, 3]); // 1 + 3 = 4 bytes (length < 128)
-        blob_changes.appended_items.push(vec![4, 5, 6, 7, 8]); // 1 + 5 = 6 bytes
+        let mut blob_changes = HeapChanges::new_blobs();
+        let _ = blob_changes.append(vec![1, 2, 3]); // 1 + 3 = 4 bytes (length < 128)
+        let _ = blob_changes.append(vec![4, 5, 6, 7, 8]); // 1 + 5 = 6 bytes
         changes.blob_heap_changes = blob_changes;
 
         // Add some GUID heap changes
-        let mut guid_changes = HeapChanges::new(1);
-        guid_changes.appended_items.push([1; 16]); // 16 bytes
-        guid_changes.appended_items.push([2; 16]); // 16 bytes
+        let mut guid_changes = HeapChanges::new_guids();
+        let _ = guid_changes.append([1; 16]); // 16 bytes
+        let _ = guid_changes.append([2; 16]); // 16 bytes
         changes.guid_heap_changes = guid_changes;
 
         let (string_size, blob_size, guid_size, userstring_size) = changes.binary_heap_sizes();

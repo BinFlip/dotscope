@@ -671,6 +671,128 @@ impl<'a> Guid<'a> {
     pub fn data(&self) -> &[u8] {
         self.data
     }
+
+    /// Checks if the GUID heap contains a specific GUID value.
+    ///
+    /// Searches through all GUIDs in the heap to determine if any entry matches
+    /// the provided GUID. This is useful for quick existence checks without
+    /// needing to know the specific index.
+    ///
+    /// # Arguments
+    /// * `guid` - The GUID value to search for
+    ///
+    /// # Returns
+    /// `true` if the GUID exists in the heap, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// #[rustfmt::skip]
+    /// let heap_data = [
+    ///     0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48,
+    ///     0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+    /// ];
+    /// let guid_heap = Guid::from(&heap_data)?;
+    ///
+    /// let target = uguid::guid!("d437908e-65e6-487c-9735-7bdff699bea5");
+    /// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
+    ///
+    /// assert!(guid_heap.contains(&target));
+    /// assert!(!guid_heap.contains(&null_guid));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn contains(&self, guid: &uguid::Guid) -> bool {
+        self.iter().any(|(_, value)| &value == guid)
+    }
+
+    /// Finds the first occurrence of a GUID and returns its 1-based index.
+    ///
+    /// Searches through all GUIDs in the heap and returns the 1-based index of the
+    /// first matching entry. This index can be used with metadata table references.
+    ///
+    /// # Arguments
+    /// * `guid` - The GUID value to search for
+    ///
+    /// # Returns
+    /// `Some(index)` if the GUID is found (1-based), `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// #[rustfmt::skip]
+    /// let heap_data = [
+    ///     0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48,
+    ///     0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+    ///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    ///     0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    /// ];
+    /// let guid_heap = Guid::from(&heap_data)?;
+    ///
+    /// let target = uguid::guid!("d437908e-65e6-487c-9735-7bdff699bea5");
+    /// let null_guid = uguid::guid!("00000000-0000-0000-0000-000000000000");
+    ///
+    /// assert_eq!(guid_heap.find(&target), Some(1));  // 1-based index
+    /// assert_eq!(guid_heap.find(&null_guid), Some(2));  // 1-based index
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn find(&self, guid: &uguid::Guid) -> Option<u32> {
+        self.iter()
+            .find(|(_, value)| *value == *guid)
+            .and_then(|(index, _)| u32::try_from(index).ok())
+    }
+
+    /// Finds all occurrences of a GUID and returns their 1-based indices.
+    ///
+    /// Searches through all GUIDs in the heap and returns the 1-based indices of all
+    /// matching entries. This handles the case where duplicate GUIDs exist in the heap.
+    ///
+    /// # Arguments
+    /// * `guid` - The GUID value to search for
+    ///
+    /// # Returns
+    /// A vector of 1-based indices where the GUID was found. Empty if not found.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::streams::Guid;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// #[rustfmt::skip]
+    /// let heap_data = [
+    ///     0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48,
+    ///     0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+    ///     0x8e, 0x90, 0x37, 0xd4, 0xe6, 0x65, 0x7c, 0x48,
+    ///     0x97, 0x35, 0x7b, 0xdf, 0xf6, 0x99, 0xbe, 0xa5,
+    /// ];
+    /// let guid_heap = Guid::from(&heap_data)?;
+    ///
+    /// let target = uguid::guid!("d437908e-65e6-487c-9735-7bdff699bea5");
+    /// let indices = guid_heap.find_all(&target);
+    ///
+    /// assert_eq!(indices.len(), 2);
+    /// assert_eq!(indices[0], 1);  // 1-based index
+    /// assert_eq!(indices[1], 2);  // 1-based index
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn find_all(&self, guid: &uguid::Guid) -> Vec<u32> {
+        self.iter()
+            .filter(|(_, value)| *value == *guid)
+            .filter_map(|(index, _)| u32::try_from(index).ok())
+            .collect()
+    }
 }
 
 impl<'a> IntoIterator for &'a Guid<'a> {

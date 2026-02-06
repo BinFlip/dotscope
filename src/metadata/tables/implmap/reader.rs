@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for ImplMapRaw {
+    const TABLE_ID: TableId = TableId::ImplMap;
+
     /// Reads a single `ImplMap` table row from binary metadata stream.
     ///
     /// Parses the binary representation of an `ImplMap` entry, reading fields

@@ -43,7 +43,7 @@
 //!
 //! ## Creating Assembly Identities
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
 //!
 //! // Simple assembly without strong name
@@ -72,7 +72,7 @@
 //! let assembly_ref: AssemblyRef = // ... loaded from metadata
 //! let identity = AssemblyIdentity::from_assembly_ref(&assembly_ref);
 //!
-//! // Parse from Assembly table entry  
+//! // Parse from Assembly table entry
 //! let assembly: Assembly = // ... loaded from metadata
 //! let identity = AssemblyIdentity::from_assembly(&assembly);
 //! # Ok::<(), dotscope::Error>(())
@@ -80,8 +80,8 @@
 //!
 //! ## Version Parsing and Display
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::identity::AssemblyVersion;
+//! ```rust,no_run
+//! use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
 //!
 //! // Parse version string
 //! let version = AssemblyVersion::parse("1.2.3.4")?;
@@ -160,7 +160,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
 ///
 /// // Create identity for a simple library
@@ -174,6 +174,7 @@ use crate::{
 ///
 /// // Use as key in collections
 /// let mut assembly_map = std::collections::HashMap::new();
+/// let assembly_data = "path/to/assembly.dll";
 /// assembly_map.insert(identity, assembly_data);
 /// ```
 #[derive(Debug, Clone)]
@@ -269,7 +270,7 @@ impl std::hash::Hash for AssemblyIdentity {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::identity::AssemblyVersion;
 ///
 /// // Create version programmatically
@@ -388,7 +389,7 @@ impl AssemblyIdentity {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
     ///
     /// let identity = AssemblyIdentity::new(
@@ -545,7 +546,7 @@ impl AssemblyIdentity {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::identity::AssemblyIdentity;
     ///
     /// // Simple name only
@@ -631,7 +632,7 @@ impl AssemblyIdentity {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
     ///
     /// let identity = AssemblyIdentity::new(
@@ -1024,7 +1025,7 @@ impl AssemblyVersion {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::identity::AssemblyVersion;
     ///
     /// let full = AssemblyVersion::parse("1.2.3.4")?;
@@ -1225,6 +1226,8 @@ impl TryFrom<u32> for ProcessorArchitecture {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     #[test]
@@ -1761,8 +1764,6 @@ mod tests {
 
     #[test]
     fn test_assembly_identity_hash_consistency() {
-        use std::collections::HashMap;
-
         let id1 = AssemblyIdentity::new(
             "TestAssembly",
             AssemblyVersion::new(1, 0, 0, 0),

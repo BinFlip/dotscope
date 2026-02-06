@@ -6,18 +6,20 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::prelude::*;
 //!
-//! let builder_context = BuilderContext::new();
+//! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! let paramptr_token = ParamPtrBuilder::new()
 //!     .param(3)                      // Points to Param table RID 3
-//!     .build(&mut builder_context)?;
+//!     .build(&mut assembly)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{ParamPtrRaw, TableDataOwned, TableId},
         token::Token,
@@ -45,9 +47,11 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::prelude::*;
 ///
+/// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+/// # let mut context = CilAssembly::new(view);
 /// // Create parameter pointer for parameter reordering
 /// let ptr1 = ParamPtrBuilder::new()
 ///     .param(5)   // Points to Param table entry 5
@@ -62,6 +66,7 @@ use crate::{
 /// let ptr3 = ParamPtrBuilder::new()
 ///     .param(2)   // Points to Param table entry 2
 ///     .build(&mut context)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct ParamPtrBuilder {
@@ -80,7 +85,7 @@ impl ParamPtrBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = ParamPtrBuilder::new();
@@ -104,7 +109,7 @@ impl ParamPtrBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Point to first parameter
@@ -124,11 +129,11 @@ impl ParamPtrBuilder {
     /// Builds and adds the `ParamPtr` entry to the metadata
     ///
     /// Validates all required fields, creates the `ParamPtr` table entry,
-    /// and adds it to the builder context. Returns a token that can be used
+    /// and adds it to the assembly. Returns a token that can be used
     /// to reference this parameter pointer entry.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the builder context
+    /// - `assembly`: Mutable reference to the CilAssembly
     ///
     /// # Returns
     /// - `Ok(Token)`: Token referencing the created parameter pointer entry
@@ -140,31 +145,29 @@ impl ParamPtrBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let mut context = BuilderContext::new();
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let token = ParamPtrBuilder::new()
     ///     .param(3)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let param = self.param.ok_or_else(|| {
             Error::ModificationInvalid("Param RID is required for ParamPtr".to_string())
         })?;
 
-        let next_rid = context.next_rid(TableId::ParamPtr);
-        let token = Token::new(((TableId::ParamPtr as u32) << 24) | next_rid);
-
         let param_ptr = ParamPtrRaw {
-            rid: next_rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
             param,
         };
 
-        context.table_row_add(TableId::ParamPtr, TableDataOwned::ParamPtr(param_ptr))?;
-        Ok(token)
+        assembly.table_row_add(TableId::ParamPtr, TableDataOwned::ParamPtr(param_ptr))
     }
 }
 
@@ -180,9 +183,8 @@ impl Default for ParamPtrBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
-    };
+    use crate::test::factories::table::assemblyref::get_test_assembly;
+    use std::sync::Arc;
 
     #[test]
     fn test_paramptr_builder_new() {
@@ -200,37 +202,30 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = ParamPtrBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let _change_ref = ParamPtrBuilder::new()
             .param(1)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::ParamPtr as u8);
-        assert_eq!(token.row(), 1);
         Ok(())
     }
 
     #[test]
     fn test_paramptr_builder_reordering() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = ParamPtrBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let _change_ref = ParamPtrBuilder::new()
             .param(10) // Point to later parameter for reordering
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::ParamPtr as u8);
-        assert_eq!(token.row(), 1);
         Ok(())
     }
 
     #[test]
     fn test_paramptr_builder_missing_param() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let result = ParamPtrBuilder::new().build(&mut context);
+        let mut assembly = get_test_assembly()?;
+        let result = ParamPtrBuilder::new().build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -261,86 +256,68 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_fluent_interface() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test method chaining
-        let token = ParamPtrBuilder::new()
+        let _change_ref = ParamPtrBuilder::new()
             .param(15)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::ParamPtr as u8);
-        assert_eq!(token.row(), 1);
         Ok(())
     }
 
     #[test]
     fn test_paramptr_builder_multiple_builds() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Build first pointer
-        let token1 = ParamPtrBuilder::new()
+        let ref1 = ParamPtrBuilder::new()
             .param(5)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build first pointer");
 
         // Build second pointer
-        let token2 = ParamPtrBuilder::new()
+        let ref2 = ParamPtrBuilder::new()
             .param(2)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build second pointer");
 
         // Build third pointer
-        let token3 = ParamPtrBuilder::new()
+        let ref3 = ParamPtrBuilder::new()
             .param(8)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build third pointer");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_eq!(token3.row(), 3);
-        assert_ne!(token1, token2);
-        assert_ne!(token2, token3);
+        // Verify each build returns a unique change reference
+        assert!(!Arc::ptr_eq(&ref1, &ref2));
+        assert!(!Arc::ptr_eq(&ref2, &ref3));
         Ok(())
     }
 
     #[test]
     fn test_paramptr_builder_large_param_rid() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = ParamPtrBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let _change_ref = ParamPtrBuilder::new()
             .param(0xFFFF) // Large Param RID
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should handle large param RID");
 
-        assert_eq!(token.table(), TableId::ParamPtr as u8);
-        assert_eq!(token.row(), 1);
         Ok(())
     }
 
     #[test]
     fn test_paramptr_builder_param_ordering_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate parameter reordering: logical order 1,2,3 -> physical order 3,1,2
         let logical_to_physical = [(1, 8), (2, 3), (3, 6)];
 
-        let mut tokens = Vec::new();
-        for (logical_idx, physical_param) in logical_to_physical {
-            let token = ParamPtrBuilder::new()
+        for (_logical_idx, physical_param) in logical_to_physical {
+            let _change_ref = ParamPtrBuilder::new()
                 .param(physical_param)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build parameter pointer");
-            tokens.push((logical_idx, token));
-        }
-
-        // Verify logical ordering is preserved in tokens
-        for (i, (logical_idx, token)) in tokens.iter().enumerate() {
-            assert_eq!(*logical_idx, i + 1);
-            assert_eq!(token.row(), (i + 1) as u32);
         }
 
         Ok(())
@@ -348,11 +325,10 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_zero_param() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test with param 0 (typically invalid but should not cause builder to fail)
-        let result = ParamPtrBuilder::new().param(0).build(&mut context);
+        let result = ParamPtrBuilder::new().param(0).build(&mut assembly);
 
         // Should build successfully even with param 0
         assert!(result.is_ok());
@@ -361,25 +337,16 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_method_parameter_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate method parameters with custom ordering
         let method_params = [4, 1, 7, 2]; // Parameters in custom order
 
-        let mut param_pointers = Vec::new();
         for &param_rid in &method_params {
-            let pointer_token = ParamPtrBuilder::new()
+            let _change_ref = ParamPtrBuilder::new()
                 .param(param_rid)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build parameter pointer");
-            param_pointers.push(pointer_token);
-        }
-
-        // Verify parameter pointers maintain logical sequence
-        for (i, token) in param_pointers.iter().enumerate() {
-            assert_eq!(token.table(), TableId::ParamPtr as u8);
-            assert_eq!(token.row(), (i + 1) as u32);
         }
 
         Ok(())
@@ -387,59 +354,45 @@ mod tests {
 
     #[test]
     fn test_paramptr_builder_compressed_metadata_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate compressed metadata scenario with parameter indirection
         let compressed_order = [10, 5, 15, 1, 20];
 
-        let mut pointer_tokens = Vec::new();
+        let mut pointer_refs = Vec::new();
         for &param_order in &compressed_order {
-            let token = ParamPtrBuilder::new()
+            let change_ref = ParamPtrBuilder::new()
                 .param(param_order)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build pointer for compressed metadata");
-            pointer_tokens.push(token);
+            pointer_refs.push(change_ref);
         }
 
         // Verify consistent indirection mapping
-        assert_eq!(pointer_tokens.len(), 5);
-        for (i, token) in pointer_tokens.iter().enumerate() {
-            assert_eq!(token.table(), TableId::ParamPtr as u8);
-            assert_eq!(token.row(), (i + 1) as u32);
-        }
+        assert_eq!(pointer_refs.len(), 5);
 
         Ok(())
     }
 
     #[test]
     fn test_paramptr_builder_edit_continue_parameter_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate edit-and-continue where parameters are added/modified
         let original_params = [1, 2, 3];
-        let mut pointers = Vec::new();
 
         for &param_rid in &original_params {
-            let pointer = ParamPtrBuilder::new()
+            let _change_ref = ParamPtrBuilder::new()
                 .param(param_rid)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build parameter pointer for edit-continue");
-            pointers.push(pointer);
         }
 
         // Add new parameter during edit session
-        let new_param_pointer = ParamPtrBuilder::new()
+        let _new_param_ref = ParamPtrBuilder::new()
             .param(100) // New parameter added during edit
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build new parameter pointer");
-
-        // Verify stable parameter pointer tokens
-        for (i, token) in pointers.iter().enumerate() {
-            assert_eq!(token.row(), (i + 1) as u32);
-        }
-        assert_eq!(new_param_pointer.row(), 4);
 
         Ok(())
     }

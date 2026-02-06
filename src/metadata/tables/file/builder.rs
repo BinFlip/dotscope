@@ -18,15 +18,14 @@
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! // Create a module file reference
 //! let module_token = FileBuilder::new()
 //!     .name("MyModule.netmodule")
 //!     .contains_metadata()
 //!     .hash_value(&[0x12, 0x34, 0x56, 0x78])
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! // Create a resource file reference
 //! let resource_token = FileBuilder::new()
@@ -46,7 +45,7 @@
 //! - **File Type Support**: Methods for specifying metadata vs. resource files
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{FileAttributes, FileRaw, TableDataOwned, TableId},
         token::Token,
@@ -73,19 +72,18 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing File entries:
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let hash_bytes = vec![0x01, 0x02, 0x03, 0x04]; // Example hash
 ///
 /// let file_token = FileBuilder::new()
 ///     .name("MyLibrary.netmodule")
 ///     .contains_metadata()
 ///     .hash_value(&hash_bytes)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
@@ -249,7 +247,7 @@ impl FileBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for the assembly being modified
+    /// * `assembly` - The assembly being modified
     ///
     /// # Returns
     ///
@@ -269,18 +267,17 @@ impl FileBuilder {
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     ///
     /// let file_token = FileBuilder::new()
     ///     .name("MyModule.netmodule")
     ///     .contains_metadata()
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// println!("Created File with token: {}", file_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let name = self.name.ok_or_else(|| {
             Error::ModificationInvalid("File name is required for File".to_string())
         })?;
@@ -291,34 +288,28 @@ impl FileBuilder {
             ));
         }
 
-        let name_index = context.string_get_or_add(&name)?;
+        let name_index = assembly.string_get_or_add(&name)?.placeholder();
 
         let hash_value_index = if let Some(hash) = self.hash_value {
             if hash.is_empty() {
                 0
             } else {
-                context.blob_add(&hash)?
+                assembly.blob_add(&hash)?.placeholder()
             }
         } else {
             0
         };
 
-        let rid = context.next_rid(TableId::File);
-        let token = Token::new(((TableId::File as u32) << 24) | rid);
-
         let file = FileRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
             flags: self.flags,
             name: name_index,
             hash_value: hash_value_index,
         };
 
-        let table_data = TableDataOwned::File(file);
-        context.table_row_add(TableId::File, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(TableId::File, TableDataOwned::File(file))
     }
 }
 
@@ -326,21 +317,20 @@ impl FileBuilder {
 mod tests {
     use super::*;
     use crate::{
-        metadata::tables::FileAttributes, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, metadata::tables::FileAttributes,
+        test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
     fn test_file_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = FileBuilder::new()
+        let ref_ = FileBuilder::new()
             .name("MyModule.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify the token has the correct table ID
-        assert_eq!(token.table(), TableId::File as u8);
-        assert!(token.row() > 0);
+        // Verify the ref has the correct table ID
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::File));
 
         Ok(())
     }
@@ -356,10 +346,9 @@ mod tests {
 
     #[test]
     fn test_file_builder_missing_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let result = FileBuilder::new().contains_metadata().build(&mut context);
+        let result = FileBuilder::new().contains_metadata().build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -370,10 +359,9 @@ mod tests {
 
     #[test]
     fn test_file_builder_empty_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let result = FileBuilder::new().name("").build(&mut context);
+        let result = FileBuilder::new().name("").build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -384,127 +372,113 @@ mod tests {
 
     #[test]
     fn test_file_builder_contains_metadata() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = FileBuilder::new()
+        let ref_ = FileBuilder::new()
             .name("Module.netmodule")
             .contains_metadata()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::File as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::File));
 
         Ok(())
     }
 
     #[test]
     fn test_file_builder_contains_no_metadata() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = FileBuilder::new()
+        let ref_ = FileBuilder::new()
             .name("Resources.resources")
             .contains_no_metadata()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::File as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::File));
 
         Ok(())
     }
 
     #[test]
     fn test_file_builder_with_hash_value() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let hash = vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
 
-        let token = FileBuilder::new()
+        let ref_ = FileBuilder::new()
             .name("HashedFile.dll")
             .hash_value(&hash)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::File as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::File));
 
         Ok(())
     }
 
     #[test]
     fn test_file_builder_with_flags() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = FileBuilder::new()
+        let ref_ = FileBuilder::new()
             .name("CustomFile.data")
             .flags(FileAttributes::CONTAINS_NO_META_DATA)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::File as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::File));
 
         Ok(())
     }
 
     #[test]
     fn test_file_builder_multiple_files() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token1 = FileBuilder::new()
+        let ref1 = FileBuilder::new()
             .name("Module1.netmodule")
             .contains_metadata()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token2 = FileBuilder::new()
+        let ref2 = FileBuilder::new()
             .name("Resources.resources")
             .contains_no_metadata()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify tokens are different and sequential
-        assert_ne!(token1, token2);
-        assert_eq!(token1.table(), TableId::File as u8);
-        assert_eq!(token2.table(), TableId::File as u8);
-        assert_eq!(token2.row(), token1.row() + 1);
+        // Verify refs are different
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::File));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::File));
 
         Ok(())
     }
 
     #[test]
     fn test_file_builder_comprehensive() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let hash = vec![0xDE, 0xAD, 0xBE, 0xEF, 0xCA, 0xFE, 0xBA, 0xBE];
 
-        let token = FileBuilder::new()
+        let ref_ = FileBuilder::new()
             .name("ComprehensiveModule.netmodule")
             .contains_metadata()
             .hash_value(&hash)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::File as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::File));
 
         Ok(())
     }
 
     #[test]
     fn test_file_builder_fluent_api() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test fluent API chaining
-        let token = FileBuilder::new()
+        let ref_ = FileBuilder::new()
             .name("FluentFile.resources")
             .contains_no_metadata()
             .hash_value(&[0x11, 0x22, 0x33, 0x44])
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::File as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::File));
 
         Ok(())
     }
@@ -529,16 +503,14 @@ mod tests {
 
     #[test]
     fn test_file_builder_empty_hash() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = FileBuilder::new()
+        let ref_ = FileBuilder::new()
             .name("NoHashFile.dll")
             .hash_value(&[]) // Empty hash should work
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::File as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::File));
 
         Ok(())
     }

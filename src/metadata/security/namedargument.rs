@@ -90,7 +90,7 @@
 //!
 //! ## Working with Boolean Arguments
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::security::{NamedArgument, ArgumentType, ArgumentValue};
 //!
 //! let unrestricted_arg = NamedArgument::new(

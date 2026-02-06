@@ -18,7 +18,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::streams::UserStrings;
 //!
 //! // Sample heap data with "Hello" string
@@ -59,7 +59,7 @@ use widestring::U16Str;
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::streams::UserStrings;
 ///
 /// // Create from heap data
@@ -72,7 +72,7 @@ use widestring::U16Str;
 ///
 /// ## Iteration Example
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::streams::UserStrings;
 ///
 /// let data = &[0u8, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00]; // "Hi"
@@ -113,7 +113,7 @@ impl<'a> UserStrings<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::streams::UserStrings;
     ///
     /// // Valid heap data
@@ -147,7 +147,7 @@ impl<'a> UserStrings<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::streams::UserStrings;
     ///
     /// let data = &[0x00, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00]; // "Hi"
@@ -227,7 +227,7 @@ impl<'a> UserStrings<'a> {
             #[allow(clippy::cast_ptr_alignment)]
             core::ptr::slice_from_raw_parts(ptr.cast::<u16>(), utf16_data.len() / 2)
                 .as_ref()
-                .unwrap()
+                .ok_or_else(|| malformed_error!("null pointer in user string slice conversion"))?
         };
 
         Ok(U16Str::from_slice(str_slice))
@@ -244,7 +244,7 @@ impl<'a> UserStrings<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::streams::UserStrings;
     ///
     /// let data = &[0u8, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00]; // "Hi" in UTF-16
@@ -268,6 +268,114 @@ impl<'a> UserStrings<'a> {
     pub fn data(&self) -> &[u8] {
         self.data
     }
+
+    /// Checks if the user strings heap contains a specific string value.
+    ///
+    /// Searches through all user strings in the heap to determine if any entry matches
+    /// the provided string. The comparison is performed by converting the UTF-16 heap
+    /// strings to UTF-8 using lossy conversion.
+    ///
+    /// # Arguments
+    /// * `s` - The string value to search for
+    ///
+    /// # Returns
+    /// `true` if the string exists in the heap, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::streams::UserStrings;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// // Heap with "Hi" string
+    /// let data = [
+    ///     0x00,
+    ///     0x05, 0x48, 0x00, 0x69, 0x00, 0x00,
+    /// ];
+    /// let user_strings = UserStrings::from(&data)?;
+    ///
+    /// assert!(user_strings.contains("Hi"));
+    /// assert!(!user_strings.contains("NotFound"));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn contains(&self, s: &str) -> bool {
+        self.iter().any(|(_, value)| value.to_string_lossy() == s)
+    }
+
+    /// Finds the first occurrence of a user string and returns its heap offset.
+    ///
+    /// Searches through all user strings in the heap and returns the byte offset of the
+    /// first matching entry. The comparison is performed by converting the UTF-16 heap
+    /// strings to UTF-8 using lossy conversion.
+    ///
+    /// # Arguments
+    /// * `s` - The string value to search for
+    ///
+    /// # Returns
+    /// `Some(offset)` if the string is found, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::streams::UserStrings;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let data = [
+    ///     0x00,
+    ///     0x05, 0x48, 0x00, 0x69, 0x00, 0x00,  // "Hi" at offset 1
+    /// ];
+    /// let user_strings = UserStrings::from(&data)?;
+    ///
+    /// assert_eq!(user_strings.find("Hi"), Some(1));
+    /// assert_eq!(user_strings.find("NotFound"), None);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn find(&self, s: &str) -> Option<u32> {
+        self.iter()
+            .find(|(_, value)| value.to_string_lossy() == s)
+            .and_then(|(offset, _)| u32::try_from(offset).ok())
+    }
+
+    /// Finds all occurrences of a user string and returns their heap offsets.
+    ///
+    /// Searches through all user strings in the heap and returns the byte offsets of all
+    /// matching entries. This handles the case where duplicate strings exist in the heap.
+    ///
+    /// # Arguments
+    /// * `s` - The string value to search for
+    ///
+    /// # Returns
+    /// A vector of offsets where the string was found. Empty if not found.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::streams::UserStrings;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let data = [
+    ///     0x00,
+    ///     0x05, 0x48, 0x00, 0x69, 0x00, 0x00,  // "Hi" at offset 1
+    ///     0x05, 0x48, 0x00, 0x69, 0x00, 0x00,  // "Hi" at offset 7
+    /// ];
+    /// let user_strings = UserStrings::from(&data)?;
+    ///
+    /// let offsets = user_strings.find_all("Hi");
+    /// assert_eq!(offsets.len(), 2);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn find_all(&self, s: &str) -> Vec<u32> {
+        self.iter()
+            .filter(|(_, value)| value.to_string_lossy() == s)
+            .filter_map(|(offset, _)| u32::try_from(offset).ok())
+            .collect()
+    }
 }
 
 impl<'a> IntoIterator for &'a UserStrings<'a> {
@@ -280,7 +388,7 @@ impl<'a> IntoIterator for &'a UserStrings<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::streams::UserStrings;
     ///
     /// let data = &[0u8, 0x05, 0x48, 0x00, 0x69, 0x00, 0x00, 0x00];

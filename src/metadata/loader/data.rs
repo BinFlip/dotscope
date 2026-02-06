@@ -226,8 +226,13 @@ impl CilObjectData {
     pub(crate) fn from_assembly_view(
         view: &CilAssemblyView,
         project_context: Option<&ProjectContext>,
+        lenient: bool,
     ) -> Result<Self> {
-        let identity = view.identity()?;
+        // Get real assembly identity (None for netmodules)
+        let real_identity = view.identity()?;
+
+        // For TypeRegistry, we always need an identity - use fallback for netmodules
+        let type_registry_identity = view.identity_or_fallback()?;
 
         let mut cil_object = CilObjectData {
             refs_assembly: SkipMap::default(),
@@ -239,7 +244,7 @@ impl CilObjectData {
             assembly: OnceLock::new(),
             assembly_os: OnceLock::new(),
             assembly_processor: OnceLock::new(),
-            types: Arc::new(TypeRegistry::new(identity.clone())?),
+            types: Arc::new(TypeRegistry::new(type_registry_identity)?),
             import_container: UnifiedImportContainer::new(),
             export_container: UnifiedExportContainer::new(),
             methods: SkipMap::default(),
@@ -251,7 +256,10 @@ impl CilObjectData {
         *cil_object.import_container.native_mut() = native_imports;
         *cil_object.export_container.native_mut() = native_exports;
 
-        if let Some(context) = project_context {
+        // Only register with project context if we have a real assembly identity.
+        // Netmodules (which return None for identity) should not be registered
+        // as separate assemblies in the project context - they're part of another assembly.
+        if let (Some(context), Some(identity)) = (project_context, real_identity) {
             context.register_and_wait_stage1(identity, cil_object.types.clone())?;
             context.link_all_registries(&cil_object.types);
         }
@@ -262,6 +270,8 @@ impl CilObjectData {
                 data: view.data(),
                 header: view.cor20header(),
                 header_root: view.metadata_root(),
+                diagnostics: view.diagnostics(),
+                lenient,
                 meta: view.tables(),
                 strings: view.strings(),
                 userstrings: view.userstrings(),

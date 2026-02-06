@@ -16,39 +16,38 @@
 //!
 //! ## Usage
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! # let mut assembly = CilAssembly::new(view);
 //!
 //! // Create a type forwarding entry
-//! let assembly_ref_token = AssemblyRefBuilder::new()
+//! let assembly_ref = AssemblyRefBuilder::new()
 //!     .name("MyApp.Core")
 //!     .version(2, 0, 0, 0)
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! let forwarded_type_token = ExportedTypeBuilder::new()
 //!     .name("Customer")
 //!     .namespace("MyApp.Models")
 //!     .public()
-//!     .implementation_assembly_ref(assembly_ref_token)
-//!     .build(&mut context)?;
+//!     .implementation_assembly_ref(assembly_ref.placeholder())
+//!     .build(&mut assembly)?;
 //!
 //! // Create a multi-module assembly type export
-//! let file_token = FileBuilder::new()
+//! let file_ref = FileBuilder::new()
 //!     .name("DataLayer.netmodule")
 //!     .contains_metadata()
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! let module_type_token = ExportedTypeBuilder::new()
 //!     .name("Repository")
 //!     .namespace("MyApp.Data")
 //!     .public()
 //!     .type_def_id(0x02000001) // TypeDef hint
-//!     .implementation_file(file_token)
-//!     .build(&mut context)?;
+//!     .implementation_file(file_ref.placeholder())
+//!     .build(&mut assembly)?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -61,7 +60,7 @@
 //! - **Implementation Support**: Methods for file-based and external assembly exports
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{
             CodedIndex, CodedIndexType, ExportedTypeRaw, TableDataOwned, TableId, TypeAttributes,
@@ -70,6 +69,21 @@ use crate::{
     },
     Error, Result,
 };
+
+/// Represents the implementation target for an ExportedType entry.
+///
+/// This enum captures both the row index (which can be a placeholder or actual row ID)
+/// and the target table type. The `CodedIndex` is constructed at write time, not at
+/// builder time, to ensure proper placeholder resolution.
+#[derive(Debug, Clone, Copy)]
+enum ImplementationTarget {
+    /// Reference to a File table entry (multi-module assembly)
+    File(u32),
+    /// Reference to an AssemblyRef table entry (type forwarding)
+    AssemblyRef(u32),
+    /// Reference to another ExportedType table entry (nested export)
+    ExportedType(u32),
+}
 
 /// Builder for creating ExportedType table entries.
 ///
@@ -90,19 +104,18 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing ExportedType entries:
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 ///
 /// let exported_type_token = ExportedTypeBuilder::new()
 ///     .name("Customer")
 ///     .namespace("MyApp.Models")
 ///     .public()
 ///     .type_def_id(0x02000001)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
@@ -130,8 +143,9 @@ pub struct ExportedTypeBuilder {
     flags: u32,
     /// Optional TypeDef ID hint for resolution optimization
     type_def_id: u32,
-    /// Implementation reference for type location
-    implementation: Option<CodedIndex>,
+    /// Implementation target capturing the row index and target table type.
+    /// The `CodedIndex` is constructed at write time.
+    implementation: Option<ImplementationTarget>,
 }
 
 impl Default for ExportedTypeBuilder {
@@ -220,7 +234,7 @@ impl ExportedTypeBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use dotscope::metadata::tables::TypeAttributes;
     /// let builder = ExportedTypeBuilder::new()
@@ -298,35 +312,31 @@ impl ExportedTypeBuilder {
     ///
     /// Use this for multi-module assembly scenarios where the type
     /// is defined in a different file within the same assembly.
+    /// The `CodedIndex` is NOT created at builder time to ensure proper placeholder resolution.
     ///
     /// # Arguments
     ///
-    /// * `file_token` - Token of the File table entry
+    /// * `file_row` - Row index or placeholder of the File table entry
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
-    /// let file_token = FileBuilder::new()
+    /// # let mut assembly = CilAssembly::new(view);
+    /// let file_ref = FileBuilder::new()
     ///     .name("DataLayer.netmodule")
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// let builder = ExportedTypeBuilder::new()
     ///     .name("Repository")
-    ///     .implementation_file(file_token);
+    ///     .implementation_file(file_ref.placeholder());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
-    pub fn implementation_file(mut self, file_token: Token) -> Self {
-        self.implementation = Some(CodedIndex::new(
-            TableId::File,
-            file_token.row(),
-            CodedIndexType::Implementation,
-        ));
+    pub fn implementation_file(mut self, file_row: u32) -> Self {
+        self.implementation = Some(ImplementationTarget::File(file_row));
         self
     }
 
@@ -334,36 +344,32 @@ impl ExportedTypeBuilder {
     ///
     /// Use this for type forwarding scenarios where the type has been
     /// moved to a different assembly and needs to be redirected.
+    /// The `CodedIndex` is NOT created at builder time to ensure proper placeholder resolution.
     ///
     /// # Arguments
     ///
-    /// * `assembly_ref_token` - Token of the AssemblyRef table entry
+    /// * `assembly_ref_row` - Row index or placeholder of the AssemblyRef table entry
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
-    /// let assembly_ref_token = AssemblyRefBuilder::new()
+    /// # let mut assembly = CilAssembly::new(view);
+    /// let assembly_ref = AssemblyRefBuilder::new()
     ///     .name("MyApp.Core")
     ///     .version(2, 0, 0, 0)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// let builder = ExportedTypeBuilder::new()
     ///     .name("Customer")
-    ///     .implementation_assembly_ref(assembly_ref_token);
+    ///     .implementation_assembly_ref(assembly_ref.placeholder());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
-    pub fn implementation_assembly_ref(mut self, assembly_ref_token: Token) -> Self {
-        self.implementation = Some(CodedIndex::new(
-            TableId::AssemblyRef,
-            assembly_ref_token.row(),
-            CodedIndexType::Implementation,
-        ));
+    pub fn implementation_assembly_ref(mut self, assembly_ref_row: u32) -> Self {
+        self.implementation = Some(ImplementationTarget::AssemblyRef(assembly_ref_row));
         self
     }
 
@@ -371,35 +377,31 @@ impl ExportedTypeBuilder {
     ///
     /// Use this for complex scenarios with nested export references,
     /// though this is rarely used in practice.
+    /// The `CodedIndex` is NOT created at builder time to ensure proper placeholder resolution.
     ///
     /// # Arguments
     ///
-    /// * `exported_type_token` - Token of the ExportedType table entry
+    /// * `exported_type_row` - Row index or placeholder of the ExportedType table entry
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
-    /// let base_export_token = ExportedTypeBuilder::new()
+    /// # let mut assembly = CilAssembly::new(view);
+    /// let base_export = ExportedTypeBuilder::new()
     ///     .name("BaseType")
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// let builder = ExportedTypeBuilder::new()
     ///     .name("DerivedType")
-    ///     .implementation_exported_type(base_export_token);
+    ///     .implementation_exported_type(base_export.placeholder());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
-    pub fn implementation_exported_type(mut self, exported_type_token: Token) -> Self {
-        self.implementation = Some(CodedIndex::new(
-            TableId::ExportedType,
-            exported_type_token.row(),
-            CodedIndexType::Implementation,
-        ));
+    pub fn implementation_exported_type(mut self, exported_type_row: u32) -> Self {
+        self.implementation = Some(ImplementationTarget::ExportedType(exported_type_row));
         self
     }
 
@@ -410,7 +412,7 @@ impl ExportedTypeBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for the assembly being modified
+    /// * `assembly` - The CilAssembly for the assembly being modified
     ///
     /// # Returns
     ///
@@ -422,7 +424,6 @@ impl ExportedTypeBuilder {
     /// - The type name is not set
     /// - The type name is empty
     /// - The implementation reference is not set
-    /// - The implementation reference uses an invalid table type (must be File, AssemblyRef, or ExportedType)
     /// - The implementation reference has a row index of 0
     /// - There are issues adding strings to heaps
     /// - There are issues adding the table row
@@ -433,19 +434,18 @@ impl ExportedTypeBuilder {
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     ///
     /// let exported_type_token = ExportedTypeBuilder::new()
     ///     .name("Customer")
     ///     .namespace("MyApp.Models")
     ///     .public()
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// println!("Created ExportedType with token: {}", exported_type_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let name = self.name.ok_or_else(|| {
             Error::ModificationInvalid("Type name is required for ExportedType".to_string())
         })?;
@@ -456,45 +456,55 @@ impl ExportedTypeBuilder {
             ));
         }
 
-        let implementation = self.implementation.ok_or_else(|| {
+        let implementation_target = self.implementation.ok_or_else(|| {
             Error::ModificationInvalid("Implementation is required for ExportedType".to_string())
         })?;
 
-        // Validate implementation reference
-        match implementation.tag {
-            TableId::File | TableId::AssemblyRef | TableId::ExportedType => {
-                if implementation.row == 0 {
-                    return Err(Error::ModificationInvalid(
-                        "Implementation reference row cannot be 0".to_string(),
-                    ));
-                }
-            }
-            _ => {
-                return Err(Error::ModificationInvalid(format!(
-                    "Invalid implementation table type: {:?}. Must be File, AssemblyRef, or ExportedType",
-                    implementation.tag
-                )));
-            }
+        // Extract the row from the target for validation
+        let implementation_row = match implementation_target {
+            ImplementationTarget::File(row)
+            | ImplementationTarget::AssemblyRef(row)
+            | ImplementationTarget::ExportedType(row) => row,
+        };
+
+        // Validate implementation reference - 0 is invalid unless it's a placeholder
+        // We allow placeholders (which have bit 31 set) to pass through
+        if implementation_row == 0 {
+            return Err(Error::ModificationInvalid(
+                "Implementation reference row cannot be 0".to_string(),
+            ));
         }
 
-        let name_index = context.string_get_or_add(&name)?;
+        // Construct the CodedIndex from the stored target information.
+        // The row value may be a placeholder that will be resolved at write time
+        // by the ResolvePlaceholders implementation.
+        let implementation = match implementation_target {
+            ImplementationTarget::File(row) => {
+                CodedIndex::new(TableId::File, row, CodedIndexType::Implementation)
+            }
+            ImplementationTarget::AssemblyRef(row) => {
+                CodedIndex::new(TableId::AssemblyRef, row, CodedIndexType::Implementation)
+            }
+            ImplementationTarget::ExportedType(row) => {
+                CodedIndex::new(TableId::ExportedType, row, CodedIndexType::Implementation)
+            }
+        };
+
+        let name_index = assembly.string_get_or_add(&name)?.placeholder();
         let namespace_index = if let Some(namespace) = self.namespace {
             if namespace.is_empty() {
                 0
             } else {
-                context.string_get_or_add(&namespace)?
+                assembly.string_get_or_add(&namespace)?.placeholder()
             }
         } else {
             0
         };
 
-        let rid = context.next_rid(TableId::ExportedType);
-        let token = Token::new(((TableId::ExportedType as u32) << 24) | rid);
-
         let exported_type = ExportedTypeRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
             flags: self.flags,
             type_def_id: self.type_def_id,
             name: name_index,
@@ -502,10 +512,10 @@ impl ExportedTypeBuilder {
             implementation,
         };
 
-        let table_data = TableDataOwned::ExportedType(exported_type);
-        context.table_row_add(TableId::ExportedType, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(
+            TableId::ExportedType,
+            TableDataOwned::ExportedType(exported_type),
+        )
     }
 }
 
@@ -513,28 +523,30 @@ impl ExportedTypeBuilder {
 mod tests {
     use super::*;
     use crate::{
+        cilassembly::ChangeRefKind,
         metadata::tables::{TableId, TypeAttributes},
         test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
     fn test_exported_type_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // First create a File to reference
-        let file_token = crate::metadata::tables::FileBuilder::new()
+        let file_ref = crate::metadata::tables::FileBuilder::new()
             .name("TestModule.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token = ExportedTypeBuilder::new()
+        let exported_ref = ExportedTypeBuilder::new()
             .name("TestType")
-            .implementation_file(file_token)
-            .build(&mut context)?;
+            .implementation_file(file_ref.placeholder())
+            .build(&mut assembly)?;
 
-        // Verify the token has the correct table ID
-        assert_eq!(token.table(), TableId::ExportedType as u8);
-        assert!(token.row() > 0);
+        // Verify the reference has the correct kind
+        assert_eq!(
+            exported_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ExportedType)
+        );
 
         Ok(())
     }
@@ -552,17 +564,16 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_missing_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a File to reference
-        let file_token = crate::metadata::tables::FileBuilder::new()
+        let file_ref = crate::metadata::tables::FileBuilder::new()
             .name("TestModule.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         let result = ExportedTypeBuilder::new()
-            .implementation_file(file_token)
-            .build(&mut context);
+            .implementation_file(file_ref.placeholder())
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -573,18 +584,17 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_empty_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a File to reference
-        let file_token = crate::metadata::tables::FileBuilder::new()
+        let file_ref = crate::metadata::tables::FileBuilder::new()
             .name("TestModule.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         let result = ExportedTypeBuilder::new()
             .name("")
-            .implementation_file(file_token)
-            .build(&mut context);
+            .implementation_file(file_ref.placeholder())
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -595,12 +605,11 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_missing_implementation() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let result = ExportedTypeBuilder::new()
             .name("TestType")
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -611,183 +620,160 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_with_namespace() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a File to reference
-        let file_token = crate::metadata::tables::FileBuilder::new()
+        let file_ref = crate::metadata::tables::FileBuilder::new()
             .name("TestModule.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token = ExportedTypeBuilder::new()
+        let exported_ref = ExportedTypeBuilder::new()
             .name("Customer")
             .namespace("MyApp.Models")
-            .implementation_file(file_token)
-            .build(&mut context)?;
+            .implementation_file(file_ref.placeholder())
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ExportedType as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            exported_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ExportedType)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_exported_type_builder_public() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a File to reference
-        let file_token = crate::metadata::tables::FileBuilder::new()
+        let file_ref = crate::metadata::tables::FileBuilder::new()
             .name("TestModule.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token = ExportedTypeBuilder::new()
+        let exported_ref = ExportedTypeBuilder::new()
             .name("PublicType")
             .public()
-            .implementation_file(file_token)
-            .build(&mut context)?;
+            .implementation_file(file_ref.placeholder())
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ExportedType as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            exported_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ExportedType)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_exported_type_builder_not_public() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a File to reference
-        let file_token = crate::metadata::tables::FileBuilder::new()
+        let file_ref = crate::metadata::tables::FileBuilder::new()
             .name("TestModule.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token = ExportedTypeBuilder::new()
+        let exported_ref = ExportedTypeBuilder::new()
             .name("InternalType")
             .not_public()
-            .implementation_file(file_token)
-            .build(&mut context)?;
+            .implementation_file(file_ref.placeholder())
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ExportedType as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            exported_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ExportedType)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_exported_type_builder_with_typedef_id() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a File to reference
-        let file_token = crate::metadata::tables::FileBuilder::new()
+        let file_ref = crate::metadata::tables::FileBuilder::new()
             .name("TestModule.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token = ExportedTypeBuilder::new()
+        let exported_ref = ExportedTypeBuilder::new()
             .name("TypeWithHint")
             .type_def_id(0x02000001)
-            .implementation_file(file_token)
-            .build(&mut context)?;
+            .implementation_file(file_ref.placeholder())
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ExportedType as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            exported_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ExportedType)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_exported_type_builder_assembly_ref_implementation() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create an AssemblyRef to reference
-        let assembly_ref_token = crate::metadata::tables::AssemblyRefBuilder::new()
+        let assembly_ref = crate::metadata::tables::AssemblyRefBuilder::new()
             .name("MyApp.Core")
             .version(1, 0, 0, 0)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token = ExportedTypeBuilder::new()
+        let exported_ref = ExportedTypeBuilder::new()
             .name("ForwardedType")
             .namespace("MyApp.Models")
-            .implementation_assembly_ref(assembly_ref_token)
-            .build(&mut context)?;
+            .implementation_assembly_ref(assembly_ref.placeholder())
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ExportedType as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            exported_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ExportedType)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_exported_type_builder_exported_type_implementation() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a File for the first ExportedType
-        let file_token = crate::metadata::tables::FileBuilder::new()
+        let file_ref = crate::metadata::tables::FileBuilder::new()
             .name("TestModule.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Create a base exported type
-        let base_token = ExportedTypeBuilder::new()
+        let base_ref = ExportedTypeBuilder::new()
             .name("BaseType")
-            .implementation_file(file_token)
-            .build(&mut context)?;
+            .implementation_file(file_ref.placeholder())
+            .build(&mut assembly)?;
 
         // Create a derived exported type that references the base
-        let token = ExportedTypeBuilder::new()
+        let derived_ref = ExportedTypeBuilder::new()
             .name("DerivedType")
-            .implementation_exported_type(base_token)
-            .build(&mut context)?;
+            .implementation_exported_type(base_ref.placeholder())
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ExportedType as u8);
-        assert!(token.row() > 0);
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_exported_type_builder_invalid_implementation() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-
-        // Create a builder with an invalid implementation reference
-        let mut builder = ExportedTypeBuilder::new().name("InvalidType");
-
-        // Manually set an invalid implementation (TypeDef is not valid for Implementation coded index)
-        builder.implementation = Some(CodedIndex::new(
-            TableId::TypeDef,
-            1,
-            CodedIndexType::Implementation,
-        ));
-
-        let result = builder.build(&mut context);
-
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Invalid implementation table type"));
+        assert_eq!(
+            derived_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ExportedType)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_exported_type_builder_zero_row_implementation() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a builder with a zero row implementation reference
         let mut builder = ExportedTypeBuilder::new().name("ZeroRowType");
 
         // Manually set an implementation with row 0 (invalid)
-        builder.implementation = Some(CodedIndex::new(
-            TableId::File,
-            0,
-            CodedIndexType::Implementation,
-        ));
+        builder.implementation = Some(ImplementationTarget::File(0));
 
-        let result = builder.build(&mut context);
+        let result = builder.build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -798,84 +784,84 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_multiple_types() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create Files to reference
-        let file_token1 = crate::metadata::tables::FileBuilder::new()
+        let file_ref1 = crate::metadata::tables::FileBuilder::new()
             .name("Module1.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let file_token2 = crate::metadata::tables::FileBuilder::new()
+        let file_ref2 = crate::metadata::tables::FileBuilder::new()
             .name("Module2.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token1 = ExportedTypeBuilder::new()
+        let ref1 = ExportedTypeBuilder::new()
             .name("Type1")
             .namespace("MyApp.A")
-            .implementation_file(file_token1)
-            .build(&mut context)?;
+            .implementation_file(file_ref1.placeholder())
+            .build(&mut assembly)?;
 
-        let token2 = ExportedTypeBuilder::new()
+        let ref2 = ExportedTypeBuilder::new()
             .name("Type2")
             .namespace("MyApp.B")
-            .implementation_file(file_token2)
-            .build(&mut context)?;
+            .implementation_file(file_ref2.placeholder())
+            .build(&mut assembly)?;
 
-        // Verify tokens are different and sequential
-        assert_ne!(token1, token2);
-        assert_eq!(token1.table(), TableId::ExportedType as u8);
-        assert_eq!(token2.table(), TableId::ExportedType as u8);
-        assert_eq!(token2.row(), token1.row() + 1);
+        // Verify refs are different and have correct kind
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::ExportedType));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::ExportedType));
 
         Ok(())
     }
 
     #[test]
     fn test_exported_type_builder_comprehensive() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a File to reference
-        let file_token = crate::metadata::tables::FileBuilder::new()
+        let file_ref = crate::metadata::tables::FileBuilder::new()
             .name("ComprehensiveModule.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token = ExportedTypeBuilder::new()
+        let exported_ref = ExportedTypeBuilder::new()
             .name("ComprehensiveType")
             .namespace("MyApp.Comprehensive")
             .public()
             .type_def_id(0x02000042)
-            .implementation_file(file_token)
-            .build(&mut context)?;
+            .implementation_file(file_ref.placeholder())
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ExportedType as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            exported_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ExportedType)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_exported_type_builder_fluent_api() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a File to reference
-        let file_token = crate::metadata::tables::FileBuilder::new()
+        let file_ref = crate::metadata::tables::FileBuilder::new()
             .name("FluentModule.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Test fluent API chaining
-        let token = ExportedTypeBuilder::new()
+        let exported_ref = ExportedTypeBuilder::new()
             .name("FluentType")
             .namespace("MyApp.Fluent")
             .not_public()
             .type_def_id(0x02000123)
-            .implementation_file(file_token)
-            .build(&mut context)?;
+            .implementation_file(file_ref.placeholder())
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ExportedType as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            exported_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ExportedType)
+        );
 
         Ok(())
     }
@@ -907,22 +893,23 @@ mod tests {
 
     #[test]
     fn test_exported_type_builder_empty_namespace() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a File to reference
-        let file_token = crate::metadata::tables::FileBuilder::new()
+        let file_ref = crate::metadata::tables::FileBuilder::new()
             .name("TestModule.netmodule")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token = ExportedTypeBuilder::new()
+        let exported_ref = ExportedTypeBuilder::new()
             .name("GlobalType")
             .namespace("") // Empty namespace should work
-            .implementation_file(file_token)
-            .build(&mut context)?;
+            .implementation_file(file_ref.placeholder())
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ExportedType as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            exported_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ExportedType)
+        );
 
         Ok(())
     }

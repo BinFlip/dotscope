@@ -15,22 +15,21 @@
 //!
 //! ## Usage
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! # let mut assembly = CilAssembly::new(view);
 //!
 //! // Create method debug information entry with document reference
 //! let debug_info_token = MethodDebugInformationBuilder::new()
 //!     .document(1) // Reference to Document table entry
 //!     .sequence_points(vec![0x01, 0x02, 0x03]) // Sequence points blob data
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! // Create entry for method without debug information
 //! let minimal_debug_token = MethodDebugInformationBuilder::new()
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -43,7 +42,7 @@
 //! - **Validation**: Document indices are validated when provided
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         sequencepoints::SequencePoints,
         tables::{MethodDebugInformationRaw, TableDataOwned, TableId},
@@ -71,17 +70,16 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing MethodDebugInformation entries:
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 ///
 /// let debug_info_token = MethodDebugInformationBuilder::new()
 ///     .document(1)                                    // Document table reference
 ///     .sequence_points(vec![0x01, 0x02, 0x03])      // Sequence points blob
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
@@ -205,7 +203,7 @@ impl MethodDebugInformationBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for the assembly being modified
+    /// * `assembly` - The CilAssembly being modified
     ///
     /// # Returns
     ///
@@ -223,45 +221,41 @@ impl MethodDebugInformationBuilder {
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     ///
     /// let debug_token = MethodDebugInformationBuilder::new()
     ///     .document(1)
     ///     .sequence_points(vec![0x01, 0x02, 0x03])
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// println!("Created MethodDebugInformation with token: {}", debug_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let rid = context.next_rid(TableId::MethodDebugInformation);
-        let token = Token::new(((TableId::MethodDebugInformation as u32) << 24) | rid);
-
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let document_index = self.document.unwrap_or(0);
 
         let sequence_points_index = if let Some(data) = self.sequence_points {
             if data.is_empty() {
                 0
             } else {
-                context.blob_add(&data)?
+                assembly.blob_add(&data)?.placeholder()
             }
         } else {
             0
         };
 
         let method_debug_info = MethodDebugInformationRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
             document: document_index,
             sequence_points: sequence_points_index,
         };
 
-        let table_data = TableDataOwned::MethodDebugInformation(method_debug_info);
-        context.table_row_add(TableId::MethodDebugInformation, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(
+            TableId::MethodDebugInformation,
+            TableDataOwned::MethodDebugInformation(method_debug_info),
+        )
     }
 }
 
@@ -269,22 +263,24 @@ impl MethodDebugInformationBuilder {
 mod tests {
     use super::*;
     use crate::{
-        metadata::tables::TableId, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, metadata::tables::TableId,
+        test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
     fn test_method_debug_information_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = MethodDebugInformationBuilder::new()
+        let ref_ = MethodDebugInformationBuilder::new()
             .document(1)
             .sequence_points(vec![0x01, 0x02, 0x03])
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify the token has the correct table ID
-        assert_eq!(token.table(), TableId::MethodDebugInformation as u8);
-        assert!(token.row() > 0);
+        // Verify the reference has the correct kind
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDebugInformation)
+        );
 
         Ok(())
     }
@@ -299,79 +295,84 @@ mod tests {
 
     #[test]
     fn test_method_debug_information_builder_minimal() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Should work with no document or sequence points
-        let token = MethodDebugInformationBuilder::new().build(&mut context)?;
+        let ref_ = MethodDebugInformationBuilder::new().build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::MethodDebugInformation as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDebugInformation)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_method_debug_information_builder_document_only() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = MethodDebugInformationBuilder::new()
+        let ref_ = MethodDebugInformationBuilder::new()
             .document(5)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::MethodDebugInformation as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDebugInformation)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_method_debug_information_builder_sequence_points_only() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let sequence_data = vec![0x10, 0x20, 0x30, 0x40];
-        let token = MethodDebugInformationBuilder::new()
+        let ref_ = MethodDebugInformationBuilder::new()
             .sequence_points(sequence_data)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::MethodDebugInformation as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDebugInformation)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_method_debug_information_builder_empty_sequence_points() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Empty sequence points should result in index 0
-        let token = MethodDebugInformationBuilder::new()
+        let ref_ = MethodDebugInformationBuilder::new()
             .document(1)
             .sequence_points(vec![])
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::MethodDebugInformation as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDebugInformation)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_method_debug_information_builder_fluent_api() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test fluent chaining
-        let token = MethodDebugInformationBuilder::new()
+        let ref_ = MethodDebugInformationBuilder::new()
             .document(3)
             .sequence_points(vec![0xAA, 0xBB, 0xCC])
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::MethodDebugInformation as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::MethodDebugInformation)
+        );
 
         Ok(())
     }

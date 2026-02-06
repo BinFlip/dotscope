@@ -7,6 +7,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{StateMachineMethodRaw, TableId},
     },
@@ -45,18 +46,30 @@ pub struct StateMachineMethodLoader;
 
 impl MetadataLoader for StateMachineMethodLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<StateMachineMethodRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let state_machine_method = row.to_owned(context.method_def)?;
-                    context
-                        .state_machine_method
-                        .insert(state_machine_method.token, state_machine_method);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<StateMachineMethodRaw>() else {
+            return Ok(());
+        };
+
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("state machine method 0x{:08x}", row.token.value());
+
+            let Some(state_machine_method) = context.handle_result(
+                row.to_owned(context.method_def),
+                DiagnosticCategory::Method,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context
+                .state_machine_method
+                .insert(state_machine_method.token, state_machine_method);
+            Ok(())
+        })
     }
 
     fn table_id(&self) -> Option<TableId> {

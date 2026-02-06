@@ -1,72 +1,133 @@
 //! Program analysis infrastructure for .NET assemblies.
 //!
 //! This module provides foundational analysis capabilities for understanding and
-//! transforming .NET CIL code. It builds upon the generic graph infrastructure
-//! in [`crate::utils::graph`] to provide domain-specific analysis tools.
+//! transforming .NET CIL code, including control flow graphs, SSA form, data flow
+//! analysis, and inter-procedural call graphs.
 //!
-//! # Architecture
+//! # Key Components
 //!
-//! The analysis module is organized into focused sub-modules:
+//! ## Control Flow Graph (CFG)
 //!
-//! - [`cfg`] - Control Flow Graph construction and analysis
-//! - [`ssa`] - Static Single Assignment form transformation
-//! - [`dataflow`] - Data flow analysis framework
-//! - [`callgraph`] - Inter-procedural call graph construction
+//! - [`ControlFlowGraph`](crate::analysis::ControlFlowGraph) - CFG built from basic blocks with lazy dominator computation
+//! - [`CfgEdge`](crate::analysis::CfgEdge) / [`CfgEdgeKind`](crate::analysis::CfgEdgeKind) - Edge representation with control flow semantics
+//! - [`LoopAnalyzer`](crate::analysis::LoopAnalyzer) / [`LoopForest`](crate::analysis::LoopForest) / [`LoopInfo`](crate::analysis::LoopInfo) - Loop detection and analysis
 //!
-//! # Usage
+//! ## Static Single Assignment (SSA)
+//!
+//! - [`SsaFunction`](crate::analysis::SsaFunction) - Method in SSA form with explicit def-use chains
+//! - [`SsaConverter`](crate::analysis::SsaConverter) - Constructs SSA from CFG via dominance frontiers
+//! - [`SsaBlock`](crate::analysis::SsaBlock) / [`SsaOp`](crate::analysis::SsaOp) / [`SsaInstruction`](crate::analysis::SsaInstruction) - SSA blocks and operations
+//! - [`PhiNode`](crate::analysis::PhiNode) / [`PhiOperand`](crate::analysis::PhiOperand) - Phi functions at control flow merge points
+//! - [`SsaVarId`](crate::analysis::SsaVarId) / [`SsaVariable`](crate::analysis::SsaVariable) - SSA variable identifiers and metadata
+//! - [`ConstValue`](crate::analysis::ConstValue) / [`AbstractValue`](crate::analysis::AbstractValue) - Constant and abstract value representation
+//!
+//! ## Data Flow Analysis
+//!
+//! - [`ConstantPropagation`](crate::analysis::ConstantPropagation) - Sparse Conditional Constant Propagation (SCCP)
+//! - [`LiveVariables`](crate::analysis::LiveVariables) / [`LivenessResult`](crate::analysis::LivenessResult) - Liveness analysis
+//! - [`ReachingDefinitions`](crate::analysis::ReachingDefinitions) / [`ReachingDefsResult`](crate::analysis::ReachingDefsResult) - Reaching definitions
+//! - [`DataFlowSolver`](crate::analysis::DataFlowSolver) / [`DataFlowAnalysis`](crate::analysis::DataFlowAnalysis) - Generic fixpoint solver framework
+//!
+//! ## Call Graph
+//!
+//! - [`CallGraph`](crate::analysis::CallGraph) - Inter-procedural call relationships
+//! - [`CallResolver`](crate::analysis::CallResolver) - Virtual call resolution via Class Hierarchy Analysis
+//! - [`CallSite`](crate::analysis::CallSite) / [`CallTarget`](crate::analysis::CallTarget) - Call site and target information
+//!
+//! # Usage Example
 //!
 //! ```rust,ignore
-//! use dotscope::analysis::ControlFlowGraph;
+//! use dotscope::analysis::{ControlFlowGraph, SsaConverter, ConstantPropagation};
 //! use dotscope::assembly::decode_blocks;
 //!
-//! // Decode method body into basic blocks
+//! // Build CFG from method body
 //! let blocks = decode_blocks(data, offset, rva, Some(size))?;
-//!
-//! // Build control flow graph
 //! let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
 //!
-//! // Access dominator tree (lazily computed)
-//! let dominators = cfg.dominators();
-//! assert!(dominators.dominates(cfg.entry(), some_block));
+//! // Convert to SSA form
+//! let ssa = SsaConverter::build(&cfg, num_args, num_locals, resolver)?;
+//!
+//! // Run constant propagation
+//! let sccp = ConstantPropagation::analyze(&ssa);
+//!
+//! // Analyze loops
+//! for loop_info in cfg.loops() {
+//!     println!("Loop at block {:?}, depth {}", loop_info.header, loop_info.depth);
+//! }
 //! ```
 
+mod algebraic;
 mod callgraph;
 mod cfg;
 mod dataflow;
+mod defuse;
+mod range;
 mod ssa;
+mod taint;
+
+#[cfg(feature = "deobfuscation")]
+mod x86;
 
 // Re-export primary types at module level
 pub use crate::utils::graph::NodeId;
+pub use algebraic::{simplify_op, SimplifyResult};
 pub use callgraph::{
     CallGraph, CallGraphNode, CallGraphStats, CallResolver, CallSite, CallTarget, CallType,
     ResolverStats,
 };
-pub use cfg::{CfgEdge, CfgEdgeKind, ControlFlowGraph, NaturalLoop};
+pub use cfg::{
+    BlockRole, BlockSemantics, CfgEdge, CfgEdgeKind, ControlFlowGraph, InductionUpdateKind,
+    InductionVar, LoopAnalyzer, LoopExit, LoopForest, LoopInfo, LoopSemantics, LoopType,
+    SemanticAnalyzer, SsaLoopAnalysis,
+};
 pub use dataflow::{
-    AnalysisResults, ConstantPropagation, DataFlowAnalysis, DataFlowSolver, Direction,
+    AnalysisResults, ConstantPropagation, DataFlowAnalysis, DataFlowCfg, DataFlowSolver, Direction,
     JoinSemiLattice, Lattice, LiveVariables, LivenessResult, MeetSemiLattice, ReachingDefinitions,
     ReachingDefsResult, ScalarValue, SccpResult,
 };
+pub use defuse::{DefUseIndex, Location};
+pub use range::{IntervalRange, ValueRange};
+#[cfg(feature = "deobfuscation")]
+pub use ssa::Z3Solver;
 pub use ssa::{
-    AbstractValue, ComputedOp, ComputedValue, ConstValue, DefSite, FieldRef, FnPtrSig, MethodRef,
-    PhiNode, PhiOperand, SigRef, SimulationResult, SsaBlock, SsaBuilder, SsaFunction,
-    SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable, StackSimulator, TypeRef, UseSite,
-    VariableOrigin,
+    analyze_alias, AbstractValue, AliasResult, ArrayIndex, BinaryOpInfo, BinaryOpKind, CmpKind,
+    ComputedOp, ComputedValue, ConstEvaluator, ConstValue, Constraint, ControlFlow, DefSite,
+    DispatcherPattern, EvaluatorConfig, FieldRef, FnPtrSig, MemoryDefSite, MemoryLocation,
+    MemoryOp, MemoryPhi, MemoryPhiOperand, MemorySsa, MemorySsaStats, MemoryState, MemoryVersion,
+    MethodPurity, MethodRef, PathConstraint, PatternDetector, PhiAnalyzer, PhiNode, PhiOperand,
+    ReturnInfo, SigRef, SimulationResult, SourceBlock, SsaBlock, SsaBlockBuilder, SsaCfg,
+    SsaConverter, SsaEvaluator, SsaExceptionHandler, SsaFunction, SsaFunctionBuilder,
+    SsaFunctionContext, SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable, StackSimulator,
+    SymbolicEvaluator, SymbolicExpr, SymbolicOp, TypeClass, TypeContext, TypeRef, UnaryOpInfo,
+    UnaryOpKind, UseSite, VariableOrigin,
+};
+pub use taint::{
+    cff_taint_config, find_blocks_jumping_to, find_token_dependencies, PhiTaintMode, TaintAnalysis,
+    TaintConfig, TaintStats, TokenTaintBuilder,
+};
+
+#[cfg(feature = "deobfuscation")]
+pub use x86::{
+    decode_all as decode_x86, decode_all_permissive as decode_x86_permissive,
+    decode_function_traversal as decode_x86_traversal, decode_single as decode_x86_single,
+    detect_epilogue as detect_x86_epilogue, detect_prologue as detect_x86_prologue,
+    DecodedInstruction as X86DecodedInstruction, EpilogueInfo as X86EpilogueInfo,
+    PrologueInfo as X86PrologueInfo, PrologueKind as X86PrologueKind,
+    TraversalDecodeResult as X86TraversalResult, X86BasicBlock, X86Condition, X86EdgeKind,
+    X86Function, X86Instruction, X86Memory, X86Operand, X86Register, X86ToSsaTranslator,
 };
 
 #[cfg(test)]
 mod tests {
     use crate::{
-        analysis::{
-            CfgEdgeKind, ControlFlowGraph, SsaBuilder, SsaFunction, SsaVarId, VariableOrigin,
-        },
+        analysis::{CfgEdgeKind, ControlFlowGraph, SsaConverter, SsaFunction, VariableOrigin},
         assembly::{decode_blocks, InstructionAssembler},
         utils::graph::NodeId,
     };
 
     /// Helper to build bytecode and decode it into a CFG.
     fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph<'static> {
-        let (bytecode, _max_stack) = assembler.finish().expect("Failed to assemble bytecode");
+        let (bytecode, _max_stack, _) = assembler.finish().expect("Failed to assemble bytecode");
         let blocks =
             decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len())).expect("Failed to decode");
         ControlFlowGraph::from_basic_blocks(blocks).expect("Failed to build CFG")
@@ -74,7 +135,7 @@ mod tests {
 
     /// Helper to build SSA from a CFG.
     fn build_ssa(cfg: &ControlFlowGraph<'_>, num_args: usize, num_locals: usize) -> SsaFunction {
-        SsaBuilder::build(cfg, num_args, num_locals).expect("SSA construction failed")
+        SsaConverter::build(cfg, num_args, num_locals, None).expect("SSA construction failed")
     }
 
     /// Consolidated SSA validation - checks all standard SSA invariants.
@@ -82,7 +143,6 @@ mod tests {
     fn assert_ssa_valid(ssa: &SsaFunction, cfg: &ControlFlowGraph<'_>) {
         assert_has_arguments(ssa, ssa.num_args());
         assert_has_locals(ssa, ssa.num_locals());
-        assert_valid_variable_ids(ssa);
         assert_single_assignment(ssa);
         assert_phi_operands_valid(ssa, cfg);
     }
@@ -141,19 +201,6 @@ mod tests {
                 "Local {} should have version 0, got {}",
                 i,
                 var.version()
-            );
-        }
-    }
-
-    /// Validates that all SSA variables have valid IDs.
-    fn assert_valid_variable_ids(ssa: &SsaFunction) {
-        for (i, var) in ssa.variables().iter().enumerate() {
-            assert_eq!(
-                var.id(),
-                SsaVarId::new(i),
-                "Variable at index {} has mismatched ID: {:?}",
-                i,
-                var.id()
             );
         }
     }
@@ -410,7 +457,7 @@ mod tests {
         let loops = cfg.loops();
         assert_eq!(loops.len(), 1);
         assert_eq!(loops[0].header, NodeId::new(0));
-        assert!(!loops[0].back_edges.is_empty());
+        assert!(!loops[0].latches.is_empty());
 
         let ssa = build_ssa(&cfg, 1, 0);
         assert_ssa_valid(&ssa, &cfg);

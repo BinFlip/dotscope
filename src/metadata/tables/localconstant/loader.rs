@@ -6,6 +6,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::TableId,
     },
@@ -37,20 +38,32 @@ pub(crate) struct LocalConstantLoader;
 
 impl MetadataLoader for LocalConstantLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<crate::metadata::tables::LocalConstantRaw>() {
-                if let (Some(strings), Some(blobs)) = (context.strings, context.blobs) {
-                    table.par_iter().try_for_each(|row| {
-                        let local_constant = row.to_owned(strings, blobs)?;
-                        context
-                            .local_constant
-                            .insert(local_constant.token, local_constant);
-                        Ok(())
-                    })?;
-                }
-            }
-        }
-        Ok(())
+        let (Some(header), Some(strings), Some(blobs)) =
+            (context.meta, context.strings, context.blobs)
+        else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<crate::metadata::tables::LocalConstantRaw>() else {
+            return Ok(());
+        };
+
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("local constant 0x{:08x}", row.token.value());
+
+            let Some(local_constant) = context.handle_result(
+                row.to_owned(strings, blobs),
+                DiagnosticCategory::Method,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context
+                .local_constant
+                .insert(local_constant.token, local_constant);
+            Ok(())
+        })
     }
 
     fn table_id(&self) -> Option<TableId> {

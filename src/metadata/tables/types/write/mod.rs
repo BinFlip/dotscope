@@ -1,42 +1,32 @@
-//! Write-capable infrastructure for creating and modifying metadata tables.
+//! Write infrastructure for serializing metadata table rows to binary format.
 //!
-//! This module provides the functionality for creating, modifying, and serializing
-//! .NET CLI metadata tables to binary format. It includes traits, builders, and
-//! containers that enable type-safe construction and serialization of metadata
-//! with support for both sequential and parallel operations.
+//! This module provides the core types for constructing and serializing .NET CLI
+//! metadata table rows. It works in conjunction with the streaming PE writer in
+//! [`crate::cilassembly::writer`] which handles the full tables stream layout
+//! (header, row counts, coded index sizes) during PE generation.
 //!
-//! # Key Components (Future Implementation)
+//! # Key Components
 //!
-//! - [`crate::metadata::tables::types::RowWritable`] - Trait for serializing table rows to byte data
-//! - [`WritableMetadataTable`] - Container for mutable table data with owned rows
-//! - [`WritableTableData`] - Enumeration of all writable table variants
-//! - [`WritableTablesHeader`] - Complete metadata tables header for serialization
-//! - [`TableBuilder`] - Builder pattern for constructing tables incrementally
+//! - [`RowWritable`] - Trait for serializing individual table rows to byte buffers
+//! - [`TableDataOwned`] - Type-erased enum over all 48 raw row types, used by the
+//!   modification pipeline for sparse updates, replacements, and insertions
 //!
-//! # Planned Architecture
+//! # Serialization Pipeline
 //!
-//! The write infrastructure will mirror the read architecture but with mutable
-//! ownership semantics:
-//! - Tables will hold owned row data (e.g., `Vec<TypeDefOwned>`)
-//! - Size calculations will be performed dynamically based on current content
-//! - Serialization will support incremental writing and validation
-//! - Cross-references will be maintained and validated during construction
+//! During PE generation, each row goes through a multi-stage pipeline before
+//! being written to the output stream:
 //!
-//! # Thread Safety
+//! 1. **Placeholder resolution** — heap offsets are resolved from [`crate::cilassembly::ChangeRefRc`] values
+//! 2. **RID remapping** — row references are adjusted for deletions via [`crate::cilassembly::writer::RidRemapper`]
+//! 3. **Row serialization** — [`RowWritable::row_write()`] encodes the row into ECMA-335 binary format
+//! 4. **RVA fixups** — method body and field RVA values are patched to final addresses
 //!
-//! Write operations will support concurrent construction with proper synchronization:
-//! - [`RowWritable`] types will be [`Sync`] to support parallel serialization
-//! - Builders will provide thread-safe incremental construction
-//! - Validation will occur at table and header level before serialization
+//! The streaming generator in [`crate::cilassembly::writer`] orchestrates this pipeline,
+//! handling the tables stream header, dynamic `TableInfo` recalculation, and three
+//! modification modes (fully replaced tables, sparse edits, and unmodified pass-through).
 
 mod data;
-mod header;
-mod table;
 mod traits;
 
-// TODO: Implement write infrastructure
 pub use data::TableDataOwned;
-// pub use data::WritableTableData;
-// pub use header::WritableTablesHeader;
-// pub use table::WritableMetadataTable;
 pub use traits::RowWritable;

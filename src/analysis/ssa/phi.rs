@@ -35,11 +35,12 @@ use crate::analysis::ssa::{SsaVarId, VariableOrigin};
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::analysis::ssa::{PhiOperand, SsaVarId};
+/// ```rust,no_run
+/// use dotscope::analysis::{PhiOperand, SsaVarId};
 ///
-/// // Value v2 coming from block 1
-/// let operand = PhiOperand::new(SsaVarId::new(2), 1);
+/// // Value coming from block 1
+/// let var = SsaVarId::new();
+/// let operand = PhiOperand::new(var, 1);
 /// ```
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct PhiOperand {
@@ -94,13 +95,16 @@ impl fmt::Display for PhiOperand {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::analysis::ssa::{PhiNode, PhiOperand, SsaVarId};
+/// ```rust,no_run
+/// use dotscope::analysis::{PhiNode, PhiOperand, SsaVarId, VariableOrigin};
 ///
-/// // Create phi: v3 = phi(v1 from B1, v2 from B2)
-/// let mut phi = PhiNode::new(SsaVarId::new(3), VariableOrigin::Local(0));
-/// phi.add_operand(PhiOperand::new(SsaVarId::new(1), 1));
-/// phi.add_operand(PhiOperand::new(SsaVarId::new(2), 2));
+/// // Create phi: result = phi(v1 from B1, v2 from B2)
+/// let v1 = SsaVarId::new();
+/// let v2 = SsaVarId::new();
+/// let result = SsaVarId::new();
+/// let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
+/// phi.add_operand(PhiOperand::new(v1, 1));
+/// phi.add_operand(PhiOperand::new(v2, 2));
 /// ```
 #[derive(Debug, Clone)]
 pub struct PhiNode {
@@ -231,6 +235,14 @@ impl PhiNode {
         self.operands.iter().map(|op| op.value)
     }
 
+    /// Sets the origin of this phi node.
+    ///
+    /// This is used during local variable optimization to update indices
+    /// after unused locals are removed.
+    pub fn set_origin(&mut self, origin: VariableOrigin) {
+        self.origin = origin;
+    }
+
     /// Sets the operand value for a specific predecessor.
     ///
     /// If an operand from that predecessor already exists, it is updated.
@@ -272,21 +284,23 @@ mod tests {
 
     #[test]
     fn test_phi_operand_creation() {
-        let operand = PhiOperand::new(SsaVarId::new(5), 2);
-        assert_eq!(operand.value(), SsaVarId::new(5));
+        let v = SsaVarId::new();
+        let operand = PhiOperand::new(v, 2);
+        assert_eq!(operand.value(), v);
         assert_eq!(operand.predecessor(), 2);
     }
 
     #[test]
     fn test_phi_operand_display() {
-        let operand = PhiOperand::new(SsaVarId::new(3), 1);
+        let operand = PhiOperand::new(SsaVarId::from_index(3), 1);
         assert_eq!(format!("{operand}"), "v3 from B1");
     }
 
     #[test]
     fn test_phi_node_creation() {
-        let phi = PhiNode::new(SsaVarId::new(10), VariableOrigin::Local(0));
-        assert_eq!(phi.result(), SsaVarId::new(10));
+        let result = SsaVarId::new();
+        let phi = PhiNode::new(result, VariableOrigin::Local(0));
+        assert_eq!(phi.result(), result);
         assert_eq!(phi.origin(), VariableOrigin::Local(0));
         assert!(phi.is_empty());
         assert_eq!(phi.operand_count(), 0);
@@ -294,40 +308,47 @@ mod tests {
 
     #[test]
     fn test_phi_node_with_capacity() {
-        let phi = PhiNode::with_capacity(SsaVarId::new(5), VariableOrigin::Argument(1), 3);
-        assert_eq!(phi.result(), SsaVarId::new(5));
+        let result = SsaVarId::new();
+        let phi = PhiNode::with_capacity(result, VariableOrigin::Argument(1), 3);
+        assert_eq!(phi.result(), result);
         assert_eq!(phi.origin(), VariableOrigin::Argument(1));
         assert!(phi.is_empty());
     }
 
     #[test]
     fn test_phi_node_add_operands() {
-        let mut phi = PhiNode::new(SsaVarId::new(3), VariableOrigin::Local(0));
+        let result = SsaVarId::new();
+        let v1 = SsaVarId::new();
+        let v2 = SsaVarId::new();
+        let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
 
-        phi.add_operand(PhiOperand::new(SsaVarId::new(1), 0));
-        phi.add_operand(PhiOperand::new(SsaVarId::new(2), 1));
+        phi.add_operand(PhiOperand::new(v1, 0));
+        phi.add_operand(PhiOperand::new(v2, 1));
 
         assert!(!phi.is_empty());
         assert_eq!(phi.operand_count(), 2);
 
         let ops = phi.operands();
-        assert_eq!(ops[0].value(), SsaVarId::new(1));
+        assert_eq!(ops[0].value(), v1);
         assert_eq!(ops[0].predecessor(), 0);
-        assert_eq!(ops[1].value(), SsaVarId::new(2));
+        assert_eq!(ops[1].value(), v2);
         assert_eq!(ops[1].predecessor(), 1);
     }
 
     #[test]
     fn test_phi_node_operand_from() {
-        let mut phi = PhiNode::new(SsaVarId::new(5), VariableOrigin::Local(0));
-        phi.add_operand(PhiOperand::new(SsaVarId::new(1), 2));
-        phi.add_operand(PhiOperand::new(SsaVarId::new(3), 4));
+        let result = SsaVarId::new();
+        let v1 = SsaVarId::new();
+        let v3 = SsaVarId::new();
+        let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
+        phi.add_operand(PhiOperand::new(v1, 2));
+        phi.add_operand(PhiOperand::new(v3, 4));
 
         assert!(phi.operand_from(2).is_some());
-        assert_eq!(phi.operand_from(2).unwrap().value(), SsaVarId::new(1));
+        assert_eq!(phi.operand_from(2).unwrap().value(), v1);
 
         assert!(phi.operand_from(4).is_some());
-        assert_eq!(phi.operand_from(4).unwrap().value(), SsaVarId::new(3));
+        assert_eq!(phi.operand_from(4).unwrap().value(), v3);
 
         assert!(phi.operand_from(0).is_none());
         assert!(phi.operand_from(99).is_none());
@@ -335,43 +356,52 @@ mod tests {
 
     #[test]
     fn test_phi_node_set_operand_new() {
-        let mut phi = PhiNode::new(SsaVarId::new(5), VariableOrigin::Local(0));
+        let result = SsaVarId::new();
+        let v10 = SsaVarId::new();
+        let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
 
-        phi.set_operand(1, SsaVarId::new(10));
+        phi.set_operand(1, v10);
         assert_eq!(phi.operand_count(), 1);
-        assert_eq!(phi.operand_from(1).unwrap().value(), SsaVarId::new(10));
+        assert_eq!(phi.operand_from(1).unwrap().value(), v10);
     }
 
     #[test]
     fn test_phi_node_set_operand_update() {
-        let mut phi = PhiNode::new(SsaVarId::new(5), VariableOrigin::Local(0));
+        let result = SsaVarId::new();
+        let v10 = SsaVarId::new();
+        let v20 = SsaVarId::new();
+        let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
 
-        phi.set_operand(1, SsaVarId::new(10));
-        phi.set_operand(1, SsaVarId::new(20)); // Update existing
+        phi.set_operand(1, v10);
+        phi.set_operand(1, v20); // Update existing
 
         assert_eq!(phi.operand_count(), 1);
-        assert_eq!(phi.operand_from(1).unwrap().value(), SsaVarId::new(20));
+        assert_eq!(phi.operand_from(1).unwrap().value(), v20);
     }
 
     #[test]
     fn test_phi_node_used_variables() {
-        let mut phi = PhiNode::new(SsaVarId::new(5), VariableOrigin::Local(0));
-        phi.add_operand(PhiOperand::new(SsaVarId::new(1), 0));
-        phi.add_operand(PhiOperand::new(SsaVarId::new(2), 1));
-        phi.add_operand(PhiOperand::new(SsaVarId::new(3), 2));
+        let result = SsaVarId::new();
+        let v1 = SsaVarId::new();
+        let v2 = SsaVarId::new();
+        let v3 = SsaVarId::new();
+        let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
+        phi.add_operand(PhiOperand::new(v1, 0));
+        phi.add_operand(PhiOperand::new(v2, 1));
+        phi.add_operand(PhiOperand::new(v3, 2));
 
         let used: Vec<_> = phi.used_variables().collect();
         assert_eq!(used.len(), 3);
-        assert!(used.contains(&SsaVarId::new(1)));
-        assert!(used.contains(&SsaVarId::new(2)));
-        assert!(used.contains(&SsaVarId::new(3)));
+        assert!(used.contains(&v1));
+        assert!(used.contains(&v2));
+        assert!(used.contains(&v3));
     }
 
     #[test]
     fn test_phi_node_display() {
-        let mut phi = PhiNode::new(SsaVarId::new(5), VariableOrigin::Local(0));
-        phi.add_operand(PhiOperand::new(SsaVarId::new(1), 0));
-        phi.add_operand(PhiOperand::new(SsaVarId::new(2), 1));
+        let mut phi = PhiNode::new(SsaVarId::from_index(5), VariableOrigin::Local(0));
+        phi.add_operand(PhiOperand::new(SsaVarId::from_index(1), 0));
+        phi.add_operand(PhiOperand::new(SsaVarId::from_index(2), 1));
 
         let display = format!("{phi}");
         assert_eq!(display, "v5 = phi(v1 from B0, v2 from B1)");
@@ -379,14 +409,14 @@ mod tests {
 
     #[test]
     fn test_phi_node_display_empty() {
-        let phi = PhiNode::new(SsaVarId::new(3), VariableOrigin::Local(0));
+        let phi = PhiNode::new(SsaVarId::from_index(3), VariableOrigin::Local(0));
         assert_eq!(format!("{phi}"), "v3 = phi()");
     }
 
     #[test]
     fn test_phi_node_display_single_operand() {
-        let mut phi = PhiNode::new(SsaVarId::new(7), VariableOrigin::Local(0));
-        phi.add_operand(PhiOperand::new(SsaVarId::new(4), 2));
+        let mut phi = PhiNode::new(SsaVarId::from_index(7), VariableOrigin::Local(0));
+        phi.add_operand(PhiOperand::new(SsaVarId::from_index(4), 2));
         assert_eq!(format!("{phi}"), "v7 = phi(v4 from B2)");
     }
 }

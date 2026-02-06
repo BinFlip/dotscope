@@ -5,14 +5,13 @@
 //! the existing low-level builders to provide a fluent, high-level API for various property patterns.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         signatures::{
             encode_field_signature, encode_property_signature, SignatureField, SignatureParameter,
             SignatureProperty, TypeSignature,
         },
         tables::{FieldBuilder, PropertyBuilder as PropertyTableBuilder},
-        token::Token,
     },
     Error, Result,
 };
@@ -76,12 +75,11 @@ pub enum PropertyImplementation {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let property_token = PropertyBuilder::new("Name", TypeSignature::String)
 ///     .auto_property()
 ///     .public_accessors()
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -93,8 +91,7 @@ pub enum PropertyImplementation {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let property_token = PropertyBuilder::new("FullName", TypeSignature::String)
 ///     .computed()
 ///     .getter(|method| method
@@ -107,7 +104,7 @@ pub enum PropertyImplementation {
 ///             })
 ///         }))
 ///     .readonly()
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -119,14 +116,13 @@ pub enum PropertyImplementation {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let property_token = PropertyBuilder::new("Value", TypeSignature::I4)
 ///     .auto_property()
 ///     .backing_field("_customValue")
 ///     .private_backing_field()
 ///     .public_accessors()
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -454,8 +450,7 @@ impl PropertyBuilder {
     ///
     /// # fn example() -> dotscope::Result<()> {
     /// # let view = CilAssemblyView::from_path("test.dll")?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     /// let builder = PropertyBuilder::new("ComputedValue", TypeSignature::I4)
     ///     .computed()
     ///     .getter(|method| method
@@ -492,8 +487,7 @@ impl PropertyBuilder {
     ///
     /// # fn example() -> dotscope::Result<()> {
     /// # let view = CilAssemblyView::from_path("test.dll")?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     /// let builder = PropertyBuilder::new("ComputedValue", TypeSignature::I4)
     ///     .computed()
     ///     .setter(|method| method
@@ -595,7 +589,7 @@ impl PropertyBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - Builder context for managing the assembly
+    /// * `assembly` - CIL assembly for managing the metadata
     ///
     /// # Returns
     ///
@@ -604,7 +598,7 @@ impl PropertyBuilder {
     /// # Errors
     ///
     /// Returns an error if property creation fails at any step.
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Create property signature with parameters for indexed properties
         let mut signature_params = Vec::new();
         for (_param_name, param_type) in &self.parameters {
@@ -626,11 +620,11 @@ impl PropertyBuilder {
         let signature_bytes = encode_property_signature(&property_signature)?;
 
         // Create the property table entry
-        let property_token = PropertyTableBuilder::new()
+        let property_ref = PropertyTableBuilder::new()
             .name(&self.name)
             .flags(self.attributes)
             .signature(&signature_bytes)
-            .build(context)?;
+            .build(assembly)?;
 
         // Handle different implementation strategies
         match self.implementation {
@@ -649,18 +643,26 @@ impl PropertyBuilder {
                 };
                 let sig_bytes = encode_field_signature(&field_sig)?;
 
-                let backing_field_token = FieldBuilder::new()
+                let backing_field_ref = FieldBuilder::new()
                     .name(&field_name)
                     .flags(backing_field_attributes)
                     .signature(&sig_bytes)
-                    .build(context)?;
+                    .build(assembly)?;
+
+                // Get the placeholder token for use in IL instructions
+                let backing_field_placeholder =
+                    backing_field_ref.placeholder_token().ok_or_else(|| {
+                        Error::ModificationInvalid(
+                            "Failed to get placeholder token for backing field".to_string(),
+                        )
+                    })?;
 
                 // Create getter if needed
                 if matches!(
                     self.accessors,
                     PropertyAccessors::GetterAndSetter | PropertyAccessors::GetterOnly
                 ) {
-                    let getter_field_token = backing_field_token; // Copy for move
+                    let getter_field_token = backing_field_placeholder; // Copy for move
                     let getter_name = self.name.clone();
                     let getter_type = self.property_type.clone();
                     let getter_visibility = self.getter_attributes;
@@ -680,7 +682,7 @@ impl PropertyBuilder {
                                 Ok(())
                             })
                         })
-                        .build(context)?;
+                        .build(assembly)?;
                 }
 
                 // Create setter if needed
@@ -688,7 +690,7 @@ impl PropertyBuilder {
                     self.accessors,
                     PropertyAccessors::GetterAndSetter | PropertyAccessors::SetterOnly
                 ) {
-                    let setter_field_token = backing_field_token; // Copy for move
+                    let setter_field_token = backing_field_placeholder; // Copy for move
                     let setter_name = self.name.clone();
                     let setter_type = self.property_type.clone();
                     let setter_visibility = self.setter_attributes;
@@ -709,10 +711,10 @@ impl PropertyBuilder {
                                 Ok(())
                             })
                         })
-                        .build(context)?;
+                        .build(assembly)?;
                 }
 
-                Ok(property_token)
+                Ok(property_ref)
             }
             PropertyImplementation::Computed { getter, setter } => {
                 // Create getter if provided and needed
@@ -729,7 +731,7 @@ impl PropertyBuilder {
                         };
 
                         let configured_getter = getter_impl(getter_method);
-                        configured_getter.build(context)?;
+                        configured_getter.build(assembly)?;
                     } else {
                         return Err(Error::ModificationInvalid(
                             "Computed property requires getter implementation".to_string(),
@@ -751,7 +753,7 @@ impl PropertyBuilder {
                         };
 
                         let configured_setter = setter_impl(setter_method);
-                        configured_setter.build(context)?;
+                        configured_setter.build(assembly)?;
                     } else {
                         return Err(Error::ModificationInvalid(
                             "Computed property requires setter implementation".to_string(),
@@ -759,12 +761,12 @@ impl PropertyBuilder {
                     }
                 }
 
-                Ok(property_token)
+                Ok(property_ref)
             }
             PropertyImplementation::Manual => {
-                // For manual implementation, just return the property token
+                // For manual implementation, just return the property reference
                 // User is responsible for creating methods separately
-                Ok(property_token)
+                Ok(property_ref)
             }
         }
     }
@@ -780,53 +782,58 @@ impl Default for PropertyBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature},
+        cilassembly::{ChangeRefKind, CilAssembly},
+        metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature, tables::TableId},
     };
     use std::path::PathBuf;
 
-    fn get_test_context() -> Result<BuilderContext> {
+    fn get_test_assembly() -> Result<CilAssembly> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         let view = CilAssemblyView::from_path(&path)?;
-        let assembly = CilAssembly::new(view);
-        Ok(BuilderContext::new(assembly))
+        Ok(CilAssembly::new(view))
     }
 
     #[test]
     fn test_simple_auto_property() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let property_token = PropertyBuilder::new("Name", TypeSignature::String)
+        let property_ref = PropertyBuilder::new("Name", TypeSignature::String)
             .auto_property()
             .public_accessors()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Should create a valid Property token
-        assert_eq!(property_token.value() & 0xFF000000, 0x17000000); // Property table
+        // Should create a valid Property reference
+        assert_eq!(
+            property_ref.kind(),
+            ChangeRefKind::TableRow(TableId::Property)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_readonly_auto_property() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let property_token = PropertyBuilder::new("ReadOnlyValue", TypeSignature::I4)
+        let property_ref = PropertyBuilder::new("ReadOnlyValue", TypeSignature::I4)
             .auto_property()
             .readonly()
             .public_accessors()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(property_token.value() & 0xFF000000, 0x17000000);
+        assert_eq!(
+            property_ref.kind(),
+            ChangeRefKind::TableRow(TableId::Property)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_computed_property() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let property_token = PropertyBuilder::new("ComputedValue", TypeSignature::I4)
+        let property_ref = PropertyBuilder::new("ComputedValue", TypeSignature::I4)
             .computed()
             .getter(|method| {
                 method.implementation(|body| {
@@ -837,123 +844,144 @@ mod tests {
                 })
             })
             .readonly()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(property_token.value() & 0xFF000000, 0x17000000);
+        assert_eq!(
+            property_ref.kind(),
+            ChangeRefKind::TableRow(TableId::Property)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_custom_backing_field() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let property_token = PropertyBuilder::new("Value", TypeSignature::R8)
+        let property_ref = PropertyBuilder::new("Value", TypeSignature::R8)
             .auto_property()
             .backing_field("_customValue")
             .private_backing_field()
             .public_accessors()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(property_token.value() & 0xFF000000, 0x17000000);
+        assert_eq!(
+            property_ref.kind(),
+            ChangeRefKind::TableRow(TableId::Property)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_indexed_property() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let property_token = PropertyBuilder::new("Item", TypeSignature::String)
+        let property_ref = PropertyBuilder::new("Item", TypeSignature::String)
             .auto_property()
             .indexed("index", TypeSignature::I4)
             .public_accessors()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(property_token.value() & 0xFF000000, 0x17000000);
+        assert_eq!(
+            property_ref.kind(),
+            ChangeRefKind::TableRow(TableId::Property)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_multi_parameter_indexed_property() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let property_token = PropertyBuilder::new("Matrix", TypeSignature::I4)
+        let property_ref = PropertyBuilder::new("Matrix", TypeSignature::I4)
             .auto_property()
             .indexed("row", TypeSignature::I4)
             .parameter("column", TypeSignature::I4)
             .public_accessors()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(property_token.value() & 0xFF000000, 0x17000000);
+        assert_eq!(
+            property_ref.kind(),
+            ChangeRefKind::TableRow(TableId::Property)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_writeonly_property() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let property_token = PropertyBuilder::new("WriteOnly", TypeSignature::String)
+        let property_ref = PropertyBuilder::new("WriteOnly", TypeSignature::String)
             .auto_property()
             .writeonly()
             .public_accessors()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(property_token.value() & 0xFF000000, 0x17000000);
+        assert_eq!(
+            property_ref.kind(),
+            ChangeRefKind::TableRow(TableId::Property)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_manual_property() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let property_token = PropertyBuilder::new("Manual", TypeSignature::Object)
+        let property_ref = PropertyBuilder::new("Manual", TypeSignature::Object)
             .manual()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(property_token.value() & 0xFF000000, 0x17000000);
+        assert_eq!(
+            property_ref.kind(),
+            ChangeRefKind::TableRow(TableId::Property)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_property_with_different_accessor_visibility() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let property_token = PropertyBuilder::new("MixedVisibility", TypeSignature::I4)
+        let property_ref = PropertyBuilder::new("MixedVisibility", TypeSignature::I4)
             .auto_property()
             .getter_visibility(0x0006) // PUBLIC
             .setter_visibility(0x0001) // PRIVATE
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(property_token.value() & 0xFF000000, 0x17000000);
+        assert_eq!(
+            property_ref.kind(),
+            ChangeRefKind::TableRow(TableId::Property)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_computed_property_missing_getter_fails() {
-        let mut context = get_test_context().unwrap();
+        let mut assembly = get_test_assembly().unwrap();
 
         let result = PropertyBuilder::new("InvalidComputed", TypeSignature::I4)
             .computed()
             .readonly()
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
     }
 
     #[test]
     fn test_computed_property_missing_setter_fails() {
-        let mut context = get_test_context().unwrap();
+        let mut assembly = get_test_assembly().unwrap();
 
         let result = PropertyBuilder::new("InvalidComputed", TypeSignature::I4)
             .computed()
             .writeonly()
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
     }

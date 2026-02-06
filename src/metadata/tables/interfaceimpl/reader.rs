@@ -10,6 +10,8 @@ use crate::{
 };
 
 impl RowReadable for InterfaceImplRaw {
+    const TABLE_ID: TableId = TableId::InterfaceImpl;
+
     /// Reads a single `InterfaceImpl` table row from binary metadata stream.
     ///
     /// Parses the binary representation of an `InterfaceImpl` entry, reading fields

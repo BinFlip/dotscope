@@ -21,6 +21,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::FieldMarshalRaw,
     },
@@ -70,18 +71,29 @@ impl MetadataLoader for FieldMarshalLoader {
     /// - Collection insertion operations fail
     /// - Parallel processing encounters errors
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<FieldMarshalRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(|coded_index| context.get_ref(coded_index), blob)?;
-                    res.apply()?;
+        let (Some(header), Some(blob)) = (context.meta, context.blobs) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<FieldMarshalRaw>() else {
+            return Ok(());
+        };
 
-                    context.field_marshal.insert(row.token, res);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("field marshal 0x{:08x}", row.token.value());
+
+            let Some(res) = context.handle_result(
+                row.to_owned(|coded_index| context.get_ref(coded_index), blob),
+                DiagnosticCategory::Field,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(res.apply(), DiagnosticCategory::Field, token_msg)?;
+            context.field_marshal.insert(row.token, res);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for the `FieldMarshal` table.

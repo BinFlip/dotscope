@@ -4,16 +4,16 @@
 //! for creating test assemblies with various ownership validation scenarios.
 
 use crate::{
-    cilassembly::CilAssembly,
     metadata::{
-        cilassemblyview::CilAssemblyView,
-        tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeAttributes, TypeDefRaw},
+        tables::{
+            CodedIndex, CodedIndexType, MethodDefRaw, TableDataOwned, TableId, TypeAttributes,
+            TypeDefRaw,
+        },
         token::Token,
     },
-    test::{get_testfile_mscorlib, TestAssembly},
+    test::{create_test_assembly, get_testfile_mscorlib, TestAssembly},
     Error, Result,
 };
-use tempfile::NamedTempFile;
 
 /// Main factory method for creating ownership validation test assemblies
 ///
@@ -46,200 +46,137 @@ pub fn owned_ownership_validator_file_factory() -> Result<Vec<TestAssembly>> {
 ///
 /// Originally from: `src/metadata/validation/validators/owned/relationships/ownership.rs`
 pub fn create_assembly_with_broken_method_ownership() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
-    let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
+    create_test_assembly(get_testfile_mscorlib, |assembly| {
+        // Create method with empty name to trigger validation failure
+        let empty_method_name_index = assembly.string_add("")?;
 
-    let mut assembly = CilAssembly::new(view);
+        let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
+        let invalid_method = MethodDefRaw {
+            rid: method_rid,
+            token: Token::new(0x06000000 + method_rid),
+            offset: 0,
+            rva: 0,
+            impl_flags: 0,
+            flags: 0x0006,                               // Public
+            name: empty_method_name_index.placeholder(), // Empty name - should trigger validation failure
+            signature: 1,
+            param_list: 1,
+        };
 
-    // Create method with empty name to trigger validation failure
-    let empty_method_name_index = assembly
-        .string_add("")
-        .map_err(|e| Error::Other(format!("Failed to add empty method name: {e}")))?;
-
-    let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
-    let invalid_method = crate::metadata::tables::MethodDefRaw {
-        rid: method_rid,
-        token: Token::new(0x06000000 + method_rid),
-        offset: 0,
-        rva: 0,
-        impl_flags: 0,
-        flags: 0x0006,                 // Public
-        name: empty_method_name_index, // Empty name - should trigger validation failure
-        signature: 1,
-        param_list: 1,
-    };
-
-    assembly
-        .table_row_add(
+        assembly.table_row_add(
             TableId::MethodDef,
             TableDataOwned::MethodDef(invalid_method),
-        )
-        .map_err(|e| Error::Other(format!("Failed to add method: {e}")))?;
+        )?;
 
-    // Create type that owns the method with empty name
-    let type_name_index = assembly
-        .string_add("TestType")
-        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
+        // Create type that owns the method with empty name
+        let type_name_index = assembly.string_add("TestType")?;
 
-    let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
-    let invalid_type = TypeDefRaw {
-        rid: type_rid,
-        token: Token::new(0x02000000 + type_rid),
-        offset: 0,
-        flags: TypeAttributes::PUBLIC,
-        type_name: type_name_index,
-        type_namespace: 0,
-        extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
-        field_list: 1,
-        method_list: method_rid, // Reference to method with empty name - should trigger validation failure
-    };
+        let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
+        let invalid_type = TypeDefRaw {
+            rid: type_rid,
+            token: Token::new(0x02000000 + type_rid),
+            offset: 0,
+            flags: TypeAttributes::PUBLIC,
+            type_name: type_name_index.placeholder(),
+            type_namespace: 0,
+            extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
+            field_list: 1,
+            method_list: method_rid, // Reference to method with empty name - should trigger validation failure
+        };
 
-    assembly
-        .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
+        assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))?;
 
-    let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-
-    assembly
-        .write_to_file(temp_file.path())
-        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
-
-    Ok(TestAssembly::from_temp_file(temp_file, false))
+        Ok(())
+    })
 }
 
 /// Creates an assembly with invalid method accessibility
 ///
 /// Originally from: `src/metadata/validation/validators/owned/relationships/ownership.rs`
 pub fn create_assembly_with_invalid_method_accessibility() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
-    let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
+    create_test_assembly(get_testfile_mscorlib, |assembly| {
+        // Create method with invalid visibility flags
+        let method_name_index = assembly.string_add("TestMethod")?;
 
-    let mut assembly = CilAssembly::new(view);
+        let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
+        let invalid_method = MethodDefRaw {
+            rid: method_rid,
+            token: Token::new(0x06000000 + method_rid),
+            offset: 0,
+            rva: 0,
+            impl_flags: 0,
+            flags: 0x0008, // Invalid visibility value (8 is beyond valid range 0-6)
+            name: method_name_index.placeholder(),
+            signature: 1,
+            param_list: 1,
+        };
 
-    // Create method with invalid visibility flags
-    let method_name_index = assembly
-        .string_add("TestMethod")
-        .map_err(|e| Error::Other(format!("Failed to add method name: {e}")))?;
-
-    let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
-    let invalid_method = crate::metadata::tables::MethodDefRaw {
-        rid: method_rid,
-        token: Token::new(0x06000000 + method_rid),
-        offset: 0,
-        rva: 0,
-        impl_flags: 0,
-        flags: 0x0008, // Invalid visibility value (8 is beyond valid range 0-6)
-        name: method_name_index,
-        signature: 1,
-        param_list: 1,
-    };
-
-    assembly
-        .table_row_add(
+        assembly.table_row_add(
             TableId::MethodDef,
             TableDataOwned::MethodDef(invalid_method),
-        )
-        .map_err(|e| Error::Other(format!("Failed to add method: {e}")))?;
+        )?;
 
-    let type_name_index = assembly
-        .string_add("TestType")
-        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
+        let type_name_index = assembly.string_add("TestType")?;
 
-    let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
-    let test_type = TypeDefRaw {
-        rid: type_rid,
-        token: Token::new(0x02000000 + type_rid),
-        offset: 0,
-        flags: TypeAttributes::PUBLIC,
-        type_name: type_name_index,
-        type_namespace: 0,
-        extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
-        field_list: 1,
-        method_list: method_rid,
-    };
+        let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
+        let test_type = TypeDefRaw {
+            rid: type_rid,
+            token: Token::new(0x02000000 + type_rid),
+            offset: 0,
+            flags: TypeAttributes::PUBLIC,
+            type_name: type_name_index.placeholder(),
+            type_namespace: 0,
+            extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
+            field_list: 1,
+            method_list: method_rid,
+        };
 
-    assembly
-        .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(test_type))
-        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
+        assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(test_type))?;
 
-    let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-
-    assembly
-        .write_to_file(temp_file.path())
-        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
-
-    Ok(TestAssembly::from_temp_file(temp_file, false))
+        Ok(())
+    })
 }
 
 /// Creates an assembly with invalid static constructor flags
 ///
 /// Originally from: `src/metadata/validation/validators/owned/relationships/ownership.rs`
 pub fn create_assembly_with_invalid_static_constructor() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
-    let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
+    create_test_assembly(get_testfile_mscorlib, |assembly| {
+        // Create static constructor (.cctor) without static flag
+        let cctor_name_index = assembly.string_add(".cctor")?;
 
-    let mut assembly = CilAssembly::new(view);
+        let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
+        let invalid_cctor = MethodDefRaw {
+            rid: method_rid,
+            token: Token::new(0x06000000 + method_rid),
+            offset: 0,
+            rva: 0,
+            impl_flags: 0,
+            flags: 0x0006, // Public (0x0006) but missing static flag (0x0010) - should trigger validation failure
+            name: cctor_name_index.placeholder(),
+            signature: 1,
+            param_list: 1,
+        };
 
-    // Create static constructor (.cctor) without static flag
-    let cctor_name_index = assembly
-        .string_add(".cctor")
-        .map_err(|e| Error::Other(format!("Failed to add .cctor name: {e}")))?;
+        assembly.table_row_add(TableId::MethodDef, TableDataOwned::MethodDef(invalid_cctor))?;
 
-    let method_rid = assembly.original_table_row_count(TableId::MethodDef) + 1;
-    let invalid_cctor = crate::metadata::tables::MethodDefRaw {
-        rid: method_rid,
-        token: Token::new(0x06000000 + method_rid),
-        offset: 0,
-        rva: 0,
-        impl_flags: 0,
-        flags: 0x0006, // Public (0x0006) but missing static flag (0x0010) - should trigger validation failure
-        name: cctor_name_index,
-        signature: 1,
-        param_list: 1,
-    };
+        let type_name_index = assembly.string_add("TestType")?;
 
-    assembly
-        .table_row_add(TableId::MethodDef, TableDataOwned::MethodDef(invalid_cctor))
-        .map_err(|e| Error::Other(format!("Failed to add .cctor method: {e}")))?;
+        let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
+        let test_type = TypeDefRaw {
+            rid: type_rid,
+            token: Token::new(0x02000000 + type_rid),
+            offset: 0,
+            flags: TypeAttributes::PUBLIC,
+            type_name: type_name_index.placeholder(),
+            type_namespace: 0,
+            extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
+            field_list: 1,
+            method_list: method_rid,
+        };
 
-    let type_name_index = assembly
-        .string_add("TestType")
-        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
+        assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(test_type))?;
 
-    let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
-    let test_type = TypeDefRaw {
-        rid: type_rid,
-        token: Token::new(0x02000000 + type_rid),
-        offset: 0,
-        flags: TypeAttributes::PUBLIC,
-        type_name: type_name_index,
-        type_namespace: 0,
-        extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
-        field_list: 1,
-        method_list: method_rid,
-    };
-
-    assembly
-        .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(test_type))
-        .map_err(|e| Error::Other(format!("Failed to add type: {e}")))?;
-
-    let temp_file = NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-
-    assembly
-        .write_to_file(temp_file.path())
-        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
-
-    Ok(TestAssembly::from_temp_file(temp_file, false))
+        Ok(())
+    })
 }

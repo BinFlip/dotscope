@@ -68,17 +68,20 @@ impl ExecutionResult {
         if self.success {
             "Success".to_string()
         } else if !self.stderr.is_empty() {
-            self.stderr
-                .lines()
-                .next()
-                .unwrap_or(&self.stderr)
-                .to_string()
+            // Include all stderr for error diagnosis
+            self.stderr.clone()
         } else if !self.stdout.is_empty() {
-            self.stdout
+            // Look for ERROR lines first, otherwise show all output
+            let error_lines: Vec<&str> = self
+                .stdout
                 .lines()
-                .next()
-                .unwrap_or(&self.stdout)
-                .to_string()
+                .filter(|line| line.contains("ERROR"))
+                .collect();
+            if !error_lines.is_empty() {
+                error_lines.join("\n")
+            } else {
+                self.stdout.clone()
+            }
         } else {
             format!("Failed with exit code {:?}", self.exit_code)
         }

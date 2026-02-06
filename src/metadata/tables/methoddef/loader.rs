@@ -75,6 +75,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{MethodDefRaw, TableId},
     },
@@ -140,21 +141,30 @@ impl MetadataLoader for MethodDefLoader {
     ///
     /// This method is thread-safe and uses parallel processing internally for optimal performance.
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings), Some(blobs)) =
+        let (Some(header), Some(strings), Some(blobs)) =
             (context.meta, context.strings, context.blobs)
-        {
-            if let Some(table) = header.table::<MethodDefRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned =
-                        row.to_owned(strings, blobs, &context.param, &context.param_ptr, table)?;
+        else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<MethodDefRaw>() else {
+            return Ok(());
+        };
 
-                    context.method_def.insert(row.token, owned.clone());
-                    Ok(())
-                })?;
-            }
-        }
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("method 0x{:08x}", row.token.value());
 
-        Ok(())
+            let Some(owned) = context.handle_result(
+                row.to_owned(strings, blobs, &context.param, &context.param_ptr, table),
+                DiagnosticCategory::Method,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.method_def.insert(row.token, owned.clone());
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `MethodDef`.

@@ -42,7 +42,52 @@
 //! - [`crate::assembly::instruction`] - Defines the instruction types contained in blocks
 //! - [`crate::assembly::decode_blocks`] - Function that constructs basic blocks from bytecode
 
-use crate::assembly::{FlowType, Instruction};
+use crate::{
+    assembly::{FlowType, Instruction},
+    metadata::method::ExceptionHandlerFlags,
+};
+
+/// Information about an exception handler entry point.
+///
+/// When a basic block is the entry point for an exception handler (catch, finally,
+/// fault, or filter), this structure provides the necessary information for
+/// proper stack simulation and control flow analysis.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct HandlerEntryInfo {
+    /// The index of the exception handler in the method's exception handler table.
+    pub handler_index: usize,
+
+    /// The type of exception handler (EXCEPTION, FINALLY, FAULT, or FILTER).
+    pub handler_type: ExceptionHandlerFlags,
+}
+
+impl HandlerEntryInfo {
+    /// Creates a new handler entry info.
+    #[must_use]
+    pub const fn new(handler_index: usize, handler_type: ExceptionHandlerFlags) -> Self {
+        Self {
+            handler_index,
+            handler_type,
+        }
+    }
+
+    /// Returns the expected stack depth at handler entry.
+    ///
+    /// - Catch handlers: 1 (exception object on stack)
+    /// - Filter handlers: 1 (exception object on stack)
+    /// - Finally handlers: 0 (empty stack)
+    /// - Fault handlers: 0 (empty stack)
+    #[must_use]
+    pub const fn entry_stack_depth(&self) -> usize {
+        if self.handler_type.bits() == ExceptionHandlerFlags::EXCEPTION.bits()
+            || self.handler_type.bits() == ExceptionHandlerFlags::FILTER.bits()
+        {
+            1 // Exception object on stack
+        } else {
+            0 // Finally/Fault have empty stack
+        }
+    }
+}
 
 /// Represents a basic block in the control flow graph.
 ///
@@ -92,8 +137,15 @@ pub struct BasicBlock {
     pub predecessors: Vec<usize>,
     /// IDs of blocks that this block can transfer control to
     pub successors: Vec<usize>,
-    /// Indices of exception handlers that cover this block
+    /// Indices of exception handlers that cover this block (this block is in their try region)
     pub exceptions: Vec<usize>,
+    /// If this block is an exception handler entry point, contains the handler info.
+    /// This is used by stack simulation to determine the entry stack state.
+    pub handler_entry: Option<HandlerEntryInfo>,
+    /// IDs of exception handler blocks that can be reached from this block.
+    /// These are implicit edges - any instruction in a protected block can
+    /// potentially transfer to its handler on exception.
+    pub exception_successors: Vec<usize>,
 }
 
 impl BasicBlock {
@@ -141,6 +193,8 @@ impl BasicBlock {
             predecessors: Vec::new(),
             successors: Vec::new(),
             exceptions: Vec::new(),
+            handler_entry: None,
+            exception_successors: Vec::new(),
         }
     }
 

@@ -6,19 +6,21 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::prelude::*;
 //!
-//! let builder_context = BuilderContext::new();
+//! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! let processor_token = AssemblyRefProcessorBuilder::new()
 //!     .processor(0x8664)             // x64 processor architecture
 //!     .assembly_ref(1)               // AssemblyRef RID
-//!     .build(&mut builder_context)?;
+//!     .build(&mut assembly)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{AssemblyRefProcessorRaw, TableDataOwned, TableId},
         token::Token,
@@ -44,26 +46,29 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::prelude::*;
 ///
+/// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+/// # let mut assembly = CilAssembly::new(view);
 /// // x64 processor requirement for external assembly
 /// let x64_ref = AssemblyRefProcessorBuilder::new()
 ///     .processor(0x8664)  // x64 architecture
 ///     .assembly_ref(1)    // References first AssemblyRef
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // x86 processor requirement
 /// let x86_ref = AssemblyRefProcessorBuilder::new()
 ///     .processor(0x014C)  // x86 architecture
 ///     .assembly_ref(2)    // References second AssemblyRef
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // ARM64 processor requirement
 /// let arm64_ref = AssemblyRefProcessorBuilder::new()
 ///     .processor(0xAA64)  // ARM64 architecture
 ///     .assembly_ref(3)    // References third AssemblyRef
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct AssemblyRefProcessorBuilder {
@@ -84,7 +89,7 @@ impl AssemblyRefProcessorBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = AssemblyRefProcessorBuilder::new();
@@ -117,7 +122,7 @@ impl AssemblyRefProcessorBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // x64 requirement
@@ -147,7 +152,7 @@ impl AssemblyRefProcessorBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = AssemblyRefProcessorBuilder::new()
@@ -162,11 +167,11 @@ impl AssemblyRefProcessorBuilder {
     /// Builds and adds the `AssemblyRefProcessor` entry to the metadata
     ///
     /// Validates all required fields, creates the `AssemblyRefProcessor` table entry,
-    /// and adds it to the builder context. Returns a token that can be used
+    /// and adds it to the assembly. Returns a token that can be used
     /// to reference this assembly ref processor entry.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the builder context
+    /// - `assembly`: Mutable reference to the CilAssembly
     ///
     /// # Returns
     /// - `Ok(Token)`: Token referencing the created assembly ref processor
@@ -178,16 +183,18 @@ impl AssemblyRefProcessorBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let mut context = BuilderContext::new();
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let token = AssemblyRefProcessorBuilder::new()
     ///     .processor(0x8664)
     ///     .assembly_ref(1)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let processor = self.processor.ok_or_else(|| {
             Error::ModificationInvalid(
                 "Processor architecture identifier is required for AssemblyRefProcessor"
@@ -201,23 +208,18 @@ impl AssemblyRefProcessorBuilder {
             )
         })?;
 
-        let next_rid = context.next_rid(TableId::AssemblyRefProcessor);
-        let token_value = ((TableId::AssemblyRefProcessor as u32) << 24) | next_rid;
-        let token = Token::new(token_value);
-
         let assembly_ref_processor = AssemblyRefProcessorRaw {
-            rid: next_rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
             processor,
             assembly_ref,
         };
 
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::AssemblyRefProcessor,
             TableDataOwned::AssemblyRefProcessor(assembly_ref_processor),
-        )?;
-        Ok(token)
+        )
     }
 }
 
@@ -234,7 +236,7 @@ impl Default for AssemblyRefProcessorBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
@@ -255,71 +257,74 @@ mod tests {
 
     #[test]
     fn test_assemblyrefprocessor_builder_x64() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = AssemblyRefProcessorBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = AssemblyRefProcessorBuilder::new()
             .processor(0x8664) // x64
             .assembly_ref(1)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyRefProcessor as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::AssemblyRefProcessor)
+        );
         Ok(())
     }
 
     #[test]
     fn test_assemblyrefprocessor_builder_x86() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = AssemblyRefProcessorBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = AssemblyRefProcessorBuilder::new()
             .processor(0x014C) // x86
             .assembly_ref(2)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyRefProcessor as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::AssemblyRefProcessor)
+        );
         Ok(())
     }
 
     #[test]
     fn test_assemblyrefprocessor_builder_arm64() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = AssemblyRefProcessorBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = AssemblyRefProcessorBuilder::new()
             .processor(0xAA64) // ARM64
             .assembly_ref(3)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyRefProcessor as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::AssemblyRefProcessor)
+        );
         Ok(())
     }
 
     #[test]
     fn test_assemblyrefprocessor_builder_no_requirement() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = AssemblyRefProcessorBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = AssemblyRefProcessorBuilder::new()
             .processor(0x0000) // No specific requirement
             .assembly_ref(1)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyRefProcessor as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::AssemblyRefProcessor)
+        );
         Ok(())
     }
 
     #[test]
     fn test_assemblyrefprocessor_builder_missing_processor() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let result = AssemblyRefProcessorBuilder::new()
             .assembly_ref(1)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -333,11 +338,10 @@ mod tests {
 
     #[test]
     fn test_assemblyrefprocessor_builder_missing_assembly_ref() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let result = AssemblyRefProcessorBuilder::new()
             .processor(0x8664)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -374,73 +378,81 @@ mod tests {
 
     #[test]
     fn test_assemblyrefprocessor_builder_fluent_interface() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test method chaining
-        let token = AssemblyRefProcessorBuilder::new()
+        let ref_ = AssemblyRefProcessorBuilder::new()
             .processor(0x01C0) // ARM
             .assembly_ref(5)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyRefProcessor as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::AssemblyRefProcessor)
+        );
         Ok(())
     }
 
     #[test]
     fn test_assemblyrefprocessor_builder_multiple_builds() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Build first processor entry
-        let token1 = AssemblyRefProcessorBuilder::new()
+        let ref1 = AssemblyRefProcessorBuilder::new()
             .processor(0x8664) // x64
             .assembly_ref(1)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build first processor entry");
 
         // Build second processor entry
-        let token2 = AssemblyRefProcessorBuilder::new()
+        let ref2 = AssemblyRefProcessorBuilder::new()
             .processor(0x014C) // x86
             .assembly_ref(2)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build second processor entry");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_ne!(token1, token2);
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+        assert_eq!(
+            ref1.kind(),
+            ChangeRefKind::TableRow(TableId::AssemblyRefProcessor)
+        );
+        assert_eq!(
+            ref2.kind(),
+            ChangeRefKind::TableRow(TableId::AssemblyRefProcessor)
+        );
         Ok(())
     }
 
     #[test]
     fn test_assemblyrefprocessor_builder_large_assembly_ref() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = AssemblyRefProcessorBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = AssemblyRefProcessorBuilder::new()
             .processor(0x8664)
             .assembly_ref(0xFFFF) // Large AssemblyRef RID
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should handle large assembly ref RID");
 
-        assert_eq!(token.table(), TableId::AssemblyRefProcessor as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::AssemblyRefProcessor)
+        );
         Ok(())
     }
 
     #[test]
     fn test_assemblyrefprocessor_builder_custom_processor() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = AssemblyRefProcessorBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = AssemblyRefProcessorBuilder::new()
             .processor(0x1234) // Custom processor identifier
             .assembly_ref(1)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyRefProcessor as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(
+            ref_.kind(),
+            ChangeRefKind::TableRow(TableId::AssemblyRefProcessor)
+        );
         Ok(())
     }
 }

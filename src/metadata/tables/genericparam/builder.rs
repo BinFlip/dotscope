@@ -6,7 +6,7 @@
 //! runtime reflection support for dynamic type operations.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{CodedIndex, CodedIndexType, GenericParamRaw, TableDataOwned, TableId},
         token::Token,
@@ -47,13 +47,12 @@ pub use super::GenericParamAttributes;
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{GenericParamBuilder, GenericParamAttributes, CodedIndex, TableId};
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create a basic type parameter for a generic class
 /// let generic_class = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef); // Generic class
@@ -62,7 +61,7 @@ pub use super::GenericParamAttributes;
 ///     .name("T")
 ///     .number(0)                    // First parameter
 ///     .owner(generic_class.clone())
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a constrained generic parameter
 /// let constrained_flags = GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT |
@@ -73,7 +72,7 @@ pub use super::GenericParamAttributes;
 ///     .number(1)                    // Second parameter
 ///     .flags(constrained_flags)     // where TEntity : class, new()
 ///     .owner(generic_class.clone())
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a covariant parameter for an interface
 /// let generic_interface = CodedIndex::new(TableId::TypeDef, 2, CodedIndexType::TypeOrMethodDef); // Generic interface
@@ -83,7 +82,7 @@ pub use super::GenericParamAttributes;
 ///     .number(0)
 ///     .flags(GenericParamAttributes::COVARIANT)  // out TResult
 ///     .owner(generic_interface.clone())
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a method-level generic parameter
 /// let generic_method = CodedIndex::new(TableId::MethodDef, 5, CodedIndexType::TypeOrMethodDef); // Generic method
@@ -92,7 +91,7 @@ pub use super::GenericParamAttributes;
 ///     .name("U")
 ///     .number(0)
 ///     .owner(generic_method)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct GenericParamBuilder {
@@ -230,7 +229,7 @@ impl GenericParamBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for managing the assembly
+    /// * `assembly` - The CIL assembly for managing metadata
     ///
     /// # Returns
     ///
@@ -245,7 +244,7 @@ impl GenericParamBuilder {
     /// - Returns error if owner is not a valid TypeOrMethodDef coded index
     /// - Returns error if heap operations fail
     /// - Returns error if table operations fail
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let name = self.name.ok_or_else(|| {
             Error::ModificationInvalid("GenericParam name is required".to_string())
         })?;
@@ -282,8 +281,8 @@ impl GenericParamBuilder {
             )));
         }
 
-        let name_index = context.string_get_or_add(&name)?;
-        let rid = context.next_rid(TableId::GenericParam);
+        let name_index = assembly.string_get_or_add(&name)?.placeholder();
+        let rid = assembly.next_rid(TableId::GenericParam)?;
 
         let token = Token::from_parts(TableId::GenericParam, rid);
 
@@ -297,7 +296,7 @@ impl GenericParamBuilder {
             name: name_index,
         };
 
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::GenericParam,
             TableDataOwned::GenericParam(generic_param_raw),
         )
@@ -308,7 +307,7 @@ impl GenericParamBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
+        cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
@@ -317,28 +316,21 @@ mod tests {
     fn test_generic_param_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-
-            // Check existing GenericParam table count
-            let existing_count = assembly.original_table_row_count(TableId::GenericParam);
-            let expected_rid = existing_count + 1;
-
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Create a basic type parameter
             let generic_type =
                 CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
 
-            let token = GenericParamBuilder::new()
+            let ref_ = GenericParamBuilder::new()
                 .name("T")
                 .number(0)
                 .owner(generic_type)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x2A000000); // GenericParam table prefix
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid); // RID should be existing + 1
+            // Verify ref is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::GenericParam));
         }
     }
 
@@ -346,24 +338,23 @@ mod tests {
     fn test_generic_param_builder_with_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let generic_type =
                 CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
             let constraint_flags = GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT
                 | GenericParamAttributes::DEFAULT_CONSTRUCTOR_CONSTRAINT;
 
-            let token = GenericParamBuilder::new()
+            let ref_ = GenericParamBuilder::new()
                 .name("TEntity")
                 .number(0)
                 .flags(constraint_flags)
                 .owner(generic_type)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x2A000000);
+            // Verify ref is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::GenericParam));
         }
     }
 
@@ -371,22 +362,21 @@ mod tests {
     fn test_generic_param_builder_covariant() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let generic_interface =
                 CodedIndex::new(TableId::TypeDef, 2, CodedIndexType::TypeOrMethodDef);
 
-            let token = GenericParamBuilder::new()
+            let ref_ = GenericParamBuilder::new()
                 .name("TResult")
                 .number(0)
                 .flags(GenericParamAttributes::COVARIANT)
                 .owner(generic_interface)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x2A000000);
+            // Verify ref is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::GenericParam));
         }
     }
 
@@ -394,21 +384,20 @@ mod tests {
     fn test_generic_param_builder_method_parameter() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let generic_method =
                 CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::TypeOrMethodDef);
 
-            let token = GenericParamBuilder::new()
+            let ref_ = GenericParamBuilder::new()
                 .name("U")
                 .number(0)
                 .owner(generic_method)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x2A000000);
+            // Verify ref is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::GenericParam));
         }
     }
 
@@ -416,8 +405,7 @@ mod tests {
     fn test_generic_param_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let generic_type =
                 CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
@@ -425,7 +413,7 @@ mod tests {
             let result = GenericParamBuilder::new()
                 .number(0)
                 .owner(generic_type)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because name is required
             assert!(result.is_err());
@@ -436,8 +424,7 @@ mod tests {
     fn test_generic_param_builder_missing_number() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let generic_type =
                 CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
@@ -445,7 +432,7 @@ mod tests {
             let result = GenericParamBuilder::new()
                 .name("T")
                 .owner(generic_type)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because number is required
             assert!(result.is_err());
@@ -456,13 +443,12 @@ mod tests {
     fn test_generic_param_builder_missing_owner() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = GenericParamBuilder::new()
                 .name("T")
                 .number(0)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because owner is required
             assert!(result.is_err());
@@ -473,8 +459,7 @@ mod tests {
     fn test_generic_param_builder_invalid_owner_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Use a table type that's not valid for TypeOrMethodDef
             let invalid_owner = CodedIndex::new(TableId::Field, 1, CodedIndexType::TypeOrMethodDef); // Field not in TypeOrMethodDef
@@ -483,7 +468,7 @@ mod tests {
                 .name("T")
                 .number(0)
                 .owner(invalid_owner)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because owner type is not valid for TypeOrMethodDef
             assert!(result.is_err());
@@ -494,8 +479,7 @@ mod tests {
     fn test_generic_param_builder_invalid_number() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let generic_type =
                 CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
@@ -504,7 +488,7 @@ mod tests {
                 .name("T")
                 .number(100000) // Too large
                 .owner(generic_type)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because number is too large
             assert!(result.is_err());
@@ -515,8 +499,7 @@ mod tests {
     fn test_generic_param_builder_invalid_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let generic_type =
                 CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
@@ -526,7 +509,7 @@ mod tests {
                 .number(0)
                 .flags(0xFFFF) // Invalid flags
                 .owner(generic_type)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because flags are invalid
             assert!(result.is_err());
@@ -537,8 +520,7 @@ mod tests {
     fn test_generic_param_builder_multiple_parameters() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let generic_type =
                 CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
@@ -546,38 +528,38 @@ mod tests {
                 CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::TypeOrMethodDef);
 
             // Create multiple generic parameters
-            let param1 = GenericParamBuilder::new()
+            let ref1 = GenericParamBuilder::new()
                 .name("T")
                 .number(0)
                 .owner(generic_type.clone())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let param2 = GenericParamBuilder::new()
+            let ref2 = GenericParamBuilder::new()
                 .name("U")
                 .number(1)
                 .flags(GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT)
                 .owner(generic_type.clone())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let param3 = GenericParamBuilder::new()
+            let ref3 = GenericParamBuilder::new()
                 .name("V")
                 .number(0)
                 .flags(GenericParamAttributes::COVARIANT)
                 .owner(generic_method)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // All should succeed and have different RIDs
-            assert_ne!(param1.value() & 0x00FFFFFF, param2.value() & 0x00FFFFFF);
-            assert_ne!(param1.value() & 0x00FFFFFF, param3.value() & 0x00FFFFFF);
-            assert_ne!(param2.value() & 0x00FFFFFF, param3.value() & 0x00FFFFFF);
+            // All should succeed and be different refs
+            assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+            assert!(!std::sync::Arc::ptr_eq(&ref1, &ref3));
+            assert!(!std::sync::Arc::ptr_eq(&ref2, &ref3));
 
-            // All should have GenericParam table prefix
-            assert_eq!(param1.value() & 0xFF000000, 0x2A000000);
-            assert_eq!(param2.value() & 0xFF000000, 0x2A000000);
-            assert_eq!(param3.value() & 0xFF000000, 0x2A000000);
+            // All should have GenericParam table kind
+            assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::GenericParam));
+            assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::GenericParam));
+            assert_eq!(ref3.kind(), ChangeRefKind::TableRow(TableId::GenericParam));
         }
     }
 
@@ -585,8 +567,7 @@ mod tests {
     fn test_generic_param_builder_all_constraint_types() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let generic_type =
                 CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
@@ -624,7 +605,7 @@ mod tests {
                     .number(*number)
                     .flags(*flags)
                     .owner(generic_type.clone())
-                    .build(&mut context)
+                    .build(&mut assembly)
                     .unwrap();
             }
 

@@ -24,7 +24,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::identity::Identity;
 //! use dotscope::metadata::tables::AssemblyHashAlgorithm;
 //!
@@ -70,14 +70,11 @@
 //! - Type loading and assembly isolation
 //! - Cross-assembly type reference resolution
 
-#[cfg(feature = "legacy-crypto")]
-use md5::{Digest as Md5Digest, Md5};
-#[cfg(feature = "legacy-crypto")]
-use sha1::{Digest as Sha1Digest, Sha1};
-use sha2::{Digest, Sha256, Sha384, Sha512};
-
 use crate::metadata::tables::AssemblyHashAlgorithm;
-use crate::{utils::read_le, Result};
+#[cfg(feature = "legacy-crypto")]
+use crate::utils::{compute_md5, compute_sha1};
+use crate::utils::{compute_sha256, compute_sha384, compute_sha512, read_le};
+use crate::Result;
 
 /// Assembly identity representation for .NET CIL assemblies.
 ///
@@ -100,7 +97,7 @@ use crate::{utils::read_le, Result};
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::identity::Identity;
 /// use dotscope::metadata::tables::AssemblyHashAlgorithm;
 ///
@@ -117,6 +114,7 @@ use crate::{utils::read_le, Result};
 ///     Identity::Token(token) => {
 ///         println!("Direct token: 0x{:016X}", token);
 ///     }
+///     _ => {}
 /// }
 /// # Ok::<(), dotscope::Error>(())
 /// ```
@@ -205,7 +203,7 @@ impl Identity {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::identity::Identity;
     ///
     /// // Create full RSA public key identity (>16 bytes)
@@ -271,7 +269,7 @@ impl Identity {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::identity::Identity;
     /// use dotscope::metadata::tables::AssemblyHashAlgorithm;
     ///
@@ -323,50 +321,31 @@ impl Identity {
     /// - The hash result cannot be read as a little-endian u64
     /// - The `legacy-crypto` feature is disabled and MD5/SHA1 is requested
     fn compute_token_from_data(data: &[u8], algo: u32) -> Result<u64> {
-        match algo {
+        let hash = match algo {
             #[cfg(feature = "legacy-crypto")]
-            AssemblyHashAlgorithm::MD5 => {
-                let mut hasher = Md5::new();
-                Md5Digest::update(&mut hasher, data);
-                let result = hasher.finalize();
-                read_le::<u64>(&result[result.len() - 8..])
-            }
+            AssemblyHashAlgorithm::MD5 => compute_md5(data),
             #[cfg(feature = "legacy-crypto")]
-            AssemblyHashAlgorithm::SHA1 => {
-                let mut hasher = Sha1::new();
-                Sha1Digest::update(&mut hasher, data);
-                let result = hasher.finalize();
-                read_le::<u64>(&result[result.len() - 8..])
-            }
+            AssemblyHashAlgorithm::SHA1 => compute_sha1(data),
             #[cfg(not(feature = "legacy-crypto"))]
-            AssemblyHashAlgorithm::MD5 | AssemblyHashAlgorithm::SHA1 => Err(malformed_error!(
-                "Hash algorithm 0x{:08X} requires the 'legacy-crypto' feature. \
-                 Compile with `features = [\"legacy-crypto\"]` to enable MD5/SHA1 support.",
-                algo
-            )),
-            AssemblyHashAlgorithm::SHA256 => {
-                let mut hasher = Sha256::new();
-                Digest::update(&mut hasher, data);
-                let result = hasher.finalize();
-                read_le::<u64>(&result[result.len() - 8..])
+            AssemblyHashAlgorithm::MD5 | AssemblyHashAlgorithm::SHA1 => {
+                return Err(malformed_error!(
+                    "Hash algorithm 0x{:08X} requires the 'legacy-crypto' feature. \
+                     Compile with `features = [\"legacy-crypto\"]` to enable MD5/SHA1 support.",
+                    algo
+                ));
             }
-            AssemblyHashAlgorithm::SHA384 => {
-                let mut hasher = Sha384::new();
-                Digest::update(&mut hasher, data);
-                let result = hasher.finalize();
-                read_le::<u64>(&result[result.len() - 8..])
+            AssemblyHashAlgorithm::SHA256 => compute_sha256(data),
+            AssemblyHashAlgorithm::SHA384 => compute_sha384(data),
+            AssemblyHashAlgorithm::SHA512 => compute_sha512(data),
+            _ => {
+                return Err(malformed_error!(
+                    "Unsupported hash algorithm: 0x{:08X}",
+                    algo
+                ));
             }
-            AssemblyHashAlgorithm::SHA512 => {
-                let mut hasher = Sha512::new();
-                Digest::update(&mut hasher, data);
-                let result = hasher.finalize();
-                read_le::<u64>(&result[result.len() - 8..])
-            }
-            _ => Err(malformed_error!(
-                "Unsupported hash algorithm: 0x{:08X}",
-                algo
-            )),
-        }
+        };
+        // Token is the last 8 bytes of the hash as little-endian u64
+        read_le::<u64>(&hash[hash.len() - 8..])
     }
 }
 
@@ -374,9 +353,6 @@ impl Identity {
 mod tests {
     use super::*;
     use crate::metadata::tables::AssemblyHashAlgorithm;
-    use md5::{Digest as Md5Digest, Md5};
-    use sha1::{Digest as Sha1Digest, Sha1};
-    use sha2::{Digest, Sha256, Sha384, Sha512};
 
     #[test]
     fn test_identity_from_pubkey() {
@@ -447,10 +423,8 @@ mod tests {
 
         let token = identity.to_token(AssemblyHashAlgorithm::MD5).unwrap();
 
-        // Manually compute MD5 to verify
-        let mut hasher = Md5::new();
-        Md5Digest::update(&mut hasher, &pubkey_data);
-        let result = hasher.finalize();
+        // Verify using centralized hash function
+        let result = compute_md5(&pubkey_data);
         let last_8_bytes = &result[result.len() - 8..];
         let expected_token = read_le::<u64>(last_8_bytes).unwrap();
 
@@ -464,10 +438,8 @@ mod tests {
 
         let token = identity.to_token(AssemblyHashAlgorithm::SHA1).unwrap();
 
-        // Manually compute SHA1 to verify
-        let mut hasher = Sha1::new();
-        Sha1Digest::update(&mut hasher, &pubkey_data);
-        let result = hasher.finalize();
+        // Verify using centralized hash function
+        let result = compute_sha1(&pubkey_data);
         let last_8_bytes = &result[result.len() - 8..];
         let expected_token = read_le::<u64>(last_8_bytes).unwrap();
 
@@ -481,10 +453,8 @@ mod tests {
 
         let token = identity.to_token(AssemblyHashAlgorithm::SHA256).unwrap();
 
-        // Manually compute SHA256 to verify
-        let mut hasher = Sha256::new();
-        Digest::update(&mut hasher, &pubkey_data);
-        let result = hasher.finalize();
+        // Verify using centralized hash function
+        let result = compute_sha256(&pubkey_data);
         let last_8_bytes = &result[result.len() - 8..];
         let expected_token = read_le::<u64>(last_8_bytes).unwrap();
 
@@ -498,10 +468,8 @@ mod tests {
 
         let token = identity.to_token(AssemblyHashAlgorithm::SHA384).unwrap();
 
-        // Manually compute SHA384 to verify
-        let mut hasher = Sha384::new();
-        Digest::update(&mut hasher, &pubkey_data);
-        let result = hasher.finalize();
+        // Verify using centralized hash function
+        let result = compute_sha384(&pubkey_data);
         let last_8_bytes = &result[result.len() - 8..];
         let expected_token = read_le::<u64>(last_8_bytes).unwrap();
 
@@ -515,10 +483,8 @@ mod tests {
 
         let token = identity.to_token(AssemblyHashAlgorithm::SHA512).unwrap();
 
-        // Manually compute SHA512 to verify
-        let mut hasher = Sha512::new();
-        Digest::update(&mut hasher, &pubkey_data);
-        let result = hasher.finalize();
+        // Verify using centralized hash function
+        let result = compute_sha512(&pubkey_data);
         let last_8_bytes = &result[result.len() - 8..];
         let expected_token = read_le::<u64>(last_8_bytes).unwrap();
 
@@ -576,9 +542,7 @@ mod tests {
         let token = identity.to_token(AssemblyHashAlgorithm::MD5).unwrap();
 
         // Hash of empty data should still produce a valid token
-        let mut hasher = Md5::new();
-        hasher.update([]);
-        let result = hasher.finalize();
+        let result = compute_md5(&[]);
         let last_8_bytes = &result[result.len() - 8..];
         let expected_token = read_le::<u64>(last_8_bytes).unwrap();
 
@@ -591,9 +555,7 @@ mod tests {
         let token = identity.to_token(AssemblyHashAlgorithm::SHA1).unwrap();
 
         // Hash of empty data should still produce a valid token
-        let mut hasher = Sha1::new();
-        hasher.update([]);
-        let result = hasher.finalize();
+        let result = compute_sha1(&[]);
         let last_8_bytes = &result[result.len() - 8..];
         let expected_token = read_le::<u64>(last_8_bytes).unwrap();
 

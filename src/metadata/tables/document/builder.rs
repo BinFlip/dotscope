@@ -16,12 +16,11 @@
 //!
 //! ## Usage
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! # let mut assembly = CilAssembly::new(view);
 //!
 //! // Create a document entry with basic information
 //! let document_token = DocumentBuilder::new()
@@ -29,12 +28,12 @@
 //!     .csharp_language()
 //!     .sha256_hash_algorithm()
 //!     .hash(vec![0x12, 0x34, 0x56, 0x78]) // Example hash
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! // Create a document with minimal information
 //! let minimal_doc_token = DocumentBuilder::new()
 //!     .name("Script.cs")
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -47,7 +46,7 @@
 //! - **Heap Management**: Strings, blobs, and GUIDs are added to appropriate heaps
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{DocumentRaw, TableDataOwned, TableId},
         token::Token,
@@ -74,19 +73,18 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing Document entries:
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 ///
 /// let document_token = DocumentBuilder::new()
 ///     .name("MyFile.cs")
 ///     .csharp_language()
 ///     .sha256_hash_algorithm()
 ///     .hash(vec![0x01, 0x02, 0x03, 0x04])
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
@@ -362,7 +360,7 @@ impl DocumentBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for the assembly being modified
+    /// * `assembly` - The CilAssembly for the assembly being modified
     ///
     /// # Returns
     ///
@@ -382,18 +380,17 @@ impl DocumentBuilder {
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     ///
     /// let document_token = DocumentBuilder::new()
     ///     .name("Program.cs")
     ///     .csharp_language()
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// println!("Created Document with token: {}", document_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let document_name = self.name.ok_or_else(|| {
             Error::ModificationInvalid("Document name is required for Document".to_string())
         })?;
@@ -404,42 +401,37 @@ impl DocumentBuilder {
             ));
         }
 
-        let rid = context.next_rid(TableId::Document);
-        let token = Token::new(((TableId::Document as u32) << 24) | rid);
-        let name_index = context.blob_add(document_name.as_bytes())?;
+        let name_index = assembly.blob_add(document_name.as_bytes())?.placeholder();
 
         let hash_algorithm_index = if let Some(guid) = self.hash_algorithm {
-            context.guid_add(&guid)?
+            assembly.guid_add(&guid)?.placeholder()
         } else {
             0
         };
 
         let hash_index = if let Some(hash_bytes) = self.hash {
-            context.blob_add(&hash_bytes)?
+            assembly.blob_add(&hash_bytes)?.placeholder()
         } else {
             0
         };
 
         let language_index = if let Some(guid) = self.language {
-            context.guid_add(&guid)?
+            assembly.guid_add(&guid)?.placeholder()
         } else {
             0
         };
 
         let document = DocumentRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
             name: name_index,
             hash_algorithm: hash_algorithm_index,
             hash: hash_index,
             language: language_index,
         };
 
-        let table_data = TableDataOwned::Document(document);
-        context.table_row_add(TableId::Document, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(TableId::Document, TableDataOwned::Document(document))
     }
 }
 
@@ -447,21 +439,20 @@ impl DocumentBuilder {
 mod tests {
     use super::*;
     use crate::{
-        metadata::tables::TableId, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, metadata::tables::TableId,
+        test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
     fn test_document_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = DocumentBuilder::new()
+        let ref_ = DocumentBuilder::new()
             .name("Program.cs")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify the token has the correct table ID
-        assert_eq!(token.table(), TableId::Document as u8);
-        assert!(token.row() > 0);
+        // Verify the ref has the correct table ID
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Document));
 
         Ok(())
     }
@@ -478,10 +469,11 @@ mod tests {
 
     #[test]
     fn test_document_builder_missing_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let result = DocumentBuilder::new().csharp_language().build(&mut context);
+        let result = DocumentBuilder::new()
+            .csharp_language()
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -492,10 +484,9 @@ mod tests {
 
     #[test]
     fn test_document_builder_empty_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let result = DocumentBuilder::new().name("").build(&mut context);
+        let result = DocumentBuilder::new().name("").build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -506,135 +497,120 @@ mod tests {
 
     #[test]
     fn test_document_builder_with_csharp_language() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = DocumentBuilder::new()
+        let ref_ = DocumentBuilder::new()
             .name("Test.cs")
             .csharp_language()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::Document as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Document));
 
         Ok(())
     }
 
     #[test]
     fn test_document_builder_with_vb_language() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = DocumentBuilder::new()
+        let ref_ = DocumentBuilder::new()
             .name("Test.vb")
             .vb_language()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::Document as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Document));
 
         Ok(())
     }
 
     #[test]
     fn test_document_builder_with_fsharp_language() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = DocumentBuilder::new()
+        let ref_ = DocumentBuilder::new()
             .name("Test.fs")
             .fsharp_language()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::Document as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Document));
 
         Ok(())
     }
 
     #[test]
     fn test_document_builder_with_sha1_hash() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let hash_bytes = vec![0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0];
-        let token = DocumentBuilder::new()
+        let ref_ = DocumentBuilder::new()
             .name("Test.cs")
             .sha1_hash_algorithm()
             .hash(hash_bytes)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::Document as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Document));
 
         Ok(())
     }
 
     #[test]
     fn test_document_builder_with_sha256_hash() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let hash_bytes = vec![0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0];
-        let token = DocumentBuilder::new()
+        let ref_ = DocumentBuilder::new()
             .name("Test.cs")
             .sha256_hash_algorithm()
             .hash(hash_bytes)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::Document as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Document));
 
         Ok(())
     }
 
     #[test]
     fn test_document_builder_full_specification() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let hash_bytes = vec![0x12, 0x34, 0x56, 0x78, 0x9a, 0xbc, 0xde, 0xf0];
-        let token = DocumentBuilder::new()
+        let ref_ = DocumentBuilder::new()
             .name("MyProgram.cs")
             .csharp_language()
             .sha256_hash_algorithm()
             .hash(hash_bytes)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::Document as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Document));
 
         Ok(())
     }
 
     #[test]
     fn test_document_builder_multiple_entries() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let doc1_token = DocumentBuilder::new()
+        let ref1 = DocumentBuilder::new()
             .name("File1.cs")
             .csharp_language()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let doc2_token = DocumentBuilder::new()
+        let ref2 = DocumentBuilder::new()
             .name("File2.vb")
             .vb_language()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify tokens are different and sequential
-        assert_ne!(doc1_token, doc2_token);
-        assert_eq!(doc1_token.table(), TableId::Document as u8);
-        assert_eq!(doc2_token.table(), TableId::Document as u8);
-        assert_eq!(doc2_token.row(), doc1_token.row() + 1);
+        // Verify refs are different
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::Document));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::Document));
 
         Ok(())
     }
 
     #[test]
     fn test_document_builder_custom_guid() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let custom_lang_guid = [
             0x01, 0x02, 0x03, 0x04, 0x05, 0x06, 0x07, 0x08, 0x09, 0x0a, 0x0b, 0x0c, 0x0d, 0x0e,
@@ -645,34 +621,31 @@ mod tests {
             0x1f, 0x20,
         ];
 
-        let token = DocumentBuilder::new()
+        let ref_ = DocumentBuilder::new()
             .name("CustomDoc.txt")
             .language(&custom_lang_guid)
             .hash_algorithm(&custom_hash_guid)
             .hash(vec![0x99, 0x88, 0x77, 0x66])
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::Document as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Document));
 
         Ok(())
     }
 
     #[test]
     fn test_document_builder_fluent_api() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test fluent API chaining
-        let token = DocumentBuilder::new()
+        let ref_ = DocumentBuilder::new()
             .name("FluentTest.cs")
             .csharp_language()
             .sha256_hash_algorithm()
             .hash(vec![0xaa, 0xbb, 0xcc, 0xdd])
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::Document as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Document));
 
         Ok(())
     }

@@ -89,6 +89,7 @@
 //! - [ECMA-335 II.24](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf)
 
 use crate::{file::parser::Parser, Result};
+use std::io::Write;
 
 /// The CLI (Common Language Infrastructure) header for .NET assemblies.
 ///
@@ -369,6 +370,70 @@ impl Cor20Header {
             managed_native_header_size,
         })
     }
+
+    /// Returns the size of the COR20 header in bytes.
+    ///
+    /// The COR20 header is always 72 bytes per ECMA-335 §II.25.3.3.
+    #[must_use]
+    pub const fn size() -> u64 {
+        72
+    }
+
+    /// Writes this COR20 header to the writer.
+    ///
+    /// The COR20 (CLI) header is exactly 72 bytes and contains the metadata location,
+    /// runtime version, entry point, and various optional data directories for resources,
+    /// strong names, and VTable fixups.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The writer to output the COR20 header to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::cor20header::Cor20Header;
+    ///
+    /// let header = Cor20Header { /* ... */ };
+    /// header.write_to(&mut writer)?;
+    /// ```
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
+        // cb (size) - always 72
+        writer.write_all(&self.cb.to_le_bytes())?;
+        // Runtime version
+        writer.write_all(&self.major_runtime_version.to_le_bytes())?;
+        writer.write_all(&self.minor_runtime_version.to_le_bytes())?;
+        // Metadata directory
+        writer.write_all(&self.meta_data_rva.to_le_bytes())?;
+        writer.write_all(&self.meta_data_size.to_le_bytes())?;
+        // Flags and entry point
+        writer.write_all(&self.flags.to_le_bytes())?;
+        writer.write_all(&self.entry_point_token.to_le_bytes())?;
+        // Resources directory
+        writer.write_all(&self.resource_rva.to_le_bytes())?;
+        writer.write_all(&self.resource_size.to_le_bytes())?;
+        // Strong name signature directory
+        writer.write_all(&self.strong_name_signature_rva.to_le_bytes())?;
+        writer.write_all(&self.strong_name_signature_size.to_le_bytes())?;
+        // Code manager table (reserved, must be 0)
+        writer.write_all(&self.code_manager_table_rva.to_le_bytes())?;
+        writer.write_all(&self.code_manager_table_size.to_le_bytes())?;
+        // VTable fixups directory
+        writer.write_all(&self.vtable_fixups_rva.to_le_bytes())?;
+        writer.write_all(&self.vtable_fixups_size.to_le_bytes())?;
+        // Export address table jumps (reserved, must be 0)
+        writer.write_all(&self.export_address_table_jmp_rva.to_le_bytes())?;
+        writer.write_all(&self.export_address_table_jmp_size.to_le_bytes())?;
+        // Managed native header (reserved)
+        writer.write_all(&self.managed_native_header_rva.to_le_bytes())?;
+        writer.write_all(&self.managed_native_header_size.to_le_bytes())?;
+
+        Ok(())
+    }
 }
 
 #[cfg(test)]
@@ -591,5 +656,46 @@ mod tests {
             "Expected error about VTable fixups mismatch, got: {}",
             err
         );
+    }
+
+    #[test]
+    fn test_write_roundtrip() {
+        #[rustfmt::skip]
+        let original_bytes = [
+            0x48, 0x00, 0x00, 0x00, // cb = 72 (0x48)
+            0x02, 0x00,             // major_runtime_version = 2
+            0x05, 0x00,             // minor_runtime_version = 5
+            0x00, 0x20, 0x00, 0x00, // meta_data_rva = 0x2000
+            0x00, 0x10, 0x00, 0x00, // meta_data_size = 0x1000
+            0x01, 0x00, 0x00, 0x00, // flags = 1 (IL_ONLY)
+            0x01, 0x00, 0x00, 0x06, // entry_point_token = 0x06000001 (MethodDef)
+            0x00, 0x00, 0x00, 0x00, // resource_rva = 0
+            0x00, 0x00, 0x00, 0x00, // resource_size = 0
+            0x00, 0x00, 0x00, 0x00, // strong_name_signature_rva = 0
+            0x00, 0x00, 0x00, 0x00, // strong_name_signature_size = 0
+            0x00, 0x00, 0x00, 0x00, // code_manager_table_rva = 0
+            0x00, 0x00, 0x00, 0x00, // code_manager_table_size = 0
+            0x00, 0x00, 0x00, 0x00, // vtable_fixups_rva = 0
+            0x00, 0x00, 0x00, 0x00, // vtable_fixups_size = 0
+            0x00, 0x00, 0x00, 0x00, // export_address_table_jmp_rva = 0
+            0x00, 0x00, 0x00, 0x00, // export_address_table_jmp_size = 0
+            0x00, 0x00, 0x00, 0x00, // managed_native_header_rva = 0
+            0x00, 0x00, 0x00, 0x00  // managed_native_header_size = 0
+        ];
+
+        // Read the header
+        let header = Cor20Header::read(&original_bytes).unwrap();
+
+        // Write it back
+        let mut written_bytes = Vec::new();
+        header.write_to(&mut written_bytes).unwrap();
+
+        // Verify roundtrip
+        assert_eq!(written_bytes.len(), 72);
+        assert_eq!(written_bytes.as_slice(), &original_bytes);
+
+        // Verify we can read the written bytes
+        let reparsed = Cor20Header::read(&written_bytes).unwrap();
+        assert_eq!(header, reparsed);
     }
 }

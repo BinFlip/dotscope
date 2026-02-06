@@ -25,7 +25,7 @@
 //! ## Parsing from Goblin PE
 //! ```rust,ignore
 //! use goblin::pe::PE;
-//! use dotscope::file::pe::Pe;
+//! use dotscope::Pe;
 //!
 //! let goblin_pe = PE::parse(data)?;
 //! let owned_pe = Pe::from_goblin_pe(&goblin_pe)?;
@@ -68,7 +68,29 @@ pub mod constants {
 
     /// Maximum reasonable RVA value for validation
     pub const MAX_REASONABLE_RVA: u32 = 0x1000_0000;
+
+    /// Size of the `ImageResourceDirectory` structure in bytes.
+    pub const IMAGE_RESOURCE_DIRECTORY_SIZE: usize = 16;
+
+    /// Size of a `ResourceEntry` structure in bytes.
+    pub const RESOURCE_ENTRY_SIZE: usize = 8;
+
+    /// Size of a `ResourceDataEntry` structure in bytes.
+    pub const RESOURCE_DATA_ENTRY_SIZE: usize = 16;
+
+    /// Indicates that the resource entry's offset points to a subdirectory.
+    /// Used in `ResourceEntry::offset_to_data_or_directory`.
+    pub const IMAGE_RESOURCE_DATA_IS_DIRECTORY: u32 = 0x8000_0000;
+
+    /// Indicates that the resource entry's name is a string offset.
+    /// Used in `ResourceEntry::name_or_id`.
+    pub const IMAGE_RESOURCE_NAME_IS_STRING: u32 = 0x8000_0000;
+
+    /// Mask to extract the offset/ID value from resource entry fields.
+    pub const IMAGE_RESOURCE_MASK: u32 = 0x7FFF_FFFF;
 }
+
+use constants::{IMAGE_RESOURCE_DIRECTORY_SIZE, RESOURCE_DATA_ENTRY_SIZE, RESOURCE_ENTRY_SIZE};
 
 /// Owned PE file representation that doesn't require borrowing from source data.
 ///
@@ -524,7 +546,7 @@ impl Pe {
     /// Total size in bytes of DOS header + PE headers
     #[must_use]
     pub fn calculate_total_file_headers_size(&self) -> u64 {
-        DosHeader::size() + self.calculate_headers_size()
+        DosHeader::SIZE as u64 + self.calculate_headers_size()
     }
 
     /// Calculates the total size of all current sections' raw data.
@@ -788,7 +810,7 @@ impl Pe {
     /// Returns an error if writing fails
     pub fn write_section_headers<W: Write>(&self, writer: &mut W) -> Result<()> {
         for section in &self.sections {
-            section.write_header_to(writer)?;
+            section.write_to(writer)?;
         }
         Ok(())
     }
@@ -798,11 +820,39 @@ impl DosHeader {
     /// Size of DOS header in bytes.
     pub const SIZE: usize = 64;
 
-    /// Returns the size of the DOS header.
-    #[must_use]
-    pub fn size() -> u64 {
-        Self::SIZE as u64
-    }
+    /// Size of standard DOS header with stub (128 bytes per ECMA-335 §II.25.2.1).
+    pub const STANDARD_SIZE: usize = 128;
+
+    /// Standard DOS header with stub from ECMA-335 Partition II §25.2.1.
+    ///
+    /// This 128-byte block contains the DOS MZ header and a minimal DOS stub that
+    /// prints "This program cannot be run in DOS mode." and exits. The e_lfanew
+    /// field at offset 0x3C points to offset 0x80 (128) where the PE header begins.
+    ///
+    /// This is the canonical DOS header used by all .NET assemblies and matches
+    /// what the CLR runtime expects. Using this standard header ensures maximum
+    /// compatibility with all .NET runtime implementations.
+    #[rustfmt::skip]
+    pub const STANDARD_DOS_HEADER: [u8; 128] = [
+        // DOS Header (64 bytes)
+        0x4D, 0x5A, 0x90, 0x00, 0x03, 0x00, 0x00, 0x00, // MZ signature + header fields
+        0x04, 0x00, 0x00, 0x00, 0xFF, 0xFF, 0x00, 0x00, // More header fields
+        0xB8, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Stack pointer, etc.
+        0x40, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Relocation table address
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Reserved
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Reserved
+        0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // Reserved
+        0x00, 0x00, 0x00, 0x00, 0x80, 0x00, 0x00, 0x00, // e_lfanew = 0x80 (offset 0x3C)
+        // DOS Stub (64 bytes) - prints "This program cannot be run in DOS mode."
+        0x0E, 0x1F, 0xBA, 0x0E, 0x00, 0xB4, 0x09, 0xCD, // PUSH CS; POP DS; MOV DX, 0x0E; MOV AH, 9; INT 21h
+        0x21, 0xB8, 0x01, 0x4C, 0xCD, 0x21, 0x54, 0x68, // INT 21h; MOV AX, 0x4C01; INT 21h; "Th"
+        0x69, 0x73, 0x20, 0x70, 0x72, 0x6F, 0x67, 0x72, // "is progr"
+        0x61, 0x6D, 0x20, 0x63, 0x61, 0x6E, 0x6E, 0x6F, // "am canno"
+        0x74, 0x20, 0x62, 0x65, 0x20, 0x72, 0x75, 0x6E, // "t be run"
+        0x20, 0x69, 0x6E, 0x20, 0x44, 0x4F, 0x53, 0x20, // " in DOS "
+        0x6D, 0x6F, 0x64, 0x65, 0x2E, 0x0D, 0x0D, 0x0A, // "mode.\r\r\n"
+        0x24, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, // "$" + padding
+    ];
 
     fn from_goblin(goblin_dos: &goblin::pe::header::DosHeader) -> Self {
         Self {
@@ -824,7 +874,20 @@ impl DosHeader {
         }
     }
 
-    fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
+    /// Writes this DOS header's fields to the writer.
+    ///
+    /// This writes just the 64-byte DOS header fields without the DOS stub.
+    /// For most use cases, prefer [`Self::write_standard`] or [`Self::write_with_stub`]
+    /// which include the required DOS stub.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The writer to output the DOS header fields to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_all(&self.signature.to_le_bytes())?;
         writer.write_all(&self.bytes_on_last_page.to_le_bytes())?;
         writer.write_all(&self.pages_in_file.to_le_bytes())?;
@@ -854,10 +917,63 @@ impl DosHeader {
 
         Ok(())
     }
+
+    /// Writes the standard DOS header with stub.
+    ///
+    /// This writes the canonical 128-byte DOS header from ECMA-335 Partition II §25.2.1,
+    /// which includes the DOS MZ header and a stub that prints "This program cannot be
+    /// run in DOS mode." This is the standard header used by all .NET assemblies.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The writer to output the DOS header to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use dotscope::DosHeader;
+    ///
+    /// let mut writer = Vec::new();
+    /// DosHeader::write_standard(&mut writer)?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn write_standard<W: Write>(writer: &mut W) -> Result<()> {
+        writer.write_all(&Self::STANDARD_DOS_HEADER)?;
+        Ok(())
+    }
+
+    /// Writes this DOS header instance followed by the standard DOS stub.
+    ///
+    /// Unlike [`Self::write_standard`], this method writes the current header's field values
+    /// followed by the DOS stub. This is useful when preserving an existing header's
+    /// specific field values while regenerating the file.
+    ///
+    /// The total size written is 128 bytes (64-byte header + 64-byte stub).
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The writer to output the DOS header to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    pub fn write_with_stub<W: Write>(&self, writer: &mut W) -> Result<()> {
+        // Write the DOS header fields
+        self.write_to(writer)?;
+
+        // Write DOS stub (64 bytes starting at offset 64)
+        writer.write_all(&Self::STANDARD_DOS_HEADER[64..128])?;
+
+        Ok(())
+    }
 }
 
 impl CoffHeader {
-    /// Size of COFF header in bytes.
+    /// Size of COFF header in bytes (20 bytes).
     pub const SIZE: usize = 20;
 
     fn from_goblin(goblin_coff: &goblin::pe::header::CoffHeader) -> Self {
@@ -895,7 +1011,19 @@ impl CoffHeader {
         self.size_of_optional_header = new_size;
     }
 
-    fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
+    /// Writes this COFF header to the writer.
+    ///
+    /// The COFF header is 20 bytes and immediately follows the PE signature ("PE\0\0").
+    /// It describes the target machine architecture, number of sections, and file characteristics.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The writer to output the COFF header to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_all(&self.machine.to_le_bytes())?;
         writer.write_all(&self.number_of_sections.to_le_bytes())?;
         writer.write_all(&self.time_date_stamp.to_le_bytes())?;
@@ -921,7 +1049,21 @@ impl OptionalHeader {
         })
     }
 
-    fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
+    /// Writes this optional header to the writer.
+    ///
+    /// The optional header contains the PE format magic, linker version, code/data sizes,
+    /// entry point, image base, alignments, subsystem info, and all 16 data directories.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The writer to output the optional header to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The magic value is invalid (not 0x10b or 0x20b)
+    /// - Writing fails
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         let is_pe32_plus = match self.standard_fields.magic {
             0x10b => false, // PE32
             0x20b => true,  // PE32+
@@ -939,9 +1081,36 @@ impl OptionalHeader {
 
         Ok(())
     }
+
+    /// Returns the serialized size of this optional header in bytes.
+    ///
+    /// The size varies based on PE format:
+    /// - PE32 (magic 0x10b): 224 bytes (28 standard + 68 windows + 128 data dirs)
+    /// - PE32+ (magic 0x20b): 240 bytes (24 standard + 88 windows + 128 data dirs)
+    #[must_use]
+    pub fn size(&self) -> usize {
+        Self::size_for_format(self.standard_fields.magic == 0x20b)
+    }
+
+    /// Returns the serialized size of an optional header for the given PE format.
+    ///
+    /// # Arguments
+    ///
+    /// * `is_pe32_plus` - `true` for PE32+ (64-bit), `false` for PE32 (32-bit)
+    #[must_use]
+    pub const fn size_for_format(is_pe32_plus: bool) -> usize {
+        StandardFields::SIZE_FOR_FORMAT[is_pe32_plus as usize]
+            + WindowsFields::SIZE_FOR_FORMAT[is_pe32_plus as usize]
+            + DataDirectories::SIZE
+    }
 }
 
 impl StandardFields {
+    /// Size of standard fields: [PE32, PE32+]
+    /// - PE32: 28 bytes (includes base_of_data)
+    /// - PE32+: 24 bytes (no base_of_data)
+    pub const SIZE_FOR_FORMAT: [usize; 2] = [28, 24];
+
     fn from_goblin(goblin_sf: &goblin::pe::optional_header::StandardFields) -> Result<Self> {
         Ok(Self {
             magic: goblin_sf.magic,
@@ -964,7 +1133,16 @@ impl StandardFields {
         })
     }
 
-    fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
+    /// Writes this standard fields structure to the writer.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The writer to output the standard fields to
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails or if PE32 format is missing `base_of_data`.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         writer.write_all(&self.magic.to_le_bytes())?;
         writer.write_all(&self.major_linker_version.to_le_bytes())?;
         writer.write_all(&self.minor_linker_version.to_le_bytes())?;
@@ -992,6 +1170,11 @@ impl StandardFields {
 }
 
 impl WindowsFields {
+    /// Size of Windows-specific fields: [PE32, PE32+]
+    /// - PE32: 68 bytes (4-byte image_base and stack/heap sizes)
+    /// - PE32+: 88 bytes (8-byte image_base and stack/heap sizes)
+    pub const SIZE_FOR_FORMAT: [usize; 2] = [68, 88];
+
     fn from_goblin(goblin_wf: &goblin::pe::optional_header::WindowsFields) -> Self {
         Self {
             image_base: goblin_wf.image_base,
@@ -1018,7 +1201,17 @@ impl WindowsFields {
         }
     }
 
-    fn write_to<W: Write>(&self, writer: &mut W, is_pe32_plus: bool) -> Result<()> {
+    /// Writes this Windows-specific fields structure to the writer.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - The writer to output the fields to
+    /// * `is_pe32_plus` - `true` for PE32+ (64-bit), `false` for PE32 (32-bit)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails or if PE32 format has values exceeding u32 range.
+    pub fn write_to<W: Write>(&self, writer: &mut W, is_pe32_plus: bool) -> Result<()> {
         // Write image_base with appropriate size
         if is_pe32_plus {
             writer.write_all(&self.image_base.to_le_bytes())?;
@@ -1084,8 +1277,24 @@ impl WindowsFields {
     }
 }
 
+impl Default for DataDirectories {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DataDirectories {
-    fn new() -> Self {
+    /// Number of data directory entries (16 per PE specification).
+    pub const COUNT: usize = 16;
+
+    /// Size of data directories in bytes (128 bytes = 16 entries × 8 bytes each).
+    pub const SIZE: usize = Self::COUNT * 8;
+
+    /// Creates a new empty `DataDirectories` structure.
+    ///
+    /// Use [`update_entry`] to populate individual directory entries.
+    #[must_use]
+    pub fn new() -> Self {
         Self {
             directories: HashMap::new(),
         }
@@ -1108,13 +1317,16 @@ impl DataDirectories {
     /// * `size` - The new size in bytes for the directory
     ///
     /// # Examples
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::{DataDirectories, DataDirectoryType};
+    ///
+    /// # let mut data_directories = DataDirectories::new();
     /// // Update CLR runtime header location
     /// data_directories.update_entry(
     ///     DataDirectoryType::ClrRuntimeHeader,
     ///     0x2000, // new RVA
     ///     72      // CLR header size
-    /// )?;
+    /// );
     /// ```
     pub fn update_entry(&mut self, dir_type: DataDirectoryType, rva: u32, size: u32) {
         self.directories.insert(
@@ -1136,9 +1348,12 @@ impl DataDirectories {
     /// * `size` - The new size of the CLR runtime header (typically 72 bytes)
     ///
     /// # Examples
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::DataDirectories;
+    ///
+    /// # let mut data_directories = DataDirectories::new();
     /// // Update CLR header to point to new location
-    /// data_directories.update_clr_entry(0x2000, 72)?;
+    /// data_directories.update_clr_entry(0x2000, 72);
     /// ```
     pub fn update_clr_entry(&mut self, rva: u32, size: u32) {
         self.update_entry(DataDirectoryType::ClrRuntimeHeader, rva, size);
@@ -1228,8 +1443,8 @@ impl DataDirectories {
 }
 
 impl SectionTable {
-    /// Size of a section table header in bytes.
-    pub const HEADER_SIZE: usize = 40;
+    /// Size of a section table entry in bytes (40 bytes per section).
+    pub const SIZE: usize = 40;
 
     fn from_goblin(goblin_section: &goblin::pe::section_table::SectionTable) -> Result<Self> {
         let name = std::str::from_utf8(&goblin_section.name)
@@ -1264,7 +1479,7 @@ impl SectionTable {
     /// Total size in bytes for the section table
     #[must_use]
     pub fn calculate_table_size(section_count: usize) -> u64 {
-        (section_count * Self::HEADER_SIZE) as u64
+        (section_count * Self::SIZE) as u64
     }
 
     /// Creates a SectionTable from layout information.
@@ -1368,67 +1583,20 @@ impl SectionTable {
         Ok(())
     }
 
-    /// Writes a section header as a standalone 40-byte header.
+    /// Writes this section header to the writer.
     ///
-    /// This method encodes the section information into the PE section table format
-    /// and writes it to the provided writer. This serializes the current state of
-    /// the section without making any modifications.
+    /// Each section header is 40 bytes and describes a section's location in both
+    /// the file and virtual memory, along with its characteristics (readable,
+    /// writable, executable, etc.).
     ///
     /// # Arguments
-    /// * `writer` - Writer to output the header bytes to
+    ///
+    /// * `writer` - The writer to output the section header to
     ///
     /// # Errors
-    /// Returns an error if writing fails
-    pub fn write_header_to<W: Write>(&self, writer: &mut W) -> Result<()> {
-        let mut header = vec![0u8; Self::HEADER_SIZE];
-        let mut offset = 0;
-
-        // Name (8 bytes, null-padded)
-        let name_bytes = self.name.as_bytes();
-        let copy_len = name_bytes.len().min(8);
-        header[offset..offset + copy_len].copy_from_slice(&name_bytes[..copy_len]);
-        offset += 8;
-
-        // Virtual size (4 bytes, little-endian)
-        header[offset..offset + 4].copy_from_slice(&self.virtual_size.to_le_bytes());
-        offset += 4;
-
-        // Virtual address (4 bytes, little-endian)
-        header[offset..offset + 4].copy_from_slice(&self.virtual_address.to_le_bytes());
-        offset += 4;
-
-        // Size of raw data (4 bytes, little-endian)
-        header[offset..offset + 4].copy_from_slice(&self.size_of_raw_data.to_le_bytes());
-        offset += 4;
-
-        // Pointer to raw data (4 bytes, little-endian)
-        header[offset..offset + 4].copy_from_slice(&self.pointer_to_raw_data.to_le_bytes());
-        offset += 4;
-
-        // Pointer to relocations (4 bytes) - 0 for .NET assemblies
-        header[offset..offset + 4].copy_from_slice(&self.pointer_to_relocations.to_le_bytes());
-        offset += 4;
-
-        // Pointer to line numbers (4 bytes) - 0 for .NET assemblies
-        header[offset..offset + 4].copy_from_slice(&self.pointer_to_line_numbers.to_le_bytes());
-        offset += 4;
-
-        // Number of relocations (2 bytes) - 0 for .NET assemblies
-        header[offset..offset + 2].copy_from_slice(&self.number_of_relocations.to_le_bytes());
-        offset += 2;
-
-        // Number of line numbers (2 bytes) - 0 for .NET assemblies
-        header[offset..offset + 2].copy_from_slice(&self.number_of_line_numbers.to_le_bytes());
-        offset += 2;
-
-        // Characteristics (4 bytes, little-endian)
-        header[offset..offset + 4].copy_from_slice(&self.characteristics.to_le_bytes());
-
-        writer.write_all(&header)?;
-        Ok(())
-    }
-
-    fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
+    ///
+    /// Returns an error if writing fails.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
         // Write name (8 bytes, null-padded)
         let mut name_bytes = [0u8; 8];
         let name_str = self.name.as_bytes();
@@ -1500,4 +1668,338 @@ impl Export {
                 .transpose()?,
         })
     }
+}
+
+/// Represents an image resource directory header in the PE format.
+///
+/// This is the header structure at each level of the resource directory tree.
+/// The resource directory is organized as a tree with up to 3 levels:
+/// Type -> Name -> Language.
+///
+/// # Structure (16 bytes)
+///
+/// | Offset | Size | Field                    |
+/// |--------|------|--------------------------|
+/// | 0      | 4    | characteristics          |
+/// | 4      | 4    | time_date_stamp          |
+/// | 8      | 2    | major_version            |
+/// | 10     | 2    | minor_version            |
+/// | 12     | 2    | number_of_named_entries  |
+/// | 14     | 2    | number_of_id_entries     |
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ImageResourceDirectory {
+    /// Resource flags (reserved, typically 0).
+    pub characteristics: u32,
+    /// Time/date stamp of resource creation.
+    pub time_date_stamp: u32,
+    /// Major version number.
+    pub major_version: u16,
+    /// Minor version number.
+    pub minor_version: u16,
+    /// Number of entries that use string names.
+    pub number_of_named_entries: u16,
+    /// Number of entries that use integer IDs.
+    pub number_of_id_entries: u16,
+}
+
+impl ImageResourceDirectory {
+    /// Reads an `ImageResourceDirectory` from a byte slice at the given offset.
+    pub fn read_from(data: &[u8], offset: usize) -> Result<Self> {
+        if offset + IMAGE_RESOURCE_DIRECTORY_SIZE > data.len() {
+            return Err(malformed_error!(
+                "Resource directory at offset {:#x} exceeds bounds",
+                offset
+            ));
+        }
+
+        Ok(Self {
+            characteristics: u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]),
+            time_date_stamp: u32::from_le_bytes([
+                data[offset + 4],
+                data[offset + 5],
+                data[offset + 6],
+                data[offset + 7],
+            ]),
+            major_version: u16::from_le_bytes([data[offset + 8], data[offset + 9]]),
+            minor_version: u16::from_le_bytes([data[offset + 10], data[offset + 11]]),
+            number_of_named_entries: u16::from_le_bytes([data[offset + 12], data[offset + 13]]),
+            number_of_id_entries: u16::from_le_bytes([data[offset + 14], data[offset + 15]]),
+        })
+    }
+
+    /// Returns the total number of entries (named + ID).
+    #[inline]
+    pub fn entry_count(&self) -> usize {
+        self.number_of_named_entries as usize + self.number_of_id_entries as usize
+    }
+
+    /// Writes this `ImageResourceDirectory` to a byte slice at the given offset.
+    pub fn write_to(&self, data: &mut [u8], offset: usize) -> Result<()> {
+        if offset + IMAGE_RESOURCE_DIRECTORY_SIZE > data.len() {
+            return Err(malformed_error!(
+                "Resource directory at offset {:#x} exceeds bounds for write",
+                offset
+            ));
+        }
+
+        data[offset..offset + 4].copy_from_slice(&self.characteristics.to_le_bytes());
+        data[offset + 4..offset + 8].copy_from_slice(&self.time_date_stamp.to_le_bytes());
+        data[offset + 8..offset + 10].copy_from_slice(&self.major_version.to_le_bytes());
+        data[offset + 10..offset + 12].copy_from_slice(&self.minor_version.to_le_bytes());
+        data[offset + 12..offset + 14].copy_from_slice(&self.number_of_named_entries.to_le_bytes());
+        data[offset + 14..offset + 16].copy_from_slice(&self.number_of_id_entries.to_le_bytes());
+
+        Ok(())
+    }
+}
+
+/// Represents a resource directory entry in the PE format.
+///
+/// Each entry can point to either a subdirectory or a data entry.
+///
+/// # Structure (8 bytes)
+///
+/// | Offset | Size | Field                        |
+/// |--------|------|------------------------------|
+/// | 0      | 4    | name_or_id                   |
+/// | 4      | 4    | offset_to_data_or_directory  |
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResourceEntry {
+    /// Either a string name offset (if high bit set) or an integer ID.
+    pub name_or_id: u32,
+    /// Offset to either a subdirectory (if high bit set) or a data entry.
+    pub offset_to_data_or_directory: u32,
+}
+
+impl ResourceEntry {
+    /// Reads a `ResourceEntry` from a byte slice at the given offset.
+    pub fn read_from(data: &[u8], offset: usize) -> Result<Self> {
+        if offset + RESOURCE_ENTRY_SIZE > data.len() {
+            return Err(malformed_error!(
+                "Resource entry at offset {:#x} exceeds bounds",
+                offset
+            ));
+        }
+
+        Ok(Self {
+            name_or_id: u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]),
+            offset_to_data_or_directory: u32::from_le_bytes([
+                data[offset + 4],
+                data[offset + 5],
+                data[offset + 6],
+                data[offset + 7],
+            ]),
+        })
+    }
+
+    /// Returns true if this entry points to a subdirectory.
+    #[inline]
+    #[must_use]
+    pub fn is_directory(self) -> bool {
+        self.offset_to_data_or_directory & constants::IMAGE_RESOURCE_DATA_IS_DIRECTORY != 0
+    }
+
+    /// Returns the offset to the target (directory or data entry).
+    #[inline]
+    #[must_use]
+    pub fn target_offset(self) -> usize {
+        (self.offset_to_data_or_directory & constants::IMAGE_RESOURCE_MASK) as usize
+    }
+
+    /// Writes this `ResourceEntry` to a byte slice at the given offset.
+    pub fn write_to(self, data: &mut [u8], offset: usize) -> Result<()> {
+        if offset + RESOURCE_ENTRY_SIZE > data.len() {
+            return Err(malformed_error!(
+                "Resource entry at offset {:#x} exceeds bounds for write",
+                offset
+            ));
+        }
+
+        data[offset..offset + 4].copy_from_slice(&self.name_or_id.to_le_bytes());
+        data[offset + 4..offset + 8]
+            .copy_from_slice(&self.offset_to_data_or_directory.to_le_bytes());
+
+        Ok(())
+    }
+}
+
+/// Represents a resource data entry (leaf node) in the PE format.
+///
+/// This structure contains the RVA pointing to actual resource data.
+///
+/// # Structure (16 bytes)
+///
+/// | Offset | Size | Field          |
+/// |--------|------|----------------|
+/// | 0      | 4    | offset_to_data | (RVA - needs relocation!)
+/// | 4      | 4    | size           |
+/// | 8      | 4    | code_page      |
+/// | 12     | 4    | reserved       |
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct ResourceDataEntry {
+    /// RVA to the actual resource data. This field needs relocation when the section moves.
+    pub offset_to_data: u32,
+    /// Size of the resource data in bytes.
+    pub size: u32,
+    /// Code page for character encoding.
+    pub code_page: u32,
+    /// Reserved (must be 0).
+    pub reserved: u32,
+}
+
+impl ResourceDataEntry {
+    /// Reads a `ResourceDataEntry` from a byte slice at the given offset.
+    pub fn read_from(data: &[u8], offset: usize) -> Result<Self> {
+        if offset + RESOURCE_DATA_ENTRY_SIZE > data.len() {
+            return Err(malformed_error!(
+                "Resource data entry at offset {:#x} exceeds bounds",
+                offset
+            ));
+        }
+
+        Ok(Self {
+            offset_to_data: u32::from_le_bytes([
+                data[offset],
+                data[offset + 1],
+                data[offset + 2],
+                data[offset + 3],
+            ]),
+            size: u32::from_le_bytes([
+                data[offset + 4],
+                data[offset + 5],
+                data[offset + 6],
+                data[offset + 7],
+            ]),
+            code_page: u32::from_le_bytes([
+                data[offset + 8],
+                data[offset + 9],
+                data[offset + 10],
+                data[offset + 11],
+            ]),
+            reserved: u32::from_le_bytes([
+                data[offset + 12],
+                data[offset + 13],
+                data[offset + 14],
+                data[offset + 15],
+            ]),
+        })
+    }
+
+    /// Writes this `ResourceDataEntry` to a byte slice at the given offset.
+    pub fn write_to(&self, data: &mut [u8], offset: usize) -> Result<()> {
+        if offset + RESOURCE_DATA_ENTRY_SIZE > data.len() {
+            return Err(malformed_error!(
+                "Resource data entry at offset {:#x} exceeds bounds",
+                offset
+            ));
+        }
+
+        let rva_bytes = self.offset_to_data.to_le_bytes();
+        let size_bytes = self.size.to_le_bytes();
+        let code_page_bytes = self.code_page.to_le_bytes();
+        let reserved_bytes = self.reserved.to_le_bytes();
+
+        data[offset..offset + 4].copy_from_slice(&rva_bytes);
+        data[offset + 4..offset + 8].copy_from_slice(&size_bytes);
+        data[offset + 8..offset + 12].copy_from_slice(&code_page_bytes);
+        data[offset + 12..offset + 16].copy_from_slice(&reserved_bytes);
+
+        Ok(())
+    }
+}
+
+/// Relocates resource section data when the section moves to a new virtual address.
+///
+/// The PE resource directory contains a tree structure where leaf nodes (`ResourceDataEntry`)
+/// contain RVAs pointing to the actual resource data. When the resource section is moved
+/// to a new location, these RVAs must be adjusted by the delta between the old and new
+/// section virtual addresses.
+///
+/// # Arguments
+///
+/// * `data` - Mutable slice containing the resource section data
+/// * `old_rva` - The original virtual address of the resource section
+/// * `new_rva` - The new virtual address where the section will be placed
+///
+/// # Returns
+///
+/// Returns `Ok(())` on success, or an error if the resource directory is malformed.
+///
+/// # Resource Directory Structure
+///
+/// The resource directory is a tree with up to 3 levels (Type -> Name -> Language).
+/// Each level consists of:
+/// - `ImageResourceDirectory` header (16 bytes)
+/// - Array of `ResourceEntry` structures (8 bytes each)
+///
+/// `ResourceEntry` can point to either:
+/// - Another `ImageResourceDirectory` (if high bit of offset is set)
+/// - A `ResourceDataEntry` leaf node (if high bit is clear)
+///
+/// Only `ResourceDataEntry::offset_to_data` contains an absolute RVA that needs relocation.
+/// All other offsets in the directory are relative to the start of the resource section.
+pub fn relocate_resource_section(data: &mut [u8], old_rva: u32, new_rva: u32) -> Result<()> {
+    if old_rva == new_rva || data.is_empty() {
+        return Ok(()); // No relocation needed
+    }
+
+    let delta = i64::from(new_rva) - i64::from(old_rva);
+
+    // Process the root directory at offset 0
+    relocate_resource_directory(data, 0, delta)
+}
+
+/// Recursively processes a resource directory and its entries, adjusting RVAs as needed.
+fn relocate_resource_directory(data: &mut [u8], offset: usize, delta: i64) -> Result<()> {
+    // Read the directory header
+    let dir = ImageResourceDirectory::read_from(data, offset)?;
+    let entries_offset = offset + IMAGE_RESOURCE_DIRECTORY_SIZE;
+
+    // Process each entry
+    for i in 0..dir.entry_count() {
+        let entry_offset = entries_offset + i * RESOURCE_ENTRY_SIZE;
+        let entry = ResourceEntry::read_from(data, entry_offset)?;
+
+        if entry.is_directory() {
+            // Entry points to another directory - recurse
+            relocate_resource_directory(data, entry.target_offset(), delta)?;
+        } else {
+            // Entry points to a ResourceDataEntry - adjust the RVA in-place
+            // The RVA is the first 4 bytes of the ResourceDataEntry structure
+            let data_entry_offset = entry.target_offset();
+            if data_entry_offset + 4 > data.len() {
+                return Err(malformed_error!(
+                    "Resource data entry at offset {:#x} exceeds bounds",
+                    data_entry_offset
+                ));
+            }
+            let old_data_rva = u32::from_le_bytes([
+                data[data_entry_offset],
+                data[data_entry_offset + 1],
+                data[data_entry_offset + 2],
+                data[data_entry_offset + 3],
+            ]);
+            let new_data_rva = u32::try_from(i64::from(old_data_rva) + delta).map_err(|_| {
+                malformed_error!(
+                    "Resource RVA relocation overflow: old_rva={:#x}, delta={}",
+                    old_data_rva,
+                    delta
+                )
+            })?;
+            data[data_entry_offset..data_entry_offset + 4]
+                .copy_from_slice(&new_data_rva.to_le_bytes());
+        }
+    }
+
+    Ok(())
 }

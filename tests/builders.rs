@@ -3,21 +3,19 @@
 //! This module tests realistic scenarios where multiple builders are used together
 //! to create complete .NET types with properties, events, and methods.
 
-use dotscope::{prelude::*, Result};
+use dotscope::{metadata::tables::TableId, prelude::*, ChangeRefKind, Result};
 use std::path::PathBuf;
 
-fn get_test_context() -> Result<BuilderContext> {
+fn get_test_assembly() -> Result<CilAssembly> {
     let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
-    let view = CilAssemblyView::from_path(&path)?;
-    let assembly = CilAssembly::new(view);
-    Ok(BuilderContext::new(assembly))
+    CilAssembly::from_path(&path)
 }
 
 /// Test creating a complete MVVM ViewModel class with properties and events.
 /// This simulates a realistic .NET development scenario.
 #[test]
 fn test_mvvm_viewmodel_with_properties_and_events() -> Result<()> {
-    let mut context = get_test_context()?;
+    let mut assembly = get_test_assembly()?;
 
     // Create a complete ViewModel class similar to:
     // public class PersonViewModel {
@@ -45,10 +43,13 @@ fn test_mvvm_viewmodel_with_properties_and_events() -> Result<()> {
         })
         // Add default constructor
         .default_constructor()
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    // Verify the class was created successfully
-    assert_eq!(viewmodel_token.value() & 0xFF000000, 0x02000000); // TypeDef table
+    // Verify the class was created successfully (TypeDef table)
+    assert_eq!(
+        viewmodel_token.kind(),
+        ChangeRefKind::TableRow(TableId::TypeDef)
+    );
 
     Ok(())
 }
@@ -57,7 +58,7 @@ fn test_mvvm_viewmodel_with_properties_and_events() -> Result<()> {
 /// This demonstrates complex property patterns with backing logic.
 #[test]
 fn test_data_model_with_validation() -> Result<()> {
-    let mut context = get_test_context()?;
+    let mut assembly = get_test_assembly()?;
 
     // Create a data model similar to:
     // public class Customer {
@@ -84,9 +85,13 @@ fn test_data_model_with_validation() -> Result<()> {
                     })
                 })
         })
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    assert_eq!(customer_token.value() & 0xFF000000, 0x02000000);
+    // Verify it's a TypeDef table entry
+    assert_eq!(
+        customer_token.kind(),
+        ChangeRefKind::TableRow(TableId::TypeDef)
+    );
 
     Ok(())
 }
@@ -95,7 +100,7 @@ fn test_data_model_with_validation() -> Result<()> {
 /// This demonstrates service-oriented architecture patterns.
 #[test]
 fn test_business_service_with_events() -> Result<()> {
-    let mut context = get_test_context()?;
+    let mut assembly = get_test_assembly()?;
 
     // Create a service similar to:
     // public class CustomerService {
@@ -145,9 +150,13 @@ fn test_business_service_with_events() -> Result<()> {
                 })
         })
         .default_constructor()
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    assert_eq!(service_token.value() & 0xFF000000, 0x02000000);
+    // Verify it's a TypeDef table entry
+    assert_eq!(
+        service_token.kind(),
+        ChangeRefKind::TableRow(TableId::TypeDef)
+    );
 
     Ok(())
 }
@@ -156,7 +165,7 @@ fn test_business_service_with_events() -> Result<()> {
 /// This tests that ClassBuilder works with inheritance scenarios.
 #[test]
 fn test_inherited_class_with_virtual_properties() -> Result<()> {
-    let mut context = get_test_context()?;
+    let mut assembly = get_test_assembly()?;
 
     // First create a base class
     let base_token = ClassBuilder::new("BaseEntity")
@@ -182,7 +191,7 @@ fn test_inherited_class_with_virtual_properties() -> Result<()> {
                 })
         })
         .default_constructor()
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
     // Create derived class with inheritance using CodedIndex
     let base_coded_index = CodedIndex::new(
@@ -213,10 +222,14 @@ fn test_inherited_class_with_virtual_properties() -> Result<()> {
                 })
         })
         .default_constructor()
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    assert_eq!(base_token.value() & 0xFF000000, 0x02000000);
-    assert_eq!(derived_token.value() & 0xFF000000, 0x02000000);
+    // Verify both are TypeDef table entries
+    assert_eq!(base_token.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
+    assert_eq!(
+        derived_token.kind(),
+        ChangeRefKind::TableRow(TableId::TypeDef)
+    );
 
     Ok(())
 }
@@ -225,7 +238,7 @@ fn test_inherited_class_with_virtual_properties() -> Result<()> {
 /// This simulates a complete event-driven system architecture.
 #[test]
 fn test_event_driven_architecture() -> Result<()> {
-    let mut context = get_test_context()?;
+    let mut assembly = get_test_assembly()?;
 
     // Create Publisher class
     let publisher_token = ClassBuilder::new("EventPublisher")
@@ -244,7 +257,7 @@ fn test_event_driven_architecture() -> Result<()> {
                 })
         })
         .default_constructor()
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
     // Create Subscriber class
     let subscriber_token = ClassBuilder::new("EventSubscriber")
@@ -277,7 +290,7 @@ fn test_event_driven_architecture() -> Result<()> {
                 })
         })
         .default_constructor()
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
     // Create Coordinator class that uses both
     let coordinator_token = ClassBuilder::new("EventCoordinator")
@@ -295,11 +308,21 @@ fn test_event_driven_architecture() -> Result<()> {
             })
         })
         .default_constructor()
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    assert_eq!(publisher_token.value() & 0xFF000000, 0x02000000);
-    assert_eq!(subscriber_token.value() & 0xFF000000, 0x02000000);
-    assert_eq!(coordinator_token.value() & 0xFF000000, 0x02000000);
+    // Verify all are TypeDef table entries
+    assert_eq!(
+        publisher_token.kind(),
+        ChangeRefKind::TableRow(TableId::TypeDef)
+    );
+    assert_eq!(
+        subscriber_token.kind(),
+        ChangeRefKind::TableRow(TableId::TypeDef)
+    );
+    assert_eq!(
+        coordinator_token.kind(),
+        ChangeRefKind::TableRow(TableId::TypeDef)
+    );
 
     Ok(())
 }
@@ -308,7 +331,7 @@ fn test_event_driven_architecture() -> Result<()> {
 /// This is the ultimate integration test showing all features working together.
 #[test]
 fn test_ultimate_integration_all_builders() -> Result<()> {
-    let mut context = get_test_context()?;
+    let mut assembly = get_test_assembly()?;
 
     // Create the most comprehensive class possible using all builders
     let ultimate_token = ClassBuilder::new("UltimateClass")
@@ -376,9 +399,13 @@ fn test_ultimate_integration_all_builders() -> Result<()> {
         })
         // Default constructor
         .default_constructor()
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    assert_eq!(ultimate_token.value() & 0xFF000000, 0x02000000);
+    // Verify it's a TypeDef table entry
+    assert_eq!(
+        ultimate_token.kind(),
+        ChangeRefKind::TableRow(TableId::TypeDef)
+    );
 
     Ok(())
 }

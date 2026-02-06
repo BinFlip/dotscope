@@ -9,16 +9,17 @@
 //! ```rust,ignore
 //! use dotscope::prelude::*;
 //!
-//! let builder_context = BuilderContext::new();
+//! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! let enc_token = EncLogBuilder::new()
 //!     .token_value(0x06000001)       // MethodDef token
 //!     .func_code(1)                  // Update operation
-//!     .build(&mut builder_context)?;
+//!     .build(&mut assembly)?;
 //! ```
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{EncLogRaw, TableDataOwned, TableId},
         token::Token,
@@ -51,19 +52,19 @@ use crate::{
 /// let create_method = EncLogBuilder::new()
 ///     .token_value(0x06000042)  // MethodDef token
 ///     .func_code(0)             // Create operation
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Record update to an existing type
 /// let update_type = EncLogBuilder::new()
 ///     .token_value(0x02000010)  // TypeDef token
 ///     .func_code(1)             // Update operation
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Record deletion of a field
 /// let delete_field = EncLogBuilder::new()
 ///     .token_value(0x04000025)  // Field token
 ///     .func_code(2)             // Delete operation
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// ```
 #[derive(Debug, Clone)]
 pub struct EncLogBuilder {
@@ -84,7 +85,7 @@ impl EncLogBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = EncLogBuilder::new();
@@ -111,7 +112,7 @@ impl EncLogBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Method token
@@ -150,7 +151,7 @@ impl EncLogBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Create operation
@@ -180,7 +181,7 @@ impl EncLogBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = EncLogBuilder::new()
@@ -201,7 +202,7 @@ impl EncLogBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = EncLogBuilder::new()
@@ -222,7 +223,7 @@ impl EncLogBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = EncLogBuilder::new()
@@ -237,11 +238,11 @@ impl EncLogBuilder {
     /// Builds and adds the `EncLog` entry to the metadata
     ///
     /// Validates all required fields, creates the `EncLog` table entry,
-    /// and adds it to the builder context. Returns a token that can be used
+    /// and adds it to the assembly. Returns a token that can be used
     /// to reference this edit log entry.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the builder context
+    /// - `assembly`: Mutable reference to the CilAssembly
     ///
     /// # Returns
     /// - `Ok(Token)`: Token referencing the created edit log entry
@@ -256,13 +257,14 @@ impl EncLogBuilder {
     /// ```rust,ignore
     /// use dotscope::prelude::*;
     ///
-    /// let mut context = BuilderContext::new();
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let token = EncLogBuilder::new()
     ///     .token_value(0x06000001)
     ///     .func_code(1)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let token_value = self.token_value.ok_or_else(|| {
             Error::ModificationInvalid("Token value is required for EncLog".to_string())
         })?;
@@ -271,19 +273,15 @@ impl EncLogBuilder {
             Error::ModificationInvalid("Function code is required for EncLog".to_string())
         })?;
 
-        let next_rid = context.next_rid(TableId::EncLog);
-        let token = Token::new(((TableId::EncLog as u32) << 24) | next_rid);
-
         let enc_log = EncLogRaw {
-            rid: next_rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
             token_value,
             func_code,
         };
 
-        context.table_row_add(TableId::EncLog, TableDataOwned::EncLog(enc_log))?;
-        Ok(token)
+        assembly.table_row_add(TableId::EncLog, TableDataOwned::EncLog(enc_log))
     }
 }
 
@@ -300,7 +298,7 @@ impl Default for EncLogBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
@@ -321,86 +319,78 @@ mod tests {
 
     #[test]
     fn test_enclog_builder_create_method() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = EncLogBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = EncLogBuilder::new()
             .token_value(0x06000001) // MethodDef token
             .func_code(0) // Create
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::EncLog as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EncLog));
         Ok(())
     }
 
     #[test]
     fn test_enclog_builder_update_type() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = EncLogBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = EncLogBuilder::new()
             .token_value(0x02000010) // TypeDef token
             .func_code(1) // Update
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::EncLog as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EncLog));
         Ok(())
     }
 
     #[test]
     fn test_enclog_builder_delete_field() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = EncLogBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = EncLogBuilder::new()
             .token_value(0x04000025) // Field token
             .func_code(2) // Delete
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::EncLog as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EncLog));
         Ok(())
     }
 
     #[test]
     fn test_enclog_builder_convenience_methods() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test create convenience method
-        let token1 = EncLogBuilder::new()
+        let ref1 = EncLogBuilder::new()
             .token_value(0x06000001)
             .create()
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build create operation");
 
         // Test update convenience method
-        let token2 = EncLogBuilder::new()
+        let ref2 = EncLogBuilder::new()
             .token_value(0x02000001)
             .update()
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build update operation");
 
         // Test delete convenience method
-        let token3 = EncLogBuilder::new()
+        let ref3 = EncLogBuilder::new()
             .token_value(0x04000001)
             .delete()
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build delete operation");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_eq!(token3.row(), 3);
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::EncLog));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::EncLog));
+        assert_eq!(ref3.kind(), ChangeRefKind::TableRow(TableId::EncLog));
         Ok(())
     }
 
     #[test]
     fn test_enclog_builder_missing_token_value() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let result = EncLogBuilder::new().func_code(0).build(&mut context);
+        let mut assembly = get_test_assembly()?;
+        let result = EncLogBuilder::new().func_code(0).build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -414,11 +404,10 @@ mod tests {
 
     #[test]
     fn test_enclog_builder_missing_func_code() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let result = EncLogBuilder::new()
             .token_value(0x06000001)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -451,50 +440,46 @@ mod tests {
 
     #[test]
     fn test_enclog_builder_fluent_interface() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test method chaining
-        let token = EncLogBuilder::new()
+        let ref_ = EncLogBuilder::new()
             .token_value(0x08000001) // Param token
             .func_code(1) // Update
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::EncLog as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EncLog));
         Ok(())
     }
 
     #[test]
     fn test_enclog_builder_multiple_builds() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Build first log entry
-        let token1 = EncLogBuilder::new()
+        let ref1 = EncLogBuilder::new()
             .token_value(0x06000001) // Method
             .create()
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build first log entry");
 
         // Build second log entry
-        let token2 = EncLogBuilder::new()
+        let ref2 = EncLogBuilder::new()
             .token_value(0x02000001) // Type
             .update()
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build second log entry");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_ne!(token1, token2);
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::EncLog));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::EncLog));
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
         Ok(())
     }
 
     #[test]
     fn test_enclog_builder_various_tokens() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test with different token types
         let tokens = [
@@ -507,13 +492,13 @@ mod tests {
         ];
 
         for (i, &token_val) in tokens.iter().enumerate() {
-            let token = EncLogBuilder::new()
+            let ref_ = EncLogBuilder::new()
                 .token_value(token_val)
                 .func_code(i as u32 % 3) // Cycle through 0, 1, 2
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build successfully");
 
-            assert_eq!(token.row(), (i + 1) as u32);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EncLog));
         }
 
         Ok(())

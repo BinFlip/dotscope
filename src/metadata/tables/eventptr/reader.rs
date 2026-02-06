@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for EventPtrRaw {
+    const TABLE_ID: TableId = TableId::EventPtr;
+
     /// Read an `EventPtr` row from the metadata tables stream
     ///
     /// Parses one `EventPtr` table row from the binary metadata stream, handling

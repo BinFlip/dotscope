@@ -153,23 +153,23 @@
 //!
 //! ## Working with Different Formats
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::security::PermissionSet;
 //!
 //! // Binary format (most common)
 //! # fn get_binary_data() -> Vec<u8> { vec![0x2E, 0x00] }
 //! let binary_data = get_binary_data();
-//! let binary_set = PermissionSet::new(&binary_data, None)?;
+//! let binary_set = PermissionSet::new(&binary_data)?;
 //!
 //! // XML format (legacy)
 //! # fn get_xml_data() -> Vec<u8> { b"<PermissionSet>".to_vec() }
 //! let xml_data = get_xml_data();
-//! let xml_set = PermissionSet::new(&xml_data, None)?;
+//! let xml_set = PermissionSet::new(&xml_data)?;
 //!
 //! // Unicode format (specialized)
 //! # fn get_unicode_data() -> Vec<u8> { vec![0xFF, 0xFE] }
 //! let unicode_data = get_unicode_data();
-//! let unicode_set = PermissionSet::new(&unicode_data, None)?;
+//! let unicode_set = PermissionSet::new(&unicode_data)?;
 //!
 //! // All formats provide the same API
 //! println!("Binary permissions: {}", binary_set.permissions().len());

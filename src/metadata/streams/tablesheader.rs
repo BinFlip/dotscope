@@ -293,7 +293,7 @@
 //! - **ECMA-335 II.22**: Complete specifications for all 45 metadata table types
 //! - **ECMA-335 II.25**: File format and metadata integration within PE files
 
-use std::sync::Arc;
+use std::{io::Write, sync::Arc};
 use strum::IntoEnumIterator;
 
 use crate::{
@@ -435,7 +435,7 @@ use crate::{
 /// ```
 ///
 /// ## High-Performance Parallel Processing
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, CustomAttributeRaw}};
 /// use rayon::prelude::*;
 /// use std::collections::HashMap;
@@ -469,7 +469,7 @@ use crate::{
 /// ```
 ///
 /// ## Memory-Efficient Large Table Processing
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, MemberRefRaw}};
 ///
 /// # fn example(tables_data: &[u8]) -> dotscope::Result<()> {
@@ -596,7 +596,7 @@ use crate::{
 /// ## Efficient Table Access Examples
 ///
 /// ### Basic Table Access
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw, MethodDefRaw, FieldRaw}};
 ///
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
@@ -618,7 +618,7 @@ use crate::{
 /// ```
 ///
 /// ### Iterating Over Table Rows
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, MethodDefRaw}};
 ///
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
@@ -637,7 +637,7 @@ use crate::{
 /// ```
 ///
 /// ### Parallel Processing with Rayon
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, FieldRaw}};
 /// use rayon::prelude::*;
 ///
@@ -655,7 +655,7 @@ use crate::{
 /// ```
 ///
 /// ### Cross-Table Analysis
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, TypeDefRaw, MethodDefRaw}};
 ///
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
@@ -678,7 +678,7 @@ use crate::{
 /// ```
 ///
 /// ### Working with Table Summaries
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::streams::TablesHeader;
 ///
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
@@ -700,7 +700,7 @@ use crate::{
 /// ```
 ///
 /// ### Memory-Efficient Pattern
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, CustomAttributeRaw}};
 ///
 /// # fn example(tables_header: &TablesHeader) -> dotscope::Result<()> {
@@ -1052,7 +1052,7 @@ impl<'a> TablesHeader<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::streams::TablesHeader;
     ///
     /// # fn example(tables: &TablesHeader) {
@@ -1087,7 +1087,7 @@ impl<'a> TablesHeader<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::{streams::TablesHeader, tables::TypeDefRaw};
     ///
     /// # fn example(tables: &TablesHeader) -> dotscope::Result<()> {
@@ -1280,7 +1280,7 @@ impl<'a> TablesHeader<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::{streams::TablesHeader, tables::{TableId, EventRaw}};
     ///
     /// # fn example(tables: &TablesHeader) -> dotscope::Result<()> {
@@ -1320,7 +1320,7 @@ impl<'a> TablesHeader<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::streams::TablesHeader;
     ///
     /// # fn example(tables: &TablesHeader) {
@@ -1356,7 +1356,7 @@ impl<'a> TablesHeader<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::streams::TablesHeader;
     ///
     /// # fn example(tables: &TablesHeader) {
@@ -1390,7 +1390,7 @@ impl<'a> TablesHeader<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::{streams::TablesHeader, tables::TableId};
     ///
     /// # fn example(tables: &TablesHeader) {
@@ -1421,7 +1421,7 @@ impl<'a> TablesHeader<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::streams::TablesHeader;
     ///
     /// # fn example(tables: &TablesHeader) {
@@ -1443,6 +1443,110 @@ impl<'a> TablesHeader<'a> {
                 row_count: self.table_row_count(table_id),
             })
             .collect()
+    }
+
+    /// Writes the tables stream header to a writer in ECMA-335 binary format.
+    ///
+    /// Serializes the tables stream header including version info, heap sizes,
+    /// valid/sorted table bitmasks, and row counts for present tables according
+    /// to ECMA-335 Section II.24.2.6.
+    ///
+    /// **Note**: This method writes only the header, not the actual table row data.
+    /// Table row data should be written separately using the `RowWritable` implementations.
+    ///
+    /// ## Binary Format Written
+    /// ```text
+    /// Offset | Size | Field        | Description
+    /// -------|------|--------------|----------------------------------
+    /// 0      | 4    | Reserved     | Must be 0x00000000
+    /// 4      | 1    | MajorVersion | Schema major version (2)
+    /// 5      | 1    | MinorVersion | Schema minor version (0)
+    /// 6      | 1    | HeapSizes    | Heap index size flags
+    /// 7      | 1    | Reserved     | Must be 0x01
+    /// 8      | 8    | Valid        | Bit vector of present tables
+    /// 16     | 8    | Sorted       | Bit vector of sorted tables
+    /// 24     | 4*N  | Rows[]       | Row counts for each present table
+    /// ```
+    ///
+    /// # Arguments
+    /// * `writer` - Any type implementing [`std::io::Write`]
+    ///
+    /// # Returns
+    /// * `Ok(())` - Header written successfully
+    /// * `Err(Error)` - Write operation failed
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the writer fails.
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// use dotscope::metadata::streams::TablesHeader;
+    ///
+    /// # fn example(tables: &TablesHeader) -> dotscope::Result<()> {
+    /// let mut buffer = Vec::new();
+    /// tables.write_header_to(&mut buffer)?;
+    ///
+    /// // Buffer now contains the serialized tables stream header
+    /// println!("Header size: {} bytes", buffer.len());
+    /// # Ok(())
+    /// # }
+    /// ```
+    pub fn write_header_to<W: Write>(&self, writer: &mut W) -> crate::Result<()> {
+        // Reserved (4 bytes) - must be 0
+        writer.write_all(&[0u8; 4])?;
+
+        // MajorVersion (1 byte)
+        writer.write_all(&[self.major_version])?;
+
+        // MinorVersion (1 byte)
+        writer.write_all(&[self.minor_version])?;
+
+        // HeapSizes (1 byte)
+        writer.write_all(&[self.info.heap_sizes()])?;
+
+        // Reserved (1 byte) - must be 1
+        writer.write_all(&[0x01])?;
+
+        // Valid (8 bytes) - bit vector of present tables
+        writer.write_all(&self.valid.to_le_bytes())?;
+
+        // Sorted (8 bytes) - bit vector of sorted tables
+        writer.write_all(&self.sorted.to_le_bytes())?;
+
+        // Row counts (4 bytes each) for present tables in table ID order
+        for table_id in TableId::iter() {
+            if self.has_table(table_id) {
+                let row_count = self.table_row_count(table_id);
+                writer.write_all(&row_count.to_le_bytes())?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Returns the serialized size of the tables stream header in bytes.
+    ///
+    /// The size includes the fixed header fields (24 bytes) plus 4 bytes for
+    /// each present table's row count.
+    ///
+    /// # Returns
+    /// The total size in bytes when written with [`write_header_to`](Self::write_header_to).
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// use dotscope::metadata::streams::TablesHeader;
+    ///
+    /// # fn example(tables: &TablesHeader) {
+    /// let header_size = tables.header_size();
+    /// println!("Tables stream header: {} bytes", header_size);
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn header_size(&self) -> usize {
+        // Fixed header: 24 bytes
+        // Row counts: 4 bytes per present table
+        24 + (self.valid.count_ones() as usize * 4)
     }
 }
 
@@ -1740,5 +1844,48 @@ mod tests {
         let typedef_table = header.table::<TypeDefRaw>();
         assert!(typedef_table.is_some());
         assert!(typedef_table.unwrap().row_count > 0);
+    }
+
+    #[test]
+    fn test_write_header_to() {
+        let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
+        let header = TablesHeader::from(data).unwrap();
+
+        let mut buffer = Vec::new();
+        header.write_header_to(&mut buffer).unwrap();
+
+        // Verify size matches expected
+        assert_eq!(buffer.len(), header.header_size());
+
+        // Verify reserved bytes
+        assert_eq!(&buffer[0..4], &[0, 0, 0, 0]); // Reserved
+
+        // Verify version
+        assert_eq!(buffer[4], header.major_version);
+        assert_eq!(buffer[5], header.minor_version);
+
+        // Verify heap sizes
+        assert_eq!(buffer[6], header.info.heap_sizes());
+
+        // Verify reserved byte
+        assert_eq!(buffer[7], 0x01);
+
+        // Verify valid bitmask
+        let valid_from_buffer = u64::from_le_bytes(buffer[8..16].try_into().unwrap());
+        assert_eq!(valid_from_buffer, header.valid);
+
+        // Verify sorted bitmask
+        let sorted_from_buffer = u64::from_le_bytes(buffer[16..24].try_into().unwrap());
+        assert_eq!(sorted_from_buffer, header.sorted);
+    }
+
+    #[test]
+    fn test_header_size() {
+        let data = include_bytes!("../../../tests/samples/WB_STREAM_TABLES_O-0x6C_S-0x59EB4.bin");
+        let header = TablesHeader::from(data).unwrap();
+
+        // Header size should be 24 + (4 * number of tables)
+        let expected_size = 24 + (header.table_count() as usize * 4);
+        assert_eq!(header.header_size(), expected_size);
     }
 }

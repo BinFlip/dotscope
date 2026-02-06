@@ -19,7 +19,10 @@
 //! See ECMA-335, Partition II, Section 22.38 for `TypeRef` table specification.
 
 use crate::{
-    metadata::loader::{LoaderContext, MetadataLoader},
+    metadata::{
+        diagnostics::DiagnosticCategory,
+        loader::{LoaderContext, MetadataLoader},
+    },
     prelude::{TableId, TypeRefRaw},
     Result,
 };
@@ -42,20 +45,36 @@ impl MetadataLoader for TypeRefLoader {
     /// * `Ok(())` - All `TypeRef` entries processed and registered successfully
     /// * `Err(_)` - Type reference loading or registration failed
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<TypeRefRaw>() {
-                // Sequential iteration is required here because TypeRef entries can
-                // reference other TypeRef entries (for nested external types), and
-                // ECMA-335 guarantees parent entries appear before children in the table.
-                // Using parallel iteration could process children before parents,
-                // causing resolution scope lookups to fail.
-                for row in table {
-                    let new_entry =
-                        row.to_owned(|coded_index| context.get_ref(coded_index), strings)?;
-                    context.types.insert(&new_entry);
-                    context.imports.add_type(&new_entry)?;
-                }
-            }
+        let (Some(header), Some(strings)) = (context.meta, context.strings) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<TypeRefRaw>() else {
+            return Ok(());
+        };
+
+        // Sequential iteration is required here because TypeRef entries can
+        // reference other TypeRef entries (for nested external types), and
+        // ECMA-335 guarantees parent entries appear before children in the table.
+        // Using parallel iteration could process children before parents,
+        // causing resolution scope lookups to fail.
+        for row in table {
+            let token_msg = || format!("type ref 0x{:08x}", row.token.value());
+
+            let Some(new_entry) = context.handle_result(
+                row.to_owned(|coded_index| context.get_ref(coded_index), strings),
+                DiagnosticCategory::Type,
+                token_msg,
+            )?
+            else {
+                continue;
+            };
+
+            context.types.insert(&new_entry);
+            context.handle_result(
+                context.imports.add_type(&new_entry),
+                DiagnosticCategory::Type,
+                token_msg,
+            )?;
         }
 
         Ok(())

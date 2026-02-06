@@ -21,15 +21,14 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use dotscope::analysis::dataflow::{ConstantPropagation, DataFlowSolver};
-//! use dotscope::analysis::SsaFunction;
+//! use dotscope::analysis::{ConstantPropagation, DataFlowSolver, SsaFunction};
 //!
 //! // Build SSA form
-//! let ssa = SsaBuilder::build(&cfg, num_args, num_locals)?;
+//! let ssa = SsaConverter::build(&graph, num_args, num_locals, resolver)?;
 //!
 //! // Run constant propagation
 //! let analysis = ConstantPropagation::new(&ssa);
-//! let mut solver = DataFlowSolver::new(analysis, &ssa, &cfg);
+//! let mut solver = DataFlowSolver::new(analysis, &ssa, &graph);
 //! solver.solve();
 //!
 //! // Query results
@@ -52,7 +51,7 @@ mod sccp;
 mod solver;
 
 // Re-export primary types
-pub use framework::{AnalysisResults, DataFlowAnalysis, Direction};
+pub use framework::{AnalysisResults, DataFlowAnalysis, DataFlowCfg, Direction};
 pub use lattice::{JoinSemiLattice, Lattice, MeetSemiLattice};
 pub use liveness::{LiveVariables, LivenessResult};
 pub use reaching::{ReachingDefinitions, ReachingDefsResult};
@@ -62,12 +61,12 @@ pub use solver::DataFlowSolver;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::{cfg::ControlFlowGraph, ssa::SsaBuilder};
+    use crate::analysis::{cfg::ControlFlowGraph, ssa::SsaConverter};
     use crate::assembly::{decode_blocks, InstructionAssembler};
 
     /// Helper to build CFG from assembled bytecode.
     fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph<'static> {
-        let (bytecode, _max_stack) = assembler.finish().expect("Failed to assemble bytecode");
+        let (bytecode, _max_stack, _) = assembler.finish().expect("Failed to assemble bytecode");
         let blocks =
             decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len())).expect("Failed to decode");
         ControlFlowGraph::from_basic_blocks(blocks).expect("Failed to build CFG")
@@ -80,7 +79,8 @@ mod tests {
         num_locals: usize,
     ) -> (crate::analysis::SsaFunction, ControlFlowGraph<'static>) {
         let cfg = build_cfg(assembler);
-        let ssa = SsaBuilder::build(&cfg, num_args, num_locals).expect("SSA construction failed");
+        let ssa =
+            SsaConverter::build(&cfg, num_args, num_locals, None).expect("SSA construction failed");
         (ssa, cfg)
     }
 

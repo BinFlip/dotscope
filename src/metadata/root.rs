@@ -43,6 +43,7 @@ use crate::{
     utils::{read_le, read_le_at},
     Result,
 };
+use std::io::Write;
 
 /// The MAGIC value indicating the CIL header ("BSJB" in ASCII).
 pub const CIL_HEADER_MAGIC: u32 = 0x424A_5342;
@@ -615,6 +616,159 @@ impl Root {
 
         Ok(())
     }
+
+    /// Writes the metadata root header to a writer in ECMA-335 binary format.
+    ///
+    /// Serializes the complete metadata root header including signature, version info,
+    /// and stream directory according to ECMA-335 Section II.24.2.1.
+    ///
+    /// ## Binary Format Written
+    /// ```text
+    /// Offset | Size | Field        | Description
+    /// -------|------|--------------|----------------------------------
+    /// 0x00   | 4    | Signature    | Magic: 0x424A5342 ("BSJB")
+    /// 0x04   | 2    | MajorVersion | Metadata format major version
+    /// 0x06   | 2    | MinorVersion | Metadata format minor version
+    /// 0x08   | 4    | Reserved     | Always 0
+    /// 0x0C   | 4    | Length       | Version string length (padded)
+    /// 0x10   | N    | Version      | Version string + null padding
+    /// ...    | 2    | Flags        | Reserved, always 0
+    /// ...    | 2    | StreamNumber | Number of stream headers
+    /// ...    | ...  | Streams      | Stream header directory
+    /// ```
+    ///
+    /// # Arguments
+    /// * `writer` - Any type implementing [`std::io::Write`]
+    ///
+    /// # Returns
+    /// * `Ok(())` - Root header written successfully
+    /// * `Err(Error)` - Write operation failed
+    ///
+    /// # Examples
+    /// ```rust,no_run
+    /// use dotscope::metadata::root::Root;
+    /// use dotscope::metadata::streams::StreamHeader;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let root = Root {
+    ///     signature: 0x424A5342,
+    ///     major_version: 1,
+    ///     minor_version: 1,
+    ///     reserved: 0,
+    ///     length: 12,
+    ///     version: "v4.0.30319".to_string(),
+    ///     flags: 0,
+    ///     stream_number: 1,
+    ///     stream_headers: vec![
+    ///         StreamHeader { offset: 0x6C, size: 0x1000, name: "#~".to_string() },
+    ///     ],
+    /// };
+    ///
+    /// let mut buffer = Vec::new();
+    /// root.write_to(&mut buffer)?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the writer fails or if the version string
+    /// length exceeds u32 range.
+    pub fn write_to<W: Write>(&self, writer: &mut W) -> Result<()> {
+        // Signature (4 bytes) - "BSJB" magic
+        writer.write_all(&self.signature.to_le_bytes())?;
+
+        // Major version (2 bytes)
+        writer.write_all(&self.major_version.to_le_bytes())?;
+
+        // Minor version (2 bytes)
+        writer.write_all(&self.minor_version.to_le_bytes())?;
+
+        // Reserved (4 bytes)
+        writer.write_all(&self.reserved.to_le_bytes())?;
+
+        // Version string length (padded to 4-byte boundary)
+        let version_bytes = self.version.as_bytes();
+        let padded_len = (version_bytes.len() + 3) & !3;
+        let padded_len_u32 = u32::try_from(padded_len).map_err(|_| {
+            malformed_error!(
+                "Version string padded length {} exceeds u32 range",
+                padded_len
+            )
+        })?;
+        writer.write_all(&padded_len_u32.to_le_bytes())?;
+
+        // Version string + null padding to 4-byte boundary
+        writer.write_all(version_bytes)?;
+        let padding = padded_len - version_bytes.len();
+        if padding > 0 {
+            writer.write_all(&vec![0u8; padding])?;
+        }
+
+        // Flags (2 bytes)
+        writer.write_all(&self.flags.to_le_bytes())?;
+
+        // Stream count (2 bytes)
+        writer.write_all(&self.stream_number.to_le_bytes())?;
+
+        // Stream headers
+        for stream in &self.stream_headers {
+            stream.write_to(writer)?;
+        }
+
+        Ok(())
+    }
+
+    /// Returns the total serialized size of this metadata root header in bytes.
+    ///
+    /// The size includes the fixed header fields plus the padded version string
+    /// and all stream headers with their alignment padding.
+    ///
+    /// # Returns
+    /// The total size in bytes when written with [`write_to`](Self::write_to).
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::root::Root;
+    /// use dotscope::metadata::streams::StreamHeader;
+    ///
+    /// let root = Root {
+    ///     signature: 0x424A5342,
+    ///     major_version: 1,
+    ///     minor_version: 1,
+    ///     reserved: 0,
+    ///     length: 12,
+    ///     version: "v4.0.30319".to_string(),
+    ///     flags: 0,
+    ///     stream_number: 1,
+    ///     stream_headers: vec![
+    ///         StreamHeader { offset: 0x6C, size: 0x1000, name: "#~".to_string() },
+    ///     ],
+    /// };
+    ///
+    /// // Fixed: 4+2+2+4+4+2+2 = 20
+    /// // Version: "v4.0.30319" (10 chars) padded to 12
+    /// // Stream header: 12 bytes (for "#~")
+    /// // Total: 20 + 12 + 12 = 44
+    /// assert_eq!(root.serialized_size(), 44);
+    /// ```
+    #[must_use]
+    pub fn serialized_size(&self) -> usize {
+        // Fixed fields: signature(4) + major(2) + minor(2) + reserved(4) + length(4) + flags(2) + stream_number(2)
+        let fixed_size = 20;
+
+        // Version string padded to 4-byte boundary
+        let version_padded = (self.version.len() + 3) & !3;
+
+        // Stream headers
+        let streams_size: usize = self
+            .stream_headers
+            .iter()
+            .map(crate::StreamHeader::serialized_size)
+            .sum();
+
+        fixed_size + version_padded + streams_size
+    }
 }
 
 #[cfg(test)]
@@ -690,5 +844,102 @@ mod tests {
             "Expected error about duplicate stream '#~', got: {}",
             error_string
         );
+    }
+
+    #[test]
+    fn test_write_to_basic() {
+        let root = Root {
+            signature: CIL_HEADER_MAGIC,
+            major_version: 1,
+            minor_version: 1,
+            reserved: 0,
+            length: 12, // Will be recalculated during write
+            version: "v4.0.30319".to_string(),
+            flags: 0,
+            stream_number: 1,
+            stream_headers: vec![StreamHeader {
+                offset: 0x6C,
+                size: 0x1000,
+                name: "#~".to_string(),
+            }],
+        };
+
+        let mut buffer = Vec::new();
+        root.write_to(&mut buffer).unwrap();
+
+        // Verify signature "BSJB"
+        assert_eq!(&buffer[0..4], &[0x42, 0x53, 0x4A, 0x42]);
+        // Verify major version
+        assert_eq!(&buffer[4..6], &[0x01, 0x00]);
+        // Verify minor version
+        assert_eq!(&buffer[6..8], &[0x01, 0x00]);
+        // Verify reserved
+        assert_eq!(&buffer[8..12], &[0x00, 0x00, 0x00, 0x00]);
+        // Verify version string length (padded to 12)
+        assert_eq!(&buffer[12..16], &[0x0C, 0x00, 0x00, 0x00]);
+        // Verify version string starts with "v4.0"
+        assert_eq!(&buffer[16..20], b"v4.0");
+    }
+
+    #[test]
+    fn test_serialized_size() {
+        let root = Root {
+            signature: CIL_HEADER_MAGIC,
+            major_version: 1,
+            minor_version: 1,
+            reserved: 0,
+            length: 12,
+            version: "v4.0.30319".to_string(), // 10 chars, padded to 12
+            flags: 0,
+            stream_number: 1,
+            stream_headers: vec![StreamHeader {
+                offset: 0x6C,
+                size: 0x1000,
+                name: "#~".to_string(), // "#~" + null (3) padded to 4, + 8 fixed = 12
+            }],
+        };
+
+        // Fixed: 20 bytes
+        // Version: 12 bytes (10 chars padded to 12)
+        // Stream header: 12 bytes
+        // Total: 44 bytes
+        assert_eq!(root.serialized_size(), 44);
+    }
+
+    #[test]
+    fn test_serialized_size_multiple_streams() {
+        let root = Root {
+            signature: CIL_HEADER_MAGIC,
+            major_version: 1,
+            minor_version: 1,
+            reserved: 0,
+            length: 12,
+            version: "v4.0.30319".to_string(),
+            flags: 0,
+            stream_number: 3,
+            stream_headers: vec![
+                StreamHeader {
+                    offset: 0x6C,
+                    size: 0x1000,
+                    name: "#~".to_string(),
+                }, // 12 bytes
+                StreamHeader {
+                    offset: 0x106C,
+                    size: 0x500,
+                    name: "#Strings".to_string(),
+                }, // 20 bytes
+                StreamHeader {
+                    offset: 0x156C,
+                    size: 0x100,
+                    name: "#Blob".to_string(),
+                }, // 16 bytes
+            ],
+        };
+
+        // Fixed: 20 bytes
+        // Version: 12 bytes
+        // Stream headers: 12 + 20 + 16 = 48 bytes
+        // Total: 80 bytes
+        assert_eq!(root.serialized_size(), 80);
     }
 }

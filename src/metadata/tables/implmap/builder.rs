@@ -6,7 +6,7 @@
 //! between managed .NET code and native code libraries.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{CodedIndex, ImplMapRaw, TableDataOwned, TableId},
         token::Token,
@@ -57,20 +57,19 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::PInvokeAttributes;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create a basic P/Invoke mapping with default settings
 /// let basic_pinvoke = ImplMapBuilder::new()
 ///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MemberForwarded)) // Target managed method
 ///     .import_name("MessageBoxW") // Native function name
 ///     .import_scope(1) // ModuleRef to user32.dll
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a P/Invoke mapping with specific calling convention and character set
 /// let advanced_pinvoke = ImplMapBuilder::new()
@@ -82,7 +81,7 @@ use crate::{
 ///         PInvokeAttributes::CHAR_SET_UNICODE |
 ///         PInvokeAttributes::SUPPORTS_LAST_ERROR
 ///     )
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a P/Invoke mapping with exact name preservation
 /// let exact_name_pinvoke = ImplMapBuilder::new()
@@ -93,7 +92,7 @@ use crate::{
 ///         PInvokeAttributes::NO_MANGLE |
 ///         PInvokeAttributes::CALL_CONV_CDECL
 ///     )
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a P/Invoke mapping with advanced character handling
 /// let string_handling_pinvoke = ImplMapBuilder::new()
@@ -105,7 +104,7 @@ use crate::{
 ///         PInvokeAttributes::BEST_FIT_DISABLED |
 ///         PInvokeAttributes::THROW_ON_UNMAPPABLE_ENABLED
 ///     )
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct ImplMapBuilder {
@@ -153,7 +152,7 @@ impl ImplMapBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use dotscope::metadata::tables::PInvokeAttributes;
     /// let builder = ImplMapBuilder::new()
@@ -217,7 +216,7 @@ impl ImplMapBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::metadata::tables::ImplMapBuilder;
     /// let builder = ImplMapBuilder::new()
     ///     .import_name("MessageBoxW");
@@ -244,7 +243,7 @@ impl ImplMapBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::metadata::tables::ImplMapBuilder;
     /// let builder = ImplMapBuilder::new()
     ///     .import_scope(1); // References ModuleRef #1 (e.g., user32.dll)
@@ -263,7 +262,7 @@ impl ImplMapBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - Builder context for heap and table management
+    /// * `assembly` - CIL assembly for heap and table management
     ///
     /// # Returns
     ///
@@ -282,20 +281,19 @@ impl ImplMapBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     /// let token = ImplMapBuilder::new()
     ///     .member_forwarded(CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MemberForwarded))
     ///     .import_name("MessageBoxW")
     ///     .import_scope(1)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let member_forwarded = self.member_forwarded.ok_or_else(|| {
             Error::ModificationInvalid("member_forwarded field is required".to_string())
         })?;
@@ -314,24 +312,19 @@ impl ImplMapBuilder {
             ));
         }
 
-        let import_name_index = context.string_add(&import_name)?;
-        let rid = context.next_rid(TableId::ImplMap);
-        let token = Token::new((TableId::ImplMap as u32) << 24 | rid);
+        let import_name_index = assembly.string_add(&import_name)?.placeholder();
 
         let implmap_raw = ImplMapRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
             mapping_flags: self.mapping_flags.unwrap_or(0),
             member_forwarded,
             import_name: import_name_index,
             import_scope,
         };
 
-        let table_data = TableDataOwned::ImplMap(implmap_raw);
-        context.table_row_add(TableId::ImplMap, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(TableId::ImplMap, TableDataOwned::ImplMap(implmap_raw))
     }
 }
 
@@ -339,16 +332,15 @@ impl ImplMapBuilder {
 mod tests {
     use super::*;
     use crate::{
-        metadata::tables::implmap::PInvokeAttributes, prelude::*,
+        cilassembly::ChangeRefKind, metadata::tables::implmap::PInvokeAttributes, prelude::*,
         test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
     fn test_implmap_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ImplMapBuilder::new()
+        let ref_ = ImplMapBuilder::new()
             .member_forwarded(CodedIndex::new(
                 TableId::MethodDef,
                 1,
@@ -356,19 +348,17 @@ mod tests {
             ))
             .import_name("MessageBoxW")
             .import_scope(1)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert!(token.value() != 0);
-        assert_eq!(token.table() as u32, TableId::ImplMap as u32);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::ImplMap));
         Ok(())
     }
 
     #[test]
     fn test_implmap_builder_with_flags() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ImplMapBuilder::new()
+        let ref_ = ImplMapBuilder::new()
             .member_forwarded(CodedIndex::new(
                 TableId::MethodDef,
                 1,
@@ -381,19 +371,17 @@ mod tests {
                     | PInvokeAttributes::CHAR_SET_UNICODE
                     | PInvokeAttributes::SUPPORTS_LAST_ERROR,
             )
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert!(token.value() != 0);
-        assert_eq!(token.table() as u32, TableId::ImplMap as u32);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::ImplMap));
         Ok(())
     }
 
     #[test]
     fn test_implmap_builder_no_mangle() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ImplMapBuilder::new()
+        let ref_ = ImplMapBuilder::new()
             .member_forwarded(CodedIndex::new(
                 TableId::MethodDef,
                 3,
@@ -402,19 +390,17 @@ mod tests {
             .import_name("my_custom_function")
             .import_scope(3)
             .mapping_flags(PInvokeAttributes::NO_MANGLE | PInvokeAttributes::CALL_CONV_CDECL)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert!(token.value() != 0);
-        assert_eq!(token.table() as u32, TableId::ImplMap as u32);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::ImplMap));
         Ok(())
     }
 
     #[test]
     fn test_implmap_builder_field_reference() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ImplMapBuilder::new()
+        let ref_ = ImplMapBuilder::new()
             .member_forwarded(CodedIndex::new(
                 TableId::Field,
                 1,
@@ -422,22 +408,20 @@ mod tests {
             ))
             .import_name("global_variable")
             .import_scope(1)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert!(token.value() != 0);
-        assert_eq!(token.table() as u32, TableId::ImplMap as u32);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::ImplMap));
         Ok(())
     }
 
     #[test]
     fn test_implmap_builder_missing_member_forwarded() {
-        let assembly = get_test_assembly().unwrap();
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly().unwrap();
 
         let result = ImplMapBuilder::new()
             .import_name("MessageBoxW")
             .import_scope(1)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("member_forwarded"));
@@ -445,8 +429,7 @@ mod tests {
 
     #[test]
     fn test_implmap_builder_missing_import_name() {
-        let assembly = get_test_assembly().unwrap();
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly().unwrap();
 
         let result = ImplMapBuilder::new()
             .member_forwarded(CodedIndex::new(
@@ -455,7 +438,7 @@ mod tests {
                 CodedIndexType::MemberForwarded,
             ))
             .import_scope(1)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("import_name"));
@@ -463,8 +446,7 @@ mod tests {
 
     #[test]
     fn test_implmap_builder_missing_import_scope() {
-        let assembly = get_test_assembly().unwrap();
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly().unwrap();
 
         let result = ImplMapBuilder::new()
             .member_forwarded(CodedIndex::new(
@@ -473,7 +455,7 @@ mod tests {
                 CodedIndexType::MemberForwarded,
             ))
             .import_name("MessageBoxW")
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("import_scope"));
@@ -481,8 +463,7 @@ mod tests {
 
     #[test]
     fn test_implmap_builder_invalid_coded_index() {
-        let assembly = get_test_assembly().unwrap();
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly().unwrap();
 
         let result = ImplMapBuilder::new()
             .member_forwarded(CodedIndex::new(
@@ -492,7 +473,7 @@ mod tests {
             )) // Invalid table
             .import_name("MessageBoxW")
             .import_scope(1)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         assert!(result
@@ -503,10 +484,9 @@ mod tests {
 
     #[test]
     fn test_implmap_builder_multiple_flags() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ImplMapBuilder::new()
+        let ref_ = ImplMapBuilder::new()
             .member_forwarded(CodedIndex::new(
                 TableId::MethodDef,
                 4,
@@ -519,20 +499,18 @@ mod tests {
                     | PInvokeAttributes::BEST_FIT_DISABLED
                     | PInvokeAttributes::THROW_ON_UNMAPPABLE_ENABLED,
             )
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert!(token.value() != 0);
-        assert_eq!(token.table() as u32, TableId::ImplMap as u32);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::ImplMap));
         Ok(())
     }
 
     #[test]
     fn test_implmap_builder_default() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test Default trait implementation
-        let token = ImplMapBuilder::default()
+        let ref_ = ImplMapBuilder::default()
             .member_forwarded(CodedIndex::new(
                 TableId::MethodDef,
                 1,
@@ -540,10 +518,9 @@ mod tests {
             ))
             .import_name("TestFunction")
             .import_scope(1)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert!(token.value() != 0);
-        assert_eq!(token.table() as u32, TableId::ImplMap as u32);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::ImplMap));
         Ok(())
     }
 }

@@ -45,11 +45,11 @@ use crate::{
 /// # Example
 ///
 /// ```rust,ignore
-/// use dotscope::analysis::dataflow::{LiveVariables, DataFlowSolver};
+/// use dotscope::analysis::{LiveVariables, DataFlowSolver};
 ///
 /// let analysis = LiveVariables::new(&ssa);
 /// let mut solver = DataFlowSolver::new(analysis);
-/// let results = solver.solve(&ssa, &cfg);
+/// let results = solver.solve(&ssa, &graph);
 ///
 /// // Check which variables are live at block exit
 /// if let Some(live) = results.out_state(block_id) {
@@ -84,18 +84,18 @@ impl LiveVariables {
             // Process phi nodes: they define variables and use operands
             for phi in block.phi_nodes() {
                 // Phi defines its result
-                let def_idx = phi.result().index();
-                if def_idx < num_vars {
+                if let Some(def_idx) = ssa.var_index(phi.result()) {
                     defs.insert(def_idx);
                 }
 
                 // Phi uses its operands (these come from predecessors,
                 // but we track them as uses in this block for simplicity)
                 for op in phi.operands() {
-                    let var_idx = op.value().index();
-                    // Only count as USE if not already defined in this block
-                    if var_idx < num_vars && !defs.contains(var_idx) {
-                        uses.insert(var_idx);
+                    if let Some(var_idx) = ssa.var_index(op.value()) {
+                        // Only count as USE if not already defined in this block
+                        if !defs.contains(var_idx) {
+                            uses.insert(var_idx);
+                        }
                     }
                 }
             }
@@ -103,17 +103,17 @@ impl LiveVariables {
             // Process instructions in forward order
             for instr in block.instructions() {
                 // Uses first (before def, since this is the "USE before DEF" set)
-                for &use_var in instr.uses() {
-                    let var_idx = use_var.index();
-                    if var_idx < num_vars && !defs.contains(var_idx) {
-                        uses.insert(var_idx);
+                for &use_var in instr.uses().iter() {
+                    if let Some(var_idx) = ssa.var_index(use_var) {
+                        if !defs.contains(var_idx) {
+                            uses.insert(var_idx);
+                        }
                     }
                 }
 
                 // Then definition
                 if let Some(def) = instr.def() {
-                    let def_idx = def.index();
-                    if def_idx < num_vars {
+                    if let Some(def_idx) = ssa.var_index(def) {
                         defs.insert(def_idx);
                     }
                 }
@@ -213,7 +213,7 @@ impl LivenessResult {
 
     /// Returns an iterator over all live variables.
     pub fn variables(&self) -> impl Iterator<Item = SsaVarId> + '_ {
-        self.live.iter().map(SsaVarId::new)
+        self.live.iter().map(SsaVarId::from_index)
     }
 
     /// Returns the number of live variables.
@@ -274,17 +274,17 @@ mod tests {
         let mut result = LivenessResult::new(10);
         assert!(result.is_empty());
 
-        result.add(SsaVarId::new(0));
-        result.add(SsaVarId::new(5));
+        result.add(SsaVarId::from_index(0));
+        result.add(SsaVarId::from_index(5));
 
         assert!(!result.is_empty());
         assert_eq!(result.count(), 2);
-        assert!(result.is_live(SsaVarId::new(0)));
-        assert!(result.is_live(SsaVarId::new(5)));
-        assert!(!result.is_live(SsaVarId::new(1)));
+        assert!(result.is_live(SsaVarId::from_index(0)));
+        assert!(result.is_live(SsaVarId::from_index(5)));
+        assert!(!result.is_live(SsaVarId::from_index(1)));
 
-        result.remove(SsaVarId::new(0));
-        assert!(!result.is_live(SsaVarId::new(0)));
+        result.remove(SsaVarId::from_index(0));
+        assert!(!result.is_live(SsaVarId::from_index(0)));
         assert_eq!(result.count(), 1);
     }
 
@@ -293,29 +293,29 @@ mod tests {
         let mut a = LivenessResult::new(10);
         let mut b = LivenessResult::new(10);
 
-        a.add(SsaVarId::new(0));
-        a.add(SsaVarId::new(1));
-        b.add(SsaVarId::new(1));
-        b.add(SsaVarId::new(2));
+        a.add(SsaVarId::from_index(0));
+        a.add(SsaVarId::from_index(1));
+        b.add(SsaVarId::from_index(1));
+        b.add(SsaVarId::from_index(2));
 
         let result = a.meet(&b);
-        assert!(result.is_live(SsaVarId::new(0)));
-        assert!(result.is_live(SsaVarId::new(1)));
-        assert!(result.is_live(SsaVarId::new(2)));
+        assert!(result.is_live(SsaVarId::from_index(0)));
+        assert!(result.is_live(SsaVarId::from_index(1)));
+        assert!(result.is_live(SsaVarId::from_index(2)));
         assert_eq!(result.count(), 3);
     }
 
     #[test]
     fn test_liveness_iterator() {
         let mut result = LivenessResult::new(100);
-        result.add(SsaVarId::new(5));
-        result.add(SsaVarId::new(42));
-        result.add(SsaVarId::new(99));
+        result.add(SsaVarId::from_index(5));
+        result.add(SsaVarId::from_index(42));
+        result.add(SsaVarId::from_index(99));
 
         let vars: Vec<_> = result.variables().collect();
         assert_eq!(vars.len(), 3);
-        assert!(vars.contains(&SsaVarId::new(5)));
-        assert!(vars.contains(&SsaVarId::new(42)));
-        assert!(vars.contains(&SsaVarId::new(99)));
+        assert!(vars.contains(&SsaVarId::from_index(5)));
+        assert!(vars.contains(&SsaVarId::from_index(42)));
+        assert!(vars.contains(&SsaVarId::from_index(99)));
     }
 }

@@ -555,6 +555,118 @@ impl<'a> Blob<'a> {
     pub fn data(&self) -> &[u8] {
         self.data
     }
+
+    /// Checks if the blob heap contains a specific byte sequence.
+    ///
+    /// Searches through all blobs in the heap to determine if any entry matches
+    /// the provided byte data exactly. This is useful for quick existence checks
+    /// when looking for specific signatures or custom attribute values.
+    ///
+    /// # Arguments
+    /// * `data` - The byte sequence to search for
+    ///
+    /// # Returns
+    /// `true` if the blob exists in the heap, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::streams::Blob;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [
+    ///     0x00,
+    ///     0x03, 0x41, 0x42, 0x43,  // "ABC"
+    ///     0x02, 0x44, 0x45,        // "DE"
+    /// ];
+    /// let blob = Blob::from(&heap_data)?;
+    ///
+    /// assert!(blob.contains(b"ABC"));
+    /// assert!(blob.contains(b"DE"));
+    /// assert!(!blob.contains(b"NotFound"));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn contains(&self, data: &[u8]) -> bool {
+        self.iter().any(|(_, value)| value == data)
+    }
+
+    /// Finds the first occurrence of a blob and returns its heap offset.
+    ///
+    /// Searches through all blobs in the heap and returns the byte offset of the
+    /// first matching entry. This offset can be used with metadata table references.
+    ///
+    /// # Arguments
+    /// * `data` - The byte sequence to search for
+    ///
+    /// # Returns
+    /// `Some(offset)` if the blob is found, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::streams::Blob;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [
+    ///     0x00,
+    ///     0x03, 0x41, 0x42, 0x43,  // "ABC" at offset 1
+    ///     0x02, 0x44, 0x45,        // "DE" at offset 5
+    /// ];
+    /// let blob = Blob::from(&heap_data)?;
+    ///
+    /// assert_eq!(blob.find(b"ABC"), Some(1));
+    /// assert_eq!(blob.find(b"DE"), Some(5));
+    /// assert_eq!(blob.find(b"NotFound"), None);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn find(&self, data: &[u8]) -> Option<u32> {
+        self.iter()
+            .find(|(_, value)| *value == data)
+            .and_then(|(offset, _)| u32::try_from(offset).ok())
+    }
+
+    /// Finds all occurrences of a blob and returns their heap offsets.
+    ///
+    /// Searches through all blobs in the heap and returns the byte offsets of all
+    /// matching entries. This handles the case where duplicate blobs exist in the heap.
+    ///
+    /// # Arguments
+    /// * `data` - The byte sequence to search for
+    ///
+    /// # Returns
+    /// A vector of offsets where the blob was found. Empty if not found.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::streams::Blob;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [
+    ///     0x00,
+    ///     0x02, 0x41, 0x42,  // "AB" at offset 1
+    ///     0x02, 0x41, 0x42,  // "AB" at offset 4
+    /// ];
+    /// let blob = Blob::from(&heap_data)?;
+    ///
+    /// let offsets = blob.find_all(b"AB");
+    /// assert_eq!(offsets.len(), 2);
+    /// assert_eq!(offsets[0], 1);
+    /// assert_eq!(offsets[1], 4);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn find_all(&self, data: &[u8]) -> Vec<u32> {
+        self.iter()
+            .filter(|(_, value)| *value == data)
+            .filter_map(|(offset, _)| u32::try_from(offset).ok())
+            .collect()
+    }
 }
 
 impl<'a> IntoIterator for &'a Blob<'a> {

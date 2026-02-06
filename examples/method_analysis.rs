@@ -366,9 +366,9 @@ fn print_local_variables(method: &Method) {
             if !local_var.modifiers.is_empty() {
                 println!(
                     "     Custom Modifiers: {} modifier(s)",
-                    local_var.modifiers.count()
+                    local_var.modifiers.len()
                 );
-                for (j, _modifier) in local_var.modifiers.iter() {
+                for (j, _modifier) in local_var.modifiers.iter().enumerate() {
                     println!("       [{j}]: Custom modifier");
                 }
             }

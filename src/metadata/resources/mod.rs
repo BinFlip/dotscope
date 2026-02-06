@@ -1500,10 +1500,6 @@ mod tests {
         assert!(bytes_64.iter().all(|&b| b == 64));
     });
 
-    // ==================================================================================
-    // Zero-Copy Specific Tests - These only apply to the ref variant
-    // ==================================================================================
-
     #[test]
     fn test_large_byte_array_zero_copy() {
         let mut encoder = DotNetResourceEncoder::new();

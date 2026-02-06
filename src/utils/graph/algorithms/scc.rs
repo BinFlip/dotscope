@@ -152,22 +152,25 @@ impl TarjanState {
             } else if self.on_stack[w_idx] {
                 // Successor w is on stack and hence in the current SCC
                 // Note: index[w] is valid here because w has been visited
-                self.lowlink[v_idx] = self.lowlink[v_idx].min(self.index[w_idx].unwrap());
+                if let Some(idx) = self.index[w_idx] {
+                    self.lowlink[v_idx] = self.lowlink[v_idx].min(idx);
+                }
             }
         }
 
         // If v is a root node, pop the stack and generate an SCC
-        if self.lowlink[v_idx] == self.index[v_idx].unwrap() {
-            let mut scc = Vec::new();
-            loop {
-                let w = self.stack.pop().unwrap();
-                self.on_stack[w.index()] = false;
-                scc.push(w);
-                if w == v {
-                    break;
+        if let Some(idx) = self.index[v_idx] {
+            if self.lowlink[v_idx] == idx {
+                let mut scc = Vec::new();
+                while let Some(w) = self.stack.pop() {
+                    self.on_stack[w.index()] = false;
+                    scc.push(w);
+                    if w == v {
+                        break;
+                    }
                 }
+                self.sccs.push(scc);
             }
-            self.sccs.push(scc);
         }
     }
 }

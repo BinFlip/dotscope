@@ -16,18 +16,17 @@
 //!
 //! ## Usage
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! # let mut assembly = CilAssembly::new(view);
 //!
 //! // Create a simple assembly reference
 //! let assembly_ref_token = AssemblyRefBuilder::new()
 //!     .name("System.Core")
 //!     .version(4, 0, 0, 0)
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! // Create a more complex assembly reference with strong naming
 //! let strong_ref_token = AssemblyRefBuilder::new()
@@ -35,7 +34,7 @@
 //!     .version(1, 2, 3, 4)
 //!     .culture("en-US")
 //!     .public_key_token(&[0xB7, 0x7A, 0x5C, 0x56, 0x19, 0x34, 0xE0, 0x89])
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -48,7 +47,7 @@
 //! - **Strong Name Support**: Handles both public keys and public key tokens
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{AssemblyFlags, AssemblyRefRaw, TableDataOwned, TableId},
         token::Token,
@@ -75,19 +74,18 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing AssemblyRef entries:
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::AssemblyFlags;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 ///
 /// let assembly_ref = AssemblyRefBuilder::new()
 ///     .name("System.Core")
 ///     .version(4, 0, 0, 0)
 ///     .flags(AssemblyFlags::RETARGETABLE)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
@@ -215,7 +213,7 @@ impl AssemblyRefBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use dotscope::metadata::tables::AssemblyFlags;
     /// let builder = AssemblyRefBuilder::new()
@@ -328,7 +326,7 @@ impl AssemblyRefBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for the assembly being modified
+    /// * `assembly` - The CilAssembly being modified
     ///
     /// # Returns
     ///
@@ -349,18 +347,17 @@ impl AssemblyRefBuilder {
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     ///
     /// let assembly_ref_token = AssemblyRefBuilder::new()
     ///     .name("System.Core")
     ///     .version(4, 0, 0, 0)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// println!("Created AssemblyRef with token: {}", assembly_ref_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let name = self.name.ok_or_else(|| {
             Error::ModificationInvalid("Assembly name is required for AssemblyRef".to_string())
         })?;
@@ -392,13 +389,13 @@ impl AssemblyRefBuilder {
             ));
         }
 
-        let name_index = context.string_get_or_add(&name)?;
+        let name_index = assembly.string_get_or_add(&name)?.placeholder();
 
         let culture_index = if let Some(culture) = self.culture {
             if culture.is_empty() {
                 0 // Empty culture string means culture-neutral
             } else {
-                context.string_get_or_add(&culture)?
+                assembly.string_get_or_add(&culture)?.placeholder()
             }
         } else {
             0 // No culture means culture-neutral
@@ -413,7 +410,7 @@ impl AssemblyRefBuilder {
                         "Public key token must be exactly 8 bytes".to_string(),
                     ));
                 }
-                context.blob_add(&data)?
+                assembly.blob_add(&data)?.placeholder()
             }
         } else {
             0
@@ -423,19 +420,16 @@ impl AssemblyRefBuilder {
             if hash.is_empty() {
                 0
             } else {
-                context.blob_add(&hash)?
+                assembly.blob_add(&hash)?.placeholder()
             }
         } else {
             0
         };
 
-        let rid = context.next_rid(TableId::AssemblyRef);
-        let token = Token::from_parts(TableId::AssemblyRef, rid);
-
         let assembly_ref = AssemblyRefRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
             major_version: self.major_version,
             minor_version: self.minor_version,
             build_number: self.build_number,
@@ -447,10 +441,10 @@ impl AssemblyRefBuilder {
             hash_value: hash_value_index,
         };
 
-        let table_data = TableDataOwned::AssemblyRef(assembly_ref);
-        context.table_row_add(TableId::AssemblyRef, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(
+            TableId::AssemblyRef,
+            TableDataOwned::AssemblyRef(assembly_ref),
+        )
     }
 }
 
@@ -458,22 +452,21 @@ impl AssemblyRefBuilder {
 mod tests {
     use super::*;
     use crate::{
-        metadata::tables::AssemblyFlags, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, metadata::tables::AssemblyFlags,
+        test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
     fn test_assemblyref_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = AssemblyRefBuilder::new()
+        let ref_ = AssemblyRefBuilder::new()
             .name("System.Core")
             .version(4, 0, 0, 0)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify the token has the correct table ID
-        assert_eq!(token.table(), TableId::AssemblyRef as u8);
-        assert!(token.row() > 0);
+        // Verify the ref has the correct kind
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyRef));
 
         Ok(())
     }
@@ -492,12 +485,11 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_missing_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let result = AssemblyRefBuilder::new()
             .version(1, 0, 0, 0)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -508,13 +500,12 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_empty_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let result = AssemblyRefBuilder::new()
             .name("")
             .version(1, 0, 0, 0)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -525,63 +516,56 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_with_culture() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = AssemblyRefBuilder::new()
+        let ref_ = AssemblyRefBuilder::new()
             .name("LocalizedAssembly")
             .version(1, 0, 0, 0)
             .culture("en-US")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::AssemblyRef as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyRef));
 
         Ok(())
     }
 
     #[test]
     fn test_assemblyref_builder_with_public_key_token() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let token_data = [0xB7, 0x7A, 0x5C, 0x56, 0x19, 0x34, 0xE0, 0x89];
 
-        let token = AssemblyRefBuilder::new()
+        let ref_ = AssemblyRefBuilder::new()
             .name("StrongNamedAssembly")
             .version(2, 1, 0, 0)
             .public_key_token(&token_data)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::AssemblyRef as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyRef));
 
         Ok(())
     }
 
     #[test]
     fn test_assemblyref_builder_with_public_key() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let public_key = vec![0x00, 0x24, 0x00, 0x00, 0x04, 0x80]; // Truncated for test
 
-        let token = AssemblyRefBuilder::new()
+        let ref_ = AssemblyRefBuilder::new()
             .name("FullKeyAssembly")
             .version(1, 2, 3, 4)
             .public_key(&public_key)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::AssemblyRef as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyRef));
 
         Ok(())
     }
 
     #[test]
     fn test_assemblyref_builder_invalid_public_key_token_length() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let invalid_token = [0xB7, 0x7A, 0x5C]; // Only 3 bytes instead of 8
 
@@ -589,7 +573,7 @@ mod tests {
             .name("InvalidTokenAssembly")
             .version(1, 0, 0, 0)
             .public_key_token(&invalid_token)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -600,13 +584,12 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_version_overflow() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let result = AssemblyRefBuilder::new()
             .name("OverflowAssembly")
             .version(70000, 0, 0, 0) // Exceeds 16-bit limit
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -617,102 +600,92 @@ mod tests {
 
     #[test]
     fn test_assemblyref_builder_with_flags() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = AssemblyRefBuilder::new()
+        let ref_ = AssemblyRefBuilder::new()
             .name("RetargetableAssembly")
             .version(1, 0, 0, 0)
             .flags(AssemblyFlags::RETARGETABLE)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::AssemblyRef as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyRef));
 
         Ok(())
     }
 
     #[test]
     fn test_assemblyref_builder_with_hash_value() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let hash = vec![0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0];
 
-        let token = AssemblyRefBuilder::new()
+        let ref_ = AssemblyRefBuilder::new()
             .name("HashedAssembly")
             .version(1, 0, 0, 0)
             .hash_value(&hash)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::AssemblyRef as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyRef));
 
         Ok(())
     }
 
     #[test]
     fn test_assemblyref_builder_multiple_assembly_refs() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token1 = AssemblyRefBuilder::new()
+        let ref1 = AssemblyRefBuilder::new()
             .name("FirstAssembly")
             .version(1, 0, 0, 0)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token2 = AssemblyRefBuilder::new()
+        let ref2 = AssemblyRefBuilder::new()
             .name("SecondAssembly")
             .version(2, 0, 0, 0)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify tokens are different and sequential
-        assert_ne!(token1, token2);
-        assert_eq!(token1.table(), TableId::AssemblyRef as u8);
-        assert_eq!(token2.table(), TableId::AssemblyRef as u8);
-        assert_eq!(token2.row(), token1.row() + 1);
+        // Verify refs are different
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::AssemblyRef));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::AssemblyRef));
 
         Ok(())
     }
 
     #[test]
     fn test_assemblyref_builder_comprehensive() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let token_data = [0xB7, 0x7A, 0x5C, 0x56, 0x19, 0x34, 0xE0, 0x89];
         let hash = vec![0xDE, 0xAD, 0xBE, 0xEF];
 
-        let token = AssemblyRefBuilder::new()
+        let ref_ = AssemblyRefBuilder::new()
             .name("ComprehensiveAssembly")
             .version(2, 1, 4, 8)
             .culture("fr-FR")
             .public_key_token(&token_data)
             .hash_value(&hash)
             .flags(AssemblyFlags::RETARGETABLE)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::AssemblyRef as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyRef));
 
         Ok(())
     }
 
     #[test]
     fn test_assemblyref_builder_fluent_api() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test fluent API chaining
-        let token = AssemblyRefBuilder::new()
+        let ref_ = AssemblyRefBuilder::new()
             .name("FluentAssembly")
             .version(3, 1, 4, 1)
             .culture("de-DE")
             .flags(0x0001)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::AssemblyRef as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyRef));
 
         Ok(())
     }

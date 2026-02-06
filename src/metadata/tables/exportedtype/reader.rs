@@ -1,6 +1,6 @@
 use crate::{
     metadata::{
-        tables::{CodedIndex, CodedIndexType, ExportedTypeRaw, RowReadable, TableInfoRef},
+        tables::{CodedIndex, CodedIndexType, ExportedTypeRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::{read_le_at, read_le_at_dyn},
@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for ExportedTypeRaw {
+    const TABLE_ID: TableId = TableId::ExportedType;
+
     /// Read an `ExportedType` row from the metadata tables stream
     ///
     /// Parses one `ExportedType` table row from the binary metadata stream, handling

@@ -25,8 +25,7 @@
 //! ## Related Modules
 //!
 //! - [`crate::metadata::tables::types::read::traits`] - Corresponding read traits
-//! - [`crate::metadata::tables::types::write::table`] - Table-level write operations
-//! - [`crate::metadata::tables::types::write::data`] - Low-level data serialization
+//! - [`crate::metadata::tables::types::write::data`] - Owned row data enum for modification pipeline
 
 use crate::{
     metadata::tables::{TableInfoRef, TableRow},

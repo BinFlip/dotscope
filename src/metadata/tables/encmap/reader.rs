@@ -1,6 +1,6 @@
 use crate::{
     metadata::{
-        tables::{EncMapRaw, RowReadable, TableInfoRef},
+        tables::{EncMapRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::read_le_at,
@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for EncMapRaw {
+    const TABLE_ID: TableId = TableId::EncMap;
+
     /// Parse a single `EncMap` table row from binary metadata.
     ///
     /// Reads and validates an `EncMap` entry from the metadata stream according to the

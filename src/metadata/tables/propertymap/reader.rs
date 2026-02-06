@@ -60,6 +60,8 @@ use crate::{
 };
 
 impl RowReadable for PropertyMapRaw {
+    const TABLE_ID: TableId = TableId::PropertyMap;
+
     /// Reads a `PropertyMap` entry from the metadata byte stream.
     ///
     /// This method parses the binary representation of a `PropertyMap` table row and creates

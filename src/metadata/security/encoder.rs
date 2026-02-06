@@ -42,7 +42,7 @@
 //!
 //! ## Basic Binary Encoding
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::security::{
 //!     encode_permission_set, Permission, PermissionSetFormat, NamedArgument,
 //!     ArgumentType, ArgumentValue
@@ -74,7 +74,6 @@
 //!     PermissionSetFormat::BinaryCompressed
 //! )?;
 //! // Result: Smaller binary representation with compression
-//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## XML Format Encoding
@@ -83,7 +82,6 @@
 //! let xml_bytes = encode_permission_set(&permissions, PermissionSetFormat::Xml)?;
 //! let xml_string = String::from_utf8(xml_bytes)?;
 //! // Result: "<PermissionSet>...</PermissionSet>"
-//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Advanced Encoder Usage
@@ -93,7 +91,6 @@
 //!
 //! let mut encoder = PermissionSetEncoder::new();
 //! let bytes = encoder.encode_permission_set(&permissions, PermissionSetFormat::BinaryCompressed)?;
-//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Error Handling
@@ -130,7 +127,7 @@ use crate::{
     metadata::security::{
         ArgumentType, ArgumentValue, NamedArgument, Permission, PermissionSetFormat,
     },
-    utils::{write_compressed_int, write_compressed_uint},
+    utils::{to_u32, write_compressed_int, write_compressed_uint},
     Result,
 };
 use std::{collections::HashMap, io::Write};
@@ -162,12 +159,13 @@ use std::{collections::HashMap, io::Write};
 /// # Examples
 ///
 /// ## Binary Format Encoding
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::security::{
 ///     encode_permission_set, Permission, PermissionSetFormat, NamedArgument,
 ///     ArgumentType, ArgumentValue
 /// };
 ///
+/// # fn main() -> dotscope::Result<()> {
 /// let permissions = vec![
 ///     Permission {
 ///         class_name: "System.Security.Permissions.SecurityPermission".to_string(),
@@ -184,6 +182,8 @@ use std::{collections::HashMap, io::Write};
 ///
 /// let bytes = encode_permission_set(&permissions, PermissionSetFormat::BinaryLegacy)?;
 /// // Result: [0x2E, 0x01, ...]  // Binary format with 1 permission
+/// # Ok(())
+/// # }
 /// ```
 ///
 /// ## XML Format Encoding
@@ -299,11 +299,7 @@ impl PermissionSetEncoder {
     /// permission sets found in .NET assemblies.
     fn encode_binary_format(&mut self, permissions: &[Permission]) -> Result<()> {
         self.buffer.push(0x2E);
-
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            write_compressed_uint(permissions.len() as u32, &mut self.buffer);
-        }
+        write_compressed_uint(to_u32(permissions.len())?, &mut self.buffer);
 
         for permission in permissions {
             self.encode_permission_binary(permission)?;
@@ -375,33 +371,21 @@ impl PermissionSetEncoder {
             }
         }
 
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            write_compressed_uint(string_list.len() as u32, &mut self.buffer);
-        }
+        write_compressed_uint(to_u32(string_list.len())?, &mut self.buffer);
         for string in &string_list {
             let string_bytes = string.as_bytes();
-            #[allow(clippy::cast_possible_truncation)]
-            {
-                write_compressed_uint(string_bytes.len() as u32, &mut self.buffer);
-            }
+            write_compressed_uint(to_u32(string_bytes.len())?, &mut self.buffer);
             self.buffer.extend_from_slice(string_bytes);
         }
 
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            write_compressed_uint(permissions.len() as u32, &mut self.buffer);
-        }
+        write_compressed_uint(to_u32(permissions.len())?, &mut self.buffer);
         for permission in permissions {
             let class_name_index = string_table[&permission.class_name];
             let assembly_name_index = string_table[&permission.assembly_name];
 
             write_compressed_uint(class_name_index, &mut self.buffer);
             write_compressed_uint(assembly_name_index, &mut self.buffer);
-            #[allow(clippy::cast_possible_truncation)]
-            {
-                write_compressed_uint(permission.named_arguments.len() as u32, &mut self.buffer);
-            }
+            write_compressed_uint(to_u32(permission.named_arguments.len())?, &mut self.buffer);
 
             for arg in &permission.named_arguments {
                 let name_index = string_table[&arg.name];
@@ -501,17 +485,11 @@ impl PermissionSetEncoder {
     /// Returns an error if encoding the permission blob fails due to unsupported types.
     fn encode_permission_binary(&mut self, permission: &Permission) -> Result<()> {
         let class_name_bytes = permission.class_name.as_bytes();
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            write_compressed_uint(class_name_bytes.len() as u32, &mut self.buffer);
-        }
+        write_compressed_uint(to_u32(class_name_bytes.len())?, &mut self.buffer);
         self.buffer.extend_from_slice(class_name_bytes);
 
         let blob_data = Self::encode_permission_blob(permission)?;
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            write_compressed_uint(blob_data.len() as u32, &mut self.buffer);
-        }
+        write_compressed_uint(to_u32(blob_data.len())?, &mut self.buffer);
         self.buffer.extend_from_slice(&blob_data);
 
         Ok(())
@@ -532,11 +510,7 @@ impl PermissionSetEncoder {
     /// Returns an error if any named argument cannot be encoded.
     fn encode_permission_blob(permission: &Permission) -> Result<Vec<u8>> {
         let mut blob = Vec::new();
-
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            write_compressed_uint(permission.named_arguments.len() as u32, &mut blob);
-        }
+        write_compressed_uint(to_u32(permission.named_arguments.len())?, &mut blob);
 
         for arg in &permission.named_arguments {
             Self::encode_named_argument(arg, &mut blob)?;

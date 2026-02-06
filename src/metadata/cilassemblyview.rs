@@ -115,10 +115,11 @@ use crate::{
     file::File,
     metadata::{
         cor20header::Cor20Header,
+        diagnostics::{DiagnosticCategory, Diagnostics},
         identity::{AssemblyIdentity, AssemblyVersion, Identity, ProcessorArchitecture},
         root::Root,
         streams::{Blob, Guid, StreamHeader, Strings, TablesHeader, UserStrings},
-        tables::{AssemblyProcessorRaw, AssemblyRaw, AssemblyRefRaw},
+        tables::{AssemblyProcessorRaw, AssemblyRaw, AssemblyRefRaw, ModuleRaw},
         validation::ValidationEngine,
     },
     Error, Result, ValidationConfig,
@@ -158,7 +159,7 @@ pub struct CilAssemblyViewData<'a> {
     /// Strings heap from #Strings stream
     pub strings: Option<Strings<'a>>,
 
-    /// User strings heap from #US stream  
+    /// User strings heap from #US stream
     pub userstrings: Option<UserStrings<'a>>,
 
     /// GUID heap from #GUID stream
@@ -166,6 +167,9 @@ pub struct CilAssemblyViewData<'a> {
 
     /// Blob heap from #Blob stream
     pub blobs: Option<Blob<'a>>,
+
+    /// Diagnostics collected during loading (duplicate heaps, structural issues, etc.)
+    pub diagnostics: Arc<Diagnostics>,
 }
 
 impl<'a> CilAssemblyViewData<'a> {
@@ -223,11 +227,20 @@ impl<'a> CilAssemblyViewData<'a> {
         let metadata_slice = &data[metadata_offset..metadata_end];
         let metadata_root = Root::read(metadata_slice)?;
 
+        let diagnostics = Arc::new(Diagnostics::new());
+
         let mut metadata_tables = None;
         let mut strings_heap = None;
         let mut userstrings_heap = None;
         let mut guid_heap = None;
         let mut blob_heap = None;
+
+        // Track which streams we've seen to detect duplicates
+        let mut seen_tables = false;
+        let mut seen_strings = false;
+        let mut seen_userstrings = false;
+        let mut seen_guid = false;
+        let mut seen_blob = false;
 
         for stream in &metadata_root.stream_headers {
             let stream_offset = stream.offset as usize;
@@ -244,21 +257,70 @@ impl<'a> CilAssemblyViewData<'a> {
 
             match stream.name.as_str() {
                 "#~" | "#-" => {
-                    metadata_tables = Some(TablesHeader::from(stream_data)?);
+                    if seen_tables {
+                        diagnostics.warning(
+                            DiagnosticCategory::Heap,
+                            format!(
+                                "Duplicate metadata tables stream '{}' found, using first occurrence",
+                                stream.name
+                            ),
+                        );
+                    } else {
+                        metadata_tables = Some(TablesHeader::from(stream_data)?);
+                        seen_tables = true;
+                    }
                 }
                 "#Strings" => {
-                    strings_heap = Some(Strings::from(stream_data)?);
+                    if seen_strings {
+                        diagnostics.warning(
+                            DiagnosticCategory::Heap,
+                            "Duplicate #Strings heap found, using first occurrence",
+                        );
+                    } else {
+                        strings_heap = Some(Strings::from(stream_data)?);
+                        seen_strings = true;
+                    }
                 }
                 "#US" => {
-                    userstrings_heap = Some(UserStrings::from(stream_data)?);
+                    if seen_userstrings {
+                        diagnostics.warning(
+                            DiagnosticCategory::Heap,
+                            "Duplicate #US heap found, using first occurrence",
+                        );
+                    } else {
+                        userstrings_heap = Some(UserStrings::from(stream_data)?);
+                        seen_userstrings = true;
+                    }
                 }
                 "#GUID" => {
-                    guid_heap = Some(Guid::from(stream_data)?);
+                    if seen_guid {
+                        diagnostics.warning(
+                            DiagnosticCategory::Heap,
+                            "Duplicate #GUID heap found, using first occurrence",
+                        );
+                    } else {
+                        guid_heap = Some(Guid::from(stream_data)?);
+                        seen_guid = true;
+                    }
                 }
                 "#Blob" => {
-                    blob_heap = Some(Blob::from(stream_data)?);
+                    if seen_blob {
+                        diagnostics.warning(
+                            DiagnosticCategory::Heap,
+                            "Duplicate #Blob heap found, using first occurrence",
+                        );
+                    } else {
+                        blob_heap = Some(Blob::from(stream_data)?);
+                        seen_blob = true;
+                    }
                 }
-                _ => {}
+                _ => {
+                    // Unknown stream - this could be a custom heap or obfuscation
+                    diagnostics.info(
+                        DiagnosticCategory::Heap,
+                        format!("Unknown metadata stream '{}' encountered", stream.name),
+                    );
+                }
             }
         }
 
@@ -272,6 +334,7 @@ impl<'a> CilAssemblyViewData<'a> {
             userstrings: userstrings_heap,
             guids: guid_heap,
             blobs: blob_heap,
+            diagnostics,
         })
     }
 }
@@ -802,6 +865,37 @@ impl CilAssemblyView {
         self.with_data(|data| data.data)
     }
 
+    /// Returns the diagnostics collected during loading.
+    ///
+    /// Diagnostics include warnings about structural issues like duplicate heap
+    /// streams that were encountered during loading. These don't prevent loading
+    /// but may indicate obfuscation or malformed metadata.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the shared [`Diagnostics`] container.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilAssemblyView;
+    /// use std::path::Path;
+    ///
+    /// let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
+    ///
+    /// if view.diagnostics().has_any() {
+    ///     println!("Loading issues found:");
+    ///     for diag in view.diagnostics().iter() {
+    ///         println!("  {}", diag);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn diagnostics(&self) -> &Arc<Diagnostics> {
+        self.with_data(|data| &data.diagnostics)
+    }
+
     /// Converts this read-only view into a mutable assembly.
     ///
     /// This method consumes the `CilAssemblyView` and creates a `CilAssembly`
@@ -915,15 +1009,15 @@ impl CilAssemblyView {
     ///
     /// # Returns
     ///
-    /// * `Ok(AssemblyIdentity)` - Complete assembly identity extracted from metadata
-    /// * `Err(_)` - If Assembly table is missing, empty, or malformed
+    /// * `Ok(Some(AssemblyIdentity))` - Complete assembly identity extracted from metadata
+    /// * `Ok(None)` - Assembly table is missing or empty (this is a netmodule)
+    /// * `Err(_)` - If metadata is malformed or cannot be parsed
     ///
-    /// # Errors
+    /// # Netmodules
     ///
-    /// This method returns an error if:
-    /// - The metadata tables are not available or corrupted
-    /// - The Assembly table (0x20) is missing or empty
-    /// - The Assembly table data cannot be parsed or converted to owned format
+    /// .NET netmodules (.netmodule files) are modules without their own assembly manifest.
+    /// They contain types and code but are designed to be linked into a multi-file assembly.
+    /// For these modules, this method returns `Ok(None)` instead of an error.
     ///
     /// # Examples
     ///
@@ -932,44 +1026,170 @@ impl CilAssemblyView {
     /// use std::path::Path;
     ///
     /// let view = CilAssemblyView::from_path(Path::new("assembly.dll"))?;
-    /// let identity = view.identity()?;
-    ///
-    /// println!("Assembly: {} v{}", identity.name, identity.version.major);
+    /// if let Some(identity) = view.identity()? {
+    ///     println!("Assembly: {} v{}", identity.name, identity.version.major);
+    /// } else {
+    ///     println!("This is a netmodule without assembly identity");
+    /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn identity(&self) -> Result<AssemblyIdentity> {
-        if let (Some(tables), Some(strings), Some(blobs)) =
-            (self.tables(), self.strings(), self.blobs())
-        {
-            if let Some(assembly_table) = tables.table::<AssemblyRaw>() {
-                if let Some(assembly_row) = assembly_table.iter().next() {
-                    let assembly = assembly_row.to_owned(strings, blobs)?;
+    pub fn identity(&self) -> Result<Option<AssemblyIdentity>> {
+        let (Some(tables), Some(strings)) = (self.tables(), self.strings()) else {
+            return Err(malformed_error!(
+                "Metadata tables or strings heap are missing"
+            ));
+        };
 
-                    let processor_architecture = tables
-                        .table::<AssemblyProcessorRaw>()
-                        .and_then(|proc_table| proc_table.iter().next())
-                        .and_then(|proc| ProcessorArchitecture::try_from(proc.processor).ok());
+        let Some(assembly_table) = tables.table::<AssemblyRaw>() else {
+            // No Assembly table - this is a netmodule
+            return Ok(None);
+        };
 
-                    #[allow(clippy::cast_possible_truncation)]
-                    return Ok(AssemblyIdentity {
-                        name: assembly.name.clone(),
-                        version: AssemblyVersion {
-                            major: assembly.major_version as u16,
-                            minor: assembly.minor_version as u16,
-                            build: assembly.build_number as u16,
-                            revision: assembly.revision_number as u16,
-                        },
-                        culture: assembly.culture.clone(),
-                        strong_name: assembly.public_key.clone().map(Identity::PubKey),
-                        processor_architecture,
-                    });
-                }
-            }
+        let Some(assembly_row) = assembly_table.iter().next() else {
+            // Empty Assembly table - also a netmodule
+            return Ok(None);
+        };
+
+        // For identity extraction, we can work without the blob heap if there's no public key
+        let blobs = self.blobs();
+
+        // Get assembly name and version directly from raw row (doesn't need blob heap)
+        let name = strings.get(assembly_row.name as usize)?.to_string();
+
+        let culture = if assembly_row.culture == 0 {
+            None
+        } else {
+            Some(strings.get(assembly_row.culture as usize)?.to_string())
+        };
+
+        // Public key requires blob heap - only fail if we need it but don't have it
+        let strong_name = if assembly_row.public_key == 0 {
+            None
+        } else if let Some(blobs) = blobs {
+            Some(Identity::PubKey(
+                blobs.get(assembly_row.public_key as usize)?.to_vec(),
+            ))
+        } else {
+            // Has public key index but no blob heap - this is malformed
+            return Err(malformed_error!(
+                "Assembly has public key reference but no blob heap"
+            ));
+        };
+
+        let processor_architecture = tables
+            .table::<AssemblyProcessorRaw>()
+            .and_then(|proc_table| proc_table.iter().next())
+            .and_then(|proc| ProcessorArchitecture::try_from(proc.processor).ok());
+
+        #[allow(clippy::cast_possible_truncation)]
+        Ok(Some(AssemblyIdentity {
+            name,
+            version: AssemblyVersion {
+                major: assembly_row.major_version as u16,
+                minor: assembly_row.minor_version as u16,
+                build: assembly_row.build_number as u16,
+                revision: assembly_row.revision_number as u16,
+            },
+            culture,
+            strong_name,
+            processor_architecture,
+        }))
+    }
+
+    /// Get the module name from the Module metadata table.
+    ///
+    /// The Module table always contains exactly one row with the module name.
+    /// This is useful for netmodules which don't have an Assembly table.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(String)` - The module name (e.g., "MyModule.dll" or "Helper.netmodule")
+    /// * `None` - If the Module table is missing or name cannot be resolved
+    pub fn module_name(&self) -> Option<String> {
+        let tables = self.tables()?;
+        let strings = self.strings()?;
+
+        let module_table = tables.table::<ModuleRaw>()?;
+        let module_row = module_table.iter().next()?;
+
+        strings.get(module_row.name as usize).ok().map(String::from)
+    }
+
+    /// Check if this is a netmodule (module without assembly manifest).
+    ///
+    /// A netmodule is a .NET module that lacks its own assembly identity.
+    /// It contains types and code but is designed to be linked into a
+    /// multi-file assembly. Netmodules have a Module table but no Assembly table.
+    ///
+    /// # Returns
+    ///
+    /// * `true` - This is a netmodule (no Assembly table)
+    /// * `false` - This is a full assembly with its own identity
+    pub fn is_netmodule(&self) -> bool {
+        let Some(tables) = self.tables() else {
+            return false;
+        };
+
+        // A netmodule has a Module table but no Assembly table
+        let has_module = tables.table::<ModuleRaw>().is_some();
+        let has_assembly = tables
+            .table::<AssemblyRaw>()
+            .is_some_and(|t| t.iter().next().is_some());
+
+        has_module && !has_assembly
+    }
+
+    /// Get assembly identity, or create a fallback identity from module name for netmodules.
+    ///
+    /// This method is useful for cases where an identity is required even for netmodules,
+    /// such as type registry initialization. For netmodules, a synthetic identity is
+    /// created with version 0.0.0.0 and the module name (without extension).
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(AssemblyIdentity)` - Either from Assembly table or synthesized from module name
+    /// * `Err(_)` - If neither Assembly nor Module table can provide identity
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilAssemblyView;
+    /// use std::path::Path;
+    ///
+    /// let view = CilAssemblyView::from_path(Path::new("helper.netmodule"))?;
+    /// let identity = view.identity_or_fallback()?;
+    /// // Returns identity with name "helper" and version 0.0.0.0
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn identity_or_fallback(&self) -> Result<AssemblyIdentity> {
+        // Try to get real assembly identity first
+        if let Some(identity) = self.identity()? {
+            return Ok(identity);
         }
 
-        Err(malformed_error!(
-            "Assembly table (0x20) is missing or empty - cannot extract assembly identity"
-        ))
+        // Fallback to module name for netmodules
+        let module_name = self.module_name().ok_or_else(|| {
+            malformed_error!("Neither Assembly nor Module table available for identity")
+        })?;
+
+        // Strip extension from module name (e.g., "helper.netmodule" -> "helper")
+        let name = module_name
+            .rsplit_once('.')
+            .map(|(base, _)| base.to_string())
+            .unwrap_or(module_name);
+
+        Ok(AssemblyIdentity {
+            name,
+            version: AssemblyVersion {
+                major: 0,
+                minor: 0,
+                build: 0,
+                revision: 0,
+            },
+            culture: None,
+            strong_name: None,
+            processor_architecture: None,
+        })
     }
 }
 

@@ -29,6 +29,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::InterfaceImplRaw,
     },
@@ -57,18 +58,29 @@ impl MetadataLoader for InterfaceImplLoader {
     /// * `Ok(())` - If all `InterfaceImpl` entries were processed successfully
     /// * `Err(_)` - If type reference resolution or interface application fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<InterfaceImplRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(context.types)?;
-                    res.apply()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<InterfaceImplRaw>() else {
+            return Ok(());
+        };
 
-                    context.interface_impl.insert(row.token, res);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("interface impl 0x{:08x}", row.token.value());
+
+            let Some(res) = context.handle_result(
+                row.to_owned(context.types),
+                DiagnosticCategory::Type,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(res.apply(), DiagnosticCategory::Type, token_msg)?;
+            context.interface_impl.insert(row.token, res);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `InterfaceImpl`.

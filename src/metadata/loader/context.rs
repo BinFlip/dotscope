@@ -79,6 +79,7 @@ use crate::{
     file::File,
     metadata::{
         cor20header::Cor20Header,
+        diagnostics::{DiagnosticCategory, Diagnostics},
         exports::Exports,
         imports::Imports,
         method::MethodMap,
@@ -168,6 +169,12 @@ pub(crate) struct LoaderContext<'a> {
     pub header: &'a Cor20Header,
     /// Metadata root header with stream definitions and signatures.
     pub header_root: &'a Root,
+    /// Diagnostics collection for reporting loading issues.
+    pub diagnostics: &'a Arc<Diagnostics>,
+    /// Whether to continue loading on errors (lenient mode) or abort (strict mode).
+    /// Default is false (strict mode) - errors will abort loading.
+    /// When true, errors are logged to diagnostics and loading continues.
+    pub lenient: bool,
 
     // === Metadata Streams ===
     /// Tables stream containing all metadata table definitions.
@@ -527,6 +534,95 @@ impl LoaderContext<'_> {
                 }
             }
             _ => CilTypeReference::None,
+        }
+    }
+
+    /// Handles a result according to the lenient/strict loading mode.
+    ///
+    /// In strict mode (default), errors are propagated immediately.
+    /// In lenient mode, errors are logged to diagnostics and `Ok(None)` is returned
+    /// to allow loading to continue.
+    ///
+    /// # Arguments
+    ///
+    /// * `result` - The result of a loading operation
+    /// * `category` - The diagnostic category for error logging
+    /// * `context_msg` - A closure that produces a context message (only called on error)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(Some(value))` - Operation succeeded
+    /// * `Ok(None)` - Operation failed but we're in lenient mode
+    /// * `Err(e)` - Operation failed in strict mode
+    ///
+    /// # Examples
+    ///
+    /// ```rust,ignore
+    /// use dotscope::metadata::diagnostics::DiagnosticCategory;
+    ///
+    /// let result = row.to_owned(strings, blob);
+    /// if let Some(owned) = context.handle_result(
+    ///     result,
+    ///     DiagnosticCategory::Table,
+    ///     || format!("token 0x{:08x}", row.token.value())
+    /// )? {
+    ///     // Use owned value
+    /// }
+    /// ```
+    pub fn handle_result<T, E: std::fmt::Display, F: FnOnce() -> String>(
+        &self,
+        result: std::result::Result<T, E>,
+        category: DiagnosticCategory,
+        context_msg: F,
+    ) -> crate::Result<Option<T>> {
+        match result {
+            Ok(value) => Ok(Some(value)),
+            Err(e) => {
+                let msg = context_msg();
+                if self.lenient {
+                    self.diagnostics
+                        .warning(category, format!("Failed to load {}: {}", msg, e));
+                    Ok(None)
+                } else {
+                    Err(malformed_error!("Failed to load {}: {}", msg, e))
+                }
+            }
+        }
+    }
+
+    /// Handles an error according to the lenient/strict loading mode.
+    ///
+    /// In strict mode (default), errors are propagated immediately.
+    /// In lenient mode, errors are logged to diagnostics and `Ok(())` is returned.
+    ///
+    /// # Arguments
+    ///
+    /// * `result` - The result of an operation that may fail
+    /// * `category` - The diagnostic category for error logging
+    /// * `context_msg` - A closure that produces a context message (only called on error)
+    ///
+    /// # Returns
+    ///
+    /// * `Ok(())` - Operation succeeded or failed in lenient mode
+    /// * `Err(e)` - Operation failed in strict mode
+    pub fn handle_error<E: std::fmt::Display, F: FnOnce() -> String>(
+        &self,
+        result: std::result::Result<(), E>,
+        category: DiagnosticCategory,
+        context_msg: F,
+    ) -> crate::Result<()> {
+        match result {
+            Ok(()) => Ok(()),
+            Err(e) => {
+                let msg = context_msg();
+                if self.lenient {
+                    self.diagnostics
+                        .warning(category, format!("Failed to process {}: {}", msg, e));
+                    Ok(())
+                } else {
+                    Err(malformed_error!("Failed to process {}: {}", msg, e))
+                }
+            }
         }
     }
 }

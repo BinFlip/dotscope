@@ -170,7 +170,7 @@ pub fn run_complete_test<M>(
     modify_fn: M,
 ) -> Result<Vec<CompleteTestResult>>
 where
-    M: Fn(&mut crate::BuilderContext) -> Result<()>,
+    M: Fn(&mut crate::CilAssembly) -> Result<()>,
 {
     let caps = runner.capabilities();
     let mut results = Vec::new();
@@ -326,7 +326,7 @@ pub fn run_complete_test_with_reflection<M, T>(
     create_tests_fn: T,
 ) -> Result<Vec<CompleteTestResult>>
 where
-    M: Fn(&mut crate::BuilderContext) -> Result<()>,
+    M: Fn(&mut crate::CilAssembly) -> Result<()>,
     T: Fn(&Path) -> Vec<reflection::MethodTest>,
 {
     let caps = runner.capabilities();
@@ -499,19 +499,15 @@ where
 /// Modify an assembly using dotscope
 fn modify_assembly<M>(original_path: &Path, modified_path: &Path, modify_fn: &M) -> Result<()>
 where
-    M: Fn(&mut crate::BuilderContext) -> Result<()>,
+    M: Fn(&mut crate::CilAssembly) -> Result<()>,
 {
     use crate::prelude::*;
 
-    let view = CilAssemblyView::from_path(original_path)?;
-    let assembly = CilAssembly::new(view);
-    let mut context = BuilderContext::new(assembly);
+    let mut assembly = CilAssembly::from_path(original_path)?;
 
-    modify_fn(&mut context)?;
+    modify_fn(&mut assembly)?;
 
-    let mut assembly = context.finish();
-    assembly.validate_and_apply_changes()?;
-    assembly.write_to_file(modified_path)?;
+    assembly.to_file(modified_path)?;
 
     Ok(())
 }
@@ -568,10 +564,11 @@ mod tests {
     fn test_complete_workflow() -> Result<()> {
         let runner = TestRunner::new()?;
 
-        let results = run_complete_test(&runner, compilation::templates::HELLO_WORLD, |_ctx| {
-            // No modifications - just test the workflow
-            Ok(())
-        })?;
+        let results =
+            run_complete_test(&runner, compilation::templates::HELLO_WORLD, |_assembly| {
+                // No modifications - just test the workflow
+                Ok(())
+            })?;
 
         for result in &results {
             println!("{}", result.summary());

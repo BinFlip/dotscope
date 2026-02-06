@@ -17,7 +17,7 @@
 
 use crate::{
     metadata::{
-        tables::{CodedIndex, CodedIndexType, DeclSecurityRaw, RowReadable, TableInfoRef},
+        tables::{CodedIndex, CodedIndexType, DeclSecurityRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::{read_le_at, read_le_at_dyn},
@@ -25,6 +25,8 @@ use crate::{
 };
 
 impl RowReadable for DeclSecurityRaw {
+    const TABLE_ID: TableId = TableId::DeclSecurity;
+
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         let offset_org = *offset;
 

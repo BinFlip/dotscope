@@ -1,6 +1,6 @@
 use crate::{
     metadata::{
-        tables::{CodedIndex, CodedIndexType, MethodSpecRaw, RowReadable, TableInfoRef},
+        tables::{CodedIndex, CodedIndexType, MethodSpecRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::read_le_at_dyn,
@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for MethodSpecRaw {
+    const TABLE_ID: TableId = TableId::MethodSpec;
+
     /// Reads a single `MethodSpec` table row from binary data.
     ///
     /// Parses the binary representation according to ECMA-335 §II.22.29:

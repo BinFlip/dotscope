@@ -158,6 +158,12 @@ pub struct ValidationConfig {
     /// Enable owned data validation during CilObject loading (stage 2)
     /// This enables validation of resolved, owned data structures
     pub enable_owned_validation: bool,
+
+    /// Enable lenient loading mode for obfuscated/malformed assemblies.
+    /// When true, parsing errors are logged to diagnostics instead of aborting.
+    /// Default is false (strict mode) - errors will abort loading.
+    /// Use `ValidationConfig::analysis()` for a preset that enables this.
+    pub lenient: bool,
 }
 
 impl Default for ValidationConfig {
@@ -174,6 +180,7 @@ impl Default for ValidationConfig {
             max_nesting_depth: 64,
             enable_raw_validation: true,
             enable_owned_validation: true,
+            lenient: false,
         }
     }
 }
@@ -181,13 +188,13 @@ impl Default for ValidationConfig {
 impl ValidationConfig {
     /// Creates a disabled validation configuration.
     ///
-    /// **⚠️ Warning**: This disables ALL validation checks, including basic structural
+    /// **Warning**: This disables ALL validation checks, including basic structural
     /// validation. Use only when you absolutely trust the assembly format. Malformed
     /// assemblies may cause panics or undefined behavior.
     ///
     /// # Returns
     ///
-    /// Returns a [`crate::metadata::validation::config::ValidationConfig`] with all validation disabled.
+    /// Returns a [`ValidationConfig`] with all validation disabled.
     ///
     /// # Use Cases
     ///
@@ -225,6 +232,7 @@ impl ValidationConfig {
             max_nesting_depth: 0,
             enable_raw_validation: false,
             enable_owned_validation: false,
+            lenient: false,
         }
     }
 
@@ -235,7 +243,7 @@ impl ValidationConfig {
     ///
     /// # Returns
     ///
-    /// Returns a [`crate::metadata::validation::config::ValidationConfig`] with minimal validation enabled.
+    /// Returns a [`ValidationConfig`] with minimal validation enabled.
     ///
     /// # What's Validated
     ///
@@ -276,6 +284,7 @@ impl ValidationConfig {
             max_nesting_depth: 64,
             enable_raw_validation: true,
             enable_owned_validation: false,
+            lenient: false,
         }
     }
 
@@ -318,14 +327,14 @@ impl ValidationConfig {
     ///
     /// # Validation Profile (.NET Runtime Equivalence)
     ///
-    /// - **Structural**: ✅ Essential for basic safety and metadata integrity
-    /// - **Cross-table**: ✅ Runtime validates cross-references during loading
-    /// - **Field layout**: ✅ Runtime validates explicit layout constraints
-    /// - **Type system**: ✅ Runtime validates inheritance and generic constraints
-    /// - **Semantic**: ✅ Runtime enforces ECMA-335 semantic rules
-    /// - **Method**: ✅ Runtime enforces method signature and override constraints
-    /// - **Token**: ✅ Runtime validates token references for security
-    /// - **Constraint**: ✅ Runtime validates generic and layout constraints
+    /// - Structural: Essential for basic safety and metadata integrity
+    /// - Cross-table: Runtime validates cross-references during loading
+    /// - Field layout: Runtime validates explicit layout constraints
+    /// - Type system: Runtime validates inheritance and generic constraints
+    /// - Semantic: Runtime enforces ECMA-335 semantic rules
+    /// - Method: Runtime enforces method signature and override constraints
+    /// - Token: Runtime validates token references for security
+    /// - Constraint: Runtime validates generic and layout constraints
     ///
     /// # Examples
     ///
@@ -353,6 +362,7 @@ impl ValidationConfig {
             max_nesting_depth: 64,          // Standard runtime nesting limit
             enable_raw_validation: true,    // Enable raw validation for safety and format integrity
             enable_owned_validation: true,  // Enable owned validation for semantic completeness
+            lenient: false,                 // Strict mode by default
         }
     }
 
@@ -376,7 +386,7 @@ impl ValidationConfig {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     ///
-    /// **⚠️ Warning**: Field layout validation may produce false positives on legitimate
+    /// **Note**: Field layout validation may produce false positives on legitimate
     /// overlapping fields (unions, explicit layout structs). Review results carefully
     /// when working with low-level interop types.
     #[must_use]
@@ -393,6 +403,7 @@ impl ValidationConfig {
             max_nesting_depth: 64,
             enable_raw_validation: true,
             enable_owned_validation: true,
+            lenient: false,
         }
     }
 
@@ -449,6 +460,7 @@ impl ValidationConfig {
             max_nesting_depth: 64,
             enable_raw_validation: true,
             enable_owned_validation: false,
+            lenient: false,
         }
     }
 
@@ -486,6 +498,71 @@ impl ValidationConfig {
             max_nesting_depth: 64,
             enable_raw_validation: false,
             enable_owned_validation: true,
+            lenient: false,
+        }
+    }
+
+    /// Creates an analysis configuration for examining obfuscated/malformed assemblies.
+    ///
+    /// This configuration enables ALL validation checks in lenient mode, which continues
+    /// loading and validation even when errors are encountered. All errors are logged to
+    /// diagnostics instead of aborting, providing a comprehensive picture of what's wrong
+    /// with the assembly. This is ideal for analyzing obfuscated assemblies, malware samples,
+    /// or assemblies with intentionally corrupted metadata.
+    ///
+    /// # Returns
+    ///
+    /// Returns a [`ValidationConfig`] configured for comprehensive analysis with lenient loading.
+    ///
+    /// # What's Different
+    ///
+    /// - **Lenient mode**: All errors (loading and validation) are logged as warnings, not fatal
+    /// - **Comprehensive validation**: ALL validation checks enabled to collect maximum diagnostic info
+    /// - **Complete error collection**: Continues through all checks to build full diagnostic report
+    ///
+    /// # Use Cases
+    ///
+    /// - Analyzing obfuscated assemblies (ConfuserEx, etc.)
+    /// - Examining malware samples with corrupted metadata
+    /// - Recovering data from damaged assemblies
+    /// - Security research and reverse engineering
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::{CilObject, ValidationConfig};
+    ///
+    /// // Load an obfuscated assembly that may have invalid metadata
+    /// let config = ValidationConfig::analysis();
+    /// let assembly = CilObject::from_path_with_validation(
+    ///     "obfuscated.exe",
+    ///     config
+    /// )?;
+    ///
+    /// // Check what issues were encountered
+    /// if assembly.diagnostics().has_any() {
+    ///     println!("Loading issues:");
+    ///     for diag in assembly.diagnostics().iter() {
+    ///         println!("  {}", diag);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn analysis() -> Self {
+        Self {
+            enable_structural_validation: true,
+            enable_cross_table_validation: true,
+            enable_field_layout_validation: true,
+            enable_type_system_validation: true,
+            enable_semantic_validation: true,
+            enable_method_validation: true,
+            enable_token_validation: true,
+            enable_constraint_validation: true,
+            max_nesting_depth: 64,
+            enable_raw_validation: true,
+            enable_owned_validation: true,
+            lenient: true, // Key difference: continue on errors, collect all diagnostics
         }
     }
 }

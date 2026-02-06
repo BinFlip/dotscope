@@ -660,4 +660,100 @@ impl TableInfo {
             self.coded_indexes[coded_index as usize] = size;
         }
     }
+
+    /// Returns the heap sizes flags byte as defined in ECMA-335 II.24.2.6.
+    ///
+    /// This byte encodes which heaps use large (4-byte) indices:
+    /// - Bit 0: #Strings heap (large if set)
+    /// - Bit 1: #GUID heap (large if set)
+    /// - Bit 2: #Blob heap (large if set)
+    ///
+    /// ## Returns
+    ///
+    /// The heap sizes flags byte for serialization in the tables stream header.
+    ///
+    /// ## Examples
+    ///
+    /// ```rust,ignore
+    /// let heap_sizes = table_info.heap_sizes();
+    /// // Use in tables stream header serialization
+    /// writer.write_all(&[heap_sizes])?;
+    /// ```
+    #[must_use]
+    pub fn heap_sizes(&self) -> u8 {
+        let mut flags = 0u8;
+        if self.is_large_index_str {
+            flags |= 0x01;
+        }
+        if self.is_large_index_guid {
+            flags |= 0x02;
+        }
+        if self.is_large_index_blob {
+            flags |= 0x04;
+        }
+        flags
+    }
+
+    /// Returns the row count for a specific table.
+    ///
+    /// ## Arguments
+    ///
+    /// * `table_id` - The [`TableId`] for which to retrieve the row count
+    ///
+    /// ## Returns
+    ///
+    /// The number of rows in the specified table (0 if table is not present).
+    #[must_use]
+    pub fn row_count(&self, table_id: TableId) -> u32 {
+        self.rows[table_id as usize].rows
+    }
+
+    /// Creates a new `TableInfo` with modified row counts for specified tables.
+    ///
+    /// This method is used when writing assemblies with modified table sizes (e.g., after
+    /// row deletions or insertions). The new `TableInfo` will have recalculated coded index
+    /// sizes based on the updated row counts.
+    ///
+    /// ## Arguments
+    ///
+    /// * `new_counts` - Iterator of (table_id, new_row_count) pairs for tables to update.
+    ///   Tables not in this iterator retain their original row counts.
+    ///
+    /// ## Returns
+    ///
+    /// A new [`TableInfo`] instance with updated row counts and recalculated coded index sizes.
+    ///
+    /// ## Example
+    ///
+    /// ```rust,ignore
+    /// use std::collections::HashMap;
+    /// use dotscope::metadata::tables::TableId;
+    ///
+    /// let mut new_counts = HashMap::new();
+    /// new_counts.insert(TableId::TypeDef, 50);
+    /// new_counts.insert(TableId::MethodDef, 100);
+    ///
+    /// let modified_info = original_info.with_modified_row_counts(new_counts.iter().map(|(k, v)| (*k, *v)));
+    /// ```
+    #[must_use]
+    pub fn with_modified_row_counts(
+        &self,
+        new_counts: impl Iterator<Item = (TableId, u32)>,
+    ) -> TableInfo {
+        let mut rows = self.rows.clone();
+        for (table_id, count) in new_counts {
+            rows[table_id as usize] = TableRowInfo::new(count);
+        }
+
+        let mut new_info = TableInfo {
+            rows,
+            coded_indexes: vec![0; CodedIndexType::COUNT],
+            is_large_index_str: self.is_large_index_str,
+            is_large_index_guid: self.is_large_index_guid,
+            is_large_index_blob: self.is_large_index_blob,
+        };
+
+        new_info.calculate_coded_index_bits();
+        new_info
+    }
 }

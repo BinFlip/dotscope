@@ -6,35 +6,27 @@
 
 use dotscope::prelude::*;
 use dotscope::DataDirectoryType;
-use std::path::Path;
 
 #[test]
 fn test_native_imports_with_minimal_changes() -> Result<()> {
     // Test native imports with minimal metadata changes to trigger the write pipeline properly
-    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
-    let assembly = view.to_owned();
-    let mut context = BuilderContext::new(assembly);
+    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
 
     // Add a minimal string to ensure we have some changes
-    let _test_string_index = context.string_add("TestString")?;
+    let _test_string_index = assembly.string_add("TestString")?;
 
     // Add native imports
     NativeImportsBuilder::new()
         .add_dll("kernel32.dll")?
         .add_function("kernel32.dll", "GetCurrentProcessId")?
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    let temp_file = tempfile::NamedTempFile::new()?;
-    let temp_path = temp_file.path();
+    // Write to memory
+    let bytes = assembly.to_memory()?;
+    assert!(!bytes.is_empty(), "Written bytes should not be empty");
 
-    let mut assembly = context.finish();
-    assembly.write_to_file(temp_path)?;
-
-    // Verify that we can at least read the file and it has some import directory
-    let file_data = std::fs::read(temp_path)?;
-    assert!(!file_data.is_empty(), "Written file should not be empty");
-
-    match CilAssemblyView::from_path(temp_path) {
+    // Load from memory and verify
+    match CilAssemblyView::from_mem(bytes) {
         Ok(reloaded_view) => {
             // Verify the import directory exists
             let import_directory = reloaded_view
@@ -53,19 +45,17 @@ fn test_native_imports_with_minimal_changes() -> Result<()> {
 #[test]
 fn add_native_imports_to_crafted_2() -> Result<()> {
     // Step 1: Load the original assembly
-    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
+    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
 
     // Check if assembly already has native imports
-    let _original_has_imports = view
+    let _original_has_imports = assembly
+        .view()
         .file()
         .get_data_directory(DataDirectoryType::ImportTable)
         .is_some();
 
-    let assembly = view.to_owned();
-    let mut context = BuilderContext::new(assembly);
-
     // Add a minimal metadata change to ensure write pipeline works properly
-    let _test_string_index = context.string_add("NativeImportTest")?;
+    let _test_string_index = assembly.string_add("NativeImportTest")?;
 
     // Step 2: Add native imports using NativeImportsBuilder
     NativeImportsBuilder::new()
@@ -75,27 +65,15 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
         .add_dll("user32.dll")?
         .add_function("user32.dll", "MessageBoxW")?
         .add_function("user32.dll", "GetActiveWindow")?
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    // Step 3: Write to a temporary file
-    let temp_file = tempfile::NamedTempFile::new()?;
-    let temp_path = temp_file.path();
+    // Step 3: Write to memory
+    let bytes = assembly.to_memory()?;
+    assert!(!bytes.is_empty(), "Written bytes should not be empty");
 
-    // Get the assembly back from context and write to file
-    let mut assembly = context.finish();
-    assembly.validate_and_apply_changes()?;
-    assembly.write_to_file(temp_path)?;
-
-    // Verify the file was actually created
-    assert!(temp_path.exists(), "Output file should exist after writing");
-
-    // Verify the file is not empty
-    let file_size = std::fs::metadata(temp_path)?.len();
-    assert!(file_size > 0, "Output file should not be empty");
-
-    // Step 4: Load the modified file and verify native imports
+    // Step 4: Load the modified bytes and verify native imports
     let modified_view =
-        CilAssemblyView::from_path(temp_path).expect("Modified assembly should load successfully");
+        CilAssemblyView::from_mem(bytes).expect("Modified assembly should load successfully");
 
     // Verify the assembly now has an import directory
     let import_directory = modified_view
@@ -183,51 +161,37 @@ fn add_native_imports_to_crafted_2() -> Result<()> {
 #[test]
 fn add_native_exports_to_crafted_2() -> Result<()> {
     // Step 1: Load the original assembly
-    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
+    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
 
     // Check if assembly already has native exports
-    let _original_has_exports = view
+    let _original_has_exports = assembly
+        .view()
         .file()
         .get_data_directory(DataDirectoryType::ExportTable)
         .is_some();
 
-    let assembly = view.to_owned();
-    let mut context = BuilderContext::new(assembly);
-
     // Add a minimal metadata change to ensure write pipeline works properly
-    let _test_string_index = context.string_add("NativeExportTest")?;
+    let _test_string_index = assembly.string_add("NativeExportTest")?;
 
     // Step 2: Add native exports using NativeExportsBuilder
     let export_result = NativeExportsBuilder::new("TestLibrary.dll")
         .add_function("TestFunction1", 1, 0x1000)
         .add_function("TestFunction2", 2, 0x2000)
         .add_function("AnotherFunction", 3, 0x3000)
-        .build(&mut context);
+        .build(&mut assembly);
 
     assert!(
         export_result.is_ok(),
         "Native export builder should succeed"
     );
 
-    // Step 3: Write to a temporary file
-    let temp_file = tempfile::NamedTempFile::new()?;
-    let temp_path = temp_file.path();
+    // Step 3: Write to memory
+    let bytes = assembly.to_memory()?;
+    assert!(!bytes.is_empty(), "Written bytes should not be empty");
 
-    // Get the assembly back from context and write to file
-    let mut assembly = context.finish();
-    assembly.validate_and_apply_changes()?;
-    assembly.write_to_file(temp_path)?;
-
-    // Verify the file was actually created
-    assert!(temp_path.exists(), "Output file should exist after writing");
-
-    // Verify the file is not empty
-    let file_size = std::fs::metadata(temp_path)?.len();
-    assert!(file_size > 0, "Output file should not be empty");
-
-    // Step 4: Load the modified file and verify native exports
+    // Step 4: Load the modified bytes and verify native exports
     let modified_view =
-        CilAssemblyView::from_path(temp_path).expect("Modified assembly should load successfully");
+        CilAssemblyView::from_mem(bytes).expect("Modified assembly should load successfully");
 
     // Verify the assembly now has an export directory
     let export_directory = modified_view
@@ -365,12 +329,10 @@ fn add_native_exports_to_crafted_2() -> Result<()> {
 #[test]
 fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
     // Step 1: Load the original assembly
-    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
-    let assembly = view.to_owned();
-    let mut context = BuilderContext::new(assembly);
+    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
 
     // Add a minimal metadata change to ensure write pipeline works properly
-    let _test_string_index = context.string_add("MixedNativeTest")?;
+    let _test_string_index = assembly.string_add("MixedNativeTest")?;
 
     // Step 2: Add both native imports and exports
 
@@ -379,34 +341,26 @@ fn add_both_imports_and_exports_to_crafted_2() -> Result<()> {
         .add_dll("kernel32.dll")?
         .add_function("kernel32.dll", "GetCurrentProcessId")?
         .add_function("kernel32.dll", "GetModuleHandleW")?
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
     // Add exports
     let export_result = NativeExportsBuilder::new("MixedLibrary.dll")
         .add_function("ExportedFunction1", 1, 0x1000)
         .add_function("ExportedFunction2", 2, 0x2000)
-        .build(&mut context);
+        .build(&mut assembly);
 
     assert!(
         export_result.is_ok(),
         "Native export builder should succeed"
     );
 
-    // Step 3: Write to a temporary file
-    let temp_file = tempfile::NamedTempFile::new()?;
-    let temp_path = temp_file.path();
+    // Step 3: Write to memory
+    let bytes = assembly.to_memory()?;
+    assert!(!bytes.is_empty(), "Written bytes should not be empty");
 
-    // Get the assembly back from context and write to file
-    let mut assembly = context.finish();
-    assembly.validate_and_apply_changes()?;
-    assembly.write_to_file(temp_path)?;
-
-    // Verify the file was actually created
-    assert!(temp_path.exists(), "Output file should exist after writing");
-
-    // Step 4: Load the modified file and verify both imports and exports
+    // Step 4: Load the modified bytes and verify both imports and exports
     let modified_view =
-        CilAssemblyView::from_path(temp_path).expect("Modified assembly should load successfully");
+        CilAssemblyView::from_mem(bytes).expect("Modified assembly should load successfully");
 
     // Verify import directory
     let import_directory = modified_view
@@ -548,36 +502,33 @@ fn round_trip_preserve_existing_data() -> Result<()> {
     // This test verifies that adding native imports/exports doesn't corrupt existing assembly data
 
     // Step 1: Load the original assembly and capture baseline data
-    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
+    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
 
-    let original_string_count = view.strings().map(|s| s.iter().count()).unwrap_or(0);
-    let original_method_count = view
+    let original_string_count = assembly
+        .view()
+        .strings()
+        .map(|s| s.iter().count())
+        .unwrap_or(0);
+    let original_method_count = assembly
+        .view()
         .tables()
         .map(|t| t.table_row_count(TableId::MethodDef))
         .unwrap_or(0);
 
-    let assembly = view.to_owned();
-    let mut context = BuilderContext::new(assembly);
-
     // Add a minimal metadata change to ensure write pipeline works properly
-    let _test_string_index = context.string_add("PreserveDataTest")?;
+    let _test_string_index = assembly.string_add("PreserveDataTest")?;
 
     // Step 2: Add native functionality
     NativeImportsBuilder::new()
         .add_dll("kernel32.dll")?
         .add_function("kernel32.dll", "GetCurrentProcessId")?
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    // Step 3: Write and reload
-    let temp_file = tempfile::NamedTempFile::new()?;
-    let temp_path = temp_file.path();
-
-    let mut assembly = context.finish();
-    assembly.validate_and_apply_changes()?;
-    assembly.write_to_file(temp_path)?;
+    // Step 3: Write to memory and reload
+    let bytes = assembly.to_memory()?;
 
     let modified_view =
-        CilAssemblyView::from_path(temp_path).expect("Modified assembly should load successfully");
+        CilAssemblyView::from_mem(bytes).expect("Modified assembly should load successfully");
 
     // Step 4: Verify existing data is preserved
 
@@ -629,7 +580,7 @@ fn test_native_imports_parsing_from_existing_pe() -> Result<()> {
     // Test that existing native imports are correctly parsed when loading a CilAssemblyView
     // This test verifies the implementation of PE import/export parsing functionality
 
-    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
+    let view = CilAssemblyView::from_path("tests/samples/crafted_2.exe")?;
 
     // Verify the file has imports to parse
     let original_imports = view.file().imports();
@@ -679,12 +630,10 @@ fn test_native_imports_parsing_from_existing_pe() -> Result<()> {
 fn test_import_table_format_validation() -> Result<()> {
     // Test that import tables are correctly formatted and parseable
 
-    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
-    let assembly = view.to_owned();
-    let mut context = BuilderContext::new(assembly);
+    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
 
     // Add imports that should generate a valid import table
-    let _test_string_index = context.string_add("ImportFormatTest")?;
+    let _test_string_index = assembly.string_add("ImportFormatTest")?;
 
     NativeImportsBuilder::new()
         .add_dll("kernel32.dll")?
@@ -693,16 +642,12 @@ fn test_import_table_format_validation() -> Result<()> {
         .add_dll("user32.dll")?
         .add_function("user32.dll", "MessageBoxW")?
         .add_function("user32.dll", "GetActiveWindow")?
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    let temp_file = tempfile::NamedTempFile::new()?;
-    let temp_path = temp_file.path();
+    // Write to memory
+    let bytes = assembly.to_memory()?;
 
-    let mut assembly = context.finish();
-    assembly.validate_and_apply_changes()?;
-    assembly.write_to_file(temp_path)?;
-
-    let modified_view = CilAssemblyView::from_path(temp_path)?;
+    let modified_view = CilAssemblyView::from_mem(bytes)?;
 
     // Verify import directory exists and is valid
     let import_directory = modified_view

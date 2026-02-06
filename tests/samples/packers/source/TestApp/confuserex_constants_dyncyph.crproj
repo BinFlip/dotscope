@@ -1,0 +1,9 @@
+<project outputDir="./protected" baseDir="." xmlns="http://confuser.codeplex.com">
+  <rule pattern="true" preset="none" inherit="false">
+    <!-- Constants encryption with dynamic cipher (harder than normal) -->
+    <protection id="constants">
+      <argument name="mode" value="dynamic" />
+    </protection>
+  </rule>
+  <module path="TestApp.exe" />
+</project>

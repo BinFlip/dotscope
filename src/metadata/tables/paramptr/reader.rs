@@ -57,6 +57,8 @@ use crate::{
 };
 
 impl RowReadable for ParamPtrRaw {
+    const TABLE_ID: TableId = TableId::ParamPtr;
+
     /// Reads a single `ParamPtr` table row from metadata bytes.
     ///
     /// This method parses a `ParamPtr` entry from the metadata stream, extracting

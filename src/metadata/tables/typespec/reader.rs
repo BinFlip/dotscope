@@ -35,7 +35,7 @@
 
 use crate::{
     metadata::{
-        tables::{RowReadable, TableInfoRef, TypeSpecRaw},
+        tables::{RowReadable, TableId, TableInfoRef, TypeSpecRaw},
         token::Token,
     },
     utils::read_le_at_dyn,
@@ -43,6 +43,8 @@ use crate::{
 };
 
 impl RowReadable for TypeSpecRaw {
+    const TABLE_ID: TableId = TableId::TypeSpec;
+
     /// Reads a single `TypeSpec` table row from binary data.
     ///
     /// Parses the binary representation of a `TypeSpec` table entry, extracting

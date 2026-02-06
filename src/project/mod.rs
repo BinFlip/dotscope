@@ -30,9 +30,10 @@
 //!
 //! ## New ProjectLoader API (Recommended)
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::project::ProjectLoader;
 //!
+//! # fn main() -> dotscope::Result<()> {
 //! // Basic single assembly loading
 //! let result = ProjectLoader::new()
 //!     .primary_file("MyApp.exe")?
@@ -51,32 +52,37 @@
 //!     .with_search_path("./dependencies")?
 //!     .auto_discover(true)
 //!     .build()?;
-//!     
+//!
 //! let project = &result.project;
 //! println!("Loaded {} assemblies", result.success_count());
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! ## Manual Assembly Loading
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::project::CilProject;
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
+//! # fn main() -> dotscope::Result<()> {
 //! let project = CilProject::new();
 //!
 //! // Manually load assemblies and add to project
 //! let main_assembly = CilObject::from_path(Path::new("MyApp.exe"))?;
 //! let lib_assembly = CilObject::from_path(Path::new("MyLib.dll"))?;
 //!
-//! project.add_assembly(main_assembly)?;
-//! project.add_assembly(lib_assembly)?;
+//! project.add_assembly(main_assembly, true)?;
+//! project.add_assembly(lib_assembly, false)?;
 //!
 //! // Query the project
 //! println!("Loaded {} assemblies", project.assembly_count());
 //! for (identity, assembly) in project.iter() {
 //!     println!("Assembly: {} has {} types", identity.name, assembly.types().len());
 //! }
+//! # Ok(())
+//! # }
 //! ```
 
 pub mod context;
@@ -120,7 +126,7 @@ pub use result::{ProjectResult, VersionMismatch};
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::project::CilProject;
 /// use dotscope::CilObject;
 /// use std::path::Path;
@@ -129,7 +135,7 @@ pub use result::{ProjectResult, VersionMismatch};
 ///
 /// // Add assemblies to the project
 /// let assembly = CilObject::from_path(Path::new("example.dll"))?;
-/// project.add_assembly(assembly)?;
+/// project.add_assembly(assembly, true)?;
 ///
 /// // Look up types across all loaded assemblies
 /// if let Some(string_type) = project.get_type_by_name("System.String") {
@@ -167,7 +173,7 @@ impl CilProject {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::project::CilProject;
     ///
     /// let project = CilProject::new();
@@ -268,7 +274,7 @@ impl CilProject {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::project::CilProject;
     /// use dotscope::CilObject;
     /// use std::path::Path;
@@ -349,8 +355,9 @@ impl CilProject {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::{project::CilProject, identity::AssemblyIdentity};
+    /// ```rust,no_run
+    /// use dotscope::project::CilProject;
+    /// use dotscope::metadata::identity::AssemblyIdentity;
     ///
     /// let project = CilProject::new();
     /// // ... add assemblies ...
@@ -387,7 +394,9 @@ impl CilProject {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::project::CilProject;
+    ///
     /// let project = CilProject::new();
     /// // ... add assemblies ...
     ///
@@ -434,7 +443,9 @@ impl CilProject {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::project::CilProject;
+    ///
     /// let project = CilProject::new();
     /// // ... load assemblies via ProjectLoader ...
     ///
@@ -490,14 +501,19 @@ impl CilProject {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::project::ProjectLoader;
+    ///
+    /// # fn main() -> dotscope::Result<()> {
     /// let result = ProjectLoader::new()
-    ///     .primary_file("MyApp.exe")
+    ///     .primary_file("MyApp.exe")?
     ///     .build()?;
     ///
     /// if let Some(primary) = result.project.get_primary() {
     ///     println!("Primary assembly has {} types", primary.types().len());
     /// }
+    /// # Ok(())
+    /// # }
     /// ```
     pub fn get_primary(&self) -> Option<Arc<CilObject>> {
         self.primary_assembly.get().cloned()

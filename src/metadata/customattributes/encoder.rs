@@ -34,7 +34,7 @@
 //!
 //! ## Encoding Complete Custom Attribute
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::customattributes::{
 //!     CustomAttributeValue, CustomAttributeArgument, encode_custom_attribute_value
 //! };
@@ -54,14 +54,16 @@
 //!
 //! ## Encoding Individual Arguments
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::customattributes::{CustomAttributeArgument, encode_custom_attribute_argument};
 //!
 //! let string_arg = CustomAttributeArgument::String("Hello".to_string());
-//! let encoded_string = encode_custom_attribute_argument(&string_arg)?;
+//! let mut encoded_string = Vec::new();
+//! encode_custom_attribute_argument(&string_arg, &mut encoded_string)?;
 //!
 //! let int_arg = CustomAttributeArgument::I4(42);
-//! let encoded_int = encode_custom_attribute_argument(&int_arg)?;
+//! let mut encoded_int = Vec::new();
+//! encode_custom_attribute_argument(&int_arg, &mut encoded_int)?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -133,8 +135,10 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::customattributes::{CustomAttributeValue, CustomAttributeArgument};
+/// ```rust,no_run
+/// use dotscope::metadata::customattributes::{
+///     CustomAttributeValue, CustomAttributeArgument, encode_custom_attribute_value,
+/// };
 ///
 /// let custom_attr = CustomAttributeValue {
 ///     fixed_args: vec![CustomAttributeArgument::String("Test".to_string())],

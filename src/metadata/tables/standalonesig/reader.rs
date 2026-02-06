@@ -42,7 +42,7 @@
 
 use crate::{
     metadata::{
-        tables::{RowReadable, StandAloneSigRaw, TableInfoRef},
+        tables::{RowReadable, StandAloneSigRaw, TableId, TableInfoRef},
         token::Token,
     },
     utils::read_le_at_dyn,
@@ -50,6 +50,8 @@ use crate::{
 };
 
 impl RowReadable for StandAloneSigRaw {
+    const TABLE_ID: TableId = TableId::StandAloneSig;
+
     /// Reads a `StandAloneSig` table row from the metadata stream.
     ///
     /// Parses a single `StandAloneSig` entry from the raw metadata bytes,

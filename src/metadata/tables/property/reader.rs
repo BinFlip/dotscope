@@ -52,7 +52,7 @@
 
 use crate::{
     metadata::{
-        tables::{PropertyRaw, RowReadable, TableInfoRef},
+        tables::{PropertyRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::{read_le_at, read_le_at_dyn},
@@ -60,6 +60,8 @@ use crate::{
 };
 
 impl RowReadable for PropertyRaw {
+    const TABLE_ID: TableId = TableId::Property;
+
     /// Reads a single Property table row from metadata bytes.
     ///
     /// This method parses a Property entry from the metadata stream, extracting

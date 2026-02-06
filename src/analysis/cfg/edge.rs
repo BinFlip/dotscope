@@ -12,7 +12,7 @@ use crate::metadata::token::Token;
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::analysis::CfgEdgeKind;
 ///
 /// let edge_kind = CfgEdgeKind::ConditionalTrue;
@@ -80,7 +80,7 @@ impl CfgEdgeKind {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::analysis::CfgEdgeKind;
     ///
     /// assert!(CfgEdgeKind::ConditionalTrue.is_conditional());
@@ -101,7 +101,7 @@ impl CfgEdgeKind {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::analysis::CfgEdgeKind;
     ///
     /// assert!(CfgEdgeKind::ExceptionHandler { exception_type: None }.is_exceptional());
@@ -134,12 +134,11 @@ impl CfgEdgeKind {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust
 /// use dotscope::analysis::{CfgEdge, CfgEdgeKind};
-/// use dotscope::utils::graph::NodeId;
 ///
-/// let edge = CfgEdge::new(NodeId::new(1), CfgEdgeKind::Unconditional);
-/// assert_eq!(edge.target(), NodeId::new(1));
+/// let edge = CfgEdge::new(1, CfgEdgeKind::Unconditional);
+/// assert_eq!(edge.target(), 1);
 /// assert!(!edge.kind().is_conditional());
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq)]

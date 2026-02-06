@@ -1,4 +1,4 @@
-// Copyright 2025 Johann Kempter
+// Copyright 2025-2026 Johann Kempter
 //
 // Licensed under the Apache License, Version 2.0 (the "License");
 // you may not use this file except in compliance with the License.
@@ -27,17 +27,20 @@
 //! [![Documentation](https://docs.rs/dotscope/badge.svg)](https://docs.rs/dotscope)
 //! [![License](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](https://github.com/BinFlip/dotscope/blob/main/LICENSE-APACHE)
 //!
-//! A cross-platform framework for analyzing and reverse engineering .NET PE executables.
+//! A cross-platform framework for analyzing, deobfuscating, emulating, and modifying .NET PE executables.
 //! Built in pure Rust, `dotscope` provides comprehensive tooling for parsing CIL (Common Intermediate Language)
-//! bytecode, metadata structures, and disassembling .NET assemblies without requiring Windows or the .NET runtime.
+//! bytecode, metadata structures, disassembling, and transforming .NET assemblies without requiring Windows or the .NET runtime.
 //!
 //! # Architecture
 //!
 //! The library is organized into several key modules that work together to provide complete .NET assembly analysis:
 //!
 //! - **File Layer**: Memory-mapped file access and binary parsing
-//! - **Metadata Layer**: ECMA-335 metadata parsing and type system representation  
+//! - **Metadata Layer**: ECMA-335 metadata parsing and type system representation
 //! - **Assembly Layer**: CIL instruction processing with complete disassembly and assembly capabilities
+//! - **Analysis Layer**: SSA form, control flow graphs, data flow analysis, and call graphs
+//! - **Deobfuscation Layer**: Pass-based optimization pipeline with obfuscator-specific handling
+//! - **Emulation Layer**: CIL bytecode interpreter with BCL stubs for runtime value computation
 //! - **Validation Layer**: Configurable validation and integrity checking
 //!
 //! ## Key Components
@@ -45,6 +48,9 @@
 //! - [`crate::CilObject`] - Main entry point for .NET assembly analysis
 //! - [`crate::metadata`] - Complete ECMA-335 metadata parsing and type system
 //! - [`crate::assembly`] - Complete CIL instruction processing: disassembly, analysis, and assembly
+//! - [`crate::analysis`] - Program analysis with SSA, CFG, data flow, and call graphs
+//! - [`crate::deobfuscation`] - Deobfuscation engine with 20 optimization passes
+//! - [`crate::emulation`] - CIL bytecode emulation with BCL method stubs
 //! - [`crate::prelude`] - Convenient re-exports of commonly used types
 //! - [`crate::Error`] and [`crate::Result`] - Comprehensive error handling
 //!
@@ -55,6 +61,9 @@
 //! - **Cross-platform** - Works on Windows, Linux, macOS, and any Rust-supported platform
 //! - **Memory safe** - Built in Rust with comprehensive error handling
 //! - **Rich type system** - Full support for generics, signatures, and complex .NET types
+//! - **Static analysis** - SSA form, control flow graphs, data flow analysis, call graphs
+//! - **Deobfuscation** - 20 passes, ConfuserEx support, string decryption, control flow recovery
+//! - **CIL emulation** - Bytecode interpreter with 119+ BCL stubs and copy-on-write memory
 //! - **Extensible architecture** - Modular design for custom analysis and tooling
 //!
 //! # Usage Examples
@@ -65,7 +74,7 @@
 //!
 //! ```toml
 //! [dependencies]
-//! dotscope = "0.5.1"
+//! dotscope = "0.6.0"
 //! ```
 //!
 //! ### Using the Prelude
@@ -167,7 +176,7 @@
 //!    .ldarg_1()?      // Load second argument
 //!    .add()?          // Add them together
 //!    .ret()?;         // Return result
-//! let bytecode = asm.finish()?; // Returns [0x02, 0x03, 0x58, 0x2A]
+//! let (bytecode, max_stack, handlers) = asm.finish()?; // Returns [0x02, 0x03, 0x58, 0x2A]
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -336,7 +345,7 @@ pub mod prelude;
 ///    .ldarg_1()?      // Load second argument
 ///    .add()?          // Add them together
 ///    .ret()?;         // Return result
-/// let bytecode = asm.finish()?;
+/// let (bytecode, max_stack, handlers) = asm.finish()?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
@@ -367,48 +376,316 @@ pub mod assembly;
 /// Program analysis infrastructure for .NET assemblies.
 ///
 /// This module provides foundational analysis capabilities for understanding and
-/// transforming .NET CIL code. It builds upon the generic graph infrastructure
-/// in [`crate::utils::graph`] to provide domain-specific analysis tools.
-///
-/// # Architecture
-///
-/// The analysis module is organized into focused sub-modules:
-///
-/// - [`crate::analysis::cfg`] - Control Flow Graph construction and analysis
+/// transforming .NET CIL code, including control flow graphs, SSA form, data flow
+/// analysis, and inter-procedural call graphs.
 ///
 /// # Key Components
 ///
 /// ## Control Flow Graph (CFG)
-/// - [`crate::analysis::ControlFlowGraph`] - CFG built from basic blocks
-/// - [`crate::analysis::CfgEdge`] - Edge representation with control flow semantics
-/// - [`crate::analysis::CfgEdgeKind`] - Classification of edge types
+/// - [`analysis::ControlFlowGraph`] - CFG built from basic blocks with lazy dominator computation
+/// - [`analysis::CfgEdge`] / [`analysis::CfgEdgeKind`] - Edge representation with control flow semantics
+/// - [`analysis::LoopAnalyzer`] / [`analysis::LoopForest`] - Loop detection and analysis
+///
+/// ## Static Single Assignment (SSA)
+/// - [`analysis::SsaFunction`] - Method in SSA form with explicit def-use chains
+/// - [`analysis::SsaConverter`] - Constructs SSA from CFG via dominance frontiers
+/// - [`analysis::SsaBlock`] / [`analysis::SsaOp`] - SSA blocks and operations
+/// - [`analysis::PhiNode`] - Phi functions at control flow merge points
+///
+/// ## Data Flow Analysis
+/// - [`analysis::ConstantPropagation`] - Sparse Conditional Constant Propagation (SCCP)
+/// - [`analysis::LiveVariables`] - Liveness analysis
+/// - [`analysis::ReachingDefinitions`] - Reaching definitions analysis
+/// - [`analysis::DataFlowSolver`] - Generic fixpoint solver
+///
+/// ## Call Graph
+/// - [`analysis::CallGraph`] - Inter-procedural call relationships
+/// - [`analysis::CallResolver`] - Virtual call resolution via Class Hierarchy Analysis
+///
+/// # Usage Example
+///
+/// ```rust,ignore
+/// use dotscope::analysis::{ControlFlowGraph, SsaConverter};
+/// use dotscope::assembly::decode_blocks;
+///
+/// // Build CFG from method body
+/// let blocks = decode_blocks(data, offset, rva, Some(size))?;
+/// let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
+///
+/// // Convert to SSA form
+/// let ssa = SsaConverter::build(&cfg, num_args, num_locals, resolver)?;
+///
+/// // Analyze loops
+/// for loop_info in cfg.loops() {
+///     println!("Loop at block {:?}, depth {}", loop_info.header, loop_info.depth);
+/// }
+/// ```
+pub mod analysis;
+
+/// Deobfuscation framework and transformation passes.
+///
+/// This module provides infrastructure for detecting and removing code obfuscation
+/// from .NET assemblies. It uses an SSA-based pass architecture with a system
+/// for obfuscator-specific detection and handling.
+///
+/// # Key Components
+///
+/// ## Engine
+/// - [`deobfuscation::DeobfuscationEngine`] - Main entry point for deobfuscation
+/// - [`deobfuscation::EngineConfig`] - Engine configuration options
+/// - [`deobfuscation::PassScheduler`] - Manages pass execution and fixpoint iteration
+/// - [`deobfuscation::AnalysisContext`] - Shared interprocedural analysis data
+///
+/// ## Obfuscator System
+/// - [`deobfuscation::Obfuscator`] - Trait for obfuscator-specific handling
+/// - [`deobfuscation::ObfuscatorDetector`] - Runs obfuscators for detection
+/// - [`deobfuscation::DetectionScore`] - Confidence-based detection scoring
+///
+/// ## Built-in Passes
+///
+/// Value propagation and folding:
+/// - [`deobfuscation::passes::ConstantPropagationPass`] - SCCP-based constant propagation
+/// - [`deobfuscation::passes::CopyPropagationPass`] - Eliminates redundant copies and phi nodes
+/// - [`deobfuscation::passes::GlobalValueNumberingPass`] - Common subexpression elimination
+/// - [`deobfuscation::passes::StrengthReductionPass`] - Replaces expensive ops with cheaper equivalents
+///
+/// Control flow recovery:
+/// - [`deobfuscation::passes::ControlFlowSimplificationPass`] - Jump threading, branch simplification
+/// - [`deobfuscation::passes::ControlFlowUnflatteningPass`] - Z3-backed dispatcher analysis and CFG reconstruction
+/// - [`deobfuscation::passes::LoopCanonicalizationPass`] - Ensures single preheaders and latches
+///
+/// Dead code elimination:
+/// - [`deobfuscation::passes::DeadCodeEliminationPass`] - Removes unreachable blocks
+/// - [`deobfuscation::passes::DeadMethodEliminationPass`] - Identifies methods with no callers
+///
+/// Other passes:
+/// - [`deobfuscation::passes::OpaquePredicatePass`] - Removes always-true/false conditions
+/// - [`deobfuscation::passes::DecryptionPass`] - Decrypts values via emulation
+/// - [`deobfuscation::passes::InliningPass`] - Inlines small methods
+///
+/// # Usage Example
+///
+/// ```rust,ignore
+/// use dotscope::deobfuscation::{DeobfuscationEngine, EngineConfig};
+/// use dotscope::CilObject;
+///
+/// let mut assembly = CilObject::from_path(std::path::Path::new("obfuscated.exe"))?;
+/// let config = EngineConfig::default();
+/// let mut engine = DeobfuscationEngine::new(config);
+///
+/// let result = engine.process_file(&mut assembly)?;
+/// println!("{}", result.summary());
+/// ```
+#[cfg(feature = "deobfuscation")]
+pub mod deobfuscation;
+
+/// CIL emulation engine for .NET bytecode execution.
+///
+/// This module provides a controlled execution environment for .NET CIL bytecode.
+/// The emulation engine is essential for deobfuscation as many obfuscators rely on
+/// runtime computation of values and dynamic string decryption.
+///
+/// # Key Components
+///
+/// ## Process Model
+/// - [`crate::emulation::ProcessBuilder`] - Fluent API for configuring emulation processes
+/// - [`crate::emulation::EmulationProcess`] - Central coordinator for emulation execution
+/// - [`crate::emulation::EmulationConfig`] - Configuration with presets (`for_extraction`, `for_analysis`, etc.)
+///
+/// ## Value System
+/// - [`crate::emulation::EmValue`] - Runtime value representation for all CIL types
+/// - [`crate::emulation::SymbolicValue`] - Tracks unknown/unresolved values during partial emulation
+/// - [`crate::emulation::HeapRef`] - Reference to heap-allocated objects
+///
+/// ## Memory Model
+/// - [`crate::emulation::EvaluationStack`] - CIL evaluation stack with overflow protection
+/// - [`crate::emulation::LocalVariables`] - Method local variable storage
+/// - [`crate::emulation::ManagedHeap`] - Simulated managed heap for object allocation
+/// - [`crate::emulation::AddressSpace`] - Unified address space for heap, statics, and mapped regions
+///
+/// ## Execution Engine
+/// - [`crate::emulation::Interpreter`] - Core CIL instruction interpreter
+/// - [`crate::emulation::EmulationController`] - High-level execution control with limits
+/// - [`crate::emulation::StepResult`] - Result of executing a single instruction
+/// - [`crate::emulation::EmulationOutcome`] - Final result of method execution (return value, exception, or limit)
+///
+/// ## Hook System
+/// - [`crate::emulation::Hook`] - Builder for creating method hooks with matching criteria
+/// - [`crate::emulation::HookManager`] - Registry for method interception hooks
+/// - [`crate::emulation::PreHookResult`] - Pre-hook result: `Continue` or `Bypass(value)`
+/// - [`crate::emulation::PostHookResult`] - Post-hook result: `Keep` or `Replace(value)`
+///
+/// ## Result Capture
+/// - [`crate::emulation::CaptureContext`] - Automatic result collection during emulation
+/// - [`crate::emulation::CapturedAssembly`] - Captured `Assembly.Load` data
+/// - [`crate::emulation::CapturedString`] - Captured decrypted strings
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
-/// use dotscope::analysis::ControlFlowGraph;
-/// use dotscope::assembly::decode_blocks;
+/// ## Value Arithmetic
 ///
-/// // Decode method body into basic blocks
-/// let blocks = decode_blocks(data, offset, rva, Some(size))?;
+/// ```rust
+/// # #[cfg(feature = "emulation")]
+/// # fn main() {
+/// use dotscope::emulation::{EmValue, BinaryOp};
+/// use dotscope::metadata::typesystem::CilFlavor;
 ///
-/// // Build control flow graph
-/// let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
+/// // CIL values follow ECMA-335 widening rules (I1/I2 → I32)
+/// let a = EmValue::I32(10);
+/// let b = EmValue::I32(3);
 ///
-/// // Access dominator tree (lazily computed)
-/// let dominators = cfg.dominators();
+/// let sum = a.clone().binary_op(b.clone(), BinaryOp::Add).unwrap();
+/// assert_eq!(sum, EmValue::I32(13));
+/// assert_eq!(sum.cil_flavor(), CilFlavor::I4);
 ///
-/// // Iterate in reverse postorder for data flow analysis
-/// for block_id in cfg.reverse_postorder() {
-///     let block = cfg.block(block_id).unwrap();
-///     println!("Block at RVA 0x{:x}", block.rva);
-/// }
+/// // Division, bitwise, and comparison operations
+/// let div = a.clone().binary_op(b.clone(), BinaryOp::Div).unwrap();
+/// assert_eq!(div, EmValue::I32(3));
+///
+/// let xor = a.clone().binary_op(b.clone(), BinaryOp::Xor).unwrap();
+/// assert_eq!(xor, EmValue::I32(10 ^ 3));
+/// # }
+/// # #[cfg(not(feature = "emulation"))]
+/// # fn main() {}
 /// ```
 ///
-/// # Thread Safety
+/// ## Building an Emulation Process
 ///
-/// All analysis types are [`std::marker::Send`] and [`std::marker::Sync`] for safe concurrent access.
-pub mod analysis;
+/// [`crate::emulation::ProcessBuilder`] provides a fluent API with configuration presets:
+///
+/// ```rust,no_run
+/// use dotscope::emulation::ProcessBuilder;
+/// use dotscope::CilObject;
+/// use std::path::Path;
+///
+/// # fn main() -> dotscope::Result<()> {
+/// let assembly = CilObject::from_path(Path::new("target.exe"))?;
+/// let pe_bytes = std::fs::read("target.exe")?;
+///
+/// let process = ProcessBuilder::new()
+///     .assembly(assembly)
+///     .map_pe_image(&pe_bytes, "target.exe")
+///     .for_extraction()           // 50M instruction limit, capture enabled
+///     .capture_assemblies()       // Capture Assembly.Load calls
+///     .capture_strings()          // Capture decrypted strings
+///     .with_timeout_ms(30_000)    // 30 second wall-clock timeout
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// Available presets: `for_extraction()` (unpacking), `for_analysis()` (symbolic tracking),
+/// `for_full_emulation()` (100M instructions), `for_minimal()` (constant folding, 10K instructions).
+///
+/// ## Executing a Method and Reading Results
+///
+/// ```rust,no_run
+/// use dotscope::emulation::{EmValue, EmulationOutcome, ProcessBuilder};
+/// use dotscope::CilObject;
+/// use std::path::Path;
+///
+/// # fn main() -> dotscope::Result<()> {
+/// # let assembly = CilObject::from_path(Path::new("target.exe"))?;
+/// # let process = ProcessBuilder::new().assembly(assembly).for_minimal().build()?;
+/// // Find and execute a specific method by type/method name
+/// if let Some(token) = process.find_method("MyNamespace.MyClass", "Decrypt") {
+///     let outcome = process.execute_method(token, vec![EmValue::I32(42)])?;
+///
+///     match outcome {
+///         EmulationOutcome::Completed { return_value, instructions } => {
+///             println!("Completed in {} instructions", instructions);
+///             if let Some(value) = return_value {
+///                 println!("Returned: {:?}", value);
+///             }
+///         }
+///         EmulationOutcome::LimitReached { limit, .. } => {
+///             println!("Hit limit: {:?}", limit);
+///         }
+///         EmulationOutcome::UnhandledException { exception, .. } => {
+///             println!("Exception: {:?}", exception);
+///         }
+///         _ => {}
+///     }
+/// }
+///
+/// // Retrieve captured data after execution
+/// for asm in process.captured_assemblies() {
+///     if let Some(name) = &asm.name {
+///         std::fs::write(name, &asm.data)?;
+///     }
+/// }
+/// for s in process.captured_strings() {
+///     println!("Decrypted string: {}", s.value);
+/// }
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Method Hooks
+///
+/// Hooks intercept method calls during emulation. Use them to stub BCL methods,
+/// bypass protection checks, or capture intermediate values:
+///
+/// ```rust,no_run
+/// use dotscope::emulation::{Hook, PreHookResult, EmValue, ProcessBuilder};
+/// use dotscope::CilObject;
+/// use std::path::Path;
+///
+/// # fn main() -> dotscope::Result<()> {
+/// # let assembly = CilObject::from_path(Path::new("target.exe"))?;
+/// let process = ProcessBuilder::new()
+///     .assembly(assembly)
+///     .for_analysis()
+///     // Bypass Environment.Exit so emulation continues
+///     .hook(
+///         Hook::new("bypass-exit")
+///             .match_name("System", "Environment", "Exit")
+///             .pre(|_ctx, _thread| PreHookResult::Bypass(None))
+///     )
+///     // Intercept DateTime.Now to return a fixed value
+///     .hook(
+///         Hook::new("fixed-time")
+///             .match_name("System", "DateTime", "get_Now")
+///             .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I64(0))))
+///     )
+///     .build()?;
+/// # Ok(())
+/// # }
+/// ```
+///
+/// ## Process Forking
+///
+/// Forking creates a lightweight copy of the emulation state, allowing you
+/// to run the same setup against many different inputs efficiently:
+///
+/// ```rust,no_run
+/// use dotscope::emulation::{EmValue, ProcessBuilder};
+/// use dotscope::CilObject;
+/// use std::path::Path;
+///
+/// # fn main() -> dotscope::Result<()> {
+/// # let assembly = CilObject::from_path(Path::new("target.exe"))?;
+/// # let pe_bytes = std::fs::read("target.exe")?;
+/// // Expensive setup: load assembly, map PE, configure hooks
+/// let base_process = ProcessBuilder::new()
+///     .assembly(assembly)
+///     .map_pe_image(&pe_bytes, "target.exe")
+///     .for_extraction()
+///     .build()?;
+///
+/// // Cheap forks share the base state via copy-on-write
+/// if let Some(decryptor) = base_process.find_method("Decryptor", "Decrypt") {
+///     for key in 0..100i32 {
+///         let fork = base_process.fork();
+///         let outcome = fork.execute_method(decryptor, vec![EmValue::I32(key)])?;
+///         // Each fork runs independently without affecting the base process
+///     }
+/// }
+/// # Ok(())
+/// # }
+/// ```
+#[cfg(feature = "emulation")]
+pub mod emulation;
 
 /// .NET metadata parsing, loading, and type system based on ECMA-335.
 ///
@@ -539,11 +816,12 @@ pub mod metadata;
 ///
 /// ```rust,ignore
 /// use dotscope::project::CilProject;
-/// use dotscope::metadata::cilobject::CilObject;
+/// use dotscope::CilObject;
+/// use std::path::Path;
 ///
 /// let project = CilProject::new();
-/// let assembly = CilObject::from_path("MyApp.exe")?;
-/// project.add_assembly(assembly)?;
+/// let assembly = CilObject::from_path(Path::new("MyApp.exe"))?;
+/// project.add_assembly(assembly, true)?;
 /// ```
 pub mod project;
 
@@ -658,12 +936,12 @@ pub use metadata::cilassemblyview::CilAssemblyView;
 /// let string_index = assembly.string_add("Hello, World!")?;
 ///
 /// // Write changes back to file
-/// assembly.write_to_file("modified_assembly.dll")?;
+/// assembly.to_file("modified_assembly.dll")?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub use cilassembly::{
-    BuilderContext, CilAssembly, LastWriteWinsResolver, MethodBodyBuilder, MethodBuilder,
-    ReferenceHandlingStrategy,
+    ChangeRefKind, ChangeRefRc, CilAssembly, CleanupRequest, LastWriteWinsResolver,
+    MethodBodyBuilder, MethodBuilder,
 };
 mod cilassembly;
 

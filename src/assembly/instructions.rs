@@ -2476,3 +2476,107 @@ pub const INSTRUCTIONS_FE: [CilInstruction; INSTRUCTIONS_FE_MAX as usize] = [
         flow: FlowType::Sequential,
     },
 ];
+
+/// Calculates the size of an instruction at the given offset in IL bytecode.
+///
+/// This function uses the [`INSTRUCTIONS`] and [`INSTRUCTIONS_FE`] tables to determine
+/// the correct instruction size based on the opcode and operand type. It handles:
+///
+/// - Single-byte opcodes (0x00-0xE0)
+/// - Two-byte opcodes with 0xFE prefix
+/// - Variable-length switch instructions
+///
+/// # Arguments
+///
+/// * `il_bytes` - The IL bytecode buffer
+/// * `offset` - The offset of the instruction to measure
+///
+/// # Returns
+///
+/// The total size of the instruction in bytes (opcode + operand).
+///
+/// # Examples
+///
+/// ```rust
+/// use dotscope::assembly::il_instruction_size;
+///
+/// // nop (0x00) - 1 byte, no operand
+/// assert_eq!(il_instruction_size(&[0x00], 0), 1);
+///
+/// // ldc.i4 (0x20) - 1 byte opcode + 4 byte operand = 5 bytes
+/// assert_eq!(il_instruction_size(&[0x20, 0x01, 0x00, 0x00, 0x00], 0), 5);
+///
+/// // ldarg (0xFE 0x09) - 2 byte opcode + 2 byte operand = 4 bytes
+/// assert_eq!(il_instruction_size(&[0xFE, 0x09, 0x00, 0x00], 0), 4);
+///
+/// // switch with 2 targets - 1 + 4 + (2 * 4) = 13 bytes
+/// let switch_bytes = [0x45, 0x02, 0x00, 0x00, 0x00, 0x10, 0x00, 0x00, 0x00, 0x20, 0x00, 0x00, 0x00];
+/// assert_eq!(il_instruction_size(&switch_bytes, 0), 13);
+/// ```
+#[must_use]
+pub fn il_instruction_size(il_bytes: &[u8], offset: usize) -> usize {
+    if offset >= il_bytes.len() {
+        return 0;
+    }
+
+    let opcode = il_bytes[offset];
+
+    // Handle two-byte opcodes (0xFE prefix)
+    if opcode == 0xFE {
+        if offset + 1 >= il_bytes.len() {
+            return 1; // Incomplete two-byte opcode
+        }
+
+        let second_byte = il_bytes[offset + 1];
+        if (second_byte as usize) < INSTRUCTIONS_FE.len() {
+            let operand_size = INSTRUCTIONS_FE[second_byte as usize]
+                .op_type
+                .size()
+                .unwrap_or(0);
+            return 2 + operand_size; // 2 bytes for opcode prefix + second byte
+        }
+        return 2; // Unknown 0xFE opcode, assume no operand
+    }
+
+    // Handle switch instruction specially (variable length)
+    if opcode == 0x45 {
+        return switch_instruction_size(il_bytes, offset);
+    }
+
+    // Single-byte opcodes
+    if (opcode as usize) < INSTRUCTIONS.len() {
+        let operand_size = INSTRUCTIONS[opcode as usize].op_type.size().unwrap_or(0);
+        return 1 + operand_size;
+    }
+
+    1 // Unknown opcode, assume 1 byte
+}
+
+/// Calculates the size of a switch instruction including its jump table.
+///
+/// Switch format: opcode (1 byte) + count (4 bytes) + targets (count * 4 bytes)
+///
+/// # Arguments
+///
+/// * `il_bytes` - The IL bytecode buffer
+/// * `offset` - The offset of the switch instruction
+///
+/// # Returns
+///
+/// The total size of the switch instruction in bytes.
+#[inline]
+#[must_use]
+pub fn switch_instruction_size(il_bytes: &[u8], offset: usize) -> usize {
+    if offset + 5 > il_bytes.len() {
+        return 1; // Malformed, just return opcode size
+    }
+
+    let count = u32::from_le_bytes([
+        il_bytes[offset + 1],
+        il_bytes[offset + 2],
+        il_bytes[offset + 3],
+        il_bytes[offset + 4],
+    ]) as usize;
+
+    1 + 4 + (count * 4) // opcode + count + targets
+}

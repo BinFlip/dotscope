@@ -14,8 +14,8 @@
 //!
 //! # Design Principles
 //!
-//! - **Separation of Concerns**: Encoding logic is separated from BuilderContext coordination
-//! - **Reusable Components**: Encoders can be used independently or through BuilderContext
+//! - **Separation of Concerns**: Encoding logic is separated from CilAssembly coordination
+//! - **Reusable Components**: Encoders can be used independently or through CilAssembly
 //! - **ECMA-335 Compliance**: All encoders follow the official binary format specifications
 //! - **TypeSignatureEncoder Foundation**: Built on the proven TypeSignatureEncoder base
 
@@ -159,7 +159,7 @@ fn encode_parameter(parameter: &SignatureParameter, buffer: &mut Vec<u8>) -> Res
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::signatures::*;
 ///
 /// let signature = MethodSignatureBuilder::new()
@@ -394,9 +394,14 @@ pub fn encode_typespec_signature(signature: &SignatureTypeSpec) -> Result<Vec<u8
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::signatures::{
-        FieldSignatureBuilder, LocalVariableSignatureBuilder, MethodSignatureBuilder,
-        PropertySignatureBuilder, TypeSignature, TypeSpecSignatureBuilder,
+    use crate::metadata::{
+        signatures::{
+            CustomModifier, FieldSignatureBuilder, LocalVariableSignatureBuilder,
+            MethodSignatureBuilder, PropertySignatureBuilder, TypeSignature,
+            TypeSpecSignatureBuilder, SIGNATURE_HEADER,
+        },
+        token::Token,
+        typesystem::ELEMENT_TYPE,
     };
 
     #[test]
@@ -423,8 +428,6 @@ mod tests {
 
     #[test]
     fn test_encode_field_signature() {
-        use crate::metadata::signatures::SIGNATURE_HEADER;
-
         let signature = FieldSignatureBuilder::new()
             .field_type(TypeSignature::String)
             .build()
@@ -446,8 +449,6 @@ mod tests {
 
     #[test]
     fn test_encode_property_signature() {
-        use crate::metadata::signatures::SIGNATURE_HEADER;
-
         let signature = PropertySignatureBuilder::new()
             .property_type(TypeSignature::I4)
             .build()
@@ -469,8 +470,6 @@ mod tests {
 
     #[test]
     fn test_encode_local_var_signature() {
-        use crate::metadata::signatures::SIGNATURE_HEADER;
-
         let signature = LocalVariableSignatureBuilder::new()
             .add_local(TypeSignature::I4)
             .add_pinned_local(TypeSignature::String)
@@ -513,10 +512,6 @@ mod tests {
 
     #[test]
     fn test_encode_custom_modifier() {
-        use crate::metadata::signatures::CustomModifier;
-        use crate::metadata::token::Token;
-        use crate::metadata::typesystem::ELEMENT_TYPE;
-
         let mut buffer = Vec::new();
 
         // Test optional modifier encoding
@@ -553,8 +548,6 @@ mod tests {
 
     #[test]
     fn test_encode_type_def_or_ref_coded_index_error() {
-        use crate::metadata::token::Token;
-
         // Test invalid token table (e.g., MethodDef table 0x06)
         let invalid_token = Token::new(0x06000001);
         let result = encode_type_def_or_ref_coded_index(invalid_token);
@@ -576,8 +569,6 @@ mod tests {
 
     #[test]
     fn test_encode_type_def_or_ref_coded_index() {
-        use crate::metadata::token::Token;
-
         // Test TypeDef token (table 0x02)
         let typedef_token = Token::new(0x02000001); // TypeDef table, RID 1
         let coded_index = encode_type_def_or_ref_coded_index(typedef_token).unwrap();

@@ -61,12 +61,10 @@
 //! - [RFC 1321](https://tools.ietf.org/html/rfc1321) - MD5 Message-Digest Algorithm (deprecated)
 //! - [RFC 3174](https://tools.ietf.org/html/rfc3174) - SHA-1 Hash Function (deprecated)
 
+#[cfg(feature = "legacy-crypto")]
+use crate::utils::{compute_md5, compute_sha1};
+use crate::utils::{compute_sha256, compute_sha384, compute_sha512};
 use crate::Result;
-#[cfg(feature = "legacy-crypto")]
-use md5::Md5;
-#[cfg(feature = "legacy-crypto")]
-use sha1::{Digest as Sha1Digest, Sha1};
-use sha2::{Digest, Sha256, Sha384, Sha512};
 use std::fmt::Write;
 
 /// Convert bytes to lowercase hexadecimal string representation
@@ -85,7 +83,7 @@ use std::fmt::Write;
 fn bytes_to_hex(bytes: &[u8]) -> String {
     let mut hex_string = String::with_capacity(bytes.len() * 2);
     for byte in bytes {
-        write!(&mut hex_string, "{byte:02x}").unwrap();
+        let _ = write!(&mut hex_string, "{byte:02x}");
     }
     hex_string
 }
@@ -223,12 +221,7 @@ impl AssemblyRefHash {
         if self.data.len() != 16 {
             return false;
         }
-
-        let mut hasher = Md5::new();
-        hasher.update(expected);
-        let result = hasher.finalize();
-
-        self.data == result.as_slice()
+        self.data == compute_md5(expected)
     }
 
     /// Verify if this hash matches input data using MD5 algorithm - stub when legacy-crypto is disabled.
@@ -258,12 +251,7 @@ impl AssemblyRefHash {
         if self.data.len() != 20 {
             return false;
         }
-
-        let mut hasher = Sha1::new();
-        Sha1Digest::update(&mut hasher, expected);
-        let result = hasher.finalize();
-
-        self.data == result.as_slice()
+        self.data == compute_sha1(expected)
     }
 
     /// Verify if this hash matches input data using SHA1 algorithm - stub when legacy-crypto is disabled.
@@ -289,12 +277,7 @@ impl AssemblyRefHash {
         if self.data.len() != 32 {
             return false;
         }
-
-        let mut hasher = Sha256::new();
-        Digest::update(&mut hasher, expected);
-        let result = hasher.finalize();
-
-        self.data == result.as_slice()
+        self.data == compute_sha256(expected)
     }
 
     /// Verify if this hash matches input data using SHA384 algorithm
@@ -313,12 +296,7 @@ impl AssemblyRefHash {
         if self.data.len() != 48 {
             return false;
         }
-
-        let mut hasher = Sha384::new();
-        Digest::update(&mut hasher, expected);
-        let result = hasher.finalize();
-
-        self.data == result.as_slice()
+        self.data == compute_sha384(expected)
     }
 
     /// Verify if this hash matches input data using SHA512 algorithm
@@ -337,12 +315,7 @@ impl AssemblyRefHash {
         if self.data.len() != 64 {
             return false;
         }
-
-        let mut hasher = Sha512::new();
-        Digest::update(&mut hasher, expected);
-        let result = hasher.finalize();
-
-        self.data == result.as_slice()
+        self.data == compute_sha512(expected)
     }
 }
 
@@ -350,27 +323,20 @@ impl AssemblyRefHash {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use sha2::{Digest, Sha256, Sha384, Sha512};
 
     // Helper function to create test SHA256 hash
     fn create_test_sha256_hash() -> Vec<u8> {
-        let mut hasher = Sha256::new();
-        Digest::update(&mut hasher, b"test data");
-        hasher.finalize().to_vec()
+        compute_sha256(b"test data")
     }
 
     // Helper function to create test SHA384 hash
     fn create_test_sha384_hash() -> Vec<u8> {
-        let mut hasher = Sha384::new();
-        Digest::update(&mut hasher, b"test data");
-        hasher.finalize().to_vec()
+        compute_sha384(b"test data")
     }
 
     // Helper function to create test SHA512 hash
     fn create_test_sha512_hash() -> Vec<u8> {
-        let mut hasher = Sha512::new();
-        Digest::update(&mut hasher, b"test data");
-        hasher.finalize().to_vec()
+        compute_sha512(b"test data")
     }
 
     #[test]
@@ -544,9 +510,7 @@ mod tests {
     #[test]
     fn test_with_real_sha256_hash() {
         let input = b"The quick brown fox jumps over the lazy dog";
-        let mut hasher = Sha256::new();
-        Digest::update(&mut hasher, input);
-        let expected_hash = hasher.finalize().to_vec();
+        let expected_hash = compute_sha256(input);
 
         let hash = AssemblyRefHash::new(&expected_hash).unwrap();
         assert_eq!(hash.data().len(), 32);
@@ -559,9 +523,7 @@ mod tests {
     #[test]
     fn test_with_real_sha384_hash() {
         let input = b"The quick brown fox jumps over the lazy dog";
-        let mut hasher = Sha384::new();
-        Digest::update(&mut hasher, input);
-        let expected_hash = hasher.finalize().to_vec();
+        let expected_hash = compute_sha384(input);
 
         let hash = AssemblyRefHash::new(&expected_hash).unwrap();
         assert_eq!(hash.data().len(), 48);
@@ -575,9 +537,7 @@ mod tests {
     #[test]
     fn test_with_real_sha512_hash() {
         let input = b"The quick brown fox jumps over the lazy dog";
-        let mut hasher = Sha512::new();
-        Digest::update(&mut hasher, input);
-        let expected_hash = hasher.finalize().to_vec();
+        let expected_hash = compute_sha512(input);
 
         let hash = AssemblyRefHash::new(&expected_hash).unwrap();
         assert_eq!(hash.data().len(), 64);
@@ -638,21 +598,15 @@ mod tests {
 #[cfg(all(test, feature = "legacy-crypto"))]
 mod legacy_tests {
     use super::*;
-    use md5::Md5;
-    use sha1::{Digest as Sha1Digest, Sha1};
 
     // Helper function to create test MD5 hash
     fn create_test_md5_hash() -> Vec<u8> {
-        let mut hasher = Md5::new();
-        hasher.update(b"test data");
-        hasher.finalize().to_vec()
+        compute_md5(b"test data")
     }
 
     // Helper function to create test SHA1 hash
     fn create_test_sha1_hash() -> Vec<u8> {
-        let mut hasher = Sha1::new();
-        Sha1Digest::update(&mut hasher, b"test data");
-        hasher.finalize().to_vec()
+        compute_sha1(b"test data")
     }
 
     #[test]
@@ -708,9 +662,7 @@ mod legacy_tests {
     #[test]
     fn test_with_real_md5_hash() {
         let input = b"The quick brown fox jumps over the lazy dog";
-        let mut hasher = Md5::new();
-        hasher.update(input);
-        let expected_hash = hasher.finalize().to_vec();
+        let expected_hash = compute_md5(input);
 
         let hash = AssemblyRefHash::new(&expected_hash).unwrap();
         assert_eq!(hash.data().len(), 16);
@@ -724,9 +676,7 @@ mod legacy_tests {
     #[test]
     fn test_with_real_sha1_hash() {
         let input = b"The quick brown fox jumps over the lazy dog";
-        let mut hasher = Sha1::new();
-        Sha1Digest::update(&mut hasher, input);
-        let expected_hash = hasher.finalize().to_vec();
+        let expected_hash = compute_sha1(input);
 
         let hash = AssemblyRefHash::new(&expected_hash).unwrap();
         assert_eq!(hash.data().len(), 20);

@@ -29,7 +29,7 @@
 //!
 //! ## Basic Permission Set Creation
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::security::{PermissionSetBuilder, PermissionSetFormat};
 //!
 //! let permission_bytes = PermissionSetBuilder::new()
@@ -44,7 +44,7 @@
 //!
 //! ## Complex Multi-Permission Sets
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::security::{PermissionSetBuilder, PermissionSetFormat};
 //!
 //! let permission_bytes = PermissionSetBuilder::new()
@@ -64,7 +64,7 @@
 //!
 //! ## Custom Permission Addition
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::security::{
 //!     PermissionSetBuilder, Permission, NamedArgument, ArgumentType, ArgumentValue
 //! };
@@ -124,7 +124,7 @@ use crate::{
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::security::{PermissionSetBuilder, PermissionSetFormat};
 ///
 /// // Create a simple unrestricted permission set
@@ -159,7 +159,7 @@ impl PermissionSetBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::PermissionSetBuilder;
     ///
     /// let builder = PermissionSetBuilder::new();
@@ -188,7 +188,7 @@ impl PermissionSetBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::{
     ///     PermissionSetBuilder, Permission, NamedArgument, ArgumentType, ArgumentValue
     /// };
@@ -227,7 +227,7 @@ impl PermissionSetBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::PermissionSetBuilder;
     ///
     /// let builder = PermissionSetBuilder::new()
@@ -253,7 +253,7 @@ impl PermissionSetBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::PermissionSetBuilder;
     ///
     /// let builder = PermissionSetBuilder::new()
@@ -289,7 +289,7 @@ impl PermissionSetBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::{PermissionSetBuilder, PermissionSetFormat};
     ///
     /// let binary_data = PermissionSetBuilder::new()
@@ -321,7 +321,7 @@ impl PermissionSetBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::PermissionSetBuilder;
     ///
     /// let permissions = PermissionSetBuilder::new()
@@ -371,7 +371,7 @@ impl Default for PermissionSetBuilder {
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::security::PermissionSetBuilder;
 ///
 /// // Unrestricted security permission
@@ -434,7 +434,7 @@ impl SecurityPermissionBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::PermissionSetBuilder;
     ///
     /// // Grant unrestricted security permissions
@@ -477,7 +477,7 @@ impl SecurityPermissionBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::PermissionSetBuilder;
     ///
     /// // Single flag
@@ -514,7 +514,7 @@ impl SecurityPermissionBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::PermissionSetBuilder;
     ///
     /// let permission_set = PermissionSetBuilder::new()
@@ -563,7 +563,7 @@ impl SecurityPermissionBuilder {
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::security::PermissionSetBuilder;
 ///
 /// // Read-only access to specific directories
@@ -629,7 +629,7 @@ impl FileIOPermissionBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::PermissionSetBuilder;
     ///
     /// // Single path
@@ -672,7 +672,7 @@ impl FileIOPermissionBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::PermissionSetBuilder;
     ///
     /// // Write access to output directories
@@ -715,7 +715,7 @@ impl FileIOPermissionBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::PermissionSetBuilder;
     ///
     /// // Unrestricted file system access
@@ -753,7 +753,7 @@ impl FileIOPermissionBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::security::PermissionSetBuilder;
     ///
     /// let permission_set = PermissionSetBuilder::new()

@@ -149,7 +149,7 @@
 
 use crate::metadata::{
     token::Token,
-    typesystem::{ArrayDimensions, CilPrimitive},
+    typesystem::{ArrayDimensions, CilPrimitive, CilPrimitiveKind},
 };
 
 /// Represents a custom modifier with its required/optional flag and type reference.
@@ -164,7 +164,7 @@ use crate::metadata::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::signatures::CustomModifier;
 /// use dotscope::metadata::token::Token;
 ///
@@ -3363,8 +3363,6 @@ impl TypeSignature {
     #[must_use]
     #[allow(clippy::unnested_or_patterns)] // Keep patterns separate for readability
     pub fn accepts_constant(&self, constant: &CilPrimitive) -> bool {
-        use crate::metadata::typesystem::CilPrimitiveKind;
-
         match (constant.kind, self) {
             // Exact primitive matches and type conversions - all return true
             // Exact type matches
@@ -3461,6 +3459,142 @@ impl TypeSignature {
             TypeSignature::I8 | TypeSignature::U8 | TypeSignature::R8 => 2,
             // All other types use 1 stack slot (primitives and reference types)
             _ => 1,
+        }
+    }
+
+    /// Returns the byte size of primitive types.
+    ///
+    /// Returns `Some(size)` for primitive types with known sizes, `None` for
+    /// reference types, arrays, generic types, and other complex types whose
+    /// sizes depend on runtime information or metadata layout tables.
+    ///
+    /// # Primitive Type Sizes
+    ///
+    /// | Type | Size (bytes) |
+    /// |------|--------------|
+    /// | Boolean, I1, U1 | 1 |
+    /// | Char, I2, U2 | 2 |
+    /// | I4, U4, R4 | 4 |
+    /// | I8, U8, R8 | 8 |
+    /// | I, U (native int) | 4 or 8 (platform-dependent) |
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::signatures::TypeSignature;
+    ///
+    /// assert_eq!(TypeSignature::I4.byte_size(), Some(4));
+    /// assert_eq!(TypeSignature::I8.byte_size(), Some(8));
+    /// assert_eq!(TypeSignature::Boolean.byte_size(), Some(1));
+    /// assert_eq!(TypeSignature::String.byte_size(), None); // Reference type
+    /// ```
+    #[must_use]
+    pub fn byte_size(&self) -> Option<usize> {
+        match self {
+            TypeSignature::Boolean | TypeSignature::I1 | TypeSignature::U1 => Some(1),
+            TypeSignature::Char | TypeSignature::I2 | TypeSignature::U2 => Some(2),
+            TypeSignature::I4 | TypeSignature::U4 | TypeSignature::R4 => Some(4),
+            TypeSignature::I8 | TypeSignature::U8 | TypeSignature::R8 => Some(8),
+            // Native int - assume 4 bytes for emulation (32-bit target)
+            TypeSignature::I | TypeSignature::U => Some(4),
+            // Reference types, arrays, generics, etc. don't have fixed sizes
+            _ => None,
+        }
+    }
+
+    /// Checks if this type signature is a primitive type (no token references).
+    ///
+    /// Returns `true` if the type is one of the built-in primitive types that don't
+    /// require token resolution (void, bool, char, numeric types, string, object).
+    /// These types are safe to use even if the assembly's type table has been modified.
+    ///
+    /// Returns `false` if the type contains token references (Class, ValueType) or
+    /// is a complex type that might recursively contain tokens.
+    #[must_use]
+    pub fn is_primitive_type(&self) -> bool {
+        matches!(
+            self,
+            Self::Void
+                | Self::Boolean
+                | Self::Char
+                | Self::I1
+                | Self::U1
+                | Self::I2
+                | Self::U2
+                | Self::I4
+                | Self::U4
+                | Self::I8
+                | Self::U8
+                | Self::R4
+                | Self::R8
+                | Self::I
+                | Self::U
+                | Self::String
+                | Self::Object
+                | Self::TypedByRef
+        )
+    }
+
+    /// Checks if this type signature contains any type token references.
+    ///
+    /// Returns `true` if the type contains Class or ValueType tokens that reference
+    /// TypeDef/TypeRef/TypeSpec entries which might become invalid if types are removed.
+    /// This includes nested types in arrays, pointers, generics, etc.
+    ///
+    /// This is useful for determining if a local variable type can be safely used after
+    /// deobfuscation, or if it should fall back to an inferred type.
+    #[must_use]
+    pub fn contains_type_tokens(&self) -> bool {
+        match self {
+            // Primitive types never contain tokens
+            Self::Void
+            | Self::Boolean
+            | Self::Char
+            | Self::I1
+            | Self::U1
+            | Self::I2
+            | Self::U2
+            | Self::I4
+            | Self::U4
+            | Self::I8
+            | Self::U8
+            | Self::R4
+            | Self::R8
+            | Self::I
+            | Self::U
+            | Self::String
+            | Self::Object
+            | Self::TypedByRef
+            | Self::GenericParamType(_)
+            | Self::GenericParamMethod(_)
+            | Self::Sentinel
+            | Self::Internal
+            | Self::Modifier
+            | Self::Type
+            | Self::Boxed
+            | Self::Reserved
+            | Self::Field
+            | Self::Unknown => false,
+
+            // These directly contain tokens
+            Self::Class(_) | Self::ValueType(_) => true,
+
+            // Recursively check contained types
+            Self::ByRef(inner) | Self::Pinned(inner) => inner.contains_type_tokens(),
+            Self::Ptr(ptr) => ptr.base.contains_type_tokens(),
+            Self::SzArray(arr) => arr.base.contains_type_tokens(),
+            Self::Array(arr) => arr.base.contains_type_tokens(),
+            Self::GenericInst(base, args) => {
+                base.contains_type_tokens() || args.iter().any(|a| a.contains_type_tokens())
+            }
+            Self::FnPtr(sig) => {
+                sig.return_type.base.contains_type_tokens()
+                    || sig.params.iter().any(|p| p.base.contains_type_tokens())
+            }
+            Self::ModifiedRequired(mods) | Self::ModifiedOptional(mods) => {
+                // Modifiers contain type tokens
+                !mods.is_empty()
+            }
         }
     }
 }

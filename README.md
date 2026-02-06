@@ -20,6 +20,9 @@ A high-performance, cross-platform framework for analyzing, reverse engineering,
 - **Cross-platform** - Works on Windows, Linux, macOS, and any Rust-supported platform
 - **Memory safe** - Built in Rust with comprehensive error handling and fuzzing
 - **Rich type system** - Full support for generics, signatures, and complex .NET types
+- **Static analysis** - SSA form, control flow graphs, data flow analysis, call graphs, and loop detection
+- **Deobfuscation** - 20 optimization passes with ConfuserEx support, string decryption, control flow recovery
+- **CIL emulation** - Full bytecode interpreter with BCL stubs for runtime value computation
 - **Extensible architecture** - Modular design for custom analysis and tooling
 
 ## Quick Start
@@ -28,7 +31,7 @@ Add `dotscope` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-dotscope = "0.5.1"
+dotscope = "0.6.0"
 ```
 
 ### Raw Access Example
@@ -101,11 +104,10 @@ fn main() -> dotscope::Result<()> {
     // Add native imports
     assembly.add_native_import_dll("kernel32.dll")?;
     assembly.add_native_import_function("kernel32.dll", "GetProcessId")?;
-    
-    // Validate and write modified assembly
-    assembly.validate_and_apply_changes()?;
-    assembly.write_to_file("output.dll".as_ref())?;
-    
+
+    // Write modified assembly
+    assembly.to_file("output.dll")?;
+
     Ok(())
 }
 ```
@@ -116,13 +118,12 @@ fn main() -> dotscope::Result<()> {
 use dotscope::prelude::*;
 
 fn main() -> dotscope::Result<()> {
-    // Load assembly and create builder context
+    // Load assembly for modification
     let view = CilAssemblyView::from_path("input.dll".as_ref())?;
-    let assembly = CilAssembly::new(view);
-    let mut context = BuilderContext::new(assembly);
+    let mut assembly = CilAssembly::new(view);
 
     // Add a user string
-    let msg_index = context.userstring_add("Hello World!")?;
+    let msg_index = assembly.userstring_add("Hello World!")?;
     let msg_token = Token::new(0x70000000 | msg_index);
 
     // Create method with CIL instructions
@@ -137,11 +138,10 @@ fn main() -> dotscope::Result<()> {
                     .ret()
             })
         })
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
     // Save the modified assembly
-    let mut assembly = context.finish();
-    assembly.write_to_file("output.dll".as_ref())?;
+    assembly.to_file("output.dll")?;
 
     Ok(())
 }
@@ -252,6 +252,40 @@ The assembly module provides comprehensive CIL processing:
 - **Method Body Construction**: Build complete method bodies with local variables and exception handling
 - **Assembly Modification**: Fluent API for adding new components to existing .NET assemblies
 
+### Analysis (`analysis`)
+
+Static program analysis infrastructure for .NET methods:
+
+- **SSA Construction**: Cytron et al. algorithm with dominance frontiers and phi insertion
+- **Control Flow Graphs**: Dominator trees, loops, back-edge detection, and post-dominators
+- **Data Flow Framework**: SCCP, liveness analysis, reaching definitions with generic fixpoint solver
+- **Call Graph**: Inter-procedural call relationships with virtual dispatch resolution via CHA
+- **Algebraic Simplification**: Expression canonicalization and constant folding
+- **Range Analysis**: Value range tracking for integer variables
+- **Taint Analysis**: Track data flow from sources to sinks
+
+### Deobfuscation (`deobfuscation`)
+
+SSA-based deobfuscation engine for protected .NET assemblies:
+
+- **Pass Pipeline**: 4-phase scheduler (normalize, optimize, deobfuscate, finalize) with fixpoint iteration
+- **20 Transformation Passes**: Constant propagation, copy propagation, GVN, dead code elimination, control flow unflattening, opaque predicate removal, strength reduction, algebraic simplification, block merging, loop canonicalization, LICM, jump threading, inlining, and more
+- **Obfuscator Detection**: Confidence-scored detection framework with extensible registry
+- **ConfuserEx Support**: Anti-tamper, anti-debug, constants (normal/dynamic/CFG), control flow, resources
+- **Code Generation**: SSA-to-CIL conversion with register coalescing and phi elimination
+- **Decryption**: Emulation-based string and constant decryption
+
+### Emulation (`emulation`)
+
+CIL bytecode interpreter for controlled .NET code execution:
+
+- **Interpreter**: Supports 200+ CIL opcodes with full operand handling
+- **Memory Model**: Copy-on-write address space with heap, statics, and mapped regions
+- **BCL Stubs**: 200+ method stubs for Math, String, Array, Convert, Crypto, and more
+- **Hook System**: Pre/post method interception with flexible matching criteria
+- **Exception Handling**: Try/catch/finally with stack unwinding
+- **Process Builder**: Configurable execution with instruction, call depth, and memory limits
+
 ## Examples
 
 Check out the [examples](examples/) directory for complete working examples with comprehensive documentation:
@@ -269,6 +303,7 @@ Check out the [examples](examples/) directory for complete working examples with
 - **[Raw Assembly View](examples/raw_assembly_view.rs)** - Direct access to PE headers, metadata streams, and heaps
 - **[Project Loader](examples/project_loader.rs)** - Loading assemblies with automatic dependency resolution
 - **[Analysis](examples/analysis.rs)** - View SSA form, disassembly, control flow graphs, and call graphs
+- **[Deobfuscation](examples/deobfuscate.rs)** - CLI tool for deobfuscating .NET assemblies with ConfuserEx support
 
 Each example includes detailed documentation explaining:
 
@@ -290,6 +325,7 @@ See the [examples README](examples/README.md) for a recommended learning path.
 - **Decompilation**: Build decompilers and analysis tools
 - **Development Tools**: Create assembly editors, analyzers, and build tools
 - **Educational**: Learn about .NET internals and PE format
+- **Deobfuscation**: Remove obfuscation from protected .NET assemblies
 - **Forensics**: Examine .NET assemblies in digital forensics
 
 ## Security
@@ -351,38 +387,21 @@ make check-all
 
 ## Future Features
 
-We're continuously working to improve `dotscope` and add new capabilities. Here are features we'd like to implement in the future:
+We're continuously working to improve `dotscope`. Here are features planned for the future:
 
 ### Core Improvements
 
-- Handling U/I (compilation dependend 64bit or 32bit) properly
-- Improve correctness and API design
-- Improve documentation and examples
-- Add protections against large allocations (e.g. maliciously crafted files that aim to exhaust system memory)
-- Improve type system hash calculations for deduplication
-- Standard trait implementations (Debug, Display, Clone, etc.)
-- Debug logging infrastructure
-- Ecosystem integration improvements
-
-### Enhanced Parsing and Security
-
-- String/Blob caching infrastructure
-- Non-embedded resource support
-
-### Performance and Scalability
-
+- Handling U/I (compilation dependent 64bit or 32bit) properly
+- Protections against large allocations from maliciously crafted files
 - Assembly linking and merging
 - Store and load full Assembly to/from JSON
+- Non-embedded resource support
 
 ### Advanced Analysis
 
-- Data flow analysis improvements
-- Emulation engine
-
-### Deobfuscation
-
-- Compiler optimizations applied to IL (dead code elimination, opaque predicate removal, etc.)
-- String decryption capabilities
+- Expression-based opaque predicate solving
+- VM devirtualization for virtualized obfuscators
+- Additional obfuscator support beyond ConfuserEx
 
 ## Contributing
 

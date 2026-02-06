@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for MethodPtrRaw {
+    const TABLE_ID: TableId = TableId::MethodPtr;
+
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(MethodPtrRaw {
             rid,

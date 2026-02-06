@@ -6,90 +6,24 @@
 use std::{collections::HashSet, fmt::Write, sync::OnceLock};
 
 use crate::{
-    analysis::cfg::{CfgEdge, CfgEdgeKind},
+    analysis::cfg::{detect_loops, CfgEdge, CfgEdgeKind, LoopForest, LoopInfo},
     assembly::{BasicBlock, FlowType, Operand},
     utils::{
         escape_dot,
         graph::{
             algorithms::{self, DominatorTree},
-            DirectedGraph, EdgeId, NodeId,
+            DirectedGraph, EdgeId, GraphBase, NodeId, Predecessors, RootedGraph, Successors,
         },
     },
     Error::GraphError,
     Result,
 };
 
-/// Information about a natural loop in the control flow graph.
-///
-/// A natural loop is a strongly connected region in the CFG with a single entry point
-/// (the header). Back edges are edges from within the loop to the header.
-///
-/// # Examples
-///
-/// ```rust,ignore
-/// use dotscope::analysis::ControlFlowGraph;
-///
-/// let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
-/// for natural_loop in cfg.loops() {
-///     println!("Loop header: {:?}", natural_loop.header);
-///     println!("Loop body contains {} blocks", natural_loop.body.len());
-/// }
-/// ```
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct NaturalLoop {
-    /// The header block of the loop (single entry point).
-    pub header: NodeId,
-    /// All blocks that are part of the loop body (including the header).
-    pub body: HashSet<NodeId>,
-    /// Back edges into the header (source nodes within the loop that jump to header).
-    pub back_edges: Vec<NodeId>,
-    /// Depth of this loop in the loop nest (0 = outermost).
-    pub depth: usize,
-}
-
-impl NaturalLoop {
-    /// Creates a new natural loop.
-    fn new(header: NodeId) -> Self {
-        let mut body = HashSet::new();
-        body.insert(header);
-        Self {
-            header,
-            body,
-            back_edges: Vec::new(),
-            depth: 0,
-        }
-    }
-
-    /// Returns true if this loop contains the given block.
-    ///
-    /// # Arguments
-    ///
-    /// * `node` - The node ID to check
-    ///
-    /// # Returns
-    ///
-    /// `true` if the block is part of this loop's body, `false` otherwise.
-    #[must_use]
-    pub fn contains(&self, node: NodeId) -> bool {
-        self.body.contains(&node)
-    }
-
-    /// Returns the number of blocks in the loop body.
-    ///
-    /// # Returns
-    ///
-    /// The count of basic blocks in this loop, including the header.
-    #[must_use]
-    pub fn size(&self) -> usize {
-        self.body.len()
-    }
-}
-
 /// A control flow graph built from CIL basic blocks.
 ///
 /// The CFG provides a proper graph abstraction over basic blocks with efficient
 /// traversal, dominator computation, and loop detection. It wraps an underlying
-/// [`DirectedGraph`] and provides domain-specific accessors.
+/// directed graph and provides domain-specific accessors.
 ///
 /// # Construction
 ///
@@ -100,7 +34,7 @@ impl NaturalLoop {
 /// use dotscope::assembly::decode_blocks;
 ///
 /// let blocks = decode_blocks(data, offset, rva, Some(size))?;
-/// let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
+/// let graph = ControlFlowGraph::from_basic_blocks(blocks)?;
 /// ```
 ///
 /// # Lazy Computation
@@ -109,6 +43,7 @@ impl NaturalLoop {
 ///
 /// - [`dominators`](Self::dominators) - Dominator tree (computed on first access)
 /// - [`dominance_frontiers`](Self::dominance_frontiers) - For SSA phi-node placement
+/// - [`loop_forest`](Self::loop_forest) - Loop analysis (computed on first access)
 ///
 /// # Thread Safety
 ///
@@ -132,8 +67,8 @@ pub struct ControlFlowGraph<'a> {
     dominators: OnceLock<DominatorTree>,
     /// Lazily computed dominance frontiers.
     dominance_frontiers: OnceLock<Vec<HashSet<NodeId>>>,
-    /// Lazily computed loop information.
-    loops: OnceLock<Vec<NaturalLoop>>,
+    /// Lazily computed loop forest with comprehensive loop information.
+    loop_forest: OnceLock<LoopForest>,
 }
 
 impl ControlFlowGraph<'static> {
@@ -165,7 +100,7 @@ impl ControlFlowGraph<'static> {
     /// use dotscope::assembly::decode_blocks;
     ///
     /// let blocks = decode_blocks(data, offset, rva, Some(size))?;
-    /// let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
+    /// let graph = ControlFlowGraph::from_basic_blocks(blocks)?;
     /// ```
     pub fn from_basic_blocks(blocks: Vec<BasicBlock>) -> Result<Self> {
         if blocks.is_empty() {
@@ -243,7 +178,7 @@ impl ControlFlowGraph<'static> {
             exits,
             dominators: OnceLock::new(),
             dominance_frontiers: OnceLock::new(),
-            loops: OnceLock::new(),
+            loop_forest: OnceLock::new(),
         })
     }
 }
@@ -276,8 +211,8 @@ impl<'a> ControlFlowGraph<'a> {
     ///
     /// // Build CFG borrowing from method's blocks (zero-copy)
     /// if let Some(blocks) = method.blocks.get() {
-    ///     let cfg = ControlFlowGraph::from_blocks_ref(blocks)?;
-    ///     // cfg is valid as long as `blocks` is valid
+    ///     let graph = ControlFlowGraph::from_blocks_ref(blocks)?;
+    ///     // graph is valid as long as `blocks` is valid
     /// }
     /// ```
     pub fn from_blocks_ref(blocks: &'a [BasicBlock]) -> Result<Self> {
@@ -314,17 +249,18 @@ impl<'a> ControlFlowGraph<'a> {
 
         // Identify entry and exit blocks
         let entry = NodeId::new(0); // Method entry is always block 0
-        let mut exits: Vec<NodeId> = Vec::new();
-        for (block_idx, block) in blocks.iter().enumerate() {
-            let is_exit = block.successors.is_empty()
-                || block
-                    .instructions
-                    .last()
-                    .is_some_and(|i| i.flow_type == FlowType::Return);
-            if is_exit {
-                exits.push(NodeId::new(block_idx));
-            }
-        }
+        let exits: Vec<NodeId> = blocks
+            .iter()
+            .enumerate()
+            .filter(|(_, block)| {
+                block.successors.is_empty()
+                    || block
+                        .instructions
+                        .last()
+                        .is_some_and(|i| i.flow_type == FlowType::Return)
+            })
+            .map(|(block_idx, _)| NodeId::new(block_idx))
+            .collect();
 
         Ok(Self {
             graph,
@@ -332,7 +268,7 @@ impl<'a> ControlFlowGraph<'a> {
             exits,
             dominators: OnceLock::new(),
             dominance_frontiers: OnceLock::new(),
-            loops: OnceLock::new(),
+            loop_forest: OnceLock::new(),
         })
     }
 
@@ -355,7 +291,7 @@ impl<'a> ControlFlowGraph<'a> {
             exits: self.exits,
             dominators: self.dominators,
             dominance_frontiers: self.dominance_frontiers,
-            loops: self.loops,
+            loop_forest: self.loop_forest,
         }
     }
 
@@ -479,102 +415,41 @@ impl<'a> ControlFlowGraph<'a> {
     ///
     /// # Returns
     ///
-    /// A reference to the vector of natural loops, sorted by header node ID.
+    /// A reference to the [`LoopForest`] containing all loop information.
     ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// use dotscope::analysis::ControlFlowGraph;
     ///
-    /// let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
-    /// for natural_loop in cfg.loops() {
-    ///     println!("Loop at {:?} with {} blocks", natural_loop.header, natural_loop.size());
+    /// let graph = ControlFlowGraph::from_basic_blocks(blocks)?;
+    /// for loop_info in graph.loop_forest().loops() {
+    ///     println!("Loop at {:?} with {} blocks", loop_info.header, loop_info.size());
     /// }
     /// ```
     #[must_use]
-    pub fn loops(&self) -> &[NaturalLoop] {
-        self.loops.get_or_init(|| self.detect_loops())
+    pub fn loop_forest(&self) -> &LoopForest {
+        self.loop_forest.get_or_init(|| self.detect_loop_forest())
     }
 
-    /// Detects natural loops in the CFG using back edge analysis.
+    /// Returns a slice of all loops in the CFG.
     ///
-    /// A back edge (n -> h) exists when h dominates n. For each back edge,
-    /// we find the natural loop by computing all nodes that can reach n
-    /// without passing through h, plus h itself.
-    fn detect_loops(&self) -> Vec<NaturalLoop> {
-        let dominators = self.dominators();
-        let mut loops: Vec<NaturalLoop> = Vec::new();
-
-        // Find all back edges: edge (n -> h) where h dominates n
-        for node in self.graph.node_ids() {
-            for succ in self.graph.successors(node) {
-                // Check if successor dominates current node (back edge)
-                if dominators.dominates(succ, node) {
-                    // Found back edge: node -> succ (succ is loop header)
-                    let header = succ;
-
-                    // Check if we already have a loop for this header
-                    if let Some(existing_loop) = loops.iter_mut().find(|l| l.header == header) {
-                        // Add this back edge source to existing loop
-                        existing_loop.back_edges.push(node);
-                        self.expand_loop_body(existing_loop, node);
-                    } else {
-                        // Create new loop
-                        let mut natural_loop = NaturalLoop::new(header);
-                        natural_loop.back_edges.push(node);
-                        self.expand_loop_body(&mut natural_loop, node);
-                        loops.push(natural_loop);
-                    }
-                }
-            }
-        }
-
-        // Compute loop nesting depths
-        Self::compute_loop_depths(&mut loops);
-
-        // Sort by header for deterministic ordering
-        loops.sort_by_key(|l| l.header.index());
-
-        loops
+    /// This is a convenience method equivalent to `loop_forest().loops()`.
+    ///
+    /// # Returns
+    ///
+    /// A slice of [`LoopInfo`] structures for all detected loops.
+    #[must_use]
+    pub fn loops(&self) -> &[LoopInfo] {
+        self.loop_forest().loops()
     }
 
-    /// Expands the loop body to include all nodes that can reach the back edge source.
+    /// Detects all loops and builds a comprehensive [`LoopForest`].
     ///
-    /// Uses a worklist algorithm: starting from the back edge source, we add
-    /// predecessors that aren't the header until we've found all loop body nodes.
-    fn expand_loop_body(&self, natural_loop: &mut NaturalLoop, back_edge_source: NodeId) {
-        if natural_loop.body.contains(&back_edge_source) {
-            return;
-        }
-
-        let mut worklist = vec![back_edge_source];
-
-        while let Some(node) = worklist.pop() {
-            if natural_loop.body.insert(node) {
-                // Node wasn't in body yet, add its predecessors
-                for pred in self.graph.predecessors(node) {
-                    if pred != natural_loop.header && !natural_loop.body.contains(&pred) {
-                        worklist.push(pred);
-                    }
-                }
-            }
-        }
-    }
-
-    /// Computes the nesting depth for each loop.
-    ///
-    /// A loop L1 is nested inside L2 if L1's header is contained in L2's body.
-    /// The depth is the number of enclosing loops.
-    fn compute_loop_depths(loops: &mut [NaturalLoop]) {
-        for i in 0..loops.len() {
-            let mut depth = 0;
-            for j in 0..loops.len() {
-                if i != j && loops[j].body.contains(&loops[i].header) {
-                    depth += 1;
-                }
-            }
-            loops[i].depth = depth;
-        }
+    /// Uses the shared [`detect_loops`] function which implements dominance-based
+    /// back edge detection and computes preheaders, exits, loop types, and nesting.
+    fn detect_loop_forest(&self) -> LoopForest {
+        detect_loops(&self.graph, self.dominators())
     }
 
     /// Returns true if this CFG contains any loops.
@@ -584,7 +459,7 @@ impl<'a> ControlFlowGraph<'a> {
     /// `true` if the CFG has at least one natural loop, `false` otherwise.
     #[must_use]
     pub fn has_loops(&self) -> bool {
-        !self.loops().is_empty()
+        !self.loop_forest().is_empty()
     }
 
     /// Returns the innermost loop containing the given node, if any.
@@ -598,14 +473,11 @@ impl<'a> ControlFlowGraph<'a> {
     ///
     /// # Returns
     ///
-    /// A reference to the innermost [`NaturalLoop`] containing the node,
+    /// A reference to the innermost [`LoopInfo`] containing the node,
     /// or `None` if the node is not in any loop.
     #[must_use]
-    pub fn innermost_loop(&self, node: NodeId) -> Option<&NaturalLoop> {
-        self.loops()
-            .iter()
-            .filter(|l| l.body.contains(&node))
-            .max_by_key(|l| l.depth)
+    pub fn innermost_loop(&self, node: NodeId) -> Option<&LoopInfo> {
+        self.loop_forest().innermost_loop(node)
     }
 
     /// Returns the successor block IDs for a given block.
@@ -706,7 +578,7 @@ impl<'a> ControlFlowGraph<'a> {
     ///
     /// # Returns
     ///
-    /// A reference to the underlying [`DirectedGraph`] structure.
+    /// A reference to the underlying directed graph structure.
     #[must_use]
     pub fn graph(&self) -> &DirectedGraph<'a, BasicBlock, CfgEdge> {
         &self.graph
@@ -768,7 +640,7 @@ impl<'a> ControlFlowGraph<'a> {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -894,6 +766,34 @@ impl<'a> ControlFlowGraph<'a> {
 
         dot.push_str("}\n");
         dot
+    }
+}
+
+impl GraphBase for ControlFlowGraph<'_> {
+    fn node_count(&self) -> usize {
+        self.graph.node_count()
+    }
+
+    fn node_ids(&self) -> impl Iterator<Item = NodeId> {
+        self.graph.node_ids()
+    }
+}
+
+impl Successors for ControlFlowGraph<'_> {
+    fn successors(&self, node: NodeId) -> impl Iterator<Item = NodeId> {
+        self.graph.successors(node)
+    }
+}
+
+impl Predecessors for ControlFlowGraph<'_> {
+    fn predecessors(&self, node: NodeId) -> impl Iterator<Item = NodeId> {
+        self.graph.predecessors(node)
+    }
+}
+
+impl RootedGraph for ControlFlowGraph<'_> {
+    fn entry(&self) -> NodeId {
+        self.entry
     }
 }
 
@@ -1137,8 +1037,8 @@ mod tests {
         assert!(loop0.body.contains(&NodeId::new(2))); // Block 2 is in body
         assert!(!loop0.body.contains(&NodeId::new(0))); // Block 0 is not in loop
         assert!(!loop0.body.contains(&NodeId::new(3))); // Block 3 is not in loop
-        assert_eq!(loop0.back_edges.len(), 1);
-        assert_eq!(loop0.back_edges[0], NodeId::new(2)); // Back edge from block 2
+        assert_eq!(loop0.latches.len(), 1);
+        assert_eq!(loop0.latches[0], NodeId::new(2)); // Back edge from block 2
         assert_eq!(loop0.depth, 0); // Outermost loop
     }
 
@@ -1217,7 +1117,7 @@ mod tests {
         let self_loop = &loops[0];
         assert_eq!(self_loop.header, NodeId::new(1));
         assert_eq!(self_loop.size(), 1); // Only the header itself
-        assert_eq!(self_loop.back_edges.len(), 1);
-        assert_eq!(self_loop.back_edges[0], NodeId::new(1)); // Self back edge
+        assert_eq!(self_loop.latches.len(), 1);
+        assert_eq!(self_loop.latches[0], NodeId::new(1)); // Self back edge (latch)
     }
 }

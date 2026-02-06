@@ -256,7 +256,7 @@ impl OwnedAttributeValidator {
     ///
     /// * `true` - Argument is well-formed and valid
     /// * `false` - Argument has structural issues or invalid content
-    #[allow(clippy::only_used_in_recursion)]
+    #[allow(clippy::self_only_used_in_recursion)]
     fn is_valid_attribute_argument(&self, arg: &CustomAttributeArgument) -> bool {
         match arg {
             // Primitive types are always valid
@@ -489,7 +489,7 @@ impl OwnedAttributeValidator {
     ///
     /// * `true` - Deep nesting detected (>10 levels)
     /// * `false` - Nesting depth is reasonable
-    #[allow(clippy::only_used_in_recursion)]
+    #[allow(clippy::self_only_used_in_recursion)]
     fn has_deep_array_nesting(&self, custom_attr: &CustomAttributeValue, depth: usize) -> bool {
         if depth > 10 {
             return true;

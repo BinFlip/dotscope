@@ -1005,6 +1005,118 @@ impl<'a> Strings<'a> {
     pub fn data(&self) -> &[u8] {
         self.data
     }
+
+    /// Checks if the strings heap contains a specific string value.
+    ///
+    /// Searches through all strings in the heap to determine if any entry matches
+    /// the provided string exactly. This is useful for quick existence checks without
+    /// needing to know the specific offset.
+    ///
+    /// # Arguments
+    /// * `s` - The string value to search for
+    ///
+    /// # Returns
+    /// `true` if the string exists in the heap, `false` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::streams::Strings;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [
+    ///     0x00,
+    ///     b'S', b'y', b's', b't', b'e', b'm', 0x00,
+    ///     b'C', b'o', b'n', b's', b'o', b'l', b'e', 0x00,
+    /// ];
+    /// let strings = Strings::from(&heap_data)?;
+    ///
+    /// assert!(strings.contains("System"));
+    /// assert!(strings.contains("Console"));
+    /// assert!(!strings.contains("NotFound"));
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn contains(&self, s: &str) -> bool {
+        self.iter().any(|(_, value)| value == s)
+    }
+
+    /// Finds the first occurrence of a string and returns its heap offset.
+    ///
+    /// Searches through all strings in the heap and returns the byte offset of the
+    /// first matching entry. This offset can be used with metadata table references.
+    ///
+    /// # Arguments
+    /// * `s` - The string value to search for
+    ///
+    /// # Returns
+    /// `Some(offset)` if the string is found, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::streams::Strings;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [
+    ///     0x00,
+    ///     b'S', b'y', b's', b't', b'e', b'm', 0x00,
+    ///     b'C', b'o', b'n', b's', b'o', b'l', b'e', 0x00,
+    /// ];
+    /// let strings = Strings::from(&heap_data)?;
+    ///
+    /// assert_eq!(strings.find("System"), Some(1));
+    /// assert_eq!(strings.find("Console"), Some(8));
+    /// assert_eq!(strings.find("NotFound"), None);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn find(&self, s: &str) -> Option<u32> {
+        self.iter()
+            .find(|(_, value)| *value == s)
+            .and_then(|(offset, _)| u32::try_from(offset).ok())
+    }
+
+    /// Finds all occurrences of a string and returns their heap offsets.
+    ///
+    /// Searches through all strings in the heap and returns the byte offsets of all
+    /// matching entries. This handles the case where duplicate strings exist in the heap.
+    ///
+    /// # Arguments
+    /// * `s` - The string value to search for
+    ///
+    /// # Returns
+    /// A vector of offsets where the string was found. Empty if not found.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::streams::Strings;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let heap_data = [
+    ///     0x00,
+    ///     b'T', b'e', b's', b't', 0x00,
+    ///     b'T', b'e', b's', b't', 0x00,
+    /// ];
+    /// let strings = Strings::from(&heap_data)?;
+    ///
+    /// let offsets = strings.find_all("Test");
+    /// assert_eq!(offsets.len(), 2);
+    /// assert_eq!(offsets[0], 1);
+    /// assert_eq!(offsets[1], 6);
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn find_all(&self, s: &str) -> Vec<u32> {
+        self.iter()
+            .filter(|(_, value)| *value == s)
+            .filter_map(|(offset, _)| u32::try_from(offset).ok())
+            .collect()
+    }
 }
 
 impl<'a> IntoIterator for &'a Strings<'a> {

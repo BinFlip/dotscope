@@ -101,6 +101,41 @@ pub enum OperandType {
     Switch,
 }
 
+impl OperandType {
+    /// Returns the size in bytes of this operand type.
+    ///
+    /// Returns `Some(size)` for fixed-size operands, or `None` for variable-size
+    /// operands (like `Switch`, which requires reading the target count from IL bytes).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::OperandType;
+    ///
+    /// assert_eq!(OperandType::None.size(), Some(0));
+    /// assert_eq!(OperandType::Int8.size(), Some(1));
+    /// assert_eq!(OperandType::Int32.size(), Some(4));
+    /// assert_eq!(OperandType::Token.size(), Some(4));
+    /// assert_eq!(OperandType::Int64.size(), Some(8));
+    /// assert_eq!(OperandType::Switch.size(), None); // Variable size
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub const fn size(&self) -> Option<usize> {
+        match self {
+            OperandType::None => Some(0),
+            OperandType::Int8 | OperandType::UInt8 => Some(1),
+            OperandType::Int16 | OperandType::UInt16 => Some(2),
+            OperandType::Int32
+            | OperandType::UInt32
+            | OperandType::Float32
+            | OperandType::Token => Some(4),
+            OperandType::Int64 | OperandType::UInt64 | OperandType::Float64 => Some(8),
+            OperandType::Switch => None, // Variable size: 4 + (count * 4)
+        }
+    }
+}
+
 /// Represents an immediate value type embedded in CIL instructions.
 ///
 /// Immediate values are constant values that are encoded directly in the instruction
@@ -221,14 +256,53 @@ pub enum Operand {
     Immediate(Immediate),
     /// Branch target address
     Target(u64),
-    /// Metadata token reference     
+    /// Metadata token reference
     Token(Token),
     /// Local variable index
     Local(u16),
     /// Method argument index
     Argument(u16),
-    /// Switch table with multiple target addresses
-    Switch(Vec<u32>),
+    /// Switch table with multiple signed branch offsets
+    Switch(Vec<i32>),
+}
+
+impl Operand {
+    /// Returns a formatted string representation of the operand.
+    ///
+    /// This method provides a human-readable string representation suitable
+    /// for tracing and debugging output.
+    ///
+    /// # Returns
+    ///
+    /// - `None` for [`Operand::None`]
+    /// - A formatted string for all other operand types
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::{Operand, Immediate};
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// assert_eq!(Operand::None.as_string(), None);
+    /// assert_eq!(Operand::Immediate(Immediate::Int32(42)).as_string(), Some("Int32(42)".to_string()));
+    /// assert_eq!(Operand::Target(0x1000).as_string(), Some("0x00001000".to_string()));
+    /// assert_eq!(Operand::Token(Token::new(0x06000001)).as_string(), Some("0x06000001".to_string()));
+    /// assert_eq!(Operand::Local(5).as_string(), Some("V_5".to_string()));
+    /// assert_eq!(Operand::Argument(3).as_string(), Some("A_3".to_string()));
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn as_string(&self) -> Option<String> {
+        match self {
+            Operand::None => None,
+            Operand::Immediate(imm) => Some(format!("{imm:?}")),
+            Operand::Target(t) => Some(format!("0x{t:08X}")),
+            Operand::Token(t) => Some(format!("0x{:08X}", t.value())),
+            Operand::Local(l) => Some(format!("V_{l}")),
+            Operand::Argument(a) => Some(format!("A_{a}")),
+            Operand::Switch(targets) => Some(format!("switch({})", targets.len())),
+        }
+    }
 }
 
 /// How an instruction affects control flow.
@@ -548,13 +622,8 @@ impl Instruction {
     pub fn get_targets(&self) -> Vec<u64> {
         match self.flow_type {
             FlowType::ConditionalBranch | FlowType::UnconditionalBranch | FlowType::Switch => {
-                match &self.operand {
-                    Operand::Switch(values) => {
-                        values.iter().map(|entry| u64::from(*entry)).collect()
-                    }
-                    Operand::Target(target) => vec![*target],
-                    _ => Vec::new(),
-                }
+                // Return the computed branch targets (absolute addresses)
+                self.branch_targets.clone()
             }
             _ => Vec::new(),
         }
@@ -705,11 +774,13 @@ impl Instruction {
         }
     }
 
-    /// Extracts switch targets from the instruction.
+    /// Extracts switch offsets from the instruction.
     ///
-    /// Returns the switch targets if the operand is a switch type.
+    /// Returns the raw switch offsets (signed i32) if the operand is a switch type.
+    /// Note: These are relative offsets, not absolute addresses.
+    /// Use `get_targets()` or `branch_targets` for absolute addresses.
     #[must_use]
-    pub fn get_switch_targets(&self) -> Option<&[u32]> {
+    pub fn get_switch_offsets(&self) -> Option<&[i32]> {
         match &self.operand {
             Operand::Switch(targets) => Some(targets),
             _ => None,

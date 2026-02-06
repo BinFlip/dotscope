@@ -32,39 +32,53 @@ use tempfile::NamedTempFile;
 
 /// Test assembly specification for validator testing.
 ///
+/// Source of assembly data for testing - either a file path or in-memory bytes.
+#[derive(Debug)]
+pub enum TestAssemblySource {
+    /// File-backed assembly with path and optional temp file for cleanup
+    File {
+        path: PathBuf,
+        _temp_file: Option<NamedTempFile>,
+    },
+    /// In-memory assembly data (zero-copy from generation)
+    Memory(Vec<u8>),
+}
+
 /// Each test assembly represents a specific validation scenario, either a clean
 /// assembly that should pass validation or a modified assembly designed to trigger
 /// specific validation failures.
 #[derive(Debug)]
 pub struct TestAssembly {
-    /// Path to the test assembly file
-    pub path: PathBuf,
+    /// Source of the assembly data
+    pub source: TestAssemblySource,
     /// Whether this assembly should pass (true) or fail (false) validation
     pub should_pass: bool,
     /// Optional specific error message or pattern expected for failing assemblies
     pub expected_error_pattern: Option<String>,
-    /// Temp file handle for automatic cleanup
-    _temp_file: Option<NamedTempFile>,
 }
 
 impl TestAssembly {
-    /// Creates a new test assembly specification.
+    /// Creates a new test assembly specification from a file path.
     pub fn new<P: Into<PathBuf>>(path: P, should_pass: bool) -> Self {
         Self {
-            path: path.into(),
+            source: TestAssemblySource::File {
+                path: path.into(),
+                _temp_file: None,
+            },
             should_pass,
             expected_error_pattern: None,
-            _temp_file: None,
         }
     }
 
     /// Creates a test assembly that should fail with a specific error pattern.
     pub fn failing_with_error<P: Into<PathBuf>>(path: P, error_pattern: &str) -> Self {
         Self {
-            path: path.into(),
+            source: TestAssemblySource::File {
+                path: path.into(),
+                _temp_file: None,
+            },
             should_pass: false,
             expected_error_pattern: Some(error_pattern.to_string()),
-            _temp_file: None,
         }
     }
 
@@ -72,10 +86,12 @@ impl TestAssembly {
     pub fn from_temp_file(temp_file: NamedTempFile, should_pass: bool) -> Self {
         let path = temp_file.path().to_path_buf();
         Self {
-            path,
+            source: TestAssemblySource::File {
+                path,
+                _temp_file: Some(temp_file),
+            },
             should_pass,
             expected_error_pattern: None,
-            _temp_file: Some(temp_file),
         }
     }
 
@@ -83,10 +99,77 @@ impl TestAssembly {
     pub fn from_temp_file_with_error(temp_file: NamedTempFile, error_pattern: &str) -> Self {
         let path = temp_file.path().to_path_buf();
         Self {
-            path,
+            source: TestAssemblySource::File {
+                path,
+                _temp_file: Some(temp_file),
+            },
             should_pass: false,
             expected_error_pattern: Some(error_pattern.to_string()),
-            _temp_file: Some(temp_file),
+        }
+    }
+
+    /// Creates a test assembly from in-memory bytes.
+    ///
+    /// This is the preferred method for test assembly creation as it avoids
+    /// file I/O overhead.
+    pub fn from_bytes(data: Vec<u8>, should_pass: bool) -> Self {
+        Self {
+            source: TestAssemblySource::Memory(data),
+            should_pass,
+            expected_error_pattern: None,
+        }
+    }
+
+    /// Creates a failing test assembly from in-memory bytes with specific error pattern.
+    pub fn from_bytes_with_error(data: Vec<u8>, error_pattern: &str) -> Self {
+        Self {
+            source: TestAssemblySource::Memory(data),
+            should_pass: false,
+            expected_error_pattern: Some(error_pattern.to_string()),
+        }
+    }
+
+    /// Returns the path if this is a file-backed assembly.
+    pub fn path(&self) -> Option<&Path> {
+        match &self.source {
+            TestAssemblySource::File { path, .. } => Some(path),
+            TestAssemblySource::Memory(_) => None,
+        }
+    }
+
+    /// Returns the bytes if this is a memory-backed assembly.
+    pub fn bytes(&self) -> Option<&[u8]> {
+        match &self.source {
+            TestAssemblySource::File { .. } => None,
+            TestAssemblySource::Memory(data) => Some(data),
+        }
+    }
+
+    /// Returns true if this is a memory-backed assembly.
+    pub fn is_memory_backed(&self) -> bool {
+        matches!(self.source, TestAssemblySource::Memory(_))
+    }
+
+    /// Returns a description of this assembly for error messages.
+    pub fn description(&self) -> String {
+        match &self.source {
+            TestAssemblySource::File { path, .. } => path.display().to_string(),
+            TestAssemblySource::Memory(data) => format!("<in-memory {} bytes>", data.len()),
+        }
+    }
+
+    /// Loads this assembly as a `CilAssemblyView` with validation disabled.
+    ///
+    /// Used by the test harness to load assemblies for validator testing.
+    pub fn load(&self) -> Result<CilAssemblyView> {
+        match &self.source {
+            TestAssemblySource::File { path, .. } => {
+                CilAssemblyView::from_path_with_validation(path, ValidationConfig::disabled())
+            }
+            TestAssemblySource::Memory(data) => CilAssemblyView::from_mem_with_validation(
+                data.clone(),
+                ValidationConfig::disabled(),
+            ),
         }
     }
 }
@@ -154,14 +237,14 @@ fn file_verify(
             if !result.test_passed {
                 return Err(Error::Other(format!(
                     "Positive test failed for {}: validation should have passed but got error: {:?}",
-                    result.assembly.path.display(),
+                    result.assembly.description(),
                     result.error_message
                 )));
             }
             if !result.validation_succeeded {
                 return Err(Error::Other(format!(
                     "Clean assembly {} failed {} validation unexpectedly",
-                    result.assembly.path.display(),
+                    result.assembly.description(),
                     validator_name
                 )));
             }
@@ -170,7 +253,7 @@ fn file_verify(
             if !result.test_passed {
                 return Err(Error::Other(format!(
                     "Negative test failed for {}: expected validation failure with pattern '{:?}' but got: validation_succeeded={}, error={:?}",
-                    result.assembly.path.display(),
+                    result.assembly.description(),
                     result.assembly.expected_error_pattern,
                     result.validation_succeeded,
                     result.error_message
@@ -179,7 +262,7 @@ fn file_verify(
             if result.validation_succeeded {
                 return Err(Error::Other(format!(
                     "Modified assembly {} passed validation but should have failed",
-                    result.assembly.path.display()
+                    result.assembly.description()
                 )));
             }
 
@@ -417,8 +500,7 @@ where
 {
     // Disable validation during loading to test individual validators in isolation.
     // The test harness controls which validators run via the run_validator callback.
-    let assembly_view =
-        CilAssemblyView::from_path_with_validation(&assembly.path, ValidationConfig::disabled())?;
+    let assembly_view = assembly.load()?;
     let scanner = ReferenceScanner::from_view(&assembly_view)?;
     let thread_count = std::thread::available_parallelism()
         .map(|n| n.get())
@@ -440,18 +522,41 @@ fn run_owned_validation_test<F>(
 where
     F: Fn(&OwnedValidationContext) -> Result<()>,
 {
+    use std::io::Write;
+
     let manifest_dir = std::env::var("CARGO_MANIFEST_DIR").unwrap_or_else(|_| ".".to_string());
     let mono_deps_path = Path::new(&manifest_dir).join("tests/samples/mono_4.8");
 
     // Disable validation during loading to test individual validators in isolation.
-    let assembly_view =
-        CilAssemblyView::from_path_with_validation(&assembly.path, ValidationConfig::disabled())?;
+    let assembly_view = assembly.load()?;
+
+    // For ProjectLoader, we need a file path. For memory-backed assemblies,
+    // create a temporary file.
+    let _temp_file: Option<NamedTempFile>;
+    let primary_path: PathBuf = match &assembly.source {
+        TestAssemblySource::File { path, .. } => path.clone(),
+        TestAssemblySource::Memory(data) => {
+            let mut temp = NamedTempFile::new().map_err(|e| {
+                Error::Other(format!(
+                    "Failed to create temp file for owned validation: {e}"
+                ))
+            })?;
+            temp.write_all(data).map_err(|e| {
+                Error::Other(format!(
+                    "Failed to write temp file for owned validation: {e}"
+                ))
+            })?;
+            let path = temp.path().to_path_buf();
+            _temp_file = Some(temp);
+            path
+        }
+    };
 
     // Load CilObject with dependencies using ProjectLoader
     // Enable strict mode for validator tests so loading failures cause immediate errors
     // Disable validation during loading to test raw validator logic
     let project_result = crate::project::ProjectLoader::new()
-        .primary_file(&assembly.path)?
+        .primary_file(&primary_path)?
         .with_search_path(&mono_deps_path)?
         .auto_discover(true)
         .strict_mode(true)

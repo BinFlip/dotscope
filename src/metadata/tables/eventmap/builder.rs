@@ -7,9 +7,9 @@
 //! ## Overview
 //!
 //! The `EventMapBuilder` enables creation of event map entries with:
-//! - Parent type specification (required)
+//! - Parent type row index specification (required)
 //! - Event list starting index specification (required)
-//! - Validation of type tokens and event indices
+//! - Validation of row indices
 //! - Automatic token generation and metadata management
 //!
 //! ## Usage
@@ -18,52 +18,51 @@
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! # let mut assembly = CilAssembly::new(view);
 //!
 //! // Create a type first
-//! let type_token = TypeDefBuilder::new()
+//! let type_ref = TypeDefBuilder::new()
 //!     .name("MyClass")
 //!     .namespace("MyApp")
 //!     .public_class()
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
-//! // Create handler type token
-//! let handler_token = TypeRefBuilder::new()
+//! // Create handler type reference
+//! let handler_ref = TypeRefBuilder::new()
 //!     .name("EventHandler")
 //!     .namespace("System")
 //!     .resolution_scope(CodedIndex::new(TableId::AssemblyRef, 1))
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! // Create events
-//! let event1_token = EventBuilder::new()
+//! let event1_ref = EventBuilder::new()
 //!     .name("OnDataChanged")
-//!     .event_type(handler_token.try_into()?)
-//!     .build(&mut context)?;
+//!     .event_type(handler_ref.try_into()?)
+//!     .build(&mut assembly)?;
 //!
-//! let event2_token = EventBuilder::new()
+//! let event2_ref = EventBuilder::new()
 //!     .name("OnSizeChanged")
-//!     .event_type(handler_token.try_into()?)
-//!     .build(&mut context)?;
+//!     .event_type(handler_ref.try_into()?)
+//!     .build(&mut assembly)?;
 //!
 //! // Create an event map entry for the type
-//! let event_map_token = EventMapBuilder::new()
-//!     .parent(type_token)
-//!     .event_list(event1_token.row()) // Starting event index
-//!     .build(&mut context)?;
+//! let event_map_ref = EventMapBuilder::new()
+//!     .parent(type_ref.placeholder())
+//!     .event_list(event1_ref.placeholder()) // Starting event index
+//!     .build(&mut assembly)?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! ## Design
 //!
 //! The builder follows the established pattern with:
-//! - **Validation**: Parent type and event list index are required and validated
-//! - **Type Verification**: Ensures parent token is valid and points to TypeDef table
+//! - **Validation**: Parent row index and event list index are required and validated
+//! - **Index Verification**: Ensures row indices are non-zero
 //! - **Token Generation**: Metadata tokens are created automatically
 //! - **Range Support**: Supports defining contiguous event ranges for efficient lookup
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{EventMapRaw, TableDataOwned, TableId},
         token::Token,
@@ -90,29 +89,31 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing EventMap entries:
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
-/// # let type_token = Token::new(0x02000001);
+/// # let mut assembly = CilAssembly::new(view);
+/// # let type_ref = TypeDefBuilder::new()
+/// #     .name("MyClass")
+/// #     .namespace("MyApp")
+/// #     .public_class()
+/// #     .build(&mut assembly)?;
 ///
-/// let event_map_token = EventMapBuilder::new()
-///     .parent(type_token)
+/// let event_map_ref = EventMapBuilder::new()
+///     .parent(type_ref.placeholder())
 ///     .event_list(1) // Starting event index
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
 /// # Validation
 ///
 /// The builder enforces the following constraints:
-/// - **Parent Required**: A parent type token must be provided
-/// - **Parent Validation**: Parent token must be a valid TypeDef table token
+/// - **Parent Required**: A parent row index must be provided
+/// - **Parent Validation**: Parent row index must be greater than 0
 /// - **Event List Required**: An event list starting index must be provided
 /// - **Index Validation**: Event list index must be greater than 0
-/// - **Token Validation**: Parent token row cannot be 0
 ///
 /// # Integration
 ///
@@ -123,8 +124,8 @@ use crate::{
 /// - **Metadata Loading**: Establishes event ownership during type loading
 #[derive(Debug, Clone)]
 pub struct EventMapBuilder {
-    /// The token of the parent type that owns the events
-    parent: Option<Token>,
+    /// The row index of the parent type that owns the events (TypeDef table)
+    parent: Option<u32>,
     /// The starting index in the Event table for this type's events
     event_list: Option<u32>,
 }
@@ -155,36 +156,36 @@ impl EventMapBuilder {
         }
     }
 
-    /// Sets the parent type token that owns the events.
+    /// Sets the parent type row index that owns the events.
     ///
-    /// The parent must be a valid TypeDef token that represents the type
-    /// that declares and owns the events in the specified range.
+    /// The parent must be a valid row index into the TypeDef table that represents the type
+    /// that declares and owns the events in the specified range. This can be a resolved row
+    /// index or a placeholder that will be resolved at write time.
     ///
     /// # Arguments
     ///
-    /// * `parent_token` - Token of the TypeDef table entry
+    /// * `parent_row` - Row index or placeholder for the TypeDef table entry
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
-    /// let type_token = TypeDefBuilder::new()
+    /// # let mut assembly = CilAssembly::new(view);
+    /// let type_ref = TypeDefBuilder::new()
     ///     .name("EventfulClass")
     ///     .namespace("MyApp")
     ///     .public_class()
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// let builder = EventMapBuilder::new()
-    ///     .parent(type_token);
+    ///     .parent(type_ref.placeholder());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
-    pub fn parent(mut self, parent_token: Token) -> Self {
-        self.parent = Some(parent_token);
+    pub fn parent(mut self, parent_row: u32) -> Self {
+        self.parent = Some(parent_row);
         self
     }
 
@@ -213,65 +214,60 @@ impl EventMapBuilder {
 
     /// Builds the EventMap entry and adds it to the assembly.
     ///
-    /// This method validates all required fields, verifies the parent token is valid,
-    /// validates the event list index, creates the EventMap table entry, and returns the
-    /// metadata token for the new entry.
+    /// This method validates all required fields, verifies the parent row index is valid,
+    /// validates the event list index, creates the EventMap table entry, and returns a
+    /// reference to the new entry.
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for the assembly being modified
+    /// * `assembly` - The CilAssembly for the assembly being modified
     ///
     /// # Returns
     ///
-    /// Returns the metadata token for the newly created EventMap entry.
+    /// Returns a reference to the newly created EventMap entry.
     ///
     /// # Errors
     ///
     /// Returns an error if:
-    /// - The parent token is not set
-    /// - The parent token is not a valid TypeDef token
-    /// - The parent token row is 0
+    /// - The parent row index is not set
+    /// - The parent row index is 0
     /// - The event list index is not set
     /// - The event list index is 0
     /// - There are issues adding the table row
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
-    /// # let type_token = Token::new(0x02000001);
+    /// # let mut assembly = CilAssembly::new(view);
+    /// # let type_ref = TypeDefBuilder::new()
+    /// #     .name("MyClass")
+    /// #     .namespace("MyApp")
+    /// #     .public_class()
+    /// #     .build(&mut assembly)?;
     ///
-    /// let event_map_token = EventMapBuilder::new()
-    ///     .parent(type_token)
+    /// let event_map_ref = EventMapBuilder::new()
+    ///     .parent(type_ref.placeholder())
     ///     .event_list(1)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
-    /// println!("Created EventMap with token: {}", event_map_token);
+    /// println!("Created EventMap entry");
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
-        let parent_token = self.parent.ok_or_else(|| {
-            Error::ModificationInvalid("Parent token is required for EventMap".to_string())
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
+        let parent_row = self.parent.ok_or_else(|| {
+            Error::ModificationInvalid("Parent row index is required for EventMap".to_string())
         })?;
 
         let event_list_index = self.event_list.ok_or_else(|| {
             Error::ModificationInvalid("Event list index is required for EventMap".to_string())
         })?;
 
-        if parent_token.table() != TableId::TypeDef as u8 {
-            return Err(Error::ModificationInvalid(format!(
-                "Parent token must be a TypeDef token, got table ID: {}",
-                parent_token.table()
-            )));
-        }
-
-        if parent_token.row() == 0 {
+        if parent_row == 0 {
             return Err(Error::ModificationInvalid(
-                "Parent token row cannot be 0".to_string(),
+                "Parent row index cannot be 0".to_string(),
             ));
         }
 
@@ -281,21 +277,15 @@ impl EventMapBuilder {
             ));
         }
 
-        let rid = context.next_rid(TableId::EventMap);
-        let token = Token::from_parts(TableId::EventMap, rid);
-
         let event_map = EventMapRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
-            parent: parent_token.row(),
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
+            parent: parent_row,
             event_list: event_list_index,
         };
 
-        let table_data = TableDataOwned::EventMap(event_map);
-        context.table_row_add(TableId::EventMap, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(TableId::EventMap, TableDataOwned::EventMap(event_map))
     }
 }
 
@@ -303,29 +293,28 @@ impl EventMapBuilder {
 mod tests {
     use super::*;
     use crate::{
-        metadata::tables::TableId, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, metadata::tables::TableId,
+        test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
     fn test_event_map_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a TypeDef for testing
-        let type_token = crate::metadata::tables::TypeDefBuilder::new()
+        let type_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("EventfulClass")
             .namespace("MyApp")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token = EventMapBuilder::new()
-            .parent(type_token)
+        let map_ref = EventMapBuilder::new()
+            .parent(type_ref.placeholder())
             .event_list(1)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify the token has the correct table ID
-        assert_eq!(token.table(), TableId::EventMap as u8);
-        assert!(token.row() > 0);
+        // Verify the ref has the correct kind
+        assert_eq!(map_ref.kind(), ChangeRefKind::TableRow(TableId::EventMap));
 
         Ok(())
     }
@@ -340,33 +329,31 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_missing_parent() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let result = EventMapBuilder::new().event_list(1).build(&mut context);
+        let result = EventMapBuilder::new().event_list(1).build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Parent token is required"));
+        assert!(error_msg.contains("Parent row index is required"));
 
         Ok(())
     }
 
     #[test]
     fn test_event_map_builder_missing_event_list() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a TypeDef for testing
-        let type_token = crate::metadata::tables::TypeDefBuilder::new()
+        let type_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("EventfulClass")
             .namespace("MyApp")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         let result = EventMapBuilder::new()
-            .parent(type_token)
-            .build(&mut context);
+            .parent(type_ref.placeholder())
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -376,61 +363,36 @@ mod tests {
     }
 
     #[test]
-    fn test_event_map_builder_invalid_parent_token() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-
-        // Use an invalid token (not TypeDef)
-        let invalid_token = Token::new(0x04000001); // Field token instead of TypeDef
+    fn test_event_map_builder_zero_parent_row() -> Result<()> {
+        let mut assembly = get_test_assembly()?;
 
         let result = EventMapBuilder::new()
-            .parent(invalid_token)
+            .parent(0) // Zero row index is invalid
             .event_list(1)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Parent token must be a TypeDef token"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_event_map_builder_zero_row_parent() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-
-        // Use a zero row token
-        let zero_token = Token::new(0x02000000);
-
-        let result = EventMapBuilder::new()
-            .parent(zero_token)
-            .event_list(1)
-            .build(&mut context);
-
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Parent token row cannot be 0"));
+        assert!(error_msg.contains("Parent row index cannot be 0"));
 
         Ok(())
     }
 
     #[test]
     fn test_event_map_builder_zero_event_list() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a TypeDef for testing
-        let type_token = crate::metadata::tables::TypeDefBuilder::new()
+        let type_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("EventfulClass")
             .namespace("MyApp")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         let result = EventMapBuilder::new()
-            .parent(type_token)
+            .parent(type_ref.placeholder())
             .event_list(0) // Zero event list index is invalid
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -441,63 +403,59 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_multiple_entries() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create TypeDefs for testing
-        let type1_token = crate::metadata::tables::TypeDefBuilder::new()
+        let type1_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("EventfulClass1")
             .namespace("MyApp")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let type2_token = crate::metadata::tables::TypeDefBuilder::new()
+        let type2_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("EventfulClass2")
             .namespace("MyApp")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let map1_token = EventMapBuilder::new()
-            .parent(type1_token)
+        let map1_ref = EventMapBuilder::new()
+            .parent(type1_ref.placeholder())
             .event_list(1)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let map2_token = EventMapBuilder::new()
-            .parent(type2_token)
+        let map2_ref = EventMapBuilder::new()
+            .parent(type2_ref.placeholder())
             .event_list(3)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify tokens are different and sequential
-        assert_ne!(map1_token, map2_token);
-        assert_eq!(map1_token.table(), TableId::EventMap as u8);
-        assert_eq!(map2_token.table(), TableId::EventMap as u8);
-        assert_eq!(map2_token.row(), map1_token.row() + 1);
+        // Verify refs are different
+        assert!(!std::sync::Arc::ptr_eq(&map1_ref, &map2_ref));
+        assert_eq!(map1_ref.kind(), ChangeRefKind::TableRow(TableId::EventMap));
+        assert_eq!(map2_ref.kind(), ChangeRefKind::TableRow(TableId::EventMap));
 
         Ok(())
     }
 
     #[test]
     fn test_event_map_builder_various_event_indices() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test with different event list indices
         let test_indices = [1, 5, 10, 20, 100];
 
         for (i, &index) in test_indices.iter().enumerate() {
-            let type_token = crate::metadata::tables::TypeDefBuilder::new()
+            let type_ref = crate::metadata::tables::TypeDefBuilder::new()
                 .name(format!("EventfulClass{i}"))
                 .namespace("MyApp")
                 .public_class()
-                .build(&mut context)?;
+                .build(&mut assembly)?;
 
-            let map_token = EventMapBuilder::new()
-                .parent(type_token)
+            let map_ref = EventMapBuilder::new()
+                .parent(type_ref.placeholder())
                 .event_list(index)
-                .build(&mut context)?;
+                .build(&mut assembly)?;
 
-            assert_eq!(map_token.table(), TableId::EventMap as u8);
-            assert!(map_token.row() > 0);
+            assert_eq!(map_ref.kind(), ChangeRefKind::TableRow(TableId::EventMap));
         }
 
         Ok(())
@@ -505,33 +463,29 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_fluent_api() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create a TypeDef for testing
-        let type_token = crate::metadata::tables::TypeDefBuilder::new()
+        let type_ref = crate::metadata::tables::TypeDefBuilder::new()
             .name("FluentTestClass")
             .namespace("MyApp")
             .public_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
         // Test fluent API chaining
-        let token = EventMapBuilder::new()
-            .parent(type_token)
+        let map_ref = EventMapBuilder::new()
+            .parent(type_ref.placeholder())
             .event_list(5)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::EventMap as u8);
-        assert!(token.row() > 0);
+        assert_eq!(map_ref.kind(), ChangeRefKind::TableRow(TableId::EventMap));
 
         Ok(())
     }
 
     #[test]
     fn test_event_map_builder_clone() {
-        let parent_token = Token::new(0x02000001);
-
-        let builder1 = EventMapBuilder::new().parent(parent_token).event_list(1);
+        let builder1 = EventMapBuilder::new().parent(1).event_list(1);
         let builder2 = builder1.clone();
 
         assert_eq!(builder1.parent, builder2.parent);
@@ -540,9 +494,7 @@ mod tests {
 
     #[test]
     fn test_event_map_builder_debug() {
-        let parent_token = Token::new(0x02000001);
-
-        let builder = EventMapBuilder::new().parent(parent_token).event_list(1);
+        let builder = EventMapBuilder::new().parent(1).event_list(1);
         let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("EventMapBuilder"));
     }

@@ -226,14 +226,14 @@ impl AnalysisTestRunner {
     ///
     /// Returns an error if call graph construction fails.
     pub fn build_callgraph(&mut self) -> Result<&CallGraph> {
-        if self.callgraph.is_some() {
-            return Ok(self.callgraph.as_ref().unwrap());
+        if let Some(ref cg) = self.callgraph {
+            return Ok(cg);
         }
 
         let assembly = self.load()?;
         let callgraph = CallGraph::build(&assembly)?;
         self.callgraph = Some(callgraph);
-        Ok(self.callgraph.as_ref().unwrap())
+        Ok(self.callgraph.as_ref().expect("just inserted"))
     }
 
     /// Finds a method by class and method name.
@@ -313,7 +313,7 @@ impl AnalysisTestRunner {
         };
 
         // Build CFG and SSA
-        let (cfg, ssa) = match build_analysis(&method) {
+        let (cfg, ssa) = match build_analysis(&method, Some(&assembly)) {
             Ok(result) => result,
             Err(e) => return AnalysisTestResult::run_failed(test_case.name, e),
         };

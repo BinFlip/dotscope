@@ -26,6 +26,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::ModuleRefRaw,
     },
@@ -53,17 +54,28 @@ impl MetadataLoader for ModuleRefLoader {
     /// - `ModuleRef` table contains invalid or corrupted data
     /// - Storage operations fail due to token conflicts
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<ModuleRefRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(strings)?;
+        let (Some(header), Some(strings)) = (context.meta, context.strings) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<ModuleRefRaw>() else {
+            return Ok(());
+        };
 
-                    context.module_ref.insert(row.token, res.clone());
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("module ref 0x{:08x}", row.token.value());
+
+            let Some(res) = context.handle_result(
+                row.to_owned(strings),
+                DiagnosticCategory::Table,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.module_ref.insert(row.token, res.clone());
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `ModuleRef`.

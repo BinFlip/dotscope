@@ -29,6 +29,7 @@
 //!
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::NestedClassRaw,
     },
@@ -58,19 +59,29 @@ impl MetadataLoader for NestedClassLoader {
     /// - Storage operations fail due to token conflicts
     ///
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta.as_ref() {
-            if let Some(table) = header.table::<NestedClassRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(context.types)?;
-                    owned.apply()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<NestedClassRaw>() else {
+            return Ok(());
+        };
 
-                    context.nested_class.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("nested class 0x{:08x}", row.token.value());
 
-        Ok(())
+            let Some(owned) = context.handle_result(
+                row.to_owned(context.types),
+                DiagnosticCategory::Type,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(owned.apply(), DiagnosticCategory::Type, token_msg)?;
+            context.nested_class.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `NestedClass`.

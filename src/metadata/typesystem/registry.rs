@@ -40,8 +40,9 @@
 //!
 //! ## Creating and Using a Registry
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::typesystem::{TypeRegistry, CilType};
+//! use dotscope::metadata::identity::AssemblyIdentity;
 //! use dotscope::metadata::token::Token;
 //!
 //! // Create a new registry with primitive types
@@ -49,7 +50,7 @@
 //! let registry = TypeRegistry::new(test_identity)?;
 //!
 //! // Look up types by name
-//! if let Some(string_type) = registry.get_by_fullname_first("System.String", true) {
+//! if let Some(string_type) = registry.get_by_fullname("System.String", true) {
 //!     println!("Found String type: 0x{:08X}", string_type.token.value());
 //! }
 //!
@@ -62,8 +63,9 @@
 //!
 //! ## Registering New Types
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::typesystem::{TypeRegistry, CilType, TypeSource};
+//! use dotscope::metadata::identity::AssemblyIdentity;
 //! use dotscope::metadata::token::Token;
 //! use std::sync::Arc;
 //!
@@ -85,7 +87,7 @@
 //! );
 //!
 //! // Register the type
-//! registry.insert(Arc::new(new_type));
+//! registry.insert(&Arc::new(new_type));
 //! # Ok(())
 //! # }
 //! ```
@@ -114,7 +116,7 @@ use dashmap::DashMap;
 use crate::{
     metadata::{
         identity::AssemblyIdentity,
-        signatures::SignatureMethodSpec,
+        signatures::{SignatureMethodSpec, TypeSignature},
         tables::{AssemblyRefRc, FileRc, MethodSpec, ModuleRc, ModuleRefRc},
         token::Token,
         typesystem::{
@@ -274,7 +276,7 @@ impl CompleteTypeSpec {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::typesystem::TypeSource;
 /// use dotscope::metadata::token::Token;
 ///
@@ -513,14 +515,16 @@ impl SourceRegistry {
 ///
 /// ## Basic Registry Operations
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::typesystem::TypeRegistry;
+/// use dotscope::metadata::identity::AssemblyIdentity;
 ///
 /// // Create registry with primitive types
-/// let registry = TypeRegistry::new()?;
+/// let identity = AssemblyIdentity::parse("Test, Version=1.0.0.0").unwrap();
+/// let registry = TypeRegistry::new(identity)?;
 ///
 /// // Query primitive types
-/// for entry in registry.get_by_fullname("System.Int32") {
+/// if let Some(entry) = registry.get_by_fullname("System.Int32", true) {
 ///     println!("Found Int32: 0x{:08X}", entry.token.value());
 /// }
 ///
@@ -596,14 +600,16 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::typesystem::TypeRegistry;
+    /// use dotscope::metadata::identity::AssemblyIdentity;
     ///
-    /// let registry = TypeRegistry::new()?;
+    /// let identity = AssemblyIdentity::parse("Test, Version=1.0.0.0").unwrap();
+    /// let registry = TypeRegistry::new(identity)?;
     ///
     /// // Primitive types are immediately available
-    /// let string_types = registry.get_by_fullname("System.String");
-    /// assert!(!string_types.is_empty());
+    /// let string_type = registry.get_by_fullname("System.String", true);
+    /// assert!(string_type.is_some());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn new(assembly_identity: AssemblyIdentity) -> Result<Self> {
@@ -885,7 +891,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::{typesystem::TypeRegistry, token::Token};
     ///
     /// # fn example(registry: &TypeRegistry) {
@@ -896,6 +902,58 @@ impl TypeRegistry {
     /// ```
     pub fn get(&self, token: &Token) -> Option<CilTypeRc> {
         self.types.get(token).map(|entry| entry.value().clone())
+    }
+
+    /// Returns the `<Module>` type which contains global fields and methods.
+    ///
+    /// The `<Module>` type is always TypeDef RID 1 in .NET assemblies. It contains
+    /// global methods, the module static constructor (.cctor), and nested types
+    /// injected by obfuscators.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(CilTypeRc)` - The module type
+    /// * `None` - If the module type doesn't exist (malformed assembly)
+    #[must_use]
+    pub fn module_type(&self) -> Option<CilTypeRc> {
+        self.get(&Token::new(0x02000001))
+    }
+
+    /// Returns the token of the module static constructor (.cctor) if it exists.
+    ///
+    /// The module `.cctor` is defined on the `<Module>` type (TypeDef RID 1).
+    /// This method is commonly used to find initialization code that needs
+    /// to be analyzed or neutralized during deobfuscation.
+    ///
+    /// # Returns
+    ///
+    /// * `Some(Token)` - The token of the module `.cctor` method
+    /// * `None` - If the module type doesn't exist or has no `.cctor`
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::TypeRegistry;
+    ///
+    /// # fn example(registry: &TypeRegistry) {
+    /// if let Some(cctor_token) = registry.module_cctor() {
+    ///     println!("Module .cctor found: {:?}", cctor_token);
+    /// }
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn module_cctor(&self) -> Option<Token> {
+        self.module_type().and_then(|module_type| {
+            module_type.methods.iter().find_map(|(_, method_ref)| {
+                method_ref.upgrade().and_then(|m| {
+                    if m.name == ".cctor" {
+                        Some(m.token)
+                    } else {
+                        None
+                    }
+                })
+            })
+        })
     }
 
     /// Look up a type by its source and qualified name.
@@ -920,14 +978,14 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::typesystem::{TypeRegistry, TypeSource};
     /// use dotscope::metadata::token::Token;
     ///
     /// # fn example(registry: &TypeRegistry) {
     /// let external_source = TypeSource::AssemblyRef(Token::new(0x23000001));
     /// if let Some(type_def) = registry.get_by_source_and_name(
-    ///     external_source,
+    ///     &external_source,
     ///     "System",
     ///     "String"
     /// ) {
@@ -986,7 +1044,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::typesystem::TypeRegistry;
     ///
     /// # fn example(registry: &TypeRegistry) {
@@ -1027,7 +1085,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::typesystem::TypeRegistry;
     ///
     /// # fn example(registry: &TypeRegistry) {
@@ -1072,18 +1130,17 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::typesystem::TypeRegistry;
     ///
     /// # fn example(registry: &TypeRegistry) {
-    /// // Find the specific System.String type
-    /// let string_types = registry.get_by_fullname("System.String");
-    /// if let Some(string_type) = string_types.first() {
+    /// // Find the specific System.String type (false = local only)
+    /// if let Some(string_type) = registry.get_by_fullname("System.String", false) {
     ///     println!("Found System.String: 0x{:08X}", string_type.token.value());
     /// }
     ///
-    /// // Find a global type
-    /// let global_types = registry.get_by_fullname("GlobalType");
+    /// // Find including external types
+    /// let global_type = registry.get_by_fullname("GlobalType", true);
     /// # }
     /// ```
     pub fn get_by_fullname(&self, fullname: &str, external: bool) -> Option<CilTypeRc> {
@@ -1177,6 +1234,153 @@ impl TypeRegistry {
         }
 
         typedef_matches
+    }
+
+    /// Gets the byte size of a field for FieldRVA initialization.
+    ///
+    /// This method looks up a field by its token and determines the size of its data
+    /// based on the field's type signature. This is primarily used for pre-populating
+    /// static fields from FieldRVA data in the PE file.
+    ///
+    /// # Arguments
+    ///
+    /// * `field_token` - The metadata token of the field (table 0x04)
+    ///
+    /// # Returns
+    ///
+    /// * `Some(size)` - For primitive types with known sizes (I1=1, I2=2, I4=4, I8=8, etc.)
+    /// * `Some(class_size)` - For value types with explicit ClassLayout size
+    /// * `None` - For arrays, reference types, or types without known sizes
+    ///
+    /// # Example
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::TypeRegistry;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// # fn example(registry: &TypeRegistry) {
+    /// let field_token = Token::new(0x04000001);
+    /// if let Some(size) = registry.get_field_byte_size(&field_token) {
+    ///     println!("Field size: {} bytes", size);
+    /// }
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn get_field_byte_size(&self, field_token: &Token) -> Option<usize> {
+        // Search through all types to find the field
+        for entry in self.iter() {
+            let type_ref = entry.value();
+            // Check if this type owns the field
+            for (_, field) in type_ref.fields.iter() {
+                if field.token == *field_token {
+                    // Found the field, get its type signature
+                    let sig = &field.signature;
+
+                    // First try to get size from primitive type
+                    if let Some(size) = sig.base.byte_size() {
+                        return Some(size);
+                    }
+
+                    // For value types, try to look up class size
+                    if let TypeSignature::ValueType(vt_token) = &sig.base {
+                        if let Some(value_type) = self.get(vt_token) {
+                            if let Some(class_size) = value_type.class_size.get() {
+                                if *class_size > 0 {
+                                    return Some(*class_size as usize);
+                                }
+                            }
+                        }
+                    }
+
+                    return None;
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Gets the type signature of a field by its metadata token.
+    ///
+    /// Searches through all types to find the field with the given token
+    /// and returns its type signature.
+    ///
+    /// # Arguments
+    ///
+    /// * `field_token` - The metadata token of the field to look up
+    ///
+    /// # Returns
+    ///
+    /// The field's type signature if found, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::typesystem::TypeRegistry;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// # fn example(registry: &TypeRegistry) {
+    /// let field_token = Token::new(0x04000001);
+    /// if let Some(sig) = registry.get_field_signature(&field_token) {
+    ///     println!("Field type: {:?}", sig);
+    /// }
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn get_field_signature(&self, field_token: &Token) -> Option<TypeSignature> {
+        // Search through all types to find the field
+        for entry in self.iter() {
+            let type_ref = entry.value();
+            // Check if this type owns the field
+            for (_, field) in type_ref.fields.iter() {
+                if field.token == *field_token {
+                    return Some(field.signature.base.clone());
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Returns the index of a field within a type's field list.
+    ///
+    /// This is used for accessing fields in value types (structs) stored inline.
+    /// The index corresponds to the position in `EmValue::ValueType::fields`.
+    ///
+    /// # Arguments
+    ///
+    /// * `type_token` - Token of the type containing the field.
+    /// * `field_token` - Token of the field to find.
+    ///
+    /// # Returns
+    ///
+    /// The zero-based index of the field within the type's field list,
+    /// or `None` if the field is not found in the type.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // For struct CFGCtx { uint A; uint B; uint C; uint D; }
+    /// // get_field_index_in_type(CFGCtx, CFGCtx::A) returns Some(0)
+    /// // get_field_index_in_type(CFGCtx, CFGCtx::D) returns Some(3)
+    /// ```
+    #[must_use]
+    pub fn get_field_index_in_type(
+        &self,
+        type_token: &Token,
+        field_token: &Token,
+    ) -> Option<usize> {
+        // Get the type
+        let type_entry = self.get(type_token)?;
+
+        // Find the field index within the type's field list
+        for (index, (_, field)) in type_entry.fields.iter().enumerate() {
+            if field.token == *field_token {
+                return Some(index);
+            }
+        }
+
+        None
     }
 
     /// Register a source entity to enable resolving references to it
@@ -1379,7 +1583,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::{
     ///     identity::AssemblyIdentity,
     ///     typesystem::TypeRegistry,
@@ -1387,9 +1591,11 @@ impl TypeRegistry {
     /// use std::sync::Arc;
     ///
     /// # fn example() -> dotscope::Result<()> {
-    /// let main_registry = TypeRegistry::new()?;
-    /// let external_registry = Arc::new(TypeRegistry::new()?);
-    /// let external_identity = AssemblyIdentity::parse("mscorlib, Version=4.0.0.0")?;
+    /// let main_identity = AssemblyIdentity::parse("Main, Version=1.0.0.0")?;
+    /// let main_registry = TypeRegistry::new(main_identity)?;
+    /// let ext_identity = AssemblyIdentity::parse("mscorlib, Version=4.0.0.0")?;
+    /// let external_registry = Arc::new(TypeRegistry::new(ext_identity.clone())?);
+    /// let external_identity = ext_identity;
     ///
     /// main_registry.registry_link(external_identity, external_registry);
     ///
@@ -1430,7 +1636,7 @@ impl TypeRegistry {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::typesystem::TypeRegistry;
     ///
     /// # fn example(registry: &TypeRegistry) {

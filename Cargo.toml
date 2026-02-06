@@ -1,6 +1,6 @@
 [package]
 name = "dotscope"
-version = "0.5.2"
+version = "0.6.0"
 authors = ["Johann Kempter <admin@binflip.rs>"]
 edition = "2021"
 description = "A high-performance, cross-platform framework for analyzing and reverse engineering .NET PE executables"
@@ -27,7 +27,7 @@ all-features = true
 rustdoc-args = ["--cfg", "docsrs"]
 
 [dependencies]
-thiserror = "2.0.17"
+thiserror = "2.0.18"
 uguid = "2.2.1"
 widestring = "1.2.1"
 strum = { version = "0.27.2", features = ["derive"]}
@@ -38,30 +38,62 @@ ouroboros = "0.18.5"
 sha1 = { version = "0.10.6", optional = true }
 sha2 = "0.10.9"
 md-5 = { version = "0.10.6", optional = true }
+hmac = "0.12.1"
+imbl = { version = "7.0.0", optional = true }
+pbkdf2 = "0.12.2"
+aes = "0.8.4"
+des = { version = "0.8.1", optional = true }
+cbc = "0.1.2"
 bitflags = "2.10.0"
 dashmap = "6.1.0"
 crossbeam-skiplist = "0.1.3"
 rayon = "1.11.0"
 rustc-hash = "2.1.1"
 boxcar = "0.2.14"
-quick-xml = "0.38.4"
+quick-xml = "0.39.0"
 hex = "0.4.3"
 num_cpus = "1.17.0"
-flate2 = "1.1.5"
+flate2 = "1.1.9"
+lzma-rs = "0.3.0"
+z3 = { version = "0.19.7", optional = true }
+iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info"], optional = true }
 
 [dev-dependencies]
-criterion = "0.8.1"
-clap = { version = "4.5.53", features = ["derive"] }
+criterion = "0.8.2"
+clap = { version = "4.5.57", features = ["derive"] }
+ctrlc = "3.5.1"
 
 [features]
-default = ["legacy-crypto"]
-# Include SHA1 and MD5 hash algorithms for full .NET compatibility.
-# Required for: public key token computation, assembly hash verification.
+default = ["legacy-crypto", "emulation", "deobfuscation"]
+
+# Include legacy cryptographic algorithms for full .NET compatibility.
+# Required for: public key token computation (SHA1), assembly hash verification (MD5/SHA1),
+# and deobfuscation of .NET code using DES/3DES encryption.
 # Disable with `default-features = false` if you need to exclude these from your dependency tree.
-legacy-crypto = ["sha1", "md-5"]
+legacy-crypto = ["dep:sha1", "dep:md-5", "dep:des"]
+
+# CIL bytecode emulation engine for runtime value computation.
+# Required for: string decryption, dynamic value resolution, BCL method simulation.
+# Disable to reduce compilation time if you only need metadata parsing.
+emulation = ["dep:imbl"]
+
+# Deobfuscation framework with transformation passes and obfuscator support.
+# Automatically enables emulation (required for value computation during deobfuscation).
+# Includes: Z3 symbolic solver (control flow unflattening), iced-x86 (native code analysis).
+# Disable to reduce compilation time if you only need metadata parsing/analysis.
+deobfuscation = ["dep:z3", "dep:iced-x86", "emulation"]
+
 # Skip expensive validation tests that use ProjectLoader with dependency resolution.
 # These tests are slow on CI runners with limited cores/IO. Use this feature on slow runners (e.g., macOS/Windows CI).
 skip-expensive-tests = []
+
+[[example]]
+name = "deobfuscate"
+required-features = ["deobfuscation"]
+
+[[example]]
+name = "analysis"
+required-features = ["deobfuscation"]
 
 [[bench]]
 name = "cilobject"

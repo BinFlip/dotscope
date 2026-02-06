@@ -6,7 +6,7 @@
 //! enabling fine-grained security control and permission management.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         security::SecurityAction,
         tables::{CodedIndex, CodedIndexType, DeclSecurityRaw, TableDataOwned, TableId},
@@ -59,12 +59,11 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create a demand for FileIOPermission on a method
 /// let method_ref = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity); // Target method
@@ -74,7 +73,7 @@ use crate::{
 ///     .action(SecurityAction::Demand)
 ///     .parent(method_ref)
 ///     .permission_set(&file_permission)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create an assembly-level security request for minimum permissions
 /// let assembly_ref = CodedIndex::new(TableId::Assembly, 1, CodedIndexType::HasDeclSecurity); // Assembly target
@@ -84,7 +83,7 @@ use crate::{
 ///     .action(SecurityAction::RequestMinimum)
 ///     .parent(assembly_ref)
 ///     .permission_set(&min_permissions)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a type-level link demand for full trust
 /// let type_ref = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasDeclSecurity); // Target type
@@ -94,7 +93,7 @@ use crate::{
 ///     .action(SecurityAction::LinkDemand)
 ///     .parent(type_ref)
 ///     .permission_set(&full_trust)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a security assertion for elevated privileges
 /// let trusted_method = CodedIndex::new(TableId::MethodDef, 2, CodedIndexType::HasDeclSecurity); // Trusted method
@@ -103,7 +102,7 @@ use crate::{
 ///     .action(SecurityAction::Assert)
 ///     .parent(trusted_method)
 ///     .unrestricted_permission_set() // Use the convenience method
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct DeclSecurityBuilder {
@@ -273,7 +272,7 @@ impl DeclSecurityBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for managing the assembly
+    /// * `assembly` - The CilAssembly for managing the assembly
     ///
     /// # Returns
     ///
@@ -288,7 +287,7 @@ impl DeclSecurityBuilder {
     /// - Returns error if parent is not a valid HasDeclSecurity coded index
     /// - Returns error if blob operations fail
     /// - Returns error if table operations fail
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let action = self
             .action
             .ok_or_else(|| Error::ModificationInvalid("Security action is required".to_string()))?;
@@ -321,9 +320,9 @@ impl DeclSecurityBuilder {
             ));
         }
 
-        let permission_set_index = context.blob_add(&permission_set)?;
+        let permission_set_index = assembly.blob_add(&permission_set)?.placeholder();
 
-        let rid = context.next_rid(TableId::DeclSecurity);
+        let rid = assembly.next_rid(TableId::DeclSecurity)?;
 
         let token_value = ((TableId::DeclSecurity as u32) << 24) | rid;
         let token = Token::new(token_value);
@@ -337,7 +336,7 @@ impl DeclSecurityBuilder {
             permission_set: permission_set_index,
         };
 
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::DeclSecurity,
             TableDataOwned::DeclSecurity(decl_security_raw),
         )
@@ -348,7 +347,7 @@ impl DeclSecurityBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
+        cilassembly::{ChangeRefKind, CilAssembly},
         metadata::{cilassemblyview::CilAssemblyView, security::SecurityAction},
     };
     use std::path::PathBuf;
@@ -357,29 +356,25 @@ mod tests {
     fn test_decl_security_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-
-            // Check existing DeclSecurity table count
-            let existing_count = assembly.original_table_row_count(TableId::DeclSecurity);
-            let expected_rid = existing_count + 1;
-
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Create a basic security declaration
             let method_ref =
                 CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity); // Method target
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04]; // Simple test blob
 
-            let token = DeclSecurityBuilder::new()
+            let security_ref = DeclSecurityBuilder::new()
                 .action(SecurityAction::Demand)
                 .parent(method_ref)
                 .permission_set(&permission_blob)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert!(token.is_table(TableId::DeclSecurity)); // DeclSecurity table prefix
-            assert_eq!(token.row(), expected_rid); // RID should be existing + 1
+            // Verify ref is created correctly
+            assert_eq!(
+                security_ref.kind(),
+                ChangeRefKind::TableRow(TableId::DeclSecurity)
+            );
         }
     }
 
@@ -387,8 +382,7 @@ mod tests {
     fn test_decl_security_builder_different_actions() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
 
@@ -410,15 +404,18 @@ mod tests {
                     CodedIndexType::HasDeclSecurity,
                 );
 
-                let token = DeclSecurityBuilder::new()
+                let security_ref = DeclSecurityBuilder::new()
                     .action(action)
                     .parent(parent)
                     .permission_set(&permission_blob)
-                    .build(&mut context)
+                    .build(&mut assembly)
                     .unwrap();
 
-                // All should succeed with DeclSecurity table prefix
-                assert!(token.is_table(TableId::DeclSecurity));
+                // All should succeed with DeclSecurity table kind
+                assert_eq!(
+                    security_ref.kind(),
+                    ChangeRefKind::TableRow(TableId::DeclSecurity)
+                );
             }
         }
     }
@@ -427,8 +424,7 @@ mod tests {
     fn test_decl_security_builder_different_parents() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
 
@@ -440,36 +436,54 @@ mod tests {
                 CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
 
             // Assembly security
-            let assembly_security = DeclSecurityBuilder::new()
+            let assembly_security_ref = DeclSecurityBuilder::new()
                 .action(SecurityAction::RequestMinimum)
                 .parent(assembly_parent)
                 .permission_set(&permission_blob)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Type security
-            let type_security = DeclSecurityBuilder::new()
+            let type_security_ref = DeclSecurityBuilder::new()
                 .action(SecurityAction::LinkDemand)
                 .parent(type_parent)
                 .permission_set(&permission_blob)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Method security
-            let method_security = DeclSecurityBuilder::new()
+            let method_security_ref = DeclSecurityBuilder::new()
                 .action(SecurityAction::Demand)
                 .parent(method_parent)
                 .permission_set(&permission_blob)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // All should succeed with different tokens
-            assert!(assembly_security.is_table(TableId::DeclSecurity));
-            assert!(type_security.is_table(TableId::DeclSecurity));
-            assert!(method_security.is_table(TableId::DeclSecurity));
-            assert_ne!(assembly_security.value(), type_security.value());
-            assert_ne!(assembly_security.value(), method_security.value());
-            assert_ne!(type_security.value(), method_security.value());
+            // All should succeed with correct kind
+            assert_eq!(
+                assembly_security_ref.kind(),
+                ChangeRefKind::TableRow(TableId::DeclSecurity)
+            );
+            assert_eq!(
+                type_security_ref.kind(),
+                ChangeRefKind::TableRow(TableId::DeclSecurity)
+            );
+            assert_eq!(
+                method_security_ref.kind(),
+                ChangeRefKind::TableRow(TableId::DeclSecurity)
+            );
+            assert!(!std::sync::Arc::ptr_eq(
+                &assembly_security_ref,
+                &type_security_ref
+            ));
+            assert!(!std::sync::Arc::ptr_eq(
+                &assembly_security_ref,
+                &method_security_ref
+            ));
+            assert!(!std::sync::Arc::ptr_eq(
+                &type_security_ref,
+                &method_security_ref
+            ));
         }
     }
 
@@ -477,23 +491,25 @@ mod tests {
     fn test_decl_security_builder_raw_action() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let parent_ref =
                 CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
 
             // Test setting action with raw u16 value
-            let token = DeclSecurityBuilder::new()
+            let security_ref = DeclSecurityBuilder::new()
                 .action_raw(0x0002) // Demand action as raw value
                 .parent(parent_ref)
                 .permission_set(&permission_blob)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Should succeed
-            assert!(token.is_table(TableId::DeclSecurity));
+            assert_eq!(
+                security_ref.kind(),
+                ChangeRefKind::TableRow(TableId::DeclSecurity)
+            );
         }
     }
 
@@ -501,21 +517,23 @@ mod tests {
     fn test_decl_security_builder_unrestricted_permission() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let parent_ref = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasDeclSecurity);
 
             // Test unrestricted permission set convenience method
-            let token = DeclSecurityBuilder::new()
+            let security_ref = DeclSecurityBuilder::new()
                 .action(SecurityAction::Assert)
                 .parent(parent_ref)
                 .unrestricted_permission_set()
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Should succeed
-            assert!(token.is_table(TableId::DeclSecurity));
+            assert_eq!(
+                security_ref.kind(),
+                ChangeRefKind::TableRow(TableId::DeclSecurity)
+            );
         }
     }
 
@@ -523,8 +541,7 @@ mod tests {
     fn test_decl_security_builder_missing_action() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let parent_ref =
                 CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
@@ -534,7 +551,7 @@ mod tests {
                 .parent(parent_ref)
                 .permission_set(&permission_blob)
                 // Missing action
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because action is required
             assert!(result.is_err());
@@ -545,8 +562,7 @@ mod tests {
     fn test_decl_security_builder_missing_parent() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let permission_blob = vec![0x01, 0x02, 0x03, 0x04];
 
@@ -554,7 +570,7 @@ mod tests {
                 .action(SecurityAction::Demand)
                 .permission_set(&permission_blob)
                 // Missing parent
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because parent is required
             assert!(result.is_err());
@@ -565,8 +581,7 @@ mod tests {
     fn test_decl_security_builder_missing_permission_set() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let parent_ref =
                 CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
@@ -575,7 +590,7 @@ mod tests {
                 .action(SecurityAction::Demand)
                 .parent(parent_ref)
                 // Missing permission_set
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because permission set is required
             assert!(result.is_err());
@@ -586,8 +601,7 @@ mod tests {
     fn test_decl_security_builder_empty_permission_set() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let parent_ref =
                 CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
@@ -597,7 +611,7 @@ mod tests {
                 .action(SecurityAction::Demand)
                 .parent(parent_ref)
                 .permission_set(&empty_blob)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because permission set cannot be empty
             assert!(result.is_err());
@@ -608,8 +622,7 @@ mod tests {
     fn test_decl_security_builder_invalid_parent_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Use a table type that's not valid for HasDeclSecurity
             let invalid_parent =
@@ -620,7 +633,7 @@ mod tests {
                 .action(SecurityAction::Demand)
                 .parent(invalid_parent)
                 .permission_set(&permission_blob)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because parent type is not valid for HasDeclSecurity
             assert!(result.is_err());
@@ -631,8 +644,7 @@ mod tests {
     fn test_decl_security_builder_zero_action() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let parent_ref =
                 CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
@@ -642,7 +654,7 @@ mod tests {
                 .action_raw(0) // Invalid zero action
                 .parent(parent_ref)
                 .permission_set(&permission_blob)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because action cannot be 0
             assert!(result.is_err());
@@ -669,8 +681,7 @@ mod tests {
     fn test_decl_security_builder_multiple_declarations() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let method_ref =
                 CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::HasDeclSecurity);
@@ -678,24 +689,33 @@ mod tests {
             let permission_blob2 = vec![0x05, 0x06, 0x07, 0x08]; // Second permission set
 
             // Create multiple security declarations for the same method
-            let demand_security = DeclSecurityBuilder::new()
+            let demand_security_ref = DeclSecurityBuilder::new()
                 .action(SecurityAction::Demand)
                 .parent(method_ref.clone())
                 .permission_set(&permission_blob1)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let assert_security = DeclSecurityBuilder::new()
+            let assert_security_ref = DeclSecurityBuilder::new()
                 .action(SecurityAction::Assert)
                 .parent(method_ref) // Same method, different action
                 .permission_set(&permission_blob2)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Both should succeed and have different RIDs
-            assert!(demand_security.is_table(TableId::DeclSecurity));
-            assert!(assert_security.is_table(TableId::DeclSecurity));
-            assert_ne!(demand_security.row(), assert_security.row());
+            // Both should succeed and be different refs
+            assert_eq!(
+                demand_security_ref.kind(),
+                ChangeRefKind::TableRow(TableId::DeclSecurity)
+            );
+            assert_eq!(
+                assert_security_ref.kind(),
+                ChangeRefKind::TableRow(TableId::DeclSecurity)
+            );
+            assert!(!std::sync::Arc::ptr_eq(
+                &demand_security_ref,
+                &assert_security_ref
+            ));
         }
     }
 
@@ -703,8 +723,7 @@ mod tests {
     fn test_decl_security_builder_realistic_scenario() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Realistic scenario: Secure file access method
             let file_method =
@@ -720,44 +739,62 @@ mod tests {
                 b'C', 0x00, b':', 0x00, b'\\', 0x00, b'*', 0x00, // C:\* in UTF-16
             ];
 
-            let file_security = DeclSecurityBuilder::new()
+            let file_security_ref = DeclSecurityBuilder::new()
                 .action(SecurityAction::Demand)
                 .parent(file_method)
                 .permission_set(&file_io_permission)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Assembly-level security request
             let assembly_ref =
                 CodedIndex::new(TableId::Assembly, 1, CodedIndexType::HasDeclSecurity);
 
-            let assembly_security = DeclSecurityBuilder::new()
+            let assembly_security_ref = DeclSecurityBuilder::new()
                 .action(SecurityAction::RequestMinimum)
                 .parent(assembly_ref)
                 .unrestricted_permission_set() // Full trust request
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Privileged method with assertion
             let privileged_method =
                 CodedIndex::new(TableId::MethodDef, 2, CodedIndexType::HasDeclSecurity);
 
-            let privilege_security = DeclSecurityBuilder::new()
+            let privilege_security_ref = DeclSecurityBuilder::new()
                 .action(SecurityAction::Assert)
                 .parent(privileged_method)
                 .unrestricted_permission_set()
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // All should succeed with proper tokens
-            assert!(file_security.is_table(TableId::DeclSecurity));
-            assert!(assembly_security.is_table(TableId::DeclSecurity));
-            assert!(privilege_security.is_table(TableId::DeclSecurity));
+            // All should succeed with proper kind
+            assert_eq!(
+                file_security_ref.kind(),
+                ChangeRefKind::TableRow(TableId::DeclSecurity)
+            );
+            assert_eq!(
+                assembly_security_ref.kind(),
+                ChangeRefKind::TableRow(TableId::DeclSecurity)
+            );
+            assert_eq!(
+                privilege_security_ref.kind(),
+                ChangeRefKind::TableRow(TableId::DeclSecurity)
+            );
 
-            // All should have different RIDs
-            assert_ne!(file_security.row(), assembly_security.row());
-            assert_ne!(file_security.row(), privilege_security.row());
-            assert_ne!(assembly_security.row(), privilege_security.row());
+            // All should be different refs
+            assert!(!std::sync::Arc::ptr_eq(
+                &file_security_ref,
+                &assembly_security_ref
+            ));
+            assert!(!std::sync::Arc::ptr_eq(
+                &file_security_ref,
+                &privilege_security_ref
+            ));
+            assert!(!std::sync::Arc::ptr_eq(
+                &assembly_security_ref,
+                &privilege_security_ref
+            ));
         }
     }
 }

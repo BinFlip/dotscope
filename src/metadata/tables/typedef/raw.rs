@@ -298,7 +298,7 @@ impl TypeDefRaw {
             None
         };
 
-        Ok(Arc::new(CilType::new(
+        let cil_type = Arc::new(CilType::new(
             self.token,
             strings.get(self.type_namespace as usize)?.to_string(),
             strings.get(self.type_name as usize)?.to_string(),
@@ -308,7 +308,21 @@ impl TypeDefRaw {
             type_fields,
             type_methods,
             None,
-        )))
+        ));
+
+        let type_ref = CilTypeRef::new(&cil_type);
+        for (_, field) in cil_type.fields.iter() {
+            // Ignore errors - OnceLock::set returns Err if already set
+            let _ = field.declaring_type.set(type_ref.clone());
+        }
+
+        for (_, method_ref) in cil_type.methods.iter() {
+            if let Some(method) = method_ref.upgrade() {
+                let _ = method.declaring_type.set(type_ref.clone());
+            }
+        }
+
+        Ok(cil_type)
     }
 
     /// Resolves and returns the base type reference for this TypeDef entry.

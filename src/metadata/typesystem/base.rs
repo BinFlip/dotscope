@@ -54,6 +54,7 @@
 //!
 //! // Create a 2D array type
 //! let array_type = CilFlavor::Array {
+//!     element_type: Box::new(CilFlavor::I4),
 //!     rank: 2,
 //!     dimensions: vec![
 //!         ArrayDimensions { size: Some(10), lower_bound: Some(0) },
@@ -82,6 +83,7 @@
 //! - [`crate::metadata::typesystem`] - Higher-level type system operations
 
 use std::{
+    fmt,
     hash::{Hash, Hasher},
     sync::Arc,
     sync::Weak,
@@ -90,7 +92,7 @@ use std::{
 use crate::{
     metadata::{
         method::MethodRef,
-        signatures::SignatureMethod,
+        signatures::{SignatureMethod, TypeSignature},
         tables::{
             AssemblyRc, AssemblyRefRc, DeclSecurityRc, EventRc, ExportedTypeRc, FieldRc, FileRc,
             GenericParamConstraintRc, GenericParamRc, InterfaceImplRc, MemberRefRc, MethodSpecList,
@@ -318,32 +320,6 @@ impl CilTypeRef {
     pub fn is_valid(&self) -> bool {
         self.weak_ref.strong_count() > 0
     }
-
-    // ─────────────────────────────────────────────────────────────────────────────
-    // Convenience Accessors
-    // ─────────────────────────────────────────────────────────────────────────────
-    //
-    // The following accessor methods provide convenient access to commonly-used
-    // type properties without requiring explicit weak reference management.
-    //
-    // ## Performance Considerations
-    //
-    // These methods upgrade the weak reference on each call and clone the returned
-    // value. For better performance when accessing multiple fields:
-    //
-    // ```rust,ignore
-    // // Preferred: Single upgrade, multiple field accesses
-    // if let Some(type_ref) = weak_ref.upgrade() {
-    //     let name = &type_ref.name;
-    //     let namespace = &type_ref.namespace;
-    //     let token = type_ref.token;
-    // }
-    //
-    // // Less efficient: Multiple upgrades and clones
-    // let name = weak_ref.name();       // upgrades + clones
-    // let namespace = weak_ref.namespace(); // upgrades + clones again
-    // ```
-    // ─────────────────────────────────────────────────────────────────────────────
 
     /// Gets the token of the referenced type, or [`None`] if dropped.
     ///
@@ -697,6 +673,40 @@ pub enum CilTypeReference {
     None,
 }
 
+impl CilTypeReference {
+    /// Returns the metadata token for this reference, if available.
+    ///
+    /// Extracts the token from the underlying reference type. Returns `None`
+    /// for the `None` variant or if the weak reference has been dropped.
+    #[must_use]
+    pub fn token(&self) -> Option<Token> {
+        match self {
+            Self::TypeRef(r) => r.token(),
+            Self::TypeDef(r) => r.token(),
+            Self::TypeSpec(r) => r.token(),
+            Self::Field(r) => Some(r.token),
+            Self::Param(r) => Some(r.token),
+            Self::Property(r) => Some(r.token),
+            Self::MethodDef(r) => r.token(),
+            Self::InterfaceImpl(r) => Some(r.token),
+            Self::MemberRef(r) => Some(r.token),
+            Self::Module(r) => Some(r.token),
+            Self::DeclSecurity(r) => Some(r.token),
+            Self::Event(r) => Some(r.token),
+            Self::StandAloneSig(r) => Some(r.token),
+            Self::ModuleRef(r) => Some(r.token),
+            Self::Assembly(r) => Some(r.token),
+            Self::AssemblyRef(r) => Some(r.token),
+            Self::File(r) => Some(r.token),
+            Self::ExportedType(r) => Some(r.token),
+            Self::GenericParam(r) => Some(r.token),
+            Self::GenericParamConstraint(r) => Some(r.token),
+            Self::MethodSpec(r) => Some(r.token),
+            Self::None => None,
+        }
+    }
+}
+
 /// Constants representing .NET metadata element types as defined in ECMA-335.
 ///
 /// These constants correspond to the element type values used in .NET metadata
@@ -909,6 +919,7 @@ pub struct CilModifier {
 ///
 /// // Array type
 /// let array_type = CilFlavor::Array {
+///     element_type: Box::new(CilFlavor::I4),
 ///     rank: 2,
 ///     dimensions: vec![
 ///         ArrayDimensions { size: Some(10), lower_bound: Some(0) },
@@ -932,12 +943,16 @@ pub struct CilModifier {
 /// # use dotscope::metadata::typesystem::CilFlavor;
 /// let byte_type = CilFlavor::U1;
 /// let int_type = CilFlavor::I4;
+/// let long_type = CilFlavor::I8;
 ///
 /// // Byte can be widened to int
 /// assert!(byte_type.is_compatible_with(&int_type));
 ///
-/// // But int cannot be assigned to byte
-/// assert!(!int_type.is_compatible_with(&byte_type));
+/// // I4 is compatible with smaller types for stack normalization (stelem.i1/i2)
+/// assert!(int_type.is_compatible_with(&byte_type));
+///
+/// // But I8 cannot be assigned to smaller non-64-bit types
+/// assert!(!long_type.is_compatible_with(&int_type));
 /// ```
 ///
 /// ## Thread Safety
@@ -989,6 +1004,8 @@ pub enum CilFlavor {
     // Complex types
     /// Multi-dimensional array type with configurable dimensions and bounds
     Array {
+        /// The element type of the array
+        element_type: Box<CilFlavor>,
         /// The rank (number of dimensions) of the array
         rank: u32,
         /// Details about each dimension including size and lower bounds
@@ -1022,6 +1039,11 @@ pub enum CilFlavor {
     ValueType,
     /// Interface type (contract definition)
     Interface,
+    /// Typed reference (System.TypedReference) - contains both a managed pointer and type info
+    TypedRef {
+        /// The type of the value being referenced (None if unknown at signature parse time)
+        target_type: Option<Box<CilFlavor>>,
+    },
 
     // Fallback
     /// Unknown or unsupported type
@@ -1035,7 +1057,12 @@ impl Hash for CilFlavor {
 
         // Hash the data for variants that have data
         match self {
-            CilFlavor::Array { rank, dimensions } => {
+            CilFlavor::Array {
+                element_type,
+                rank,
+                dimensions,
+            } => {
+                element_type.hash(state);
                 rank.hash(state);
                 dimensions.hash(state);
             }
@@ -1161,6 +1188,7 @@ impl CilFlavor {
     /// assert!(CilFlavor::Class.is_reference_type());
     ///
     /// let array_type = CilFlavor::Array {
+    ///     element_type: Box::new(CilFlavor::I4),
     ///     rank: 1,
     ///     dimensions: vec![ArrayDimensions::default()],
     /// };
@@ -1231,6 +1259,17 @@ impl CilFlavor {
         // Primitive widening rules
         #[allow(clippy::match_same_arms)]
         match (self, target) {
+            // Same-size signed/unsigned integers are storage-compatible
+            // (important for array element storage)
+            (CilFlavor::I1, CilFlavor::U1) | (CilFlavor::U1, CilFlavor::I1) => true,
+            (CilFlavor::I2, CilFlavor::U2) | (CilFlavor::U2, CilFlavor::I2) => true,
+            (CilFlavor::I4, CilFlavor::U4) | (CilFlavor::U4, CilFlavor::I4) => true,
+            (CilFlavor::I8, CilFlavor::U8) | (CilFlavor::U8, CilFlavor::I8) => true,
+
+            // Stack normalization: CIL stack uses I4/I8/F for all smaller types
+            // stelem.i1/i2 expect I4 on stack and truncate during store
+            (CilFlavor::I4, CilFlavor::I1 | CilFlavor::U1 | CilFlavor::I2 | CilFlavor::U2) => true,
+
             // Integer widening: smaller -> larger
             (CilFlavor::I1 | CilFlavor::U1, CilFlavor::I2 | CilFlavor::I4 | CilFlavor::I8) => true,
             (CilFlavor::I2, CilFlavor::I4 | CilFlavor::I8) => true,
@@ -1256,6 +1295,12 @@ impl CilFlavor {
 
             // All value types are compatible with ValueType
             (source, CilFlavor::ValueType) if source.is_value_type() => true,
+
+            // Generic type parameters - be permissive since we don't have runtime type
+            // substitution. This allows operations like unbox/castclass to succeed when
+            // the target is a generic method parameter (TM0, TM1, etc.)
+            (_, CilFlavor::GenericParameter { .. }) => true,
+            (CilFlavor::GenericParameter { .. }, _) => true,
 
             _ => false,
         }
@@ -1300,6 +1345,269 @@ impl CilFlavor {
             // Null constant to any reference type
             // Note: This would need special handling for null literals
             _ => false,
+        }
+    }
+
+    /// Check if a value of the given flavor is compatible for stack/local storage.
+    ///
+    /// This implements CIL stack normalization rules where smaller types widen
+    /// to larger stack types during emulation. Used for type checking in local
+    /// variables and arguments.
+    ///
+    /// # Arguments
+    /// * `value_flavor` - The flavor of the value being stored
+    ///
+    /// # Returns
+    /// `true` if a value of the given flavor can be stored in a slot of this type
+    #[must_use]
+    pub fn is_stack_assignable_from(&self, value_flavor: &CilFlavor) -> bool {
+        // Exact match is always allowed
+        if self == value_flavor {
+            return true;
+        }
+
+        match (self, value_flavor) {
+            // Small integers widen to I4 on the stack
+            (
+                CilFlavor::I1
+                | CilFlavor::U1
+                | CilFlavor::I2
+                | CilFlavor::U2
+                | CilFlavor::I4
+                | CilFlavor::U4
+                | CilFlavor::Boolean
+                | CilFlavor::Char,
+                CilFlavor::I4,
+            ) => true,
+
+            // Reference types are all compatible (null, objects)
+            (
+                CilFlavor::Object | CilFlavor::String | CilFlavor::Class | CilFlavor::Interface,
+                CilFlavor::Object,
+            ) => true,
+            (CilFlavor::Object, CilFlavor::String | CilFlavor::Class | CilFlavor::Interface) => {
+                true
+            }
+
+            // Managed pointer compatible with reference for analysis
+            (CilFlavor::ByRef, CilFlavor::Object) => true,
+            (CilFlavor::Object, CilFlavor::ByRef) => true,
+
+            // Arrays are objects - Object can be stored in array slots (untyped arrays)
+            // and arrays can be stored in Object slots (polymorphism)
+            (CilFlavor::Array { .. }, CilFlavor::Object) => true,
+            (CilFlavor::Object, CilFlavor::Array { .. }) => true,
+
+            // Unmanaged pointer compatible with native integers (IntPtr/UIntPtr)
+            // This is common in low-level code and P/Invoke scenarios
+            (CilFlavor::Pointer, CilFlavor::I | CilFlavor::U) => true,
+            (CilFlavor::I | CilFlavor::U, CilFlavor::Pointer) => true,
+
+            // Native integers are compatible with each other (sign doesn't matter for storage)
+            (CilFlavor::I, CilFlavor::U) => true,
+            (CilFlavor::U, CilFlavor::I) => true,
+
+            // Generic type parameters are compatible with any type since we don't have
+            // runtime type substitution. This allows storing values in locals typed as
+            // generic method parameters (TM0, TM1, etc.)
+            (CilFlavor::GenericParameter { .. }, _) => true,
+            (_, CilFlavor::GenericParameter { .. }) => true,
+
+            _ => false,
+        }
+    }
+
+    /// Returns a static string representation of this CIL flavor.
+    ///
+    /// This is useful for error messages and diagnostics.
+    #[must_use]
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            CilFlavor::Void => "void",
+            CilFlavor::Boolean => "bool",
+            CilFlavor::Char => "char",
+            CilFlavor::I1 => "int8",
+            CilFlavor::U1 => "uint8",
+            CilFlavor::I2 => "int16",
+            CilFlavor::U2 => "uint16",
+            CilFlavor::I4 => "int32",
+            CilFlavor::U4 => "uint32",
+            CilFlavor::I8 => "int64",
+            CilFlavor::U8 => "uint64",
+            CilFlavor::R4 => "float32",
+            CilFlavor::R8 => "float64",
+            CilFlavor::I => "native int",
+            CilFlavor::U => "native uint",
+            CilFlavor::Object => "object",
+            CilFlavor::String => "string",
+            CilFlavor::Pointer => "ptr",
+            CilFlavor::ByRef => "byref",
+            CilFlavor::ValueType => "valuetype",
+            CilFlavor::Class => "class",
+            CilFlavor::Interface => "interface",
+            CilFlavor::Array { .. } => "array",
+            CilFlavor::GenericInstance => "generic",
+            CilFlavor::GenericParameter { .. } => "typeparam",
+            CilFlavor::TypedRef { .. } => "typedref",
+            CilFlavor::FnPtr { .. } => "fnptr",
+            CilFlavor::Pinned => "pinned",
+            CilFlavor::Unknown => "unknown",
+        }
+    }
+
+    /// Returns the size in bytes of a single element of this type flavor.
+    ///
+    /// This is used for array initialization to determine how many bytes to read
+    /// from the PE file for each array element.
+    ///
+    /// # Returns
+    ///
+    /// The size in bytes, or `None` for types without a fixed size (objects, arrays, etc.)
+    #[must_use]
+    pub fn element_size(&self) -> Option<usize> {
+        match self {
+            CilFlavor::Boolean | CilFlavor::I1 | CilFlavor::U1 => Some(1),
+            CilFlavor::Char | CilFlavor::I2 | CilFlavor::U2 => Some(2),
+            CilFlavor::I4 | CilFlavor::U4 | CilFlavor::R4 => Some(4),
+            CilFlavor::I8 | CilFlavor::U8 | CilFlavor::R8 => Some(8),
+            // Native int/uint are pointer-sized; assume 8 bytes for 64-bit
+            CilFlavor::I | CilFlavor::U => Some(8),
+            // Reference types and complex types don't have a fixed byte size
+            _ => None,
+        }
+    }
+}
+
+impl fmt::Display for CilFlavor {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.as_str())
+    }
+}
+
+/// Converts a type signature to the corresponding CIL flavor.
+///
+/// This implementation maps metadata type signatures to their runtime type flavors,
+/// enabling type-aware emulation and analysis. The conversion follows ECMA-335 type
+/// semantics.
+impl From<&TypeSignature> for CilFlavor {
+    fn from(sig: &TypeSignature) -> Self {
+        match sig {
+            // Fallback/unknown
+            TypeSignature::Unknown => CilFlavor::Unknown,
+
+            // Void
+            TypeSignature::Void => CilFlavor::Void,
+
+            // Primitive types
+            TypeSignature::Boolean => CilFlavor::Boolean,
+            TypeSignature::Char => CilFlavor::Char,
+            TypeSignature::I1 => CilFlavor::I1,
+            TypeSignature::U1 => CilFlavor::U1,
+            TypeSignature::I2 => CilFlavor::I2,
+            TypeSignature::U2 => CilFlavor::U2,
+            TypeSignature::I4 => CilFlavor::I4,
+            TypeSignature::U4 => CilFlavor::U4,
+            TypeSignature::I8 => CilFlavor::I8,
+            TypeSignature::U8 => CilFlavor::U8,
+            TypeSignature::R4 => CilFlavor::R4,
+            TypeSignature::R8 => CilFlavor::R8,
+            TypeSignature::I => CilFlavor::I,
+            TypeSignature::U => CilFlavor::U,
+
+            // Reference types
+            TypeSignature::String => CilFlavor::String,
+            TypeSignature::Object => CilFlavor::Object,
+            TypeSignature::Class(_) => CilFlavor::Class,
+            TypeSignature::ValueType(_) => CilFlavor::ValueType,
+
+            // Pointer and reference types
+            TypeSignature::Ptr(_) => CilFlavor::Pointer,
+            TypeSignature::ByRef(_) => CilFlavor::ByRef,
+
+            // Special types - TypedByRef doesn't carry target type info in signature
+            TypeSignature::TypedByRef => CilFlavor::TypedRef { target_type: None },
+
+            // Function pointer - carry the full signature
+            TypeSignature::FnPtr(method_sig) => CilFlavor::FnPtr {
+                signature: (**method_sig).clone(),
+            },
+
+            // Single-dimensional zero-based array
+            TypeSignature::SzArray(sz_arr) => CilFlavor::Array {
+                element_type: Box::new(CilFlavor::from(sz_arr.base.as_ref())),
+                rank: 1,
+                dimensions: vec![],
+            },
+
+            // Multi-dimensional array with dimensions
+            TypeSignature::Array(arr) => CilFlavor::Array {
+                element_type: Box::new(CilFlavor::from(arr.base.as_ref())),
+                rank: arr.rank,
+                dimensions: arr
+                    .dimensions
+                    .iter()
+                    .map(|dim| ArrayDimensions {
+                        size: dim.size,
+                        lower_bound: dim.lower_bound,
+                    })
+                    .collect(),
+            },
+
+            // Generic instantiation
+            TypeSignature::GenericInst(_, _) => CilFlavor::GenericInstance,
+
+            // Generic type parameter (from enclosing type)
+            TypeSignature::GenericParamType(index) => CilFlavor::GenericParameter {
+                method: false,
+                index: *index,
+            },
+
+            // Generic method parameter (from enclosing method)
+            TypeSignature::GenericParamMethod(index) => CilFlavor::GenericParameter {
+                method: true,
+                index: *index,
+            },
+
+            // Pinned type - recurse to get the underlying flavor, then wrap
+            TypeSignature::Pinned(inner) => {
+                // For pinned types, we preserve the inner type's flavor but mark as pinned
+                // The CilFlavor::Pinned variant exists for this purpose
+                let inner_flavor = CilFlavor::from(inner.as_ref());
+                // If the inner is already a simple type, we could just return Pinned
+                // But since we want to preserve semantics, we return the inner flavor
+                // The pinned nature is more about memory management than type identity
+                match inner_flavor {
+                    CilFlavor::Unknown => CilFlavor::Pinned,
+                    _ => inner_flavor,
+                }
+            }
+
+            // Custom modifiers - these don't carry the base type, just modifier metadata
+            // They appear in signature parsing context where the actual type comes separately
+            TypeSignature::ModifiedRequired(_) | TypeSignature::ModifiedOptional(_) => {
+                CilFlavor::Unknown
+            }
+
+            // Sentinel marks the boundary between fixed and variable args in vararg calls
+            TypeSignature::Sentinel => CilFlavor::Void,
+
+            // Internal CLI types - implementation details
+            TypeSignature::Internal => CilFlavor::Unknown,
+
+            // Modifier marker in signature encoding
+            TypeSignature::Modifier => CilFlavor::Unknown,
+
+            // System.Type in custom attributes
+            TypeSignature::Type => CilFlavor::Class,
+
+            // Boxed value type
+            TypeSignature::Boxed => CilFlavor::Object,
+
+            // Reserved for future use
+            TypeSignature::Reserved => CilFlavor::Unknown,
+
+            // Field signature marker
+            TypeSignature::Field => CilFlavor::Unknown,
         }
     }
 }

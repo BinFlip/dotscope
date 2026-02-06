@@ -33,14 +33,24 @@
 //! All types in this module are `Send` and `Sync` when their generic parameters
 //! (if any) are also `Send` and `Sync`.
 
-use std::fmt;
+use std::{
+    fmt,
+    sync::atomic::{AtomicUsize, Ordering},
+};
 
 use crate::analysis::ssa::SsaType;
+
+/// Global counter for generating unique SSA variable IDs.
+///
+/// This ensures every `SsaVarId::next()` call returns a globally unique ID,
+/// preventing collisions between different phases of SSA construction
+/// (simulation, phi placement, renaming) and across different functions.
+static NEXT_SSA_VAR_ID: AtomicUsize = AtomicUsize::new(0);
 
 /// Unique identifier for an SSA variable.
 ///
 /// This is a lightweight handle into the variable table, providing O(1) access
-/// to variable metadata. The identifier is unique within a single [`SsaFunction`]
+/// to variable metadata. The identifier is unique within a single [`SsaFunction`](crate::analysis::SsaFunction)
 /// but not globally unique across functions.
 ///
 /// # Memory Layout
@@ -50,39 +60,69 @@ use crate::analysis::ssa::SsaType;
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::analysis::ssa::SsaVarId;
+/// ```rust,no_run
+/// use dotscope::analysis::SsaVarId;
 ///
-/// let var_id = SsaVarId::new(0);
-/// assert_eq!(var_id.index(), 0);
+/// let var_id = SsaVarId::new();
+/// println!("Variable index: {}", var_id.index());
 /// ```
-#[derive(Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash, Default)]
 pub struct SsaVarId(usize);
 
 impl SsaVarId {
-    /// Creates a new SSA variable identifier.
+    /// Allocates a new unique SSA variable ID.
     ///
-    /// # Arguments
+    /// Uses a global atomic counter to ensure every ID is unique across all
+    /// SSA construction phases and functions. This prevents ID collisions
+    /// between simulation and rename phases.
     ///
-    /// * `index` - The index into the variable table
+    /// # Thread Safety
+    ///
+    /// This method is thread-safe and can be called concurrently from multiple threads.
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::analysis::ssa::SsaVarId;
+    /// ```rust,no_run
+    /// use dotscope::analysis::SsaVarId;
     ///
-    /// let id = SsaVarId::new(42);
-    /// assert_eq!(id.index(), 42);
+    /// let id1 = SsaVarId::new();
+    /// let id2 = SsaVarId::new();
+    /// assert_ne!(id1, id2); // IDs are always unique
     /// ```
     #[must_use]
-    pub const fn new(index: usize) -> Self {
+    pub fn new() -> Self {
+        Self(NEXT_SSA_VAR_ID.fetch_add(1, Ordering::Relaxed))
+    }
+
+    /// Reconstructs an `SsaVarId` from a stored index.
+    ///
+    /// This does NOT allocate a new ID - it wraps an existing index value.
+    /// Use this when you have stored an ID's index (e.g., in a BitSet) and
+    /// need to convert it back to an `SsaVarId`.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - A previously stored index from [`SsaVarId::index()`]
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::analysis::SsaVarId;
+    ///
+    /// let id = SsaVarId::new();
+    /// let stored = id.index();
+    /// let reconstructed = SsaVarId::from_index(stored);
+    /// assert_eq!(id, reconstructed);
+    /// ```
+    #[must_use]
+    pub const fn from_index(index: usize) -> Self {
         Self(index)
     }
 
     /// Returns the underlying index.
     ///
-    /// This index can be used to look up the variable's metadata in the
-    /// variable table of an [`SsaFunction`].
+    /// Note: This index is globally unique but NOT necessarily contiguous
+    /// within a single function. Do not use this for indexing into arrays.
     #[must_use]
     pub const fn index(self) -> usize {
         self.0
@@ -117,15 +157,15 @@ impl fmt::Display for SsaVarId {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::analysis::ssa::VariableOrigin;
+/// ```rust,no_run
+/// use dotscope::analysis::VariableOrigin;
 ///
 /// let arg_origin = VariableOrigin::Argument(0);  // First method argument
 /// let local_origin = VariableOrigin::Local(2);   // Third local variable
 /// let stack_origin = VariableOrigin::Stack(5);   // Stack temporary
 /// let phi_origin = VariableOrigin::Phi;          // From phi node
 /// ```
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum VariableOrigin {
     /// Method argument (parameter).
     ///
@@ -306,11 +346,10 @@ impl UseSite {
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::analysis::ssa::{SsaVariable, SsaVarId, VariableOrigin, DefSite, SsaType};
+/// ```rust,no_run
+/// use dotscope::analysis::{SsaVariable, VariableOrigin, DefSite, SsaType};
 ///
 /// let var = SsaVariable::new(
-///     SsaVarId::new(0),
 ///     VariableOrigin::Argument(0),
 ///     0, // version
 ///     DefSite::phi(0), // defined at entry of block 0
@@ -318,7 +357,6 @@ impl UseSite {
 ///
 /// // With type information
 /// let typed_var = SsaVariable::new_typed(
-///     SsaVarId::new(1),
 ///     VariableOrigin::Local(0),
 ///     0,
 ///     DefSite::instruction(0, 0),
@@ -366,14 +404,44 @@ pub struct SsaVariable {
 impl SsaVariable {
     /// Creates a new SSA variable with unknown type.
     ///
+    /// The variable ID is automatically allocated from the global counter.
+    ///
     /// # Arguments
     ///
-    /// * `id` - Unique identifier for this variable
     /// * `origin` - Where this variable came from in the CIL
     /// * `version` - SSA version number
     /// * `def_site` - Where this variable is defined
     #[must_use]
-    pub fn new(id: SsaVarId, origin: VariableOrigin, version: u32, def_site: DefSite) -> Self {
+    pub fn new(origin: VariableOrigin, version: u32, def_site: DefSite) -> Self {
+        Self {
+            id: SsaVarId::new(),
+            origin,
+            version,
+            def_site,
+            var_type: SsaType::Unknown,
+            uses: Vec::new(),
+            address_taken: false,
+        }
+    }
+
+    /// Creates a new SSA variable with a specific ID and unknown type.
+    ///
+    /// This constructor is used when the ID has been pre-allocated
+    /// (e.g., during block duplication with variable remapping).
+    ///
+    /// # Arguments
+    ///
+    /// * `id` - The pre-allocated variable ID
+    /// * `origin` - Where this variable came from in the CIL
+    /// * `version` - SSA version number
+    /// * `def_site` - Where this variable is defined
+    #[must_use]
+    pub fn new_with_id(
+        id: SsaVarId,
+        origin: VariableOrigin,
+        version: u32,
+        def_site: DefSite,
+    ) -> Self {
         Self {
             id,
             origin,
@@ -385,17 +453,20 @@ impl SsaVariable {
         }
     }
 
-    /// Creates a new SSA variable with a known type.
+    /// Creates a new SSA variable with a specific ID and type.
+    ///
+    /// This constructor is used when cloning variables during block duplication,
+    /// preserving both the pre-allocated ID and the original type.
     ///
     /// # Arguments
     ///
-    /// * `id` - Unique identifier for this variable
+    /// * `id` - The pre-allocated variable ID
     /// * `origin` - Where this variable came from in the CIL
     /// * `version` - SSA version number
     /// * `def_site` - Where this variable is defined
     /// * `var_type` - The type of this variable
     #[must_use]
-    pub fn new_typed(
+    pub fn new_with_id_typed(
         id: SsaVarId,
         origin: VariableOrigin,
         version: u32,
@@ -404,6 +475,34 @@ impl SsaVariable {
     ) -> Self {
         Self {
             id,
+            origin,
+            version,
+            def_site,
+            var_type,
+            uses: Vec::new(),
+            address_taken: false,
+        }
+    }
+
+    /// Creates a new SSA variable with a known type.
+    ///
+    /// The variable ID is automatically allocated from the global counter.
+    ///
+    /// # Arguments
+    ///
+    /// * `origin` - Where this variable came from in the CIL
+    /// * `version` - SSA version number
+    /// * `def_site` - Where this variable is defined
+    /// * `var_type` - The type of this variable
+    #[must_use]
+    pub fn new_typed(
+        origin: VariableOrigin,
+        version: u32,
+        def_site: DefSite,
+        var_type: SsaType,
+    ) -> Self {
+        Self {
+            id: SsaVarId::new(),
             origin,
             version,
             def_site,
@@ -488,9 +587,25 @@ impl SsaVariable {
         self.uses.push(use_site);
     }
 
+    /// Clears all use sites for this variable.
+    ///
+    /// This is used when recomputing use information after SSA transformations
+    /// that may have invalidated the use tracking.
+    pub fn clear_uses(&mut self) {
+        self.uses.clear();
+    }
+
     /// Marks this variable as having its address taken.
     pub fn set_address_taken(&mut self) {
         self.address_taken = true;
+    }
+
+    /// Sets the origin of this variable.
+    ///
+    /// This is used during local variable optimization to update indices
+    /// after unused locals are removed.
+    pub fn set_origin(&mut self, origin: VariableOrigin) {
+        self.origin = origin;
     }
 }
 
@@ -506,22 +621,23 @@ mod tests {
 
     #[test]
     fn test_ssa_var_id_creation() {
-        let id = SsaVarId::new(42);
+        let id = SsaVarId::from_index(42);
         assert_eq!(id.index(), 42);
     }
 
     #[test]
     fn test_ssa_var_id_display() {
-        let id = SsaVarId::new(5);
-        assert_eq!(format!("{id}"), "v5");
-        assert_eq!(format!("{id:?}"), "v5");
+        let id = SsaVarId::new();
+        let expected = format!("v{}", id.index());
+        assert_eq!(format!("{id}"), expected);
+        assert_eq!(format!("{id:?}"), expected);
     }
 
     #[test]
     fn test_ssa_var_id_equality() {
-        let id1 = SsaVarId::new(10);
-        let id2 = SsaVarId::new(10);
-        let id3 = SsaVarId::new(20);
+        let id1 = SsaVarId::from_index(10);
+        let id2 = SsaVarId::from_index(10);
+        let id3 = SsaVarId::from_index(20);
 
         assert_eq!(id1, id2);
         assert_ne!(id1, id3);
@@ -605,14 +721,9 @@ mod tests {
 
     #[test]
     fn test_ssa_variable_creation() {
-        let var = SsaVariable::new(
-            SsaVarId::new(0),
-            VariableOrigin::Argument(0),
-            0,
-            DefSite::phi(0),
-        );
+        let var = SsaVariable::new(VariableOrigin::Argument(0), 0, DefSite::phi(0));
 
-        assert_eq!(var.id(), SsaVarId::new(0));
+        // ID is now auto-allocated
         assert_eq!(var.origin(), VariableOrigin::Argument(0));
         assert_eq!(var.version(), 0);
         assert!(var.def_site().is_phi());
@@ -623,12 +734,7 @@ mod tests {
 
     #[test]
     fn test_ssa_variable_add_use() {
-        let mut var = SsaVariable::new(
-            SsaVarId::new(1),
-            VariableOrigin::Local(0),
-            1,
-            DefSite::instruction(0, 0),
-        );
+        let mut var = SsaVariable::new(VariableOrigin::Local(0), 1, DefSite::instruction(0, 0));
 
         assert!(var.is_dead());
 
@@ -641,12 +747,7 @@ mod tests {
 
     #[test]
     fn test_ssa_variable_address_taken() {
-        let mut var = SsaVariable::new(
-            SsaVarId::new(2),
-            VariableOrigin::Local(1),
-            0,
-            DefSite::phi(0),
-        );
+        let mut var = SsaVariable::new(VariableOrigin::Local(1), 0, DefSite::phi(0));
 
         assert!(!var.is_address_taken());
         var.set_address_taken();
@@ -655,20 +756,10 @@ mod tests {
 
     #[test]
     fn test_ssa_variable_display() {
-        let var = SsaVariable::new(
-            SsaVarId::new(0),
-            VariableOrigin::Argument(2),
-            3,
-            DefSite::phi(0),
-        );
+        let var = SsaVariable::new(VariableOrigin::Argument(2), 3, DefSite::phi(0));
         assert_eq!(format!("{var}"), "arg2_3");
 
-        let var2 = SsaVariable::new(
-            SsaVarId::new(1),
-            VariableOrigin::Local(0),
-            1,
-            DefSite::instruction(1, 2),
-        );
+        let var2 = SsaVariable::new(VariableOrigin::Local(0), 1, DefSite::instruction(1, 2));
         assert_eq!(format!("{var2}"), "loc0_1");
     }
 }

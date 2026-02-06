@@ -32,7 +32,8 @@
 //!
 //! let result = ValidationResult::from_named_results(
 //!     validator_results,
-//!     Duration::from_millis(100)
+//!     Duration::from_millis(100),
+//!     None
 //! );
 //!
 //! if result.is_failure() {
@@ -56,8 +57,11 @@
 //! - [`crate::metadata::validation::traits`] - Validators return [`crate::Result`] converted to outcomes
 //! - [`crate::Error`] - Error types used in failed validation outcomes
 
-use crate::{Error, Result};
-use std::{fmt, time::Duration};
+use crate::{
+    metadata::diagnostics::{DiagnosticCategory, Diagnostics},
+    Error, Result,
+};
+use std::{fmt, sync::Arc, time::Duration};
 
 /// Represents the outcome of a validation operation.
 ///
@@ -177,14 +181,60 @@ impl ValidationResult {
     /// This variant allows associating validator names with their results for
     /// better error reporting and debugging.
     ///
+    /// When diagnostics is provided (lenient mode), validation failures are logged
+    /// as warnings to the diagnostics system instead of failing the validation. This
+    /// allows analysis to continue even with validation errors, which is useful for
+    /// obfuscated or malformed assemblies.
+    ///
     /// # Arguments
     ///
     /// * `named_results` - Pairs of (validator_name, result)
     /// * `duration` - Total time spent on validation
+    /// * `diagnostics` - Optional diagnostics container. If `Some`, enables lenient mode where
+    ///   failures are logged as warnings. If `None`, failures cause validation to fail (strict mode).
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::metadata::validation::ValidationResult;
+    /// use dotscope::metadata::diagnostics::Diagnostics;
+    /// use dotscope::{Result, Error};
+    /// use std::sync::Arc;
+    /// use std::time::Duration;
+    ///
+    /// let results = vec![
+    ///     ("Validator1", Ok(())),
+    ///     ("Validator2", Err(Error::NotSupported)),
+    /// ];
+    ///
+    /// // Strict mode (no diagnostics)
+    /// let result = ValidationResult::from_named_results(
+    ///     results.clone(),
+    ///     Duration::from_millis(100),
+    ///     None
+    /// );
+    /// assert!(result.is_failure());
+    ///
+    /// // Lenient mode (with diagnostics)
+    /// let diagnostics = Arc::new(Diagnostics::new());
+    /// let result = ValidationResult::from_named_results(
+    ///     results,
+    ///     Duration::from_millis(100),
+    ///     Some(&diagnostics)
+    /// );
+    /// assert!(result.is_success()); // Still succeeds in lenient mode
+    /// assert_eq!(diagnostics.warnings().len(), 1); // Failure logged as warning
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
     #[must_use]
-    pub fn from_named_results(named_results: Vec<(&str, Result<()>)>, duration: Duration) -> Self {
+    pub fn from_named_results(
+        named_results: Vec<(&str, Result<()>)>,
+        duration: Duration,
+        diagnostics: Option<&Arc<Diagnostics>>,
+    ) -> Self {
         let mut outcomes = Vec::with_capacity(named_results.len());
         let mut success = true;
+        let lenient = diagnostics.is_some();
 
         for (name, result) in named_results {
             match result {
@@ -192,8 +242,18 @@ impl ValidationResult {
                     outcomes.push(ValidationOutcome::success(name.to_string()));
                 }
                 Err(error) => {
-                    success = false;
-                    outcomes.push(ValidationOutcome::failure(name.to_string(), error));
+                    if lenient {
+                        if let Some(diag) = diagnostics {
+                            diag.warning(
+                                DiagnosticCategory::Validation,
+                                format!("Validation failed in {}: {}", name, error),
+                            );
+                        }
+                        outcomes.push(ValidationOutcome::success(name.to_string()));
+                    } else {
+                        success = false;
+                        outcomes.push(ValidationOutcome::failure(name.to_string(), error));
+                    }
                 }
             }
         }
@@ -702,7 +762,7 @@ mod tests {
         ];
 
         let validation_result =
-            ValidationResult::from_named_results(results, Duration::from_millis(50));
+            ValidationResult::from_named_results(results, Duration::from_millis(50), None);
 
         assert!(!validation_result.is_success());
         assert_eq!(validation_result.validator_count(), 2);

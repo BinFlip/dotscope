@@ -39,7 +39,7 @@
 
 use crate::{
     metadata::{
-        tables::{AssemblyProcessorRaw, RowReadable, TableInfoRef},
+        tables::{AssemblyProcessorRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::read_le_at,
@@ -47,6 +47,8 @@ use crate::{
 };
 
 impl RowReadable for AssemblyProcessorRaw {
+    const TABLE_ID: TableId = TableId::AssemblyProcessor;
+
     /// Read and parse an `AssemblyProcessor` table row from binary data
     ///
     /// Deserializes one `AssemblyProcessor` table entry from the metadata tables stream.

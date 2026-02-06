@@ -30,7 +30,7 @@ use crate::{Error, Result};
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::marshalling::NATIVE_TYPE;
 ///
 /// // Simple types have no additional parameters
@@ -158,7 +158,7 @@ pub mod NATIVE_TYPE {
 ///
 /// When marshalling safe arrays, the VARTYPE specifies the element type:
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::marshalling::VARIANT_TYPE;
 ///
 /// // Safe array of 32-bit integers
@@ -293,7 +293,9 @@ pub mod VARIANT_TYPE {
 /// # Usage Patterns
 ///
 /// Most marshalling descriptors contain only a primary type:
-/// ```rust,ignore
+/// ```rust,no_run
+/// use dotscope::metadata::marshalling::{MarshallingInfo, NativeType};
+///
 /// // Simple LPSTR marshalling
 /// let descriptor = MarshallingInfo {
 ///     primary_type: NativeType::LPStr { size_param_index: None },
@@ -313,9 +315,12 @@ pub mod VARIANT_TYPE {
 /// # Parsing
 ///
 /// Use [`crate::metadata::marshalling::parse_marshalling_descriptor`] to parse from binary format:
-/// ```rust,ignore
+/// ```rust,no_run
+/// use dotscope::metadata::marshalling::{parse_marshalling_descriptor, NATIVE_TYPE};
+///
 /// let bytes = &[NATIVE_TYPE::LPSTR, 0x05]; // LPSTR with size param 5
 /// let info = parse_marshalling_descriptor(bytes)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, PartialEq, Clone)]
 pub struct MarshallingInfo {
@@ -365,7 +370,7 @@ impl MarshallingInfo {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::marshalling::{MarshallingInfo, NativeType};
     ///
     /// // Valid: both parameters set
@@ -518,7 +523,7 @@ impl MarshallingInfo {
 ///
 /// # Usage Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::marshalling::NativeType;
 ///
 /// // Simple string marshalling
@@ -869,7 +874,7 @@ impl NativeType {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::marshalling::NativeType;
     ///
     /// // Simple types have no parameters

@@ -380,9 +380,16 @@ impl ValidationEngine {
         // Convert to named results for better error reporting
         let named_results: Vec<(&str, Result<()>)> = results.into_iter().collect();
 
+        let diagnostics = if self.config.lenient {
+            Some(view.diagnostics())
+        } else {
+            None
+        };
+
         Ok(ValidationResult::from_named_results(
             named_results,
             duration,
+            diagnostics,
         ))
     }
 
@@ -441,9 +448,16 @@ impl ValidationEngine {
         // Convert to named results for comprehensive error collection
         let named_results: Vec<(&str, Result<()>)> = results.into_iter().collect();
 
+        let diagnostics = if self.config.lenient {
+            Some(object.diagnostics())
+        } else {
+            None
+        };
+
         Ok(ValidationResult::from_named_results(
             named_results,
             duration,
+            diagnostics,
         ))
     }
 

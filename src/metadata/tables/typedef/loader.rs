@@ -52,6 +52,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{TableId, TypeDefRaw},
         typesystem::CilTypeReference,
@@ -117,32 +118,43 @@ impl MetadataLoader for TypeDefLoader {
     /// * `Ok(())` - All type definitions loaded and validated successfully
     /// * `Err(_)` - Type loading or validation failed
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<TypeDefRaw>() {
-                let current_assembly_ref = context
-                    .assembly
-                    .get()
-                    .map(|assembly| CilTypeReference::Assembly(assembly.clone()));
+        let (Some(header), Some(strings)) = (context.meta, context.strings) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<TypeDefRaw>() else {
+            return Ok(());
+        };
 
-                table.par_iter().try_for_each(|row| -> Result<()> {
-                    let type_def = row.to_owned(
-                        |coded_index| context.get_ref(coded_index),
-                        strings,
-                        &context.field,
-                        &context.field_ptr,
-                        context.method_def,
-                        &context.method_ptr,
-                        table,
-                        false, // Skip base type resolution - handled by InheritanceResolver
-                        current_assembly_ref.clone(),
-                    )?;
+        let current_assembly_ref = context
+            .assembly
+            .get()
+            .map(|assembly| CilTypeReference::Assembly(assembly.clone()));
 
-                    context.types.insert(&type_def);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("type 0x{:08x}", row.token.value());
+
+            let Some(type_def) = context.handle_result(
+                row.to_owned(
+                    |coded_index| context.get_ref(coded_index),
+                    strings,
+                    &context.field,
+                    &context.field_ptr,
+                    context.method_def,
+                    &context.method_ptr,
+                    table,
+                    false, // Skip base type resolution - handled by InheritanceResolver
+                    current_assembly_ref.clone(),
+                ),
+                DiagnosticCategory::Type,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.types.insert(&type_def);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for the `TypeDef` table.

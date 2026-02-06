@@ -73,7 +73,7 @@
 //!         Some(name) => println!("Export: {} @ ordinal {}", name, function.ordinal),
 //!         None => println!("Export: ordinal {} only", function.ordinal),
 //!     }
-//!     
+//!
 //!     if function.is_forwarder() {
 //!         println!("  Forwarded to: {}", function.get_forwarder_target().unwrap());
 //!     } else {
@@ -84,8 +84,8 @@
 //!
 //! ## Create Export Table
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::exports::native::NativeExports;
+//! ```rust,no_run
+//! use dotscope::metadata::exports::NativeExports;
 //!
 //! let mut exports = NativeExports::new("MyLibrary.dll");
 //!
@@ -99,7 +99,8 @@
 //! exports.add_forwarder("ForwardedFunc", 3, "Other.dll.TargetFunc")?;
 //!
 //! // Generate export table data
-//! let export_data = exports.get_export_table_data();
+//! let export_data = exports.get_export_table_data()?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
 //! # Thread Safety
@@ -119,7 +120,7 @@ use std::collections::HashMap;
 
 use crate::{
     file::pe::Export,
-    utils::{write_le_at, write_string_at},
+    utils::{to_u32, write_le_at, write_string_at},
     Result,
 };
 
@@ -137,8 +138,8 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::exports::native::NativeExports;
+/// ```rust,no_run
+/// use dotscope::metadata::exports::NativeExports;
 ///
 /// let mut exports = NativeExports::new("MyLibrary.dll");
 ///
@@ -146,7 +147,7 @@ use crate::{
 /// exports.add_function("MyFunction", 1, 0x1000)?;
 ///
 /// // Generate export table
-/// let table_data = exports.get_export_table_data();
+/// let table_data = exports.get_export_table_data()?;
 /// println!("Export table size: {} bytes", table_data.len());
 /// # Ok::<(), dotscope::Error>(())
 /// ```
@@ -315,9 +316,8 @@ impl NativeExports {
     ///     },
     /// ];
     ///
-    /// let native_exports = NativeExports::from_pe_exports(&pe_exports)?;
+    /// let native_exports = NativeExports::from_pe_exports(&pe_exports).unwrap();
     /// assert!(!native_exports.is_empty());
-    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_pe_exports(pe_exports: &[Export]) -> Result<Self> {
         let mut exports = Self::new(""); // DLL name will be set from first export
@@ -362,7 +362,7 @@ impl NativeExports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::NativeExports;
     ///
     /// let mut exports = NativeExports::new("MyLibrary.dll");
@@ -381,7 +381,6 @@ impl NativeExports {
     /// - The ordinal is already in use
     /// - The function name is already exported
     /// - The ordinal is 0 (invalid)
-    #[allow(clippy::cast_possible_truncation)]
     pub fn add_function(&mut self, name: &str, ordinal: u16, address: u32) -> Result<()> {
         if name.is_empty() {
             return Err(malformed_error!("Function name cannot be empty"));
@@ -415,8 +414,8 @@ impl NativeExports {
         self.name_to_ordinal.insert(name.to_owned(), ordinal);
 
         // Update directory metadata
-        self.directory.function_count = self.functions.len() as u32;
-        self.directory.name_count = self.name_to_ordinal.len() as u32;
+        self.directory.function_count = to_u32(self.functions.len())?;
+        self.directory.name_count = to_u32(self.name_to_ordinal.len())?;
 
         // Update next ordinal
         if ordinal >= self.next_ordinal {
@@ -438,7 +437,7 @@ impl NativeExports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::NativeExports;
     ///
     /// let mut exports = NativeExports::new("MyLibrary.dll");
@@ -454,7 +453,6 @@ impl NativeExports {
     /// Returns an error if:
     /// - The ordinal is already in use
     /// - The ordinal is 0 (invalid)
-    #[allow(clippy::cast_possible_truncation)]
     pub fn add_function_by_ordinal(&mut self, ordinal: u16, address: u32) -> Result<()> {
         if ordinal == 0 {
             return Err(malformed_error!("Ordinal cannot be 0"));
@@ -477,7 +475,7 @@ impl NativeExports {
         self.functions.insert(ordinal, function);
 
         // Update directory metadata
-        self.directory.function_count = self.functions.len() as u32;
+        self.directory.function_count = to_u32(self.functions.len())?;
 
         // Update next ordinal
         if ordinal >= self.next_ordinal {
@@ -500,7 +498,7 @@ impl NativeExports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::NativeExports;
     ///
     /// let mut exports = NativeExports::new("MyLibrary.dll");
@@ -570,11 +568,8 @@ impl NativeExports {
             self.name_to_ordinal.insert(name.to_owned(), ordinal);
         }
 
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            self.directory.function_count = (self.functions.len() + self.forwarders.len()) as u32;
-            self.directory.name_count = self.name_to_ordinal.len() as u32;
-        }
+        self.directory.function_count = to_u32(self.functions.len() + self.forwarders.len())?;
+        self.directory.name_count = to_u32(self.name_to_ordinal.len())?;
 
         if ordinal >= self.next_ordinal {
             self.next_ordinal = ordinal + 1;
@@ -661,7 +656,7 @@ impl NativeExports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::NativeExports;
     ///
     /// let mut exports = NativeExports::new("MyLibrary.dll");
@@ -686,7 +681,7 @@ impl NativeExports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::NativeExports;
     ///
     /// let mut exports = NativeExports::new("MyLibrary.dll");
@@ -715,7 +710,7 @@ impl NativeExports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::NativeExports;
     ///
     /// let mut exports = NativeExports::new("MyLibrary.dll");
@@ -741,7 +736,7 @@ impl NativeExports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::NativeExports;
     ///
     /// let mut exports = NativeExports::new("MyLibrary.dll");
@@ -766,8 +761,8 @@ impl NativeExports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use dotscope::metadata::exports::NativeExports;
+    /// ```rust,no_run
+    /// use dotscope::metadata::exports::{NativeExports, ExportFunction};
     ///
     /// let mut exports = NativeExports::new("MyLibrary.dll");
     /// exports.add_function("Function1", 1, 0x1000)?;
@@ -790,6 +785,7 @@ impl NativeExports {
     ///
     /// ```rust,ignore
     /// use dotscope::metadata::exports::NativeExports;
+    /// use dotscope::metadata::exports::native::ExportForwarder;
     ///
     /// let mut exports = NativeExports::new("MyLibrary.dll");
     /// exports.add_forwarder("Forwarder1", 1, "kernel32.dll.Function1")?;
@@ -810,7 +806,7 @@ impl NativeExports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::NativeExports;
     ///
     /// let mut exports = NativeExports::new("MyLibrary.dll");
@@ -842,13 +838,13 @@ impl NativeExports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::NativeExports;
     ///
     /// let mut exports = NativeExports::new("MyLibrary.dll");
     /// exports.add_function("MyFunction", 1, 0x1000)?;
     ///
-    /// let table_data = exports.get_export_table_data();
+    /// let table_data = exports.get_export_table_data()?;
     /// assert!(!table_data.is_empty());
     /// println!("Export table size: {} bytes", table_data.len());
     /// # Ok::<(), dotscope::Error>(())
@@ -877,6 +873,32 @@ impl NativeExports {
         let base_rva = self.export_table_base_rva;
         if base_rva == 0 {
             return Err(malformed_error!("Export table base RVA not set"));
+        }
+        self.get_export_table_data_with_base_rva(base_rva)
+    }
+
+    /// Generate export table data for PE writing with a specified base RVA.
+    ///
+    /// This is the same as [`get_export_table_data`](Self::get_export_table_data)
+    /// but allows specifying the base RVA for all internal RVA calculations.
+    /// This is useful when the export table location is calculated dynamically
+    /// during PE file layout.
+    ///
+    /// # Arguments
+    /// * `base_rva` - The RVA where the export table will be placed in the final PE file
+    ///
+    /// # Returns
+    ///
+    /// A vector containing the complete export table data in PE format, or an
+    /// empty vector if no exports are present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the export table data cannot be serialized due to
+    /// invalid ordinal ranges or buffer allocation failures.
+    pub fn get_export_table_data_with_base_rva(&self, base_rva: u32) -> Result<Vec<u8>> {
+        if self.is_empty() {
+            return Ok(Vec::new());
         }
 
         // Calculate table sizes and offsets
@@ -919,12 +941,11 @@ impl NativeExports {
             total_strings_size += forwarder.target.len() + 1; // target + null
         }
 
-        #[allow(clippy::cast_possible_truncation)]
         let total_size = export_dir_size
             + eat_size
             + name_table_size
             + ordinal_table_size
-            + (total_strings_size as u32);
+            + to_u32(total_strings_size)?;
         let mut data = vec![0u8; total_size as usize];
         let mut offset = 0;
 
@@ -983,8 +1004,7 @@ impl NativeExports {
             } else if let Some(_forwarder) = self.forwarders.get(&ordinal) {
                 // Forwarder - write RVA to forwarder string
                 if let Some(&string_offset) = forwarder_string_offsets.get(&ordinal) {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let forwarder_rva = strings_rva + (string_offset as u32);
+                    let forwarder_rva = strings_rva + to_u32(string_offset)?;
                     data[temp_offset..temp_offset + 4]
                         .copy_from_slice(&forwarder_rva.to_le_bytes());
                 }
@@ -997,8 +1017,7 @@ impl NativeExports {
         // Write Export Name Table
         let mut name_string_offset = self.directory.dll_name.len() + 1; // After DLL name
         for (name, _) in &named_exports {
-            #[allow(clippy::cast_possible_truncation)]
-            let name_rva = strings_rva + (name_string_offset as u32);
+            let name_rva = strings_rva + to_u32(name_string_offset)?;
             write_le_at(&mut data, &mut offset, name_rva)?;
             name_string_offset += name.len() + 1; // +1 for null terminator
         }
@@ -1053,7 +1072,7 @@ impl NativeExports {
     /// let mut exports = NativeExports::new("OldName.dll");
     /// assert_eq!(exports.dll_name(), "OldName.dll");
     ///
-    /// exports.set_dll_name("NewName.dll");
+    /// exports.set_dll_name("NewName.dll").unwrap();
     /// assert_eq!(exports.dll_name(), "NewName.dll");
     /// ```
     ///

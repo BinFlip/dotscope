@@ -6,7 +6,7 @@
 //! support for block-scoped variables and constants.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{LocalScopeRaw, TableDataOwned, TableId},
         token::Token,
@@ -40,31 +40,30 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::prelude::*;
 /// use std::path::Path;
 ///
 /// # fn main() -> dotscope::Result<()> {
 /// let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create a basic local scope
-/// let scope_token = LocalScopeBuilder::new()
-///     .method(Token::new(0x06000001))  // Reference to method
+/// let scope_ref = LocalScopeBuilder::new()
+///     .method(1)                       // MethodDef row 1
 ///     .start_offset(0x10)              // IL offset where scope begins
 ///     .length(0x50)                    // Length in IL bytes
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a scope with variables and import context
 /// let detailed_scope = LocalScopeBuilder::new()
-///     .method(Token::new(0x06000002))
+///     .method(2)                       // MethodDef row 2
 ///     .import_scope(1)                 // Reference to import scope
 ///     .variable_list(3)                // First variable index
 ///     .constant_list(1)                // First constant index
 ///     .start_offset(0x00)
 ///     .length(0x100)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -89,13 +88,13 @@ use crate::{
 ///
 /// `LocalScopeBuilder` is safe to use across threads:
 /// - No internal state requiring synchronization
-/// - Context passed to build() method handles concurrency
+/// - CilAssembly passed to build() method handles concurrency
 /// - Can be created and used across thread boundaries
-/// - Final build() operation is atomic within the context
+/// - Final build() operation is atomic within the assembly
 #[derive(Debug, Clone, Default)]
 pub struct LocalScopeBuilder {
-    /// Method containing this scope
-    method: Option<Token>,
+    /// Method containing this scope (row index or placeholder)
+    method: Option<u32>,
     /// Optional import scope for namespace context
     import_scope: Option<u32>,
     /// First variable index (0 = no variables)
@@ -132,17 +131,17 @@ impl LocalScopeBuilder {
     ///
     /// # Arguments
     ///
-    /// * `method` - Token referencing the containing method (MethodDef table)
+    /// * `method` - Row index or placeholder for the containing method (MethodDef table)
     ///
     /// # Examples
     ///
     /// ```rust
     /// # use dotscope::prelude::*;
     /// let builder = LocalScopeBuilder::new()
-    ///     .method(Token::new(0x06000001));
+    ///     .method(1);  // MethodDef row 1
     /// ```
     #[must_use]
-    pub fn method(mut self, method: Token) -> Self {
+    pub fn method(mut self, method: u32) -> Self {
         self.method = Some(method);
         self
     }
@@ -264,27 +263,27 @@ impl LocalScopeBuilder {
     ///
     /// This method validates all provided information, creates the LocalScope
     /// metadata entry, and adds it to the assembly's LocalScope table.
-    /// Returns a token that can be used to reference this scope.
+    /// Returns a change reference that can be used to track this scope.
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for assembly modification
+    /// * `assembly` - The CilAssembly for assembly modification
     ///
     /// # Returns
     ///
-    /// Returns `Ok(Token)` with the LocalScope token on success.
+    /// Returns `Ok(ChangeRefRc)` with the LocalScope reference on success.
     ///
     /// # Errors
     ///
     /// Returns an error if:
-    /// - Method reference is missing or invalid
+    /// - Method reference is missing or invalid (must be > 0)
     /// - Start offset or length are missing
     /// - Length is zero
     /// - Table operations fail due to metadata constraints
     /// - Local scope validation failed
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let method = self.method.ok_or_else(|| {
-            Error::ModificationInvalid("Method token is required for LocalScope".to_string())
+            Error::ModificationInvalid("Method row is required for LocalScope".to_string())
         })?;
 
         let start_offset = self.start_offset.ok_or_else(|| {
@@ -295,15 +294,9 @@ impl LocalScopeBuilder {
             Error::ModificationInvalid("Length is required for LocalScope".to_string())
         })?;
 
-        if method.table() != TableId::MethodDef as u8 {
+        if method == 0 {
             return Err(Error::ModificationInvalid(
-                "Method token must reference MethodDef table".to_string(),
-            ));
-        }
-
-        if method.row() == 0 {
-            return Err(Error::ModificationInvalid(
-                "Method token row cannot be 0".to_string(),
+                "Method row cannot be 0".to_string(),
             ));
         }
 
@@ -313,14 +306,14 @@ impl LocalScopeBuilder {
             ));
         }
 
-        let next_rid = context.next_rid(TableId::LocalScope);
-        let token = Token::new(0x3200_0000 + next_rid);
+        let rid = assembly.next_rid(TableId::LocalScope)?;
+        let token = Token::from_parts(TableId::LocalScope, rid);
 
         let local_scope_raw = LocalScopeRaw {
-            rid: next_rid,
+            rid,
             token,
             offset: 0, // Will be set during binary generation
-            method: method.row(),
+            method,
             import_scope: self.import_scope.unwrap_or(0),
             variable_list: self.variable_list.unwrap_or(0),
             constant_list: self.constant_list.unwrap_or(0),
@@ -328,7 +321,7 @@ impl LocalScopeBuilder {
             length,
         };
 
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::LocalScope,
             TableDataOwned::LocalScope(local_scope_raw),
         )
@@ -339,23 +332,21 @@ impl LocalScopeBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
     fn test_localscope_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = LocalScopeBuilder::new()
-            .method(Token::new(0x06000001))
+        let ref_ = LocalScopeBuilder::new()
+            .method(1)
             .start_offset(0x10)
             .length(0x50)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify the token has the correct table ID
-        assert_eq!(token.table(), TableId::LocalScope as u8);
-        assert!(token.row() > 0);
+        // Verify the ref has the correct table ID
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::LocalScope));
 
         Ok(())
     }
@@ -374,50 +365,46 @@ mod tests {
 
     #[test]
     fn test_localscope_builder_with_all_fields() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = LocalScopeBuilder::new()
-            .method(Token::new(0x06000002))
+        let ref_ = LocalScopeBuilder::new()
+            .method(2)
             .import_scope(1)
             .variable_list(5)
             .constant_list(2)
             .start_offset(0x00)
             .length(0x100)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::LocalScope as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::LocalScope));
 
         Ok(())
     }
 
     #[test]
     fn test_localscope_builder_missing_method() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let result = LocalScopeBuilder::new()
             .start_offset(0x10)
             .length(0x50)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Method token is required"));
+        assert!(error_msg.contains("Method row is required"));
 
         Ok(())
     }
 
     #[test]
     fn test_localscope_builder_missing_start_offset() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let result = LocalScopeBuilder::new()
-            .method(Token::new(0x06000001))
+            .method(1)
             .length(0x50)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -428,13 +415,12 @@ mod tests {
 
     #[test]
     fn test_localscope_builder_missing_length() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let result = LocalScopeBuilder::new()
-            .method(Token::new(0x06000001))
+            .method(1)
             .start_offset(0x10)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -445,14 +431,13 @@ mod tests {
 
     #[test]
     fn test_localscope_builder_zero_length() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let result = LocalScopeBuilder::new()
-            .method(Token::new(0x06000001))
+            .method(1)
             .start_offset(0x10)
             .length(0)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -462,37 +447,18 @@ mod tests {
     }
 
     #[test]
-    fn test_localscope_builder_invalid_method_table() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-
-        let result = LocalScopeBuilder::new()
-            .method(Token::new(0x02000001)) // TypeDef instead of MethodDef
-            .start_offset(0x10)
-            .length(0x50)
-            .build(&mut context);
-
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Method token must reference MethodDef table"));
-
-        Ok(())
-    }
-
-    #[test]
     fn test_localscope_builder_zero_method_row() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let result = LocalScopeBuilder::new()
-            .method(Token::new(0x06000000)) // Row 0 is invalid
+            .method(0) // Row 0 is invalid
             .start_offset(0x10)
             .length(0x50)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Method token row cannot be 0"));
+        assert!(error_msg.contains("Method row cannot be 0"));
 
         Ok(())
     }
@@ -500,7 +466,7 @@ mod tests {
     #[test]
     fn test_localscope_builder_clone() {
         let builder1 = LocalScopeBuilder::new()
-            .method(Token::new(0x06000001))
+            .method(1)
             .start_offset(0x10)
             .length(0x50);
         let builder2 = builder1.clone();
@@ -512,9 +478,7 @@ mod tests {
 
     #[test]
     fn test_localscope_builder_debug() {
-        let builder = LocalScopeBuilder::new()
-            .method(Token::new(0x06000001))
-            .start_offset(0x10);
+        let builder = LocalScopeBuilder::new().method(1).start_offset(0x10);
         let debug_str = format!("{builder:?}");
         assert!(debug_str.contains("LocalScopeBuilder"));
     }

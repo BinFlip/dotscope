@@ -33,6 +33,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::GenericParamConstraintRaw,
     },
@@ -86,18 +87,29 @@ impl MetadataLoader for GenericParamConstraintLoader {
     /// - Collection insertion operations fail
     /// - Parallel processing encounters errors
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<GenericParamConstraintRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(&context.generic_param, context.types)?;
-                    res.apply()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<GenericParamConstraintRaw>() else {
+            return Ok(());
+        };
 
-                    context.generic_param_constraint.insert(row.token, res);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("generic param constraint 0x{:08x}", row.token.value());
+
+            let Some(res) = context.handle_result(
+                row.to_owned(&context.generic_param, context.types),
+                DiagnosticCategory::Type,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(res.apply(), DiagnosticCategory::Type, token_msg)?;
+            context.generic_param_constraint.insert(row.token, res);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for the `GenericParamConstraint` table.

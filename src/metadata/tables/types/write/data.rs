@@ -5,6 +5,7 @@
 //! `TableData<'a>` enum, this version owns all data and has no lifetime constraints.
 
 use crate::{
+    cilassembly::{AssemblyChanges, ResolvePlaceholders},
     metadata::tables::{
         AssemblyOsRaw,
         AssemblyProcessorRaw,
@@ -386,6 +387,76 @@ impl TableDataOwned {
             Self::GenericParamConstraint(_) => GenericParamConstraintRaw::row_size(sizes),
         }
     }
+
+    /// Resolves all placeholder values in this row's heap reference fields.
+    ///
+    /// This method dispatches to the appropriate `ResolvePlaceholders` implementation
+    /// for the contained row type. It should be called after heaps have been written
+    /// and ChangeRefs resolved, but before the row is serialized via `row_write()`.
+    ///
+    /// # Arguments
+    ///
+    /// * `changes` - AssemblyChanges containing resolved `ChangeRefRc` entries
+    pub fn resolve_placeholders(&mut self, changes: &AssemblyChanges) {
+        match self {
+            Self::Module(row) => row.resolve_placeholders(changes),
+            Self::TypeRef(row) => row.resolve_placeholders(changes),
+            Self::TypeDef(row) => row.resolve_placeholders(changes),
+            Self::Field(row) => row.resolve_placeholders(changes),
+            Self::MethodDef(row) => row.resolve_placeholders(changes),
+            Self::Param(row) => row.resolve_placeholders(changes),
+            Self::InterfaceImpl(row) => row.resolve_placeholders(changes),
+            Self::MemberRef(row) => row.resolve_placeholders(changes),
+            Self::Constant(row) => row.resolve_placeholders(changes),
+            Self::CustomAttribute(row) => row.resolve_placeholders(changes),
+            Self::FieldMarshal(row) => row.resolve_placeholders(changes),
+            Self::DeclSecurity(row) => row.resolve_placeholders(changes),
+            Self::ClassLayout(row) => row.resolve_placeholders(changes),
+            Self::FieldLayout(row) => row.resolve_placeholders(changes),
+            Self::StandAloneSig(row) => row.resolve_placeholders(changes),
+            Self::EventMap(row) => row.resolve_placeholders(changes),
+            Self::Event(row) => row.resolve_placeholders(changes),
+            Self::PropertyMap(row) => row.resolve_placeholders(changes),
+            Self::Property(row) => row.resolve_placeholders(changes),
+            Self::MethodSemantics(row) => row.resolve_placeholders(changes),
+            Self::MethodImpl(row) => row.resolve_placeholders(changes),
+            Self::ModuleRef(row) => row.resolve_placeholders(changes),
+            Self::TypeSpec(row) => row.resolve_placeholders(changes),
+            Self::ImplMap(row) => row.resolve_placeholders(changes),
+            Self::FieldRVA(row) => row.resolve_placeholders(changes),
+            Self::Assembly(row) => row.resolve_placeholders(changes),
+            Self::AssemblyRef(row) => row.resolve_placeholders(changes),
+            Self::File(row) => row.resolve_placeholders(changes),
+            Self::ExportedType(row) => row.resolve_placeholders(changes),
+            Self::ManifestResource(row) => row.resolve_placeholders(changes),
+            Self::NestedClass(row) => row.resolve_placeholders(changes),
+            Self::GenericParam(row) => row.resolve_placeholders(changes),
+            Self::MethodSpec(row) => row.resolve_placeholders(changes),
+            Self::GenericParamConstraint(row) => row.resolve_placeholders(changes),
+            // Tables without heap refs - these don't need resolution
+            Self::FieldPtr(_)
+            | Self::MethodPtr(_)
+            | Self::ParamPtr(_)
+            | Self::Document(_)
+            | Self::MethodDebugInformation(_)
+            | Self::LocalScope(_)
+            | Self::LocalVariable(_)
+            | Self::LocalConstant(_)
+            | Self::ImportScope(_)
+            | Self::StateMachineMethod(_)
+            | Self::CustomDebugInformation(_)
+            | Self::EncLog(_)
+            | Self::EncMap(_)
+            | Self::EventPtr(_)
+            | Self::PropertyPtr(_)
+            | Self::AssemblyProcessor(_)
+            | Self::AssemblyOS(_)
+            | Self::AssemblyRefProcessor(_)
+            | Self::AssemblyRefOS(_) => {
+                // These tables don't have heap references that use placeholders
+            }
+        }
+    }
 }
 
 // Implement RowWritable by delegating to the contained type
@@ -461,21 +532,5 @@ impl TableRow for TableDataOwned {
         // This static method can't know which variant it's being called for,
         // so we return 0 and use the instance method instead
         0
-    }
-}
-
-#[cfg(test)]
-mod tests {
-
-    #[test]
-    fn test_table_data_owned_type_identification() {
-        // We would need to create actual instances to test this properly
-        // This requires having the Raw types constructable
-    }
-
-    #[test]
-    fn test_table_variants_count() {
-        // Verify we have all the expected table variants
-        // This is more of a compilation test to ensure all variants are defined
     }
 }

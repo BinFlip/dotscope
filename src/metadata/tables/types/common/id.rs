@@ -432,8 +432,8 @@ impl TableId {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use crate::metadata::tables::TableId;
+    /// ```rust
+    /// use dotscope::metadata::tables::TableId;
     ///
     /// assert_eq!(TableId::Module.token_type(), 0x00);
     /// assert_eq!(TableId::TypeRef.token_type(), 0x01);
@@ -460,8 +460,8 @@ impl TableId {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// use crate::metadata::tables::TableId;
+    /// ```rust
+    /// use dotscope::metadata::tables::TableId;
     ///
     /// assert_eq!(TableId::from_token_type(0x00), Some(TableId::Module));
     /// assert_eq!(TableId::from_token_type(0x01), Some(TableId::TypeRef));
@@ -527,6 +527,160 @@ impl TableId {
             _ => None,
         }
     }
+
+    /// Returns true if this table type has cross-table references that would
+    /// need remapping when other tables have row deletions.
+    ///
+    /// Tables with cross-table references contain fields that point to rows
+    /// in other tables (either directly via RID or through coded indices).
+    /// When rows are deleted from referenced tables, these references must
+    /// be updated to maintain metadata integrity.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::tables::TableId;
+    ///
+    /// // TypeDef references Field and MethodDef tables
+    /// assert!(TableId::TypeDef.has_cross_references());
+    ///
+    /// // Module table has no cross-table references
+    /// assert!(!TableId::Module.has_cross_references());
+    /// ```
+    #[must_use]
+    pub fn has_cross_references(&self) -> bool {
+        matches!(
+            self,
+            TableId::TypeRef
+                | TableId::TypeDef
+                | TableId::MethodDef
+                | TableId::InterfaceImpl
+                | TableId::MemberRef
+                | TableId::Constant
+                | TableId::CustomAttribute
+                | TableId::FieldMarshal
+                | TableId::DeclSecurity
+                | TableId::ClassLayout
+                | TableId::FieldLayout
+                | TableId::EventMap
+                | TableId::Event
+                | TableId::PropertyMap
+                | TableId::MethodSemantics
+                | TableId::MethodImpl
+                | TableId::ImplMap
+                | TableId::FieldRVA
+                | TableId::ExportedType
+                | TableId::ManifestResource
+                | TableId::NestedClass
+                | TableId::GenericParam
+                | TableId::MethodSpec
+                | TableId::GenericParamConstraint
+        )
+    }
+
+    /// Returns the set of tables that this table references.
+    ///
+    /// This identifies which tables a given table has dependencies on through
+    /// its fields. Used to determine if a table needs remapping based on which
+    /// tables have deletions - if any of the returned tables have deletions,
+    /// this table's rows may need their references updated.
+    ///
+    /// # Returns
+    ///
+    /// A static slice of `TableId` values representing all tables that this
+    /// table can reference. Returns an empty slice for tables without
+    /// cross-table references.
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::metadata::tables::TableId;
+    ///
+    /// // TypeDef references TypeDef, TypeRef, TypeSpec (extends), Field, and MethodDef
+    /// let refs = TableId::TypeDef.references();
+    /// assert!(refs.contains(&TableId::Field));
+    /// assert!(refs.contains(&TableId::MethodDef));
+    ///
+    /// // Module has no references
+    /// assert!(TableId::Module.references().is_empty());
+    /// ```
+    #[must_use]
+    pub fn references(&self) -> &'static [TableId] {
+        match self {
+            TableId::TypeRef => &[
+                TableId::Module,
+                TableId::ModuleRef,
+                TableId::AssemblyRef,
+                TableId::TypeRef,
+            ],
+            TableId::TypeDef => &[
+                TableId::TypeDef,
+                TableId::TypeRef,
+                TableId::TypeSpec,
+                TableId::Field,
+                TableId::MethodDef,
+            ],
+            TableId::MethodDef => &[TableId::Param],
+            TableId::InterfaceImpl => &[TableId::TypeDef, TableId::TypeRef, TableId::TypeSpec],
+            TableId::MemberRef => &[
+                TableId::TypeDef,
+                TableId::TypeRef,
+                TableId::ModuleRef,
+                TableId::MethodDef,
+                TableId::TypeSpec,
+            ],
+            TableId::Constant => &[TableId::Field, TableId::Param, TableId::Property],
+            TableId::CustomAttribute => &[
+                // HasCustomAttribute covers many tables
+                TableId::MethodDef,
+                TableId::Field,
+                TableId::TypeRef,
+                TableId::TypeDef,
+                TableId::Param,
+                TableId::InterfaceImpl,
+                TableId::MemberRef,
+                TableId::Module,
+                TableId::DeclSecurity,
+                TableId::Property,
+                TableId::Event,
+                TableId::StandAloneSig,
+                TableId::ModuleRef,
+                TableId::TypeSpec,
+                TableId::Assembly,
+                TableId::AssemblyRef,
+                TableId::File,
+                TableId::ExportedType,
+                TableId::ManifestResource,
+                TableId::GenericParam,
+                TableId::GenericParamConstraint,
+                TableId::MethodSpec,
+            ],
+            TableId::FieldMarshal => &[TableId::Field, TableId::Param],
+            TableId::DeclSecurity => &[TableId::TypeDef, TableId::MethodDef, TableId::Assembly],
+            TableId::ClassLayout => &[TableId::TypeDef],
+            TableId::FieldLayout => &[TableId::Field],
+            TableId::EventMap => &[TableId::TypeDef, TableId::Event],
+            TableId::Event => &[TableId::TypeDef, TableId::TypeRef, TableId::TypeSpec],
+            TableId::PropertyMap => &[TableId::TypeDef, TableId::Property],
+            TableId::MethodSemantics => &[TableId::MethodDef, TableId::Event, TableId::Property],
+            TableId::MethodImpl => &[TableId::TypeDef, TableId::MethodDef, TableId::MemberRef],
+            TableId::ImplMap => &[TableId::Field, TableId::MethodDef, TableId::ModuleRef],
+            TableId::FieldRVA => &[TableId::Field],
+            TableId::ExportedType => &[TableId::File, TableId::AssemblyRef, TableId::ExportedType],
+            TableId::ManifestResource => &[TableId::File, TableId::AssemblyRef],
+            TableId::NestedClass => &[TableId::TypeDef],
+            TableId::GenericParam => &[TableId::TypeDef, TableId::MethodDef],
+            TableId::MethodSpec => &[TableId::MethodDef, TableId::MemberRef],
+            TableId::GenericParamConstraint => &[
+                TableId::GenericParam,
+                TableId::TypeDef,
+                TableId::TypeRef,
+                TableId::TypeSpec,
+            ],
+            // Tables without cross-table references
+            _ => &[],
+        }
+    }
 }
 
 /// Macro that provides unified dispatch from TableId enum values to their corresponding Raw table types.
@@ -544,7 +698,7 @@ impl TableId {
 /// ```
 ///
 /// For table writing operations:
-/// ```rust,ignore  
+/// ```rust,ignore
 /// use crate::metadata::tables::dispatch_table_type;
 /// dispatch_table_type!(table_id, |RawType| {
 ///     if let Some(table) = self.tables_header.table::<RawType>() {

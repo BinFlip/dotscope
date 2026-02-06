@@ -31,7 +31,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::exports::Exports;
 //! use dotscope::metadata::token::Token;
 //!

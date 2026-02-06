@@ -11,6 +11,8 @@ use crate::{
 };
 
 impl RowReadable for GenericParamConstraintRaw {
+    const TABLE_ID: TableId = TableId::GenericParamConstraint;
+
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(GenericParamConstraintRaw {
             rid,

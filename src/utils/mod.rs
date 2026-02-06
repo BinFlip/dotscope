@@ -42,21 +42,28 @@
 //! ```
 
 mod alignment;
+mod base64;
 mod bitset;
 mod compression;
+mod crypto;
+mod decompress;
 mod dot;
 mod enums;
 pub(crate) mod graph;
+mod hash;
 mod heap_calc;
 mod io;
+mod math;
 mod synchronization;
 mod visitedmap;
 
-pub use alignment::{align_to, align_to_4_bytes};
+pub use alignment::align_to;
+pub use base64::{base64_decode, base64_encode};
 pub use bitset::BitSet;
 pub use compression::compressed_uint_size;
 pub use dot::escape_dot;
 pub use enums::EnumUtils;
+pub use hash::{hash_blob, hash_guid, hash_string};
 pub use heap_calc::calculate_table_row_size;
 #[allow(unused_imports)]
 pub use io::{
@@ -66,5 +73,21 @@ pub use io::{
     write_compressed_uint, write_le, write_le_at, write_le_at_dyn, write_prefixed_string_utf16,
     write_prefixed_string_utf8, write_string_at, write_string_utf8, CilIO,
 };
+#[cfg(feature = "deobfuscation")]
+pub use math::is_power_of_two;
+pub use math::to_u32;
 pub use synchronization::FailFastBarrier;
 pub use visitedmap::VisitedMap;
+
+#[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
+pub(crate) use crypto::derive_pbkdf1_key;
+#[cfg(feature = "emulation")]
+pub(crate) use crypto::{apply_crypto_transform, derive_pbkdf2_key};
+#[cfg(feature = "legacy-crypto")]
+pub(crate) use crypto::{compute_md5, compute_sha1};
+pub(crate) use crypto::{compute_sha256, compute_sha384, compute_sha512};
+
+#[allow(unused_imports)]
+pub(crate) use decompress::{
+    decompress_confuserex_lzma, decompress_deflate, decompress_gzip, is_confuserex_lzma,
+};

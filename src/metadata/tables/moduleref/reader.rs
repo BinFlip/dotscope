@@ -50,7 +50,7 @@
 
 use crate::{
     metadata::{
-        tables::{ModuleRefRaw, RowReadable, TableInfoRef},
+        tables::{ModuleRefRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::read_le_at_dyn,
@@ -58,6 +58,8 @@ use crate::{
 };
 
 impl RowReadable for ModuleRefRaw {
+    const TABLE_ID: TableId = TableId::ModuleRef;
+
     /// Reads a single `ModuleRef` table row from binary data.
     ///
     /// Parses the binary representation according to ECMA-335 §II.22.31:

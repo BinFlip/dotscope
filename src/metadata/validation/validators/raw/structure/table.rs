@@ -148,13 +148,9 @@ impl RawTableValidator {
             .tables()
             .ok_or_else(|| malformed_error!("Assembly view does not contain metadata tables"))?;
 
-        if tables.table::<ModuleRaw>().is_none() {
-            return Err(malformed_error!(
-                "Module table is required but not present in assembly"
-            ));
-        }
-
-        let module_table = tables.table::<ModuleRaw>().unwrap();
+        let module_table = tables.table::<ModuleRaw>().ok_or_else(|| {
+            malformed_error!("Module table is required but not present in assembly")
+        })?;
         if module_table.row_count == 0 {
             return Err(malformed_error!(
                 "Module table is present but contains no rows - at least one Module row is required"

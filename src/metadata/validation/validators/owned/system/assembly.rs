@@ -566,7 +566,7 @@ impl OwnedAssemblyValidator {
     /// # Errors
     ///
     /// Returns [`crate::Error::ValidationOwnedFailed`] if:
-    /// - Assembly or reference versions are all-zero or excessively high
+    /// - Assembly or reference versions are excessively high
     /// - Strong name tokens or public keys are malformed
     /// - Assembly reference flags contain unknown values
     fn validate_assembly_version_compatibility(
@@ -575,21 +575,8 @@ impl OwnedAssemblyValidator {
     ) -> Result<()> {
         // Validate the current assembly's version information
         if let Some(assembly) = context.object().assembly() {
-            // Check for reasonable version numbers
-            if assembly.major_version == 0
-                && assembly.minor_version == 0
-                && assembly.build_number == 0
-                && assembly.revision_number == 0
-            {
-                return Err(Error::ValidationOwnedFailed {
-                    validator: self.name().to_string(),
-                    message: format!(
-                        "Assembly '{}' has all-zero version number, which may cause versioning issues",
-                        assembly.name
-                    ),
-
-                });
-            }
+            // Note: All-zero version (0.0.0.0) is valid and common for development assemblies
+            // or assemblies that don't specify version information. We don't reject these.
 
             // Check for excessively high version numbers that might indicate corruption
             if assembly.major_version > 999
@@ -615,20 +602,8 @@ impl OwnedAssemblyValidator {
         let assembly_refs = context.object().refs_assembly();
         for entry in assembly_refs {
             let assembly_ref = entry.value();
-            // Check for reasonable version numbers in dependencies
-            if assembly_ref.major_version == 0
-                && assembly_ref.minor_version == 0
-                && assembly_ref.build_number == 0
-                && assembly_ref.revision_number == 0
-            {
-                return Err(Error::ValidationOwnedFailed {
-                    validator: self.name().to_string(),
-                    message: format!(
-                        "Assembly reference '{}' has all-zero version number",
-                        assembly_ref.name
-                    ),
-                });
-            }
+            // Note: All-zero version (0.0.0.0) is valid for assembly references
+            // Some assemblies don't specify version requirements for their dependencies.
 
             // Check for excessively high version numbers in dependencies
             if assembly_ref.major_version > 999

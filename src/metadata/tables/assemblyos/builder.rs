@@ -6,20 +6,22 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::prelude::*;
 //!
-//! let builder_context = BuilderContext::new();
+//! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! let os_token = AssemblyOSBuilder::new()
 //!     .os_platform_id(1)             // Windows platform
 //!     .os_major_version(10)          // Windows 10
 //!     .os_minor_version(0)           // Windows 10.0
-//!     .build(&mut builder_context)?;
+//!     .build(&mut assembly)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{AssemblyOsRaw, TableDataOwned, TableId},
         token::Token,
@@ -47,29 +49,32 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::prelude::*;
 ///
+/// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+/// # let mut assembly = CilAssembly::new(view);
 /// // Windows 10 targeting
 /// let win10_os = AssemblyOSBuilder::new()
 ///     .os_platform_id(1)    // Windows platform
 ///     .os_major_version(10)  // Windows 10
 ///     .os_minor_version(0)   // Windows 10.0
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Windows 7 targeting
 /// let win7_os = AssemblyOSBuilder::new()
 ///     .os_platform_id(1)    // Windows platform
 ///     .os_major_version(6)   // Windows 7
 ///     .os_minor_version(1)   // Windows 7.1
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Custom OS targeting
 /// let custom_os = AssemblyOSBuilder::new()
 ///     .os_platform_id(99)    // Custom platform
 ///     .os_major_version(1)    // Major version
 ///     .os_minor_version(0)    // Minor version
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 #[allow(clippy::struct_field_names)]
@@ -93,7 +98,7 @@ impl AssemblyOSBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = AssemblyOSBuilder::new();
@@ -127,7 +132,7 @@ impl AssemblyOSBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Windows platform
@@ -157,7 +162,7 @@ impl AssemblyOSBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Windows 10 (major version 10)
@@ -187,7 +192,7 @@ impl AssemblyOSBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Windows 10.0 (minor version 0)
@@ -207,11 +212,11 @@ impl AssemblyOSBuilder {
     /// Builds and adds the `AssemblyOS` entry to the metadata
     ///
     /// Validates all required fields, creates the `AssemblyOS` table entry,
-    /// and adds it to the builder context. Returns a token that can be used
+    /// and adds it to the assembly. Returns a token that can be used
     /// to reference this assembly OS entry.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the builder context
+    /// - `assembly`: Mutable reference to the CilAssembly
     ///
     /// # Returns
     /// - `Ok(Token)`: Token referencing the created assembly OS entry
@@ -223,17 +228,19 @@ impl AssemblyOSBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let mut context = BuilderContext::new();
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let token = AssemblyOSBuilder::new()
     ///     .os_platform_id(1)
     ///     .os_major_version(10)
     ///     .os_minor_version(0)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let os_platform_id = self.os_platform_id.ok_or_else(|| {
             Error::ModificationInvalid(
                 "OS platform identifier is required for AssemblyOS".to_string(),
@@ -248,21 +255,16 @@ impl AssemblyOSBuilder {
             Error::ModificationInvalid("OS minor version is required for AssemblyOS".to_string())
         })?;
 
-        let next_rid = context.next_rid(TableId::AssemblyOS);
-        let token_value = ((TableId::AssemblyOS as u32) << 24) | next_rid;
-        let token = Token::new(token_value);
-
         let assembly_os = AssemblyOsRaw {
-            rid: next_rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
             os_platform_id,
             os_major_version,
             os_minor_version,
         };
 
-        context.table_row_add(TableId::AssemblyOS, TableDataOwned::AssemblyOS(assembly_os))?;
-        Ok(token)
+        assembly.table_row_add(TableId::AssemblyOS, TableDataOwned::AssemblyOS(assembly_os))
     }
 }
 
@@ -279,7 +281,7 @@ impl Default for AssemblyOSBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
@@ -302,76 +304,67 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_windows10() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = AssemblyOSBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = AssemblyOSBuilder::new()
             .os_platform_id(1) // Windows
             .os_major_version(10) // Windows 10
             .os_minor_version(0) // Windows 10.0
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyOS as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyOS));
         Ok(())
     }
 
     #[test]
     fn test_assemblyos_builder_windows7() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = AssemblyOSBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = AssemblyOSBuilder::new()
             .os_platform_id(1) // Windows
             .os_major_version(6) // Windows 7
             .os_minor_version(1) // Windows 7.1
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyOS as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyOS));
         Ok(())
     }
 
     #[test]
     fn test_assemblyos_builder_linux() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = AssemblyOSBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = AssemblyOSBuilder::new()
             .os_platform_id(2) // Unix/Linux
             .os_major_version(5) // Linux kernel 5
             .os_minor_version(4) // Linux kernel 5.4
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyOS as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyOS));
         Ok(())
     }
 
     #[test]
     fn test_assemblyos_builder_custom() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = AssemblyOSBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = AssemblyOSBuilder::new()
             .os_platform_id(99) // Custom platform
             .os_major_version(1) // Custom major
             .os_minor_version(0) // Custom minor
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyOS as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyOS));
         Ok(())
     }
 
     #[test]
     fn test_assemblyos_builder_missing_platform_id() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let result = AssemblyOSBuilder::new()
             .os_major_version(10)
             .os_minor_version(0)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -385,12 +378,11 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_missing_major_version() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let result = AssemblyOSBuilder::new()
             .os_platform_id(1)
             .os_minor_version(0)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -404,12 +396,11 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_missing_minor_version() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let result = AssemblyOSBuilder::new()
             .os_platform_id(1)
             .os_major_version(10)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -450,78 +441,71 @@ mod tests {
 
     #[test]
     fn test_assemblyos_builder_fluent_interface() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test method chaining
-        let token = AssemblyOSBuilder::new()
+        let ref_ = AssemblyOSBuilder::new()
             .os_platform_id(3)
             .os_major_version(12)
             .os_minor_version(5)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyOS as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyOS));
         Ok(())
     }
 
     #[test]
     fn test_assemblyos_builder_multiple_builds() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Build first OS entry
-        let token1 = AssemblyOSBuilder::new()
+        let ref1 = AssemblyOSBuilder::new()
             .os_platform_id(1) // Windows
             .os_major_version(10)
             .os_minor_version(0)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build first OS entry");
 
         // Build second OS entry
-        let token2 = AssemblyOSBuilder::new()
+        let ref2 = AssemblyOSBuilder::new()
             .os_platform_id(2) // Unix/Linux
             .os_major_version(5)
             .os_minor_version(4)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build second OS entry");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_ne!(token1, token2);
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::AssemblyOS));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::AssemblyOS));
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
         Ok(())
     }
 
     #[test]
     fn test_assemblyos_builder_zero_values() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = AssemblyOSBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = AssemblyOSBuilder::new()
             .os_platform_id(0) // Zero platform
             .os_major_version(0) // Zero major
             .os_minor_version(0) // Zero minor
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyOS as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyOS));
         Ok(())
     }
 
     #[test]
     fn test_assemblyos_builder_max_values() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = AssemblyOSBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = AssemblyOSBuilder::new()
             .os_platform_id(u32::MAX) // Max platform
             .os_major_version(u32::MAX) // Max major
             .os_minor_version(u32::MAX) // Max minor
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::AssemblyOS as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyOS));
         Ok(())
     }
 }

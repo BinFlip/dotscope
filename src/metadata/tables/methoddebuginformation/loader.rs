@@ -22,6 +22,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{MethodDebugInformationRaw, TableId},
     },
@@ -52,18 +53,27 @@ pub struct MethodDebugInformationLoader;
 
 impl MetadataLoader for MethodDebugInformationLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<MethodDebugInformationRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let method_debug_info = row.to_owned(blob)?;
-                    context
-                        .method_debug_information
-                        .insert(method_debug_info.token, method_debug_info);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        let (Some(header), Some(blob)) = (context.meta, context.blobs) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<MethodDebugInformationRaw>() else {
+            return Ok(());
+        };
+
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("method debug info 0x{:08x}", row.token.value());
+
+            let Some(method_debug_info) =
+                context.handle_result(row.to_owned(blob), DiagnosticCategory::Method, token_msg)?
+            else {
+                return Ok(());
+            };
+
+            context
+                .method_debug_information
+                .insert(method_debug_info.token, method_debug_info);
+            Ok(())
+        })
     }
 
     fn table_id(&self) -> Option<TableId> {

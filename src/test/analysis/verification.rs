@@ -3,17 +3,18 @@
 //! This module provides functions that compare actual analysis results
 //! against expected properties.
 
-use std::fmt;
+use std::{collections::HashSet, fmt};
 
 use crate::{
     analysis::{
-        CallGraph, ConstantPropagation, ControlFlowGraph, DataFlowSolver, LiveVariables,
-        ReachingDefinitions, SsaBuilder, SsaFunction,
+        CallGraph, ConstantPropagation, ControlFlowGraph, DataFlowSolver, LiveVariables, NodeId,
+        ReachingDefinitions, SsaConverter, SsaFunction, TypeContext,
     },
     metadata::method::Method,
     test::analysis::expectations::{
         CallGraphExpectation, CfgExpectation, DataFlowExpectation, SsaExpectation,
     },
+    CilObject,
 };
 
 /// Error returned when verification fails.
@@ -265,28 +266,27 @@ pub fn verify_ssa(
         ));
     }
 
-    // 2. Variable IDs are sequential
-    for (i, var) in ssa.variables().iter().enumerate() {
-        if var.id().index() != i {
+    // 2. Variable IDs are unique (not necessarily sequential with global counter)
+    let mut seen_ids = HashSet::new();
+    for var in ssa.variables() {
+        if !seen_ids.insert(var.id()) {
             errors.push(VerificationError::new(
                 "SSA",
-                format!("variable_id[{}]", i),
-                i.to_string(),
-                var.id().index().to_string(),
+                "duplicate_variable_id",
+                "unique IDs",
+                format!("duplicate {}", var.id()),
             ));
-            break; // Only report first mismatch
+            break; // Only report first duplicate
         }
     }
 
     // 3. Each phi operand references a valid predecessor
     for (block_idx, block) in ssa.blocks().iter().enumerate() {
-        let preds: Vec<_> = cfg
-            .predecessors(crate::analysis::NodeId::new(block_idx))
-            .collect();
+        let preds: Vec<_> = cfg.predecessors(NodeId::new(block_idx)).collect();
 
         for (phi_idx, phi) in block.phi_nodes().iter().enumerate() {
             for op in phi.operands() {
-                let pred_node = crate::analysis::NodeId::new(op.predecessor());
+                let pred_node = NodeId::new(op.predecessor());
                 if !preds.contains(&pred_node) {
                     errors.push(VerificationError::new(
                         "SSA",
@@ -484,7 +484,10 @@ pub fn verify_dataflow(
 /// # Returns
 ///
 /// A tuple of (CFG, SSA) or an error message.
-pub fn build_analysis(method: &Method) -> Result<(ControlFlowGraph<'static>, SsaFunction), String> {
+pub fn build_analysis(
+    method: &Method,
+    assembly: Option<&CilObject>,
+) -> Result<(ControlFlowGraph<'static>, SsaFunction), String> {
     // Get the pre-decoded basic blocks from the method
     let blocks = method
         .blocks
@@ -502,7 +505,9 @@ pub fn build_analysis(method: &Method) -> Result<(ControlFlowGraph<'static>, Ssa
     // Get local variable count
     let num_locals = method.local_vars.count();
 
-    let ssa = SsaBuilder::build(&cfg, num_args, num_locals)
+    // Build SSA with type context if assembly is available
+    let type_context = assembly.map(|asm| TypeContext::new(method, asm));
+    let ssa = SsaConverter::build(&cfg, num_args, num_locals, type_context.as_ref())
         .map_err(|e| format!("Failed to build SSA: {}", e))?;
 
     Ok((cfg, ssa))

@@ -6,7 +6,7 @@
 //! multiple inheritance support, and runtime type compatibility.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{CodedIndex, CodedIndexType, InterfaceImplRaw, TableDataOwned, TableId},
         token::Token,
@@ -45,13 +45,12 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{InterfaceImplBuilder, CodedIndex, TableId};
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create a class implementing an interface
 /// let implementing_class = 1; // TypeDef RID for MyClass
@@ -60,16 +59,16 @@ use crate::{
 /// let impl_declaration = InterfaceImplBuilder::new()
 ///     .class(implementing_class)
 ///     .interface(target_interface)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
-/// // Create an interface extending another interface  
+/// // Create an interface extending another interface
 /// let derived_interface = 2; // TypeDef RID for IMyInterface
 /// let base_interface = CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef); // IComparable from mscorlib
 ///
 /// let interface_extension = InterfaceImplBuilder::new()
 ///     .class(derived_interface)
 ///     .interface(base_interface)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a generic interface implementation
 /// let generic_class = 3; // TypeDef RID for MyGenericClass
@@ -78,7 +77,7 @@ use crate::{
 /// let generic_impl = InterfaceImplBuilder::new()
 ///     .class(generic_class)
 ///     .interface(generic_interface)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct InterfaceImplBuilder {
@@ -163,7 +162,7 @@ impl InterfaceImplBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for managing the assembly
+    /// * `assembly` - The CIL assembly for managing metadata
     ///
     /// # Returns
     ///
@@ -177,7 +176,7 @@ impl InterfaceImplBuilder {
     /// - Returns error if class RID is 0 (invalid RID)
     /// - Returns error if interface is not a valid TypeDefOrRef coded index
     /// - Returns error if table operations fail
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let class = self.class.ok_or_else(|| {
             Error::ModificationInvalid("InterfaceImpl class is required".to_string())
         })?;
@@ -200,7 +199,7 @@ impl InterfaceImplBuilder {
             )));
         }
 
-        let rid = context.next_rid(TableId::InterfaceImpl);
+        let rid = assembly.next_rid(TableId::InterfaceImpl)?;
 
         let token_value = ((TableId::InterfaceImpl as u32) << 24) | rid;
         let token = Token::new(token_value);
@@ -213,7 +212,7 @@ impl InterfaceImplBuilder {
             interface,
         };
 
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::InterfaceImpl,
             TableDataOwned::InterfaceImpl(interface_impl_raw),
         )
@@ -224,87 +223,83 @@ impl InterfaceImplBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
     fn test_interface_impl_builder_basic() {
-        if let Ok(assembly) = get_test_assembly() {
-            // Check existing InterfaceImpl table count
-            let existing_count = assembly.original_table_row_count(TableId::InterfaceImpl);
-            let expected_rid = existing_count + 1;
-
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = get_test_assembly() {
             // Create a basic interface implementation
             let implementing_class = 1; // TypeDef RID
             let target_interface =
                 CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef); // External interface
 
-            let token = InterfaceImplBuilder::new()
+            let impl_ref = InterfaceImplBuilder::new()
                 .class(implementing_class)
                 .interface(target_interface)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x09000000); // InterfaceImpl table prefix
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid); // RID should be existing + 1
+            // Verify ref is created correctly
+            assert_eq!(
+                impl_ref.kind(),
+                ChangeRefKind::TableRow(TableId::InterfaceImpl)
+            );
         }
     }
 
     #[test]
     fn test_interface_impl_builder_interface_extension() {
-        if let Ok(assembly) = get_test_assembly() {
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = get_test_assembly() {
             // Create an interface extending another interface
             let derived_interface = 2; // TypeDef RID for derived interface
             let base_interface = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeDefOrRef); // Local base interface
 
-            let token = InterfaceImplBuilder::new()
+            let impl_ref = InterfaceImplBuilder::new()
                 .class(derived_interface)
                 .interface(base_interface)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x09000000);
+            // Verify ref is created correctly
+            assert_eq!(
+                impl_ref.kind(),
+                ChangeRefKind::TableRow(TableId::InterfaceImpl)
+            );
         }
     }
 
     #[test]
     fn test_interface_impl_builder_generic_interface() {
-        if let Ok(assembly) = get_test_assembly() {
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = get_test_assembly() {
             // Create a generic interface implementation
             let implementing_class = 3; // TypeDef RID
             let generic_interface =
                 CodedIndex::new(TableId::TypeSpec, 1, CodedIndexType::TypeDefOrRef); // Generic interface instantiation
 
-            let token = InterfaceImplBuilder::new()
+            let impl_ref = InterfaceImplBuilder::new()
                 .class(implementing_class)
                 .interface(generic_interface)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x09000000);
+            // Verify ref is created correctly
+            assert_eq!(
+                impl_ref.kind(),
+                ChangeRefKind::TableRow(TableId::InterfaceImpl)
+            );
         }
     }
 
     #[test]
     fn test_interface_impl_builder_missing_class() {
-        if let Ok(assembly) = get_test_assembly() {
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = get_test_assembly() {
             let target_interface =
                 CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
 
             let result = InterfaceImplBuilder::new()
                 .interface(target_interface)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because class is required
             assert!(result.is_err());
@@ -313,14 +308,12 @@ mod tests {
 
     #[test]
     fn test_interface_impl_builder_missing_interface() {
-        if let Ok(assembly) = get_test_assembly() {
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = get_test_assembly() {
             let implementing_class = 1; // TypeDef RID
 
             let result = InterfaceImplBuilder::new()
                 .class(implementing_class)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because interface is required
             assert!(result.is_err());
@@ -329,16 +322,14 @@ mod tests {
 
     #[test]
     fn test_interface_impl_builder_zero_class_rid() {
-        if let Ok(assembly) = get_test_assembly() {
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = get_test_assembly() {
             let target_interface =
                 CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
 
             let result = InterfaceImplBuilder::new()
                 .class(0) // Invalid RID
                 .interface(target_interface)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because class RID cannot be 0
             assert!(result.is_err());
@@ -347,9 +338,7 @@ mod tests {
 
     #[test]
     fn test_interface_impl_builder_invalid_interface_type() {
-        if let Ok(assembly) = get_test_assembly() {
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = get_test_assembly() {
             let implementing_class = 1; // TypeDef RID
                                         // Use a table type that's not valid for TypeDefOrRef
             let invalid_interface =
@@ -358,7 +347,7 @@ mod tests {
             let result = InterfaceImplBuilder::new()
                 .class(implementing_class)
                 .interface(invalid_interface)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because interface type is not valid for TypeDefOrRef
             assert!(result.is_err());
@@ -367,9 +356,7 @@ mod tests {
 
     #[test]
     fn test_interface_impl_builder_multiple_implementations() {
-        if let Ok(assembly) = get_test_assembly() {
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = get_test_assembly() {
             let class1 = 1; // TypeDef RID
             let class2 = 2; // TypeDef RID
             let class3 = 3; // TypeDef RID
@@ -379,51 +366,61 @@ mod tests {
             let interface3 = CodedIndex::new(TableId::TypeSpec, 1, CodedIndexType::TypeDefOrRef); // Generic interface
 
             // Create multiple interface implementations
-            let impl1 = InterfaceImplBuilder::new()
+            let impl1_ref = InterfaceImplBuilder::new()
                 .class(class1)
                 .interface(interface1.clone())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let impl2 = InterfaceImplBuilder::new()
+            let impl2_ref = InterfaceImplBuilder::new()
                 .class(class1) // Same class implementing multiple interfaces
                 .interface(interface2.clone())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let impl3 = InterfaceImplBuilder::new()
+            let impl3_ref = InterfaceImplBuilder::new()
                 .class(class2)
                 .interface(interface1) // Same interface implemented by multiple classes
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let impl4 = InterfaceImplBuilder::new()
+            let impl4_ref = InterfaceImplBuilder::new()
                 .class(class3)
                 .interface(interface3)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // All should succeed and have different RIDs
-            assert_ne!(impl1.value() & 0x00FFFFFF, impl2.value() & 0x00FFFFFF);
-            assert_ne!(impl1.value() & 0x00FFFFFF, impl3.value() & 0x00FFFFFF);
-            assert_ne!(impl1.value() & 0x00FFFFFF, impl4.value() & 0x00FFFFFF);
-            assert_ne!(impl2.value() & 0x00FFFFFF, impl3.value() & 0x00FFFFFF);
-            assert_ne!(impl2.value() & 0x00FFFFFF, impl4.value() & 0x00FFFFFF);
-            assert_ne!(impl3.value() & 0x00FFFFFF, impl4.value() & 0x00FFFFFF);
+            // All should succeed and be different refs
+            assert!(!std::sync::Arc::ptr_eq(&impl1_ref, &impl2_ref));
+            assert!(!std::sync::Arc::ptr_eq(&impl1_ref, &impl3_ref));
+            assert!(!std::sync::Arc::ptr_eq(&impl1_ref, &impl4_ref));
+            assert!(!std::sync::Arc::ptr_eq(&impl2_ref, &impl3_ref));
+            assert!(!std::sync::Arc::ptr_eq(&impl2_ref, &impl4_ref));
+            assert!(!std::sync::Arc::ptr_eq(&impl3_ref, &impl4_ref));
 
-            // All should have InterfaceImpl table prefix
-            assert_eq!(impl1.value() & 0xFF000000, 0x09000000);
-            assert_eq!(impl2.value() & 0xFF000000, 0x09000000);
-            assert_eq!(impl3.value() & 0xFF000000, 0x09000000);
-            assert_eq!(impl4.value() & 0xFF000000, 0x09000000);
+            // All should have InterfaceImpl table kind
+            assert_eq!(
+                impl1_ref.kind(),
+                ChangeRefKind::TableRow(TableId::InterfaceImpl)
+            );
+            assert_eq!(
+                impl2_ref.kind(),
+                ChangeRefKind::TableRow(TableId::InterfaceImpl)
+            );
+            assert_eq!(
+                impl3_ref.kind(),
+                ChangeRefKind::TableRow(TableId::InterfaceImpl)
+            );
+            assert_eq!(
+                impl4_ref.kind(),
+                ChangeRefKind::TableRow(TableId::InterfaceImpl)
+            );
         }
     }
 
     #[test]
     fn test_interface_impl_builder_complex_inheritance() {
-        if let Ok(assembly) = get_test_assembly() {
-            let mut context = BuilderContext::new(assembly);
-
+        if let Ok(mut assembly) = get_test_assembly() {
             // Create a complex inheritance scenario
             let base_class = 1; // TypeDef RID for base class
             let derived_class = 2; // TypeDef RID for derived class
@@ -431,23 +428,29 @@ mod tests {
             let interface2 = CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef); // Derived interface
 
             // Base class implements interface1
-            let base_impl = InterfaceImplBuilder::new()
+            let base_impl_ref = InterfaceImplBuilder::new()
                 .class(base_class)
                 .interface(interface1)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Derived class implements interface2 (additional interface)
-            let derived_impl = InterfaceImplBuilder::new()
+            let derived_impl_ref = InterfaceImplBuilder::new()
                 .class(derived_class)
                 .interface(interface2)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Both should succeed with different tokens
-            assert_ne!(base_impl.value(), derived_impl.value());
-            assert_eq!(base_impl.value() & 0xFF000000, 0x09000000);
-            assert_eq!(derived_impl.value() & 0xFF000000, 0x09000000);
+            // Both should succeed with different refs
+            assert!(!std::sync::Arc::ptr_eq(&base_impl_ref, &derived_impl_ref));
+            assert_eq!(
+                base_impl_ref.kind(),
+                ChangeRefKind::TableRow(TableId::InterfaceImpl)
+            );
+            assert_eq!(
+                derived_impl_ref.kind(),
+                ChangeRefKind::TableRow(TableId::InterfaceImpl)
+            );
         }
     }
 }

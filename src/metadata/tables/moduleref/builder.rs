@@ -8,22 +8,21 @@
 //! The `ModuleRefBuilder` enables creation of module references with:
 //! - Module name validation and heap management
 //! - Automatic RID assignment and token generation
-//! - Integration with the broader builder context
+//! - Integration with the broader CilAssembly
 //! - Comprehensive validation and error handling
 //!
 //! ## Usage
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! # let mut assembly = CilAssembly::new(view);
 //!
 //! // Create a module reference
 //! let module_ref_token = ModuleRefBuilder::new()
 //!     .name("ExternalModule.dll")
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -36,7 +35,7 @@
 //! - **Error Handling**: Clear error messages for validation failures
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{ModuleRefRaw, TableDataOwned, TableId},
         token::Token,
@@ -62,16 +61,15 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing ModuleRef entries:
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 ///
 /// let module_ref = ModuleRefBuilder::new()
 ///     .name("System.Core.dll")
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
@@ -141,7 +139,7 @@ impl ModuleRefBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for the assembly being modified
+    /// * `assembly` - The CilAssembly for the assembly being modified
     ///
     /// # Returns
     ///
@@ -157,21 +155,20 @@ impl ModuleRefBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     ///
     /// let module_ref_token = ModuleRefBuilder::new()
     ///     .name("MyModule.dll")
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
-    /// println!("Created ModuleRef with token: {}", module_ref_token);
+    /// println!("Created ModuleRef with token: {:?}", module_ref_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let name = self.name.ok_or_else(|| {
             Error::ModificationInvalid("Module name is required for ModuleRef".to_string())
         })?;
@@ -182,40 +179,36 @@ impl ModuleRefBuilder {
             ));
         }
 
-        let name_index = context.string_get_or_add(&name)?;
-        let rid = context.next_rid(TableId::ModuleRef);
-        let token = Token::from_parts(TableId::ModuleRef, rid);
+        let name_index = assembly.string_get_or_add(&name)?.placeholder();
 
         let module_ref = ModuleRefRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
             name: name_index,
         };
 
-        context.table_row_add(TableId::ModuleRef, TableDataOwned::ModuleRef(module_ref))?;
-
-        Ok(token)
+        assembly.table_row_add(TableId::ModuleRef, TableDataOwned::ModuleRef(module_ref))
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::factories::table::assemblyref::get_test_assembly;
+    use crate::{
+        cilassembly::ChangeRefKind, test::factories::table::assemblyref::get_test_assembly,
+    };
 
     #[test]
     fn test_moduleref_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ModuleRefBuilder::new()
+        let ref_ = ModuleRefBuilder::new()
             .name("System.Core.dll")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify the token has the correct table ID
-        assert_eq!(token.table(), TableId::ModuleRef as u8);
-        assert!(token.row() > 0);
+        // Verify the reference has the correct kind
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::ModuleRef));
 
         Ok(())
     }
@@ -229,10 +222,9 @@ mod tests {
 
     #[test]
     fn test_moduleref_builder_missing_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let result = ModuleRefBuilder::new().build(&mut context);
+        let result = ModuleRefBuilder::new().build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -243,10 +235,9 @@ mod tests {
 
     #[test]
     fn test_moduleref_builder_empty_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let result = ModuleRefBuilder::new().name("").build(&mut context);
+        let result = ModuleRefBuilder::new().name("").build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -257,46 +248,41 @@ mod tests {
 
     #[test]
     fn test_moduleref_builder_multiple_modules() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token1 = ModuleRefBuilder::new()
+        let ref1 = ModuleRefBuilder::new()
             .name("Module1.dll")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token2 = ModuleRefBuilder::new()
+        let ref2 = ModuleRefBuilder::new()
             .name("Module2.dll")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify tokens are different and sequential
-        assert_ne!(token1, token2);
-        assert_eq!(token1.table(), TableId::ModuleRef as u8);
-        assert_eq!(token2.table(), TableId::ModuleRef as u8);
-        assert_eq!(token2.row(), token1.row() + 1);
+        // Verify references are different
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::ModuleRef));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::ModuleRef));
 
         Ok(())
     }
 
     #[test]
     fn test_moduleref_builder_fluent_api() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test fluent API chaining
-        let token = ModuleRefBuilder::new()
+        let ref_ = ModuleRefBuilder::new()
             .name("FluentModule.dll")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ModuleRef as u8);
-        assert!(token.row() > 0);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::ModuleRef));
 
         Ok(())
     }
 
     #[test]
     fn test_moduleref_builder_various_names() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let test_names = [
             "System.dll",
@@ -307,11 +293,9 @@ mod tests {
         ];
 
         for name in test_names.iter() {
-            let token = ModuleRefBuilder::new().name(*name).build(&mut context)?;
+            let ref_ = ModuleRefBuilder::new().name(*name).build(&mut assembly)?;
 
-            assert_eq!(token.table(), TableId::ModuleRef as u8);
-            // Row numbers start from the next available RID (which could be higher if table already has entries)
-            assert!(token.row() > 0);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::ModuleRef));
         }
 
         Ok(())
@@ -319,24 +303,22 @@ mod tests {
 
     #[test]
     fn test_moduleref_builder_string_reuse() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Create two module references with the same name
-        let token1 = ModuleRefBuilder::new()
+        let ref1 = ModuleRefBuilder::new()
             .name("SharedModule.dll")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token2 = ModuleRefBuilder::new()
+        let ref2 = ModuleRefBuilder::new()
             .name("SharedModule.dll")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Tokens should be different (different RIDs)
-        assert_ne!(token1, token2);
-        assert_eq!(token2.row(), token1.row() + 1);
+        // References should be different (different instances)
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
 
         // But the strings should be reused in the heap
-        // (This is an internal optimization that the builder context handles)
+        // (This is an internal optimization that the CilAssembly handles)
 
         Ok(())
     }

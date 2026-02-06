@@ -6,7 +6,7 @@
 //! enumeration value definitions, and attribute argument specification.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{CodedIndex, CodedIndexType, ConstantRaw, TableDataOwned, TableId},
         token::Token,
@@ -50,14 +50,13 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::{ConstantBuilder, CodedIndex, TableId};
 /// # use dotscope::metadata::typesystem::ELEMENT_TYPE;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create an integer constant for a field
 /// let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant); // Target field
@@ -67,7 +66,7 @@ use crate::{
 ///     .element_type(ELEMENT_TYPE::I4)
 ///     .parent(field_ref)
 ///     .value(&int_value)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a string constant for a parameter default
 /// let param_ref = CodedIndex::new(TableId::Param, 2, CodedIndexType::HasConstant); // Target parameter
@@ -77,7 +76,7 @@ use crate::{
 ///     .element_type(ELEMENT_TYPE::STRING)
 ///     .parent(param_ref)
 ///     .string_value(string_value)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a boolean constant for a property
 /// let property_ref = CodedIndex::new(TableId::Property, 1, CodedIndexType::HasConstant); // Target property
@@ -87,7 +86,7 @@ use crate::{
 ///     .element_type(ELEMENT_TYPE::BOOLEAN)
 ///     .parent(property_ref)
 ///     .value(&bool_value)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a null reference constant
 /// let null_field = CodedIndex::new(TableId::Field, 3, CodedIndexType::HasConstant); // Target field
@@ -97,7 +96,7 @@ use crate::{
 ///     .element_type(ELEMENT_TYPE::CLASS)
 ///     .parent(null_field)
 ///     .value(&null_value)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct ConstantBuilder {
@@ -312,7 +311,7 @@ impl ConstantBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for managing the assembly
+    /// * `assembly` - The CilAssembly for managing the assembly
     ///
     /// # Returns
     ///
@@ -328,7 +327,7 @@ impl ConstantBuilder {
     /// - Returns error if element type is invalid for constants
     /// - Returns error if heap operations fail
     /// - Returns error if table operations fail
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let element_type = self.element_type.ok_or_else(|| {
             Error::ModificationInvalid("Constant element type is required".to_string())
         })?;
@@ -382,10 +381,10 @@ impl ConstantBuilder {
         let value_index = if value.is_empty() {
             0 // Empty blob for null references
         } else {
-            context.blob_add(&value)?
+            assembly.blob_add(&value)?.placeholder()
         };
 
-        let rid = context.next_rid(TableId::Constant);
+        let rid = assembly.next_rid(TableId::Constant)?;
 
         let token = Token::from_parts(TableId::Constant, rid);
 
@@ -398,7 +397,7 @@ impl ConstantBuilder {
             value: value_index,
         };
 
-        context.table_row_add(TableId::Constant, TableDataOwned::Constant(constant_raw))
+        assembly.table_row_add(TableId::Constant, TableDataOwned::Constant(constant_raw))
     }
 }
 
@@ -406,7 +405,7 @@ impl ConstantBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
+        cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
@@ -415,28 +414,21 @@ mod tests {
     fn test_constant_builder_basic_integer() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-
-            // Check existing Constant table count
-            let existing_count = assembly.original_table_row_count(TableId::Constant);
-            let expected_rid = existing_count + 1;
-
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Create an integer constant for a field
             let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant);
             let int_value = 42i32.to_le_bytes();
 
-            let token = ConstantBuilder::new()
+            let const_ref = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::I4)
                 .parent(field_ref)
                 .value(&int_value)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x0B000000); // Constant table prefix
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid); // RID should be existing + 1
+            // Verify ref is created correctly
+            assert_eq!(const_ref.kind(), ChangeRefKind::TableRow(TableId::Constant));
         }
     }
 
@@ -444,19 +436,18 @@ mod tests {
     fn test_constant_builder_i4_convenience() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant);
 
-            let token = ConstantBuilder::new()
+            let const_ref = ConstantBuilder::new()
                 .parent(field_ref)
                 .i4_value(42)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x0B000000);
+            // Verify ref is created correctly
+            assert_eq!(const_ref.kind(), ChangeRefKind::TableRow(TableId::Constant));
         }
     }
 
@@ -464,19 +455,18 @@ mod tests {
     fn test_constant_builder_boolean() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let param_ref = CodedIndex::new(TableId::Param, 1, CodedIndexType::HasConstant);
 
-            let token = ConstantBuilder::new()
+            let const_ref = ConstantBuilder::new()
                 .parent(param_ref)
                 .boolean_value(true)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x0B000000);
+            // Verify ref is created correctly
+            assert_eq!(const_ref.kind(), ChangeRefKind::TableRow(TableId::Constant));
         }
     }
 
@@ -484,19 +474,18 @@ mod tests {
     fn test_constant_builder_string() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let property_ref = CodedIndex::new(TableId::Property, 1, CodedIndexType::HasConstant);
 
-            let token = ConstantBuilder::new()
+            let const_ref = ConstantBuilder::new()
                 .parent(property_ref)
                 .string_value("Hello, World!")
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x0B000000);
+            // Verify ref is created correctly
+            assert_eq!(const_ref.kind(), ChangeRefKind::TableRow(TableId::Constant));
         }
     }
 
@@ -504,21 +493,20 @@ mod tests {
     fn test_constant_builder_null_reference() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let field_ref = CodedIndex::new(TableId::Field, 2, CodedIndexType::HasConstant);
             let null_value = [0u8, 0u8, 0u8, 0u8]; // 4-byte zero for null reference
 
-            let token = ConstantBuilder::new()
+            let const_ref = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::CLASS)
                 .parent(field_ref)
                 .value(&null_value)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x0B000000);
+            // Verify ref is created correctly
+            assert_eq!(const_ref.kind(), ChangeRefKind::TableRow(TableId::Constant));
         }
     }
 
@@ -526,8 +514,7 @@ mod tests {
     fn test_constant_builder_missing_element_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant);
             let int_value = 42i32.to_le_bytes();
@@ -535,7 +522,7 @@ mod tests {
             let result = ConstantBuilder::new()
                 .parent(field_ref)
                 .value(&int_value)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because element type is required
             assert!(result.is_err());
@@ -546,15 +533,14 @@ mod tests {
     fn test_constant_builder_missing_parent() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let int_value = 42i32.to_le_bytes();
 
             let result = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::I4)
                 .value(&int_value)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because parent is required
             assert!(result.is_err());
@@ -565,15 +551,14 @@ mod tests {
     fn test_constant_builder_missing_value() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant);
 
             let result = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::I4)
                 .parent(field_ref)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because value is required
             assert!(result.is_err());
@@ -584,8 +569,7 @@ mod tests {
     fn test_constant_builder_invalid_parent_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Use a table type that's not valid for HasConstant
             let invalid_parent = CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::HasConstant); // TypeDef not in HasConstant
@@ -595,7 +579,7 @@ mod tests {
                 .element_type(ELEMENT_TYPE::I4)
                 .parent(invalid_parent)
                 .value(&int_value)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because parent type is not valid for HasConstant
             assert!(result.is_err());
@@ -606,8 +590,7 @@ mod tests {
     fn test_constant_builder_invalid_element_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let field_ref = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant);
             let int_value = 42i32.to_le_bytes();
@@ -616,7 +599,7 @@ mod tests {
                 .element_type(0xFF) // Invalid element type
                 .parent(field_ref)
                 .value(&int_value)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because element type is invalid for constants
             assert!(result.is_err());
@@ -627,8 +610,7 @@ mod tests {
     fn test_constant_builder_multiple_constants() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let field1 = CodedIndex::new(TableId::Field, 1, CodedIndexType::HasConstant);
             let field2 = CodedIndex::new(TableId::Field, 2, CodedIndexType::HasConstant);
@@ -636,44 +618,56 @@ mod tests {
             let property1 = CodedIndex::new(TableId::Property, 1, CodedIndexType::HasConstant);
 
             // Create multiple constants with different types
-            let const1 = ConstantBuilder::new()
+            let const1_ref = ConstantBuilder::new()
                 .parent(field1)
                 .i4_value(42)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let const2 = ConstantBuilder::new()
+            let const2_ref = ConstantBuilder::new()
                 .parent(field2)
                 .boolean_value(true)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let const3 = ConstantBuilder::new()
+            let const3_ref = ConstantBuilder::new()
                 .parent(param1)
                 .string_value("default value")
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let const4 = ConstantBuilder::new()
+            let const4_ref = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::R8)
                 .parent(property1)
                 .value(&std::f64::consts::PI.to_le_bytes())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // All should succeed and have different RIDs
-            assert_ne!(const1.value() & 0x00FFFFFF, const2.value() & 0x00FFFFFF);
-            assert_ne!(const1.value() & 0x00FFFFFF, const3.value() & 0x00FFFFFF);
-            assert_ne!(const1.value() & 0x00FFFFFF, const4.value() & 0x00FFFFFF);
-            assert_ne!(const2.value() & 0x00FFFFFF, const3.value() & 0x00FFFFFF);
-            assert_ne!(const2.value() & 0x00FFFFFF, const4.value() & 0x00FFFFFF);
-            assert_ne!(const3.value() & 0x00FFFFFF, const4.value() & 0x00FFFFFF);
+            // All should succeed and be different refs
+            assert!(!std::sync::Arc::ptr_eq(&const1_ref, &const2_ref));
+            assert!(!std::sync::Arc::ptr_eq(&const1_ref, &const3_ref));
+            assert!(!std::sync::Arc::ptr_eq(&const1_ref, &const4_ref));
+            assert!(!std::sync::Arc::ptr_eq(&const2_ref, &const3_ref));
+            assert!(!std::sync::Arc::ptr_eq(&const2_ref, &const4_ref));
+            assert!(!std::sync::Arc::ptr_eq(&const3_ref, &const4_ref));
 
-            // All should have Constant table prefix
-            assert_eq!(const1.value() & 0xFF000000, 0x0B000000);
-            assert_eq!(const2.value() & 0xFF000000, 0x0B000000);
-            assert_eq!(const3.value() & 0xFF000000, 0x0B000000);
-            assert_eq!(const4.value() & 0xFF000000, 0x0B000000);
+            // All should have Constant table kind
+            assert_eq!(
+                const1_ref.kind(),
+                ChangeRefKind::TableRow(TableId::Constant)
+            );
+            assert_eq!(
+                const2_ref.kind(),
+                ChangeRefKind::TableRow(TableId::Constant)
+            );
+            assert_eq!(
+                const3_ref.kind(),
+                ChangeRefKind::TableRow(TableId::Constant)
+            );
+            assert_eq!(
+                const4_ref.kind(),
+                ChangeRefKind::TableRow(TableId::Constant)
+            );
         }
     }
 
@@ -681,8 +675,7 @@ mod tests {
     fn test_constant_builder_all_primitive_types() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Test various primitive types
             let field_refs: Vec<_> = (1..=12)
@@ -694,7 +687,7 @@ mod tests {
                 .element_type(ELEMENT_TYPE::BOOLEAN)
                 .parent(field_refs[0].clone())
                 .value(&[1u8])
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Char (16-bit Unicode)
@@ -702,7 +695,7 @@ mod tests {
                 .element_type(ELEMENT_TYPE::CHAR)
                 .parent(field_refs[1].clone())
                 .value(&('A' as u16).to_le_bytes())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Signed integers
@@ -710,28 +703,28 @@ mod tests {
                 .element_type(ELEMENT_TYPE::I1)
                 .parent(field_refs[2].clone())
                 .value(&(-42i8).to_le_bytes())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             let _i2_const = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::I2)
                 .parent(field_refs[3].clone())
                 .value(&(-1000i16).to_le_bytes())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             let _i4_const = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::I4)
                 .parent(field_refs[4].clone())
                 .value(&(-100000i32).to_le_bytes())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             let _i8_const = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::I8)
                 .parent(field_refs[5].clone())
                 .value(&(-1000000000000i64).to_le_bytes())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Unsigned integers
@@ -739,28 +732,28 @@ mod tests {
                 .element_type(ELEMENT_TYPE::U1)
                 .parent(field_refs[6].clone())
                 .value(&255u8.to_le_bytes())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             let _u2_const = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::U2)
                 .parent(field_refs[7].clone())
                 .value(&65535u16.to_le_bytes())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             let _u4_const = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::U4)
                 .parent(field_refs[8].clone())
                 .value(&4294967295u32.to_le_bytes())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             let _u8_const = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::U8)
                 .parent(field_refs[9].clone())
                 .value(&18446744073709551615u64.to_le_bytes())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Floating point
@@ -768,14 +761,14 @@ mod tests {
                 .element_type(ELEMENT_TYPE::R4)
                 .parent(field_refs[10].clone())
                 .value(&std::f32::consts::PI.to_le_bytes())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             let _r8_const = ConstantBuilder::new()
                 .element_type(ELEMENT_TYPE::R8)
                 .parent(field_refs[11].clone())
                 .value(&std::f64::consts::E.to_le_bytes())
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // All constants should be created successfully

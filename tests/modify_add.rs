@@ -4,31 +4,38 @@
 //! modified assemblies to disk and ensuring they can be loaded back correctly.
 
 use dotscope::prelude::*;
-use std::path::Path;
+use dotscope::ChangeRefKind;
 
 #[test]
 fn extend_crafted_2() -> Result<()> {
     // Step 1: Load the original assembly
-    let view = CilAssemblyView::from_path(Path::new("tests/samples/crafted_2.exe"))?;
+    let mut assembly = CilAssembly::from_path("tests/samples/crafted_2.exe")?;
 
-    let original_string_count = view.strings().map(|s| s.iter().count()).unwrap_or(0);
-    let original_blob_count = view.blobs().map(|b| b.iter().count()).unwrap_or(0);
-    let original_userstring_count = view.userstrings().map(|u| u.iter().count()).unwrap_or(0);
-    let original_field_count = view
+    let original_string_count = assembly
+        .view()
+        .strings()
+        .map(|s| s.iter().count())
+        .unwrap_or(0);
+    let original_userstring_count = assembly
+        .view()
+        .userstrings()
+        .map(|u| u.iter().count())
+        .unwrap_or(0);
+    let original_field_count = assembly
+        .view()
         .tables()
         .map(|t| t.table_row_count(TableId::Field))
         .unwrap_or(0);
-    let original_method_count = view
+    let original_method_count = assembly
+        .view()
         .tables()
         .map(|t| t.table_row_count(TableId::MethodDef))
         .unwrap_or(0);
-    let original_param_count = view
+    let original_param_count = assembly
+        .view()
         .tables()
         .map(|t| t.table_row_count(TableId::Param))
         .unwrap_or(0);
-
-    let assembly = view.to_owned();
-    let mut context = BuilderContext::new(assembly);
 
     // Step 2: Add new heap entries
 
@@ -38,8 +45,8 @@ fn extend_crafted_2() -> Result<()> {
     let test_userstring = "TestAddedUserString";
 
     // Add user string directly (not used by builders)
-    let userstring_index = context.userstring_add(test_userstring)?;
-    assert!(userstring_index > 0, "UserString index should be positive");
+    let _userstring_ref = assembly.userstring_add(test_userstring)?;
+    // The ChangeRef is valid if we got here without error
 
     // Step 3: Add new table rows that reference the new heap entries
 
@@ -48,13 +55,10 @@ fn extend_crafted_2() -> Result<()> {
         .name(test_string)
         .flags(0x0001) // Private field
         .signature(&test_blob)
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    assert!(field_token.value() > 0, "Field token should be positive");
-    assert!(
-        field_token.value() > original_field_count,
-        "Field token should be higher than original field count"
-    );
+    // Just verify the reference was created - actual token value is resolved at write time
+    assert_eq!(field_token.kind(), ChangeRefKind::TableRow(TableId::Field));
 
     // Add a new MethodDef using the MethodDefBuilder
     let method_name_string = "TestAddedMethod";
@@ -66,12 +70,12 @@ fn extend_crafted_2() -> Result<()> {
         .impl_flags(0) // No special implementation flags
         .signature(&method_signature_blob)
         .rva(0) // No implementation
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    assert!(method_token.value() > 0, "Method token should be positive");
-    assert!(
-        method_token.value() > original_method_count,
-        "Method token should be higher than original method count"
+    // Just verify the reference was created - actual token value is resolved at write time
+    assert_eq!(
+        method_token.kind(),
+        ChangeRefKind::TableRow(TableId::MethodDef)
     );
 
     // Add a new Param using the ParamBuilder
@@ -81,35 +85,18 @@ fn extend_crafted_2() -> Result<()> {
         .name(param_name_string)
         .flags(0x0000) // No special flags
         .sequence(1) // First parameter
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    assert!(param_token.value() > 0, "Param token should be positive");
-    assert!(
-        param_token.value() > original_param_count,
-        "Param token should be higher than original param count"
-    );
+    // Just verify the reference was created - actual token value is resolved at write time
+    assert_eq!(param_token.kind(), ChangeRefKind::TableRow(TableId::Param));
 
-    // Step 4: Write to a temporary file
-    let temp_file = tempfile::NamedTempFile::new()?;
-    let temp_path = temp_file.path();
+    // Step 4: Write to memory
+    let bytes = assembly.to_memory()?;
+    assert!(!bytes.is_empty(), "Written bytes should not be empty");
 
-    // Get the assembly back from context and write to file
-    let mut assembly = context.finish();
-
-    // Use the new validation system
-    assembly.validate_and_apply_changes()?;
-    assembly.write_to_file(temp_path)?;
-
-    // Verify the file was actually created
-    assert!(temp_path.exists(), "Output file should exist after writing");
-
-    // Verify the file is not empty
-    let file_size = std::fs::metadata(temp_path)?.len();
-    assert!(file_size > 0, "Output file should not be empty");
-
-    // Step 5: Load the new file and verify our additions
+    // Step 5: Load the written bytes and verify our additions
     let modified_view =
-        CilAssemblyView::from_path(temp_path).expect("Modified assembly should load successfully");
+        CilAssemblyView::from_mem(bytes).expect("Modified assembly should load successfully");
 
     // Verify heap additions
     // Check strings
@@ -166,19 +153,9 @@ fn extend_crafted_2() -> Result<()> {
         .blobs()
         .expect("Modified assembly should have blob heap");
 
-    let new_blob_count = blobs.iter().count();
-    assert!(
-        new_blob_count > original_blob_count,
-        "Blob heap should have grown from {} to at least {}",
-        original_blob_count,
-        original_blob_count + 1
-    );
-    assert!(
-        new_blob_count >= original_blob_count + 2,
-        "Blob heap should have at least 2 more entries, got {} (expected at least {})",
-        new_blob_count,
-        original_blob_count + 2
-    );
+    // Note: Blob count might not increase if the added blobs are duplicates of existing entries.
+    // The heap writer correctly deduplicates identical blobs. What matters is that our blobs
+    // are findable in the heap and that the table references point to valid blobs.
 
     // Verify our added blobs exist by searching for them in the heap
     let mut found_test_blob = false;

@@ -5,7 +5,7 @@
 //! name, version identifier (Mvid), and Edit-and-Continue support for .NET assemblies.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{ModuleRaw, TableDataOwned, TableId},
         token::Token,
@@ -46,17 +46,16 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create a basic module with auto-generated Mvid
 /// let basic_module = ModuleBuilder::new()
 ///     .name("MyModule.dll")
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a module with specific Mvid for version control
 /// let versioned_module = ModuleBuilder::new()
@@ -65,7 +64,7 @@ use crate::{
 ///         0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0,
 ///         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88
 ///     ])
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a module with Edit-and-Continue support for development
 /// let dev_module = ModuleBuilder::new()
@@ -74,7 +73,7 @@ use crate::{
 ///         0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11,
 ///         0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99
 ///     ])
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Create a module with full development support
 /// let full_dev_module = ModuleBuilder::new()
@@ -92,7 +91,7 @@ use crate::{
 ///         0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88,
 ///         0x99, 0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00
 ///     ])
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct ModuleBuilder {
@@ -142,7 +141,7 @@ impl ModuleBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::metadata::tables::ModuleBuilder;
     /// let builder = ModuleBuilder::new()
     ///     .generation(0); // Always 0 per ECMA-335
@@ -169,7 +168,7 @@ impl ModuleBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::metadata::tables::ModuleBuilder;
     /// let builder = ModuleBuilder::new()
     ///     .name("MyLibrary.dll");
@@ -196,7 +195,7 @@ impl ModuleBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::metadata::tables::ModuleBuilder;
     /// let builder = ModuleBuilder::new()
     ///     .mvid(&[
@@ -226,7 +225,7 @@ impl ModuleBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::metadata::tables::ModuleBuilder;
     /// let builder = ModuleBuilder::new()
     ///     .encid(&[
@@ -256,7 +255,7 @@ impl ModuleBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::metadata::tables::ModuleBuilder;
     /// let builder = ModuleBuilder::new()
     ///     .encbaseid(&[
@@ -279,7 +278,7 @@ impl ModuleBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - Builder context for heap and table management
+    /// * `assembly` - Builder context for heap and table management
     ///
     /// # Returns
     ///
@@ -297,24 +296,23 @@ impl ModuleBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     /// let token = ModuleBuilder::new()
     ///     .name("MyModule.dll")
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Validate required fields
         let name = self
             .name
             .ok_or_else(|| Error::ModificationInvalid("name field is required".to_string()))?;
 
-        let existing_count = context.next_rid(TableId::Module) - 1;
+        let existing_count = assembly.next_rid(TableId::Module)? - 1;
         if existing_count > 0 {
             return Err(Error::ModificationInvalid(
                 "Module table already contains an entry. Only one module per assembly is allowed."
@@ -322,34 +320,31 @@ impl ModuleBuilder {
             ));
         }
 
-        let name_index = context.string_add(&name)?;
+        let name_index = assembly.string_add(&name)?.placeholder();
 
         let mvid_index = if let Some(mvid) = self.mvid {
-            context.guid_add(&mvid)?
+            assembly.guid_add(&mvid)?.placeholder()
         } else {
             let new_mvid = generate_random_guid();
-            context.guid_add(&new_mvid)?
+            assembly.guid_add(&new_mvid)?.placeholder()
         };
 
         let encid_index = if let Some(encid) = self.encid {
-            context.guid_add(&encid)?
+            assembly.guid_add(&encid)?.placeholder()
         } else {
             0 // 0 indicates no EncId
         };
 
         let encbaseid_index = if let Some(encbaseid) = self.encbaseid {
-            context.guid_add(&encbaseid)?
+            assembly.guid_add(&encbaseid)?.placeholder()
         } else {
             0 // 0 indicates no EncBaseId
         };
 
-        let rid = context.next_rid(TableId::Module);
-        let token = Token::new((TableId::Module as u32) << 24 | rid);
-
         let module_raw = ModuleRaw {
-            rid,
-            token,
-            offset: 0, // Will be set during binary generation
+            rid: 0,
+            token: Token::new(0),
+            offset: 0,
             generation: self.generation.unwrap_or(0), // Always 0 per ECMA-335
             name: name_index,
             mvid: mvid_index,
@@ -357,10 +352,7 @@ impl ModuleBuilder {
             encbaseid: encbaseid_index,
         };
 
-        let table_data = TableDataOwned::Module(module_raw);
-        context.table_row_add(TableId::Module, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(TableId::Module, TableDataOwned::Module(module_raw))
     }
 }
 
@@ -409,13 +401,12 @@ mod tests {
 
     #[test]
     fn test_module_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Note: WindowsBase.dll already has a Module entry, so this should fail
         let result = ModuleBuilder::new()
             .name("TestModule.dll")
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         assert!(result
@@ -427,8 +418,7 @@ mod tests {
 
     #[test]
     fn test_module_builder_with_mvid() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let mvid = [
             0x12, 0x34, 0x56, 0x78, 0x9A, 0xBC, 0xDE, 0xF0, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66,
@@ -438,7 +428,7 @@ mod tests {
         let result = ModuleBuilder::new()
             .name("TestModule.dll")
             .mvid(&mvid)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         assert!(result
@@ -450,8 +440,7 @@ mod tests {
 
     #[test]
     fn test_module_builder_with_enc_support() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let encid = [
             0xAA, 0xBB, 0xCC, 0xDD, 0xEE, 0xFF, 0x00, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77,
@@ -466,7 +455,7 @@ mod tests {
             .name("DebugModule.dll")
             .encid(&encid)
             .encbaseid(&encbaseid)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         assert!(result
@@ -478,10 +467,9 @@ mod tests {
 
     #[test]
     fn test_module_builder_missing_name() {
-        let assembly = get_test_assembly().unwrap();
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly().unwrap();
 
-        let result = ModuleBuilder::new().build(&mut context);
+        let result = ModuleBuilder::new().build(&mut assembly);
 
         assert!(result.is_err());
         assert!(result
@@ -492,13 +480,12 @@ mod tests {
 
     #[test]
     fn test_module_builder_generation() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let result = ModuleBuilder::new()
             .name("TestModule.dll")
             .generation(0) // Should always be 0 per ECMA-335
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         assert!(result
@@ -510,13 +497,12 @@ mod tests {
 
     #[test]
     fn test_module_builder_default() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test Default trait implementation
         let result = ModuleBuilder::default()
             .name("DefaultModule.dll")
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         assert!(result

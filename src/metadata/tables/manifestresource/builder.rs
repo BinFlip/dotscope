@@ -16,43 +16,42 @@
 //!
 //! ## Usage
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! # use dotscope::prelude::*;
 //! # use std::path::Path;
 //! # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-//! # let assembly = CilAssembly::new(view);
-//! # let mut context = BuilderContext::new(assembly);
+//! # let mut assembly = CilAssembly::new(view);
 //!
 //! // Create an embedded resource
 //! let embedded_token = ManifestResourceBuilder::new()
 //!     .name("MyApp.Resources.strings.resources")
 //!     .public()
 //!     .offset(0x1000)
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! // Create a file-based resource
-//! let file_token = FileBuilder::new()
+//! let file_ref = FileBuilder::new()
 //!     .name("Resources.resources")
 //!     .contains_no_metadata()
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! let file_resource_token = ManifestResourceBuilder::new()
 //!     .name("MyApp.FileResources")
 //!     .private()
-//!     .implementation_file(file_token)
-//!     .build(&mut context)?;
+//!     .implementation_file(file_ref.placeholder())
+//!     .build(&mut assembly)?;
 //!
 //! // Create an external assembly resource
-//! let assembly_ref_token = AssemblyRefBuilder::new()
+//! let assembly_ref = AssemblyRefBuilder::new()
 //!     .name("MyApp.Resources")
 //!     .version(1, 0, 0, 0)
-//!     .build(&mut context)?;
+//!     .build(&mut assembly)?;
 //!
 //! let external_resource_token = ManifestResourceBuilder::new()
 //!     .name("MyApp.ExternalResources")
 //!     .public()
-//!     .implementation_assembly_ref(assembly_ref_token)
-//!     .build(&mut context)?;
+//!     .implementation_assembly_ref(assembly_ref.placeholder())
+//!     .build(&mut assembly)?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -65,7 +64,7 @@
 //! - **Implementation Support**: Methods for embedded, file-based, and external resources
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         resources::DotNetResourceEncoder,
         tables::{
@@ -76,6 +75,21 @@ use crate::{
     },
     Error, Result,
 };
+
+/// Represents the implementation target for a ManifestResource entry.
+///
+/// This enum captures both the row index (which can be a placeholder or actual row ID)
+/// and the target table type. The `CodedIndex` is constructed at write time, not at
+/// builder time, to ensure proper placeholder resolution.
+#[derive(Debug, Clone, Copy)]
+enum ResourceImplementationTarget {
+    /// Resource is embedded in the assembly (null implementation)
+    Embedded,
+    /// Reference to a File table entry (file-based resource)
+    File(u32),
+    /// Reference to an AssemblyRef table entry (external assembly resource)
+    AssemblyRef(u32),
+}
 
 /// Builder for creating ManifestResource table entries.
 ///
@@ -95,18 +109,17 @@ use crate::{
 ///
 /// The builder provides a fluent interface for constructing ManifestResource entries:
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 ///
 /// let resource_token = ManifestResourceBuilder::new()
 ///     .name("MyApp.Resources.strings")
 ///     .public()
 ///     .offset(0x1000)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 ///
@@ -131,8 +144,9 @@ pub struct ManifestResourceBuilder {
     flags: u32,
     /// Offset for embedded resources
     offset: u32,
-    /// Implementation reference for resource location
-    implementation: Option<CodedIndex>,
+    /// Implementation target capturing the row index and target table type.
+    /// The `CodedIndex` is constructed at write time.
+    implementation: Option<ResourceImplementationTarget>,
     /// Optional resource data for embedded resources
     resource_data: Option<Vec<u8>>,
     /// Optional resource data encoder for generating resource data
@@ -282,35 +296,31 @@ impl ManifestResourceBuilder {
     ///
     /// Use this for file-based resources that are stored in external files
     /// referenced through the File table.
+    /// The `CodedIndex` is NOT created at builder time to ensure proper placeholder resolution.
     ///
     /// # Arguments
     ///
-    /// * `file_token` - Token of the File table entry
+    /// * `file_row` - Row index or placeholder of the File table entry
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
-    /// let file_token = FileBuilder::new()
+    /// # let mut assembly = CilAssembly::new(view);
+    /// let file_ref = FileBuilder::new()
     ///     .name("Resources.resources")
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// let builder = ManifestResourceBuilder::new()
     ///     .name("FileBasedResource")
-    ///     .implementation_file(file_token);
+    ///     .implementation_file(file_ref.placeholder());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
-    pub fn implementation_file(mut self, file_token: Token) -> Self {
-        self.implementation = Some(CodedIndex::new(
-            TableId::File,
-            file_token.row(),
-            CodedIndexType::Implementation,
-        ));
+    pub fn implementation_file(mut self, file_row: u32) -> Self {
+        self.implementation = Some(ResourceImplementationTarget::File(file_row));
         self
     }
 
@@ -318,36 +328,32 @@ impl ManifestResourceBuilder {
     ///
     /// Use this for resources that are stored in external assemblies
     /// referenced through the AssemblyRef table.
+    /// The `CodedIndex` is NOT created at builder time to ensure proper placeholder resolution.
     ///
     /// # Arguments
     ///
-    /// * `assembly_ref_token` - Token of the AssemblyRef table entry
+    /// * `assembly_ref_row` - Row index or placeholder of the AssemblyRef table entry
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
-    /// let assembly_ref_token = AssemblyRefBuilder::new()
+    /// # let mut assembly = CilAssembly::new(view);
+    /// let assembly_ref = AssemblyRefBuilder::new()
     ///     .name("MyApp.Resources")
     ///     .version(1, 0, 0, 0)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// let builder = ManifestResourceBuilder::new()
     ///     .name("ExternalResource")
-    ///     .implementation_assembly_ref(assembly_ref_token);
+    ///     .implementation_assembly_ref(assembly_ref.placeholder());
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     #[must_use]
-    pub fn implementation_assembly_ref(mut self, assembly_ref_token: Token) -> Self {
-        self.implementation = Some(CodedIndex::new(
-            TableId::AssemblyRef,
-            assembly_ref_token.row(),
-            CodedIndexType::Implementation,
-        ));
+    pub fn implementation_assembly_ref(mut self, assembly_ref_row: u32) -> Self {
+        self.implementation = Some(ResourceImplementationTarget::AssemblyRef(assembly_ref_row));
         self
     }
 
@@ -368,7 +374,7 @@ impl ManifestResourceBuilder {
     /// ```
     #[must_use]
     pub fn implementation_embedded(mut self) -> Self {
-        self.implementation = None; // Embedded means null implementation
+        self.implementation = Some(ResourceImplementationTarget::Embedded);
         self
     }
 
@@ -384,7 +390,7 @@ impl ManifestResourceBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// let resource_data = b"Hello, World!";
     /// let builder = ManifestResourceBuilder::new()
@@ -394,7 +400,7 @@ impl ManifestResourceBuilder {
     #[must_use]
     pub fn resource_data(mut self, data: &[u8]) -> Self {
         self.resource_data = Some(data.to_vec());
-        self.implementation = None; // Force embedded implementation
+        self.implementation = Some(ResourceImplementationTarget::Embedded); // Force embedded implementation
         self
     }
 
@@ -409,7 +415,7 @@ impl ManifestResourceBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// let builder = ManifestResourceBuilder::new()
     ///     .name("ConfigResource")
@@ -418,7 +424,7 @@ impl ManifestResourceBuilder {
     #[must_use]
     pub fn resource_string(mut self, content: &str) -> Self {
         self.resource_data = Some(content.as_bytes().to_vec());
-        self.implementation = None; // Force embedded implementation
+        self.implementation = Some(ResourceImplementationTarget::Embedded); // Force embedded implementation
         self
     }
 
@@ -451,7 +457,7 @@ impl ManifestResourceBuilder {
             .resource_encoder
             .get_or_insert_with(DotNetResourceEncoder::new);
         encoder.add_string(resource_name, content)?;
-        self.implementation = None; // Force embedded implementation
+        self.implementation = Some(ResourceImplementationTarget::Embedded); // Force embedded implementation
         Ok(self)
     }
 
@@ -467,7 +473,7 @@ impl ManifestResourceBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// let icon_data = std::fs::read("icon.png")?;
     /// let builder = ManifestResourceBuilder::new()
@@ -484,7 +490,7 @@ impl ManifestResourceBuilder {
             .resource_encoder
             .get_or_insert_with(DotNetResourceEncoder::new);
         encoder.add_byte_array(resource_name, data)?;
-        self.implementation = None; // Force embedded implementation
+        self.implementation = Some(ResourceImplementationTarget::Embedded); // Force embedded implementation
         Ok(self)
     }
 
@@ -501,7 +507,7 @@ impl ManifestResourceBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// let config_xml = r#"<?xml version="1.0"?>
     /// <configuration>
@@ -538,7 +544,7 @@ impl ManifestResourceBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// let json_config = r#"{"timeout": 30, "retries": 3}"#;
     ///
@@ -572,7 +578,7 @@ impl ManifestResourceBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// # use dotscope::prelude::*;
     /// let builder = ManifestResourceBuilder::new()
     ///     .name("OptimizedResources")
@@ -601,7 +607,7 @@ impl ManifestResourceBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for the assembly being modified
+    /// * `assembly` - The CilAssembly being modified
     ///
     /// # Returns
     ///
@@ -623,19 +629,18 @@ impl ManifestResourceBuilder {
     /// # use dotscope::prelude::*;
     /// # use std::path::Path;
     /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     ///
     /// let resource_token = ManifestResourceBuilder::new()
     ///     .name("MyApp.Resources")
     ///     .public()
     ///     .offset(0x1000)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     ///
     /// println!("Created ManifestResource with token: {}", resource_token);
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let name = self.name.ok_or_else(|| {
             Error::ModificationInvalid("Resource name is required for ManifestResource".to_string())
         })?;
@@ -646,57 +651,48 @@ impl ManifestResourceBuilder {
             ));
         }
 
-        let name_index = context.string_get_or_add(&name)?;
+        let name_index = assembly.string_get_or_add(&name)?.placeholder();
 
-        let implementation = if let Some(impl_ref) = self.implementation {
-            match impl_ref.tag {
-                TableId::File | TableId::AssemblyRef => {
-                    if impl_ref.row == 0 {
-                        return Err(Error::ModificationInvalid(
-                            "Implementation reference row cannot be 0 for File or AssemblyRef tables".to_string(),
-                        ));
-                    }
-                    impl_ref
+        // Construct the CodedIndex from the stored target information.
+        // The row value may be a placeholder that will be resolved at write time
+        // by the ResolvePlaceholders implementation.
+        let implementation = match self.implementation {
+            Some(ResourceImplementationTarget::File(row)) => {
+                // Validate that row is not 0 (unless it's a placeholder with bit 31 set)
+                if row == 0 {
+                    return Err(Error::ModificationInvalid(
+                        "Implementation reference row cannot be 0 for File table".to_string(),
+                    ));
                 }
-                TableId::ExportedType => {
-                    // ExportedType is valid but rarely used
-                    if impl_ref.row == 0 {
-                        return Err(Error::ModificationInvalid(
-                            "Implementation reference row cannot be 0 for ExportedType table"
-                                .to_string(),
-                        ));
-                    }
-                    impl_ref
-                }
-                _ => {
-                    return Err(Error::ModificationInvalid(format!(
-                        "Invalid implementation table type: {:?}. Must be File, AssemblyRef, or ExportedType",
-                        impl_ref.tag
-                    )));
-                }
+                CodedIndex::new(TableId::File, row, CodedIndexType::Implementation)
             }
-        } else {
-            // For embedded resources, create a null coded index (row 0)
-            CodedIndex::new(TableId::File, 0, CodedIndexType::Implementation) // This will have row = 0, indicating embedded
+            Some(ResourceImplementationTarget::AssemblyRef(row)) => {
+                if row == 0 {
+                    return Err(Error::ModificationInvalid(
+                        "Implementation reference row cannot be 0 for AssemblyRef table"
+                            .to_string(),
+                    ));
+                }
+                CodedIndex::new(TableId::AssemblyRef, row, CodedIndexType::Implementation)
+            }
+            Some(ResourceImplementationTarget::Embedded) | None => {
+                // For embedded resources, create a null coded index (row 0)
+                CodedIndex::new(TableId::File, 0, CodedIndexType::Implementation)
+            }
         };
 
         // Handle resource data if provided
         let mut final_offset = self.offset;
         if let Some(encoder) = self.resource_encoder {
             let encoded_data = encoder.encode_dotnet_format()?;
-            let blob_index = context.blob_add(&encoded_data)?;
-            final_offset = blob_index;
+            final_offset = assembly.resource_data_add(&encoded_data);
         } else if let Some(data) = self.resource_data {
-            let blob_index = context.blob_add(&data)?;
-            final_offset = blob_index;
+            final_offset = assembly.resource_data_add(&data);
         }
 
-        let rid = context.next_rid(TableId::ManifestResource);
-        let token = Token::new(((TableId::ManifestResource as u32) << 24) | rid);
-
         let manifest_resource = ManifestResourceRaw {
-            rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
             offset_field: final_offset,
             flags: self.flags,
@@ -704,10 +700,10 @@ impl ManifestResourceBuilder {
             implementation,
         };
 
-        let table_data = TableDataOwned::ManifestResource(manifest_resource);
-        context.table_row_add(TableId::ManifestResource, table_data)?;
-
-        Ok(token)
+        assembly.table_row_add(
+            TableId::ManifestResource,
+            TableDataOwned::ManifestResource(manifest_resource),
+        )
     }
 }
 
@@ -715,22 +711,24 @@ impl ManifestResourceBuilder {
 mod tests {
     use super::*;
     use crate::{
+        cilassembly::ChangeRefKind,
         metadata::tables::{ManifestResourceAttributes, TableId},
         test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
     fn test_manifest_resource_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("MyApp.Resources")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify the token has the correct table ID
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        // Verify the ref has the correct kind
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
@@ -748,10 +746,9 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_missing_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let result = ManifestResourceBuilder::new().public().build(&mut context);
+        let result = ManifestResourceBuilder::new().public().build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -762,10 +759,9 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_empty_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let result = ManifestResourceBuilder::new().name("").build(&mut context);
+        let result = ManifestResourceBuilder::new().name("").build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -776,141 +772,152 @@ mod tests {
 
     #[test]
     fn test_manifest_resource_builder_public() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("PublicResource")
             .public()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_manifest_resource_builder_private() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("PrivateResource")
             .private()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_manifest_resource_builder_with_offset() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("EmbeddedResource")
             .offset(0x1000)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_manifest_resource_builder_with_flags() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("CustomResource")
             .flags(ManifestResourceAttributes::PRIVATE.bits())
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_manifest_resource_builder_embedded() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("EmbeddedResource")
             .implementation_embedded()
             .offset(0x2000)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_manifest_resource_builder_multiple_resources() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token1 = ManifestResourceBuilder::new()
+        let ref1 = ManifestResourceBuilder::new()
             .name("Resource1")
             .public()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        let token2 = ManifestResourceBuilder::new()
+        let ref2 = ManifestResourceBuilder::new()
             .name("Resource2")
             .private()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Verify tokens are different and sequential
-        assert_ne!(token1, token2);
-        assert_eq!(token1.table(), TableId::ManifestResource as u8);
-        assert_eq!(token2.table(), TableId::ManifestResource as u8);
-        assert_eq!(token2.row(), token1.row() + 1);
+        // Verify refs are different
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+        assert_eq!(
+            ref1.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
+        assert_eq!(
+            ref2.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_manifest_resource_builder_comprehensive() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("MyApp.Comprehensive.Resources")
             .public()
             .offset(0x4000)
             .implementation_embedded()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_manifest_resource_builder_fluent_api() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test fluent API chaining
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("FluentResource")
             .private()
             .offset(0x8000)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
@@ -934,45 +941,16 @@ mod tests {
     }
 
     #[test]
-    fn test_manifest_resource_builder_invalid_implementation() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-
-        // Create a builder with an invalid implementation reference (TypeDef table)
-        let mut builder = ManifestResourceBuilder::new().name("InvalidImplementation");
-
-        // Manually set an invalid implementation (TypeDef is not valid for Implementation coded index)
-        builder.implementation = Some(CodedIndex::new(
-            TableId::TypeDef,
-            1,
-            CodedIndexType::Implementation,
-        ));
-
-        let result = builder.build(&mut context);
-
-        assert!(result.is_err());
-        let error_msg = result.unwrap_err().to_string();
-        assert!(error_msg.contains("Invalid implementation table type"));
-
-        Ok(())
-    }
-
-    #[test]
-    fn test_manifest_resource_builder_zero_row_implementation() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+    fn test_manifest_resource_builder_zero_row_file_implementation() -> Result<()> {
+        let mut assembly = get_test_assembly()?;
 
         // Create a builder with a zero row implementation reference
         let mut builder = ManifestResourceBuilder::new().name("ZeroRowImplementation");
 
-        // Manually set an implementation with row 0 (invalid for non-embedded)
-        builder.implementation = Some(CodedIndex::new(
-            TableId::File,
-            0,
-            CodedIndexType::Implementation,
-        ));
+        // Manually set an implementation with row 0 (invalid for File)
+        builder.implementation = Some(ResourceImplementationTarget::File(0));
 
-        let result = builder.build(&mut context);
+        let result = builder.build(&mut assembly);
 
         assert!(result.is_err());
         let error_msg = result.unwrap_err().to_string();
@@ -982,116 +960,115 @@ mod tests {
     }
 
     #[test]
-    fn test_manifest_resource_builder_valid_exported_type_implementation() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+    fn test_manifest_resource_builder_zero_row_assemblyref_implementation() -> Result<()> {
+        let mut assembly = get_test_assembly()?;
 
-        // Create a builder with a valid ExportedType implementation reference
-        let mut builder = ManifestResourceBuilder::new().name("ExportedTypeResource");
+        // Create a builder with a zero row implementation reference
+        let mut builder = ManifestResourceBuilder::new().name("ZeroRowImplementation");
 
-        // Set a valid ExportedType implementation (row > 0)
-        builder.implementation = Some(CodedIndex::new(
-            TableId::ExportedType,
-            1,
-            CodedIndexType::Implementation,
-        ));
+        // Manually set an implementation with row 0 (invalid for AssemblyRef)
+        builder.implementation = Some(ResourceImplementationTarget::AssemblyRef(0));
 
-        let result = builder.build(&mut context);
+        let result = builder.build(&mut assembly);
 
-        assert!(result.is_ok());
-        let token = result?;
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert!(result.is_err());
+        let error_msg = result.unwrap_err().to_string();
+        assert!(error_msg.contains("Implementation reference row cannot be 0"));
 
         Ok(())
     }
 
     #[test]
     fn test_manifest_resource_builder_with_resource_data() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let resource_data = b"Hello, World!";
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("TextResource")
             .resource_data(resource_data)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_manifest_resource_builder_with_resource_string() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("ConfigResource")
             .resource_string("key=value\nsetting=option")
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_manifest_resource_builder_with_encoder() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("EncodedResources")
             .add_string_resource("AppTitle", "My Application")?
             .add_string_resource("Version", "1.0.0")?
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_manifest_resource_builder_configure_encoder() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("OptimizedResources")
             .configure_encoder(|_encoder| {
                 // DotNetResourceEncoder doesn't need deduplication setup
             })
             .add_string_resource("Test", "Content")?
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }
 
     #[test]
     fn test_manifest_resource_builder_mixed_resources() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         let binary_data = vec![0x01, 0x02, 0x03, 0x04];
         let xml_content = r#"<?xml version="1.0"?><config><setting value="test"/></config>"#;
 
-        let token = ManifestResourceBuilder::new()
+        let resource_ref = ManifestResourceBuilder::new()
             .name("MixedResources")
             .add_string_resource("title", "My App")?
             .add_binary_resource("data", &binary_data)?
             .add_xml_resource("config.xml", xml_content)?
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(token.table(), TableId::ManifestResource as u8);
-        assert!(token.row() > 0);
+        assert_eq!(
+            resource_ref.kind(),
+            ChangeRefKind::TableRow(TableId::ManifestResource)
+        );
 
         Ok(())
     }

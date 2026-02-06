@@ -723,6 +723,7 @@ impl TypeBuilder {
             let array_type = self.registry.get_or_create_type(&CompleteTypeSpec {
                 token_init: self.token_init.take(),
                 flavor: CilFlavor::Array {
+                    element_type: Box::new(base_type.flavor().clone()),
                     rank: 1,
                     dimensions: vec![],
                 },
@@ -764,6 +765,7 @@ impl TypeBuilder {
             let array_type = self.registry.get_or_create_type(&CompleteTypeSpec {
                 token_init: self.token_init.take(),
                 flavor: CilFlavor::Array {
+                    element_type: Box::new(base_type.flavor().clone()),
                     rank,
                     dimensions: vec![],
                 },

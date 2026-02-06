@@ -35,7 +35,7 @@
 //!
 //! ## Parsing from Blob Heap
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::customattributes::parse_custom_attribute_blob;
 //! use dotscope::CilObject;
 //!
@@ -55,7 +55,7 @@
 //!
 //! ## Parsing Raw Blob Data
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::customattributes::{parse_custom_attribute_data, CustomAttributeArgument};
 //!
 //! # fn get_constructor_params() -> std::sync::Arc<boxcar::Vec<dotscope::metadata::tables::ParamRc>> { todo!() }
@@ -196,7 +196,7 @@ const MAX_ATTRIBUTE_ARRAY_LENGTH: i32 = 65536;
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::customattributes::parse_custom_attribute_blob;
 /// use dotscope::CilObject;
 ///
@@ -261,7 +261,7 @@ pub fn parse_custom_attribute_blob(
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::customattributes::{parse_custom_attribute_data, CustomAttributeArgument};
 ///
 /// # fn get_constructor_params() -> std::sync::Arc<boxcar::Vec<dotscope::metadata::tables::ParamRc>> { todo!() }
@@ -801,6 +801,10 @@ impl<'a> CustomAttributeParser<'a> {
                     let value = self.parse_argument_by_type_tag(type_tag)?;
                     Ok(Some(value))
                 } else {
+                    // Class types that are actually enums (external enum references)
+                    // use the same multi-stage fallback strategy as ValueType enums.
+                    //
+                    // Stage 1: Direct type resolution via TypeRegistry
                     if let Some(registry) = &self.type_registry {
                         if let Some(resolved_type) = registry.resolve_type_global(&type_name) {
                             if EnumUtils::is_enum_type(&resolved_type, Some(registry)) {
@@ -811,10 +815,30 @@ impl<'a> CustomAttributeParser<'a> {
                         }
                     }
 
-                    Err(malformed_error!(
-                        "Cannot resolve Class type '{}' - type not found in TypeRegistry. This indicates either the assembly containing this type is not loaded yet, or there's an issue with type name resolution.",
-                        type_name
-                    ))
+                    // Stage 2: Heuristic enum detection as fallback
+                    let is_enum = if let Some(registry) = &self.type_registry {
+                        EnumUtils::is_enum_type_by_name(&type_name, registry)
+                    } else {
+                        EnumUtils::is_enum_type(&type_ref, None)
+                    };
+
+                    if is_enum {
+                        let underlying_type_size = if let Some(registry) = &self.type_registry {
+                            EnumUtils::get_enum_underlying_type_size_by_name(&type_name, registry)
+                        } else {
+                            EnumUtils::get_enum_underlying_type_size(&type_ref)
+                        };
+
+                        return self.parse_enum(type_name, underlying_type_size);
+                    }
+
+                    // Stage 3: Fallback for unresolvable external types
+                    // TypeRef types (external references) often have CilFlavor::Class even
+                    // when they're actually enums, because we lack the type definition to
+                    // determine inheritance. For custom attributes, external types that
+                    // aren't System.Type/String/Object are typically enums. Assume int32
+                    // underlying type (the most common) to allow parsing to continue.
+                    self.parse_enum(type_name, 4)
                 }
             }
             CilFlavor::ValueType => {
@@ -1365,7 +1389,13 @@ mod tests {
         create_constructor_with_params, create_constructor_with_params_and_registry,
         create_empty_constructor, get_test_type_registry,
     };
-    use std::sync::{Arc, OnceLock};
+    use std::{
+        collections::HashMap,
+        sync::{
+            atomic::{AtomicU64, Ordering},
+            Arc, Mutex, OnceLock,
+        },
+    };
 
     #[test]
     fn test_parse_empty_blob_with_method() {
@@ -1690,6 +1720,7 @@ mod tests {
     #[test]
     fn test_parse_array_argument_error() {
         let method = create_constructor_with_params(vec![CilFlavor::Array {
+            element_type: Box::new(CilFlavor::I4),
             rank: 1,
             dimensions: vec![],
         }]);
@@ -1777,11 +1808,7 @@ mod tests {
         }
 
         // Keep the type registry alive for the duration of the test
-        use std::collections::HashMap;
-        use std::sync::atomic::{AtomicU64, Ordering};
-        use std::sync::Mutex;
-        static TYPE_REGISTRIES: std::sync::OnceLock<Mutex<HashMap<u64, Arc<TypeRegistry>>>> =
-            std::sync::OnceLock::new();
+        static TYPE_REGISTRIES: OnceLock<Mutex<HashMap<u64, Arc<TypeRegistry>>>> = OnceLock::new();
         static COUNTER: AtomicU64 = AtomicU64::new(1);
 
         let registries = TYPE_REGISTRIES.get_or_init(|| Mutex::new(HashMap::new()));
@@ -1793,6 +1820,7 @@ mod tests {
     #[test]
     fn test_parse_multidimensional_array_error() {
         let method = create_constructor_with_params(vec![CilFlavor::Array {
+            element_type: Box::new(CilFlavor::I4),
             rank: 2,
             dimensions: vec![],
         }]);

@@ -192,22 +192,6 @@ impl Operation {
         }
     }
 
-    /// Returns a mutable reference to the row data if this operation contains any.
-    ///
-    /// Insert and Update operations contain row data, while Delete operations do not.
-    /// This method provides mutable access to that data when available for modification.
-    ///
-    /// # Returns
-    ///
-    /// - `Some(&mut `[`crate::metadata::tables::TableDataOwned`]`)` for Insert and Update operations
-    /// - `None` for Delete operations
-    pub fn get_row_data_mut(&mut self) -> Option<&mut TableDataOwned> {
-        match self {
-            Operation::Insert(_, data) | Operation::Update(_, data) => Some(data),
-            Operation::Delete(_) => None,
-        }
-    }
-
     /// Returns the operation type as a string for debugging/logging.
     pub fn operation_type(&self) -> &'static str {
         match self {
@@ -408,23 +392,6 @@ mod tests {
         // Delete should return None
         let delete_op = Operation::Delete(1);
         assert!(delete_op.get_row_data().is_none());
-    }
-
-    #[test]
-    fn test_operation_get_row_data_mut_for_all_variants() {
-        let row_data = create_test_row();
-
-        // Insert should return Some (mutable)
-        let mut insert_op = Operation::Insert(1, row_data.clone());
-        assert!(insert_op.get_row_data_mut().is_some());
-
-        // Update should return Some (mutable)
-        let mut update_op = Operation::Update(1, row_data);
-        assert!(update_op.get_row_data_mut().is_some());
-
-        // Delete should return None
-        let mut delete_op = Operation::Delete(1);
-        assert!(delete_op.get_row_data_mut().is_none());
     }
 
     #[test]

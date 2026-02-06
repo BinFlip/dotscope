@@ -37,8 +37,8 @@
 //! output.write_at(0, b"MZ")?; // DOS signature
 //! output.write_u32_le_at(100, 0x12345678)?; // Little-endian value
 //!
-//! // Atomically finalize the file
-//! output.finalize()?;
+//! // Atomically finalize the file (None = keep original size)
+//! output.finalize(None)?;
 //! # Ok::<(), crate::Error>(())
 //! ```
 //!
@@ -58,46 +58,75 @@ use std::path::{Path, PathBuf};
 
 use memmap2::{MmapMut, MmapOptions};
 
-use crate::{cilassembly::writer::layout::FileRegion, utils::write_compressed_uint, Error, Result};
+use crate::{utils::write_compressed_uint, Error, Result};
 
-/// A memory-mapped output file that supports atomic operations.
+/// Internal backing storage for output data.
 ///
-/// This wrapper provides safe and efficient access to large binary files during generation.
-/// It implements the write-to-temp-then-rename pattern for atomic file operations while
-/// providing memory-mapped access for efficient random writes.
+/// This enum allows the Output struct to efficiently handle both file-backed
+/// and in-memory operations without unnecessary copies.
+enum OutputBacking {
+    /// File-backed memory mapping for efficient large file I/O.
+    File {
+        /// The memory mapping of the file
+        mmap: MmapMut,
+        /// The target file path
+        target_path: PathBuf,
+    },
+    /// In-memory vector for zero-copy memory output.
+    Memory {
+        /// The data buffer
+        data: Vec<u8>,
+    },
+}
+
+/// A dual-mode output that supports both file-backed and in-memory operations.
+///
+/// This wrapper provides safe and efficient access to large binary data during generation.
+/// It supports two modes of operation:
+///
+/// - **File-backed**: Creates a file and memory-maps it for efficient random access
+/// - **In-memory**: Uses a `Vec<u8>` for zero-copy memory generation
 ///
 /// # Features
 ///
-/// - **Memory-mapped access**: Efficient random access to large files without full loading
-/// - **Atomic finalization**: Temporary file is atomically moved to final destination
+/// - **Dual-mode operation**: File-backed uses mmap, in-memory uses Vec
+/// - **Zero-copy memory output**: `into_vec()` returns the Vec directly without copying
+/// - **Atomic finalization**: File-backed output uses atomic operations
 /// - **Proper cleanup**: Automatic cleanup on error or drop through RAII patterns
 /// - **Cross-platform compatibility**: Works consistently across different operating systems
 /// - **Bounds checking**: All write operations are bounds-checked for safety
 ///
 /// # Memory Management
 ///
-/// The file is backed by a temporary file that is memory-mapped for access. This allows
-/// efficient writing to arbitrary offsets without the memory overhead of loading the
-/// entire file content into application memory.
+/// For file-backed output, the file is memory-mapped for access, allowing efficient
+/// writing to arbitrary offsets without loading entire content into application memory.
 ///
-/// # Atomic Operations
+/// For in-memory output, a `Vec<u8>` is used directly, which avoids the overhead of
+/// memory mapping and allows zero-copy extraction via `into_vec()`.
 ///
-/// Files are written to a temporary location in the same directory as the target file
-/// to ensure atomic rename operations work correctly (same filesystem requirement).
-/// Only after successful completion is the file moved to its final location.
+/// # Usage Patterns
+///
+/// ```rust,ignore
+/// // File-backed output
+/// let output = Output::create("output.dll", 4096)?;
+/// // ... write data ...
+/// output.finalize(Some(actual_size))?;
+///
+/// // In-memory output (zero-copy)
+/// let output = Output::create_in_memory(4096)?;
+/// // ... write data ...
+/// let bytes = output.into_vec(Some(actual_size))?; // No copy!
+/// ```
 pub struct Output {
-    /// The memory mapping of the target file
-    mmap: MmapMut,
+    /// The backing storage (file mmap or in-memory vec)
+    backing: OutputBacking,
 
-    /// The target path
-    target_path: PathBuf,
-
-    /// Whether the file has been finalized
+    /// Whether the output has been finalized
     finalized: bool,
 }
 
 impl Output {
-    /// Creates a new memory-mapped output file.
+    /// Creates a new file-backed memory-mapped output.
     ///
     /// This creates a file directly at the target path and maps it into memory
     /// for efficient writing operations. If finalization fails or the output
@@ -142,36 +171,100 @@ impl Output {
         };
 
         Ok(Self {
-            mmap,
-            target_path,
+            backing: OutputBacking::File { mmap, target_path },
             finalized: false,
         })
     }
 
-    /// Gets a mutable slice to the entire file contents.
+    /// Creates a new in-memory output using a pre-allocated vector.
     ///
-    /// Provides direct access to the entire memory-mapped file for bulk operations.
-    /// Use with caution as this bypasses bounds checking.
-    pub fn as_mut_slice(&mut self) -> &mut [u8] {
-        &mut self.mmap[..]
+    /// This creates an in-memory buffer without any file backing, useful for
+    /// generating PE data that will be used in-memory rather than saved to disk.
+    /// Use [`into_vec`](Self::into_vec) to extract the data after generation
+    /// is complete - this is a zero-copy operation that moves the Vec.
+    ///
+    /// # Arguments
+    ///
+    /// * `size` - The total size of the memory region to allocate
+    ///
+    /// # Returns
+    ///
+    /// Returns a new [`crate::cilassembly::writer::output::Output`] ready for writing.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::MmapFailed`] if the size is too large for the architecture.
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut output = Output::create_in_memory(4096)?;
+    /// output.write_at(0, b"MZ")?;
+    /// // ... more writes ...
+    /// let bytes = output.into_vec(Some(actual_size))?; // Zero-copy!
+    /// ```
+    pub fn create_in_memory(size: u64) -> Result<Self> {
+        let size_usize = usize::try_from(size).map_err(|_| {
+            Error::MmapFailed(format!("Size {size} too large for target architecture"))
+        })?;
+
+        // Create zero-initialized vector
+        let data = vec![0u8; size_usize];
+
+        Ok(Self {
+            backing: OutputBacking::Memory { data },
+            finalized: false,
+        })
     }
 
-    /// Gets a mutable slice to a specific range of the file.
+    /// Returns `true` if this is an in-memory output (no file backing).
     ///
-    /// Provides bounds-checked access to a specific range within the file.
+    /// In-memory outputs should be finalized with [`into_vec`](Self::into_vec)
+    /// rather than [`finalize`](Self::finalize).
+    #[must_use]
+    pub fn is_in_memory(&self) -> bool {
+        matches!(self.backing, OutputBacking::Memory { .. })
+    }
+
+    /// Gets an immutable slice to the entire buffer contents.
+    ///
+    /// Provides direct read-only access to the entire buffer.
+    /// This is useful for operations like checksum calculation that need
+    /// to read the entire content without modifying it.
+    pub fn as_slice(&self) -> &[u8] {
+        match &self.backing {
+            OutputBacking::File { mmap, .. } => &mmap[..],
+            OutputBacking::Memory { data } => &data[..],
+        }
+    }
+
+    /// Gets a mutable slice to the entire buffer contents.
+    ///
+    /// Provides direct access to the entire buffer for bulk operations.
+    /// Use with caution as this bypasses bounds checking.
+    pub fn as_mut_slice(&mut self) -> &mut [u8] {
+        match &mut self.backing {
+            OutputBacking::File { mmap, .. } => &mut mmap[..],
+            OutputBacking::Memory { data } => &mut data[..],
+        }
+    }
+
+    /// Gets a mutable slice to a specific range of the buffer.
+    ///
+    /// Provides bounds-checked access to a specific range within the buffer.
     ///
     /// # Arguments
     /// * `start` - Starting byte offset (inclusive)
     /// * `end` - Ending byte offset (exclusive)
     ///
     /// # Errors
-    /// Returns [`crate::Error::MmapFailed`] if the range is invalid or exceeds file bounds.
+    /// Returns [`crate::Error::MmapFailed`] if the range is invalid or exceeds buffer bounds.
     pub fn get_mut_range(&mut self, start: usize, end: usize) -> Result<&mut [u8]> {
-        if end > self.mmap.len() {
+        let len = self.size();
+        if end > len {
             return Err(Error::MmapFailed(format!(
-                "Range end {} exceeds file size {}",
-                end,
-                self.mmap.len()
+                "Range end {} exceeds buffer size {}",
+                end, len
             )));
         }
 
@@ -181,7 +274,7 @@ impl Output {
             )));
         }
 
-        Ok(&mut self.mmap[start..end])
+        Ok(&mut self.as_mut_slice()[start..end])
     }
 
     /// Gets a mutable slice starting at the given offset with the specified size.
@@ -193,83 +286,83 @@ impl Output {
     /// * `size` - Number of bytes to include in the slice
     ///
     /// # Errors
-    /// Returns [`crate::Error::MmapFailed`] if the range is invalid or exceeds file bounds.
+    /// Returns [`crate::Error::MmapFailed`] if the range is invalid or exceeds buffer bounds.
     pub fn get_mut_slice(&mut self, start: usize, size: usize) -> Result<&mut [u8]> {
         let end = start + size;
-        if end > self.mmap.len() {
+        let len = self.size();
+        if end > len {
             return Err(Error::MmapFailed(format!(
-                "Write would exceed file size: start={}, size={}, end={}, file_size={}",
-                start,
-                size,
-                end,
-                self.mmap.len()
+                "Write would exceed buffer size: start={}, size={}, end={}, buffer_size={}",
+                start, size, end, len
             )));
         }
         self.get_mut_range(start, end)
     }
 
-    /// Writes data at a specific offset in the file.
+    /// Writes data at a specific offset in the buffer.
     ///
-    /// Performs bounds-checked writing of arbitrary data to the specified file offset.
+    /// Performs bounds-checked writing of arbitrary data to the specified offset.
     ///
     /// # Arguments
     /// * `offset` - Byte offset where to write the data
-    /// * `data` - Byte slice to write to the file
+    /// * `data` - Byte slice to write
     ///
     /// # Errors
-    /// Returns [`crate::Error::MmapFailed`] if the write would exceed file bounds.
+    /// Returns [`crate::Error::MmapFailed`] if the write would exceed buffer bounds.
     pub fn write_at(&mut self, offset: u64, data: &[u8]) -> Result<()> {
         let start = usize::try_from(offset).map_err(|_| {
             Error::MmapFailed(format!("Offset {offset} too large for target architecture"))
         })?;
         let end = start + data.len();
+        let len = self.size();
 
-        if end > self.mmap.len() {
+        if end > len {
             return Err(Error::MmapFailed(format!(
-                "Write would exceed file size: offset={}, len={}, file_size={}",
+                "Write would exceed buffer size: offset={}, len={}, buffer_size={}",
                 offset,
                 data.len(),
-                self.mmap.len()
+                len
             )));
         }
 
-        self.mmap[start..end].copy_from_slice(data);
+        self.as_mut_slice()[start..end].copy_from_slice(data);
         Ok(())
     }
 
-    /// Reads data from the memory-mapped file at a specific offset.
+    /// Reads data from the buffer at a specific offset.
     ///
-    /// This method reads existing data from the file, useful for inspecting
+    /// This method reads existing data from the buffer, useful for inspecting
     /// values before modifying them (e.g., reading debug directory RVA before clearing).
     ///
     /// # Arguments
-    /// * `offset` - File offset to read from
+    /// * `offset` - Buffer offset to read from
     /// * `buffer` - Buffer to read data into
     ///
     /// # Errors
-    /// Returns [`crate::Error::MmapFailed`] if the read would exceed file bounds.
+    /// Returns [`crate::Error::MmapFailed`] if the read would exceed buffer bounds.
     pub fn read_at(&self, offset: u64, buffer: &mut [u8]) -> Result<()> {
         let start = usize::try_from(offset).map_err(|_| {
             Error::MmapFailed(format!("Offset {offset} too large for target architecture"))
         })?;
         let end = start + buffer.len();
+        let len = self.size();
 
-        if end > self.mmap.len() {
+        if end > len {
             return Err(Error::MmapFailed(format!(
-                "Read would exceed file size: offset={}, len={}, file_size={}",
+                "Read would exceed buffer size: offset={}, len={}, buffer_size={}",
                 offset,
                 buffer.len(),
-                self.mmap.len()
+                len
             )));
         }
 
-        buffer.copy_from_slice(&self.mmap[start..end]);
+        buffer.copy_from_slice(&self.as_slice()[start..end]);
         Ok(())
     }
 
-    /// Copies data from the source offset to the target offset within the same file.
+    /// Copies data from the source offset to the target offset within the same buffer.
     ///
-    /// This method provides efficient in-file copying for relocating existing content.
+    /// This method provides efficient in-buffer copying for relocating existing content.
     /// It's used extensively during the binary generation process to move sections
     /// and preserve existing data in new locations.
     ///
@@ -279,7 +372,7 @@ impl Output {
     /// * `size` - Number of bytes to copy
     ///
     /// # Errors
-    /// Returns [`crate::Error::MmapFailed`] if either range exceeds file bounds
+    /// Returns [`crate::Error::MmapFailed`] if either range exceeds buffer bounds
     /// or if the ranges overlap in a way that would cause data corruption.
     pub fn copy_range(&mut self, source_offset: u64, target_offset: u64, size: u64) -> Result<()> {
         let source_start = usize::try_from(source_offset).map_err(|_| {
@@ -298,28 +391,25 @@ impl Output {
 
         let source_end = source_start + copy_size;
         let target_end = target_start + copy_size;
+        let len = self.size();
 
         // Validate bounds
-        if source_end > self.mmap.len() {
+        if source_end > len {
             return Err(Error::MmapFailed(format!(
-                "Source range would exceed file size: {}..{} (file size: {})",
-                source_start,
-                source_end,
-                self.mmap.len()
+                "Source range would exceed buffer size: {}..{} (buffer size: {})",
+                source_start, source_end, len
             )));
         }
 
-        if target_end > self.mmap.len() {
+        if target_end > len {
             return Err(Error::MmapFailed(format!(
-                "Target range would exceed file size: {}..{} (file size: {})",
-                target_start,
-                target_end,
-                self.mmap.len()
+                "Target range would exceed buffer size: {}..{} (buffer size: {})",
+                target_start, target_end, len
             )));
         }
 
         // For safety, use copy_within which handles overlapping ranges correctly
-        self.mmap
+        self.as_mut_slice()
             .copy_within(source_start..source_end, target_start);
         Ok(())
     }
@@ -357,21 +447,21 @@ impl Output {
     /// * `byte` - Byte value to write
     ///
     /// # Errors
-    /// Returns [`crate::Error::MmapFailed`] if the offset exceeds file bounds.
+    /// Returns [`crate::Error::MmapFailed`] if the offset exceeds buffer bounds.
     pub fn write_byte_at(&mut self, offset: u64, byte: u8) -> Result<()> {
         let index = usize::try_from(offset).map_err(|_| {
             Error::MmapFailed(format!("Offset {offset} too large for target architecture"))
         })?;
+        let len = self.size();
 
-        if index >= self.mmap.len() {
+        if index >= len {
             return Err(Error::MmapFailed(format!(
-                "Byte write would exceed file size: offset={}, file_size={}",
-                offset,
-                self.mmap.len()
+                "Byte write would exceed buffer size: offset={}, buffer_size={}",
+                offset, len
             )));
         }
 
-        self.mmap[index] = byte;
+        self.as_mut_slice()[index] = byte;
         Ok(())
     }
 
@@ -541,8 +631,12 @@ impl Output {
     /// Gets the total size of the file.
     ///
     /// Returns the size in bytes of the memory-mapped file as specified during creation.
-    pub fn size(&self) -> u64 {
-        self.mmap.len() as u64
+    #[must_use]
+    pub fn size(&self) -> usize {
+        match &self.backing {
+            OutputBacking::File { mmap, .. } => mmap.len(),
+            OutputBacking::Memory { data } => data.len(),
+        }
     }
 
     /// Flushes any pending writes to disk.
@@ -553,158 +647,326 @@ impl Output {
     /// # Errors
     /// Returns [`crate::Error::MmapFailed`] if the flush operation fails.
     pub fn flush(&mut self) -> Result<()> {
-        self.mmap
-            .flush()
-            .map_err(|e| Error::MmapFailed(format!("Failed to flush memory mapping: {e}")))
+        match &mut self.backing {
+            OutputBacking::File { mmap, .. } => mmap
+                .flush()
+                .map_err(|e| Error::MmapFailed(format!("Failed to flush memory mapping: {e}"))),
+            OutputBacking::Memory { .. } => {
+                // No-op for in-memory output
+                Ok(())
+            }
+        }
     }
 
-    /// Finalizes the file by flushing all pending writes.
+    /// Finalizes the file-backed output, optionally truncating to a specified size.
     ///
     /// This operation ensures data durability and marks the file as complete:
     /// 1. Flushes the memory mapping to write cached data to disk
-    /// 2. Marks the file as finalized to prevent cleanup on drop
+    /// 2. Optionally truncates the file to the specified size
+    /// 3. Marks the output as finalized to prevent cleanup on drop
+    ///
+    /// The truncation feature supports the over-allocation pattern: create a file larger
+    /// than needed, write content, then shrink to actual size at the end. This avoids
+    /// the need for precise size estimation upfront.
     ///
     /// After calling this method, the file is complete and will remain at the target path.
     /// This method can only be called once per [`crate::cilassembly::writer::output::Output`] instance.
     ///
+    /// # Arguments
+    ///
+    /// * `actual_size` - If `Some(size)`, truncate the file to this size before finalizing.
+    ///   If `None`, keep the original allocated size.
+    ///
     /// # Errors
+    ///
     /// Returns [`crate::Error::FinalizationFailed`] in the following cases:
-    /// - File has already been finalized
+    /// - Output has already been finalized
+    /// - Output is in-memory (use [`into_vec`](Self::into_vec) instead)
     /// - Memory mapping flush fails
-    pub fn finalize(mut self) -> Result<()> {
+    /// - File truncation fails (if size is specified)
+    pub fn finalize(mut self, actual_size: Option<u64>) -> Result<()> {
         if self.finalized {
             return Err(Error::FinalizationFailed(
-                "File has already been finalized".to_string(),
+                "Output has already been finalized".to_string(),
             ));
         }
 
-        // Flush memory mapping
-        self.mmap.flush().map_err(|e| {
-            Error::FinalizationFailed(format!("Failed to flush memory mapping: {e}"))
-        })?;
+        // Extract the backing to work with it
+        let backing = std::mem::replace(
+            &mut self.backing,
+            OutputBacking::Memory { data: Vec::new() }, // Placeholder
+        );
 
-        // Mark as finalized
+        match backing {
+            OutputBacking::File { mmap, target_path } => {
+                // Flush memory mapping
+                mmap.flush().map_err(|e| {
+                    Error::FinalizationFailed(format!("Failed to flush memory mapping: {e}"))
+                })?;
+
+                // Truncate if requested
+                if let Some(size) = actual_size {
+                    // Drop the mmap to release file handle
+                    drop(mmap);
+
+                    // Truncate the file
+                    let file = std::fs::OpenOptions::new()
+                        .write(true)
+                        .open(&target_path)
+                        .map_err(|e| {
+                            Error::FinalizationFailed(format!(
+                                "Failed to reopen file for truncation: {e}"
+                            ))
+                        })?;
+
+                    file.set_len(size).map_err(|e| {
+                        Error::FinalizationFailed(format!(
+                            "Failed to truncate file to {size} bytes: {e}"
+                        ))
+                    })?;
+                }
+
+                // Mark as finalized
+                self.finalized = true;
+                Ok(())
+            }
+            OutputBacking::Memory { .. } => Err(Error::FinalizationFailed(
+                "Cannot finalize in-memory output to file; use into_vec() instead".to_string(),
+            )),
+        }
+    }
+
+    /// Extracts the data as a `Vec<u8>`, consuming the output.
+    ///
+    /// This is the finalization method for in-memory outputs. For in-memory outputs,
+    /// this is a zero-copy operation that moves the internal Vec. For file-backed
+    /// outputs, this copies the data from the mmap.
+    ///
+    /// # Arguments
+    ///
+    /// * `actual_size` - If `Some(size)`, truncate to this many bytes.
+    ///   If `None`, return the entire buffer.
+    ///
+    /// # Returns
+    ///
+    /// A `Vec<u8>` containing the output data.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`crate::Error::FinalizationFailed`] in the following cases:
+    /// - Output has already been finalized
+    /// - Requested size exceeds the allocated buffer size
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut output = Output::create_in_memory(4096)?;
+    /// output.write_at(0, b"MZ")?;
+    /// // ... more writes ...
+    /// let bytes = output.into_vec(Some(256))?; // Zero-copy, truncated to 256 bytes
+    /// ```
+    pub fn into_vec(mut self, actual_size: Option<u64>) -> Result<Vec<u8>> {
+        if self.finalized {
+            return Err(Error::FinalizationFailed(
+                "Output has already been finalized".to_string(),
+            ));
+        }
+
+        // Extract the backing
+        let backing = std::mem::replace(
+            &mut self.backing,
+            OutputBacking::Memory { data: Vec::new() }, // Placeholder
+        );
+
+        let mut data = match backing {
+            OutputBacking::Memory { data } => {
+                // Zero-copy: just move the Vec
+                data
+            }
+            OutputBacking::File { mmap, .. } => {
+                // Need to copy from mmap
+                mmap[..].to_vec()
+            }
+        };
+
+        // Truncate if requested
+        if let Some(size) = actual_size {
+            let size_usize = usize::try_from(size).map_err(|_| {
+                Error::FinalizationFailed(format!(
+                    "Requested size {size} too large for target architecture"
+                ))
+            })?;
+            if size_usize > data.len() {
+                return Err(Error::FinalizationFailed(format!(
+                    "Requested size {} exceeds buffer size {}",
+                    size_usize,
+                    data.len()
+                )));
+            }
+            data.truncate(size_usize);
+        }
+
+        // Mark as finalized to prevent cleanup
         self.finalized = true;
-        Ok(())
+
+        Ok(data)
     }
 
     /// Gets the target path where the file will be created.
     ///
-    /// Returns the final destination path specified during creation.
-    pub fn target_path(&self) -> &Path {
-        &self.target_path
-    }
-
-    /// Gets a mutable slice for a FileRegion.
-    ///
-    /// Convenience method that accepts a FileRegion instead of separate offset and size parameters.
-    /// This makes it easier to work with layout regions throughout the writing pipeline.
-    ///
-    /// # Arguments
-    /// * `region` - The file region to get a slice for
-    ///
-    /// # Errors
-    /// Returns [`crate::Error::MmapFailed`] if the region is invalid or exceeds file bounds.
-    ///
-    /// # Examples
-    /// ```rust,ignore
-    /// let region = FileRegion::new(0x1000, 0x500);
-    /// let slice = output.get_mut_slice_region(&region)?;
-    /// ```
-    pub fn get_mut_slice_region(&mut self, region: &FileRegion) -> Result<&mut [u8]> {
-        self.get_mut_slice(
-            usize::try_from(region.offset).map_err(|_| {
-                Error::MmapFailed(format!(
-                    "Region offset {} too large for target architecture",
-                    region.offset
-                ))
-            })?,
-            usize::try_from(region.size).map_err(|_| {
-                Error::MmapFailed(format!(
-                    "Region size {} too large for target architecture",
-                    region.size
-                ))
-            })?,
-        )
-    }
-
-    /// Writes data to a FileRegion.
-    ///
-    /// Convenience method that writes data starting at the region's offset.
-    /// The data size should not exceed the region's size.
-    ///
-    /// # Arguments
-    /// * `region` - The file region to write to
-    /// * `data` - Byte slice to write to the region
-    ///
-    /// # Errors
-    /// Returns [`crate::Error::MmapFailed`] if the write would exceed file bounds.
-    ///
-    /// # Examples
-    /// ```rust,ignore
-    /// let region = FileRegion::new(0x1000, 0x500);
-    /// output.write_to_region(&region, &data)?;
-    /// ```
-    pub fn write_to_region(&mut self, region: &FileRegion, data: &[u8]) -> Result<()> {
-        self.write_at(region.offset, data)
-    }
-
-    /// Validates that a layout-planned file region is completely within file bounds.
-    ///
-    /// This utility method performs pre-operation validation to ensure that a [`FileRegion`]
-    /// calculated during layout planning is completely within the file boundaries. This is
-    /// particularly useful for validation before performing bulk operations on regions or
-    /// when implementing defensive programming practices.
-    ///
-    /// Unlike the error-generating bounds checks in other methods, this method provides
-    /// a simple boolean result that can be used for conditional logic and validation
-    /// workflows without exception handling overhead.
-    ///
-    /// # Arguments
-    ///
-    /// * `region` - A [`FileRegion`] to validate against current file bounds.
-    ///   The region's offset and size are checked to ensure the entire region
-    ///   `[offset..offset+size)` is within file boundaries.
-    ///
-    /// # Returns
-    ///
-    /// Returns `true` if the region is completely within file bounds (including the
-    /// case where the region ends exactly at the file size). Returns `false` if any
-    /// part of the region extends beyond the file or if the region has invalid parameters.
-    ///
-    /// # Examples
-    /// ```rust,ignore
-    /// let region = FileRegion::new(0x1000, 0x500);
-    /// if output.region_is_valid(&region) {
-    ///     let slice = output.get_mut_slice_region(&region)?;
-    /// }
-    /// ```
-    pub fn region_is_valid(&self, region: &FileRegion) -> bool {
-        region.end_offset() <= self.size()
+    /// Returns the final destination path if this is a file-backed output,
+    /// or `None` for in-memory outputs.
+    pub fn target_path(&self) -> Option<&Path> {
+        match &self.backing {
+            OutputBacking::File { target_path, .. } => Some(target_path.as_path()),
+            OutputBacking::Memory { .. } => None,
+        }
     }
 }
 
 impl Drop for Output {
     fn drop(&mut self) {
         if !self.finalized {
-            // File was not finalized, so we should clean it up
+            // Output was not finalized, so we should clean up
             // First try to flush any pending writes
             let _ = self.flush();
 
-            // Drop the mmap first to release the file handle
-            // This is done implicitly when mmap is dropped
-
-            // Then delete the incomplete file
-            let _ = std::fs::remove_file(&self.target_path);
+            // For file-backed outputs, delete the incomplete file
+            if let OutputBacking::File { target_path, .. } = &self.backing {
+                let _ = std::fs::remove_file(target_path);
+            }
+            // For in-memory outputs, the Vec will be dropped automatically
         }
-        // If finalized, the file should remain at the target location
+        // If finalized, the file should remain at the target location (for file-backed)
+        // or the data was extracted (for in-memory)
+    }
+}
+
+/// A sequential writer wrapper around [`Output`] that implements [`std::io::Write`].
+///
+/// This wrapper provides a position-tracked interface to the memory-mapped output file,
+/// allowing the existing `write_to` methods (which use `std::io::Write`) to work directly
+/// with the mmap-based output. The wrapper tracks the current write position and advances
+/// it after each write operation.
+///
+/// # Usage
+///
+/// Create an `OutputWriter` at a specific offset, then use it with any method that
+/// accepts `impl Write`:
+///
+/// ```rust,ignore
+/// let mut output = Output::create("output.dll", 4096)?;
+/// let mut writer = output.writer_at(0x80); // Start at PE header offset
+///
+/// // Now use with existing write_to methods
+/// coff_header.write_to(&mut writer)?;
+/// optional_header.write_to(&mut writer)?;
+///
+/// // Get final position after writing
+/// let end_pos = writer.position();
+/// ```
+///
+/// # Thread Safety
+///
+/// `OutputWriter` is not thread-safe as it holds a mutable reference to the underlying
+/// `Output` and maintains internal position state.
+pub struct OutputWriter<'a> {
+    /// Reference to the underlying output file
+    output: &'a mut Output,
+    /// Current write position
+    position: u64,
+}
+
+impl<'a> OutputWriter<'a> {
+    /// Creates a new writer starting at the specified offset.
+    ///
+    /// # Arguments
+    ///
+    /// * `output` - The output file to write to
+    /// * `offset` - The starting position for writes
+    pub fn new(output: &'a mut Output, offset: u64) -> Self {
+        Self {
+            output,
+            position: offset,
+        }
+    }
+
+    /// Returns the current write position.
+    ///
+    /// This is the offset where the next write will occur.
+    #[must_use]
+    pub fn position(&self) -> u64 {
+        self.position
+    }
+
+    /// Sets the current write position.
+    ///
+    /// # Arguments
+    ///
+    /// * `position` - The new write position
+    pub fn set_position(&mut self, position: u64) {
+        self.position = position;
+    }
+
+    /// Returns the number of bytes written since the initial offset.
+    ///
+    /// # Arguments
+    ///
+    /// * `start_offset` - The offset where writing began
+    #[must_use]
+    pub fn bytes_written_since(&self, start_offset: u64) -> u64 {
+        self.position.saturating_sub(start_offset)
+    }
+}
+
+impl std::io::Write for OutputWriter<'_> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        self.output
+            .write_at(self.position, buf)
+            .map_err(|e| std::io::Error::other(e.to_string()))?;
+        self.position += buf.len() as u64;
+        Ok(buf.len())
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.output
+            .flush()
+            .map_err(|e| std::io::Error::other(e.to_string()))
+    }
+}
+
+impl Output {
+    /// Creates a sequential writer starting at the specified offset.
+    ///
+    /// This returns an [`OutputWriter`] that implements [`std::io::Write`], allowing
+    /// the existing `write_to` methods to work directly with the mmap-based output.
+    ///
+    /// # Arguments
+    ///
+    /// * `offset` - The starting position for writes
+    ///
+    /// # Example
+    ///
+    /// ```rust,ignore
+    /// let mut output = Output::create("output.dll", 4096)?;
+    /// let mut writer = output.writer_at(0x80);
+    ///
+    /// // Use with write_to methods
+    /// coff_header.write_to(&mut writer)?;
+    /// ```
+    pub fn writer_at(&mut self, offset: u64) -> OutputWriter<'_> {
+        OutputWriter::new(self, offset)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::{fs::File, io::Read};
+    use crate::file::pe::DosHeader;
+    use std::{
+        fs::File,
+        io::{Read, Write},
+    };
     use tempfile::tempdir;
 
     #[test]
@@ -786,7 +1048,7 @@ mod tests {
         {
             let mut mmap_file = Output::create(&target_path, 16).unwrap();
             mmap_file.write_at(0, b"Test content").unwrap();
-            mmap_file.finalize().unwrap();
+            mmap_file.finalize(None).unwrap();
         }
 
         // Verify the file was created and contains the expected data
@@ -811,5 +1073,226 @@ mod tests {
 
         // This should also fail - single byte beyond end
         assert!(mmap_file.write_byte_at(10, 0x42).is_err());
+    }
+
+    #[test]
+    fn test_output_writer() {
+        let temp_dir = tempdir().unwrap();
+        let target_path = temp_dir.path().join("test.bin");
+
+        let mut output = Output::create(&target_path, 1024).unwrap();
+
+        // Test OutputWriter with std::io::Write
+        {
+            let mut writer = output.writer_at(0x10);
+            assert_eq!(writer.position(), 0x10);
+
+            // Write some data
+            writer.write_all(b"Hello").unwrap();
+            assert_eq!(writer.position(), 0x15);
+
+            writer.write_all(b", World!").unwrap();
+            assert_eq!(writer.position(), 0x1D);
+
+            // Test bytes_written_since
+            assert_eq!(writer.bytes_written_since(0x10), 0x0D); // 13 bytes
+        }
+
+        // Verify the data was written correctly
+        let slice = output.as_mut_slice();
+        assert_eq!(&slice[0x10..0x1D], b"Hello, World!");
+    }
+
+    #[test]
+    fn test_output_writer_with_pe_header() {
+        let temp_dir = tempdir().unwrap();
+        let target_path = temp_dir.path().join("test.bin");
+
+        let mut output = Output::create(&target_path, 1024).unwrap();
+
+        // Write standard DOS header using OutputWriter
+        {
+            let mut writer = output.writer_at(0);
+            DosHeader::write_standard(&mut writer).unwrap();
+            assert_eq!(writer.position(), 128); // DOS header + stub = 128 bytes
+        }
+
+        // Verify the DOS header signature
+        let slice = output.as_mut_slice();
+        assert_eq!(slice[0], 0x4D); // 'M'
+        assert_eq!(slice[1], 0x5A); // 'Z'
+                                    // Verify e_lfanew field at offset 0x3C points to 0x80
+        assert_eq!(&slice[0x3C..0x40], &[0x80, 0x00, 0x00, 0x00]);
+    }
+
+    #[test]
+    fn test_finalize_with_truncation() {
+        let temp_dir = tempdir().unwrap();
+        let target_path = temp_dir.path().join("truncate_test.bin");
+
+        // Create over-allocated file
+        let initial_size = 1024 * 1024; // 1MB
+        let actual_content_size = 100u64;
+
+        {
+            let mut output = Output::create(&target_path, initial_size).unwrap();
+
+            // Write only 100 bytes of content
+            output.write_at(0, &[0x42u8; 100]).unwrap();
+
+            // Finalize with truncation to actual size
+            output.finalize(Some(actual_content_size)).unwrap();
+        }
+
+        // Verify file was truncated to actual size
+        let metadata = std::fs::metadata(&target_path).unwrap();
+        assert_eq!(metadata.len(), actual_content_size);
+
+        // Verify content is intact
+        let mut file = File::open(&target_path).unwrap();
+        let mut contents = Vec::new();
+        file.read_to_end(&mut contents).unwrap();
+        assert_eq!(contents.len(), 100);
+        assert!(contents.iter().all(|&b| b == 0x42));
+    }
+
+    #[test]
+    fn test_finalize_without_truncation() {
+        let temp_dir = tempdir().unwrap();
+        let target_path = temp_dir.path().join("no_truncate_test.bin");
+
+        let initial_size = 1024u64;
+
+        {
+            let mut output = Output::create(&target_path, initial_size).unwrap();
+            output.write_at(0, b"Hello").unwrap();
+
+            // Finalize without truncation (None)
+            output.finalize(None).unwrap();
+        }
+
+        // Verify file keeps original size
+        let metadata = std::fs::metadata(&target_path).unwrap();
+        assert_eq!(metadata.len(), initial_size);
+    }
+
+    #[test]
+    fn test_create_in_memory() {
+        let output = Output::create_in_memory(1024).unwrap();
+        assert_eq!(output.size(), 1024);
+        assert!(output.is_in_memory());
+        assert!(output.target_path().is_none());
+        assert!(!output.finalized);
+    }
+
+    #[test]
+    fn test_in_memory_write_operations() {
+        let mut output = Output::create_in_memory(1024).unwrap();
+
+        // Test byte write
+        output.write_byte_at(0, 0x4D).unwrap(); // 'M'
+        output.write_byte_at(1, 0x5A).unwrap(); // 'Z'
+
+        // Test u32 write
+        output.write_u32_le_at(4, 0xDEADBEEF).unwrap();
+
+        // Test slice write
+        output.write_at(8, b"Hello, Memory!").unwrap();
+
+        // Verify the data
+        let slice = output.as_slice();
+        assert_eq!(slice[0], 0x4D);
+        assert_eq!(slice[1], 0x5A);
+        assert_eq!(&slice[4..8], &[0xEF, 0xBE, 0xAD, 0xDE]); // Little endian
+        assert_eq!(&slice[8..22], b"Hello, Memory!");
+    }
+
+    #[test]
+    fn test_into_vec_basic() {
+        let mut output = Output::create_in_memory(1024).unwrap();
+
+        // Write some data
+        output.write_at(0, b"Test data").unwrap();
+
+        // Extract to vec (full buffer)
+        let data = output.into_vec(None).unwrap();
+        assert_eq!(data.len(), 1024);
+        assert_eq!(&data[0..9], b"Test data");
+    }
+
+    #[test]
+    fn test_into_vec_with_truncation() {
+        let mut output = Output::create_in_memory(1024).unwrap();
+
+        // Write some data
+        output.write_at(0, b"Test data here").unwrap();
+
+        // Extract only first 14 bytes (actual content size)
+        let data = output.into_vec(Some(14)).unwrap();
+        assert_eq!(data.len(), 14);
+        assert_eq!(&data, b"Test data here");
+    }
+
+    #[test]
+    fn test_into_vec_size_validation() {
+        let output = Output::create_in_memory(100).unwrap();
+
+        // Try to extract more than allocated - should fail
+        let result = output.into_vec(Some(200));
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_in_memory_finalize_fails() {
+        let output = Output::create_in_memory(1024).unwrap();
+
+        // Calling finalize() on in-memory output should fail
+        let result = output.finalize(None);
+        assert!(result.is_err());
+        assert!(result.unwrap_err().to_string().contains("in-memory output"));
+    }
+
+    #[test]
+    fn test_file_backed_is_not_in_memory() {
+        let temp_dir = tempdir().unwrap();
+        let target_path = temp_dir.path().join("test.bin");
+
+        let output = Output::create(&target_path, 1024).unwrap();
+        assert!(!output.is_in_memory());
+        assert!(output.target_path().is_some());
+        assert_eq!(output.target_path().unwrap(), target_path);
+    }
+
+    #[test]
+    fn test_in_memory_copy_range() {
+        let mut output = Output::create_in_memory(256).unwrap();
+
+        // Write some data
+        output.write_at(0, b"Source Data").unwrap();
+
+        // Copy it to another location
+        output.copy_range(0, 100, 11).unwrap();
+
+        // Verify both locations have the data
+        let slice = output.as_slice();
+        assert_eq!(&slice[0..11], b"Source Data");
+        assert_eq!(&slice[100..111], b"Source Data");
+    }
+
+    #[test]
+    fn test_in_memory_zero_range() {
+        let mut output = Output::create_in_memory(64).unwrap();
+
+        // Fill with non-zero data
+        output.fill_region(0, 32, 0xFF).unwrap();
+
+        // Zero a range
+        output.zero_range(8, 8).unwrap();
+
+        // Verify
+        let slice = output.as_slice();
+        assert!(slice[0..8].iter().all(|&b| b == 0xFF));
+        assert!(slice[8..16].iter().all(|&b| b == 0x00));
+        assert!(slice[16..32].iter().all(|&b| b == 0xFF));
     }
 }

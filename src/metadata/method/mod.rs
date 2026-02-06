@@ -28,7 +28,7 @@
 //!
 //! ## Basic Method Analysis
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -52,7 +52,7 @@
 //!
 //! ## Instruction-Level Analysis
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::CilObject;
 //! use std::path::Path;
 //!
@@ -109,20 +109,22 @@ pub use iter::InstructionIterator;
 pub use types::*;
 
 use crate::{
-    analysis::ControlFlowGraph,
-    assembly::{self, BasicBlock},
+    analysis::{ControlFlowGraph, SsaConverter, SsaExceptionHandler, SsaFunction, TypeContext},
+    assembly::{self, BasicBlock, InstructionEncoder},
     file::File,
     metadata::{
         customattributes::CustomAttributeValueList,
         security::Security,
-        signatures::{parse_local_var_signature, SignatureMethod},
+        signatures::{
+            parse_local_var_signature, SignatureLocalVariable, SignatureMethod, TypeSignature,
+        },
         streams::Blob,
         tables::{GenericParamList, MetadataTable, MethodSpecList, ParamList, StandAloneSigRaw},
         token::Token,
-        typesystem::{TypeRegistry, TypeResolver},
+        typesystem::{CilModifier, CilTypeRef, TypeRegistry, TypeResolver},
     },
     utils::VisitedMap,
-    Result,
+    CilObject, Result,
 };
 
 /// A map that holds the mapping of Token to parsed `Method`.
@@ -144,7 +146,7 @@ pub type MethodRc = Arc<Method>;
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::CilObject;
 /// use std::path::Path;
 ///
@@ -182,7 +184,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -212,7 +214,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -250,7 +252,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -281,7 +283,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -317,7 +319,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -349,7 +351,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -384,7 +386,7 @@ impl MethodRef {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -501,6 +503,12 @@ pub struct Method {
     pub blocks: OnceLock<Vec<BasicBlock>>,
     /// Custom attributes attached to this method
     pub custom_attributes: CustomAttributeValueList,
+    /// The type that declares this method (lazy-loaded).
+    ///
+    /// Contains a weak reference to the [`crate::metadata::typesystem::CilType`] that owns this method.
+    /// This is set during TypeDef loading after the owning type is constructed.
+    /// Use [`CilTypeRef::upgrade()`] to obtain a strong reference when needed.
+    pub declaring_type: OnceLock<CilTypeRef>,
 }
 
 impl Method {
@@ -521,7 +529,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -563,7 +571,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -615,7 +623,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -654,7 +662,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -693,7 +701,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -718,7 +726,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -743,7 +751,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -768,7 +776,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -793,7 +801,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -819,7 +827,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -847,7 +855,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -872,7 +880,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -897,7 +905,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -922,7 +930,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -971,7 +979,7 @@ impl Method {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::CilObject;
     /// use std::path::Path;
     ///
@@ -1102,10 +1110,13 @@ impl Method {
         let local_var_sig = parse_local_var_signature(local_var_sig_data)?;
 
         for local_var in &local_var_sig.locals {
-            let modifiers = Arc::new(boxcar::Vec::with_capacity(local_var.modifiers.len()));
+            let mut modifiers = Vec::with_capacity(local_var.modifiers.len());
             for var_mod in &local_var.modifiers {
                 match types.get(&var_mod.modifier_type) {
-                    Some(var_mod_type) => _ = modifiers.push(var_mod_type.into()),
+                    Some(var_mod_type) => modifiers.push(CilModifier {
+                        required: var_mod.is_required,
+                        modifier: var_mod_type.into(),
+                    }),
                     None => {
                         return Err(malformed_error!(
                             "Failed to resolve local variable modifier type - token 0x{:08X}",
@@ -1226,6 +1237,395 @@ impl Method {
 
         Ok(())
     }
+
+    /// Checks if this method appears to be an event handler based on its signature.
+    ///
+    /// Event handlers typically follow a specific pattern:
+    /// - Name starts with "On" or ends with "Handler", "_Click", "_Load", "_Changed"
+    /// - Takes exactly 2 parameters (sender and event args)
+    /// - Returns void
+    ///
+    /// This heuristic is useful for deobfuscation to identify methods that are likely
+    /// entry points or callbacks that should be preserved.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the method matches the event handler pattern.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// for entry in assembly.methods().iter() {
+    ///     let method = entry.value();
+    ///     if method.is_event_handler() {
+    ///         println!("Event handler: {}", method.name);
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn is_event_handler(&self) -> bool {
+        // Check for typical event handler patterns:
+        // 1. Name patterns (OnX, X_Handler, etc.)
+        let has_handler_name = self.name.starts_with("On")
+            || self.name.ends_with("Handler")
+            || self.name.ends_with("_Click")
+            || self.name.ends_with("_Load")
+            || self.name.ends_with("_Changed")
+            || self.name.contains('_');
+
+        // 2. Parameter count (typically 2: sender + event args)
+        let has_two_params = self.signature.params.len() == 2;
+
+        // 3. Void return type is typical but not required
+        let is_void = matches!(self.signature.return_type.base, TypeSignature::Void);
+
+        // A method is likely an event handler if it has the naming pattern
+        // and the right parameter count
+        has_handler_name && has_two_params && is_void
+    }
+
+    /// Builds and returns the SSA (Static Single Assignment) form for this method.
+    ///
+    /// SSA form is a program representation where each variable is assigned exactly
+    /// once and defined before it is used. This is useful for dataflow analysis,
+    /// optimization, and deobfuscation.
+    ///
+    /// The SSA is built from the method's control flow graph, using the method's
+    /// parameter count and local variable count to properly set up the function.
+    ///
+    /// # Arguments
+    ///
+    /// * `assembly` - The [`CilObject`] containing this method for resolving method
+    ///   signatures in call instructions. This enables correct argument tracking for
+    ///   call/callvirt/newobj instructions.
+    ///
+    /// # Returns
+    ///
+    /// An [`SsaFunction`] representing this method in SSA form, or `None` if:
+    /// - The method has no control flow graph
+    /// - SSA construction fails
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
+    /// for entry in assembly.methods().iter().take(5) {
+    ///     let method = entry.value();
+    ///     if let Some(ssa) = method.ssa(&assembly) {
+    ///         println!("Method {} has {} SSA blocks",
+    ///                  method.name, ssa.block_count());
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    #[must_use]
+    pub fn ssa(&self, assembly: &CilObject) -> Option<SsaFunction> {
+        let blocks = self.blocks.get()?;
+
+        // Get CFG from method
+        let cfg = self.cfg()?;
+
+        // Compute argument and local counts
+        let num_args = self.signature.params.len() + usize::from(self.signature.has_this);
+        let num_locals = self.local_vars.count();
+
+        // Create type context for type lookup during SSA construction
+        let type_context = TypeContext::new(self, assembly);
+
+        // Build SSA from CFG with type context (also sets original local types)
+        let mut ssa = SsaConverter::build(&cfg, num_args, num_locals, Some(&type_context)).ok()?;
+
+        // Populate exception handlers from method body
+        if let Some(body) = self.body.get() {
+            if !body.exception_handlers.is_empty() {
+                // Exception handler offsets are relative to method body start.
+                // Block offsets are absolute file offsets. Get base offset from first block.
+                let base_offset = blocks.first().map(|b| b.offset).unwrap_or(0);
+
+                let ssa_handlers: Vec<SsaExceptionHandler> = body
+                    .exception_handlers
+                    .iter()
+                    .enumerate()
+                    .map(|(handler_idx, eh)| {
+                        // Map offsets to block indices (add base_offset to convert relative to absolute)
+                        let try_start_block = Self::find_block_at_offset(
+                            blocks,
+                            base_offset + eh.try_offset as usize,
+                        );
+                        let try_end_block = Self::find_block_at_offset(
+                            blocks,
+                            base_offset + (eh.try_offset + eh.try_length) as usize,
+                        );
+
+                        // For handler blocks, use the handler_entry info from decoder if available
+                        let handler_start_block =
+                            Self::find_handler_entry_block(blocks, handler_idx).or_else(|| {
+                                Self::find_block_at_offset(
+                                    blocks,
+                                    base_offset + eh.handler_offset as usize,
+                                )
+                            });
+                        let handler_end_block = Self::find_block_at_offset(
+                            blocks,
+                            base_offset + (eh.handler_offset + eh.handler_length) as usize,
+                        );
+
+                        let filter_start_block = if eh.flags == ExceptionHandlerFlags::FILTER {
+                            Self::find_block_at_offset(
+                                blocks,
+                                base_offset + eh.filter_offset as usize,
+                            )
+                        } else {
+                            None
+                        };
+
+                        // Get the class token for catch handlers
+                        let class_token_or_filter = if eh.flags == ExceptionHandlerFlags::EXCEPTION
+                        {
+                            eh.handler.as_ref().map(|t| t.token.value()).unwrap_or(0)
+                        } else if eh.flags == ExceptionHandlerFlags::FILTER {
+                            eh.filter_offset
+                        } else {
+                            0
+                        };
+
+                        SsaExceptionHandler {
+                            flags: eh.flags,
+                            try_offset: eh.try_offset,
+                            try_length: eh.try_length,
+                            handler_offset: eh.handler_offset,
+                            handler_length: eh.handler_length,
+                            class_token_or_filter,
+                            try_start_block,
+                            try_end_block,
+                            handler_start_block,
+                            handler_end_block,
+                            filter_start_block,
+                        }
+                    })
+                    .collect();
+
+                ssa.set_exception_handlers(ssa_handlers);
+            }
+        }
+
+        Some(ssa)
+    }
+
+    /// Finds the block index that starts at or contains the given offset.
+    fn find_block_at_offset(blocks: &[BasicBlock], offset: usize) -> Option<usize> {
+        // First try exact match (block starting at this offset)
+        if let Some(idx) = blocks.iter().position(|b| b.offset == offset) {
+            return Some(idx);
+        }
+
+        // If no exact match, find block containing the offset
+        blocks
+            .iter()
+            .position(|b| offset >= b.offset && offset < b.offset + b.size)
+    }
+
+    /// Finds the block that is marked as an entry point for the given handler index.
+    fn find_handler_entry_block(blocks: &[BasicBlock], handler_index: usize) -> Option<usize> {
+        blocks.iter().position(|b| {
+            b.handler_entry
+                .as_ref()
+                .is_some_and(|info| info.handler_index == handler_index)
+        })
+    }
+
+    /// Extracts the local variable types in signature format for code generation.
+    ///
+    /// This converts the resolved `LocalVariable` types back to `SignatureLocalVariable`
+    /// format, preserving the modifier semantics (required vs optional) that are needed
+    /// for correct signature encoding.
+    ///
+    /// # Returns
+    ///
+    /// `Some(Vec<SignatureLocalVariable>)` if all local variables could be converted,
+    /// `None` if the method has no locals or conversion failed.
+    #[must_use]
+    pub fn get_local_type_signatures(&self) -> Option<Vec<SignatureLocalVariable>> {
+        if self.local_vars.is_empty() {
+            return None;
+        }
+
+        // Convert each LocalVariable to SignatureLocalVariable
+        // Note: boxcar::Vec::iter() yields (index, &value) tuples
+        self.local_vars
+            .iter()
+            .map(|(_, local)| local.to_signature_local())
+            .collect()
+    }
+
+    /// Encodes the method body to a byte vector.
+    ///
+    /// This method serializes the complete method body including:
+    /// - Method header (tiny or fat format as appropriate)
+    /// - All CIL instructions from basic blocks
+    /// - Exception handler sections (if any)
+    ///
+    /// The output format is compatible with ECMA-335 II.25.4 and can be
+    /// directly written to a PE file's .text section.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(Vec<u8>)` containing the complete encoded method body,
+    /// or `Err` if the method has no body or encoding fails.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The method has no body (abstract, native, or runtime methods)
+    /// - Instruction encoding fails
+    /// - Exception handler encoding fails
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use std::path::Path;
+    ///
+    /// let assembly = CilObject::from_path(Path::new("test.dll"))?;
+    /// for entry in assembly.methods().iter() {
+    ///     let method = entry.value();
+    ///     if let Ok(bytes) = method.encode_body() {
+    ///         println!("Method {} encoded to {} bytes", method.name, bytes.len());
+    ///     }
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn encode_body(&self) -> Result<Vec<u8>> {
+        // Get the method body - if no body, this is an abstract/native/runtime method
+        let body = self
+            .body
+            .get()
+            .ok_or_else(|| malformed_error!("Method {} has no body to encode", self.name))?;
+
+        // Get the basic blocks containing instructions
+        let blocks = self
+            .blocks
+            .get()
+            .ok_or_else(|| malformed_error!("Method {} has no decoded blocks", self.name))?;
+
+        // Encode all instructions using InstructionEncoder
+        let mut encoder = InstructionEncoder::new();
+
+        for block in blocks {
+            for instruction in &block.instructions {
+                // Convert Operand to Option<Operand> for the encoder
+                let operand = match &instruction.operand {
+                    crate::assembly::Operand::None => None,
+                    op => Some(op.clone()),
+                };
+                encoder.emit_instruction(instruction.mnemonic, operand)?;
+            }
+        }
+
+        // Finalize to get the IL bytecode and max stack
+        let (il_code, max_stack, _) = encoder.finalize()?;
+
+        // Determine if we have exception handlers
+        let has_exceptions = !body.exception_handlers.is_empty();
+
+        // Calculate IL code size, ensuring it fits in u32
+        let il_code_size = u32::try_from(il_code.len())
+            .map_err(|_| malformed_error!("IL code size {} exceeds u32 range", il_code.len()))?;
+
+        // Encode the method header
+        let header = encode_method_body_header(
+            il_code_size,
+            max_stack,
+            body.local_var_sig_token,
+            has_exceptions,
+            body.is_init_local,
+        )?;
+
+        // Build the complete method body
+        let mut result = header;
+        result.extend_from_slice(&il_code);
+
+        // If fat format with exceptions, align to 4 bytes and add exception handlers
+        if has_exceptions {
+            // Align to 4-byte boundary
+            let padding = (4 - (result.len() % 4)) % 4;
+            result.extend(std::iter::repeat_n(0u8, padding));
+
+            // Encode and append exception handlers
+            let exception_data = encode_exception_handlers(&body.exception_handlers)?;
+            result.extend_from_slice(&exception_data);
+        }
+
+        Ok(result)
+    }
+
+    /// Returns the total encoded size of this method body in bytes.
+    ///
+    /// This calculates the size without actually encoding, useful for
+    /// layout planning. The size includes header, IL code, alignment
+    /// padding, and exception handler sections.
+    ///
+    /// # Returns
+    ///
+    /// Returns `Some(size)` if the method has a body, `None` otherwise.
+    #[must_use]
+    pub fn encoded_size(&self) -> Option<usize> {
+        let body = self.body.get()?;
+        let blocks = self.blocks.get()?;
+
+        // Calculate IL code size from instructions
+        let mut code_size = 0usize;
+        for block in blocks {
+            for instruction in &block.instructions {
+                // instruction.size is u64, safely convert to usize
+                code_size += usize::try_from(instruction.size).ok()?;
+            }
+        }
+
+        // Determine header size
+        let has_exceptions = !body.exception_handlers.is_empty();
+        let has_locals = body.local_var_sig_token != 0;
+        let needs_fat = code_size > 63 || body.max_stack > 8 || has_locals || has_exceptions;
+
+        let header_size = if needs_fat { 12 } else { 1 };
+
+        let mut total = header_size + code_size;
+
+        // Add exception handler section size if needed
+        if has_exceptions {
+            // Align to 4 bytes
+            total = (total + 3) & !3;
+
+            // Calculate exception section size
+            let handler_count = body.exception_handlers.len();
+            // Check if we need fat format for exception handlers
+            let needs_fat_exceptions = handler_count > 20
+                || body.exception_handlers.iter().any(|h| {
+                    h.try_offset > 0xFFFF
+                        || h.try_length > 0xFF
+                        || h.handler_offset > 0xFFFF
+                        || h.handler_length > 0xFF
+                });
+
+            if needs_fat_exceptions {
+                // Fat format: 4-byte header + 24 bytes per handler
+                total += 4 + handler_count * 24;
+            } else {
+                // Small format: 4-byte header + 12 bytes per handler
+                total += 4 + handler_count * 12;
+            }
+        }
+
+        Some(total)
+    }
 }
 
 #[cfg(test)]
@@ -1267,6 +1667,8 @@ mod tests {
             predecessors: vec![],
             successors: vec![],
             exceptions: vec![],
+            handler_entry: None,
+            exception_successors: vec![],
         };
 
         let blocks = vec![block];
@@ -1297,6 +1699,8 @@ mod tests {
             predecessors: vec![],
             successors: vec![1],
             exceptions: vec![],
+            handler_entry: None,
+            exception_successors: vec![],
         };
 
         let block2 = BasicBlock {
@@ -1311,6 +1715,8 @@ mod tests {
             predecessors: vec![0],
             successors: vec![],
             exceptions: vec![],
+            handler_entry: None,
+            exception_successors: vec![],
         };
 
         let blocks = vec![block1, block2];
@@ -1342,6 +1748,8 @@ mod tests {
             predecessors: vec![],
             successors: vec![],
             exceptions: vec![],
+            handler_entry: None,
+            exception_successors: vec![],
         };
 
         let blocks = vec![block];
@@ -1403,6 +1811,8 @@ mod tests {
             predecessors: vec![],
             successors: vec![],
             exceptions: vec![],
+            handler_entry: None,
+            exception_successors: vec![],
         }
     }
 
@@ -1422,6 +1832,8 @@ mod tests {
             predecessors: vec![],
             successors: vec![],
             exceptions: vec![],
+            handler_entry: None,
+            exception_successors: vec![],
         };
         let block3 = create_empty_block(2);
 
@@ -1450,6 +1862,8 @@ mod tests {
             predecessors: vec![],
             successors: vec![],
             exceptions: vec![],
+            handler_entry: None,
+            exception_successors: vec![],
         });
 
         let method = create_test_method(blocks);

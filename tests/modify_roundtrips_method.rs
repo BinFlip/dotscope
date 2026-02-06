@@ -13,9 +13,9 @@ use dotscope::{
         token::Token,
     },
     prelude::*,
+    ChangeRefKind, ChangeRefRc,
 };
 use std::path::Path;
-use tempfile::NamedTempFile;
 
 const TEST_ASSEMBLY_PATH: &str = "tests/samples/mono_4.8/mscorlib.dll";
 
@@ -26,15 +26,13 @@ fn create_test_assembly() -> Result<CilAssembly> {
         panic!("Test assembly not found at: {}", path.display());
     }
 
-    let view = CilAssemblyView::from_path(path)?;
-    Ok(CilAssembly::new(view))
+    CilAssembly::from_path(path)
 }
 
 #[test]
 fn test_method_injection_roundtrip() -> Result<()> {
     // Step 1: Create a modified assembly with method injection
-    let temp_file = NamedTempFile::new()?;
-    let modified_assembly = inject_hello_world_method(temp_file.path())?;
+    let modified_assembly = inject_hello_world_method()?;
 
     // Step 2: Verify assembly basic integrity
     verify_assembly_integrity(&modified_assembly)?;
@@ -48,21 +46,21 @@ fn test_method_injection_roundtrip() -> Result<()> {
     Ok(())
 }
 
-fn inject_hello_world_method(output_path: &Path) -> Result<CilObject> {
+fn inject_hello_world_method() -> Result<CilObject> {
     // Load assembly using factory
-    let assembly = create_test_assembly()?;
-    let mut context = BuilderContext::new(assembly);
+    let mut assembly = create_test_assembly()?;
 
-    // Add user string
-    let hello_index = context.userstring_add("Hello World from integration test!")?;
-    let hello_string_token = Token::new(0x70000000 | hello_index);
+    // Add user string - returns ChangeRefRc
+    let hello_ref = assembly.userstring_add("Hello World from integration test!")?;
+    // Use the placeholder value - bit 31 marks it as placeholder, resolved during write
+    let hello_string_token = Token::new(0x70000000 | hello_ref.placeholder());
 
     // Create external references
-    let mscorlib_ref = create_mscorlib_ref(&mut context)?;
-    let console_writeline_ref = create_console_writeline_ref(&mut context, mscorlib_ref)?;
+    let mscorlib_ref = create_mscorlib_ref(&mut assembly)?;
+    let console_writeline_ref = create_console_writeline_ref(&mut assembly, mscorlib_ref)?;
 
     // Inject method
-    let _method_token = MethodBuilder::new("TestInjectedMethod")
+    let method_ref = MethodBuilder::new("TestInjectedMethod")
         .public()
         .static_method()
         .returns(TypeSignature::Void)
@@ -74,15 +72,20 @@ fn inject_hello_world_method(output_path: &Path) -> Result<CilObject> {
                 Ok(())
             })
         })
-        .build(&mut context)?;
+        .build(&mut assembly)?;
 
-    // Write modified assembly
-    let mut assembly = context.finish();
-    assembly.validate_and_apply_changes()?;
-    assembly.write_to_file(output_path)?;
+    // Verify the method ChangeRef kind
+    assert_eq!(
+        method_ref.kind(),
+        ChangeRefKind::TableRow(TableId::MethodDef),
+        "Method ChangeRef should be a MethodDef table row"
+    );
+
+    // Write modified assembly to memory
+    let bytes = assembly.to_memory()?;
 
     // Load the written assembly for verification
-    CilObject::from_path(output_path)
+    CilObject::from_mem(bytes)
 }
 
 /// Verify basic assembly integrity after modification
@@ -325,43 +328,71 @@ fn verify_injected_method_instructions(
 }
 
 /// Helper function to create an AssemblyRef for System.Runtime
-fn create_mscorlib_ref(context: &mut BuilderContext) -> Result<Token> {
-    AssemblyRefBuilder::new()
+fn create_mscorlib_ref(assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
+    let assembly_ref = AssemblyRefBuilder::new()
         .name("System.Runtime")
         .version(8, 0, 0, 0)
         .public_key_token(&[0xb0, 0x3f, 0x5f, 0x7f, 0x11, 0xd5, 0x0a, 0x3a])
-        .build(context)
+        .build(assembly)?;
+
+    // Verify the ChangeRef kind
+    assert_eq!(
+        assembly_ref.kind(),
+        ChangeRefKind::TableRow(TableId::AssemblyRef),
+        "AssemblyRef ChangeRef should be an AssemblyRef table row"
+    );
+
+    Ok(assembly_ref)
 }
 
 /// Helper function to create a MemberRef for System.Console.WriteLine(string)
 fn create_console_writeline_ref(
-    context: &mut BuilderContext,
-    mscorlib_ref: Token,
+    assembly: &mut CilAssembly,
+    mscorlib_ref: ChangeRefRc,
 ) -> Result<Token> {
-    // Create TypeRef for System.Console
+    // Create TypeRef for System.Console using placeholder for resolution_scope
     let console_typeref = TypeRefBuilder::new()
         .name("Console")
         .namespace("System")
         .resolution_scope(CodedIndex::new(
             TableId::AssemblyRef,
-            mscorlib_ref.row(),
+            mscorlib_ref.placeholder(),
             CodedIndexType::ResolutionScope,
         ))
-        .build(context)?;
+        .build(assembly)?;
+
+    // Verify the TypeRef ChangeRef kind
+    assert_eq!(
+        console_typeref.kind(),
+        ChangeRefKind::TableRow(TableId::TypeRef),
+        "TypeRef ChangeRef should be a TypeRef table row"
+    );
 
     // Create method signature for WriteLine(string)
     let signature = create_writeline_signature()?;
 
-    // Create MemberRef for Console.WriteLine
-    MemberRefBuilder::new()
+    // Create MemberRef for Console.WriteLine using placeholder for class
+    let member_ref = MemberRefBuilder::new()
         .name("WriteLine")
         .class(CodedIndex::new(
             TableId::TypeRef,
-            console_typeref.row(),
+            console_typeref.placeholder(),
             CodedIndexType::MemberRefParent,
         ))
         .signature(&signature)
-        .build(context)
+        .build(assembly)?;
+
+    // Verify the MemberRef ChangeRef kind
+    assert_eq!(
+        member_ref.kind(),
+        ChangeRefKind::TableRow(TableId::MemberRef),
+        "MemberRef ChangeRef should be a MemberRef table row"
+    );
+
+    // Use placeholder_token() for table row references - resolved during write
+    Ok(member_ref
+        .placeholder_token()
+        .expect("MemberRef should have placeholder token"))
 }
 
 /// Helper function to create the method signature for Console.WriteLine(string)

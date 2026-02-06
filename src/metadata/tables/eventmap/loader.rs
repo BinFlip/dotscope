@@ -16,6 +16,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::EventMapRaw,
     },
@@ -53,19 +54,29 @@ impl MetadataLoader for EventMapLoader {
     /// - Cross-reference resolution fails  
     /// - Entry registration fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta.as_ref() {
-            if let Some(table) = header.table::<EventMapRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned =
-                        row.to_owned(context.types, &context.event, &context.event_ptr, table)?;
-                    owned.apply()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<EventMapRaw>() else {
+            return Ok(());
+        };
 
-                    context.event_map.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("event map 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned(context.types, &context.event, &context.event_ptr, table),
+                DiagnosticCategory::Table,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(owned.apply(), DiagnosticCategory::Table, token_msg)?;
+            context.event_map.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `EventMap` table

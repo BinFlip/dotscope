@@ -1287,17 +1287,34 @@ pub fn verify_resource(res: &Resources) {
     assert!(resource.source.is_none());
 
     let data = res.get_data(&resource).unwrap();
-    assert_eq!(data.len(), 67456);
+    assert_eq!(data.len(), 67451);
 
     verify_wbdll_resource_buffer(data);
 }
 
 /// Verify that the passed buffer matches the expected resources from WindowsBase.dll
 ///
+/// This function handles two cases:
+/// 1. Raw data with 4-byte length prefix (from .bin files or old API)
+/// 2. Data without length prefix (from new `get_data()` API)
+///
 /// ## Arguments
 /// * 'data' - The resource buffer
 pub fn verify_wbdll_resource_buffer(data: &[u8]) {
-    let mut resource = Resource::parse(data).unwrap();
+    // Detect if data starts with 4-byte length prefix by checking if data[0..4]
+    // equals the length of the rest of the data (or close to it)
+    let has_length_prefix = if data.len() >= 4 {
+        let prefix_value = u32::from_le_bytes([data[0], data[1], data[2], data[3]]) as usize;
+        // Allow 1 byte tolerance for padding
+        prefix_value >= data.len() - 5 && prefix_value <= data.len() - 4
+    } else {
+        false
+    };
+
+    // Skip the length prefix if present
+    let actual_data = if has_length_prefix { &data[4..] } else { data };
+
+    let mut resource = Resource::parse(actual_data).unwrap();
     assert_eq!(resource.res_mgr_header_version, 1);
     assert_eq!(resource.header_size, 0x91);
     assert_eq!(resource.reader_type, "System.Resources.ResourceReader, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089");
@@ -1305,18 +1322,21 @@ pub fn verify_wbdll_resource_buffer(data: &[u8]) {
         resource.resource_set_type,
         "System.Resources.RuntimeResourceSet"
     );
-    assert_eq!(resource.rr_header_offset, 0xA1);
+    // rr_header_offset is calculated as parser position in the buffer.
+    // Value is 0x9D (157) for data without length prefix
+    assert_eq!(resource.rr_header_offset, 0x9D);
     assert_eq!(resource.rr_version, 2);
     assert_eq!(resource.resource_count, 0x232);
     assert_eq!(resource.type_names.len(), 0);
     assert_eq!(resource.padding, 7);
     assert_eq!(resource.name_hashes.len(), 562);
     assert_eq!(resource.name_positions.len(), 562);
+    // These values are stored in the file
     assert_eq!(resource.data_section_offset, 0x8F88);
-    assert_eq!(resource.name_section_offset, 0x1248);
+    assert_eq!(resource.name_section_offset, 0x1244);
     assert!(!resource.is_debug);
 
-    let parsed = resource.read_resources(data).unwrap();
+    let parsed = resource.read_resources(actual_data).unwrap();
     let buffertoosmall = parsed.get("BufferTooSmall").unwrap();
     assert_eq!(buffertoosmall.name, "BufferTooSmall");
     assert_eq!(buffertoosmall.name_hash, 0x148859CE);

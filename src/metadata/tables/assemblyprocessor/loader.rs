@@ -42,6 +42,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{AssemblyProcessorRaw, TableId},
     },
@@ -79,20 +80,32 @@ impl MetadataLoader for AssemblyProcessorLoader {
     /// This method is thread-safe as it only reads from the context and performs
     /// atomic operations when setting the assembly processor data.
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<AssemblyProcessorRaw>() {
-                if let Some(row) = table.get(1) {
-                    let owned = row.to_owned()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<AssemblyProcessorRaw>() else {
+            return Ok(());
+        };
+        let Some(row) = table.get(1) else {
+            return Ok(());
+        };
 
-                    context
-                        .assembly_processor
-                        .set(owned)
-                        .map_err(|_| malformed_error!("AssemblyProcessor has already been set"))?;
-                    return Ok(());
-                }
-            }
-        }
-        Ok(())
+        let token_msg = || format!("assembly processor 0x{:08x}", row.token.value());
+
+        let Some(owned) =
+            context.handle_result(row.to_owned(), DiagnosticCategory::Table, token_msg)?
+        else {
+            return Ok(());
+        };
+
+        context.handle_error(
+            context
+                .assembly_processor
+                .set(owned)
+                .map_err(|_| malformed_error!("AssemblyProcessor has already been set")),
+            DiagnosticCategory::Table,
+            token_msg,
+        )
     }
 
     /// Returns the table identifier for the `AssemblyProcessor` table

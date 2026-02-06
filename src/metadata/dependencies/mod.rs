@@ -101,6 +101,8 @@ pub use types::{
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::Arc, thread};
+
     use super::*;
     use crate::{
         metadata::{dependencies::DependencyType, identity::AssemblyVersion},
@@ -108,7 +110,6 @@ mod tests {
             create_test_assembly_ref, create_test_dependency, create_test_identity,
         },
     };
-    use std::sync::Arc;
 
     #[test]
     fn test_cross_module_integration() {
@@ -208,8 +209,6 @@ mod tests {
 
     #[test]
     fn test_concurrent_operations_integration() {
-        use std::thread;
-
         let graph = Arc::new(AssemblyDependencyGraph::new());
         let mut handles = vec![];
 

@@ -6,18 +6,20 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::prelude::*;
 //!
-//! let builder_context = BuilderContext::new();
+//! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! let methodptr_token = MethodPtrBuilder::new()
 //!     .method(8)                     // Points to MethodDef table RID 8
-//!     .build(&mut builder_context)?;
+//!     .build(&mut assembly)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{MethodPtrRaw, TableDataOwned, TableId},
         token::Token,
@@ -45,9 +47,11 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::prelude::*;
 ///
+/// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+/// # let mut context = CilAssembly::new(view);
 /// // Create method pointer for method reordering
 /// let ptr1 = MethodPtrBuilder::new()
 ///     .method(15)  // Points to MethodDef table entry 15
@@ -62,6 +66,7 @@ use crate::{
 /// let ptr3 = MethodPtrBuilder::new()
 ///     .method(7)   // Points to MethodDef table entry 7
 ///     .build(&mut context)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct MethodPtrBuilder {
@@ -80,7 +85,7 @@ impl MethodPtrBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = MethodPtrBuilder::new();
@@ -104,7 +109,7 @@ impl MethodPtrBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Point to first method
@@ -128,7 +133,7 @@ impl MethodPtrBuilder {
     /// to reference this method pointer entry.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the builder context
+    /// - `assembly`: Mutable reference to the CilAssembly
     ///
     /// # Returns
     /// - `Ok(Token)`: Token referencing the created method pointer entry
@@ -140,31 +145,29 @@ impl MethodPtrBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let mut context = BuilderContext::new();
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let token = MethodPtrBuilder::new()
     ///     .method(8)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let method = self.method.ok_or_else(|| {
             Error::ModificationInvalid("Method RID is required for MethodPtr".to_string())
         })?;
 
-        let next_rid = context.next_rid(TableId::MethodPtr);
-        let token = Token::new(((TableId::MethodPtr as u32) << 24) | next_rid);
-
         let method_ptr = MethodPtrRaw {
-            rid: next_rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
             method,
         };
 
-        context.table_row_add(TableId::MethodPtr, TableDataOwned::MethodPtr(method_ptr))?;
-        Ok(token)
+        assembly.table_row_add(TableId::MethodPtr, TableDataOwned::MethodPtr(method_ptr))
     }
 }
 
@@ -181,7 +184,7 @@ impl Default for MethodPtrBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
@@ -200,37 +203,32 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = MethodPtrBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = MethodPtrBuilder::new()
             .method(1)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::MethodPtr as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodPtr));
         Ok(())
     }
 
     #[test]
     fn test_methodptr_builder_reordering() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = MethodPtrBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = MethodPtrBuilder::new()
             .method(25) // Point to later method for reordering
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::MethodPtr as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodPtr));
         Ok(())
     }
 
     #[test]
     fn test_methodptr_builder_missing_method() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let result = MethodPtrBuilder::new().build(&mut context);
+        let mut assembly = get_test_assembly()?;
+        let result = MethodPtrBuilder::new().build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -261,86 +259,80 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_fluent_interface() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test method chaining
-        let token = MethodPtrBuilder::new()
+        let ref_ = MethodPtrBuilder::new()
             .method(42)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::MethodPtr as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodPtr));
         Ok(())
     }
 
     #[test]
     fn test_methodptr_builder_multiple_builds() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Build first pointer
-        let token1 = MethodPtrBuilder::new()
+        let ref1 = MethodPtrBuilder::new()
             .method(20)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build first pointer");
 
         // Build second pointer
-        let token2 = MethodPtrBuilder::new()
+        let ref2 = MethodPtrBuilder::new()
             .method(10)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build second pointer");
 
         // Build third pointer
-        let token3 = MethodPtrBuilder::new()
+        let ref3 = MethodPtrBuilder::new()
             .method(30)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build third pointer");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_eq!(token3.row(), 3);
-        assert_ne!(token1, token2);
-        assert_ne!(token2, token3);
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+        assert!(!std::sync::Arc::ptr_eq(&ref2, &ref3));
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::MethodPtr));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::MethodPtr));
+        assert_eq!(ref3.kind(), ChangeRefKind::TableRow(TableId::MethodPtr));
         Ok(())
     }
 
     #[test]
     fn test_methodptr_builder_large_method_rid() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = MethodPtrBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = MethodPtrBuilder::new()
             .method(0xFFFF) // Large MethodDef RID
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should handle large method RID");
 
-        assert_eq!(token.table(), TableId::MethodPtr as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodPtr));
         Ok(())
     }
 
     #[test]
     fn test_methodptr_builder_method_ordering_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate method reordering: logical order 1,2,3 -> physical order 3,1,2
         let logical_to_physical = [(1, 30), (2, 10), (3, 20)];
 
-        let mut tokens = Vec::new();
+        let mut refs = Vec::new();
         for (logical_idx, physical_method) in logical_to_physical {
-            let token = MethodPtrBuilder::new()
+            let ref_ = MethodPtrBuilder::new()
                 .method(physical_method)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build method pointer");
-            tokens.push((logical_idx, token));
+            refs.push((logical_idx, ref_));
         }
 
-        // Verify logical ordering is preserved in tokens
-        for (i, (logical_idx, token)) in tokens.iter().enumerate() {
+        // Verify all refs have correct kind
+        for (i, (logical_idx, ref_)) in refs.iter().enumerate() {
             assert_eq!(*logical_idx, i + 1);
-            assert_eq!(token.row(), (i + 1) as u32);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodPtr));
         }
 
         Ok(())
@@ -348,11 +340,10 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_zero_method() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test with method 0 (typically invalid but should not cause builder to fail)
-        let result = MethodPtrBuilder::new().method(0).build(&mut context);
+        let result = MethodPtrBuilder::new().method(0).build(&mut assembly);
 
         // Should build successfully even with method 0
         assert!(result.is_ok());
@@ -361,25 +352,23 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_edit_continue_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate edit-and-continue scenario where methods are added/reordered
         let original_methods = [5, 10, 15];
-        let mut tokens = Vec::new();
+        let mut refs = Vec::new();
 
         for &method_rid in &original_methods {
-            let token = MethodPtrBuilder::new()
+            let ref_ = MethodPtrBuilder::new()
                 .method(method_rid)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build method pointer for edit-continue");
-            tokens.push(token);
+            refs.push(ref_);
         }
 
-        // Verify stable logical tokens despite physical reordering
-        for (i, token) in tokens.iter().enumerate() {
-            assert_eq!(token.table(), TableId::MethodPtr as u8);
-            assert_eq!(token.row(), (i + 1) as u32);
+        // Verify stable logical refs despite physical reordering
+        for ref_ in refs.iter() {
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodPtr));
         }
 
         Ok(())
@@ -387,26 +376,24 @@ mod tests {
 
     #[test]
     fn test_methodptr_builder_hot_reload_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate hot-reload where new methods replace existing ones
         let new_method_implementations = [100, 200, 300];
-        let mut pointer_tokens = Vec::new();
+        let mut pointer_refs = Vec::new();
 
         for &new_method in &new_method_implementations {
-            let pointer_token = MethodPtrBuilder::new()
+            let pointer_ref = MethodPtrBuilder::new()
                 .method(new_method)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build pointer for hot-reload");
-            pointer_tokens.push(pointer_token);
+            pointer_refs.push(pointer_ref);
         }
 
-        // Verify pointer tokens maintain stable references for hot-reload
-        assert_eq!(pointer_tokens.len(), 3);
-        for (i, token) in pointer_tokens.iter().enumerate() {
-            assert_eq!(token.table(), TableId::MethodPtr as u8);
-            assert_eq!(token.row(), (i + 1) as u32);
+        // Verify pointer refs maintain stable references for hot-reload
+        assert_eq!(pointer_refs.len(), 3);
+        for ref_ in pointer_refs.iter() {
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodPtr));
         }
 
         Ok(())

@@ -145,8 +145,9 @@ impl DependencyAnalyzer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::dependencies::{DependencyAnalyzer, AssemblyDependencyGraph};
+    /// use std::sync::Arc;
     ///
     /// let graph = Arc::new(AssemblyDependencyGraph::new());
     /// let analyzer = DependencyAnalyzer::new(graph);
@@ -470,7 +471,11 @@ impl DependencyAnalyzer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::metadata::dependencies::{DependencyAnalyzer, AssemblyDependencyGraph};
+    /// use std::sync::Arc;
+    ///
+    /// let graph = Arc::new(AssemblyDependencyGraph::new());
     /// let analyzer = DependencyAnalyzer::new(graph);
     /// let graph_ref = analyzer.dependency_graph();
     /// println!("Graph has {} dependencies", graph_ref.dependency_count());
@@ -629,11 +634,6 @@ impl DependencyAnalyzer {
     /// `AssemblyIdentity` with the module name and `UNKNOWN` version. The version
     /// can be checked with [`AssemblyVersion::is_unknown()`] to identify dependencies
     /// where version binding analysis may not be possible.
-    ///
-    /// # Note
-    ///
-    /// In a full implementation, this could be extended to resolve the module to its
-    /// containing assembly by loading and inspecting the referenced file.
     fn create_module_assembly_identity(module_ref: &ModuleRef) -> AssemblyIdentity {
         let assembly_name = if let Some(name_without_ext) = module_ref.name.strip_suffix(".dll") {
             name_without_ext.to_string()

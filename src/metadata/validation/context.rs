@@ -858,7 +858,7 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_path(&path) {
             let scanner = ReferenceScanner::from_view(&view).unwrap();
             let config = ValidationConfig::minimal();
-            let changes = AssemblyChanges::new(&view);
+            let changes = AssemblyChanges::new();
             let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
             let context = RawValidationContext::new_for_modification(
@@ -882,7 +882,7 @@ mod tests {
         if let Ok(view) = CilAssemblyView::from_path(&path) {
             let scanner = ReferenceScanner::from_view(&view).unwrap();
             let config = ValidationConfig::minimal();
-            let changes = AssemblyChanges::new(&view);
+            let changes = AssemblyChanges::new();
             let thread_pool = ThreadPoolBuilder::new().num_threads(4).build().unwrap();
 
             let loading_context =

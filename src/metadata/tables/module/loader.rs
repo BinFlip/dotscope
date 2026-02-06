@@ -26,6 +26,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{ModuleRaw, TableId},
     },
@@ -53,23 +54,37 @@ impl MetadataLoader for ModuleLoader {
     /// - String or GUID heap entries cannot be resolved
     /// - Module has already been set (duplicate loading attempt)
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(tables_header), Some(strings), Some(guids)) =
+        let (Some(tables_header), Some(strings), Some(guids)) =
             (context.meta, context.strings, context.guids)
-        {
-            if let Some(table) = tables_header.table::<ModuleRaw>() {
-                if let Some(row) = table.get(1) {
-                    let owned = row.to_owned(strings, guids)?;
+        else {
+            return Err(malformed_error!("No module has been found"));
+        };
+        let Some(table) = tables_header.table::<ModuleRaw>() else {
+            return Err(malformed_error!("No module has been found"));
+        };
+        let Some(row) = table.get(1) else {
+            return Err(malformed_error!("No module has been found"));
+        };
 
-                    context
-                        .module
-                        .set(owned)
-                        .map_err(|_| malformed_error!("Module has already been set"))?;
-                    return Ok(());
-                }
-            }
-        }
+        let token_msg = || format!("module 0x{:08x}", row.token.value());
 
-        Err(malformed_error!("No module has been found"))
+        let Some(owned) = context.handle_result(
+            row.to_owned(strings, guids),
+            DiagnosticCategory::Table,
+            token_msg,
+        )?
+        else {
+            return Err(malformed_error!("No module has been found"));
+        };
+
+        context.handle_error(
+            context
+                .module
+                .set(owned)
+                .map_err(|_| malformed_error!("Module has already been set")),
+            DiagnosticCategory::Table,
+            token_msg,
+        )
     }
 
     /// Returns the table identifier for Module.

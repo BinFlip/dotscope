@@ -6,21 +6,23 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::prelude::*;
 //!
-//! let builder_context = BuilderContext::new();
+//! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4 signature
 //!
 //! let constant_token = LocalConstantBuilder::new()
-//!     .name("PI")                    // Constant name  
+//!     .name("PI")                    // Constant name
 //!     .signature(&signature_bytes)   // Raw signature bytes
-//!     .build(&mut builder_context)?;
+//!     .build(&mut assembly)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{LocalConstantRaw, TableDataOwned, TableId},
         token::Token,
@@ -40,21 +42,24 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::prelude::*;
 ///
+/// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+/// # let mut assembly = CilAssembly::new(view);
 /// // Named local constant with I4 signature
 /// let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
 /// let constant_token = LocalConstantBuilder::new()
 ///     .name("MAX_VALUE")
 ///     .signature(&signature_bytes)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Anonymous constant (compiler-generated)
 /// let anon_token = LocalConstantBuilder::new()
 ///     .name("")  // Empty name for anonymous constant
 ///     .signature(&signature_bytes)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct LocalConstantBuilder {
@@ -75,7 +80,7 @@ impl LocalConstantBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = LocalConstantBuilder::new();
@@ -101,7 +106,7 @@ impl LocalConstantBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Named constant
@@ -131,7 +136,7 @@ impl LocalConstantBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // I4 (int32) constant signature
@@ -153,11 +158,11 @@ impl LocalConstantBuilder {
     /// Builds and adds the `LocalConstant` entry to the metadata
     ///
     /// Validates all required fields, creates the `LocalConstant` table entry,
-    /// and adds it to the builder context. Returns a token that can be used
+    /// and adds it to the CIL assembly. Returns a token that can be used
     /// to reference this local constant.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the builder context
+    /// - `assembly`: Mutable reference to the CIL assembly
     ///
     /// # Returns
     /// - `Ok(Token)`: Token referencing the created local constant
@@ -170,17 +175,19 @@ impl LocalConstantBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let mut context = BuilderContext::new();
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
     /// let token = LocalConstantBuilder::new()
     ///     .name("myConstant")
     ///     .signature(&signature_bytes)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let name = self.name.ok_or_else(|| {
             Error::ModificationInvalid(
                 "Constant name is required for LocalConstant (use empty string for anonymous)"
@@ -194,35 +201,30 @@ impl LocalConstantBuilder {
             )
         })?;
 
-        let next_rid = context.next_rid(TableId::LocalConstant);
-        let token_value = ((TableId::LocalConstant as u32) << 24) | next_rid;
-        let token = Token::new(token_value);
-
         let name_index = if name.is_empty() {
             0
         } else {
-            context.string_add(&name)?
+            assembly.string_add(&name)?.placeholder()
         };
 
         let signature_index = if signature.is_empty() {
             0
         } else {
-            context.blob_add(&signature)?
+            assembly.blob_add(&signature)?.placeholder()
         };
 
         let local_constant = LocalConstantRaw {
-            rid: next_rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
             name: name_index,
             signature: signature_index,
         };
 
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::LocalConstant,
             TableDataOwned::LocalConstant(local_constant),
-        )?;
-        Ok(token)
+        )
     }
 }
 
@@ -239,7 +241,8 @@ impl Default for LocalConstantBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, metadata::tables::TableId,
+        test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
@@ -260,44 +263,39 @@ mod tests {
 
     #[test]
     fn test_localconstant_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
-        let token = LocalConstantBuilder::new()
+        let ref_ = LocalConstantBuilder::new()
             .name("testConstant")
             .signature(&signature_bytes)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::LocalConstant as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::LocalConstant));
         Ok(())
     }
 
     #[test]
     fn test_localconstant_builder_anonymous_constant() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let signature_bytes = vec![0x0E]; // ELEMENT_TYPE_STRING
-        let token = LocalConstantBuilder::new()
+        let ref_ = LocalConstantBuilder::new()
             .name("") // Empty name for anonymous constant
             .signature(&signature_bytes)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::LocalConstant as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::LocalConstant));
         Ok(())
     }
 
     #[test]
     fn test_localconstant_builder_missing_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let signature_bytes = vec![0x08]; // ELEMENT_TYPE_I4
         let result = LocalConstantBuilder::new()
             .signature(&signature_bytes)
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -311,11 +309,10 @@ mod tests {
 
     #[test]
     fn test_localconstant_builder_missing_signature() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let result = LocalConstantBuilder::new()
             .name("testConstant")
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -354,46 +351,43 @@ mod tests {
 
     #[test]
     fn test_localconstant_builder_fluent_interface() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let signature_bytes = vec![0x02]; // ELEMENT_TYPE_BOOLEAN
 
         // Test method chaining
-        let token = LocalConstantBuilder::new()
+        let ref_ = LocalConstantBuilder::new()
             .name("chainedConstant")
             .signature(&signature_bytes)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::LocalConstant as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::LocalConstant));
         Ok(())
     }
 
     #[test]
     fn test_localconstant_builder_multiple_builds() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let signature1 = vec![0x08]; // ELEMENT_TYPE_I4
         let signature2 = vec![0x0E]; // ELEMENT_TYPE_STRING
 
         // Build first constant
-        let token1 = LocalConstantBuilder::new()
+        let ref1 = LocalConstantBuilder::new()
             .name("constant1")
             .signature(&signature1)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build first constant");
 
         // Build second constant
-        let token2 = LocalConstantBuilder::new()
+        let ref2 = LocalConstantBuilder::new()
             .name("constant2")
             .signature(&signature2)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build second constant");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_ne!(token1, token2);
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::LocalConstant));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::LocalConstant));
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
         Ok(())
     }
 }

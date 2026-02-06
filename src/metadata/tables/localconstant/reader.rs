@@ -1,6 +1,6 @@
 use crate::{
     metadata::{
-        tables::{LocalConstantRaw, RowReadable, TableInfoRef},
+        tables::{LocalConstantRaw, RowReadable, TableId, TableInfoRef},
         token::Token,
     },
     utils::read_le_at_dyn,
@@ -8,6 +8,8 @@ use crate::{
 };
 
 impl RowReadable for LocalConstantRaw {
+    const TABLE_ID: TableId = TableId::LocalConstant;
+
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(LocalConstantRaw {
             rid,

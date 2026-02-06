@@ -34,6 +34,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::MemberRefRaw,
     },
@@ -62,21 +63,32 @@ impl MetadataLoader for MemberRefLoader {
     /// * `Ok(())` - If all `MemberRef` entries were processed successfully
     /// * `Err(_)` - If parent resolution, signature parsing, or name resolution fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings), Some(blob)) =
+        let (Some(header), Some(strings), Some(blob)) =
             (context.meta, context.strings, context.blobs)
-        {
-            if let Some(table) = header.table::<MemberRefRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(strings, blob, context.types, |coded_index| {
-                        context.get_ref(coded_index)
-                    })?;
+        else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<MemberRefRaw>() else {
+            return Ok(());
+        };
 
-                    context.member_ref.insert(row.token, res.clone());
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("member ref 0x{:08x}", row.token.value());
+
+            let Some(res) = context.handle_result(
+                row.to_owned(strings, blob, context.types, |coded_index| {
+                    context.get_ref(coded_index)
+                }),
+                DiagnosticCategory::Type,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.member_ref.insert(row.token, res.clone());
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `MemberRef`.

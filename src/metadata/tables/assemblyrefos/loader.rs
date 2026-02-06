@@ -43,6 +43,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::AssemblyRefOsRaw,
     },
@@ -91,18 +92,29 @@ impl MetadataLoader for AssemblyRefOsLoader {
     /// This method is thread-safe and uses parallel iteration for performance.
     /// Updates to assembly references are handled through atomic operations.
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<AssemblyRefOsRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(context.assembly_ref)?;
-                    owned.apply()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<AssemblyRefOsRaw>() else {
+            return Ok(());
+        };
 
-                    context.assembly_ref_os.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("assembly ref os 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned(context.assembly_ref),
+                DiagnosticCategory::Table,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(owned.apply(), DiagnosticCategory::Table, token_msg)?;
+            context.assembly_ref_os.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `AssemblyRefOS`

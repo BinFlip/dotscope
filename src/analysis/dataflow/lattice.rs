@@ -38,7 +38,7 @@ use crate::utils::BitSet;
 /// # Examples
 ///
 /// ```rust,ignore
-/// use dotscope::analysis::dataflow::MeetSemiLattice;
+/// use dotscope::analysis::MeetSemiLattice;
 ///
 /// impl MeetSemiLattice for ConstantLattice {
 ///     fn meet(&self, other: &Self) -> Self {
@@ -135,5 +135,168 @@ impl JoinSemiLattice for BitSet {
 
     fn is_top(&self) -> bool {
         self.is_empty()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_bitset_meet_union() {
+        let mut a = BitSet::new(10);
+        a.insert(1);
+        a.insert(3);
+
+        let mut b = BitSet::new(10);
+        b.insert(2);
+        b.insert(3);
+
+        let result = a.meet(&b);
+
+        // Meet is union: {1, 3} ∪ {2, 3} = {1, 2, 3}
+        assert!(result.contains(1));
+        assert!(result.contains(2));
+        assert!(result.contains(3));
+        assert!(!result.contains(0));
+        assert!(!result.contains(4));
+    }
+
+    #[test]
+    fn test_bitset_meet_idempotent() {
+        let mut a = BitSet::new(10);
+        a.insert(1);
+        a.insert(5);
+
+        let result = a.meet(&a);
+
+        // Idempotent: x.meet(x) = x
+        assert_eq!(a, result);
+    }
+
+    #[test]
+    fn test_bitset_meet_commutative() {
+        let mut a = BitSet::new(10);
+        a.insert(1);
+        a.insert(3);
+
+        let mut b = BitSet::new(10);
+        b.insert(2);
+        b.insert(4);
+
+        // Commutative: x.meet(y) = y.meet(x)
+        assert_eq!(a.meet(&b), b.meet(&a));
+    }
+
+    #[test]
+    fn test_bitset_meet_associative() {
+        let mut a = BitSet::new(10);
+        a.insert(1);
+
+        let mut b = BitSet::new(10);
+        b.insert(2);
+
+        let mut c = BitSet::new(10);
+        c.insert(3);
+
+        // Associative: x.meet(y.meet(z)) = (x.meet(y)).meet(z)
+        let left = a.meet(&b.meet(&c));
+        let right = a.meet(&b).meet(&c);
+        assert_eq!(left, right);
+    }
+
+    #[test]
+    fn test_bitset_join_intersection() {
+        let mut a = BitSet::new(10);
+        a.insert(1);
+        a.insert(2);
+        a.insert(3);
+
+        let mut b = BitSet::new(10);
+        b.insert(2);
+        b.insert(3);
+        b.insert(4);
+
+        let result = a.join(&b);
+
+        // Join is intersection: {1, 2, 3} ∩ {2, 3, 4} = {2, 3}
+        assert!(!result.contains(1));
+        assert!(result.contains(2));
+        assert!(result.contains(3));
+        assert!(!result.contains(4));
+    }
+
+    #[test]
+    fn test_bitset_join_idempotent() {
+        let mut a = BitSet::new(10);
+        a.insert(1);
+        a.insert(5);
+
+        let result = a.join(&a);
+
+        // Idempotent: x.join(x) = x
+        assert_eq!(a, result);
+    }
+
+    #[test]
+    fn test_bitset_join_commutative() {
+        let mut a = BitSet::new(10);
+        a.insert(1);
+        a.insert(3);
+
+        let mut b = BitSet::new(10);
+        b.insert(2);
+        b.insert(3);
+
+        // Commutative: x.join(y) = y.join(x)
+        assert_eq!(a.join(&b), b.join(&a));
+    }
+
+    #[test]
+    fn test_bitset_is_top_empty() {
+        let empty = BitSet::new(10);
+        assert!(empty.is_top());
+
+        let mut non_empty = BitSet::new(10);
+        non_empty.insert(0);
+        assert!(!non_empty.is_top());
+    }
+
+    #[test]
+    fn test_bitset_is_bottom_full() {
+        let full = BitSet::full(10);
+        assert!(full.is_bottom());
+
+        let mut partial = BitSet::new(10);
+        partial.insert(0);
+        assert!(!partial.is_bottom());
+    }
+
+    #[test]
+    fn test_bitset_meet_with_empty() {
+        let empty = BitSet::new(10);
+
+        let mut a = BitSet::new(10);
+        a.insert(1);
+        a.insert(2);
+
+        // Meet with empty (top) should give the other set
+        let result = a.meet(&empty);
+        assert!(result.contains(1));
+        assert!(result.contains(2));
+        assert_eq!(result.count(), 2);
+    }
+
+    #[test]
+    fn test_bitset_join_with_empty() {
+        let empty = BitSet::new(10);
+
+        let mut a = BitSet::new(10);
+        a.insert(1);
+        a.insert(2);
+
+        // Join with empty (top) should give empty
+        let result = a.join(&empty);
+        assert!(result.is_empty());
     }
 }

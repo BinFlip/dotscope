@@ -6,7 +6,7 @@
 //! the assembly name and public key data.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{AssemblyRaw, TableDataOwned, TableId},
         token::Token,
@@ -22,19 +22,18 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::AssemblyBuilder;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// let assembly_token = AssemblyBuilder::new()
 ///     .name("MyAssembly")
 ///     .version(1, 2, 3, 4)
 ///     .culture("neutral")
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct AssemblyBuilder {
@@ -170,7 +169,7 @@ impl AssemblyBuilder {
     ///
     /// This method validates the configuration, adds required strings/blobs
     /// to the appropriate heaps, creates the AssemblyRaw entry, and adds it
-    /// to the assembly via the BuilderContext.
+    /// to the assembly via the CilAssembly.
     ///
     /// # Returns
     ///
@@ -182,33 +181,34 @@ impl AssemblyBuilder {
     /// - Required fields are missing (name)
     /// - Heap operations fail
     /// - Assembly table row creation fails
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Validate required fields
         let name = self
             .name
             .ok_or_else(|| malformed_error!("Assembly name is required"))?;
 
-        // Add strings to heaps and get indices
-        let name_index = context.string_add(&name)?;
+        // Add strings to heaps and get placeholder indices
+        let name_ref = assembly.string_add(&name)?;
+        let name_index = name_ref.placeholder();
 
         let culture_index = if let Some(culture) = &self.culture {
             if culture == "neutral" || culture.is_empty() {
                 0 // Culture-neutral assembly
             } else {
-                context.string_add(culture)?
+                assembly.string_add(culture)?.placeholder()
             }
         } else {
             0 // Default to culture-neutral
         };
 
         let public_key_index = if let Some(public_key) = &self.public_key {
-            context.blob_add(public_key)?
+            assembly.blob_add(public_key)?.placeholder()
         } else {
             0 // No public key (unsigned assembly)
         };
 
         // Get the next RID for the Assembly table
-        let rid = context.next_rid(TableId::Assembly);
+        let rid = assembly.next_rid(TableId::Assembly)?;
 
         // Create the AssemblyRaw entry
         let assembly_raw = AssemblyRaw {
@@ -227,7 +227,7 @@ impl AssemblyBuilder {
         };
 
         // Add the row to the assembly and return the token
-        context.table_row_add(TableId::Assembly, TableDataOwned::Assembly(assembly_raw))
+        assembly.table_row_add(TableId::Assembly, TableDataOwned::Assembly(assembly_raw))
     }
 }
 
@@ -241,7 +241,7 @@ impl Default for AssemblyBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
+        cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
@@ -250,24 +250,17 @@ mod tests {
     fn test_assembly_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
+            let mut assembly = CilAssembly::new(view);
 
-            // Check existing Assembly table count
-            let existing_assembly_count = assembly.original_table_row_count(TableId::Assembly);
-            let expected_rid = existing_assembly_count + 1;
-
-            let mut context = BuilderContext::new(assembly);
-
-            let token = AssemblyBuilder::new()
+            let ref_ = AssemblyBuilder::new()
                 .name("TestAssembly")
                 .version(1, 2, 3, 4)
                 .culture("neutral")
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x20000000); // Assembly table prefix
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid); // RID should be existing + 1
+            // Verify ref is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Assembly));
         }
     }
 
@@ -275,21 +268,20 @@ mod tests {
     fn test_assembly_builder_with_public_key() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let public_key = vec![0x01, 0x02, 0x03, 0x04];
-            let token = AssemblyBuilder::new()
+            let ref_ = AssemblyBuilder::new()
                 .name("SignedAssembly")
                 .version(2, 0, 0, 0)
                 .public_key(public_key)
                 .hash_algorithm(0x8004) // SHA1
                 .flags(0x0001) // Public key flag
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x20000000);
+            // Verify ref is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Assembly));
         }
     }
 
@@ -297,12 +289,11 @@ mod tests {
     fn test_assembly_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = AssemblyBuilder::new()
                 .version(1, 0, 0, 0)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because name is required
             assert!(result.is_err());

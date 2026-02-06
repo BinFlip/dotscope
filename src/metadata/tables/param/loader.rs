@@ -27,6 +27,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::ParamRaw,
     },
@@ -67,18 +68,28 @@ impl MetadataLoader for ParamLoader {
     /// ## Thread Safety
     /// Uses parallel iteration and concurrent storage operations for thread safety.
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<ParamRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let res = row.to_owned(strings)?;
+        let (Some(header), Some(strings)) = (context.meta, context.strings) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<ParamRaw>() else {
+            return Ok(());
+        };
 
-                    context.param.insert(row.token, res.clone());
-                    Ok(())
-                })?;
-            }
-        }
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("param 0x{:08x}", row.token.value());
 
-        Ok(())
+            let Some(res) = context.handle_result(
+                row.to_owned(strings),
+                DiagnosticCategory::Method,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.param.insert(row.token, res.clone());
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for Param.

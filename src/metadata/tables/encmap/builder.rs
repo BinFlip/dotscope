@@ -9,15 +9,16 @@
 //! ```rust,ignore
 //! use dotscope::prelude::*;
 //!
-//! let builder_context = BuilderContext::new();
+//! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! let encmap_token = EncMapBuilder::new()
 //!     .original_token(0x06000001)    // MethodDef token before editing
-//!     .build(&mut builder_context)?;
+//!     .build(&mut assembly)?;
 //! ```
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{EncMapRaw, TableDataOwned, TableId},
         token::Token,
@@ -49,22 +50,22 @@ use crate::{
 /// // Map original method token
 /// let method_map = EncMapBuilder::new()
 ///     .original_token(0x06000042)  // Original MethodDef token
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Map original type token
 /// let type_map = EncMapBuilder::new()
 ///     .original_token(0x02000010)  // Original TypeDef token
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Map original field token
 /// let field_map = EncMapBuilder::new()
 ///     .original_token(0x04000025)  // Original Field token
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// ```
 #[derive(Debug, Clone)]
 pub struct EncMapBuilder {
     /// Original metadata token before editing
-    original_token: Option<Token>,
+    original_token: Option<u32>,
 }
 
 impl EncMapBuilder {
@@ -78,7 +79,7 @@ impl EncMapBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = EncMapBuilder::new();
@@ -104,46 +105,40 @@ impl EncMapBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Using raw token value
     /// let builder = EncMapBuilder::new()
     ///     .original_token(0x06000001);  // MethodDef RID 1
-    ///
-    /// // Using Token object
-    /// let token = Token::new(0x02000005);
-    /// let builder = EncMapBuilder::new()
-    ///     .original_token_obj(token);
     /// ```
     #[must_use]
     pub fn original_token(mut self, original_token: u32) -> Self {
-        self.original_token = Some(Token::new(original_token));
+        self.original_token = Some(original_token);
         self
     }
 
-    /// Sets the original metadata token using a Token object
+    /// Sets the original metadata token value
     ///
-    /// Alternative method for setting the original token using a Token object
-    /// instead of a raw u32 value.
+    /// Alternative method name for setting the original token value.
+    /// This is an alias for `original_token()`.
     ///
     /// # Parameters
-    /// - `original_token`: The original Token object
+    /// - `original_token`: The original token value
     ///
     /// # Returns
     /// Self for method chaining
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let token = Token::new(0x04000010);
     /// let builder = EncMapBuilder::new()
-    ///     .original_token_obj(token);
+    ///     .original_token_value(0x04000010);
     /// ```
     #[must_use]
-    pub fn original_token_obj(mut self, original_token: Token) -> Self {
+    pub fn original_token_value(mut self, original_token: u32) -> Self {
         self.original_token = Some(original_token);
         self
     }
@@ -151,11 +146,11 @@ impl EncMapBuilder {
     /// Builds and adds the `EncMap` entry to the metadata
     ///
     /// Validates all required fields, creates the `EncMap` table entry,
-    /// and adds it to the builder context. Returns a token that can be used
+    /// and adds it to the assembly. Returns a token that can be used
     /// to reference this token mapping entry.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the builder context
+    /// - `assembly`: Mutable reference to the CilAssembly
     ///
     /// # Returns
     /// - `Ok(Token)`: Token referencing the created token mapping entry
@@ -170,28 +165,25 @@ impl EncMapBuilder {
     /// ```rust,ignore
     /// use dotscope::prelude::*;
     ///
-    /// let mut context = BuilderContext::new();
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let token = EncMapBuilder::new()
     ///     .original_token(0x06000001)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let original_token = self.original_token.ok_or_else(|| {
             Error::ModificationInvalid("Original token is required for EncMap".to_string())
         })?;
 
-        let next_rid = context.next_rid(TableId::EncMap);
-        let token = Token::new(((TableId::EncMap as u32) << 24) | next_rid);
-
         let enc_map = EncMapRaw {
-            rid: next_rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
-            original_token,
+            original_token: Token::new(original_token),
         };
 
-        context.table_row_add(TableId::EncMap, TableDataOwned::EncMap(enc_map))?;
-        Ok(token)
+        assembly.table_row_add(TableId::EncMap, TableDataOwned::EncMap(enc_map))
     }
 }
 
@@ -208,7 +200,7 @@ impl Default for EncMapBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
@@ -227,66 +219,56 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_method_token() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = EncMapBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = EncMapBuilder::new()
             .original_token(0x06000001) // MethodDef token
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::EncMap as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EncMap));
         Ok(())
     }
 
     #[test]
     fn test_encmap_builder_type_token() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = EncMapBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = EncMapBuilder::new()
             .original_token(0x02000010) // TypeDef token
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::EncMap as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EncMap));
         Ok(())
     }
 
     #[test]
     fn test_encmap_builder_field_token() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = EncMapBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = EncMapBuilder::new()
             .original_token(0x04000025) // Field token
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::EncMap as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EncMap));
         Ok(())
     }
 
     #[test]
-    fn test_encmap_builder_token_object() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let original = Token::new(0x08000005);
-        let token = EncMapBuilder::new()
-            .original_token_obj(original)
-            .build(&mut context)
+    fn test_encmap_builder_token_value() -> Result<()> {
+        let mut assembly = get_test_assembly()?;
+        let ref_ = EncMapBuilder::new()
+            .original_token_value(0x08000005)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::EncMap as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EncMap));
         Ok(())
     }
 
     #[test]
     fn test_encmap_builder_missing_original_token() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let result = EncMapBuilder::new().build(&mut context);
+        let mut assembly = get_test_assembly()?;
+        let result = EncMapBuilder::new().build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -300,8 +282,7 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_clone() {
-        let original = Token::new(0x06000001);
-        let builder = EncMapBuilder::new().original_token_obj(original);
+        let builder = EncMapBuilder::new().original_token(0x06000001);
 
         let cloned = builder.clone();
         assert_eq!(builder.original_token, cloned.original_token);
@@ -318,47 +299,43 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_fluent_interface() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test method chaining
-        let token = EncMapBuilder::new()
+        let ref_ = EncMapBuilder::new()
             .original_token(0x17000001) // Property token
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::EncMap as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EncMap));
         Ok(())
     }
 
     #[test]
     fn test_encmap_builder_multiple_builds() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Build first mapping entry
-        let token1 = EncMapBuilder::new()
+        let ref1 = EncMapBuilder::new()
             .original_token(0x06000001) // Method
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build first mapping entry");
 
         // Build second mapping entry
-        let token2 = EncMapBuilder::new()
+        let ref2 = EncMapBuilder::new()
             .original_token(0x02000001) // Type
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build second mapping entry");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_ne!(token1, token2);
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::EncMap));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::EncMap));
         Ok(())
     }
 
     #[test]
     fn test_encmap_builder_various_tokens() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test with different token types
         let tokens = [
@@ -370,13 +347,13 @@ mod tests {
             0x17000001, // Property
         ];
 
-        for (i, &token_val) in tokens.iter().enumerate() {
-            let token = EncMapBuilder::new()
+        for &token_val in tokens.iter() {
+            let ref_ = EncMapBuilder::new()
                 .original_token(token_val)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build successfully");
 
-            assert_eq!(token.row(), (i + 1) as u32);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EncMap));
         }
 
         Ok(())
@@ -384,8 +361,7 @@ mod tests {
 
     #[test]
     fn test_encmap_builder_large_token_values() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test with large token values
         let large_tokens = [
@@ -394,13 +370,13 @@ mod tests {
             0x04FFFFFF, // Large Field
         ];
 
-        for (i, &token_val) in large_tokens.iter().enumerate() {
-            let token = EncMapBuilder::new()
+        for &token_val in large_tokens.iter() {
+            let ref_ = EncMapBuilder::new()
                 .original_token(token_val)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should handle large token values");
 
-            assert_eq!(token.row(), (i + 1) as u32);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::EncMap));
         }
 
         Ok(())

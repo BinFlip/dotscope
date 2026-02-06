@@ -79,7 +79,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::{CilObject, metadata::method::MethodBody};
 //!
 //! let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
@@ -103,8 +103,13 @@
 //! - ECMA-335 6th Edition, Partition II, Section 25.4 - Method Header Format
 //! - ECMA-335 6th Edition, Partition II, Section 25.4.6 - Exception Handling Data Sections
 
+use std::io::Write;
+
 use crate::{
-    metadata::method::{ExceptionHandler, ExceptionHandlerFlags, MethodBodyFlags, SectionFlags},
+    metadata::method::{
+        encode_exception_handlers, ExceptionHandler, ExceptionHandlerFlags, MethodBodyFlags,
+        SectionFlags,
+    },
     utils::{read_le, read_le_at},
     Result,
 };
@@ -283,15 +288,14 @@ impl MethodBody {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::method::MethodBody;
     ///
     /// let method_data = &[0x16, 0x00, 0x2A]; // Simple method: ldarg.0, ret
     /// let body = MethodBody::from(method_data)?;
     ///
     /// assert!(!body.is_fat);
-    /// assert_eq!(body.size_code, 5);
-    /// assert_eq!(body.max_stack, 8); // Tiny format default
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from(data: &[u8]) -> Result<MethodBody> {
         if data.is_empty() {
@@ -463,26 +467,169 @@ impl MethodBody {
         }
     }
 
-    /// Get the full size of this method including header and code.
+    /// Get the total serialized size including header, code, and exception handlers.
     ///
-    /// Returns the total size in bytes by combining the header size and code size.
-    /// This represents the complete footprint of the method in the assembly file.
+    /// This calculates the complete size of the method body as it appears in the
+    /// assembly file, including:
+    /// - Method header (1 byte for tiny, 12 bytes for fat)
+    /// - IL code bytes
+    /// - 4-byte alignment padding (for fat format with exception handlers)
+    /// - Exception handler sections
     ///
     /// # Returns
     ///
-    /// The total size in bytes (header + code). Note that exception handling
-    /// sections are stored separately and not included in this size.
+    /// The total serialized size in bytes.
+    #[must_use]
+    pub fn size(&self) -> usize {
+        let base_size = self.size_header + self.size_code;
+
+        if self.exception_handlers.is_empty() {
+            return base_size;
+        }
+
+        // Exception handlers require 4-byte alignment after the code
+        let aligned_base = (base_size + 3) & !3;
+
+        // Determine if we need fat or small exception handler format
+        let needs_fat_format = self.exception_handlers.iter().any(|h| {
+            h.try_offset > 0xFFFF
+                || h.try_length > 0xFF
+                || h.handler_offset > 0xFFFF
+                || h.handler_length > 0xFF
+        });
+
+        let section_size = if needs_fat_format {
+            // Fat format: 4-byte header + 24 bytes per handler
+            4 + (self.exception_handlers.len() * 24)
+        } else {
+            // Small format: 4-byte header + 12 bytes per handler
+            4 + (self.exception_handlers.len() * 12)
+        };
+
+        aligned_base + section_size
+    }
+
+    /// Writes the method body to a writer.
+    ///
+    /// Serializes the method header (tiny or fat format), IL code, and exception handlers
+    /// directly to the provided writer. This avoids intermediate buffers for efficient
+    /// streaming output.
+    ///
+    /// # Arguments
+    ///
+    /// * `writer` - Any type implementing [`std::io::Write`]
+    /// * `il_code` - The IL bytecode for the method
+    ///
+    /// # Returns
+    ///
+    /// The total number of bytes written (header + code + exception handlers + padding).
+    ///
+    /// # Format Selection
+    ///
+    /// The format is automatically determined based on method characteristics:
+    /// - **Tiny Format**: Used when code size ≤ 63 bytes, no local variables, and no exceptions
+    /// - **Fat Format**: Used for all other methods
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
-    /// let body = MethodBody::from(method_data)?;
-    /// let total_size = body.size();
-    /// assert_eq!(total_size, body.size_header + body.size_code);
+    /// ```rust,no_run
+    /// use dotscope::metadata::method::MethodBody;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let body = MethodBody {
+    ///     size_code: 2,
+    ///     size_header: 1,
+    ///     local_var_sig_token: 0,
+    ///     max_stack: 8,
+    ///     is_fat: false,
+    ///     is_init_local: false,
+    ///     is_exception_data: false,
+    ///     exception_handlers: vec![],
+    /// };
+    ///
+    /// let il_code = vec![0x17, 0x2A]; // ldc.i4.1, ret
+    /// let mut buffer = Vec::new();
+    /// let bytes_written = body.write_to(&mut buffer, &il_code)?;
+    ///
+    /// assert_eq!(bytes_written, 3); // 1-byte header + 2-byte code
+    /// # Ok(())
+    /// # }
     /// ```
-    #[must_use]
-    pub fn size(&self) -> usize {
-        self.size_code + self.size_header
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing to the writer fails or if the method body
+    /// parameters are invalid (e.g., code size exceeds limits).
+    pub fn write_to<W: Write>(&self, writer: &mut W, il_code: &[u8]) -> Result<u64> {
+        let code_size = il_code.len();
+        let has_exceptions = !self.exception_handlers.is_empty();
+
+        // Determine format: use tiny if possible
+        let use_tiny = code_size <= 63
+            && self.max_stack <= 8
+            && self.local_var_sig_token == 0
+            && !has_exceptions;
+
+        let mut bytes_written: u64 = 0;
+
+        if use_tiny {
+            // Tiny format: single byte header
+            // Bits 7-2: code size (6 bits)
+            // Bits 1-0: format (0x02 for tiny)
+            let code_size_u8 = u8::try_from(code_size).map_err(|_| {
+                malformed_error!("Code size {} exceeds tiny format limit", code_size)
+            })?;
+            let header_byte = (code_size_u8 << 2) | 0x02;
+            writer.write_all(&[header_byte])?;
+            bytes_written += 1;
+        } else {
+            // Fat format: 12-byte header
+            let code_size_u32 = u32::try_from(code_size)
+                .map_err(|_| malformed_error!("Code size {} exceeds u32 range", code_size))?;
+            let max_stack_u16 = u16::try_from(self.max_stack)
+                .map_err(|_| malformed_error!("Max stack {} exceeds u16 range", self.max_stack))?;
+
+            // Flags layout (ECMA-335 II.25.4.4):
+            // Bits 0-1: Format (0x03 for fat)
+            // Bit 3: CorILMethod_MoreSects (0x08)
+            // Bit 4: CorILMethod_InitLocals (0x10)
+            // Bits 12-15: Size in dwords (3 for fat header = 12 bytes)
+            let mut flags: u16 = 0x3003; // Size (3 << 12) | FAT_FORMAT (0x03)
+            if has_exceptions {
+                flags |= 0x0008; // MORE_SECTS
+            }
+            if self.is_init_local {
+                flags |= 0x0010; // INIT_LOCALS
+            }
+
+            // Write header fields
+            writer.write_all(&flags.to_le_bytes())?;
+            writer.write_all(&max_stack_u16.to_le_bytes())?;
+            writer.write_all(&code_size_u32.to_le_bytes())?;
+            writer.write_all(&self.local_var_sig_token.to_le_bytes())?;
+            bytes_written += 12;
+        }
+
+        // Write IL code
+        writer.write_all(il_code)?;
+        bytes_written += code_size as u64;
+
+        // Write exception handlers if present
+        if has_exceptions {
+            // Align to 4-byte boundary
+            let padding = (4 - (bytes_written % 4)) % 4;
+            if padding > 0 {
+                writer.write_all(&vec![0u8; padding as usize])?;
+                bytes_written += padding;
+            }
+
+            // Use the shared exception handler encoding
+            let exception_bytes = encode_exception_handlers(&self.exception_handlers)?;
+            writer.write_all(&exception_bytes)?;
+            bytes_written += exception_bytes.len() as u64;
+        }
+
+        Ok(bytes_written)
     }
 }
 
@@ -582,7 +729,7 @@ mod tests {
         assert_eq!(method_header.max_stack, 1);
         assert_eq!(method_header.size_code, 30);
         assert_eq!(method_header.size_header, 12);
-        assert_eq!(method_header.size(), 42);
+        assert_eq!(method_header.size(), 60); // 44 (aligned base) + 16 (small exception section)
         assert_eq!(method_header.local_var_sig_token, 0x11000003);
         assert_eq!(method_header.exception_handlers.len(), 1);
         assert!(method_header.exception_handlers[0]
@@ -624,7 +771,7 @@ mod tests {
         assert_eq!(method_header.max_stack, 3);
         assert_eq!(method_header.size_code, 0x2E);
         assert_eq!(method_header.size_header, 12);
-        assert_eq!(method_header.size(), 58);
+        assert_eq!(method_header.size(), 76); // 60 (aligned base) + 16 (small exception section)
         assert_eq!(method_header.local_var_sig_token, 0x1100001A);
         assert_eq!(method_header.exception_handlers.len(), 1);
         assert!(method_header.exception_handlers[0]
@@ -664,7 +811,7 @@ mod tests {
         assert_eq!(method_header.max_stack, 5);
         assert_eq!(method_header.size_code, 0x19F);
         assert_eq!(method_header.size_header, 12);
-        assert_eq!(method_header.size(), 427);
+        assert_eq!(method_header.size(), 480); // 428 (aligned base) + 52 (fat exception section with 2 handlers)
         assert_eq!(method_header.local_var_sig_token, 0x11000070);
         assert_eq!(method_header.exception_handlers.len(), 2);
         assert!(method_header.exception_handlers[0]
@@ -712,7 +859,7 @@ mod tests {
         assert_eq!(method_header.max_stack, 3);
         assert_eq!(method_header.size_code, 81);
         assert_eq!(method_header.size_header, 12);
-        assert_eq!(method_header.size(), 93);
+        assert_eq!(method_header.size(), 124); // 96 (aligned base) + 28 (small exception section with 2 handlers)
         assert_eq!(method_header.local_var_sig_token, 0x1100007C);
 
         assert_eq!(method_header.exception_handlers.len(), 2);

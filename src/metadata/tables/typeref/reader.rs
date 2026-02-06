@@ -42,7 +42,7 @@
 
 use crate::{
     metadata::{
-        tables::{CodedIndex, CodedIndexType, RowReadable, TableInfoRef, TypeRefRaw},
+        tables::{CodedIndex, CodedIndexType, RowReadable, TableId, TableInfoRef, TypeRefRaw},
         token::Token,
     },
     utils::read_le_at_dyn,
@@ -50,6 +50,8 @@ use crate::{
 };
 
 impl RowReadable for TypeRefRaw {
+    const TABLE_ID: TableId = TableId::TypeRef;
+
     /// Reads a `TypeRef` table row from binary metadata.
     ///
     /// Parses the binary representation of a `TypeRef` table row according to the

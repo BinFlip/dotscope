@@ -53,12 +53,15 @@
 
 use crate::{
     assembly::{
-        instruction::{FlowType, Immediate, Operand, OperandType},
+        instruction::{FlowType, Immediate, Instruction, Operand, OperandType},
         instructions::{CilInstruction, INSTRUCTIONS, INSTRUCTIONS_FE},
     },
     Error, Result,
 };
-use std::{collections::HashMap, sync::OnceLock};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::OnceLock,
+};
 
 /// Reverse lookup table mapping mnemonics to opcode information.
 ///
@@ -111,12 +114,28 @@ fn get_mnemonic_lookup(
 pub struct LabelFixup {
     /// The target label name to resolve
     pub label: String,
-    /// Position in bytecode where the branch offset should be written  
+    /// Position in bytecode where the branch offset should be written
     pub fixup_position: usize,
     /// Size of the branch offset field (1, 2, or 4 bytes)
     pub offset_size: u8,
     /// Position of the branch instruction for relative offset calculation
     pub instruction_position: usize,
+    /// If Some, this branch can be optimized to short form using this mnemonic
+    pub short_form_mnemonic: Option<&'static str>,
+}
+
+/// Switch fixup information for multi-way branch resolution.
+///
+/// This structure tracks unresolved switch target references, allowing
+/// forward label resolution for switch instructions.
+#[derive(Debug, Clone)]
+pub struct SwitchFixup {
+    /// The target label names to resolve (one per switch case)
+    pub labels: Vec<String>,
+    /// Position in bytecode where the switch targets start (after the count)
+    pub fixup_position: usize,
+    /// Position after the switch instruction (for relative offset calculation)
+    pub instruction_end_position: usize,
 }
 
 /// Core CIL instruction encoder.
@@ -180,10 +199,41 @@ pub struct InstructionEncoder {
     labels: HashMap<String, u32>,
     /// Pending branch fixups awaiting label resolution
     fixups: Vec<LabelFixup>,
+    /// Pending switch fixups awaiting label resolution
+    switch_fixups: Vec<SwitchFixup>,
     /// Current stack depth (number of items on evaluation stack)
     current_stack_depth: i16,
     /// Maximum stack depth reached during encoding
     max_stack_depth: u16,
+    /// Expected stack depth at branch targets for validation.
+    /// When a branch is emitted, the current stack depth is recorded for the target label.
+    /// When the label is defined, we verify all paths have the same depth.
+    label_stack_depths: HashMap<String, i16>,
+    /// Whether we're in unreachable code (after an unconditional branch, return, throw, etc.).
+    /// When unreachable, the current_stack_depth is meaningless since there's no execution path.
+    /// Defining a label resets this to false (the label makes code reachable again).
+    unreachable: bool,
+}
+
+/// Maps long-form branch mnemonics to their short-form equivalents.
+fn get_short_form_mnemonic(mnemonic: &str) -> Option<&'static str> {
+    match mnemonic {
+        "br" => Some("br.s"),
+        "brfalse" => Some("brfalse.s"),
+        "brtrue" => Some("brtrue.s"),
+        "beq" => Some("beq.s"),
+        "bne.un" => Some("bne.un.s"),
+        "bge" => Some("bge.s"),
+        "bge.un" => Some("bge.un.s"),
+        "bgt" => Some("bgt.s"),
+        "bgt.un" => Some("bgt.un.s"),
+        "ble" => Some("ble.s"),
+        "ble.un" => Some("ble.un.s"),
+        "blt" => Some("blt.s"),
+        "blt.un" => Some("blt.un.s"),
+        "leave" => Some("leave.s"),
+        _ => None,
+    }
 }
 
 impl InstructionEncoder {
@@ -207,8 +257,11 @@ impl InstructionEncoder {
             bytecode: Vec::new(),
             labels: HashMap::new(),
             fixups: Vec::new(),
+            switch_fixups: Vec::new(),
             current_stack_depth: 0,
             max_stack_depth: 0,
+            label_stack_depths: HashMap::new(),
+            unreachable: false,
         }
     }
 
@@ -264,9 +317,63 @@ impl InstructionEncoder {
         self.emit_operand(operand, metadata.op_type)?;
 
         // Update stack tracking
-        self.update_stack_depth(metadata.stack_pops, metadata.stack_pushes)?;
+        self.update_stack_depth(metadata.stack_pops, metadata.stack_pushes)
+            .map_err(|e| malformed_error!("Stack error at instruction '{}': {}", mnemonic, e))?;
+
+        // Mark code as unreachable after terminating instructions.
+        // After these, there's no fall-through - execution only continues via labels.
+        if matches!(
+            metadata.flow,
+            FlowType::Return | FlowType::Throw | FlowType::EndFinally
+        ) {
+            self.unreachable = true;
+        }
 
         Ok(())
+    }
+
+    /// Emit an instruction from a previously decoded [`Instruction`].
+    ///
+    /// This method re-encodes a decoded instruction, preserving its mnemonic and operand.
+    /// It's useful for transforming IL bytecode by decoding, modifying operands
+    /// (e.g., remapping tokens), and re-encoding.
+    ///
+    /// # Arguments
+    ///
+    /// * `instruction` - The decoded instruction to emit
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the instruction's mnemonic is not recognized or if
+    /// the operand doesn't match the expected type for that instruction.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::{InstructionEncoder, decode_stream};
+    /// use dotscope::Parser;
+    ///
+    /// // Decode some IL
+    /// let il_bytes = &[0x00, 0x2A]; // nop, ret
+    /// let mut parser = Parser::new(il_bytes);
+    /// let instructions = decode_stream(&mut parser, 0)?;
+    ///
+    /// // Re-encode the instructions
+    /// let mut encoder = InstructionEncoder::new();
+    /// for instr in &instructions {
+    ///     encoder.emit_instruction_decoded(instr)?;
+    /// }
+    /// let (bytecode, _, _) = encoder.finalize()?;
+    /// assert_eq!(bytecode, il_bytes);
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn emit_instruction_decoded(&mut self, instruction: &Instruction) -> Result<()> {
+        let operand = if matches!(instruction.operand, Operand::None) {
+            None
+        } else {
+            Some(instruction.operand.clone())
+        };
+        self.emit_instruction(instruction.mnemonic, operand)
     }
 
     /// Emit a branch instruction with label reference.
@@ -336,11 +443,18 @@ impl InstructionEncoder {
         };
 
         // Record fixup for later resolution
+        // For long-form branches, record the short form for potential optimization
+        let short_form_mnemonic = if offset_size == 4 {
+            get_short_form_mnemonic(mnemonic)
+        } else {
+            None
+        };
         let fixup = LabelFixup {
             label: label.to_string(),
             fixup_position: self.bytecode.len(),
             offset_size,
             instruction_position: instruction_start,
+            short_form_mnemonic,
         };
         self.fixups.push(fixup);
 
@@ -350,9 +464,387 @@ impl InstructionEncoder {
         }
 
         // Update stack tracking for branch instructions
-        self.update_stack_depth(metadata.stack_pops, metadata.stack_pushes)?;
+        self.update_stack_depth(metadata.stack_pops, metadata.stack_pushes)
+            .map_err(|e| {
+                malformed_error!("Stack error at branch '{}' to '{}': {}", mnemonic, label, e)
+            })?;
+
+        // Record expected stack depth at branch target for validation.
+        // After the branch pops its condition (if any), the target should see this depth.
+        self.record_label_stack_depth(label)?;
+
+        // Mark code as unreachable after unconditional branches.
+        // Conditional branches (brfalse, brtrue, beq, etc.) have fall-through paths,
+        // but unconditional branches (br, leave) and their short forms do not.
+        if matches!(
+            metadata.flow,
+            FlowType::UnconditionalBranch | FlowType::Leave
+        ) {
+            self.unreachable = true;
+        }
 
         Ok(())
+    }
+
+    /// Emit a switch instruction with multiple target labels.
+    ///
+    /// The switch instruction performs a multi-way branch based on an integer value.
+    /// If the value is within range (0 to n-1), execution transfers to the corresponding
+    /// label. If the value is out of range, execution continues to the next instruction
+    /// (fall-through).
+    ///
+    /// # Parameters
+    ///
+    /// * `labels` - Target label names for each switch case (0-indexed)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the labels slice is empty or instruction encoding fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionEncoder;
+    ///
+    /// let mut encoder = InstructionEncoder::new();
+    ///
+    /// encoder.emit_instruction("ldarg.0", None)?;
+    /// encoder.emit_switch(&["case0", "case1", "case2"])?;
+    /// encoder.emit_instruction("ldc.i4.m1", None)?; // Default case (fall-through)
+    /// encoder.emit_instruction("ret", None)?;
+    ///
+    /// encoder.define_label("case0")?;
+    /// encoder.emit_instruction("ldc.i4.0", None)?;
+    /// encoder.emit_instruction("ret", None)?;
+    ///
+    /// encoder.define_label("case1")?;
+    /// encoder.emit_instruction("ldc.i4.1", None)?;
+    /// encoder.emit_instruction("ret", None)?;
+    ///
+    /// encoder.define_label("case2")?;
+    /// encoder.emit_instruction("ldc.i4.2", None)?;
+    /// encoder.emit_instruction("ret", None)?;
+    ///
+    /// let (bytecode, max_stack, _) = encoder.finalize()?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn emit_switch(&mut self, labels: &[&str]) -> Result<()> {
+        if labels.is_empty() {
+            return Err(Error::InvalidBranch(
+                "switch must have at least one target".to_string(),
+            ));
+        }
+
+        // Emit the switch opcode (0x45)
+        self.bytecode.push(0x45);
+
+        // Emit the number of targets
+        let num_targets =
+            u32::try_from(labels.len()).map_err(|_| malformed_error!("Too many switch targets"))?;
+        self.bytecode.extend_from_slice(&num_targets.to_le_bytes());
+
+        // Record the position where targets start
+        let fixup_position = self.bytecode.len();
+
+        // Emit placeholder bytes for each target (4 bytes each)
+        for _ in 0..labels.len() {
+            self.bytecode.extend_from_slice(&[0, 0, 0, 0]);
+        }
+
+        // Record the position after the switch instruction (for relative offset calculation)
+        let instruction_end_position = self.bytecode.len();
+
+        // Create the switch fixup
+        let switch_fixup = SwitchFixup {
+            labels: labels.iter().map(|s| (*s).to_string()).collect(),
+            fixup_position,
+            instruction_end_position,
+        };
+        self.switch_fixups.push(switch_fixup);
+
+        // Switch pops one value from the stack
+        self.update_stack_depth(1, 0)
+            .map_err(|e| malformed_error!("Stack error at 'switch': {}", e))?;
+
+        // Record expected stack depth at all switch targets for validation
+        for label in labels {
+            self.record_label_stack_depth(label)?;
+        }
+
+        Ok(())
+    }
+
+    /// Emit a call instruction with explicit stack effect tracking.
+    ///
+    /// This method handles `call`, `callvirt`, `calli`, and `newobj` instructions
+    /// where the stack effect depends on the method signature and cannot be
+    /// determined from static instruction metadata alone.
+    ///
+    /// # Parameters
+    ///
+    /// * `mnemonic` - The instruction mnemonic ("call", "callvirt", "calli", or "newobj")
+    /// * `operand` - The method/signature token operand
+    /// * `num_args` - Number of arguments popped from stack (including 'this' for instance calls)
+    /// * `has_result` - Whether the call pushes a result onto the stack
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the mnemonic is not recognized or encoding fails.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::{InstructionEncoder, Operand};
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let mut encoder = InstructionEncoder::new();
+    ///
+    /// // Call a method with 2 arguments that returns a value
+    /// encoder.emit_call(
+    ///     "call",
+    ///     Some(Operand::Token(Token::new(0x0a000001))),
+    ///     2,    // pops 2 arguments
+    ///     true  // pushes 1 result
+    /// )?;
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn emit_call(
+        &mut self,
+        mnemonic: &str,
+        operand: Option<Operand>,
+        num_args: u8,
+        has_result: bool,
+    ) -> Result<()> {
+        let (opcode, prefix, metadata) = get_mnemonic_lookup()
+            .get(mnemonic)
+            .ok_or_else(|| Error::InvalidMnemonic(mnemonic.to_string()))?;
+
+        // Emit prefix byte if needed (0xFE for extended instructions)
+        if *prefix != 0 {
+            self.bytecode.push(*prefix);
+        }
+
+        // Emit primary opcode
+        self.bytecode.push(*opcode);
+
+        // Emit operand based on expected type
+        self.emit_operand(operand, metadata.op_type)?;
+
+        // Use the caller-provided stack effect instead of metadata
+        let pushes = if has_result { 1 } else { 0 };
+        self.update_stack_depth(num_args, pushes)
+            .map_err(|e| malformed_error!("Stack error at call '{}': {}", mnemonic, e))?;
+
+        Ok(())
+    }
+
+    /// Emit a `ldarg` instruction with optimal encoding.
+    ///
+    /// Automatically selects the most compact form:
+    /// - `ldarg.0` through `ldarg.3` for indices 0-3 (1 byte)
+    /// - `ldarg.s` for indices 4-255 (2 bytes)
+    /// - `ldarg` for indices 256+ (4 bytes)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionEncoder;
+    ///
+    /// let mut encoder = InstructionEncoder::new();
+    /// encoder.emit_ldarg(0)?;  // Emits ldarg.0 (1 byte)
+    /// encoder.emit_ldarg(10)?; // Emits ldarg.s 10 (2 bytes)
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn emit_ldarg(&mut self, index: u16) -> Result<()> {
+        match index {
+            0 => self.emit_instruction("ldarg.0", None),
+            1 => self.emit_instruction("ldarg.1", None),
+            2 => self.emit_instruction("ldarg.2", None),
+            3 => self.emit_instruction("ldarg.3", None),
+            x if x <= 255 =>
+            {
+                #[allow(clippy::cast_possible_truncation)]
+                self.emit_instruction(
+                    "ldarg.s",
+                    Some(Operand::Immediate(Immediate::UInt8(x as u8))),
+                )
+            }
+            x =>
+            {
+                #[allow(clippy::cast_possible_wrap)]
+                self.emit_instruction(
+                    "ldarg",
+                    Some(Operand::Immediate(Immediate::Int16(x as i16))),
+                )
+            }
+        }
+    }
+
+    /// Emit a `ldloc` instruction with optimal encoding.
+    ///
+    /// Automatically selects the most compact form:
+    /// - `ldloc.0` through `ldloc.3` for indices 0-3 (1 byte)
+    /// - `ldloc.s` for indices 4-255 (2 bytes)
+    /// - `ldloc` for indices 256+ (4 bytes)
+    pub fn emit_ldloc(&mut self, index: u16) -> Result<()> {
+        match index {
+            0 => self.emit_instruction("ldloc.0", None),
+            1 => self.emit_instruction("ldloc.1", None),
+            2 => self.emit_instruction("ldloc.2", None),
+            3 => self.emit_instruction("ldloc.3", None),
+            x if x <= 255 =>
+            {
+                #[allow(clippy::cast_possible_truncation)]
+                self.emit_instruction(
+                    "ldloc.s",
+                    Some(Operand::Immediate(Immediate::UInt8(x as u8))),
+                )
+            }
+            x =>
+            {
+                #[allow(clippy::cast_possible_wrap)]
+                self.emit_instruction(
+                    "ldloc",
+                    Some(Operand::Immediate(Immediate::Int16(x as i16))),
+                )
+            }
+        }
+    }
+
+    /// Emit a `starg` instruction with optimal encoding.
+    ///
+    /// Automatically selects the most compact form:
+    /// - `starg.s` for indices 0-255 (2 bytes)
+    /// - `starg` for indices 256+ (4 bytes)
+    pub fn emit_starg(&mut self, index: u16) -> Result<()> {
+        if index <= 255 {
+            #[allow(clippy::cast_possible_truncation)]
+            self.emit_instruction(
+                "starg.s",
+                Some(Operand::Immediate(Immediate::UInt8(index as u8))),
+            )
+        } else {
+            #[allow(clippy::cast_possible_wrap)]
+            self.emit_instruction(
+                "starg",
+                Some(Operand::Immediate(Immediate::Int16(index as i16))),
+            )
+        }
+    }
+
+    /// Emit a `stloc` instruction with optimal encoding.
+    ///
+    /// Automatically selects the most compact form:
+    /// - `stloc.0` through `stloc.3` for indices 0-3 (1 byte)
+    /// - `stloc.s` for indices 4-255 (2 bytes)
+    /// - `stloc` for indices 256+ (4 bytes)
+    pub fn emit_stloc(&mut self, index: u16) -> Result<()> {
+        match index {
+            0 => self.emit_instruction("stloc.0", None),
+            1 => self.emit_instruction("stloc.1", None),
+            2 => self.emit_instruction("stloc.2", None),
+            3 => self.emit_instruction("stloc.3", None),
+            x if x <= 255 =>
+            {
+                #[allow(clippy::cast_possible_truncation)]
+                self.emit_instruction(
+                    "stloc.s",
+                    Some(Operand::Immediate(Immediate::UInt8(x as u8))),
+                )
+            }
+            x =>
+            {
+                #[allow(clippy::cast_possible_wrap)]
+                self.emit_instruction(
+                    "stloc",
+                    Some(Operand::Immediate(Immediate::Int16(x as i16))),
+                )
+            }
+        }
+    }
+
+    /// Emit a `ldc.i4` instruction with optimal encoding.
+    ///
+    /// Automatically selects the most compact form:
+    /// - `ldc.i4.m1` through `ldc.i4.8` for values -1 to 8 (1 byte)
+    /// - `ldc.i4.s` for values -128 to 127 (2 bytes)
+    /// - `ldc.i4` for all other values (5 bytes)
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::assembly::InstructionEncoder;
+    ///
+    /// let mut encoder = InstructionEncoder::new();
+    /// encoder.emit_ldc_i4(0)?;      // Emits ldc.i4.0 (1 byte)
+    /// encoder.emit_ldc_i4(42)?;     // Emits ldc.i4.s 42 (2 bytes)
+    /// encoder.emit_ldc_i4(1000)?;   // Emits ldc.i4 1000 (5 bytes)
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn emit_ldc_i4(&mut self, value: i32) -> Result<()> {
+        match value {
+            -1 => self.emit_instruction("ldc.i4.m1", None),
+            0 => self.emit_instruction("ldc.i4.0", None),
+            1 => self.emit_instruction("ldc.i4.1", None),
+            2 => self.emit_instruction("ldc.i4.2", None),
+            3 => self.emit_instruction("ldc.i4.3", None),
+            4 => self.emit_instruction("ldc.i4.4", None),
+            5 => self.emit_instruction("ldc.i4.5", None),
+            6 => self.emit_instruction("ldc.i4.6", None),
+            7 => self.emit_instruction("ldc.i4.7", None),
+            8 => self.emit_instruction("ldc.i4.8", None),
+            x if (-128..=127).contains(&x) =>
+            {
+                #[allow(clippy::cast_possible_truncation)]
+                self.emit_instruction(
+                    "ldc.i4.s",
+                    Some(Operand::Immediate(Immediate::Int8(x as i8))),
+                )
+            }
+            x => self.emit_instruction("ldc.i4", Some(Operand::Immediate(Immediate::Int32(x)))),
+        }
+    }
+
+    /// Emit a `ldarga` instruction with optimal encoding.
+    ///
+    /// Automatically selects the most compact form:
+    /// - `ldarga.s` for indices 0-255 (2 bytes)
+    /// - `ldarga` for indices 256+ (4 bytes)
+    pub fn emit_ldarga(&mut self, index: u16) -> Result<()> {
+        if index <= 255 {
+            #[allow(clippy::cast_possible_truncation)]
+            self.emit_instruction(
+                "ldarga.s",
+                Some(Operand::Immediate(Immediate::UInt8(index as u8))),
+            )
+        } else {
+            #[allow(clippy::cast_possible_wrap)]
+            self.emit_instruction(
+                "ldarga",
+                Some(Operand::Immediate(Immediate::Int16(index as i16))),
+            )
+        }
+    }
+
+    /// Emit a `ldloca` instruction with optimal encoding.
+    ///
+    /// Automatically selects the most compact form:
+    /// - `ldloca.s` for indices 0-255 (2 bytes)
+    /// - `ldloca` for indices 256+ (4 bytes)
+    pub fn emit_ldloca(&mut self, index: u16) -> Result<()> {
+        if index <= 255 {
+            #[allow(clippy::cast_possible_truncation)]
+            self.emit_instruction(
+                "ldloca.s",
+                Some(Operand::Immediate(Immediate::UInt8(index as u8))),
+            )
+        } else {
+            #[allow(clippy::cast_possible_wrap)]
+            self.emit_instruction(
+                "ldloca",
+                Some(Operand::Immediate(Immediate::Int16(index as i16))),
+            )
+        }
     }
 
     /// Define a label at the current bytecode position.
@@ -386,10 +878,141 @@ impl InstructionEncoder {
             return Err(Error::DuplicateLabel(name.to_string()));
         }
 
+        // Validate or set stack depth for this label.
+        // All control flow paths to this label must have the same stack depth.
+        if let Some(&expected) = self.label_stack_depths.get(name) {
+            if self.unreachable {
+                // We're in unreachable code (after an unconditional branch/return/throw).
+                // The current_stack_depth is meaningless since there's no execution path here.
+                // Reset to the expected depth from branches that target this label.
+                self.current_stack_depth = expected;
+            } else if self.current_stack_depth != expected {
+                // We have a fall-through path AND branches to this label.
+                // All paths must have the same stack depth.
+                return Err(malformed_error!(
+                    "Stack depth mismatch at label '{}': expected {} (from branch), got {} (current)",
+                    name,
+                    expected,
+                    self.current_stack_depth
+                ));
+            }
+        } else if !self.unreachable {
+            // First time seeing this label via fall-through from reachable code.
+            // Record the current depth as expected.
+            self.label_stack_depths
+                .insert(name.to_string(), self.current_stack_depth);
+        } else {
+            // Unreachable code with no existing expected depth.
+            // Reset current_stack_depth to 0 before making code reachable again.
+            // The depth was meaningless garbage from unreachable code, and we don't
+            // want it to propagate to reachable code that follows this label.
+            // The first actual branch to this label will set the correct expected depth.
+            self.current_stack_depth = 0;
+        }
+
+        // Defining a label makes code reachable again (via branches to this label).
+        self.unreachable = false;
+
         let bytecode_len = u32::try_from(self.bytecode.len())
             .map_err(|_| malformed_error!("Bytecode length exceeds u32 range"))?;
         self.labels.insert(name.to_string(), bytecode_len);
         Ok(())
+    }
+
+    /// Returns the current bytecode position (length of emitted bytecode so far).
+    ///
+    /// This can be used to track instruction offsets during code generation,
+    /// for example to record block start positions for exception handler remapping.
+    ///
+    /// # Returns
+    ///
+    /// The current bytecode length in bytes.
+    #[must_use]
+    pub fn current_position(&self) -> u32 {
+        self.bytecode.len() as u32
+    }
+
+    /// Ensures the method ends with a proper method-terminating instruction.
+    ///
+    /// CIL methods must end with an instruction that terminates execution
+    /// (ret, throw, rethrow, jmp, endfinally). Control flow instructions like
+    /// `br` or `br.s` transfer control but don't terminate the method - if the
+    /// branch target is an empty block at the end, the decoder would read past
+    /// the method body into garbage data.
+    ///
+    /// This method checks two conditions:
+    /// 1. If the bytecode ends with a valid method terminator opcode
+    /// 2. If any branch targets a label at or past the end of bytecode (empty block)
+    ///
+    /// If either condition fails, a `ret` instruction is appended.
+    ///
+    /// # Method Terminators
+    ///
+    /// The following opcodes are considered proper method terminators:
+    /// - `ret` (0x2A) - Return from method
+    /// - `throw` (0x7A) - Throw exception
+    /// - `rethrow` (0xFE 0x1A) - Rethrow current exception
+    /// - `endfinally` (0xDC) - End finally/fault block
+    /// - `jmp` (0x27) - Jump to another method (tail call)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if emitting the `ret` instruction fails.
+    fn ensure_method_terminated(&mut self) -> Result<()> {
+        if self.bytecode.is_empty() {
+            // Empty method - no terminator needed (or handled elsewhere)
+            return Ok(());
+        }
+
+        // Check if the last instruction is a proper method terminator
+        let ends_with_terminator = if let Some(&last_byte) = self.bytecode.last() {
+            // Single-byte terminators: ret, throw, endfinally, jmp
+            matches!(last_byte, 0x2A | 0x7A | 0xDC | 0x27)
+                // Two-byte terminator: rethrow (0xFE 0x1A)
+                || (self.bytecode.len() >= 2
+                    && self.bytecode[self.bytecode.len() - 2] == 0xFE
+                    && last_byte == 0x1A)
+        } else {
+            false
+        };
+
+        if ends_with_terminator {
+            return Ok(());
+        }
+
+        // The bytecode doesn't end with a terminator. Check if any branch targets
+        // a label at or past the current end of bytecode. Such branches point to
+        // empty blocks and need valid code at the target.
+        let current_len = self.bytecode.len();
+        let has_branch_to_end = self.fixups.iter().any(|fixup| {
+            if let Some(&label_pos) = self.labels.get(&fixup.label) {
+                // Label is defined at or past the end of bytecode
+                label_pos as usize >= current_len
+            } else {
+                // Label not defined yet - shouldn't happen, but be safe
+                false
+            }
+        });
+
+        if has_branch_to_end {
+            self.emit_instruction("ret", None)?;
+        }
+
+        Ok(())
+    }
+
+    /// Returns the resolved offset for a defined label.
+    ///
+    /// # Arguments
+    ///
+    /// * `name` - The label name to look up.
+    ///
+    /// # Returns
+    ///
+    /// The byte offset of the label, or `None` if the label is not defined.
+    #[must_use]
+    pub fn label_offset(&self, name: &str) -> Option<u32> {
+        self.labels.get(name).copied()
     }
 
     /// Finalize encoding and resolve all label references.
@@ -420,15 +1043,21 @@ impl InstructionEncoder {
     /// encoder.emit_instruction("ldc.i4.1", None)?; // Pushes 1 item
     /// encoder.emit_instruction("ret", None)?;     // Returns with 1 item
     ///
-    /// let (bytecode, max_stack) = encoder.finalize()?;
+    /// let (bytecode, max_stack, _labels) = encoder.finalize()?;
     /// assert_eq!(bytecode, vec![0x17, 0x2A]); // ldc.i4.1, ret
     /// assert_eq!(max_stack, 1); // Maximum stack depth was 1
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn finalize(mut self) -> Result<(Vec<u8>, u16)> {
-        // ToDo: Avoid the copy
-        let fixups = self.fixups.clone();
+    pub fn finalize(mut self) -> Result<(Vec<u8>, u16, HashMap<String, u32>)> {
+        // Ensure the method ends with a proper terminating instruction.
+        // This must be done before branch optimization since it may add instructions.
+        self.ensure_method_terminated()?;
 
+        // Optimize branches iteratively until no more improvements
+        self.optimize_branch_forms()?;
+
+        // Resolve all branch fixups
+        let fixups = std::mem::take(&mut self.fixups);
         for fixup in &fixups {
             let label_position = self
                 .labels
@@ -436,7 +1065,6 @@ impl InstructionEncoder {
                 .ok_or_else(|| Error::UndefinedLabel(fixup.label.clone()))?;
 
             // Calculate relative offset from end of branch instruction to label
-            // The end of the instruction is the fixup position + offset size
             let next_instruction_pos = fixup.fixup_position + fixup.offset_size as usize;
 
             let label_pos_i32 = i32::try_from(*label_position)
@@ -449,7 +1077,208 @@ impl InstructionEncoder {
             self.write_branch_offset(offset, fixup)?;
         }
 
-        Ok((self.bytecode, self.max_stack_depth))
+        // Process switch fixups
+        let switch_fixups = std::mem::take(&mut self.switch_fixups);
+        for switch_fixup in &switch_fixups {
+            let instruction_end_i32 = i32::try_from(switch_fixup.instruction_end_position)
+                .map_err(|_| malformed_error!("Switch instruction end exceeds i32 range"))?;
+
+            for (i, label) in switch_fixup.labels.iter().enumerate() {
+                let label_position = self
+                    .labels
+                    .get(label)
+                    .ok_or_else(|| Error::UndefinedLabel(label.clone()))?;
+
+                let label_pos_i32 = i32::try_from(*label_position)
+                    .map_err(|_| malformed_error!("Label position exceeds i32 range"))?;
+
+                // Switch offsets are relative to the end of the switch instruction
+                let offset = label_pos_i32 - instruction_end_i32;
+
+                // Write the 4-byte offset at the correct position
+                let target_pos = switch_fixup.fixup_position + i * 4;
+                let offset_bytes = offset.to_le_bytes();
+                self.bytecode[target_pos..target_pos + 4].copy_from_slice(&offset_bytes);
+            }
+        }
+
+        // Return bytecode, max stack, and final label positions (after branch optimization)
+        Ok((self.bytecode, self.max_stack_depth, self.labels))
+    }
+
+    /// Optimize branch forms by converting long-form branches to short-form where possible.
+    ///
+    /// This method iteratively shrinks branches until no more optimizations are possible.
+    /// Each iteration may enable additional optimizations as the bytecode shrinks.
+    fn optimize_branch_forms(&mut self) -> Result<()> {
+        const MAX_ITERATIONS: usize = 100;
+
+        for _ in 0..MAX_ITERATIONS {
+            let shrinkable = self.find_shrinkable_branches()?;
+            if shrinkable.is_empty() {
+                break; // No more optimizations possible
+            }
+
+            // Rebuild bytecode with short-form branches
+            self.apply_branch_shrinking(&shrinkable)?;
+        }
+
+        Ok(())
+    }
+
+    /// Find branches that could be converted to short form.
+    ///
+    /// Returns indices of fixups that can be shrunk.
+    fn find_shrinkable_branches(&self) -> Result<Vec<usize>> {
+        let mut shrinkable = Vec::new();
+
+        for (idx, fixup) in self.fixups.iter().enumerate() {
+            // Only consider long-form branches that have a short form
+            if fixup.offset_size != 4 || fixup.short_form_mnemonic.is_none() {
+                continue;
+            }
+
+            let label_position = self
+                .labels
+                .get(&fixup.label)
+                .ok_or_else(|| Error::UndefinedLabel(fixup.label.clone()))?;
+
+            // Calculate offset as if we used short form (1 byte offset instead of 4)
+            // Short form: instruction is 2 bytes (opcode + 1-byte offset)
+            // The offset is relative to the end of the instruction
+            let short_form_end = fixup.instruction_position + 2; // opcode + 1-byte offset
+
+            let label_pos_i32 = i32::try_from(*label_position)
+                .map_err(|_| malformed_error!("Label position exceeds i32 range"))?;
+            let short_end_i32 = i32::try_from(short_form_end)
+                .map_err(|_| malformed_error!("Instruction position exceeds i32 range"))?;
+
+            // Calculate what the offset would be with short form
+            // Note: We need to account for the 3-byte savings in positions after this branch
+            let offset = label_pos_i32 - short_end_i32;
+
+            // Check if offset fits in signed byte (-128 to +127)
+            if (-128..=127).contains(&offset) {
+                shrinkable.push(idx);
+            }
+        }
+
+        Ok(shrinkable)
+    }
+
+    /// Apply branch shrinking by rebuilding bytecode with short-form branches.
+    fn apply_branch_shrinking(&mut self, shrinkable: &[usize]) -> Result<()> {
+        if shrinkable.is_empty() {
+            return Ok(());
+        }
+
+        // Build a set for O(1) lookup
+        let shrinkable_set: HashSet<usize> = shrinkable.iter().copied().collect();
+
+        // Calculate position adjustments for each shrunk branch
+        // Each shrunk branch saves 3 bytes (5 bytes -> 2 bytes)
+        let mut adjustments: Vec<(usize, i32)> = Vec::new(); // (position, cumulative_adjustment)
+        let mut cumulative = 0i32;
+
+        for &idx in shrinkable {
+            let fixup = &self.fixups[idx];
+            // The adjustment takes effect after this instruction
+            let instr_end = fixup.fixup_position + fixup.offset_size as usize;
+            cumulative -= 3; // Shrinking saves 3 bytes
+            adjustments.push((instr_end, cumulative));
+        }
+
+        // Helper to calculate adjusted position
+        let adjust_position = |pos: usize| -> usize {
+            let mut adj = 0i32;
+            for &(threshold, cumulative_adj) in &adjustments {
+                if pos >= threshold {
+                    adj = cumulative_adj;
+                } else {
+                    break;
+                }
+            }
+            (pos as i32 + adj).max(0) as usize
+        };
+
+        // Rebuild bytecode
+        let mut new_bytecode = Vec::with_capacity(self.bytecode.len());
+        let mut src_pos = 0usize;
+
+        // Sort fixups by position for sequential processing
+        let mut sorted_indices: Vec<usize> = (0..self.fixups.len()).collect();
+        sorted_indices.sort_by_key(|&i| self.fixups[i].instruction_position);
+
+        for &idx in &sorted_indices {
+            let fixup = &self.fixups[idx];
+
+            // Copy bytes up to this instruction
+            if src_pos < fixup.instruction_position {
+                new_bytecode.extend_from_slice(&self.bytecode[src_pos..fixup.instruction_position]);
+            }
+            src_pos = fixup.instruction_position;
+
+            if shrinkable_set.contains(&idx) {
+                // Emit short-form branch
+                let short_mnemonic = fixup.short_form_mnemonic.ok_or_else(|| {
+                    Error::InvalidMnemonic("missing short form for shrinkable branch".to_string())
+                })?;
+                let (opcode, prefix, _) = get_mnemonic_lookup()
+                    .get(short_mnemonic)
+                    .ok_or_else(|| Error::InvalidMnemonic(short_mnemonic.to_string()))?;
+
+                if *prefix != 0 {
+                    new_bytecode.push(*prefix);
+                }
+                new_bytecode.push(*opcode);
+                new_bytecode.push(0); // Placeholder for offset
+
+                // Skip the original instruction (opcode + 4-byte offset)
+                src_pos = fixup.fixup_position + 4;
+            } else {
+                // Copy original instruction
+                let instr_end = fixup.fixup_position + fixup.offset_size as usize;
+                new_bytecode.extend_from_slice(&self.bytecode[src_pos..instr_end]);
+                src_pos = instr_end;
+            }
+        }
+
+        // Copy remaining bytes
+        if src_pos < self.bytecode.len() {
+            new_bytecode.extend_from_slice(&self.bytecode[src_pos..]);
+        }
+
+        // Update labels
+        for (_, pos) in self.labels.iter_mut() {
+            *pos = adjust_position(*pos as usize) as u32;
+        }
+
+        // Update fixups
+        for (idx, fixup) in self.fixups.iter_mut().enumerate() {
+            let new_instr_pos = adjust_position(fixup.instruction_position);
+
+            if shrinkable_set.contains(&idx) {
+                // This branch was shrunk
+                fixup.instruction_position = new_instr_pos;
+                fixup.fixup_position = new_instr_pos + 1; // opcode + offset position
+                fixup.offset_size = 1;
+                fixup.short_form_mnemonic = None; // Already optimized
+            } else {
+                // Just adjust positions
+                fixup.instruction_position = new_instr_pos;
+                fixup.fixup_position = adjust_position(fixup.fixup_position);
+            }
+        }
+
+        // Update switch fixups
+        for switch_fixup in self.switch_fixups.iter_mut() {
+            switch_fixup.fixup_position = adjust_position(switch_fixup.fixup_position);
+            switch_fixup.instruction_end_position =
+                adjust_position(switch_fixup.instruction_end_position);
+        }
+
+        self.bytecode = new_bytecode;
+        Ok(())
     }
 
     /// Emit operand bytes based on the expected operand type.
@@ -648,14 +1477,21 @@ impl InstructionEncoder {
         let net_effect = i16::from(pushes) - i16::from(pops);
         self.current_stack_depth += net_effect;
 
-        // Check for stack underflow
-        if self.current_stack_depth < 0 {
+        // Check for stack underflow - but only in reachable code.
+        // In unreachable code, the stack depth is meaningless, so we don't error.
+        // We still track it for when code becomes reachable again via a label.
+        if self.current_stack_depth < 0 && !self.unreachable {
             return Err(malformed_error!(
                 "Stack underflow: depth became {} after instruction with {} pops, {} pushes",
                 self.current_stack_depth,
                 pops,
                 pushes
             ));
+        }
+
+        // Clamp negative depth to 0 to prevent cascading issues
+        if self.current_stack_depth < 0 {
+            self.current_stack_depth = 0;
         }
 
         // Update maximum stack depth
@@ -708,6 +1544,74 @@ impl InstructionEncoder {
     pub fn get_label_position(&self, label_name: &str) -> Option<u32> {
         self.labels.get(label_name).copied()
     }
+
+    /// Records the expected stack depth at a branch target label.
+    ///
+    /// When a branch instruction is emitted, the current stack depth (after popping
+    /// any condition) is recorded as the expected depth at the target label. When
+    /// the label is defined, we validate that the current depth matches.
+    ///
+    /// # Parameters
+    ///
+    /// * `label` - The target label name
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the label was previously recorded with a different depth,
+    /// indicating inconsistent stack depths across control flow paths.
+    fn record_label_stack_depth(&mut self, label: &str) -> Result<()> {
+        // In unreachable code, don't record or validate stack depths.
+        // The current_stack_depth is meaningless since there's no execution path.
+        // The first reachable branch to this label will set the correct depth.
+        if self.unreachable {
+            return Ok(());
+        }
+
+        if let Some(&expected) = self.label_stack_depths.get(label) {
+            if self.current_stack_depth != expected {
+                return Err(malformed_error!(
+                    "Stack depth mismatch for branch to '{}': expected {}, but branch has {}",
+                    label,
+                    expected,
+                    self.current_stack_depth
+                ));
+            }
+        } else {
+            self.label_stack_depths
+                .insert(label.to_string(), self.current_stack_depth);
+        }
+        Ok(())
+    }
+
+    /// Sets the expected stack depth at a label.
+    ///
+    /// This is used to explicitly set the expected depth for labels that may be
+    /// reached via fall-through or other non-branch control flow (e.g., exception
+    /// handlers). Unlike `record_label_stack_depth`, this does not validate - it
+    /// just sets the expectation.
+    ///
+    /// # Parameters
+    ///
+    /// * `label` - The label name
+    /// * `depth` - The expected stack depth at this label
+    pub fn set_label_stack_depth(&mut self, label: &str, depth: i16) {
+        self.label_stack_depths.insert(label.to_string(), depth);
+    }
+
+    /// Sets the current stack depth directly.
+    ///
+    /// This is used at control flow boundaries where the stack depth is known
+    /// (e.g., after exception handlers where stack is cleared, at method entry).
+    ///
+    /// # Parameters
+    ///
+    /// * `depth` - The new stack depth
+    pub fn set_stack_depth(&mut self, depth: i16) {
+        self.current_stack_depth = depth;
+        if depth >= 0 {
+            self.max_stack_depth = self.max_stack_depth.max(depth as u16);
+        }
+    }
 }
 
 impl Default for InstructionEncoder {
@@ -736,7 +1640,7 @@ mod tests {
         encoder.emit_instruction("nop", None)?;
         encoder.emit_instruction("ret", None)?;
 
-        let (bytecode, _max_stack) = encoder.finalize()?;
+        let (bytecode, _max_stack, _) = encoder.finalize()?;
         assert_eq!(bytecode, vec![0x00, 0x2A]); // nop = 0x00, ret = 0x2A
 
         Ok(())
@@ -751,7 +1655,7 @@ mod tests {
         // ldc.i4.s uses Int8 for the signed immediate value
         encoder.emit_instruction("ldc.i4.s", Some(Operand::Immediate(Immediate::Int8(42))))?;
 
-        let (bytecode, _max_stack) = encoder.finalize()?;
+        let (bytecode, _max_stack, _) = encoder.finalize()?;
         // ldarg.s = 0x0E, ldarg index = 1, ldc.i4.s = 0x1F, immediate = 42
         assert_eq!(bytecode, vec![0x0E, 0x01, 0x1F, 42]);
 
@@ -768,7 +1672,7 @@ mod tests {
         encoder.define_label("target")?;
         encoder.emit_instruction("ret", None)?; // 0x2A
 
-        let (bytecode, _max_stack) = encoder.finalize()?;
+        let (bytecode, _max_stack, _) = encoder.finalize()?;
         // br.s offset should be 1 (skip the nop instruction)
         assert_eq!(bytecode, vec![0x00, 0x2B, 0x01, 0x00, 0x2A]);
 

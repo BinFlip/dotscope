@@ -99,7 +99,7 @@
 //! All builders produce signature structures that can be encoded using the existing
 //! [`crate::metadata::typesystem::encoder::TypeSignatureEncoder`] and stored in blob heaps.
 //! Integration with the assembly modification system is provided through the
-//! [`crate::cilassembly::BuilderContext`].
+//! [`crate::cilassembly::CilAssembly`].
 //!
 //! # Validation and Error Handling
 //!
@@ -547,6 +547,241 @@ impl MethodSignatureBuilder {
 impl Default for MethodSignatureBuilder {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+// Factory Methods for Common Method Signature Patterns
+impl MethodSignatureBuilder {
+    /// Creates a simple void method with no parameters.
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::signatures::MethodSignatureBuilder;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let signature = MethodSignatureBuilder::simple_void_method().build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn simple_void_method() -> Self {
+        Self::new()
+    }
+
+    /// Creates a simple static method with the specified return type.
+    ///
+    /// # Arguments
+    /// * `return_type` - The return type of the method
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::signatures::{MethodSignatureBuilder, TypeSignature};
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let signature = MethodSignatureBuilder::simple_method(TypeSignature::I4).build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn simple_method(return_type: TypeSignature) -> Self {
+        Self::new().returns(return_type)
+    }
+
+    /// Creates an instance method (with `this` pointer) with the specified return type.
+    ///
+    /// # Arguments
+    /// * `return_type` - The return type of the method
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::signatures::{MethodSignatureBuilder, TypeSignature};
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let signature = MethodSignatureBuilder::instance_method(TypeSignature::String).build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn instance_method(return_type: TypeSignature) -> Self {
+        Self::new().has_this(true).returns(return_type)
+    }
+
+    /// Creates a static method with the specified return type.
+    ///
+    /// This is an alias for [`simple_method`](Self::simple_method) for clarity.
+    ///
+    /// # Arguments
+    /// * `return_type` - The return type of the method
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::signatures::{MethodSignatureBuilder, TypeSignature};
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let signature = MethodSignatureBuilder::static_method(TypeSignature::Boolean)
+    ///     .param(TypeSignature::String)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn static_method(return_type: TypeSignature) -> Self {
+        Self::new().returns(return_type)
+    }
+
+    /// Creates a generic method with the specified return type and generic parameter count.
+    ///
+    /// # Arguments
+    /// * `return_type` - The return type of the method
+    /// * `generic_count` - Number of generic type parameters
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::signatures::{MethodSignatureBuilder, TypeSignature};
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// // T Method<T>(T item)
+    /// let signature = MethodSignatureBuilder::generic_method(
+    ///     TypeSignature::GenericParamMethod(0),
+    ///     1
+    /// )
+    /// .param(TypeSignature::GenericParamMethod(0))
+    /// .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn generic_method(return_type: TypeSignature, generic_count: u32) -> Self {
+        Self::new()
+            .generic_param_count(generic_count)
+            .returns(return_type)
+    }
+
+    /// Creates a property getter signature.
+    ///
+    /// Property getters are instance methods with no parameters that return the property value.
+    ///
+    /// # Arguments
+    /// * `return_type` - The type of the property
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::signatures::{MethodSignatureBuilder, TypeSignature};
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let getter = MethodSignatureBuilder::property_getter(TypeSignature::String).build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn property_getter(return_type: TypeSignature) -> Self {
+        Self::instance_method(return_type)
+    }
+
+    /// Creates a property setter signature.
+    ///
+    /// Property setters are instance methods with a single `value` parameter and void return.
+    ///
+    /// # Arguments
+    /// * `value_type` - The type of the property value
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::signatures::{MethodSignatureBuilder, TypeSignature};
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let setter = MethodSignatureBuilder::property_setter(TypeSignature::String).build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn property_setter(value_type: TypeSignature) -> Self {
+        Self::instance_method(TypeSignature::Void).param(value_type)
+    }
+
+    /// Creates a constructor signature.
+    ///
+    /// Constructors are instance methods with void return type (`.ctor`).
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::signatures::{MethodSignatureBuilder, TypeSignature};
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let ctor = MethodSignatureBuilder::constructor()
+    ///     .param(TypeSignature::String)  // name parameter
+    ///     .param(TypeSignature::I4)       // age parameter
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn constructor() -> Self {
+        Self::instance_method(TypeSignature::Void)
+    }
+
+    /// Creates a static constructor signature.
+    ///
+    /// Static constructors are static methods with void return type and no parameters (`.cctor`).
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::signatures::MethodSignatureBuilder;
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// let cctor = MethodSignatureBuilder::static_constructor().build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn static_constructor() -> Self {
+        Self::simple_void_method()
+    }
+
+    /// Creates a P/Invoke method signature with the specified calling convention.
+    ///
+    /// # Arguments
+    /// * `return_type` - The return type of the method
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::signatures::{MethodSignatureBuilder, TypeSignature};
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// // P/Invoke with stdcall convention (common for Windows APIs)
+    /// let signature = MethodSignatureBuilder::pinvoke_stdcall(TypeSignature::I4)
+    ///     .param(TypeSignature::I4)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn pinvoke_stdcall(return_type: TypeSignature) -> Self {
+        Self::new()
+            .calling_convention_stdcall()
+            .returns(return_type)
+    }
+
+    /// Creates a P/Invoke method signature with cdecl calling convention.
+    ///
+    /// # Arguments
+    /// * `return_type` - The return type of the method
+    ///
+    /// # Examples
+    /// ```rust
+    /// use dotscope::metadata::signatures::{MethodSignatureBuilder, TypeSignature};
+    ///
+    /// # fn example() -> dotscope::Result<()> {
+    /// // P/Invoke with cdecl convention (common for C libraries)
+    /// let signature = MethodSignatureBuilder::pinvoke_cdecl(TypeSignature::Void)
+    ///     .param(TypeSignature::String)
+    ///     .build()?;
+    /// # Ok(())
+    /// # }
+    /// ```
+    #[must_use]
+    pub fn pinvoke_cdecl(return_type: TypeSignature) -> Self {
+        Self::new().calling_convention_cdecl().returns(return_type)
     }
 }
 
@@ -1266,5 +1501,136 @@ mod tests {
         let result = TypeSpecSignatureBuilder::new().build();
         assert!(result.is_err());
         assert!(result.unwrap_err().to_string().contains("specify a type"));
+    }
+
+    #[test]
+    fn test_simple_void_method() {
+        let signature = MethodSignatureBuilder::simple_void_method()
+            .build()
+            .unwrap();
+
+        assert!(!signature.has_this);
+        assert!(signature.default);
+        assert_eq!(signature.return_type.base, TypeSignature::Void);
+        assert!(signature.params.is_empty());
+    }
+
+    #[test]
+    fn test_simple_method() {
+        let signature = MethodSignatureBuilder::simple_method(TypeSignature::I4)
+            .build()
+            .unwrap();
+
+        assert!(!signature.has_this);
+        assert_eq!(signature.return_type.base, TypeSignature::I4);
+    }
+
+    #[test]
+    fn test_instance_method() {
+        let signature = MethodSignatureBuilder::instance_method(TypeSignature::String)
+            .build()
+            .unwrap();
+
+        assert!(signature.has_this);
+        assert_eq!(signature.return_type.base, TypeSignature::String);
+    }
+
+    #[test]
+    fn test_static_method() {
+        let signature = MethodSignatureBuilder::static_method(TypeSignature::Boolean)
+            .param(TypeSignature::String)
+            .build()
+            .unwrap();
+
+        assert!(!signature.has_this);
+        assert_eq!(signature.return_type.base, TypeSignature::Boolean);
+        assert_eq!(signature.params.len(), 1);
+        assert_eq!(signature.params[0].base, TypeSignature::String);
+    }
+
+    #[test]
+    fn test_generic_method_factory() {
+        let signature =
+            MethodSignatureBuilder::generic_method(TypeSignature::GenericParamMethod(0), 1)
+                .param(TypeSignature::GenericParamMethod(0))
+                .build()
+                .unwrap();
+
+        assert_eq!(signature.param_count_generic, 1);
+        assert_eq!(
+            signature.return_type.base,
+            TypeSignature::GenericParamMethod(0)
+        );
+    }
+
+    #[test]
+    fn test_property_getter_factory() {
+        let signature = MethodSignatureBuilder::property_getter(TypeSignature::String)
+            .build()
+            .unwrap();
+
+        assert!(signature.has_this);
+        assert_eq!(signature.return_type.base, TypeSignature::String);
+        assert!(signature.params.is_empty());
+    }
+
+    #[test]
+    fn test_property_setter_factory() {
+        let signature = MethodSignatureBuilder::property_setter(TypeSignature::String)
+            .build()
+            .unwrap();
+
+        assert!(signature.has_this);
+        assert_eq!(signature.return_type.base, TypeSignature::Void);
+        assert_eq!(signature.params.len(), 1);
+        assert_eq!(signature.params[0].base, TypeSignature::String);
+    }
+
+    #[test]
+    fn test_constructor_factory() {
+        let signature = MethodSignatureBuilder::constructor()
+            .param(TypeSignature::String)
+            .param(TypeSignature::I4)
+            .build()
+            .unwrap();
+
+        assert!(signature.has_this);
+        assert_eq!(signature.return_type.base, TypeSignature::Void);
+        assert_eq!(signature.params.len(), 2);
+    }
+
+    #[test]
+    fn test_static_constructor_factory() {
+        let signature = MethodSignatureBuilder::static_constructor()
+            .build()
+            .unwrap();
+
+        assert!(!signature.has_this);
+        assert_eq!(signature.return_type.base, TypeSignature::Void);
+        assert!(signature.params.is_empty());
+    }
+
+    #[test]
+    fn test_pinvoke_stdcall_factory() {
+        let signature = MethodSignatureBuilder::pinvoke_stdcall(TypeSignature::I4)
+            .param(TypeSignature::I4)
+            .build()
+            .unwrap();
+
+        assert!(signature.stdcall);
+        assert!(!signature.default);
+        assert_eq!(signature.return_type.base, TypeSignature::I4);
+    }
+
+    #[test]
+    fn test_pinvoke_cdecl_factory() {
+        let signature = MethodSignatureBuilder::pinvoke_cdecl(TypeSignature::Void)
+            .param(TypeSignature::String)
+            .build()
+            .unwrap();
+
+        assert!(signature.cdecl);
+        assert!(!signature.default);
+        assert_eq!(signature.return_type.base, TypeSignature::Void);
     }
 }

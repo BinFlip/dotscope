@@ -6,6 +6,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::TableId,
     },
@@ -36,20 +37,27 @@ pub struct ImportScopeLoader;
 
 impl MetadataLoader for ImportScopeLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<crate::metadata::tables::ImportScopeRaw>() {
-                if let Some(blobs) = context.blobs {
-                    table.par_iter().try_for_each(|row| {
-                        let import_scope = row.to_owned(blobs)?;
-                        context
-                            .import_scope
-                            .insert(import_scope.token, import_scope);
-                        Ok(())
-                    })?;
-                }
-            }
-        }
-        Ok(())
+        let (Some(header), Some(blobs)) = (context.meta, context.blobs) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<crate::metadata::tables::ImportScopeRaw>() else {
+            return Ok(());
+        };
+
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("import scope 0x{:08x}", row.token.value());
+
+            let Some(import_scope) =
+                context.handle_result(row.to_owned(blobs), DiagnosticCategory::Table, token_msg)?
+            else {
+                return Ok(());
+            };
+
+            context
+                .import_scope
+                .insert(import_scope.token, import_scope);
+            Ok(())
+        })
     }
 
     fn table_id(&self) -> Option<TableId> {

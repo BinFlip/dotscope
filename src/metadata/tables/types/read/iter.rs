@@ -35,7 +35,10 @@
 use rayon::iter::{plumbing, IndexedParallelIterator, ParallelIterator};
 use std::sync::{Arc, Mutex};
 
-use crate::metadata::tables::{MetadataTable, RowReadable};
+use crate::{
+    metadata::tables::{MetadataTable, RowReadable},
+    Error, Result,
+};
 
 /// Sequential iterator for metadata table rows.
 ///
@@ -131,33 +134,37 @@ impl<'a, T: RowReadable + Send + Sync + 'a> TableParIterator<'a, T> {
     /// Returns `Ok(())` if all operations complete successfully, or the first error
     /// encountered during parallel processing.
     ///
-    /// # Panics
-    ///
-    /// This function will panic if the mutex is poisoned during error handling.
-    ///
     /// # Errors
     ///
     /// Returns an error if any operation applied to an item returns an error. The first error encountered is returned.
-    pub fn try_for_each<F>(self, op: F) -> crate::Result<()>
+    pub fn try_for_each<F>(self, op: F) -> Result<()>
     where
-        F: Fn(T) -> crate::Result<()> + Send + Sync,
+        F: Fn(T) -> Result<()> + Send + Sync,
     {
         let error = Arc::new(Mutex::new(None));
 
         self.for_each(|item| {
-            if error.lock().unwrap().is_some() {
-                return;
+            if let Ok(guard) = error.lock() {
+                if guard.is_some() {
+                    return;
+                }
             }
 
             if let Err(e) = op(item) {
-                let mut guard = error.lock().unwrap();
-                if guard.is_none() {
-                    *guard = Some(e);
+                if let Ok(mut guard) = error.lock() {
+                    if guard.is_none() {
+                        *guard = Some(e);
+                    }
                 }
             }
         });
 
-        match Arc::into_inner(error).unwrap().into_inner().unwrap() {
+        let mutex = Arc::into_inner(error)
+            .ok_or_else(|| Error::LockError("Arc still has references".into()))?;
+        match mutex
+            .into_inner()
+            .map_err(|e| Error::LockError(format!("iterator error lock: {e}")))?
+        {
             Some(e) => Err(e),
             None => Ok(()),
         }

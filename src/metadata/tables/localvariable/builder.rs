@@ -6,20 +6,22 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::prelude::*;
 //!
-//! let builder_context = BuilderContext::new();
+//! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! let local_var_token = LocalVariableBuilder::new()
 //!     .attributes(0x01)       // Set variable attributes
 //!     .index(0)               // First local variable
 //!     .name("counter")        // Variable name
-//!     .build(&mut builder_context)?;
+//!     .build(&mut assembly)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{LocalVariableRaw, TableDataOwned, TableId},
         token::Token,
@@ -42,21 +44,24 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::prelude::*;
 ///
+/// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+/// # let mut assembly = CilAssembly::new(view);
 /// // Named local variable
 /// let var_token = LocalVariableBuilder::new()
 ///     .attributes(0x01)
 ///     .index(0)
 ///     .name("myVariable")
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Anonymous variable (compiler-generated)
 /// let anon_token = LocalVariableBuilder::new()
 ///     .index(1)
 ///     .name("")  // Empty name for anonymous variable
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct LocalVariableBuilder {
@@ -79,7 +84,7 @@ impl LocalVariableBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = LocalVariableBuilder::new();
@@ -107,7 +112,7 @@ impl LocalVariableBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = LocalVariableBuilder::new()
@@ -133,7 +138,7 @@ impl LocalVariableBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = LocalVariableBuilder::new()
@@ -158,7 +163,7 @@ impl LocalVariableBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Named variable
@@ -178,11 +183,11 @@ impl LocalVariableBuilder {
     /// Builds and adds the `LocalVariable` entry to the metadata
     ///
     /// Validates all required fields, creates the `LocalVariable` table entry,
-    /// and adds it to the builder context. Returns a token that can be used
+    /// and adds it to the CilAssembly. Returns a token that can be used
     /// to reference this local variable.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the builder context
+    /// - `assembly`: Mutable reference to the CilAssembly
     ///
     /// # Returns
     /// - `Ok(Token)`: Token referencing the created local variable
@@ -195,16 +200,18 @@ impl LocalVariableBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let mut context = BuilderContext::new();
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let token = LocalVariableBuilder::new()
     ///     .index(0)
     ///     .name("myVar")
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let index = self.index.ok_or_else(|| {
             Error::ModificationInvalid("Variable index is required for LocalVariable".to_string())
         })?;
@@ -216,28 +223,25 @@ impl LocalVariableBuilder {
             )
         })?;
 
-        let next_rid = context.next_rid(TableId::LocalVariable);
-        let token = Token::new(0x3300_0000 + next_rid);
         let name_index = if name.is_empty() {
             0
         } else {
-            context.string_add(&name)?
+            assembly.string_add(&name)?.placeholder()
         };
 
         let local_variable = LocalVariableRaw {
-            rid: next_rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
             attributes: self.attributes.unwrap_or(0),
             index,
             name: name_index,
         };
 
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::LocalVariable,
             TableDataOwned::LocalVariable(local_variable),
-        )?;
-        Ok(token)
+        )
     }
 }
 
@@ -254,7 +258,7 @@ impl Default for LocalVariableBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
@@ -277,57 +281,50 @@ mod tests {
 
     #[test]
     fn test_localvariable_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = LocalVariableBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = LocalVariableBuilder::new()
             .index(0)
             .name("testVar")
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::LocalVariable as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::LocalVariable));
         Ok(())
     }
 
     #[test]
     fn test_localvariable_builder_with_all_fields() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = LocalVariableBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = LocalVariableBuilder::new()
             .attributes(0x0001)
             .index(2)
             .name("myVariable")
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::LocalVariable as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::LocalVariable));
         Ok(())
     }
 
     #[test]
     fn test_localvariable_builder_anonymous_variable() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = LocalVariableBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = LocalVariableBuilder::new()
             .index(1)
             .name("") // Empty name for anonymous variable
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::LocalVariable as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::LocalVariable));
         Ok(())
     }
 
     #[test]
     fn test_localvariable_builder_missing_index() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
         let result = LocalVariableBuilder::new()
             .name("testVar")
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -341,9 +338,8 @@ mod tests {
 
     #[test]
     fn test_localvariable_builder_missing_name() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let result = LocalVariableBuilder::new().index(0).build(&mut context);
+        let mut assembly = get_test_assembly()?;
+        let result = LocalVariableBuilder::new().index(0).build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -384,44 +380,41 @@ mod tests {
 
     #[test]
     fn test_localvariable_builder_fluent_interface() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test method chaining
-        let token = LocalVariableBuilder::new()
+        let ref_ = LocalVariableBuilder::new()
             .attributes(0x0002)
             .index(3)
             .name("chainedVar")
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::LocalVariable as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::LocalVariable));
         Ok(())
     }
 
     #[test]
     fn test_localvariable_builder_multiple_builds() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Build first variable
-        let token1 = LocalVariableBuilder::new()
+        let ref1 = LocalVariableBuilder::new()
             .index(0)
             .name("var1")
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build first variable");
 
         // Build second variable
-        let token2 = LocalVariableBuilder::new()
+        let ref2 = LocalVariableBuilder::new()
             .index(1)
             .name("var2")
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build second variable");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_ne!(token1, token2);
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::LocalVariable));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::LocalVariable));
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
         Ok(())
     }
 }

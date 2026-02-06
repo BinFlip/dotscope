@@ -101,9 +101,7 @@
 
 use crate::{
     metadata::resources::{ResourceType, RESOURCE_MAGIC},
-    utils::compressed_uint_size,
-    utils::write_7bit_encoded_int,
-    utils::write_compressed_uint,
+    utils::{compressed_uint_size, to_u32, write_7bit_encoded_int, write_compressed_uint},
     Error, Result,
 };
 use std::collections::BTreeMap;
@@ -859,34 +857,24 @@ impl DotNetResourceEncoder {
 
         // Resource reader type name (exact Microsoft constant)
         let reader_type = "System.Resources.ResourceReader, mscorlib, Version=4.0.0.0, Culture=neutral, PublicKeyToken=b77a5c561934e089";
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            write_compressed_uint(reader_type.len() as u32, &mut buffer);
-        }
+        write_compressed_uint(to_u32(reader_type.len())?, &mut buffer);
         buffer.extend_from_slice(reader_type.as_bytes());
 
         // Resource set type name (exact Microsoft constant)
         let resource_set_type = "System.Resources.RuntimeResourceSet";
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            write_compressed_uint(resource_set_type.len() as u32, &mut buffer);
-        }
+        write_compressed_uint(to_u32(resource_set_type.len())?, &mut buffer);
         buffer.extend_from_slice(resource_set_type.as_bytes());
 
         // Calculate header size and update placeholder
         let header_size = buffer.len() - header_size_pos - 4;
-        #[allow(clippy::cast_possible_truncation)]
-        let header_size_bytes = (header_size as u32).to_le_bytes();
+        let header_size_bytes = to_u32(header_size)?.to_le_bytes();
         buffer[header_size_pos..header_size_pos + 4].copy_from_slice(&header_size_bytes);
 
         // Runtime Resource Reader Header
         buffer.extend_from_slice(&self.version.to_le_bytes()); // RR version
 
         // Resource count
-        #[allow(clippy::cast_possible_truncation)]
-        {
-            buffer.extend_from_slice(&(self.resources.len() as u32).to_le_bytes());
-        }
+        buffer.extend_from_slice(&to_u32(self.resources.len())?.to_le_bytes());
 
         // Write type table
         Self::write_type_table(&mut buffer)?;
@@ -918,8 +906,9 @@ impl DotNetResourceEncoder {
             let (name, _) = &self.resources[*resource_index];
             let name_utf16: Vec<u16> = name.encode_utf16().collect();
             let byte_count = name_utf16.len() * 2;
-            #[allow(clippy::cast_possible_truncation)]
-            let entry_size = compressed_uint_size(byte_count) as u32 + byte_count as u32 + 4;
+            #[allow(clippy::cast_possible_truncation)] // compressed_uint_size returns at most 4
+            let len_size = compressed_uint_size(byte_count) as u32;
+            let entry_size = len_size + to_u32(byte_count)? + 4;
 
             name_section_layout.push(name_offset);
             name_offset += entry_size;
@@ -961,10 +950,7 @@ impl DotNetResourceEncoder {
             let byte_count = name_utf16.len() * 2;
 
             // Write byte count, not character count
-            #[allow(clippy::cast_possible_truncation)]
-            {
-                write_compressed_uint(byte_count as u32, &mut buffer);
-            }
+            write_compressed_uint(to_u32(byte_count)?, &mut buffer);
 
             for utf16_char in name_utf16 {
                 buffer.extend_from_slice(&utf16_char.to_le_bytes());
@@ -979,8 +965,7 @@ impl DotNetResourceEncoder {
         // For embedded resources, we need to be careful about the offset calculation
         // The offset should point to where the data actually starts in the file
         let actual_data_section_offset = buffer.len() - 4; // -4 to account for size prefix
-        #[allow(clippy::cast_possible_truncation)]
-        let data_section_offset_value = (actual_data_section_offset as u32).to_le_bytes();
+        let data_section_offset_value = to_u32(actual_data_section_offset)?.to_le_bytes();
         buffer[data_section_offset_pos..data_section_offset_pos + 4]
             .copy_from_slice(&data_section_offset_value);
 
@@ -989,8 +974,7 @@ impl DotNetResourceEncoder {
 
         // Update the size field at the beginning
         let total_size = buffer.len() - 4; // Exclude the size field itself
-        #[allow(clippy::cast_possible_truncation)]
-        let size_bytes = (total_size as u32).to_le_bytes();
+        let size_bytes = to_u32(total_size)?.to_le_bytes();
         buffer[size_placeholder_pos..size_placeholder_pos + 4].copy_from_slice(&size_bytes);
 
         Ok(buffer)
@@ -1077,10 +1061,7 @@ impl DotNetResourceEncoder {
                 ResourceType::String(s) => {
                     // Microsoft uses BinaryWriter.Write(string) which writes UTF-8 with 7-bit encoded length prefix
                     let utf8_bytes = s.as_bytes();
-                    #[allow(clippy::cast_possible_truncation)]
-                    {
-                        write_7bit_encoded_int(utf8_bytes.len() as u32, buffer);
-                    }
+                    write_7bit_encoded_int(to_u32(utf8_bytes.len())?, buffer);
                     buffer.extend_from_slice(utf8_bytes);
                 }
                 ResourceType::Boolean(b) => {
@@ -1140,10 +1121,7 @@ impl DotNetResourceEncoder {
                     buffer.extend_from_slice(&ticks.to_le_bytes());
                 }
                 ResourceType::ByteArray(data) | ResourceType::Stream(data) => {
-                    #[allow(clippy::cast_possible_truncation)]
-                    {
-                        buffer.extend_from_slice(&(data.len() as u32).to_le_bytes());
-                    }
+                    buffer.extend_from_slice(&to_u32(data.len())?.to_le_bytes());
                     buffer.extend_from_slice(data);
                 }
                 ResourceType::StartOfUserTypes => {
@@ -1165,6 +1143,7 @@ impl Default for DotNetResourceEncoder {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::resources::parser::parse_dotnet_resource;
 
     #[test]
     fn test_dotnet_resource_encoder_basic() {
@@ -1275,8 +1254,6 @@ mod tests {
 
     #[test]
     fn test_roundtrip_edge_values() {
-        use crate::metadata::resources::parser::parse_dotnet_resource;
-
         let mut encoder = DotNetResourceEncoder::new();
 
         // Test edge values
@@ -1352,8 +1329,6 @@ mod tests {
 
     #[test]
     fn test_large_resource_data() {
-        use crate::metadata::resources::parser::parse_dotnet_resource;
-
         let mut encoder = DotNetResourceEncoder::new();
 
         // Test large string resource

@@ -5,7 +5,7 @@
 //! the existing low-level builders to provide a fluent, high-level API for various event patterns.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         signatures::{encode_field_signature, SignatureField, TypeSignature},
         tables::{
@@ -60,12 +60,11 @@ pub enum EventImplementation {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let event_token = EventBuilder::new("OnClick", TypeSignature::Object)
 ///     .auto_event()
 ///     .public_accessors()
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -77,8 +76,7 @@ pub enum EventImplementation {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let event_token = EventBuilder::new("OnDataChanged", TypeSignature::Object)
 ///     .custom()
 ///     .add_method(|method| method
@@ -103,7 +101,7 @@ pub enum EventImplementation {
 ///                 Ok(())
 ///             })
 ///         }))
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -377,8 +375,7 @@ impl EventBuilder {
     ///
     /// # fn example() -> dotscope::Result<()> {
     /// # let view = CilAssemblyView::from_path("test.dll")?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     /// let builder = EventBuilder::new("OnDataChanged", TypeSignature::Object)
     ///     .custom()
     ///     .add_method(|method| method
@@ -415,8 +412,7 @@ impl EventBuilder {
     ///
     /// # fn example() -> dotscope::Result<()> {
     /// # let view = CilAssemblyView::from_path("test.dll")?;
-    /// # let assembly = CilAssembly::new(view);
-    /// # let mut context = BuilderContext::new(assembly);
+    /// # let mut assembly = CilAssembly::new(view);
     /// let builder = EventBuilder::new("OnDataChanged", TypeSignature::Object)
     ///     .custom()
     ///     .remove_method(|method| method
@@ -499,27 +495,27 @@ impl EventBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - Builder context for managing the assembly
+    /// * `assembly` - CilAssembly for managing the assembly
     ///
     /// # Returns
     ///
-    /// A token representing the newly created event definition.
+    /// A `ChangeRefRc` representing the newly created event definition.
     ///
     /// # Errors
     ///
     /// Returns an error if event creation fails at any step.
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Use the provided event type index, or fall back to System.Object placeholder
         let event_type_coded_index = self
             .event_type_index
             .unwrap_or_else(|| CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef));
 
         // Create the event table entry
-        let event_token = EventTableBuilder::new()
+        let event_ref = EventTableBuilder::new()
             .name(&self.name)
             .flags(self.attributes)
             .event_type(event_type_coded_index)
-            .build(context)?;
+            .build(assembly)?;
 
         // Handle different implementation strategies
         match self.implementation {
@@ -537,11 +533,19 @@ impl EventBuilder {
                 };
                 let sig_bytes = encode_field_signature(&field_sig)?;
 
-                let backing_field_token = FieldBuilder::new()
+                let backing_field_ref = FieldBuilder::new()
                     .name(&field_name)
                     .flags(backing_field_attributes)
                     .signature(&sig_bytes)
-                    .build(context)?;
+                    .build(assembly)?;
+
+                // Get placeholder token for the backing field
+                let backing_field_token =
+                    backing_field_ref.placeholder_token().ok_or_else(|| {
+                        Error::ModificationInvalid(
+                            "Failed to get placeholder token for backing field".to_string(),
+                        )
+                    })?;
 
                 // Create add method
                 let add_field_token = backing_field_token; // Copy for move
@@ -566,7 +570,7 @@ impl EventBuilder {
                             Ok(())
                         })
                     })
-                    .build(context)?;
+                    .build(assembly)?;
 
                 // Create remove method
                 let remove_field_token = backing_field_token; // Copy for move
@@ -592,9 +596,9 @@ impl EventBuilder {
                             Ok(())
                         })
                     })
-                    .build(context)?;
+                    .build(assembly)?;
 
-                Ok(event_token)
+                Ok(event_ref)
             }
             EventImplementation::Custom {
                 add_method,
@@ -612,7 +616,7 @@ impl EventBuilder {
                     };
 
                     let configured_add = add_impl(add_method_builder);
-                    configured_add.build(context)?;
+                    configured_add.build(assembly)?;
                 } else {
                     return Err(Error::ModificationInvalid(
                         "Custom event requires add method implementation".to_string(),
@@ -631,19 +635,19 @@ impl EventBuilder {
                     };
 
                     let configured_remove = remove_impl(remove_method_builder);
-                    configured_remove.build(context)?;
+                    configured_remove.build(assembly)?;
                 } else {
                     return Err(Error::ModificationInvalid(
                         "Custom event requires remove method implementation".to_string(),
                     ));
                 }
 
-                Ok(event_token)
+                Ok(event_ref)
             }
             EventImplementation::Manual => {
-                // For manual implementation, just return the event token
+                // For manual implementation, just return the event ref
                 // User is responsible for creating methods separately
-                Ok(event_token)
+                Ok(event_ref)
             }
         }
     }
@@ -659,38 +663,37 @@ impl Default for EventBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature},
+        cilassembly::{changes::ChangeRefKind, CilAssembly},
+        metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature, tables::TableId},
     };
     use std::path::PathBuf;
 
-    fn get_test_context() -> Result<BuilderContext> {
+    fn get_test_assembly() -> Result<CilAssembly> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         let view = CilAssemblyView::from_path(&path)?;
-        let assembly = CilAssembly::new(view);
-        Ok(BuilderContext::new(assembly))
+        Ok(CilAssembly::new(view))
     }
 
     #[test]
     fn test_simple_auto_event() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let event_token = EventBuilder::new("OnClick", TypeSignature::Object)
+        let event_ref = EventBuilder::new("OnClick", TypeSignature::Object)
             .auto_event()
             .public_accessors()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Should create a valid Event token
-        assert_eq!(event_token.value() & 0xFF000000, 0x14000000); // Event table
+        // Should create a valid Event reference
+        assert_eq!(event_ref.kind(), ChangeRefKind::TableRow(TableId::Event));
 
         Ok(())
     }
 
     #[test]
     fn test_custom_event() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let event_token = EventBuilder::new("OnDataChanged", TypeSignature::Object)
+        let event_ref = EventBuilder::new("OnDataChanged", TypeSignature::Object)
             .custom()
             .add_method(|method| {
                 method.implementation(|body| {
@@ -714,60 +717,60 @@ mod tests {
                     })
                 })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(event_token.value() & 0xFF000000, 0x14000000);
+        assert_eq!(event_ref.kind(), ChangeRefKind::TableRow(TableId::Event));
 
         Ok(())
     }
 
     #[test]
     fn test_manual_event() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let event_token = EventBuilder::new("ManualEvent", TypeSignature::Object)
+        let event_ref = EventBuilder::new("ManualEvent", TypeSignature::Object)
             .manual()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(event_token.value() & 0xFF000000, 0x14000000);
+        assert_eq!(event_ref.kind(), ChangeRefKind::TableRow(TableId::Event));
 
         Ok(())
     }
 
     #[test]
     fn test_custom_backing_field() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let event_token = EventBuilder::new("OnValueChanged", TypeSignature::Object)
+        let event_ref = EventBuilder::new("OnValueChanged", TypeSignature::Object)
             .auto_event()
             .backing_field("_onValueChanged")
             .private_backing_field()
             .public_accessors()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(event_token.value() & 0xFF000000, 0x14000000);
+        assert_eq!(event_ref.kind(), ChangeRefKind::TableRow(TableId::Event));
 
         Ok(())
     }
 
     #[test]
     fn test_event_with_different_accessor_visibility() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let event_token = EventBuilder::new("MixedVisibility", TypeSignature::Object)
+        let event_ref = EventBuilder::new("MixedVisibility", TypeSignature::Object)
             .auto_event()
             .add_visibility(0x0006) // PUBLIC
             .remove_visibility(0x0001) // PRIVATE
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(event_token.value() & 0xFF000000, 0x14000000);
+        assert_eq!(event_ref.kind(), ChangeRefKind::TableRow(TableId::Event));
 
         Ok(())
     }
 
     #[test]
     fn test_custom_event_missing_add_fails() {
-        let mut context = get_test_context().unwrap();
+        let mut assembly = get_test_assembly().unwrap();
 
         let result = EventBuilder::new("InvalidCustom", TypeSignature::Object)
             .custom()
@@ -779,14 +782,14 @@ mod tests {
                     })
                 })
             })
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
     }
 
     #[test]
     fn test_custom_event_missing_remove_fails() {
-        let mut context = get_test_context().unwrap();
+        let mut assembly = get_test_assembly().unwrap();
 
         let result = EventBuilder::new("InvalidCustom", TypeSignature::Object)
             .custom()
@@ -798,25 +801,25 @@ mod tests {
                     })
                 })
             })
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
     }
 
     #[test]
     fn test_event_with_explicit_type_index() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
         // Create event with explicit delegate type reference (e.g., EventHandler at TypeRef index 5)
         let event_handler_ref = CodedIndex::new(TableId::TypeRef, 5, CodedIndexType::TypeDefOrRef);
 
-        let event_token = EventBuilder::new("OnExplicitType", TypeSignature::Object)
+        let event_ref = EventBuilder::new("OnExplicitType", TypeSignature::Object)
             .manual()
             .event_type_index(event_handler_ref)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Should create a valid Event token
-        assert_eq!(event_token.value() & 0xFF000000, 0x14000000);
+        // Should create a valid Event reference
+        assert_eq!(event_ref.kind(), ChangeRefKind::TableRow(TableId::Event));
 
         Ok(())
     }

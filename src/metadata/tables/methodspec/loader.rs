@@ -21,6 +21,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::MethodSpecRaw,
     },
@@ -49,21 +50,32 @@ impl MetadataLoader for MethodSpecLoader {
     /// - Type registry cannot resolve generic arguments
     /// - Target methods cannot accept generic instantiations
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(blob)) = (context.meta, context.blobs) {
-            if let Some(table) = header.table::<MethodSpecRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned_and_apply(
-                        |coded_index| context.get_ref(coded_index),
-                        blob,
-                        context.types,
-                    )?;
+        let (Some(header), Some(blob)) = (context.meta, context.blobs) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<MethodSpecRaw>() else {
+            return Ok(());
+        };
 
-                    context.method_spec.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("method spec 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned_and_apply(
+                    |coded_index| context.get_ref(coded_index),
+                    blob,
+                    context.types,
+                ),
+                DiagnosticCategory::Method,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.method_spec.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `MethodSpec`.

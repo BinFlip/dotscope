@@ -728,7 +728,9 @@ impl<'a> SignatureParser<'a> {
             ));
         }
 
-        Ok(result_stack.pop().unwrap())
+        result_stack
+            .pop()
+            .ok_or_else(|| malformed_error!("internal: result stack empty after validation"))
     }
 
     /// Helper method to parse a type signature without building the result (for lookahead).

@@ -749,13 +749,16 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
 
             // ClassToken or FilterOffset (4 bytes)
             if eh.flags.contains(ExceptionHandlerFlags::FILTER) {
+                // FILTER: filter_offset is the code offset where filter starts
                 section.extend_from_slice(&eh.filter_offset.to_le_bytes());
-            } else if let Some(_handler_type) = &eh.handler {
-                // For typed handlers, we would need the type token
-                // For now, use 0 as placeholder
-                section.extend_from_slice(&0u32.to_le_bytes());
+            } else if let Some(handler_type) = &eh.handler {
+                // EXCEPTION with resolved type: use the type's token
+                section.extend_from_slice(&handler_type.token.value().to_le_bytes());
+            } else if eh.flags == ExceptionHandlerFlags::EXCEPTION {
+                // EXCEPTION with unresolved type: filter_offset contains the raw type token
+                section.extend_from_slice(&eh.filter_offset.to_le_bytes());
             } else {
-                // No type token (finally/fault handlers)
+                // FINALLY (0x02) or FAULT (0x04): no type token needed
                 section.extend_from_slice(&0u32.to_le_bytes());
             }
         }
@@ -803,13 +806,16 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
 
             // ClassToken or FilterOffset (4 bytes)
             if eh.flags.contains(ExceptionHandlerFlags::FILTER) {
+                // FILTER: filter_offset is the code offset where filter starts
                 section.extend_from_slice(&eh.filter_offset.to_le_bytes());
-            } else if let Some(_handler_type) = &eh.handler {
-                // For typed handlers, we would need the type token
-                // For now, use 0 as placeholder
-                section.extend_from_slice(&0u32.to_le_bytes());
+            } else if let Some(handler_type) = &eh.handler {
+                // EXCEPTION with resolved type: use the type's token
+                section.extend_from_slice(&handler_type.token.value().to_le_bytes());
+            } else if eh.flags == ExceptionHandlerFlags::EXCEPTION {
+                // EXCEPTION with unresolved type: filter_offset contains the raw type token
+                section.extend_from_slice(&eh.filter_offset.to_le_bytes());
             } else {
-                // No type token (finally/fault handlers)
+                // FINALLY (0x02) or FAULT (0x04): no type token needed
                 section.extend_from_slice(&0u32.to_le_bytes());
             }
         }

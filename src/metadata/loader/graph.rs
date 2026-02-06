@@ -181,7 +181,7 @@ impl<'a> LoaderGraph<'a> {
             // Only in debug builds, we check for circular dependencies and
             // generate the graph as string
             self.check_circular_dependencies()?;
-            let _test = self.dump_execution_plan();
+            let _test = self.dump_execution_plan()?;
         }
 
         Ok(())
@@ -367,14 +367,10 @@ impl<'a> LoaderGraph<'a> {
     ///
     /// # Returns
     ///
-    /// A formatted string showing each execution level and its loaders with dependencies.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the graph is in an invalid state (should not happen after validation).
-    pub fn dump_execution_plan(&self) -> String {
-        // We unwrap, because this should only ever happen in debug builds here
-        let levels = self.topological_levels().unwrap();
+    /// A formatted string showing each execution level and its loaders with dependencies,
+    /// or an error if the graph is in an invalid state.
+    pub fn dump_execution_plan(&self) -> Result<String> {
+        let levels = self.topological_levels()?;
         let mut result = String::new();
 
         for (level_idx, level) in levels.iter().enumerate() {
@@ -403,6 +399,6 @@ impl<'a> LoaderGraph<'a> {
             let _ = writeln!(result, "]");
         }
 
-        result
+        Ok(result)
     }
 }

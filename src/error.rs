@@ -49,7 +49,7 @@
 //!
 //! ## Advanced Error Handling
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::{Error, metadata::cilobject::CilObject};
 //! use std::path::Path;
 //!
@@ -74,7 +74,7 @@
 //!
 //! ## Using the Malformed Error Macro
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::malformed_error;
 //!
 //! fn validate_header(size: usize) -> dotscope::Result<()> {
@@ -95,7 +95,23 @@
 
 use thiserror::Error;
 
+#[cfg(feature = "emulation")]
+use crate::emulation::EmulationError;
 use crate::metadata::{tables::TableId, token::Token};
+
+// Stub type for EmulationError when emulation feature is disabled.
+// This allows the Error enum to remain stable across feature configurations.
+// The type is public to match the visibility of the Error::Emulation variant.
+#[cfg(not(feature = "emulation"))]
+#[derive(Debug, Clone, PartialEq)]
+pub struct EmulationError(String);
+
+#[cfg(not(feature = "emulation"))]
+impl std::fmt::Display for EmulationError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "Emulation not available: {}", self.0)
+    }
+}
 
 /// Helper macro for creating malformed data errors with source location information.
 ///
@@ -115,7 +131,7 @@ use crate::metadata::{tables::TableId, token::Token};
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::malformed_error;
 /// // Simple string message
 /// let error = malformed_error!("Invalid data format");
@@ -592,6 +608,35 @@ pub enum Error {
     /// - Duplicate assembly identities
     #[error("Configuration error: {0}")]
     Configuration(String),
+
+    /// Emulation error.
+    ///
+    /// This error wraps errors from the CIL emulation engine, including
+    /// interpreter errors, memory access violations, and execution limit
+    /// violations.
+    #[error("{0}")]
+    Emulation(Box<EmulationError>),
+
+    /// Deobfuscation error.
+    ///
+    /// This error occurs during deobfuscation passes, such as control flow
+    /// unflattening, when the analysis or transformation cannot be completed.
+    #[error("Deobfuscation error: {0}")]
+    Deobfuscation(String),
+
+    /// x86/x64 native code analysis error.
+    ///
+    /// This error occurs during x86/x64 native code decoding or SSA translation,
+    /// including invalid instructions, unsupported operations, or translation failures.
+    #[error("x86 error: {0}")]
+    X86Error(String),
+
+    /// Tracing error.
+    ///
+    /// This error occurs when trace file creation or writing fails.
+    /// This includes permission errors, disk full, or invalid paths.
+    #[error("Tracing error: {0}")]
+    TracingError(String),
 }
 
 impl Clone for Error {
@@ -613,8 +658,23 @@ impl Clone for Error {
                 validator: validator.clone(),
                 message: message.clone(),
             },
+            // Emulation errors are cloneable (boxed)
+            Error::Emulation(e) => Error::Emulation(e.clone()),
+            // Deobfuscation errors are cloneable
+            Error::Deobfuscation(s) => Error::Deobfuscation(s.clone()),
+            // X86 errors are cloneable
+            Error::X86Error(s) => Error::X86Error(s.clone()),
+            // Tracing errors are cloneable
+            Error::TracingError(s) => Error::TracingError(s.clone()),
             // For all other variants, convert to their string representation and use Other
             other => Error::Other(other.to_string()),
         }
+    }
+}
+
+#[cfg(feature = "emulation")]
+impl From<EmulationError> for Error {
+    fn from(err: EmulationError) -> Self {
+        Error::Emulation(Box::new(err))
     }
 }

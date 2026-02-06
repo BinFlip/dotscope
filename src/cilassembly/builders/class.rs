@@ -5,7 +5,7 @@
 //! the existing low-level builders to provide a fluent, high-level API.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         signatures::{encode_field_signature, SignatureField, TypeSignature},
         tables::{
@@ -61,14 +61,13 @@ struct PropertyDefinition {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = CilAssembly::new(view);
-/// # let mut context = BuilderContext::new(assembly);
+/// # let mut assembly = CilAssembly::new(view);
 /// let class_token = ClassBuilder::new("Person")
 ///     .public()
 ///     .field("name", TypeSignature::String)
 ///     .field("age", TypeSignature::I4)
 ///     .default_constructor()
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -81,13 +80,12 @@ struct PropertyDefinition {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = dotscope::CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = dotscope::CilAssembly::new(view);
-/// # let mut context = dotscope::BuilderContext::new(assembly);
+/// # let mut assembly = dotscope::CilAssembly::new(view);
 /// let class_token = ClassBuilder::new("Employee")
 ///     .public()
 ///     .auto_property("Name", TypeSignature::String)
 ///     .auto_property("Salary", TypeSignature::R8)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -100,8 +98,7 @@ struct PropertyDefinition {
 ///
 /// # fn example() -> dotscope::Result<()> {
 /// # let view = dotscope::CilAssemblyView::from_path("test.dll")?;
-/// # let assembly = dotscope::CilAssembly::new(view);
-/// # let mut context = dotscope::BuilderContext::new(assembly);
+/// # let mut assembly = dotscope::CilAssembly::new(view);
 /// let class_token = ClassBuilder::new("Calculator")
 ///     .public()
 ///     .field("lastResult", TypeSignature::I4)
@@ -122,7 +119,7 @@ struct PropertyDefinition {
 ///                 Ok(())
 ///             })
 ///         }))
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok(())
 /// # }
 /// ```
@@ -405,8 +402,7 @@ impl ClassBuilder {
     ///
     /// # fn example() -> dotscope::Result<()> {
     /// # let view = dotscope::CilAssemblyView::from_path("test.dll")?;
-    /// # let assembly = dotscope::CilAssembly::new(view);
-    /// # let mut context = dotscope::BuilderContext::new(assembly);
+    /// # let mut assembly = dotscope::CilAssembly::new(view);
     /// let class_token = ClassBuilder::new("Calculator")
     ///     .method(|_m| MethodBuilder::new("Add")
     ///         .public()
@@ -419,7 +415,7 @@ impl ClassBuilder {
     ///                 Ok(())
     ///             })
     ///         }))
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
     /// # Ok(())
     /// # }
     /// ```
@@ -542,7 +538,7 @@ impl ClassBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - Builder context for managing the assembly
+    /// * `assembly` - CilAssembly for managing the assembly
     ///
     /// # Returns
     ///
@@ -553,7 +549,7 @@ impl ClassBuilder {
     /// Returns an error if:
     /// - Class creation fails at any step
     /// - Both sealed and abstract flags are set (mutually exclusive per ECMA-335)
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Validate that sealed and abstract are not both set (mutually exclusive)
         if (self.flags & TypeAttributes::SEALED) != 0
             && (self.flags & TypeAttributes::ABSTRACT) != 0
@@ -565,7 +561,7 @@ impl ClassBuilder {
         }
 
         // Create the TypeDef entry
-        let typedef_token = TypeDefBuilder::new()
+        let typedef_ref = TypeDefBuilder::new()
             .name(&self.name)
             .namespace(self.namespace.as_deref().unwrap_or(""))
             .flags(self.flags)
@@ -573,10 +569,10 @@ impl ClassBuilder {
                 self.extends
                     .unwrap_or_else(|| CodedIndex::null(CodedIndexType::TypeDefOrRef)),
             ) // null = no base class (will default to Object)
-            .build(context)?;
+            .build(assembly)?;
 
-        // Create field definitions and store their tokens
-        let mut field_tokens = Vec::new();
+        // Create field definitions and store their change refs
+        let mut field_refs: Vec<(String, ChangeRefRc)> = Vec::new();
         for field_def in &self.fields {
             // Encode the field signature
             let field_sig = SignatureField {
@@ -585,12 +581,12 @@ impl ClassBuilder {
             };
             let sig_bytes = encode_field_signature(&field_sig)?;
 
-            let field_token = FieldBuilder::new()
+            let field_ref = FieldBuilder::new()
                 .name(&field_def.name)
                 .flags(field_def.attributes)
                 .signature(&sig_bytes)
-                .build(context)?;
-            field_tokens.push((field_def.name.clone(), field_token));
+                .build(assembly)?;
+            field_refs.push((field_def.name.clone(), field_ref));
         }
 
         // Generate default constructor if requested
@@ -606,21 +602,28 @@ impl ClassBuilder {
                         Ok(())
                     })
                 })
-                .build(context)?;
+                .build(assembly)?;
         }
 
         // Create property getter/setter methods
         for prop_def in &self.properties {
             if let Some(backing_field_name) = &prop_def.backing_field_name {
-                // Find the backing field token
-                let backing_field_token = field_tokens
+                // Find the backing field change ref and get its placeholder token
+                let backing_field_ref = field_refs
                     .iter()
                     .find(|(name, _)| name == backing_field_name)
-                    .map(|(_, token)| *token)
+                    .map(|(_, change_ref)| change_ref.clone())
                     .ok_or_else(|| {
                         Error::ModificationInvalid(format!(
                             "Backing field {backing_field_name} not found"
                         ))
+                    })?;
+
+                let backing_field_token =
+                    backing_field_ref.placeholder_token().ok_or_else(|| {
+                        Error::ModificationInvalid(
+                            "Failed to get placeholder token for backing field".to_string(),
+                        )
                     })?;
 
                 // Create getter
@@ -635,7 +638,7 @@ impl ClassBuilder {
                                 Ok(())
                             })
                         })
-                        .build(context)?;
+                        .build(assembly)?;
                 }
 
                 // Create setter
@@ -651,25 +654,25 @@ impl ClassBuilder {
                                 Ok(())
                             })
                         })
-                        .build(context)?;
+                        .build(assembly)?;
                 }
             }
         }
 
         // Build custom methods
         for method_builder in self.methods {
-            method_builder.build(context)?;
+            method_builder.build(assembly)?;
         }
 
-        // Create InterfaceImpl entries
+        // Create InterfaceImpl entries - use placeholder for the class reference
         for interface_index in self.implements {
             InterfaceImplBuilder::new()
-                .class(typedef_token.into())
+                .class(typedef_ref.placeholder())
                 .interface(interface_index)
-                .build(context)?;
+                .build(assembly)?;
         }
 
-        Ok(typedef_token)
+        Ok(typedef_ref)
     }
 }
 
@@ -683,69 +686,68 @@ impl Default for ClassBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
+        cilassembly::{changes::ChangeRefKind, CilAssembly},
         metadata::{cilassemblyview::CilAssemblyView, signatures::TypeSignature, tables::TableId},
     };
     use std::path::PathBuf;
 
-    fn get_test_context() -> Result<BuilderContext> {
+    fn get_test_assembly() -> Result<CilAssembly> {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         let view = CilAssemblyView::from_path(&path)?;
-        let assembly = CilAssembly::new(view);
-        Ok(BuilderContext::new(assembly))
+        Ok(CilAssembly::new(view))
     }
 
     #[test]
     fn test_simple_class() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let class_token = ClassBuilder::new("SimpleClass")
+        let class_ref = ClassBuilder::new("SimpleClass")
             .public()
             .field("value", TypeSignature::I4)
             .default_constructor()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        // Should create a valid TypeDef token
-        assert_eq!(class_token.value() & 0xFF000000, 0x02000000); // TypeDef table
+        // Should create a valid TypeDef reference
+        assert_eq!(class_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_class_with_namespace() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let class_token = ClassBuilder::new("MyClass")
+        let class_ref = ClassBuilder::new("MyClass")
             .namespace("MyCompany.MyProduct")
             .public()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(class_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(class_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_class_with_auto_properties() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let class_token = ClassBuilder::new("Person")
+        let class_ref = ClassBuilder::new("Person")
             .public()
             .auto_property("Name", TypeSignature::String)
             .auto_property("Age", TypeSignature::I4)
             .default_constructor()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(class_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(class_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_class_with_methods() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let class_token = ClassBuilder::new("Calculator")
+        let class_ref = ClassBuilder::new("Calculator")
             .public()
             .field("lastResult", TypeSignature::I4)
             .method(|_m| {
@@ -762,117 +764,117 @@ mod tests {
                         })
                     })
             })
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(class_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(class_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_sealed_class() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let class_token = ClassBuilder::new("SealedClass")
+        let class_ref = ClassBuilder::new("SealedClass")
             .public()
             .sealed()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(class_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(class_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_abstract_class() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let class_token = ClassBuilder::new("AbstractBase")
+        let class_ref = ClassBuilder::new("AbstractBase")
             .public()
             .abstract_class()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(class_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(class_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_class_with_static_fields() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let class_token = ClassBuilder::new("Configuration")
+        let class_ref = ClassBuilder::new("Configuration")
             .public()
             .static_field("instance", TypeSignature::Object)
             .public_field("settings", TypeSignature::String)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(class_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(class_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_class_with_readonly_property() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
-        let class_token = ClassBuilder::new("Circle")
+        let class_ref = ClassBuilder::new("Circle")
             .public()
             .field("radius", TypeSignature::R8)
             .readonly_property("Diameter", TypeSignature::R8)
             .default_constructor()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(class_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(class_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_class_with_inheritance() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
         let base_class_index = CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef); // Placeholder base class
 
-        let class_token = ClassBuilder::new("DerivedClass")
+        let class_ref = ClassBuilder::new("DerivedClass")
             .public()
             .inherits(base_class_index)
             .default_constructor()
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(class_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(class_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_class_with_interfaces() -> Result<()> {
-        let mut context = get_test_context()?;
+        let mut assembly = get_test_assembly()?;
 
         let interface1 = CodedIndex::new(TableId::TypeRef, 2, CodedIndexType::TypeDefOrRef); // Placeholder interface
         let interface2 = CodedIndex::new(TableId::TypeRef, 3, CodedIndexType::TypeDefOrRef); // Another interface
 
-        let class_token = ClassBuilder::new("Implementation")
+        let class_ref = ClassBuilder::new("Implementation")
             .public()
             .implements(interface1)
             .implements(interface2)
-            .build(&mut context)?;
+            .build(&mut assembly)?;
 
-        assert_eq!(class_token.value() & 0xFF000000, 0x02000000);
+        assert_eq!(class_ref.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
 
         Ok(())
     }
 
     #[test]
     fn test_sealed_and_abstract_mutually_exclusive() {
-        let mut context = get_test_context().unwrap();
+        let mut assembly = get_test_assembly().unwrap();
 
         // Attempting to create a class that is both sealed and abstract should fail
         let result = ClassBuilder::new("InvalidClass")
             .public()
             .sealed()
             .abstract_class()
-            .build(&mut context);
+            .build(&mut assembly);
 
         assert!(result.is_err());
         let err = result.unwrap_err();

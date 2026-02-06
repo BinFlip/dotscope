@@ -29,6 +29,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::ManifestResourceRaw,
     },
@@ -57,23 +58,34 @@ impl MetadataLoader for ManifestResourceLoader {
     /// * `Ok(())` - If all `ManifestResource` entries were processed successfully
     /// * `Err(_)` - If reference resolution or resource access setup fails
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let (Some(header), Some(strings)) = (context.meta, context.strings) {
-            if let Some(table) = header.table::<ManifestResourceRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(
-                        |coded_index| context.get_ref(coded_index),
-                        &context.input,
-                        context.header,
-                        strings,
-                        table,
-                    )?;
+        let (Some(header), Some(strings)) = (context.meta, context.strings) else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<ManifestResourceRaw>() else {
+            return Ok(());
+        };
 
-                    context.resources.insert(owned.clone());
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("manifest resource 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned(
+                    |coded_index| context.get_ref(coded_index),
+                    &context.input,
+                    context.header,
+                    strings,
+                    table,
+                ),
+                DiagnosticCategory::Table,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.resources.insert(owned.clone());
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `ManifestResource`.

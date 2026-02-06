@@ -10,6 +10,8 @@ use crate::{
 };
 
 impl RowReadable for MethodSemanticsRaw {
+    const TABLE_ID: TableId = TableId::MethodSemantics;
+
     /// Reads a single `MethodSemantics` table row from binary data.
     ///
     /// Parses the binary representation according to ECMA-335 §II.22.28:

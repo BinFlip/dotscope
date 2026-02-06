@@ -53,7 +53,7 @@
 //! ## Parse Existing Import Table
 //!
 //! ```rust,ignore
-//! use dotscope::metadata::imports::native::NativeImports;
+//! use dotscope::metadata::imports::NativeImports;
 //!
 //! let pe_data = std::fs::read("application.exe")?;
 //! let native_imports = NativeImports::parse_from_pe(&pe_data)?;
@@ -72,9 +72,10 @@
 //!
 //! ## Create Import Table
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::imports::native::NativeImports;
+//! ```rust,no_run
+//! use dotscope::metadata::imports::NativeImports;
 //!
+//! # fn main() -> dotscope::Result<()> {
 //! let mut imports = NativeImports::new();
 //!
 //! // Add DLL and functions
@@ -86,7 +87,9 @@
 //! imports.add_function_by_ordinal("user32.dll", 120)?; // MessageBoxW
 //!
 //! // Generate import table data
-//! let import_data = imports.get_import_table_data();
+//! let import_data = imports.get_import_table_data(false)?;
+//! # Ok(())
+//! # }
 //! ```
 //!
 //! # Thread Safety
@@ -106,7 +109,7 @@ use std::collections::HashMap;
 
 use crate::{
     file::pe::Import,
-    utils::{write_le_at, write_string_at},
+    utils::{to_u32, write_le_at, write_string_at},
     Result,
 };
 
@@ -124,9 +127,10 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
-/// use dotscope::metadata::imports::native::NativeImports;
+/// ```rust,no_run
+/// use dotscope::metadata::imports::NativeImports;
 ///
+/// # fn main() -> dotscope::Result<()> {
 /// let mut imports = NativeImports::new();
 ///
 /// // Add a DLL dependency
@@ -134,9 +138,10 @@ use crate::{
 /// imports.add_function("kernel32.dll", "GetCurrentProcessId")?;
 ///
 /// // Generate import table
-/// let table_data = imports.get_import_table_data();
+/// let table_data = imports.get_import_table_data(false)?;
 /// println!("Import table size: {} bytes", table_data.len());
-/// # Ok::<(), dotscope::Error>(())
+/// # Ok(())
+/// # }
 /// ```
 #[derive(Debug, Clone)]
 pub struct NativeImports {
@@ -385,7 +390,7 @@ impl NativeImports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::imports::NativeImports;
     ///
     /// let mut imports = NativeImports::new();
@@ -432,7 +437,7 @@ impl NativeImports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::imports::NativeImports;
     ///
     /// let mut imports = NativeImports::new();
@@ -495,7 +500,10 @@ impl NativeImports {
             original_value: 0,
         };
 
-        let descriptor = self.descriptors.get_mut(dll_name).unwrap();
+        let descriptor = self
+            .descriptors
+            .get_mut(dll_name)
+            .ok_or_else(|| malformed_error!("DLL '{dll_name}' disappeared from import table"))?;
         descriptor.functions.push(function);
         self.iat_entries.insert(iat_rva, iat_entry);
 
@@ -513,7 +521,7 @@ impl NativeImports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::imports::NativeImports;
     ///
     /// let mut imports = NativeImports::new();
@@ -558,7 +566,10 @@ impl NativeImports {
         }
 
         let iat_rva = self.allocate_iat_rva();
-        let descriptor = self.descriptors.get_mut(dll_name).unwrap();
+        let descriptor = self
+            .descriptors
+            .get_mut(dll_name)
+            .ok_or_else(|| malformed_error!("DLL '{dll_name}' disappeared from import table"))?;
 
         let function = Import {
             dll: dll_name.to_owned(),
@@ -592,7 +603,7 @@ impl NativeImports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::imports::NativeImports;
     ///
     /// let mut imports = NativeImports::new();
@@ -618,7 +629,7 @@ impl NativeImports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::imports::NativeImports;
     ///
     /// let mut imports = NativeImports::new();
@@ -647,7 +658,7 @@ impl NativeImports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::imports::NativeImports;
     ///
     /// let mut imports = NativeImports::new();
@@ -683,7 +694,9 @@ impl NativeImports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::metadata::imports::NativeImports;
+    ///
     /// let imports = NativeImports::new();
     /// println!("Total imported functions: {}", imports.total_function_count());
     /// ```
@@ -719,7 +732,7 @@ impl NativeImports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::imports::NativeImports;
     ///
     /// let mut imports = NativeImports::new();
@@ -754,7 +767,7 @@ impl NativeImports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::imports::NativeImports;
     ///
     /// let mut imports = NativeImports::new();
@@ -783,6 +796,34 @@ impl NativeImports {
     /// 4. Name table with function names and hints
     /// 5. DLL name strings
     pub fn get_import_table_data(&self, is_pe32_plus: bool) -> Result<Vec<u8>> {
+        self.get_import_table_data_with_base_rva(is_pe32_plus, self.import_table_base_rva)
+    }
+
+    /// Generate import table data for PE writing with a specified base RVA.
+    ///
+    /// This is the same as [`get_import_table_data`](Self::get_import_table_data)
+    /// but allows specifying the base RVA for all internal RVA calculations.
+    /// This is useful when the import table location is calculated dynamically
+    /// during PE file layout.
+    ///
+    /// # Arguments
+    /// * `is_pe32_plus` - Whether this is PE32+ format (64-bit) or PE32 (32-bit)
+    /// * `base_rva` - The RVA where the import table will be placed in the final PE file
+    ///
+    /// # Returns
+    ///
+    /// A `Result` containing a vector with the complete import table data in PE format,
+    /// or an empty vector if no imports are present.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the import table data cannot be serialized due to
+    /// invalid RVA calculations or buffer allocation failures.
+    pub fn get_import_table_data_with_base_rva(
+        &self,
+        is_pe32_plus: bool,
+        base_rva: u32,
+    ) -> Result<Vec<u8>> {
         if self.is_empty() {
             return Ok(Vec::new());
         }
@@ -835,10 +876,7 @@ impl NativeImports {
 
         for descriptor in descriptors_sorted {
             let mut desc = descriptor.clone();
-            #[allow(clippy::cast_possible_truncation)]
-            {
-                desc.original_first_thunk = self.import_table_base_rva + (ilt_offset as u32);
-            }
+            desc.original_first_thunk = base_rva + to_u32(ilt_offset)?;
             ilt_offset += (descriptor.functions.len() + 1) * entry_size; // +1 for null terminator
             descriptors_with_offsets.push(desc);
         }
@@ -848,10 +886,7 @@ impl NativeImports {
         let mut iat_offset = iat_start_offset;
 
         for descriptor in &mut descriptors_with_offsets {
-            #[allow(clippy::cast_possible_truncation)]
-            {
-                descriptor.first_thunk = self.import_table_base_rva + (iat_offset as u32);
-            }
+            descriptor.first_thunk = base_rva + to_u32(iat_offset)?;
             iat_offset += (descriptor.functions.len() + 1) * entry_size; // +1 for null terminator
         }
 
@@ -864,8 +899,7 @@ impl NativeImports {
 
         // First pass: calculate DLL name RVAs
         for descriptor in &descriptors_with_offsets {
-            #[allow(clippy::cast_possible_truncation)]
-            let dll_name_rva = self.import_table_base_rva + (current_string_offset as u32);
+            let dll_name_rva = base_rva + to_u32(current_string_offset)?;
             dll_name_rvas.push(dll_name_rva);
             current_string_offset += descriptor.dll_name.len() + 1; // +1 for null terminator
         }
@@ -876,8 +910,7 @@ impl NativeImports {
 
             for function in &descriptor.functions {
                 if let Some(ref name) = function.name {
-                    #[allow(clippy::cast_possible_truncation)]
-                    let func_name_rva = self.import_table_base_rva + (current_string_offset as u32);
+                    let func_name_rva = base_rva + to_u32(current_string_offset)?;
                     func_rvas.push(u64::from(func_name_rva));
                     current_string_offset += 2; // hint (2 bytes)
                     current_string_offset += name.len() + 1; // name + null terminator
@@ -1002,7 +1035,7 @@ impl NativeImports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::imports::NativeImports;
     ///
     /// let mut imports = NativeImports::new();

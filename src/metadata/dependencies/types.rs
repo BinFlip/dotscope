@@ -121,12 +121,14 @@ impl PartialEq for DependencySource {
     ///
     /// ```rust,ignore
     /// use dotscope::metadata::dependencies::DependencySource;
+    /// use dotscope::metadata::identity::AssemblyIdentity;
+    ///
+    /// let id = AssemblyIdentity::parse("Test, Version=1.0.0.0").unwrap();
+    /// let source1 = DependencySource::AssemblyRef(id.clone());
+    /// let source2 = DependencySource::AssemblyRef(id);
     ///
     /// // Two AssemblyRef sources to the same assembly are equal
     /// assert_eq!(source1, source2);
-    ///
-    /// // AssemblyRef and ModuleRef are never equal
-    /// assert_ne!(assembly_source, module_source);
     /// ```
     fn eq(&self, other: &Self) -> bool {
         match (self, other) {

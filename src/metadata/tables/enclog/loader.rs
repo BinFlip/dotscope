@@ -21,6 +21,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{EncLogRaw, TableId},
     },
@@ -49,17 +50,25 @@ impl MetadataLoader for EncLogLoader {
     /// * `Ok(())` - `EncLog` entries successfully loaded or table not present
     /// * `Err(`[`crate::Error`]`)` - Malformed data or processing error
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<EncLogRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<EncLogRaw>() else {
+            return Ok(());
+        };
 
-                    context.enc_log.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("enc log 0x{:08x}", row.token.value());
+
+            let Some(owned) =
+                context.handle_result(row.to_owned(), DiagnosticCategory::Table, token_msg)?
+            else {
+                return Ok(());
+            };
+
+            context.enc_log.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for the `EncLog` table

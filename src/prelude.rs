@@ -89,12 +89,12 @@
 //! let mut assembler = InstructionAssembler::new();
 //! assembler
 //!     .ldarg_0()?      // Load first argument
-//!     .ldarg_1()?      // Load second argument  
+//!     .ldarg_1()?      // Load second argument
 //!     .add()?          // Add them
 //!     .ret()?;         // Return result
-//! let bytecode = assembler.finish()?;
+//! let (bytecode, max_stack, handlers) = assembler.finish()?;
 //!
-//! // Low-level encoder for any CIL instruction  
+//! // Low-level encoder for any CIL instruction
 //! let mut encoder = InstructionEncoder::new();
 //! encoder.emit_instruction("ldarg.0", None)?;
 //! encoder.emit_instruction("ldc.i4.s", Some(Operand::Immediate(Immediate::Int8(42))))?;
@@ -111,7 +111,7 @@
 //!    .ldc_i4_0()?
 //!    .label("end")?
 //!    .ret()?;
-//! let conditional_bytecode = asm.finish()?;
+//! let (conditional_bytecode, _, _) = asm.finish()?;
 //! # Ok::<(), dotscope::Error>(())
 //! ```
 //!
@@ -197,6 +197,15 @@ pub use crate::Result;
 /// Controls validation strictness, error handling behavior, and performance trade-offs
 /// during metadata parsing and type system construction.
 pub use crate::ValidationConfig;
+
+/// Diagnostics collection for assembly loading anomalies.
+///
+/// Thread-safe container for collecting warnings and errors during assembly loading.
+/// Essential for lenient loading of obfuscated or malformed assemblies where issues
+/// should be reported but not prevent loading from completing.
+pub use crate::metadata::diagnostics::{
+    Diagnostic, DiagnosticCategory, DiagnosticSeverity, Diagnostics,
+};
 
 // ================================================================================================
 // Main Entry Points
@@ -696,22 +705,21 @@ pub use crate::metadata::tables::{
 // ================================================================================================
 //
 // This section provides metadata builder types for creating and modifying .NET assemblies.
-// These builders use a fluent API pattern where the BuilderContext is passed to the build()
+// These builders use a fluent API pattern where CilAssembly is passed to the build()
 // method, enabling ergonomic creation of multiple metadata entries in sequence.
 //
 // All builders follow the established pattern:
-// - Builder structs do NOT hold references to BuilderContext
-// - Context is passed as a parameter to the build() method
+// - Builder structs do NOT hold references to CilAssembly
+// - Assembly is passed as a parameter to the build() method
 // - All builders implement Default trait for clippy compliance
 // - Multiple builders can be used in sequence without borrow checker issues
 
+pub use crate::cilassembly::ChangeRefRc;
 /// Core builder infrastructure.
 ///
-/// BuilderContext coordinates metadata creation across all builders, managing heap operations,
-/// table modifications, and cross-reference resolution. CilAssembly provides the mutable assembly
-/// interface required for metadata modification operations. ReferenceHandlingStrategy controls
-/// how references are handled when removing heap entries or table rows.
-pub use crate::{BuilderContext, CilAssembly, ReferenceHandlingStrategy};
+/// CilAssembly provides the mutable assembly interface required for metadata modification operations.
+/// ChangeRefRc is a reference-counted handle for tracking heap additions and table modifications.
+pub use crate::CilAssembly;
 
 /// Assembly validation pipeline components.
 ///
@@ -741,13 +749,17 @@ pub use crate::metadata::tables::{TypeDefBuilder, TypeRefBuilder, TypeSpecBuilde
 /// method implementation, parameter information, property encapsulation, event
 /// notification mechanisms, and declarative metadata annotations.
 pub use crate::metadata::tables::{
-    AssemblyRefBuilder, ClassLayoutBuilder, ConstantBuilder, CustomAttributeBuilder,
-    DeclSecurityBuilder, DocumentBuilder, EventMapBuilder, ExportedTypeBuilder, FieldBuilder,
-    FieldLayoutBuilder, FieldMarshalBuilder, FieldRVABuilder, FileBuilder, GenericParamBuilder,
-    GenericParamConstraintBuilder, ImplMapBuilder, InterfaceImplBuilder, LocalScopeBuilder,
-    LocalVariableBuilder, ManifestResourceBuilder, MemberRefBuilder, MethodDebugInformationBuilder,
-    MethodDefBuilder, MethodImplBuilder, MethodSemanticsBuilder, MethodSpecBuilder, ModuleBuilder,
-    ModuleRefBuilder, NestedClassBuilder, ParamBuilder, PropertyMapBuilder, StandAloneSigBuilder,
+    AssemblyOSBuilder, AssemblyProcessorBuilder, AssemblyRefBuilder, AssemblyRefOSBuilder,
+    AssemblyRefProcessorBuilder, ClassLayoutBuilder, ConstantBuilder, CustomAttributeBuilder,
+    CustomDebugInformationBuilder, DeclSecurityBuilder, DocumentBuilder, EncLogBuilder,
+    EncMapBuilder, EventMapBuilder, EventPtrBuilder, ExportedTypeBuilder, FieldBuilder,
+    FieldLayoutBuilder, FieldMarshalBuilder, FieldPtrBuilder, FieldRVABuilder, FileBuilder,
+    GenericParamBuilder, GenericParamConstraintBuilder, ImplMapBuilder, ImportScopeBuilder,
+    InterfaceImplBuilder, LocalConstantBuilder, LocalScopeBuilder, LocalVariableBuilder,
+    ManifestResourceBuilder, MemberRefBuilder, MethodDebugInformationBuilder, MethodDefBuilder,
+    MethodImplBuilder, MethodPtrBuilder, MethodSemanticsBuilder, MethodSpecBuilder, ModuleBuilder,
+    ModuleRefBuilder, NestedClassBuilder, ParamBuilder, ParamPtrBuilder, PropertyMapBuilder,
+    PropertyPtrBuilder, StandAloneSigBuilder, StateMachineMethodBuilder,
 };
 
 /// High-level builders for .NET constructs.
@@ -791,4 +803,138 @@ pub use crate::metadata::tables::MethodSemanticsAttributes;
 pub use crate::file::pe::{
     CoffHeader, DataDirectories, DataDirectory, DataDirectoryType, DosHeader, Export as PeExport,
     Import as PeImport, OptionalHeader, Pe, SectionTable, StandardFields, WindowsFields,
+};
+
+/// Generator configuration for PE file output.
+///
+/// Use `CilAssembly::to_file()` or `CilAssembly::to_memory()` to generate assemblies.
+/// Use `GeneratorConfig` for advanced configuration.
+pub use crate::cilassembly::GeneratorConfig;
+
+// ================================================================================================
+// Analysis Infrastructure
+// ================================================================================================
+//
+// This section provides program analysis infrastructure for .NET assemblies including
+// control flow graphs, SSA (Static Single Assignment) form, data flow analysis, and
+// call graph construction. These are foundational types for advanced code analysis,
+// optimization, and deobfuscation.
+
+/// Control flow graph types.
+///
+/// Build and analyze control flow graphs from CIL method bodies. Includes edge classification,
+/// loop detection, and dominator tree computation for program analysis.
+pub use crate::analysis::{CfgEdge, CfgEdgeKind, ControlFlowGraph, LoopForest, LoopInfo};
+
+/// SSA (Static Single Assignment) form types.
+///
+/// Convert CIL methods to SSA form for advanced analysis. Includes SSA function representation,
+/// variables, operations, and phi nodes for data flow analysis.
+pub use crate::analysis::{
+    ConstValue, MethodPurity, PhiNode, ReturnInfo, SsaBlock, SsaConverter, SsaFunction,
+    SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable, VariableOrigin,
+};
+
+/// Data flow analysis types.
+///
+/// Generic data flow analysis framework including reaching definitions, live variables,
+/// and constant propagation. Provides lattice-based analysis with configurable direction.
+pub use crate::analysis::{
+    ConstantPropagation, DataFlowAnalysis, DataFlowSolver, Direction, LiveVariables,
+    ReachingDefinitions, ScalarValue,
+};
+
+/// Call graph analysis.
+///
+/// Build and analyze call graphs for interprocedural analysis. Essential for understanding
+/// method dependencies and enabling whole-program optimization.
+pub use crate::analysis::CallGraph;
+
+// ================================================================================================
+// Deobfuscation Framework
+// ================================================================================================
+//
+// This section provides the deobfuscation framework for detecting and removing code
+// obfuscation from .NET assemblies. Includes the deobfuscation engine, obfuscator support,
+// pass infrastructure, and built-in transformation passes.
+
+/// Deobfuscation engine and configuration.
+///
+/// Main entry point for deobfuscation with configurable passes and obfuscator support.
+/// Process obfuscated assemblies to recover original code structure.
+#[cfg(feature = "deobfuscation")]
+pub use crate::deobfuscation::{DeobfuscationEngine, DeobfuscationResult, EngineConfig};
+
+/// Obfuscator detection and support.
+///
+/// Obfuscator-based identification with confidence scoring. Create custom obfuscator
+/// implementations for detecting and handling specific obfuscators.
+#[cfg(feature = "deobfuscation")]
+pub use crate::deobfuscation::{
+    DetectionResult, DetectionScore, Obfuscator, ObfuscatorDetector, ObfuscatorRegistry,
+};
+
+/// Pass system for SSA-based transformations.
+///
+/// Create custom deobfuscation passes that operate on SSA form. The scheduler manages
+/// pass execution order and fixpoint iteration.
+#[cfg(feature = "deobfuscation")]
+pub use crate::deobfuscation::{AnalysisContext, EventLog, PassScheduler, SsaPass};
+
+/// Built-in deobfuscation passes.
+///
+/// Standard passes for common deobfuscation tasks: constant propagation, dead code
+/// elimination, control flow simplification, and string decryption.
+#[cfg(feature = "deobfuscation")]
+pub use crate::deobfuscation::passes::{
+    ConstantPropagationPass, ControlFlowSimplificationPass, CopyPropagationPass,
+    DeadCodeEliminationPass, DecryptionPass, OpaquePredicatePass,
+};
+
+/// Code generation from SSA.
+///
+/// Convert SSA form back to CIL bytecode after deobfuscation transformations.
+#[cfg(feature = "deobfuscation")]
+pub use crate::deobfuscation::SsaCodeGenerator;
+
+// ================================================================================================
+// Emulation Engine
+// ================================================================================================
+//
+// This section provides the CIL emulation engine for controlled execution of .NET bytecode.
+// Essential for deobfuscation when values are computed at runtime, such as string decryption
+// and dynamic control flow resolution.
+
+/// Emulation value types.
+///
+/// Runtime value representation for CIL emulation including primitives, references,
+/// and symbolic values for partial emulation.
+#[cfg(feature = "emulation")]
+pub use crate::emulation::{BinaryOp, EmValue, HeapRef, SymbolicValue, TaintSource};
+
+/// Emulation memory model.
+///
+/// Memory model for CIL emulation including evaluation stack, local variables,
+/// arguments, managed heap simulation, and Copy-on-Write memory pages.
+#[cfg(feature = "emulation")]
+pub use crate::emulation::{
+    ArgumentStorage, EvaluationStack, LocalVariables, ManagedHeap, Page, PAGE_SIZE,
+};
+
+/// Emulation engine and control.
+///
+/// Core interpreter and execution controller with configurable limits and hook system
+/// for intercepting method calls and providing custom behavior.
+#[cfg(feature = "emulation")]
+pub use crate::emulation::{EmulationController, EmulationLimits, EmulationOutcome, Interpreter};
+
+/// Hook system for method interception.
+///
+/// The hook system allows intercepting method calls during emulation to provide custom
+/// behavior. Use these types to implement your own hooks for methods that cannot be
+/// directly emulated or require special handling.
+#[cfg(feature = "emulation")]
+pub use crate::emulation::{
+    Hook, HookContext, HookManager, HookMatcher, HookOutcome, HookPriority, PostHookResult,
+    PreHookResult,
 };

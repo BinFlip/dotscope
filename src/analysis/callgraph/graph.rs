@@ -5,8 +5,8 @@
 //! is constructed by scanning all method bodies for call instructions and
 //! resolving their targets using assembly metadata and Class Hierarchy Analysis.
 //!
-//! The implementation leverages the generic [`DirectedGraph`] infrastructure
-//! from the `utils/graph` module, providing access to standard graph algorithms.
+//! The implementation leverages generic graph infrastructure, providing access
+//! to standard graph algorithms.
 
 use std::collections::{HashMap, HashSet};
 use std::fmt::Write;
@@ -37,9 +37,9 @@ use crate::{
 /// inter-procedural analysis such as dead code detection, call chain analysis,
 /// and optimization.
 ///
-/// This implementation uses the generic [`DirectedGraph`] infrastructure from
-/// `utils/graph`, providing access to standard graph algorithms like SCC
-/// computation, topological sorting, and traversal.
+/// This implementation uses generic graph infrastructure, providing access
+/// to standard graph algorithms like SCC computation, topological sorting,
+/// and traversal.
 ///
 /// # Example
 ///
@@ -79,6 +79,7 @@ impl CallGraph {
     /// # Returns
     ///
     /// An empty `CallGraph` with no methods or call edges.
+    #[must_use]
     pub fn new() -> Self {
         Self {
             graph: DirectedGraph::new(),
@@ -248,10 +249,9 @@ impl CallGraph {
         let mut visited: HashSet<Token> = HashSet::new();
 
         while let Some(current_token) = worklist.pop() {
-            if visited.contains(&current_token) {
+            if !visited.insert(current_token) {
                 continue;
             }
-            visited.insert(current_token);
 
             // Try to get the method - could be internal (MethodDef) or external (MemberRef/MethodSpec)
             let table_id = current_token.table();
@@ -926,7 +926,7 @@ impl CallGraph {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::analysis::CallGraph;
     /// use dotscope::CilObject;
     /// use std::path::Path;

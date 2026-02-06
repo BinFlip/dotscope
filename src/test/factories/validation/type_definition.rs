@@ -4,13 +4,11 @@
 //! for creating test assemblies with various type definition validation scenarios.
 
 use crate::{
-    cilassembly::CilAssembly,
     metadata::{
-        cilassemblyview::CilAssemblyView,
         tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
         token::Token,
     },
-    test::{get_testfile_mscorlib, TestAssembly},
+    test::{create_test_assembly, get_testfile_mscorlib, TestAssembly},
     Error, Result,
 };
 
@@ -53,191 +51,139 @@ pub fn owned_type_definition_validator_file_factory() -> Result<Vec<TestAssembly
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/definition.rs`
 pub fn create_assembly_with_empty_type_name() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
-    let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
+    create_test_assembly(get_testfile_mscorlib, |assembly| {
+        // Create type with empty name
+        let empty_name_index = assembly
+            .string_add("")
+            .map_err(|e| Error::Other(format!("Failed to add empty type name: {e}")))?;
 
-    let mut assembly = CilAssembly::new(view);
+        // Create a regular namespace (not "<Module>") to ensure validation triggers
+        let namespace_index = assembly
+            .string_add("TestNamespace")
+            .map_err(|e| Error::Other(format!("Failed to add namespace: {e}")))?;
 
-    // Create type with empty name
-    let empty_name_index = assembly
-        .string_add("")
-        .map_err(|e| Error::Other(format!("Failed to add empty type name: {e}")))?;
+        let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
-    // Create a regular namespace (not "<Module>") to ensure validation triggers
-    let namespace_index = assembly
-        .string_add("TestNamespace")
-        .map_err(|e| Error::Other(format!("Failed to add namespace: {e}")))?;
+        let invalid_type = TypeDefRaw {
+            rid: type_rid,
+            token: Token::new(0x02000000 + type_rid),
+            offset: 0,
+            flags: 0x00000001,                             // Public
+            type_name: empty_name_index.placeholder(), // Empty name - should trigger validation failure
+            type_namespace: namespace_index.placeholder(), // Regular namespace (not "<Module>")
+            extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
+            field_list: 1,
+            method_list: 1,
+        };
 
-    let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
+        assembly
+            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
+            .map_err(|e| Error::Other(format!("Failed to add invalid type: {e}")))?;
 
-    let invalid_type = TypeDefRaw {
-        rid: type_rid,
-        token: Token::new(0x02000000 + type_rid),
-        offset: 0,
-        flags: 0x00000001,               // Public
-        type_name: empty_name_index,     // Empty name - should trigger validation failure
-        type_namespace: namespace_index, // Regular namespace (not "<Module>")
-        extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
-        field_list: 1,
-        method_list: 1,
-    };
-
-    assembly
-        .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-        .map_err(|e| Error::Other(format!("Failed to add invalid type: {e}")))?;
-
-    let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-
-    assembly
-        .write_to_file(temp_file.path())
-        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
-
-    Ok(TestAssembly::from_temp_file(temp_file, false))
+        Ok(())
+    })
 }
 
 /// Creates an assembly with a type name containing null character - validation should fail
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/definition.rs`
 pub fn create_assembly_with_null_char_in_type_name() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
-    let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
+    create_test_assembly(get_testfile_mscorlib, |assembly| {
+        // Create type name with null character
+        let invalid_name = "Invalid\0Type";
+        let invalid_name_index = assembly
+            .string_add(invalid_name)
+            .map_err(|e| Error::Other(format!("Failed to add invalid type name: {e}")))?;
 
-    let mut assembly = CilAssembly::new(view);
+        let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
-    // Create type name with null character
-    let invalid_name = "Invalid\0Type";
-    let invalid_name_index = assembly
-        .string_add(invalid_name)
-        .map_err(|e| Error::Other(format!("Failed to add invalid type name: {e}")))?;
+        let invalid_type = TypeDefRaw {
+            rid: type_rid,
+            token: Token::new(0x02000000 + type_rid),
+            offset: 0,
+            flags: 0x00000001,                           // Public
+            type_name: invalid_name_index.placeholder(), // Name with null character - should trigger validation failure
+            type_namespace: 0,
+            extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
+            field_list: 1,
+            method_list: 1,
+        };
 
-    let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
+        assembly
+            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
+            .map_err(|e| Error::Other(format!("Failed to add invalid type: {e}")))?;
 
-    let invalid_type = TypeDefRaw {
-        rid: type_rid,
-        token: Token::new(0x02000000 + type_rid),
-        offset: 0,
-        flags: 0x00000001,             // Public
-        type_name: invalid_name_index, // Name with null character - should trigger validation failure
-        type_namespace: 0,
-        extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
-        field_list: 1,
-        method_list: 1,
-    };
-
-    assembly
-        .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-        .map_err(|e| Error::Other(format!("Failed to add invalid type: {e}")))?;
-
-    let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-
-    assembly
-        .write_to_file(temp_file.path())
-        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
-
-    Ok(TestAssembly::from_temp_file(temp_file, false))
+        Ok(())
+    })
 }
 
 /// Creates an assembly with a namespace containing null character - validation should fail
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/definition.rs`
 pub fn create_assembly_with_null_char_in_namespace() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
-    let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
+    create_test_assembly(get_testfile_mscorlib, |assembly| {
+        // Create valid type name
+        let type_name_index = assembly
+            .string_add("ValidTypeName")
+            .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
 
-    let mut assembly = CilAssembly::new(view);
+        // Create namespace with null character
+        let invalid_namespace = "Invalid\0Namespace";
+        let invalid_namespace_index = assembly
+            .string_add(invalid_namespace)
+            .map_err(|e| Error::Other(format!("Failed to add invalid namespace: {e}")))?;
 
-    // Create valid type name
-    let type_name_index = assembly
-        .string_add("ValidTypeName")
-        .map_err(|e| Error::Other(format!("Failed to add type name: {e}")))?;
+        let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
-    // Create namespace with null character
-    let invalid_namespace = "Invalid\0Namespace";
-    let invalid_namespace_index = assembly
-        .string_add(invalid_namespace)
-        .map_err(|e| Error::Other(format!("Failed to add invalid namespace: {e}")))?;
+        let invalid_type = TypeDefRaw {
+            rid: type_rid,
+            token: Token::new(0x02000000 + type_rid),
+            offset: 0,
+            flags: 0x00000001, // Public
+            type_name: type_name_index.placeholder(),
+            type_namespace: invalid_namespace_index.placeholder(), // Namespace with null character - should trigger validation failure
+            extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
+            field_list: 1,
+            method_list: 1,
+        };
 
-    let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
+        assembly
+            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
+            .map_err(|e| Error::Other(format!("Failed to add invalid type: {e}")))?;
 
-    let invalid_type = TypeDefRaw {
-        rid: type_rid,
-        token: Token::new(0x02000000 + type_rid),
-        offset: 0,
-        flags: 0x00000001, // Public
-        type_name: type_name_index,
-        type_namespace: invalid_namespace_index, // Namespace with null character - should trigger validation failure
-        extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
-        field_list: 1,
-        method_list: 1,
-    };
-
-    assembly
-        .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-        .map_err(|e| Error::Other(format!("Failed to add invalid type: {e}")))?;
-
-    let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-
-    assembly
-        .write_to_file(temp_file.path())
-        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
-
-    Ok(TestAssembly::from_temp_file(temp_file, false))
+        Ok(())
+    })
 }
 
 /// Creates an assembly with a malformed special name pattern - validation should fail
 ///
 /// Originally from: `src/metadata/validation/validators/owned/types/definition.rs`
 pub fn create_assembly_with_malformed_special_name() -> Result<TestAssembly> {
-    let Some(clean_testfile) = get_testfile_mscorlib() else {
-        return Err(Error::Other("mscorlib.dll not available".to_string()));
-    };
-    let view = CilAssemblyView::from_path(&clean_testfile)
-        .map_err(|e| Error::Other(format!("Failed to load test assembly: {e}")))?;
+    create_test_assembly(get_testfile_mscorlib, |assembly| {
+        // Create type name with malformed special pattern (starts with < but doesn't end with >)
+        let malformed_name = "<InvalidSpecialName";
+        let malformed_name_index = assembly
+            .string_add(malformed_name)
+            .map_err(|e| Error::Other(format!("Failed to add malformed type name: {e}")))?;
 
-    let mut assembly = CilAssembly::new(view);
+        let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
 
-    // Create type name with malformed special pattern (starts with < but doesn't end with >)
-    let malformed_name = "<InvalidSpecialName";
-    let malformed_name_index = assembly
-        .string_add(malformed_name)
-        .map_err(|e| Error::Other(format!("Failed to add malformed type name: {e}")))?;
+        let invalid_type = TypeDefRaw {
+            rid: type_rid,
+            token: Token::new(0x02000000 + type_rid),
+            offset: 0,
+            flags: 0x00000001,                             // Public
+            type_name: malformed_name_index.placeholder(), // Malformed special name - should trigger validation failure
+            type_namespace: 0,
+            extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
+            field_list: 1,
+            method_list: 1,
+        };
 
-    let type_rid = assembly.original_table_row_count(TableId::TypeDef) + 1;
+        assembly
+            .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
+            .map_err(|e| Error::Other(format!("Failed to add invalid type: {e}")))?;
 
-    let invalid_type = TypeDefRaw {
-        rid: type_rid,
-        token: Token::new(0x02000000 + type_rid),
-        offset: 0,
-        flags: 0x00000001,               // Public
-        type_name: malformed_name_index, // Malformed special name - should trigger validation failure
-        type_namespace: 0,
-        extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
-        field_list: 1,
-        method_list: 1,
-    };
-
-    assembly
-        .table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(invalid_type))
-        .map_err(|e| Error::Other(format!("Failed to add invalid type: {e}")))?;
-
-    let temp_file = tempfile::NamedTempFile::new()
-        .map_err(|e| Error::Other(format!("Failed to create temp file: {e}")))?;
-
-    assembly
-        .write_to_file(temp_file.path())
-        .map_err(|e| Error::Other(format!("Failed to write assembly: {e}")))?;
-
-    Ok(TestAssembly::from_temp_file(temp_file, false))
+        Ok(())
+    })
 }

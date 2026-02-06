@@ -27,6 +27,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::FieldRvaRaw,
     },
@@ -69,18 +70,29 @@ impl MetadataLoader for FieldRvaLoader {
     /// - Collection insertion operations fail
     /// - Parallel processing encounters errors
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<FieldRvaRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(&context.field)?;
-                    owned.apply()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<FieldRvaRaw>() else {
+            return Ok(());
+        };
 
-                    context.field_rva.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("field rva 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned(&context.field),
+                DiagnosticCategory::Field,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(owned.apply(), DiagnosticCategory::Field, token_msg)?;
+            context.field_rva.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for the `FieldRva` table.

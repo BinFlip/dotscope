@@ -14,8 +14,8 @@ use std::fmt;
 ///
 /// # Usage
 ///
-/// Node IDs are created by [`DirectedGraph::add_node`](crate::utils::graph::DirectedGraph::add_node)
-/// and should not typically be constructed manually. They are used to:
+/// Node IDs are created when adding nodes to a graph and should not typically
+/// be constructed manually. They are used to:
 ///
 /// - Reference nodes when adding edges
 /// - Look up node data
@@ -51,7 +51,7 @@ impl NodeId {
     /// Creates a new `NodeId` from a raw index value.
     ///
     /// This constructor is primarily intended for internal use and testing.
-    /// Normal usage should obtain `NodeId` values from [`DirectedGraph::add_node`](crate::utils::graph::DirectedGraph::add_node).
+    /// Normal usage should obtain `NodeId` values from graph construction methods.
     ///
     /// # Arguments
     ///
@@ -265,7 +265,7 @@ mod tests {
 
     #[test]
     fn test_node_id_array_indexing() {
-        let data = vec!["zero", "one", "two", "three"];
+        let data = ["zero", "one", "two", "three"];
         let node = NodeId::new(2);
 
         assert_eq!(data[node.index()], "two");

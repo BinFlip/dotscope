@@ -1,6 +1,8 @@
 use crate::{
     metadata::{
-        tables::{CodedIndex, CodedIndexType, ManifestResourceRaw, RowReadable, TableInfoRef},
+        tables::{
+            CodedIndex, CodedIndexType, ManifestResourceRaw, RowReadable, TableId, TableInfoRef,
+        },
         token::Token,
     },
     utils::{read_le_at, read_le_at_dyn},
@@ -8,6 +10,8 @@ use crate::{
 };
 
 impl RowReadable for ManifestResourceRaw {
+    const TABLE_ID: TableId = TableId::ManifestResource;
+
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ManifestResourceRaw {
             rid,

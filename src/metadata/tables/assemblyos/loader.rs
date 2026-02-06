@@ -22,6 +22,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::{AssemblyOsRaw, TableId},
     },
@@ -49,20 +50,32 @@ impl MetadataLoader for AssemblyOsLoader {
     /// * `Ok(())` - `AssemblyOS` successfully loaded or table not present
     /// * `Err(`[`crate::Error`]`)` - Malformed data or duplicate `AssemblyOS` information
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<AssemblyOsRaw>() {
-                if let Some(row) = table.get(1) {
-                    let owned = row.to_owned()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<AssemblyOsRaw>() else {
+            return Ok(());
+        };
+        let Some(row) = table.get(1) else {
+            return Ok(());
+        };
 
-                    context
-                        .assembly_os
-                        .set(owned)
-                        .map_err(|_| malformed_error!("AssemblyOs has already been set"))?;
-                    return Ok(());
-                }
-            }
-        }
-        Ok(())
+        let token_msg = || format!("assembly os 0x{:08x}", row.token.value());
+
+        let Some(owned) =
+            context.handle_result(row.to_owned(), DiagnosticCategory::Table, token_msg)?
+        else {
+            return Ok(());
+        };
+
+        context.handle_error(
+            context
+                .assembly_os
+                .set(owned)
+                .map_err(|_| malformed_error!("AssemblyOs has already been set")),
+            DiagnosticCategory::Table,
+            token_msg,
+        )
     }
 
     /// Returns the table identifier for the `AssemblyOS` table

@@ -6,7 +6,7 @@
 //! supporting both compile-time and runtime generic method resolution.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{CodedIndex, CodedIndexType, MethodSpecRaw, TableDataOwned, TableId},
         token::Token,
@@ -54,12 +54,11 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Instantiate a generic method with a single type argument
 /// let generic_method = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef); // Generic Add<T> method
@@ -71,7 +70,7 @@ use crate::{
 /// let add_int = MethodSpecBuilder::new()
 ///     .method(generic_method)
 ///     .instantiation(&int_instantiation)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Instantiate a generic method with multiple type arguments
 /// let dictionary_method = CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::MethodDefOrRef); // Dictionary<TKey, TValue>.TryGetValue
@@ -84,7 +83,7 @@ use crate::{
 /// let trygetvalue_string_int = MethodSpecBuilder::new()
 ///     .method(dictionary_method)
 ///     .instantiation(&string_int_instantiation)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Instantiate a generic method with complex type arguments
 /// let complex_method = CodedIndex::new(TableId::MethodDef, 2, CodedIndexType::MethodDefOrRef); // Complex generic method
@@ -97,7 +96,7 @@ use crate::{
 /// let complex_string_array = MethodSpecBuilder::new()
 ///     .method(complex_method)
 ///     .instantiation(&complex_instantiation)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 ///
 /// // Instantiate with a reference to another type
 /// let reference_method = CodedIndex::new(TableId::MemberRef, 2, CodedIndexType::MethodDefOrRef); // Generic method reference
@@ -110,7 +109,7 @@ use crate::{
 /// let typeref_instantiation_spec = MethodSpecBuilder::new()
 ///     .method(reference_method)
 ///     .instantiation(&typeref_instantiation)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct MethodSpecBuilder {
@@ -274,7 +273,7 @@ impl MethodSpecBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for managing the assembly
+    /// * `assembly` - The CilAssembly for managing the assembly
     ///
     /// # Returns
     ///
@@ -288,7 +287,7 @@ impl MethodSpecBuilder {
     /// - Returns error if method is not a valid MethodDefOrRef coded index
     /// - Returns error if blob operations fail
     /// - Returns error if table operations fail
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let method = self
             .method
             .ok_or_else(|| Error::ModificationInvalid("Generic method is required".to_string()))?;
@@ -325,9 +324,9 @@ impl MethodSpecBuilder {
             ));
         }
 
-        let instantiation_index = context.blob_add(&instantiation)?;
+        let instantiation_index = assembly.blob_add(&instantiation)?.placeholder();
 
-        let rid = context.next_rid(TableId::MethodSpec);
+        let rid = assembly.next_rid(TableId::MethodSpec)?;
 
         let token_value = ((TableId::MethodSpec as u32) << 24) | rid;
         let token = Token::new(token_value);
@@ -340,7 +339,7 @@ impl MethodSpecBuilder {
             instantiation: instantiation_index,
         };
 
-        context.table_row_add(
+        assembly.table_row_add(
             TableId::MethodSpec,
             TableDataOwned::MethodSpec(method_spec_raw),
         )
@@ -351,7 +350,7 @@ impl MethodSpecBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
+        cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
     };
     use std::path::PathBuf;
@@ -360,27 +359,20 @@ mod tests {
     fn test_method_spec_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-
-            // Check existing MethodSpec table count
-            let existing_count = assembly.original_table_row_count(TableId::MethodSpec);
-            let expected_rid = existing_count + 1;
-
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Create a basic method specification
             let method_ref = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef); // Generic method
             let instantiation_blob = vec![0x01, 0x08]; // Single int32 argument
 
-            let token = MethodSpecBuilder::new()
+            let ref_ = MethodSpecBuilder::new()
                 .method(method_ref)
                 .instantiation(&instantiation_blob)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x2B000000); // MethodSpec table prefix
-            assert_eq!(token.value() & 0x00FFFFFF, expected_rid); // RID should be existing + 1
+            // Verify reference is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodSpec));
         }
     }
 
@@ -388,31 +380,30 @@ mod tests {
     fn test_method_spec_builder_different_methods() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let instantiation_blob = vec![0x01, 0x08]; // Single int32 argument
 
             // Test MethodDef
             let methoddef = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
-            let methoddef_spec = MethodSpecBuilder::new()
+            let ref1 = MethodSpecBuilder::new()
                 .method(methoddef)
                 .instantiation(&instantiation_blob)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Test MemberRef
             let memberref = CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::MethodDefOrRef);
-            let memberref_spec = MethodSpecBuilder::new()
+            let ref2 = MethodSpecBuilder::new()
                 .method(memberref)
                 .instantiation(&instantiation_blob)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Both should succeed with MethodSpec table prefix
-            assert_eq!(methoddef_spec.value() & 0xFF000000, 0x2B000000);
-            assert_eq!(memberref_spec.value() & 0xFF000000, 0x2B000000);
-            assert_ne!(methoddef_spec.value(), memberref_spec.value());
+            // Both should succeed with MethodSpec table reference
+            assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::MethodSpec));
+            assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::MethodSpec));
+            assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
         }
     }
 
@@ -420,36 +411,35 @@ mod tests {
     fn test_method_spec_builder_convenience_methods() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let method_ref = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
 
             // Test simple instantiation
-            let simple_spec = MethodSpecBuilder::new()
+            let ref1 = MethodSpecBuilder::new()
                 .method(method_ref.clone())
                 .simple_instantiation(0x08) // int32
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Test multiple primitives
-            let multiple_spec = MethodSpecBuilder::new()
+            let ref2 = MethodSpecBuilder::new()
                 .method(method_ref.clone())
                 .multiple_primitives(&[0x08, 0x0E]) // int32, string
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Test array instantiation
-            let array_spec = MethodSpecBuilder::new()
+            let ref3 = MethodSpecBuilder::new()
                 .method(method_ref)
                 .array_instantiation(0x08) // int32[]
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // All should succeed
-            assert_eq!(simple_spec.value() & 0xFF000000, 0x2B000000);
-            assert_eq!(multiple_spec.value() & 0xFF000000, 0x2B000000);
-            assert_eq!(array_spec.value() & 0xFF000000, 0x2B000000);
+            assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::MethodSpec));
+            assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::MethodSpec));
+            assert_eq!(ref3.kind(), ChangeRefKind::TableRow(TableId::MethodSpec));
         }
     }
 
@@ -457,8 +447,7 @@ mod tests {
     fn test_method_spec_builder_complex_instantiations() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let method_ref = CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::MethodDefOrRef);
 
@@ -471,13 +460,13 @@ mod tests {
                 0x08, // Array element type: int32
             ];
 
-            let complex_spec = MethodSpecBuilder::new()
+            let ref_ = MethodSpecBuilder::new()
                 .method(method_ref)
                 .instantiation(&complex_instantiation)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            assert_eq!(complex_spec.value() & 0xFF000000, 0x2B000000);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::MethodSpec));
         }
     }
 
@@ -485,15 +474,14 @@ mod tests {
     fn test_method_spec_builder_missing_method() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let instantiation_blob = vec![0x01, 0x08];
 
             let result = MethodSpecBuilder::new()
                 .instantiation(&instantiation_blob)
                 // Missing method
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because method is required
             assert!(result.is_err());
@@ -504,15 +492,14 @@ mod tests {
     fn test_method_spec_builder_missing_instantiation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let method_ref = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
 
             let result = MethodSpecBuilder::new()
                 .method(method_ref)
                 // Missing instantiation
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because instantiation is required
             assert!(result.is_err());
@@ -523,8 +510,7 @@ mod tests {
     fn test_method_spec_builder_empty_instantiation() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let method_ref = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
             let empty_blob = vec![]; // Empty instantiation
@@ -532,7 +518,7 @@ mod tests {
             let result = MethodSpecBuilder::new()
                 .method(method_ref)
                 .instantiation(&empty_blob)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because instantiation cannot be empty
             assert!(result.is_err());
@@ -543,8 +529,7 @@ mod tests {
     fn test_method_spec_builder_invalid_method_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Use a table type that's not valid for MethodDefOrRef
             let invalid_method = CodedIndex::new(TableId::Field, 1, CodedIndexType::MethodDefOrRef); // Field not in MethodDefOrRef
@@ -553,7 +538,7 @@ mod tests {
             let result = MethodSpecBuilder::new()
                 .method(invalid_method)
                 .instantiation(&instantiation_blob)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because method type is not valid for MethodDefOrRef
             assert!(result.is_err());
@@ -564,8 +549,7 @@ mod tests {
     fn test_method_spec_builder_zero_generic_args() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let method_ref = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
             let zero_args_blob = vec![0x00]; // Zero generic arguments
@@ -573,7 +557,7 @@ mod tests {
             let result = MethodSpecBuilder::new()
                 .method(method_ref)
                 .instantiation(&zero_args_blob)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because generic argument count cannot be zero
             assert!(result.is_err());
@@ -584,53 +568,43 @@ mod tests {
     fn test_method_spec_builder_realistic_scenarios() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Scenario 1: List<T>.Add(T) instantiated with int
             let list_add = CodedIndex::new(TableId::MethodDef, 1, CodedIndexType::MethodDefOrRef);
-            let list_int_spec = MethodSpecBuilder::new()
+            let ref1 = MethodSpecBuilder::new()
                 .method(list_add)
                 .simple_instantiation(0x08) // int32
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Scenario 2: Dictionary<TKey, TValue>.TryGetValue instantiated with string, int
             let dict_tryget =
                 CodedIndex::new(TableId::MemberRef, 1, CodedIndexType::MethodDefOrRef);
-            let dict_string_int_spec = MethodSpecBuilder::new()
+            let ref2 = MethodSpecBuilder::new()
                 .method(dict_tryget)
                 .multiple_primitives(&[0x0E, 0x08]) // string, int32
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
             // Scenario 3: Generic method with array type
             let array_method =
                 CodedIndex::new(TableId::MethodDef, 2, CodedIndexType::MethodDefOrRef);
-            let array_string_spec = MethodSpecBuilder::new()
+            let ref3 = MethodSpecBuilder::new()
                 .method(array_method)
                 .array_instantiation(0x0E) // string[]
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // All should succeed with proper tokens
-            assert_eq!(list_int_spec.value() & 0xFF000000, 0x2B000000);
-            assert_eq!(dict_string_int_spec.value() & 0xFF000000, 0x2B000000);
-            assert_eq!(array_string_spec.value() & 0xFF000000, 0x2B000000);
+            // All should succeed with proper references
+            assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::MethodSpec));
+            assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::MethodSpec));
+            assert_eq!(ref3.kind(), ChangeRefKind::TableRow(TableId::MethodSpec));
 
-            // All should have different RIDs
-            assert_ne!(
-                list_int_spec.value() & 0x00FFFFFF,
-                dict_string_int_spec.value() & 0x00FFFFFF
-            );
-            assert_ne!(
-                list_int_spec.value() & 0x00FFFFFF,
-                array_string_spec.value() & 0x00FFFFFF
-            );
-            assert_ne!(
-                dict_string_int_spec.value() & 0x00FFFFFF,
-                array_string_spec.value() & 0x00FFFFFF
-            );
+            // All should be different references
+            assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+            assert!(!std::sync::Arc::ptr_eq(&ref1, &ref3));
+            assert!(!std::sync::Arc::ptr_eq(&ref2, &ref3));
         }
     }
 }

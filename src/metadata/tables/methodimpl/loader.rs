@@ -75,6 +75,7 @@
 //! - Purpose: Define method implementation mappings for interface and virtual method resolution
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::MethodImplRaw,
     },
@@ -141,19 +142,29 @@ impl MetadataLoader for MethodImplLoader {
     ///
     /// This method is thread-safe and uses parallel processing internally for optimal efficiency.
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<MethodImplRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned =
-                        row.to_owned(|coded_index| context.get_ref(coded_index), context.types)?;
-                    owned.apply()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<MethodImplRaw>() else {
+            return Ok(());
+        };
 
-                    context.method_impl.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("method impl 0x{:08x}", row.token.value());
+
+            let Some(owned) = context.handle_result(
+                row.to_owned(|coded_index| context.get_ref(coded_index), context.types),
+                DiagnosticCategory::Method,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(owned.apply(), DiagnosticCategory::Method, token_msg)?;
+            context.method_impl.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for `MethodImpl`.

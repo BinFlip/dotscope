@@ -24,7 +24,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! # use dotscope::metadata::tables::LocalVariable;
 //! # fn example(local_variable: &LocalVariable) {
 //! // Display variable information

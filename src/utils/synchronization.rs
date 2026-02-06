@@ -161,7 +161,10 @@ impl FailFastBarrier {
     pub fn wait(&self) -> Result<()> {
         // Check if already broken
         {
-            let guard = self.state.lock().unwrap();
+            let guard = self
+                .state
+                .lock()
+                .map_err(|e| Error::LockError(format!("barrier lock poisoned: {e}")))?;
             if let Some(msg) = guard.as_ref() {
                 return Err(Error::LockError(format!("Barrier was broken: {msg}")));
             }
@@ -171,18 +174,24 @@ impl FailFastBarrier {
 
         if arrived_count == self.count {
             // Last thread to arrive - wake everyone up
-            let _guard = self.state.lock().unwrap();
+            let _guard = self
+                .state
+                .lock()
+                .map_err(|e| Error::LockError(format!("barrier lock poisoned: {e}")))?;
             self.condvar.notify_all();
             Ok(())
         } else {
             // Wait for others or until broken
-            let guard = self.state.lock().unwrap();
+            let guard = self
+                .state
+                .lock()
+                .map_err(|e| Error::LockError(format!("barrier lock poisoned: {e}")))?;
             let guard = self
                 .condvar
                 .wait_while(guard, |state| {
                     state.is_none() && self.arrived.load(Ordering::Acquire) < self.count
                 })
-                .unwrap();
+                .map_err(|e| Error::LockError(format!("barrier condvar poisoned: {e}")))?;
 
             if let Some(msg) = guard.as_ref() {
                 Err(Error::LockError(format!("Barrier was broken: {msg}")))

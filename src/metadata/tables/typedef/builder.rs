@@ -5,7 +5,7 @@
 //! value types, enums) within the current module.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
         token::Token,
@@ -21,21 +21,20 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
-/// # use dotscope::metadata::tables::{CodedIndex, TableId, TypeDefBuilder};
+/// # use dotscope::metadata::tables::{CodedIndex, CodedIndexType, TableId, TypeDefBuilder};
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create a simple class
 /// let my_class = TypeDefBuilder::new()
 ///     .name("MyClass")
 ///     .namespace("MyNamespace")
-///     .extends(CodedIndex::new(TableId::TypeRef, 1)) // System.Object
+///     .extends(CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef)) // System.Object
 ///     .flags(0x00100001) // Public | Class
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct TypeDefBuilder {
@@ -204,15 +203,15 @@ impl TypeDefBuilder {
     ///
     /// This method validates the configuration, adds required strings
     /// to the string heap, creates the TypeDefRaw entry, and adds it
-    /// to the assembly via the BuilderContext.
+    /// to the assembly.
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for heap management and table operations
+    /// * `assembly` - The assembly for heap management and table operations
     ///
     /// # Returns
     ///
-    /// The [`crate::metadata::token::Token`] for the newly created TypeDef entry.
+    /// A [`ChangeRefRc`] for the newly created TypeDef entry.
     ///
     /// # Errors
     ///
@@ -220,27 +219,27 @@ impl TypeDefBuilder {
     /// - Required fields are missing (name)
     /// - Heap operations fail
     /// - TypeDef table row creation fails
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Validate required fields
         let name = self
             .name
             .ok_or_else(|| malformed_error!("TypeDef name is required"))?;
 
         // Add strings to heaps and get indices
-        let name_index = context.string_add(&name)?;
+        let name_index = assembly.string_add(&name)?.placeholder();
 
         let namespace_index = if let Some(namespace) = &self.namespace {
             if namespace.is_empty() {
                 0 // Global namespace
             } else {
-                context.string_get_or_add(namespace)?
+                assembly.string_get_or_add(namespace)?.placeholder()
             }
         } else {
             0 // Default to global namespace
         };
 
         // Get the next RID for the TypeDef table
-        let rid = context.next_rid(TableId::TypeDef);
+        let rid = assembly.next_rid(TableId::TypeDef)?;
 
         // Create the TypeDefRaw entry
         let typedef_raw = TypeDefRaw {
@@ -258,7 +257,7 @@ impl TypeDefBuilder {
         };
 
         // Add the row to the assembly and return the token
-        context.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(typedef_raw))
+        assembly.table_row_add(TableId::TypeDef, TableDataOwned::TypeDef(typedef_raw))
     }
 }
 
@@ -266,8 +265,11 @@ impl TypeDefBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
-        metadata::{cilassemblyview::CilAssemblyView, tables::TypeAttributes},
+        cilassembly::{ChangeRefKind, CilAssembly},
+        metadata::{
+            cilassemblyview::CilAssemblyView,
+            tables::{TableId, TypeAttributes},
+        },
     };
     use std::path::PathBuf;
 
@@ -275,19 +277,17 @@ mod tests {
     fn test_typedef_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let token = TypeDefBuilder::new()
+            let ref_ = TypeDefBuilder::new()
                 .name("TestClass")
                 .namespace("TestNamespace")
                 .public_class()
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x02000000); // TypeDef table prefix
-            assert!(token.value() & 0x00FFFFFF > 0); // RID should be > 0
+            // Verify reference is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
         }
     }
 
@@ -295,18 +295,17 @@ mod tests {
     fn test_typedef_builder_interface() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let token = TypeDefBuilder::new()
+            let ref_ = TypeDefBuilder::new()
                 .name("ITestInterface")
                 .namespace("TestNamespace")
                 .public_interface()
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x02000000); // TypeDef table prefix
+            // Verify reference is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
         }
     }
 
@@ -314,18 +313,17 @@ mod tests {
     fn test_typedef_builder_value_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let token = TypeDefBuilder::new()
+            let ref_ = TypeDefBuilder::new()
                 .name("TestStruct")
                 .namespace("TestNamespace")
                 .public_value_type()
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x02000000); // TypeDef table prefix
+            // Verify reference is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
         }
     }
 
@@ -333,20 +331,19 @@ mod tests {
     fn test_typedef_builder_with_base_type() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let base_type = CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef); // Assume System.Object
-            let token = TypeDefBuilder::new()
+            let ref_ = TypeDefBuilder::new()
                 .name("DerivedClass")
                 .namespace("TestNamespace")
                 .extends(base_type)
                 .flags(TypeAttributes::PUBLIC | TypeAttributes::CLASS)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x02000000); // TypeDef table prefix
+            // Verify reference is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
         }
     }
 
@@ -354,13 +351,12 @@ mod tests {
     fn test_typedef_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = TypeDefBuilder::new()
                 .namespace("TestNamespace")
                 .public_class()
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because name is required
             assert!(result.is_err());
@@ -371,18 +367,17 @@ mod tests {
     fn test_typedef_builder_global_namespace() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
-            let token = TypeDefBuilder::new()
+            let ref_ = TypeDefBuilder::new()
                 .name("GlobalClass")
                 .namespace("") // Empty namespace = global
                 .public_class()
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert_eq!(token.value() & 0xFF000000, 0x02000000); // TypeDef table prefix
+            // Verify reference is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::TypeDef));
         }
     }
 }

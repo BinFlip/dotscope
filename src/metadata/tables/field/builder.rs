@@ -6,7 +6,7 @@
 //! and characteristics.
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{FieldRaw, TableDataOwned, TableId},
         token::Token,
@@ -23,13 +23,12 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// # use dotscope::prelude::*;
 /// # use dotscope::metadata::tables::FieldBuilder;
 /// # use std::path::Path;
 /// # let view = CilAssemblyView::from_path(Path::new("test.dll"))?;
-/// let assembly = CilAssembly::new(view);
-/// let mut context = BuilderContext::new(assembly);
+/// let mut assembly = CilAssembly::new(view);
 ///
 /// // Create a field signature for System.String
 /// let string_signature = &[0x12]; // ELEMENT_TYPE_STRING
@@ -39,7 +38,7 @@ use crate::{
 ///     .name("myField")
 ///     .flags(0x0001) // Private
 ///     .signature(string_signature)
-///     .build(&mut context)?;
+///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct FieldBuilder {
@@ -149,7 +148,7 @@ impl FieldBuilder {
     ///
     /// # Arguments
     ///
-    /// * `context` - The builder context for managing the assembly
+    /// * `assembly` - The assembly being modified
     ///
     /// # Returns
     ///
@@ -163,7 +162,7 @@ impl FieldBuilder {
     /// - Returns error if signature is not set
     /// - Returns error if heap operations fail
     /// - Returns error if table operations fail
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Validate required fields
         let name = self
             .name
@@ -178,13 +177,13 @@ impl FieldBuilder {
             .ok_or_else(|| Error::ModificationInvalid("Field signature is required".to_string()))?;
 
         // Add name to string heap
-        let name_index = context.string_get_or_add(&name)?;
+        let name_index = assembly.string_get_or_add(&name)?.placeholder();
 
         // Add signature to blob heap
-        let signature_index = context.blob_add(&signature)?;
+        let signature_index = assembly.blob_add(&signature)?.placeholder();
 
         // Get the next RID for the Field table
-        let rid = context.next_rid(TableId::Field);
+        let rid = assembly.next_rid(TableId::Field)?;
 
         // Create the token for this field
         let token = Token::from_parts(TableId::Field, rid);
@@ -200,7 +199,7 @@ impl FieldBuilder {
         };
 
         // Add the field to the table
-        context.table_row_add(TableId::Field, TableDataOwned::Field(field_raw))
+        assembly.table_row_add(TableId::Field, TableDataOwned::Field(field_raw))
     }
 }
 
@@ -208,7 +207,7 @@ impl FieldBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::{BuilderContext, CilAssembly},
+        cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
         prelude::FieldAttributes,
     };
@@ -218,27 +217,24 @@ mod tests {
     fn test_field_builder_basic() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
+            let mut assembly = CilAssembly::new(view);
 
             // Check existing Field table count
             let existing_field_count = assembly.original_table_row_count(TableId::Field);
-            let expected_rid = existing_field_count + 1;
-
-            let mut context = BuilderContext::new(assembly);
+            let _expected_rid = existing_field_count + 1;
 
             // Create a field signature for System.String (ELEMENT_TYPE_STRING = 0x0E)
             let string_signature = &[0x0E];
 
-            let token = FieldBuilder::new()
+            let ref_ = FieldBuilder::new()
                 .name("testField")
                 .flags(FieldAttributes::PRIVATE)
                 .signature(string_signature)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert!(token.is_table(TableId::Field)); // Field table prefix
-            assert_eq!(token.row(), expected_rid); // RID should be existing + 1
+            // Verify ref_ is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Field));
         }
     }
 
@@ -246,24 +242,23 @@ mod tests {
     fn test_field_builder_with_attributes() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Create an int32 signature (ELEMENT_TYPE_I4 = 0x08)
             let int32_signature = &[0x08];
 
             // Create a public static readonly field
-            let token = FieldBuilder::new()
+            let ref_ = FieldBuilder::new()
                 .name("PublicStaticField")
                 .flags(
                     FieldAttributes::PUBLIC | FieldAttributes::STATIC | FieldAttributes::INIT_ONLY,
                 )
                 .signature(int32_signature)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert!(token.is_table(TableId::Field));
+            // Verify ref_ is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Field));
         }
     }
 
@@ -271,24 +266,23 @@ mod tests {
     fn test_field_builder_literal_field() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             // Create a boolean signature (ELEMENT_TYPE_BOOLEAN = 0x02)
             let bool_signature = &[0x02];
 
             // Create a private const field
-            let token = FieldBuilder::new()
+            let ref_ = FieldBuilder::new()
                 .name("ConstField")
                 .flags(
                     FieldAttributes::PRIVATE | FieldAttributes::LITERAL | FieldAttributes::STATIC,
                 )
                 .signature(bool_signature)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Verify token is created correctly
-            assert!(token.is_table(TableId::Field));
+            // Verify ref_ is created correctly
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::Field));
         }
     }
 
@@ -296,13 +290,12 @@ mod tests {
     fn test_field_builder_missing_name() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = FieldBuilder::new()
                 .flags(FieldAttributes::PRIVATE)
                 .signature(&[0x08])
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because name is required
             assert!(result.is_err());
@@ -313,13 +306,12 @@ mod tests {
     fn test_field_builder_missing_flags() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = FieldBuilder::new()
                 .name("testField")
                 .signature(&[0x08])
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because flags are required
             assert!(result.is_err());
@@ -330,13 +322,12 @@ mod tests {
     fn test_field_builder_missing_signature() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let result = FieldBuilder::new()
                 .name("testField")
                 .flags(FieldAttributes::PRIVATE)
-                .build(&mut context);
+                .build(&mut assembly);
 
             // Should fail because signature is required
             assert!(result.is_err());
@@ -347,30 +338,29 @@ mod tests {
     fn test_field_builder_multiple_fields() {
         let path = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("tests/samples/WindowsBase.dll");
         if let Ok(view) = CilAssemblyView::from_path(&path) {
-            let assembly = CilAssembly::new(view);
-            let mut context = BuilderContext::new(assembly);
+            let mut assembly = CilAssembly::new(view);
 
             let signature = &[0x08]; // int32
 
             // Create multiple fields - now this will work!
-            let field1 = FieldBuilder::new()
+            let ref1 = FieldBuilder::new()
                 .name("Field1")
                 .flags(FieldAttributes::PRIVATE)
                 .signature(signature)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            let field2 = FieldBuilder::new()
+            let ref2 = FieldBuilder::new()
                 .name("Field2")
                 .flags(FieldAttributes::PUBLIC)
                 .signature(signature)
-                .build(&mut context)
+                .build(&mut assembly)
                 .unwrap();
 
-            // Both should succeed and have different RIDs
-            assert_ne!(field1.row(), field2.row());
-            assert!(field1.is_table(TableId::Field));
-            assert!(field2.is_table(TableId::Field));
+            // Both should succeed and have different references
+            assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+            assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::Field));
+            assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::Field));
         }
     }
 }

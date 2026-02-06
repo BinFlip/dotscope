@@ -31,7 +31,7 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::exports::Exports;
 //! use dotscope::metadata::token::Token;
 //!
@@ -91,7 +91,7 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::metadata::exports::Exports;
 /// use dotscope::metadata::token::Token;
 ///
@@ -167,7 +167,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::Exports;
     /// use dotscope::metadata::token::Token;
     ///
@@ -240,7 +240,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::Exports;
     ///
     /// let exports = Exports::new();
@@ -261,7 +261,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::Exports;
     ///
     /// let exports = Exports::new();
@@ -297,7 +297,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::Exports;
     ///
     /// let exports = Exports::new();
@@ -355,7 +355,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::Exports;
     /// use dotscope::metadata::typesystem::CilTypeReference;
     ///
@@ -364,7 +364,6 @@ impl Exports {
     /// let assembly_ref = get_assembly_ref();
     ///
     /// let matching_types = exports.find_by_implementation(&assembly_ref);
-    /// println!("Found {} types in this assembly", matching_types.len());
     ///
     /// for (_, exported_type) in matching_types.iter() {
     ///     println!("Type: {}", exported_type.name);
@@ -410,7 +409,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::Exports;
     ///
     /// let exports = Exports::new();
@@ -432,7 +431,7 @@ impl Exports {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::metadata::exports::Exports;
     ///
     /// let exports = Exports::new();

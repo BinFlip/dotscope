@@ -35,9 +35,10 @@ pub struct VersionMismatch {
 ///
 /// # Usage
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::project::{ProjectLoader, ProjectResult};
 ///
+/// # fn main() -> dotscope::Result<()> {
 /// // From ProjectLoader API
 /// let result: ProjectResult = ProjectLoader::new()
 ///     .primary_file("MyApp.exe")?
@@ -53,6 +54,8 @@ pub struct VersionMismatch {
 ///     println!("Loaded {} assemblies, {} failed",
 ///              result.success_count(), result.failure_count());
 /// }
+/// # Ok(())
+/// # }
 /// ```
 pub struct ProjectResult {
     /// The loaded project containing all successfully loaded assemblies

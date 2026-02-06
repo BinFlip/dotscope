@@ -6,18 +6,20 @@
 //!
 //! # Usage Example
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::prelude::*;
 //!
-//! let builder_context = BuilderContext::new();
+//! # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+//! let mut assembly = CilAssembly::new(view);
 //!
 //! let fieldptr_token = FieldPtrBuilder::new()
 //!     .field(5)                      // Points to Field table RID 5
-//!     .build(&mut builder_context)?;
+//!     .build(&mut assembly)?;
+//! # Ok::<(), dotscope::Error>(())
 //! ```
 
 use crate::{
-    cilassembly::BuilderContext,
+    cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
         tables::{FieldPtrRaw, TableDataOwned, TableId},
         token::Token,
@@ -44,9 +46,11 @@ use crate::{
 ///
 /// # Examples
 ///
-/// ```rust,ignore
+/// ```rust,no_run
 /// use dotscope::prelude::*;
 ///
+/// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+/// # let mut context = CilAssembly::new(view);
 /// // Create field pointer for field reordering
 /// let ptr1 = FieldPtrBuilder::new()
 ///     .field(10)  // Points to Field table entry 10
@@ -61,6 +65,7 @@ use crate::{
 /// let ptr3 = FieldPtrBuilder::new()
 ///     .field(3)   // Points to Field table entry 3
 ///     .build(&mut context)?;
+/// # Ok::<(), dotscope::Error>(())
 /// ```
 #[derive(Debug, Clone)]
 pub struct FieldPtrBuilder {
@@ -79,7 +84,7 @@ impl FieldPtrBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// let builder = FieldPtrBuilder::new();
@@ -103,7 +108,7 @@ impl FieldPtrBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
     /// // Point to first field
@@ -123,11 +128,11 @@ impl FieldPtrBuilder {
     /// Builds and adds the `FieldPtr` entry to the metadata
     ///
     /// Validates all required fields, creates the `FieldPtr` table entry,
-    /// and adds it to the builder context. Returns a token that can be used
+    /// and adds it to the assembly. Returns a token that can be used
     /// to reference this field pointer entry.
     ///
     /// # Parameters
-    /// - `context`: Mutable reference to the builder context
+    /// - `assembly`: Mutable reference to the assembly being modified
     ///
     /// # Returns
     /// - `Ok(Token)`: Token referencing the created field pointer entry
@@ -139,31 +144,29 @@ impl FieldPtrBuilder {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
     /// use dotscope::prelude::*;
     ///
-    /// let mut context = BuilderContext::new();
+    /// # let view = CilAssemblyView::from_path(std::path::Path::new("a.dll")).unwrap();
+    /// let mut assembly = CilAssembly::new(view);
     /// let token = FieldPtrBuilder::new()
     ///     .field(5)
-    ///     .build(&mut context)?;
+    ///     .build(&mut assembly)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn build(self, context: &mut BuilderContext) -> Result<Token> {
+    pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         let field = self.field.ok_or_else(|| {
             Error::ModificationInvalid("Field RID is required for FieldPtr".to_string())
         })?;
 
-        let next_rid = context.next_rid(TableId::FieldPtr);
-        let token = Token::new(((TableId::FieldPtr as u32) << 24) | next_rid);
-
         let field_ptr = FieldPtrRaw {
-            rid: next_rid,
-            token,
+            rid: 0,
+            token: Token::new(0),
             offset: 0,
             field,
         };
 
-        context.table_row_add(TableId::FieldPtr, TableDataOwned::FieldPtr(field_ptr))?;
-        Ok(token)
+        assembly.table_row_add(TableId::FieldPtr, TableDataOwned::FieldPtr(field_ptr))
     }
 }
 
@@ -180,7 +183,7 @@ impl Default for FieldPtrBuilder {
 mod tests {
     use super::*;
     use crate::{
-        cilassembly::BuilderContext, test::factories::table::assemblyref::get_test_assembly,
+        cilassembly::ChangeRefKind, test::factories::table::assemblyref::get_test_assembly,
     };
 
     #[test]
@@ -199,37 +202,32 @@ mod tests {
 
     #[test]
     fn test_fieldptr_builder_basic() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = FieldPtrBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = FieldPtrBuilder::new()
             .field(1)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::FieldPtr as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::FieldPtr));
         Ok(())
     }
 
     #[test]
     fn test_fieldptr_builder_reordering() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = FieldPtrBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = FieldPtrBuilder::new()
             .field(10) // Point to later field for reordering
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::FieldPtr as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::FieldPtr));
         Ok(())
     }
 
     #[test]
     fn test_fieldptr_builder_missing_field() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let result = FieldPtrBuilder::new().build(&mut context);
+        let mut assembly = get_test_assembly()?;
+        let result = FieldPtrBuilder::new().build(&mut assembly);
 
         assert!(result.is_err());
         match result.unwrap_err() {
@@ -260,86 +258,80 @@ mod tests {
 
     #[test]
     fn test_fieldptr_builder_fluent_interface() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test method chaining
-        let token = FieldPtrBuilder::new()
+        let ref_ = FieldPtrBuilder::new()
             .field(25)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build successfully");
 
-        assert_eq!(token.table(), TableId::FieldPtr as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::FieldPtr));
         Ok(())
     }
 
     #[test]
     fn test_fieldptr_builder_multiple_builds() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Build first pointer
-        let token1 = FieldPtrBuilder::new()
+        let ref1 = FieldPtrBuilder::new()
             .field(10)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build first pointer");
 
         // Build second pointer
-        let token2 = FieldPtrBuilder::new()
+        let ref2 = FieldPtrBuilder::new()
             .field(5)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build second pointer");
 
         // Build third pointer
-        let token3 = FieldPtrBuilder::new()
+        let ref3 = FieldPtrBuilder::new()
             .field(15)
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should build third pointer");
 
-        assert_eq!(token1.row(), 1);
-        assert_eq!(token2.row(), 2);
-        assert_eq!(token3.row(), 3);
-        assert_ne!(token1, token2);
-        assert_ne!(token2, token3);
+        assert!(!std::sync::Arc::ptr_eq(&ref1, &ref2));
+        assert!(!std::sync::Arc::ptr_eq(&ref2, &ref3));
+        assert_eq!(ref1.kind(), ChangeRefKind::TableRow(TableId::FieldPtr));
+        assert_eq!(ref2.kind(), ChangeRefKind::TableRow(TableId::FieldPtr));
+        assert_eq!(ref3.kind(), ChangeRefKind::TableRow(TableId::FieldPtr));
         Ok(())
     }
 
     #[test]
     fn test_fieldptr_builder_large_field_rid() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
-        let token = FieldPtrBuilder::new()
+        let mut assembly = get_test_assembly()?;
+        let ref_ = FieldPtrBuilder::new()
             .field(0xFFFF) // Large Field RID
-            .build(&mut context)
+            .build(&mut assembly)
             .expect("Should handle large field RID");
 
-        assert_eq!(token.table(), TableId::FieldPtr as u8);
-        assert_eq!(token.row(), 1);
+        assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::FieldPtr));
         Ok(())
     }
 
     #[test]
     fn test_fieldptr_builder_field_ordering_scenario() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Simulate field reordering: logical order 1,2,3 -> physical order 3,1,2
         let logical_to_physical = [(1, 3), (2, 1), (3, 2)];
 
-        let mut tokens = Vec::new();
+        let mut refs = Vec::new();
         for (logical_idx, physical_field) in logical_to_physical {
-            let token = FieldPtrBuilder::new()
+            let ref_ = FieldPtrBuilder::new()
                 .field(physical_field)
-                .build(&mut context)
+                .build(&mut assembly)
                 .expect("Should build field pointer");
-            tokens.push((logical_idx, token));
+            refs.push((logical_idx, ref_));
         }
 
-        // Verify logical ordering is preserved in tokens
-        for (i, (logical_idx, token)) in tokens.iter().enumerate() {
+        // Verify all refs have correct kind
+        for (i, (logical_idx, ref_)) in refs.iter().enumerate() {
             assert_eq!(*logical_idx, i + 1);
-            assert_eq!(token.row(), (i + 1) as u32);
+            assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::FieldPtr));
         }
 
         Ok(())
@@ -347,11 +339,10 @@ mod tests {
 
     #[test]
     fn test_fieldptr_builder_zero_field() -> Result<()> {
-        let assembly = get_test_assembly()?;
-        let mut context = BuilderContext::new(assembly);
+        let mut assembly = get_test_assembly()?;
 
         // Test with field 0 (typically invalid but should not cause builder to fail)
-        let result = FieldPtrBuilder::new().field(0).build(&mut context);
+        let result = FieldPtrBuilder::new().field(0).build(&mut assembly);
 
         // Should build successfully even with field 0
         assert!(result.is_ok());

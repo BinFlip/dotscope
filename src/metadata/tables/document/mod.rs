@@ -36,7 +36,7 @@
 //!
 //! # Usage Examples
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::tables::{Document, DocumentMap};
 //! use dotscope::metadata::token::Token;
 //!

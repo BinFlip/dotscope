@@ -36,7 +36,7 @@
 //!
 //! ## Assembly Identity Management
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
 //!
 //! // Create assembly identity
@@ -57,7 +57,7 @@
 //!
 //! ## Cryptographic Verification
 //!
-//! ```rust,ignore
+//! ```rust,no_run
 //! use dotscope::metadata::identity::Identity;
 //! use dotscope::metadata::tables::AssemblyHashAlgorithm;
 //!

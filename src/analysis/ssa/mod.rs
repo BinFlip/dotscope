@@ -46,7 +46,7 @@
 //! # Usage
 //!
 //! ```rust,ignore
-//! use dotscope::analysis::{ControlFlowGraph, ssa::SsaBuilder};
+//! use dotscope::analysis::{ControlFlowGraph, SsaConverter};
 //! use dotscope::assembly::decode_blocks;
 //!
 //! // Build CFG from decoded blocks
@@ -54,7 +54,7 @@
 //! let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
 //!
 //! // Construct SSA form
-//! let ssa = SsaBuilder::build(&cfg, num_args, num_locals)?;
+//! let ssa = SsaConverter::build(&cfg, num_args, num_locals, resolver)?;
 //!
 //! // Analyze phi nodes at merge points
 //! for block in ssa.blocks() {
@@ -72,24 +72,51 @@
 
 mod block;
 mod builder;
+mod cfg;
+mod constraints;
+mod consts;
+mod converter;
 mod decompose;
+mod evaluator;
+mod exception;
 mod function;
 mod instruction;
+mod memory;
 mod ops;
+mod patterns;
 mod phi;
+mod phis;
 mod stack;
+mod symbolic;
 mod types;
 mod value;
 mod variable;
 
 // Re-export primary types at module level
 pub use block::SsaBlock;
-pub use builder::SsaBuilder;
-pub use function::SsaFunction;
+pub use builder::{SsaBlockBuilder, SsaFunctionBuilder, SsaFunctionContext};
+pub use cfg::SsaCfg;
+pub use constraints::{Constraint, PathConstraint};
+pub use consts::ConstEvaluator;
+pub use converter::SsaConverter;
+pub use evaluator::{ControlFlow, EvaluatorConfig, SsaEvaluator};
+pub use exception::SsaExceptionHandler;
+pub use function::{MethodPurity, ReturnInfo, SsaFunction};
 pub use instruction::SsaInstruction;
-pub use ops::SsaOp;
+pub use memory::{
+    analyze_alias, AliasResult, ArrayIndex, MemoryDefSite, MemoryLocation, MemoryOp, MemoryPhi,
+    MemoryPhiOperand, MemorySsa, MemorySsaStats, MemoryState, MemoryVersion,
+};
+pub use ops::{BinaryOpInfo, BinaryOpKind, CmpKind, SsaOp, UnaryOpInfo, UnaryOpKind};
+pub use patterns::{DispatcherPattern, PatternDetector, SourceBlock};
 pub use phi::{PhiNode, PhiOperand};
-pub use stack::{SimulationResult, StackSimulator};
-pub use types::{FieldRef, FnPtrSig, MethodRef, SigRef, SsaType, TypeRef};
+pub use phis::PhiAnalyzer;
+pub use stack::{SimulationResult, StackSimulator, StackSlot, StackSlotSource};
+// SymbolicExpr, SymbolicOp, SymbolicEvaluator are always available for value tracking
+pub use symbolic::{SymbolicEvaluator, SymbolicExpr, SymbolicOp};
+// Z3Solver requires the z3 dependency which is only available with deobfuscation
+#[cfg(feature = "deobfuscation")]
+pub use symbolic::Z3Solver;
+pub use types::{FieldRef, FnPtrSig, MethodRef, SigRef, SsaType, TypeClass, TypeContext, TypeRef};
 pub use value::{AbstractValue, ComputedOp, ComputedValue, ConstValue};
 pub use variable::{DefSite, SsaVarId, SsaVariable, UseSite, VariableOrigin};

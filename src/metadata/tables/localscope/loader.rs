@@ -6,6 +6,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::TableId,
     },
@@ -39,22 +40,34 @@ pub struct LocalScopeLoader;
 
 impl MetadataLoader for LocalScopeLoader {
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta {
-            if let Some(table) = header.table::<crate::metadata::tables::LocalScopeRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let local_scope = row.to_owned(
-                        context.method_def,
-                        &context.import_scope,
-                        &context.local_variable,
-                        &context.local_constant,
-                        table,
-                    )?;
-                    context.local_scope.insert(local_scope.token, local_scope);
-                    Ok(())
-                })?;
-            }
-        }
-        Ok(())
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<crate::metadata::tables::LocalScopeRaw>() else {
+            return Ok(());
+        };
+
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("local scope 0x{:08x}", row.token.value());
+
+            let Some(local_scope) = context.handle_result(
+                row.to_owned(
+                    context.method_def,
+                    &context.import_scope,
+                    &context.local_variable,
+                    &context.local_constant,
+                    table,
+                ),
+                DiagnosticCategory::Method,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.local_scope.insert(local_scope.token, local_scope);
+            Ok(())
+        })
     }
 
     fn table_id(&self) -> Option<TableId> {

@@ -81,6 +81,8 @@
 pub mod analysis;
 pub mod builders;
 mod crafted2;
+#[cfg(feature = "emulation")]
+pub mod emulation;
 pub mod factories;
 pub mod helpers;
 pub mod mono;

@@ -29,6 +29,7 @@
 
 use crate::{
     metadata::{
+        diagnostics::DiagnosticCategory,
         loader::{LoaderContext, MetadataLoader},
         tables::PropertyMapRaw,
     },
@@ -61,24 +62,34 @@ impl MetadataLoader for PropertyMapLoader {
     /// * `Ok(())` - All entries loaded successfully
     /// * `Err(Error)` - Missing dependencies, validation error, or storage error
     fn load(&self, context: &LoaderContext) -> Result<()> {
-        if let Some(header) = context.meta.as_ref() {
-            if let Some(table) = header.table::<PropertyMapRaw>() {
-                table.par_iter().try_for_each(|row| {
-                    let owned = row.to_owned(
-                        context.types,
-                        &context.property,
-                        &context.property_ptr,
-                        table,
-                    )?;
-                    owned.apply()?;
+        let Some(header) = context.meta else {
+            return Ok(());
+        };
+        let Some(table) = header.table::<PropertyMapRaw>() else {
+            return Ok(());
+        };
 
-                    context.property_map.insert(row.token, owned);
-                    Ok(())
-                })?;
-            }
-        }
+        table.par_iter().try_for_each(|row| {
+            let token_msg = || format!("property map 0x{:08x}", row.token.value());
 
-        Ok(())
+            let Some(owned) = context.handle_result(
+                row.to_owned(
+                    context.types,
+                    &context.property,
+                    &context.property_ptr,
+                    table,
+                ),
+                DiagnosticCategory::Table,
+                token_msg,
+            )?
+            else {
+                return Ok(());
+            };
+
+            context.handle_error(owned.apply(), DiagnosticCategory::Table, token_msg)?;
+            context.property_map.insert(row.token, owned);
+            Ok(())
+        })
     }
 
     /// Returns the table identifier for the `PropertyMap` table.

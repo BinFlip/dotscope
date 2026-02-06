@@ -1317,9 +1317,11 @@ impl File {
     /// Mutable reference to the internal Pe structure
     ///
     /// # Examples
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// use dotscope::{File, SectionTable};
+    ///
     /// // Add a new section to the PE file
-    /// let mut file = File::from_path(path)?;
+    /// let mut file = File::from_path("assembly.dll")?;
     /// let new_section = SectionTable::from_layout_info(
     ///     ".meta".to_string(),
     ///     0x4000,
@@ -1332,6 +1334,7 @@ impl File {
     ///
     /// // Update CLR data directory
     /// file.pe_mut().update_clr_data_directory(0x4000, 72)?;
+    /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn pe_mut(&mut self) -> &mut Pe {
         &mut self.pe

@@ -214,17 +214,17 @@ static EXECUTION_LEVELS: LazyLock<Vec<Vec<&'static dyn MetadataLoader>>> = LazyL
 ///     fn load(&self, context: &LoaderContext) -> Result<()> {
 ///         // Access dependency data
 ///         let assembly_data = context.assemblies();
-///         
+///
 ///         // Process this table's data
 ///         // ...
-///         
+///
 ///         Ok(())
 ///     }
-///     
+///
 ///     fn table_id(&self) -> TableId {
 ///         TableId::MyTable
 ///     }
-///     
+///
 ///     fn dependencies(&self) -> &'static [TableId] {
 ///         &[TableId::Assembly, TableId::Module]
 ///     }
@@ -264,13 +264,13 @@ pub(crate) trait MetadataLoader: Send + Sync {
     ///     // Get required metadata streams
     ///     let table_stream = context.table_stream()?;
     ///     let strings = context.strings_stream();
-    ///     
+    ///
     ///     // Parse table entries
     ///     for entry in table_stream.my_table_entries()? {
     ///         let name = strings.get_string(entry.name_index)?;
     ///         // Process entry...
     ///     }
-    ///     
+    ///
     ///     Ok(())
     /// }
     /// ```

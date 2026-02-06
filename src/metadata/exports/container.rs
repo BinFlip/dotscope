@@ -21,8 +21,8 @@
 //!
 //! # Examples
 //!
-//! ```rust,ignore
-//! use dotscope::metadata::exports::UnifiedExportContainer;
+//! ```rust,no_run
+//! use dotscope::metadata::exports::{UnifiedExportContainer, ExportEntry};
 //!
 //! let container = UnifiedExportContainer::new();
 //!
@@ -231,7 +231,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::UnifiedExportContainer;
     /// let container = UnifiedExportContainer::new();
     /// let cil_exports = container.cil();
     ///
@@ -249,7 +250,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::UnifiedExportContainer;
     /// let container = UnifiedExportContainer::new();
     /// let native_exports = container.native();
     ///
@@ -268,7 +270,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::UnifiedExportContainer;
     /// let mut container = UnifiedExportContainer::new();
     /// container.native_mut().add_function("MyFunction", 1, 0x1000)?;
     /// # Ok::<(), dotscope::Error>(())
@@ -291,7 +294,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::{UnifiedExportContainer, ExportEntry};
     /// let container = UnifiedExportContainer::new();
     /// let exports = container.find_by_name("MyFunction");
     ///
@@ -326,7 +330,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::{UnifiedExportContainer, ExportSource};
     /// let container = UnifiedExportContainer::new();
     /// let functions = container.get_all_exported_functions();
     ///
@@ -376,7 +381,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::UnifiedExportContainer;
     /// let container = UnifiedExportContainer::new();
     /// let native_functions = container.get_native_function_names();
     /// println!("Native functions: {:?}", native_functions);
@@ -389,7 +395,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::UnifiedExportContainer;
     /// let container = UnifiedExportContainer::new();
     /// if container.is_empty() {
     ///     println!("No exports found");
@@ -403,7 +410,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::UnifiedExportContainer;
     /// let container = UnifiedExportContainer::new();
     /// println!("Total exports: {}", container.total_count());
     /// ```
@@ -426,7 +434,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::UnifiedExportContainer;
     /// let mut container = UnifiedExportContainer::new();
     /// container.add_native_function("MyFunction", 1, 0x1000)?;
     /// container.add_native_function("AnotherFunction", 2, 0x2000)?;
@@ -456,7 +465,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::UnifiedExportContainer;
     /// let mut container = UnifiedExportContainer::new();
     /// container.add_native_function_by_ordinal(100, 0x1000)?;
     /// # Ok::<(), dotscope::Error>(())
@@ -482,7 +492,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::UnifiedExportContainer;
     /// let mut container = UnifiedExportContainer::new();
     /// container.add_native_forwarder("GetProcessId", 1, "kernel32.dll.GetCurrentProcessId")?;
     /// # Ok::<(), dotscope::Error>(())
@@ -512,7 +523,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::UnifiedExportContainer;
     /// let container = UnifiedExportContainer::new();
     /// if let Some(export_data) = container.get_export_table_data()? {
     ///     // Write export_data to PE export directory
@@ -541,7 +553,8 @@ impl UnifiedExportContainer {
     ///
     /// # Examples
     ///
-    /// ```rust,ignore
+    /// ```rust,no_run
+    /// # use dotscope::metadata::exports::UnifiedExportContainer;
     /// let mut container = UnifiedExportContainer::new();
     /// container.set_dll_name("MyLibrary.dll")?;
     /// assert_eq!(container.native().dll_name(), "MyLibrary.dll");

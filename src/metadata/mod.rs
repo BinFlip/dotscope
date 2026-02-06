@@ -174,6 +174,8 @@ pub mod customattributes;
 pub mod customdebuginformation;
 /// Multi-assembly dependency tracking and analysis system
 pub mod dependencies;
+/// Diagnostics collection for assembly loading and analysis
+pub mod diagnostics;
 /// Implementation of 'Exports' by the loaded binary
 pub mod exports;
 /// Assembly identity and cryptographic verification system
@@ -200,6 +202,8 @@ pub mod sequencepoints;
 pub mod signatures;
 /// Implementation of all metadata streams (tables, heaps, etc.)
 pub mod streams;
+/// Table field layout definitions for heap references
+pub mod tablefields;
 /// Implementation of the .NET metadata tables
 pub mod tables;
 /// Commonly used metadata token type
