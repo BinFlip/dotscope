@@ -412,38 +412,6 @@ impl UnifiedImportContainer {
         Ok(())
     }
 
-    /// Get native import table data for PE writing.
-    ///
-    /// Generates PE import table data that can be written to the
-    /// import directory of a PE file. Returns None if no native
-    /// imports exist.
-    ///
-    /// # Arguments
-    /// * `is_pe32_plus` - Whether this is PE32+ format (64-bit) or PE32 (32-bit)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if native import table generation fails due to
-    /// invalid import data or encoding issues.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// # use dotscope::metadata::imports::UnifiedImportContainer;
-    /// let container = UnifiedImportContainer::new();
-    /// if let Some(import_data) = container.get_import_table_data(false)? { // PE32
-    ///     // Write import_data to PE import directory
-    /// }
-    /// # Ok::<(), dotscope::Error>(())
-    /// ```
-    pub fn get_import_table_data(&self, is_pe32_plus: bool) -> Result<Option<Vec<u8>>> {
-        if self.native.is_empty() {
-            Ok(None)
-        } else {
-            Ok(Some(self.native.get_import_table_data(is_pe32_plus)?))
-        }
-    }
-
     /// Update Import Address Table RVAs after section moves.
     ///
     /// Adjusts all IAT RVAs by the specified delta when sections are moved
@@ -992,38 +960,6 @@ mod tests {
         // Should succeed with negative delta
         let result = container.update_iat_rvas(-0x100);
         assert!(result.is_ok());
-    }
-
-    #[test]
-    fn test_get_import_table_data_empty() {
-        let container = UnifiedImportContainer::new();
-        let result = container.get_import_table_data(false);
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_none());
-    }
-
-    #[test]
-    fn test_get_import_table_data_pe32() {
-        let mut container = UnifiedImportContainer::new();
-        container
-            .add_native_function("kernel32.dll", "GetCurrentProcessId")
-            .unwrap();
-
-        let result = container.get_import_table_data(false);
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_some());
-    }
-
-    #[test]
-    fn test_get_import_table_data_pe32_plus() {
-        let mut container = UnifiedImportContainer::new();
-        container
-            .add_native_function("kernel32.dll", "GetCurrentProcessId")
-            .unwrap();
-
-        let result = container.get_import_table_data(true);
-        assert!(result.is_ok());
-        assert!(result.unwrap().is_some());
     }
 
     #[test]

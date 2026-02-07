@@ -156,10 +156,10 @@ mod tests {
 
         // Verify the written data
         // parent: TypeDef(42) has HasCustomAttribute tag 3, so (42 << 5) | 3 = 1347 = 0x0543
-        // constructor: MethodDef(15) has CustomAttributeType tag 0 (first occurrence), so (15 << 3) | 0 = 120 = 0x0078
+        // constructor: MethodDef(15) has CustomAttributeType tag 2 (per ECMA-335), so (15 << 3) | 2 = 122 = 0x007A
         let expected = vec![
             0x43, 0x05, // parent: 0x0543, little-endian
-            0x78, 0x00, // constructor: 0x0078, little-endian
+            0x7A, 0x00, // constructor: 0x007A, little-endian
             0x34, 0x12, // value: 0x1234, little-endian
         ];
 
@@ -282,10 +282,10 @@ mod tests {
 
         // Parent and constructor should still encode their tags even with zero rows
         // parent: Assembly(0) has HasCustomAttribute tag 14, so (0 << 5) | 14 = 14 = 0x000E
-        // constructor: MethodDef(0) has CustomAttributeType tag 0 (first occurrence), so (0 << 3) | 0 = 0 = 0x0000
+        // constructor: MethodDef(0) has CustomAttributeType tag 2 (per ECMA-335), so (0 << 3) | 2 = 2 = 0x0002
         let expected = vec![
             0x0E, 0x00, // parent: 0x000E, little-endian
-            0x00, 0x00, // constructor: 0x0000, little-endian
+            0x02, 0x00, // constructor: 0x0002, little-endian
             0x00, 0x00, // value: 0x0000, little-endian
         ];
 

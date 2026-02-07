@@ -103,6 +103,9 @@ pub fn apply_all_fixups(ctx: &mut WriteContext) -> Result<()> {
     // Zero stripped data regions for better compression
     zero_stripped_data_regions(ctx)?;
 
+    // Fix COFF characteristics if relocations were stripped
+    fixup_coff_characteristics(ctx)?;
+
     // Calculate and write PE checksum (must be last)
     fixup_checksum(ctx)?;
 
@@ -155,6 +158,12 @@ pub fn fixup_optional_header(ctx: &mut WriteContext) -> Result<()> {
     // SizeOfCode at offset 4 (after magic field)
     ctx.write_u32_at(ctx.optional_header_offset + 4, text_file_size)?;
 
+    // AddressOfEntryPoint at offset 16
+    // This is the RVA of the native entry point stub that jumps to _CorExeMain/_CorDllMain
+    if let Some(entry_rva) = ctx.native_entry_rva {
+        ctx.write_u32_at(ctx.optional_header_offset + 16, entry_rva)?;
+    }
+
     // SizeOfImage at offset 56
     ctx.write_u32_at(ctx.optional_header_offset + 56, image_size)?;
 
@@ -186,7 +195,6 @@ pub fn fixup_section_table(ctx: &mut WriteContext) -> Result<()> {
         if section.removed {
             continue;
         }
-
         // Get section data or use original values for sections without write info
         let (data_offset, rva, data_size) =
             match (section.data_offset, section.rva, section.data_size) {
@@ -194,6 +202,8 @@ pub fn fixup_section_table(ctx: &mut WriteContext) -> Result<()> {
                 _ => continue, // Skip sections without data
             };
 
+        // SizeOfRawData must be a multiple of FileAlignment per PE spec.
+        // This is required for all sections including the last one.
         let file_size = u32::try_from(align_to(
             u64::from(data_size),
             u64::from(ctx.file_alignment),
@@ -350,13 +360,14 @@ pub fn fixup_data_directories(ctx: &mut WriteContext) -> Result<()> {
     let dd_offset = if ctx.is_pe32_plus { 112 } else { 96 };
     let dd_base = ctx.optional_header_offset + dd_offset;
 
-    // IAT (index 12) - always at the very start of .text section
+    // IAT (index 12) - at the very start of .text section
     let iat_rva = ctx.text_section_rva;
+    let iat_size = u32::try_from(ctx.iat_size).unwrap_or(8);
     ctx.write_u32_at(dd_base + 12 * 8, iat_rva)?;
-    ctx.write_u32_at(dd_base + 12 * 8 + 4, 8)?; // IAT is always 8 bytes for .NET
+    ctx.write_u32_at(dd_base + 12 * 8 + 4, iat_size)?;
 
     // CLR Runtime Header (index 14) - immediately after IAT
-    let clr_rva = ctx.text_section_rva + 8;
+    let clr_rva = ctx.text_section_rva + iat_size;
     ctx.write_u32_at(dd_base + 14 * 8, clr_rva)?;
     ctx.write_u32_at(dd_base + 14 * 8 + 4, COR20_HEADER_SIZE)?;
 
@@ -556,6 +567,50 @@ pub fn zero_stripped_data_regions(ctx: &mut WriteContext) -> Result<()> {
         if cert_offset_u64 + u64::from(cert_size) <= ctx.bytes_written {
             let zeros = vec![0u8; cert_size as usize];
             ctx.write_at(cert_offset_u64, &zeros)?;
+        }
+    }
+
+    Ok(())
+}
+
+/// Fixes up COFF characteristics when relocations are stripped.
+///
+/// Sets the `IMAGE_FILE_RELOCS_STRIPPED` flag (0x0001) in the COFF header
+/// characteristics field when the assembly has no relocations. This is
+/// required by CoreCLR for IL-only x64 EXEs without relocations.
+///
+/// # Arguments
+///
+/// * `ctx` - The write context with relocs_stripped flag
+///
+/// # CoreCLR Requirements
+///
+/// From CoreCLR's `CheckILOnlyBaseRelocations()`:
+/// - If no base relocation directory AND not a DLL, RELOCS_STRIPPED must be set
+/// - This applies to IL-only x64 EXEs where no relocations are needed
+///
+/// # COFF Header Layout
+///
+/// The characteristics field is at offset 18 (0x12) from the start of the
+/// COFF header. It's a 16-bit field containing various PE flags.
+pub fn fixup_coff_characteristics(ctx: &mut WriteContext) -> Result<()> {
+    if ctx.relocs_stripped {
+        const IMAGE_FILE_RELOCS_STRIPPED: u16 = 0x0001;
+
+        // Read current characteristics (offset +18 from COFF header)
+        let chars_offset = ctx.coff_header_offset + 18;
+
+        // Read the current value from the output
+        let current_bytes = ctx.output.as_slice();
+        let chars_offset_usize = chars_offset as usize;
+        if chars_offset_usize + 2 <= current_bytes.len() {
+            let current = u16::from_le_bytes([
+                current_bytes[chars_offset_usize],
+                current_bytes[chars_offset_usize + 1],
+            ]);
+
+            // Set the RELOCS_STRIPPED flag
+            ctx.write_u16_at(chars_offset, current | IMAGE_FILE_RELOCS_STRIPPED)?;
         }
     }
 

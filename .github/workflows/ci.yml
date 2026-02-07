@@ -61,6 +61,14 @@ jobs:
       run: |
         choco install z3 -y
         dotnet tool install --global dotnet-ildasm
+        # Find Z3 installation and set environment variables for z3-sys
+        $z3Path = Get-ChildItem -Path "C:\ProgramData\chocolatey\lib\z3\tools" -Directory | Select-Object -First 1
+        $z3Header = Join-Path $z3Path.FullName "include\z3.h"
+        $z3Lib = Join-Path $z3Path.FullName "bin"
+        echo "Z3_SYS_Z3_HEADER=$z3Header" >> $env:GITHUB_ENV
+        echo "LIBZ3_SYS_LIB_DIR=$z3Lib" >> $env:GITHUB_ENV
+        echo "Found Z3 at: $($z3Path.FullName)"
+      shell: pwsh
 
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2

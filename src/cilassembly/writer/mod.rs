@@ -53,6 +53,7 @@ mod generator;
 mod heaps;
 mod methods;
 mod output;
+mod relocations;
 mod remapper;
 mod signatures;
 mod sizes;

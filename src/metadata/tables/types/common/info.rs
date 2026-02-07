@@ -400,6 +400,23 @@ impl TableInfo {
         row: u32,
         coded_index_type: CodedIndexType,
     ) -> Result<u32> {
+        // CustomAttributeType has a special encoding per ECMA-335 §II.24.2.6:
+        // The coded index uses 3 bits for the tag, but only tags 2 and 3 are valid:
+        // - Tag 2: MethodDef
+        // - Tag 3: MemberRef
+        // Tags 0, 1, 4-7 are "unused" but the tables array has placeholders.
+        // We must return the canonical tag, not the first position.
+        if coded_index_type == CodedIndexType::CustomAttributeType {
+            let tag: u32 = match table_id {
+                TableId::MethodDef => 2,
+                TableId::MemberRef => 3,
+                _ => return Err(out_of_bounds_error!()),
+            };
+            // CustomAttributeType uses 3 bits for the tag (5 entries -> ceil(log2(5)) = 3)
+            let encoded = (row << 3) | tag;
+            return Ok(encoded);
+        }
+
         let tables = coded_index_type.tables();
 
         let tag = tables

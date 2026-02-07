@@ -58,6 +58,7 @@ mod synchronization;
 mod visitedmap;
 
 pub use alignment::align_to;
+#[cfg(feature = "emulation")]
 pub use base64::{base64_decode, base64_encode};
 pub use bitset::BitSet;
 pub use compression::compressed_uint_size;

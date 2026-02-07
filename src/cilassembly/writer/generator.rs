@@ -43,6 +43,7 @@ use crate::{
             },
             methods::remap_method_body_tokens,
             output::Output,
+            relocations::{generate_relocations, RelocationConfig},
             remapper::{RemapReferences, RidRemapper},
         },
         CilAssembly, Operation, TableModifications,
@@ -357,7 +358,7 @@ impl<'a> PeGenerator<'a> {
         self.write_section_table(&mut ctx)?;
 
         // Align to file alignment for .text section
-        ctx.align_to_file();
+        ctx.align_to_file()?;
         ctx.text_section_offset = ctx.pos();
 
         // Phase 2: Write .text section content
@@ -441,7 +442,7 @@ impl<'a> PeGenerator<'a> {
         }
 
         // Align to file alignment for next section
-        ctx.align_to_file();
+        ctx.align_to_file()?;
 
         // Phase 3: Write additional sections (in order they appear in section table)
         self.write_other_sections(&mut ctx)?;
@@ -744,9 +745,11 @@ impl<'a> PeGenerator<'a> {
         Ok(())
     }
 
-    /// Writes the IAT (Import Address Table).
+    /// Writes the IAT (Import Address Table) at the start of .text section.
     ///
-    /// Writes 8 zero bytes as a placeholder IAT for .NET executables.
+    /// Builds the complete import list (mscoree.dll first, then any native imports)
+    /// and writes the IAT content directly. The IAT is placed at the very start of
+    /// .text section as required by .NET PE format.
     ///
     /// # Arguments
     ///
@@ -758,13 +761,154 @@ impl<'a> PeGenerator<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if writing fails.
+    /// Returns an error if building imports or writing fails.
     fn write_iat(&self, ctx: &mut WriteContext) -> Result<()> {
-        let _ = self; // Method signature kept for consistency
         ctx.iat_offset = ctx.pos();
-        let zeros = [0u8; 8];
-        ctx.write(&zeros)?;
+
+        // Build complete import list: mscoree.dll first, then preserved + new imports
+        let imports = self.build_import_list(ctx)?;
+
+        // Calculate IAT size
+        let iat_size = imports.iat_byte_size(ctx.is_pe32_plus);
+
+        if iat_size == 0 {
+            // No imports - write minimal placeholder (shouldn't happen for .NET)
+            let zeros = [0u8; 8];
+            ctx.write(&zeros)?;
+            ctx.iat_size = 8;
+        } else {
+            // Calculate where import table will be written (needed for string RVA calculation)
+            // This is a forward reference - we'll write the import table after metadata
+            // For now, use a placeholder RVA that will be corrected when we know the final position
+            // The IAT content depends on import_table_rva for hint/name string references
+            //
+            // Since we don't know import_table_rva yet, we store the imports and build IAT
+            // later as part of write_import_data, then patch the IAT offset.
+            //
+            // Alternative: write zeros now, then patch in fixup phase
+            let zeros = vec![0u8; iat_size];
+            ctx.write(&zeros)?;
+            ctx.iat_size = iat_size as u64;
+        }
+
+        // Store imports for use in write_import_data
+        ctx.pending_imports = Some(imports);
+
         Ok(())
+    }
+
+    /// Builds the complete import list for the assembly.
+    ///
+    /// The import list is built by merging:
+    /// 1. mscoree.dll with _CorExeMain/_CorDllMain (always first)
+    /// 2. Original imports from the source PE (excluding mscoree.dll)
+    /// 3. User-added imports from assembly changes
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The write context (used for PE format detection)
+    ///
+    /// # Returns
+    ///
+    /// A `NativeImports` containing all imports with mscoree.dll first.
+    fn build_import_list(&self, ctx: &WriteContext) -> Result<NativeImports> {
+        let view = self.assembly.view();
+
+        // Collect non-mscoree imports from original PE
+        let mut other_imports = NativeImports::new();
+        other_imports.set_pe_format(ctx.is_pe32_plus);
+
+        if let Some(pe_imports) = view.file().imports() {
+            let original = NativeImports::from_pe_imports(pe_imports, ctx.is_pe32_plus)?;
+            for desc in original.descriptors() {
+                // Skip mscoree.dll - we'll add it correctly as first import
+                if desc.dll_name.eq_ignore_ascii_case("mscoree.dll") {
+                    continue;
+                }
+                if other_imports.add_dll(&desc.dll_name).is_ok() {
+                    for func in &desc.functions {
+                        if let Some(ref name) = func.name {
+                            let _ = other_imports.add_function(&desc.dll_name, name);
+                        } else if let Some(ordinal) = func.ordinal {
+                            let _ = other_imports.add_function_by_ordinal(&desc.dll_name, ordinal);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Add user-specified imports from changes
+        let new_imports = self.assembly.changes().native_imports().native();
+        for desc in new_imports.descriptors() {
+            // Skip mscoree.dll - protected
+            if desc.dll_name.eq_ignore_ascii_case("mscoree.dll") {
+                continue;
+            }
+            // Add or merge with existing
+            if !other_imports.has_dll(&desc.dll_name) {
+                let _ = other_imports.add_dll(&desc.dll_name);
+            }
+            for func in &desc.functions {
+                if let Some(ref name) = func.name {
+                    let _ = other_imports.add_function(&desc.dll_name, name);
+                } else if let Some(ordinal) = func.ordinal {
+                    let _ = other_imports.add_function_by_ordinal(&desc.dll_name, ordinal);
+                }
+            }
+        }
+
+        // Build final import list with mscoree.dll FIRST
+        let mut final_imports = NativeImports::new();
+        final_imports.set_pe_format(ctx.is_pe32_plus);
+
+        // Determine entry point function based on PE characteristics
+        // IMAGE_FILE_DLL = 0x2000
+        let is_dll = view.file().header().characteristics & 0x2000 != 0;
+        let entry_fn = if is_dll { "_CorDllMain" } else { "_CorExeMain" };
+
+        // Add mscoree.dll first (required for .NET)
+        final_imports.add_dll("mscoree.dll")?;
+        final_imports.add_function("mscoree.dll", entry_fn)?;
+
+        // Add all other imports after mscoree.dll
+        for desc in other_imports.descriptors() {
+            final_imports.add_dll(&desc.dll_name)?;
+            for func in &desc.functions {
+                if let Some(ref name) = func.name {
+                    let _ = final_imports.add_function(&desc.dll_name, name);
+                } else if let Some(ordinal) = func.ordinal {
+                    let _ = final_imports.add_function_by_ordinal(&desc.dll_name, ordinal);
+                }
+            }
+        }
+
+        Ok(final_imports)
+    }
+
+    /// Checks if this assembly is IL-only (no native code).
+    ///
+    /// Examines the COMIMAGE_FLAGS_ILONLY flag in the COR20 header.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the assembly contains only managed IL code, `false` if it has native code.
+    fn is_il_only(&self) -> bool {
+        const COMIMAGE_FLAGS_ILONLY: u32 = 0x0000_0001;
+        let cor20 = self.assembly.view().cor20header();
+        (cor20.flags & COMIMAGE_FLAGS_ILONLY) != 0
+    }
+
+    /// Checks if this is a DLL (not an EXE).
+    ///
+    /// Examines the IMAGE_FILE_DLL flag in the COFF characteristics.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the assembly is a DLL, `false` if it's an EXE.
+    fn is_dll(&self) -> bool {
+        const IMAGE_FILE_DLL: u16 = 0x2000;
+        let characteristics = self.assembly.view().file().header().characteristics;
+        (characteristics & IMAGE_FILE_DLL) != 0
     }
 
     /// Writes the COR20 (CLR) header.
@@ -839,6 +983,11 @@ impl<'a> PeGenerator<'a> {
                         .map(|mods| mods.deleted_rids().collect())
                         .unwrap_or_default();
 
+                    // Track RVAs we've already written to avoid duplicates.
+                    // Multiple MethodDef entries can share the same RVA if they have
+                    // identical IL bodies - we only need to write each unique body once.
+                    let mut written_rvas: HashSet<u32> = HashSet::new();
+
                     for row in method_table.iter() {
                         if deleted_method_rids.contains(&row.rid) {
                             continue;
@@ -857,6 +1006,13 @@ impl<'a> PeGenerator<'a> {
                             continue;
                         }
 
+                        // Skip if we've already written a body at this RVA.
+                        // The RVA mapping was already recorded on first write.
+                        if written_rvas.contains(&original_rva) {
+                            continue;
+                        }
+                        written_rvas.insert(original_rva);
+
                         // Read method body at original RVA
                         let offset = file.rva_to_offset(original_rva as usize)?;
                         let available_data = file.data_slice(offset, file.data().len() - offset)?;
@@ -872,6 +1028,12 @@ impl<'a> PeGenerator<'a> {
 
                         // Read just the method body bytes
                         let body_data = file.data_slice(offset, body_size)?;
+
+                        // Fat method headers require 4-byte alignment (ECMA-335 §II.25.4.2)
+                        // Tiny headers have no alignment requirement
+                        if method_body.is_fat {
+                            ctx.align_to_4_with_padding()?;
+                        }
 
                         // Track new RVA for this method
                         let new_rva = ctx.current_rva();
@@ -890,9 +1052,6 @@ impl<'a> PeGenerator<'a> {
                         } else {
                             ctx.write(body_data)?;
                         }
-
-                        // Align to 4 bytes for next body
-                        ctx.align_to_4_with_padding()?;
                     }
                 }
             }
@@ -903,6 +1062,13 @@ impl<'a> PeGenerator<'a> {
         bodies.sort_by_key(|(placeholder, _)| *placeholder);
 
         for (placeholder_rva, body_bytes) in bodies {
+            // Fat method headers require 4-byte alignment (ECMA-335 §II.25.4.2)
+            // Check first byte: (byte & 0x3) == 0x3 means fat header
+            let is_fat = !body_bytes.is_empty() && (body_bytes[0] & 0x3) == 0x3;
+            if is_fat {
+                ctx.align_to_4_with_padding()?;
+            }
+
             // Calculate actual RVA for this method body
             let actual_rva = ctx.current_rva();
             ctx.method_body_rva_map.insert(placeholder_rva, actual_rva);
@@ -918,9 +1084,6 @@ impl<'a> PeGenerator<'a> {
             )?;
 
             ctx.write(&resolved_body)?;
-
-            // Align to 4 bytes for next body
-            ctx.align_to_4_with_padding()?;
         }
 
         Ok(())
@@ -1995,10 +2158,11 @@ impl<'a> PeGenerator<'a> {
         }
     }
 
-    /// Writes import data.
+    /// Writes import data (descriptors + ILT + strings) and patches the IAT.
     ///
-    /// Merges original imports from the assembly with any new imports from changes
-    /// and writes the combined import table.
+    /// Uses the imports built during `write_iat()` to generate the import table.
+    /// The import table is written after metadata, and the IAT at the start of
+    /// .text section is patched with the correct thunk RVAs.
     ///
     /// # Arguments
     ///
@@ -2010,82 +2174,127 @@ impl<'a> PeGenerator<'a> {
     ///
     /// # Errors
     ///
-    /// Returns an error if import table serialization or writing fails.
+    /// Returns an error if import table generation or writing fails.
     fn write_import_data(&self, ctx: &mut WriteContext) -> Result<()> {
-        let view = self.assembly.view();
-
-        // Get original imports from the PE file
-        let original_imports = if let Some(pe_imports) = view.file().imports() {
-            NativeImports::from_pe_imports(pe_imports, ctx.is_pe32_plus)?
-        } else {
-            NativeImports::new()
+        // Take pending imports built during write_iat()
+        let imports = match ctx.pending_imports.take() {
+            Some(imports) => imports,
+            None => {
+                // No imports were built - this shouldn't happen for .NET assemblies
+                // but handle gracefully
+                return Ok(());
+            }
         };
 
-        let new_imports = self.assembly.changes().native_imports().native();
-        if original_imports.is_empty() && new_imports.is_empty() {
-            return Ok(());
-        }
-
-        // Clone original imports and merge in new ones
-        let mut merged = if original_imports.is_empty() {
-            let mut merged = NativeImports::new();
-            merged.set_pe_format(ctx.is_pe32_plus);
-            merged
-        } else {
-            let mut merged = NativeImports::new();
-            merged.set_pe_format(ctx.is_pe32_plus);
-
-            // Copy original descriptors
-            for desc in original_imports.descriptors() {
-                if merged.add_dll(&desc.dll_name).is_ok() {
-                    for func in &desc.functions {
-                        if let Some(ref name) = func.name {
-                            let _ = merged.add_function(&desc.dll_name, name);
-                        } else if let Some(ordinal) = func.ordinal {
-                            let _ = merged.add_function_by_ordinal(&desc.dll_name, ordinal);
-                        }
-                    }
-                }
-            }
-            merged
-        };
-
-        // Add new imports from changes
-        for desc in new_imports.descriptors() {
-            if merged.add_dll(&desc.dll_name).is_ok() || merged.has_dll(&desc.dll_name) {
-                for func in &desc.functions {
-                    if let Some(ref name) = func.name {
-                        let _ = merged.add_function(&desc.dll_name, name);
-                    } else if let Some(ordinal) = func.ordinal {
-                        let _ = merged.add_function_by_ordinal(&desc.dll_name, ordinal);
-                    }
-                }
-            }
-        }
-
-        if merged.is_empty() {
+        if imports.is_empty() {
             return Ok(());
         }
 
         ctx.align_to_4();
-        let import_data_offset = ctx.pos();
-        let import_data_rva = ctx.current_rva();
+        let import_table_rva = ctx.current_rva();
 
-        // Serialize import table data
-        let import_data_bytes =
-            merged.get_import_table_data_with_base_rva(ctx.is_pe32_plus, import_data_rva)?;
+        // Generate import table data (descriptors + ILT + strings)
+        // FirstThunk fields will point to IAT at ctx.text_section_rva
+        let import_table_bytes = imports.build_import_table(
+            ctx.is_pe32_plus,
+            ctx.text_section_rva, // IAT is at start of .text
+            import_table_rva,     // Where we're writing the import table
+        )?;
 
-        if !import_data_bytes.is_empty() {
-            ctx.import_data_offset = Some(import_data_offset);
-            ctx.import_data_rva = Some(import_data_rva);
-            ctx.import_data_size = Some(u32::try_from(import_data_bytes.len()).map_err(|_| {
-                Error::LayoutFailed(format!(
-                    "Import data size {} exceeds u32 range",
-                    import_data_bytes.len()
-                ))
-            })?);
-            ctx.import_table_bytes = Some(import_data_bytes.clone());
-            ctx.write(&import_data_bytes)?;
+        if import_table_bytes.is_empty() {
+            return Ok(());
+        }
+
+        // Now generate and patch the IAT content
+        // The IAT was written as zeros in write_iat(), now we know the import_table_rva
+        let iat_bytes = imports.build_iat_bytes(ctx.is_pe32_plus, import_table_rva)?;
+
+        // Patch the IAT at the start of .text section
+        if !iat_bytes.is_empty() {
+            ctx.write_at(ctx.iat_offset, &iat_bytes)?;
+        }
+
+        // Write import table data
+        ctx.import_data_offset = Some(ctx.pos());
+        ctx.import_data_rva = Some(import_table_rva);
+        ctx.import_data_size = Some(u32::try_from(import_table_bytes.len()).map_err(|_| {
+            Error::LayoutFailed(format!(
+                "Import data size {} exceeds u32 range",
+                import_table_bytes.len()
+            ))
+        })?);
+        ctx.write(&import_table_bytes)?;
+
+        // Write native entry point stub after import table
+        self.write_native_entry_stub(ctx)?;
+
+        Ok(())
+    }
+
+    /// Writes the native entry point stub for .NET PE files.
+    ///
+    /// This writes a small native code stub that performs an indirect jump through
+    /// the IAT to _CorExeMain (for EXEs) or _CorDllMain (for DLLs). The Windows
+    /// loader jumps to this entry point, which then transfers control to the CLR.
+    ///
+    /// The stub format is:
+    /// - For PE32: `ff 25 xx xx xx xx` (jmp dword ptr [VA]) - 6 bytes
+    /// - For PE32+: `ff 25 00 00 00 00` (jmp qword ptr [rip+0]) followed by 8-byte address
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The write context tracking positions and output
+    ///
+    /// # Returns
+    ///
+    /// Returns `Ok(())` on success.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if writing fails.
+    fn write_native_entry_stub(&self, ctx: &mut WriteContext) -> Result<()> {
+        // Align to 4 bytes for entry point
+        ctx.align_to_4_with_padding()?;
+
+        // Calculate entry point RVA
+        let entry_rva = ctx.current_rva();
+        ctx.native_entry_rva = Some(entry_rva);
+
+        // The IAT entry for _CorExeMain/_CorDllMain is at the start of .text section
+        // We need the absolute VA (image base + RVA)
+        let iat_rva = ctx.text_section_rva;
+        let image_base = ctx.image_base;
+
+        if ctx.is_pe32_plus {
+            // PE32+ (x64): Use RIP-relative addressing
+            // ff 25 00 00 00 00 = jmp qword ptr [rip+0]
+            // followed by 8-byte absolute address
+            // But for .NET, the stub is simpler: jmp qword ptr [IAT]
+            // The offset from RIP (after instruction) to IAT
+            let stub_end_rva = entry_rva + 6; // instruction is 6 bytes
+            let rel_offset = iat_rva.wrapping_sub(stub_end_rva);
+            let stub: [u8; 6] = [
+                0xff,
+                0x25, // jmp qword ptr [rip+offset]
+                (rel_offset & 0xff) as u8,
+                ((rel_offset >> 8) & 0xff) as u8,
+                ((rel_offset >> 16) & 0xff) as u8,
+                ((rel_offset >> 24) & 0xff) as u8,
+            ];
+            ctx.write(&stub)?;
+        } else {
+            // PE32 (x86): Use absolute addressing
+            // ff 25 xx xx xx xx = jmp dword ptr [VA]
+            let iat_va = image_base + u64::from(iat_rva);
+            let stub: [u8; 6] = [
+                0xff,
+                0x25, // jmp dword ptr [abs]
+                (iat_va & 0xff) as u8,
+                ((iat_va >> 8) & 0xff) as u8,
+                ((iat_va >> 16) & 0xff) as u8,
+                ((iat_va >> 24) & 0xff) as u8,
+            ];
+            ctx.write(&stub)?;
         }
 
         Ok(())
@@ -2224,16 +2433,6 @@ impl<'a> PeGenerator<'a> {
             .unwrap_or(0);
         let original_text_end = original_text_rva.saturating_add(original_text_size);
 
-        // Get original .rsrc RVA for reloc adjustment
-        let original_rsrc_rva = file
-            .sections()
-            .iter()
-            .find(|s| s.name.starts_with(".rsrc"))
-            .map(|s| s.virtual_address);
-
-        // Track the new .rsrc RVA for reloc adjustment
-        let mut new_rsrc_rva: Option<u32> = None;
-
         // Iterate through sections in order
         for section_idx in 0..ctx.sections.len() {
             let section_name = ctx.sections[section_idx].name.clone();
@@ -2276,7 +2475,6 @@ impl<'a> PeGenerator<'a> {
                 if data_size > 0 {
                     ctx.update_section(section_idx, data_offset, section_rva, data_size);
                     current_end_rva = u64::from(section_rva) + u64::from(data_size);
-                    new_rsrc_rva = Some(section_rva);
                 }
             } else if section_name.starts_with(".reloc") {
                 // Write reloc section with filtering
@@ -2286,8 +2484,6 @@ impl<'a> PeGenerator<'a> {
                     original_section,
                     original_text_rva,
                     original_text_end,
-                    original_rsrc_rva,
-                    new_rsrc_rva,
                 )?;
 
                 if let Some(data_size) = result {
@@ -2308,8 +2504,10 @@ impl<'a> PeGenerator<'a> {
                 }
             }
 
-            // Align to file alignment for next section
-            ctx.align_to_file();
+            // Align to file alignment. This padding is required because PE spec
+            // mandates SizeOfRawData be a multiple of FileAlignment, and the file
+            // must contain those bytes.
+            ctx.align_to_file()?;
         }
 
         Ok(())
@@ -2347,7 +2545,13 @@ impl<'a> PeGenerator<'a> {
         Ok(section.virtual_size)
     }
 
-    /// Writes reloc section data with filtering.
+    /// Writes reloc section data with proper CoreCLR compliance.
+    ///
+    /// Handles relocations based on assembly type:
+    /// - x64 IL-only EXE: Remove .reloc, set RELOCS_STRIPPED flag
+    /// - x86 IL-only EXE: Generate entry stub relocation
+    /// - DLLs: Always generate relocations (CoreCLR requirement)
+    /// - Mixed-mode: Filter existing relocations
     ///
     /// Returns Some(size) if data was written, None if section should be removed.
     fn write_reloc_data(
@@ -2356,35 +2560,40 @@ impl<'a> PeGenerator<'a> {
         section: &SectionTable,
         original_text_rva: u32,
         original_text_end: u32,
-        original_rsrc_rva: Option<u32>,
-        new_rsrc_rva: Option<u32>,
     ) -> Result<Option<u32>> {
         let view = self.assembly.view();
         let file = view.file();
 
-        let data = match file.data().get(
+        // Get original reloc data if present
+        let existing_data = file.data().get(
             section.pointer_to_raw_data as usize
                 ..(section.pointer_to_raw_data + section.size_of_raw_data) as usize,
-        ) {
-            Some(d) => d,
-            None => return Ok(None),
-        };
-
-        // Process relocation blocks - keep only blocks not pointing to .text
-        let processed_reloc = self.process_relocation_blocks(
-            data,
-            original_text_rva,
-            original_text_end,
-            original_rsrc_rva,
-            new_rsrc_rva,
         );
 
-        if processed_reloc.is_empty() {
+        // Build relocation configuration
+        let config = RelocationConfig {
+            is_dll: self.is_dll(),
+            is_pe32_plus: ctx.is_pe32_plus,
+            is_il_only: self.is_il_only(),
+            entry_stub_rva: ctx.native_entry_rva,
+        };
+
+        // Generate relocations using the new module
+        let result = generate_relocations(
+            &config,
+            existing_data,
+            (original_text_rva, original_text_end),
+        );
+
+        // Store the strip flag for later fixup
+        ctx.relocs_stripped = result.strip_relocations;
+
+        if result.data.is_empty() {
             return Ok(None);
         }
 
-        let size = u32::try_from(processed_reloc.len()).unwrap_or(0);
-        ctx.write(&processed_reloc)?;
+        let size = u32::try_from(result.data.len()).unwrap_or(0);
+        ctx.write(&result.data)?;
 
         Ok(Some(size))
     }
@@ -2412,90 +2621,6 @@ impl<'a> PeGenerator<'a> {
         ctx.write(data)?;
 
         Ok(section.virtual_size)
-    }
-
-    /// Processes relocation blocks, filtering and adjusting as needed.
-    ///
-    /// Parses the relocation block format and:
-    /// 1. Skips blocks pointing to .text (we completely rebuild it)
-    /// 2. Adjusts VirtualAddress for blocks pointing to .rsrc if it moved
-    /// 3. Preserves blocks pointing to other sections unchanged
-    ///
-    /// # Arguments
-    ///
-    /// * `reloc_data` - Original .reloc section data
-    /// * `original_text_rva` - Original .text section RVA
-    /// * `original_text_end` - Original .text section end RVA
-    /// * `original_rsrc_rva` - Original .rsrc section RVA (if present)
-    /// * `new_rsrc_rva` - New .rsrc section RVA (if present)
-    ///
-    /// # Returns
-    ///
-    /// Processed relocation data with updated block headers.
-    fn process_relocation_blocks(
-        &self,
-        reloc_data: &[u8],
-        original_text_rva: u32,
-        original_text_end: u32,
-        original_rsrc_rva: Option<u32>,
-        new_rsrc_rva: Option<u32>,
-    ) -> Vec<u8> {
-        let mut result = Vec::new();
-        let mut offset = 0;
-
-        // Process each relocation block
-        while offset + 8 <= reloc_data.len() {
-            // Read block header
-            let block_va = u32::from_le_bytes([
-                reloc_data[offset],
-                reloc_data[offset + 1],
-                reloc_data[offset + 2],
-                reloc_data[offset + 3],
-            ]);
-            let block_size = u32::from_le_bytes([
-                reloc_data[offset + 4],
-                reloc_data[offset + 5],
-                reloc_data[offset + 6],
-                reloc_data[offset + 7],
-            ]) as usize;
-
-            // Validate block size
-            if block_size < 8 || offset + block_size > reloc_data.len() {
-                break;
-            }
-
-            // Check if this block points to .text (skip if so)
-            let points_to_text = block_va >= original_text_rva && block_va < original_text_end;
-
-            if !points_to_text {
-                // Check if this block points to .rsrc and needs adjustment
-                let adjusted_va =
-                    if let (Some(orig_rsrc), Some(new_rsrc)) = (original_rsrc_rva, new_rsrc_rva) {
-                        // If block is in .rsrc, adjust by the delta
-                        if block_va >= orig_rsrc {
-                            let delta = new_rsrc as i64 - orig_rsrc as i64;
-                            ((block_va as i64) + delta) as u32
-                        } else {
-                            block_va
-                        }
-                    } else {
-                        block_va
-                    };
-
-                // Write adjusted block header
-                result.extend_from_slice(&adjusted_va.to_le_bytes());
-                result.extend_from_slice(&(block_size as u32).to_le_bytes());
-
-                // Copy block entries unchanged (they're offsets within the page)
-                if block_size > 8 {
-                    result.extend_from_slice(&reloc_data[offset + 8..offset + block_size]);
-                }
-            }
-
-            offset += block_size;
-        }
-
-        result
     }
 }
 

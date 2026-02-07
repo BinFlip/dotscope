@@ -85,9 +85,6 @@
 //!
 //! imports.add_dll("user32.dll")?;
 //! imports.add_function_by_ordinal("user32.dll", 120)?; // MessageBoxW
-//!
-//! // Generate import table data
-//! let import_data = imports.get_import_table_data(false)?;
 //! # Ok(())
 //! # }
 //! ```
@@ -109,7 +106,7 @@ use std::collections::HashMap;
 
 use crate::{
     file::pe::Import,
-    utils::{to_u32, write_le_at, write_string_at},
+    utils::{write_le_at, write_string_at},
     Result,
 };
 
@@ -137,9 +134,7 @@ use crate::{
 /// imports.add_dll("kernel32.dll")?;
 /// imports.add_function("kernel32.dll", "GetCurrentProcessId")?;
 ///
-/// // Generate import table
-/// let table_data = imports.get_import_table_data(false)?;
-/// println!("Import table size: {} bytes", table_data.len());
+/// println!("DLL count: {}", imports.dll_count());
 /// # Ok(())
 /// # }
 /// ```
@@ -153,9 +148,6 @@ pub struct NativeImports {
 
     /// Next available RVA for IAT allocation
     next_iat_rva: u32,
-
-    /// Base RVA for import table structures
-    import_table_base_rva: u32,
 
     /// Whether this is a PE32+ (64-bit) image.
     /// Affects IAT entry size: 4 bytes for PE32, 8 bytes for PE32+.
@@ -233,9 +225,8 @@ impl NativeImports {
         Self {
             descriptors: HashMap::new(),
             iat_entries: HashMap::new(),
-            next_iat_rva: 0x1000,          // Default IAT base address
-            import_table_base_rva: 0x2000, // Default import table base
-            is_pe32_plus: false,           // Default to PE32 (32-bit)
+            next_iat_rva: 0x1000, // Default IAT base address
+            is_pe32_plus: false,  // Default to PE32 (32-bit)
         }
     }
 
@@ -750,280 +741,6 @@ impl NativeImports {
         self.descriptors.keys().cloned().collect()
     }
 
-    /// Generate import table data for PE writing.
-    ///
-    /// Creates the complete import table structure including import descriptors,
-    /// Import Lookup Table (ILT), Import Address Table (IAT), and name tables.
-    /// The returned data can be written directly to a PE file's import section.
-    ///
-    /// # Arguments
-    /// * `is_pe32_plus` - Whether this is PE32+ format (64-bit) or PE32 (32-bit)
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing a vector with the complete import table data in PE format,
-    /// or an empty vector if no imports are present. Returns an error if the table
-    /// generation fails due to size limitations or other constraints.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,no_run
-    /// use dotscope::metadata::imports::NativeImports;
-    ///
-    /// let mut imports = NativeImports::new();
-    /// imports.add_dll("kernel32.dll")?;
-    /// imports.add_function("kernel32.dll", "GetCurrentProcessId")?;
-    ///
-    /// let table_data = imports.get_import_table_data(false)?; // PE32 format
-    /// assert!(!table_data.is_empty());
-    /// println!("Import table size: {} bytes", table_data.len());
-    /// # Ok::<(), dotscope::Error>(())
-    /// ```
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - The calculated table size would exceed reasonable limits
-    /// - String writing operations fail due to encoding issues
-    /// - Memory allocation for the output buffer fails
-    ///
-    /// # Table Layout
-    ///
-    /// The generated data follows this structure:
-    /// 1. Import Descriptor Table (null-terminated)
-    /// 2. Import Lookup Tables (ILT) for each DLL
-    /// 3. Import Address Tables (IAT) for each DLL
-    /// 4. Name table with function names and hints
-    /// 5. DLL name strings
-    pub fn get_import_table_data(&self, is_pe32_plus: bool) -> Result<Vec<u8>> {
-        self.get_import_table_data_with_base_rva(is_pe32_plus, self.import_table_base_rva)
-    }
-
-    /// Generate import table data for PE writing with a specified base RVA.
-    ///
-    /// This is the same as [`get_import_table_data`](Self::get_import_table_data)
-    /// but allows specifying the base RVA for all internal RVA calculations.
-    /// This is useful when the import table location is calculated dynamically
-    /// during PE file layout.
-    ///
-    /// # Arguments
-    /// * `is_pe32_plus` - Whether this is PE32+ format (64-bit) or PE32 (32-bit)
-    /// * `base_rva` - The RVA where the import table will be placed in the final PE file
-    ///
-    /// # Returns
-    ///
-    /// A `Result` containing a vector with the complete import table data in PE format,
-    /// or an empty vector if no imports are present.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the import table data cannot be serialized due to
-    /// invalid RVA calculations or buffer allocation failures.
-    pub fn get_import_table_data_with_base_rva(
-        &self,
-        is_pe32_plus: bool,
-        base_rva: u32,
-    ) -> Result<Vec<u8>> {
-        if self.is_empty() {
-            return Ok(Vec::new());
-        }
-
-        // Calculate total size needed for the import table
-        let descriptor_table_size = (self.descriptors.len() + 1) * 20; // +1 for null terminator
-
-        // Calculate sizes for ILT and IAT tables
-        let mut total_string_size = 0;
-
-        for descriptor in self.descriptors.values() {
-            total_string_size += descriptor.dll_name.len() + 1; // +1 for null terminator
-
-            for function in &descriptor.functions {
-                if let Some(ref name) = function.name {
-                    total_string_size += 2 + name.len() + 1; // 2 bytes hint + name + null terminator
-                }
-            }
-        }
-
-        // Each DLL has ILT and IAT tables (function count + 1 null terminator)
-        // Entry size depends on PE format: PE32 = 4 bytes, PE32+ = 8 bytes
-        let entry_size = if is_pe32_plus { 8 } else { 4 };
-        let mut ilt_iat_size = 0;
-        for descriptor in self.descriptors.values() {
-            let entries_per_table = descriptor.functions.len() + 1; // +1 for null terminator
-            ilt_iat_size += entries_per_table * entry_size * 2; // * 2 for ILT and IAT
-        }
-
-        let estimated_size = descriptor_table_size + ilt_iat_size + total_string_size;
-
-        // Allocate buffer with estimated size plus some padding
-        let mut data = vec![0u8; estimated_size + 256];
-
-        let mut offset = 0;
-
-        // Calculate offsets for different sections
-        let mut current_rva_offset = descriptor_table_size;
-
-        // Build descriptors with calculated offsets
-        // Sort ALL descriptors (including existing ones) by DLL name to ensure deterministic ordering
-        let mut descriptors_sorted: Vec<_> = self.descriptors.values().collect();
-        descriptors_sorted.sort_by(|a, b| a.dll_name.cmp(&b.dll_name));
-
-        let mut descriptors_with_offsets = Vec::new();
-
-        // First pass: Calculate ILT offsets (all ILTs come first)
-        let ilt_start_offset = current_rva_offset;
-        let mut ilt_offset = ilt_start_offset;
-
-        for descriptor in descriptors_sorted {
-            let mut desc = descriptor.clone();
-            desc.original_first_thunk = base_rva + to_u32(ilt_offset)?;
-            ilt_offset += (descriptor.functions.len() + 1) * entry_size; // +1 for null terminator
-            descriptors_with_offsets.push(desc);
-        }
-
-        // Second pass: Calculate IAT offsets (all IATs come after all ILTs)
-        let iat_start_offset = ilt_offset;
-        let mut iat_offset = iat_start_offset;
-
-        for descriptor in &mut descriptors_with_offsets {
-            descriptor.first_thunk = base_rva + to_u32(iat_offset)?;
-            iat_offset += (descriptor.functions.len() + 1) * entry_size; // +1 for null terminator
-        }
-
-        current_rva_offset = iat_offset;
-
-        let strings_section_offset = current_rva_offset;
-        let mut dll_name_rvas = Vec::new();
-        let mut function_name_rvas: Vec<Vec<u64>> = Vec::new();
-        let mut current_string_offset = strings_section_offset;
-
-        // First pass: calculate DLL name RVAs
-        for descriptor in &descriptors_with_offsets {
-            let dll_name_rva = base_rva + to_u32(current_string_offset)?;
-            dll_name_rvas.push(dll_name_rva);
-            current_string_offset += descriptor.dll_name.len() + 1; // +1 for null terminator
-        }
-
-        // Second pass: calculate function name RVAs
-        for descriptor in &descriptors_with_offsets {
-            let mut func_rvas = Vec::new();
-
-            for function in &descriptor.functions {
-                if let Some(ref name) = function.name {
-                    let func_name_rva = base_rva + to_u32(current_string_offset)?;
-                    func_rvas.push(u64::from(func_name_rva));
-                    current_string_offset += 2; // hint (2 bytes)
-                    current_string_offset += name.len() + 1; // name + null terminator
-                }
-            }
-
-            function_name_rvas.push(func_rvas);
-        }
-
-        // Third pass: update ILT values in descriptors
-        for (i, descriptor) in descriptors_with_offsets.iter_mut().enumerate() {
-            let func_rvas = &function_name_rvas[i];
-            let mut func_idx = 0;
-
-            for function in &mut descriptor.functions {
-                if function.name.is_some() {
-                    // Named import: use RVA pointing to hint/name table entry
-                    if func_idx < func_rvas.len() {
-                        function.ilt_value = func_rvas[func_idx];
-                        func_idx += 1;
-                    }
-                } else if let Some(ordinal) = function.ordinal {
-                    // Ordinal import: use ordinal with high bit set
-                    // PE32 uses bit 31, PE32+ uses bit 63
-                    if is_pe32_plus {
-                        function.ilt_value = 0x8000_0000_0000_0000u64 | u64::from(ordinal);
-                    } else {
-                        function.ilt_value = 0x8000_0000u64 | u64::from(ordinal);
-                    }
-                }
-            }
-        }
-
-        // Write import descriptor table
-        for (i, descriptor) in descriptors_with_offsets.iter().enumerate() {
-            // Write IMAGE_IMPORT_DESCRIPTOR structure (20 bytes each)
-            write_le_at::<u32>(&mut data, &mut offset, descriptor.original_first_thunk)?;
-            write_le_at::<u32>(&mut data, &mut offset, descriptor.timestamp)?;
-            write_le_at::<u32>(&mut data, &mut offset, descriptor.forwarder_chain)?;
-            write_le_at::<u32>(&mut data, &mut offset, dll_name_rvas[i])?; // DLL name RVA
-            write_le_at::<u32>(&mut data, &mut offset, descriptor.first_thunk)?;
-        }
-
-        // Write null terminator descriptor (20 bytes of zeros)
-        for _ in 0..5 {
-            write_le_at::<u32>(&mut data, &mut offset, 0)?;
-        }
-
-        // Write ALL ILT tables first (not interleaved - this is required by PE format)
-        for descriptor in &descriptors_with_offsets {
-            // Write ILT for this DLL (entry size depends on PE format)
-            for function in &descriptor.functions {
-                if is_pe32_plus {
-                    write_le_at::<u64>(&mut data, &mut offset, function.ilt_value)?;
-                } else {
-                    #[allow(clippy::cast_possible_truncation)]
-                    {
-                        write_le_at::<u32>(&mut data, &mut offset, function.ilt_value as u32)?;
-                    }
-                }
-            }
-            // Null terminator for this DLL's ILT
-            if is_pe32_plus {
-                write_le_at::<u64>(&mut data, &mut offset, 0)?;
-            } else {
-                write_le_at::<u32>(&mut data, &mut offset, 0)?;
-            }
-        }
-
-        // Write ALL IAT tables after all ILTs (required by PE format)
-        for descriptor in &descriptors_with_offsets {
-            // Write IAT for this DLL (initially same as ILT, entry size depends on PE format)
-            for function in &descriptor.functions {
-                if is_pe32_plus {
-                    write_le_at::<u64>(&mut data, &mut offset, function.ilt_value)?;
-                } else {
-                    #[allow(clippy::cast_possible_truncation)]
-                    {
-                        write_le_at::<u32>(&mut data, &mut offset, function.ilt_value as u32)?;
-                    }
-                }
-            }
-            // Null terminator for this DLL's IAT
-            if is_pe32_plus {
-                write_le_at::<u64>(&mut data, &mut offset, 0)?;
-            } else {
-                write_le_at::<u32>(&mut data, &mut offset, 0)?;
-            }
-        }
-
-        // First, write all DLL names
-        for descriptor in &descriptors_with_offsets {
-            write_string_at(&mut data, &mut offset, &descriptor.dll_name)?;
-        }
-
-        // Then, write all function names with hints
-        for descriptor in &descriptors_with_offsets {
-            for function in &descriptor.functions {
-                if let Some(ref name) = function.name {
-                    // Write hint (2 bytes)
-                    write_le_at::<u16>(&mut data, &mut offset, function.hint)?;
-                    // Write function name
-                    write_string_at(&mut data, &mut offset, name)?;
-                }
-            }
-        }
-
-        // Truncate buffer to actual used size
-        data.truncate(offset);
-
-        Ok(data)
-    }
-
     /// Update Import Address Table RVAs after section moves.
     ///
     /// Adjusts all IAT RVAs by the specified delta when sections are moved
@@ -1110,18 +827,6 @@ impl NativeImports {
         Ok(())
     }
 
-    /// Set the base RVA for import table generation.
-    ///
-    /// This must be called before `get_import_table_data()` to ensure that
-    /// all RVA calculations in the import table are based on the correct
-    /// final location where the table will be written in the PE file.
-    ///
-    /// # Arguments
-    /// * `base_rva` - The RVA where the import table will be placed in the final PE file
-    pub fn set_import_table_base_rva(&mut self, base_rva: u32) {
-        self.import_table_base_rva = base_rva;
-    }
-
     /// Allocate a new IAT RVA.
     ///
     /// Returns the next available RVA for IAT allocation and increments
@@ -1131,6 +836,310 @@ impl NativeImports {
         let rva = self.next_iat_rva;
         self.next_iat_rva += self.iat_entry_size();
         rva
+    }
+
+    /// Calculate the total size of the Import Address Table (IAT) in bytes.
+    ///
+    /// For .NET PE files, the IAT is placed at the start of the .text section.
+    /// Each DLL's imports require (function_count + 1) entries for the null terminator.
+    ///
+    /// # Arguments
+    /// * `is_pe32_plus` - Whether this is PE32+ (64-bit) or PE32 (32-bit) format
+    ///
+    /// # Returns
+    /// Total IAT size in bytes.
+    #[must_use]
+    pub fn iat_byte_size(&self, is_pe32_plus: bool) -> usize {
+        let entry_size = if is_pe32_plus { 8 } else { 4 };
+        let mut total_entries = 0;
+
+        for descriptor in self.descriptors.values() {
+            // Each DLL needs: function entries + 1 null terminator
+            total_entries += descriptor.functions.len() + 1;
+        }
+
+        total_entries * entry_size
+    }
+
+    /// Build the IAT (Import Address Table) bytes for .NET PE generation.
+    ///
+    /// Generates the IAT content that should be written at the start of the .text section.
+    /// Each entry contains an RVA pointing to the hint/name table entry for that function.
+    /// The RVAs are calculated based on the provided `import_table_rva` parameter which
+    /// indicates where the import table (containing the strings) will be located.
+    ///
+    /// # Arguments
+    /// * `is_pe32_plus` - Whether this is PE32+ (64-bit) or PE32 (32-bit) format
+    /// * `import_table_rva` - RVA where the import table will be written (used to calculate string RVAs)
+    ///
+    /// # Returns
+    /// IAT bytes to write at the start of .text section.
+    pub fn build_iat_bytes(&self, is_pe32_plus: bool, import_table_rva: u32) -> Result<Vec<u8>> {
+        if self.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let entry_size = if is_pe32_plus { 8 } else { 4 };
+        let mut iat_bytes = Vec::with_capacity(self.iat_byte_size(is_pe32_plus));
+
+        // Sort descriptors for deterministic ordering (mscoree.dll should be first when building import list)
+        let mut descriptors_sorted: Vec<_> = self.descriptors.values().collect();
+        descriptors_sorted
+            .sort_by(|a, b| a.dll_name.to_lowercase().cmp(&b.dll_name.to_lowercase()));
+
+        // Calculate where strings will be in the import table
+        // Layout: descriptors + null descriptor + ILT entries + strings
+        let descriptor_size = (self.descriptors.len() + 1) * 20; // +1 for null terminator
+
+        let mut total_ilt_entries = 0;
+        for desc in &descriptors_sorted {
+            total_ilt_entries += desc.functions.len() + 1; // +1 for null terminator per DLL
+        }
+        let ilt_size = total_ilt_entries * entry_size;
+
+        // Strings start after descriptors and ILT
+        let strings_start_rva = import_table_rva + (descriptor_size + ilt_size) as u32;
+
+        // Calculate hint/name RVAs for each function
+        let mut current_string_rva = strings_start_rva;
+
+        // First pass: calculate DLL name RVAs (they come first in strings)
+        let mut dll_name_end_rva = current_string_rva;
+        for desc in &descriptors_sorted {
+            dll_name_end_rva += (desc.dll_name.len() + 1) as u32; // +1 for null terminator
+        }
+
+        // Function hint/names come after DLL names
+        current_string_rva = dll_name_end_rva;
+
+        // Build IAT entries for each DLL
+        for descriptor in &descriptors_sorted {
+            for function in &descriptor.functions {
+                let thunk_value = if let Some(ordinal) = function.ordinal {
+                    // Ordinal import: high bit set + ordinal
+                    if function.name.is_none() {
+                        if is_pe32_plus {
+                            0x8000_0000_0000_0000u64 | u64::from(ordinal)
+                        } else {
+                            0x8000_0000u64 | u64::from(ordinal)
+                        }
+                    } else {
+                        // Named import with hint
+                        u64::from(current_string_rva)
+                    }
+                } else {
+                    // Named import
+                    u64::from(current_string_rva)
+                };
+
+                // Write IAT entry
+                if is_pe32_plus {
+                    iat_bytes.extend_from_slice(&thunk_value.to_le_bytes());
+                } else {
+                    #[allow(clippy::cast_possible_truncation)]
+                    iat_bytes.extend_from_slice(&(thunk_value as u32).to_le_bytes());
+                }
+
+                // Advance string RVA for named imports
+                if let Some(function_name) = function.name.as_ref() {
+                    current_string_rva += 2; // hint (2 bytes)
+                    current_string_rva += (function_name.len() + 1) as u32;
+                    // name + null
+                }
+            }
+
+            // Null terminator for this DLL's IAT
+            if is_pe32_plus {
+                iat_bytes.extend_from_slice(&0u64.to_le_bytes());
+            } else {
+                iat_bytes.extend_from_slice(&0u32.to_le_bytes());
+            }
+        }
+
+        Ok(iat_bytes)
+    }
+
+    /// Build the import table data (descriptors + ILT + strings) for .NET PE generation.
+    ///
+    /// Generates import table data where FirstThunk fields point to the external IAT
+    /// at `iat_rva` (typically at the start of .text section). This method does NOT
+    /// generate an embedded IAT - only descriptors, ILT, and strings.
+    ///
+    /// # Arguments
+    /// * `is_pe32_plus` - Whether this is PE32+ (64-bit) or PE32 (32-bit) format
+    /// * `iat_rva` - RVA where the IAT is located (start of .text section)
+    /// * `table_rva` - RVA where this import table will be written
+    ///
+    /// # Returns
+    /// Import table bytes (descriptors + ILT + strings) to write after metadata.
+    pub fn build_import_table(
+        &self,
+        is_pe32_plus: bool,
+        iat_rva: u32,
+        table_rva: u32,
+    ) -> Result<Vec<u8>> {
+        if self.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let entry_size = if is_pe32_plus { 8 } else { 4 };
+
+        // Sort descriptors for deterministic ordering
+        let mut descriptors_sorted: Vec<_> = self.descriptors.values().collect();
+        descriptors_sorted
+            .sort_by(|a, b| a.dll_name.to_lowercase().cmp(&b.dll_name.to_lowercase()));
+
+        // Calculate layout sizes
+        let descriptor_table_size = (descriptors_sorted.len() + 1) * 20; // +1 for null terminator
+
+        // Calculate total ILT size
+        let mut total_ilt_entries = 0;
+        for desc in &descriptors_sorted {
+            total_ilt_entries += desc.functions.len() + 1; // +1 for null terminator per DLL
+        }
+        let ilt_size = total_ilt_entries * entry_size;
+
+        // Calculate total string size
+        let mut total_string_size = 0;
+        for desc in &descriptors_sorted {
+            total_string_size += desc.dll_name.len() + 1; // DLL name + null
+            for func in &desc.functions {
+                if let Some(ref name) = func.name {
+                    total_string_size += 2 + name.len() + 1; // hint + name + null
+                }
+            }
+        }
+
+        // Allocate buffer
+        let total_size = descriptor_table_size + ilt_size + total_string_size + 16; // +16 for alignment padding
+        let mut data = vec![0u8; total_size];
+        let mut offset = 0;
+
+        // Calculate RVAs
+        let ilt_start_rva = table_rva + descriptor_table_size as u32;
+        let strings_start_rva = ilt_start_rva + ilt_size as u32;
+
+        // Build ILT offset map and string RVAs
+        let mut ilt_rva = ilt_start_rva;
+        let mut iat_offset = 0u32; // Offset within IAT for each DLL
+
+        // Pre-calculate DLL name RVAs
+        let mut dll_name_rvas = Vec::with_capacity(descriptors_sorted.len());
+        let mut current_dll_name_rva = strings_start_rva;
+        for desc in &descriptors_sorted {
+            dll_name_rvas.push(current_dll_name_rva);
+            current_dll_name_rva += (desc.dll_name.len() + 1) as u32;
+        }
+
+        // Pre-calculate function name RVAs
+        let mut current_func_name_rva = current_dll_name_rva;
+        let mut func_name_rvas: Vec<Vec<u64>> = Vec::with_capacity(descriptors_sorted.len());
+
+        for desc in &descriptors_sorted {
+            let mut rvas = Vec::with_capacity(desc.functions.len());
+            for func in &desc.functions {
+                if let Some(function_name) = func.name.as_ref() {
+                    rvas.push(u64::from(current_func_name_rva));
+                    current_func_name_rva += 2; // hint
+                    current_func_name_rva += (function_name.len() + 1) as u32;
+                // name + null
+                } else {
+                    rvas.push(0); // Will use ordinal
+                }
+            }
+            func_name_rvas.push(rvas);
+        }
+
+        // Write import descriptors
+        for (i, desc) in descriptors_sorted.iter().enumerate() {
+            let desc_ilt_rva = ilt_rva;
+            let desc_iat_rva = iat_rva + iat_offset;
+
+            // OriginalFirstThunk (ILT RVA)
+            write_le_at::<u32>(&mut data, &mut offset, desc_ilt_rva)?;
+            // TimeDateStamp
+            write_le_at::<u32>(&mut data, &mut offset, 0)?;
+            // ForwarderChain
+            write_le_at::<u32>(&mut data, &mut offset, 0)?;
+            // Name (DLL name RVA)
+            write_le_at::<u32>(&mut data, &mut offset, dll_name_rvas[i])?;
+            // FirstThunk (IAT RVA - points to external IAT)
+            write_le_at::<u32>(&mut data, &mut offset, desc_iat_rva)?;
+
+            // Update offsets for next descriptor
+            let entries_for_dll = desc.functions.len() + 1; // +1 for null terminator
+            ilt_rva += (entries_for_dll * entry_size) as u32;
+            iat_offset += (entries_for_dll * entry_size) as u32;
+        }
+
+        // Write null terminator descriptor
+        for _ in 0..5 {
+            write_le_at::<u32>(&mut data, &mut offset, 0)?;
+        }
+
+        // Write ILT entries
+        for (i, desc) in descriptors_sorted.iter().enumerate() {
+            for (j, func) in desc.functions.iter().enumerate() {
+                let ilt_value = if func.name.is_none() {
+                    // Ordinal import
+                    if let Some(ordinal) = func.ordinal {
+                        if is_pe32_plus {
+                            0x8000_0000_0000_0000u64 | u64::from(ordinal)
+                        } else {
+                            0x8000_0000u64 | u64::from(ordinal)
+                        }
+                    } else {
+                        0
+                    }
+                } else {
+                    // Named import - use pre-calculated RVA
+                    func_name_rvas[i][j]
+                };
+
+                if is_pe32_plus {
+                    write_le_at::<u64>(&mut data, &mut offset, ilt_value)?;
+                } else {
+                    #[allow(clippy::cast_possible_truncation)]
+                    write_le_at::<u32>(&mut data, &mut offset, ilt_value as u32)?;
+                }
+            }
+
+            // Null terminator for this DLL's ILT
+            if is_pe32_plus {
+                write_le_at::<u64>(&mut data, &mut offset, 0)?;
+            } else {
+                write_le_at::<u32>(&mut data, &mut offset, 0)?;
+            }
+        }
+
+        // Write strings: DLL names first, then function names
+        for desc in &descriptors_sorted {
+            write_string_at(&mut data, &mut offset, &desc.dll_name)?;
+        }
+
+        for desc in &descriptors_sorted {
+            for func in &desc.functions {
+                if let Some(ref name) = func.name {
+                    // Write hint (2 bytes)
+                    write_le_at::<u16>(&mut data, &mut offset, func.hint)?;
+                    // Write function name
+                    write_string_at(&mut data, &mut offset, name)?;
+                }
+            }
+        }
+
+        // Align to 4 bytes
+        while offset % 4 != 0 {
+            if offset < data.len() {
+                data[offset] = 0;
+            }
+            offset += 1;
+        }
+
+        // Truncate to actual size
+        data.truncate(offset);
+
+        Ok(data)
     }
 }
 
@@ -1163,159 +1172,5 @@ mod tests {
         // Adding same DLL again should not increase count
         imports.add_dll("kernel32.dll").unwrap();
         assert_eq!(imports.dll_count(), 1);
-    }
-
-    #[test]
-    fn test_import_table_string_layout_fix() {
-        let mut imports = NativeImports::new();
-        imports.set_import_table_base_rva(0x2000);
-
-        // Add DLLs - the fix ensures deterministic ordering
-        imports.add_dll("user32.dll").unwrap();
-        imports.add_function("user32.dll", "MessageBoxA").unwrap();
-
-        imports.add_dll("kernel32.dll").unwrap();
-        imports
-            .add_function("kernel32.dll", "GetCurrentProcessId")
-            .unwrap();
-
-        // Generate import table data - this should not crash and should be deterministic
-        let table_data1 = imports.get_import_table_data(false).unwrap(); // PE32
-        let table_data2 = imports.get_import_table_data(false).unwrap(); // PE32
-
-        // Critical fix: The output is now deterministic (no HashMap iteration randomness)
-        assert_eq!(
-            table_data1, table_data2,
-            "Import table generation should be deterministic"
-        );
-
-        // Verify basic properties
-        assert!(!table_data1.is_empty());
-        assert!(table_data1.len() > 100); // Should contain substantial data
-    }
-
-    #[test]
-    fn test_ilt_multiple_functions_per_dll() {
-        let mut imports = NativeImports::new();
-        imports.set_import_table_base_rva(0x2000);
-
-        // Test the specific issue: multiple functions per DLL should all be parseable
-        // Add user32.dll with 2 functions (should both be parsed)
-        imports.add_dll("user32.dll").unwrap();
-        imports.add_function("user32.dll", "MessageBoxW").unwrap();
-        imports
-            .add_function("user32.dll", "GetWindowTextW")
-            .unwrap();
-
-        // Add kernel32.dll with 2 functions (should both be parsed)
-        imports.add_dll("kernel32.dll").unwrap();
-        imports
-            .add_function("kernel32.dll", "GetCurrentProcessId")
-            .unwrap();
-        imports.add_function("kernel32.dll", "ExitProcess").unwrap();
-
-        // Add mscoree.dll with 1 function (baseline)
-        imports.add_dll("mscoree.dll").unwrap();
-        imports.add_function("mscoree.dll", "_CorExeMain").unwrap();
-
-        // Verify that each DLL has the correct number of functions
-        assert_eq!(
-            imports
-                .get_descriptor("user32.dll")
-                .unwrap()
-                .functions
-                .len(),
-            2
-        );
-        assert_eq!(
-            imports
-                .get_descriptor("kernel32.dll")
-                .unwrap()
-                .functions
-                .len(),
-            2
-        );
-        assert_eq!(
-            imports
-                .get_descriptor("mscoree.dll")
-                .unwrap()
-                .functions
-                .len(),
-            1
-        );
-
-        // Generate import table data - this should calculate ILT values
-        let table_data = imports.get_import_table_data(false).unwrap(); // PE32
-        assert!(!table_data.is_empty());
-
-        // The key test: verify that the table data contains entries for all functions
-        // Import descriptors: 3 DLLs + null terminator = 4 * 20 = 80 bytes
-        // ILT tables: kernel32(2+1)*8 + mscoree(1+1)*8 + user32(2+1)*8 = 48 bytes
-        // IAT tables: same as ILT = 48 bytes
-        // Strings: Variable but should be substantial
-        let expected_min_size = 80 + 48 + 48; // At least this much without strings
-        assert!(
-            table_data.len() >= expected_min_size,
-            "Table data should be at least {} bytes, got {}",
-            expected_min_size,
-            table_data.len()
-        );
-
-        // Verify that the import descriptors section contains valid RVAs
-        // Each import descriptor is 20 bytes: OriginalFirstThunk, TimeDateStamp, ForwarderChain, Name, FirstThunk
-        for i in 0..3 {
-            // 3 DLLs
-            let desc_offset = i * 20;
-            if desc_offset + 20 <= table_data.len() {
-                let original_first_thunk = u32::from_le_bytes([
-                    table_data[desc_offset],
-                    table_data[desc_offset + 1],
-                    table_data[desc_offset + 2],
-                    table_data[desc_offset + 3],
-                ]);
-                let first_thunk = u32::from_le_bytes([
-                    table_data[desc_offset + 16],
-                    table_data[desc_offset + 17],
-                    table_data[desc_offset + 18],
-                    table_data[desc_offset + 19],
-                ]);
-
-                // Both should be non-zero RVAs pointing to ILT and IAT respectively
-                assert_ne!(
-                    original_first_thunk, 0,
-                    "OriginalFirstThunk should be non-zero for descriptor {i}"
-                );
-                assert_ne!(
-                    first_thunk, 0,
-                    "FirstThunk should be non-zero for descriptor {i}"
-                );
-            }
-        }
-
-        // Verify function counts
-        assert_eq!(
-            imports
-                .get_descriptor("user32.dll")
-                .unwrap()
-                .functions
-                .len(),
-            2
-        );
-        assert_eq!(
-            imports
-                .get_descriptor("kernel32.dll")
-                .unwrap()
-                .functions
-                .len(),
-            2
-        );
-        assert_eq!(
-            imports
-                .get_descriptor("mscoree.dll")
-                .unwrap()
-                .functions
-                .len(),
-            1
-        );
     }
 }

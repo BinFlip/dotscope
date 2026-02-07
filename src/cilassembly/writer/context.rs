@@ -37,6 +37,7 @@ use crate::{
         CilAssembly,
     },
     file::pe::{OptionalHeader, SectionTable},
+    prelude::NativeImports,
     CilAssemblyView, Error, Result,
 };
 
@@ -172,6 +173,10 @@ pub struct WriteContext<'a> {
     /// File offset of Import Address Table within .text section.
     pub iat_offset: u64,
 
+    /// Size of Import Address Table in bytes.
+    /// This is dynamic based on the number of imports.
+    pub iat_size: u64,
+
     /// File offset of COR20 (CLR) header within .text section.
     pub cor20_header_offset: u64,
 
@@ -225,8 +230,14 @@ pub struct WriteContext<'a> {
     pub import_data_rva: Option<u32>,
     /// Size of native import table in bytes.
     pub import_data_size: Option<u32>,
-    /// Serialized import table bytes for mixed-mode assemblies with P/Invoke.
-    pub import_table_bytes: Option<Vec<u8>>,
+
+    /// Pending imports built during IAT writing, used for import table generation.
+    /// Contains mscoree.dll (first) + any additional native imports.
+    pub pending_imports: Option<NativeImports>,
+
+    /// RVA of native entry point stub (jmp to IAT).
+    /// This is the AddressOfEntryPoint for the PE file.
+    pub native_entry_rva: Option<u32>,
 
     /// File offset of native export table data.
     pub export_data_offset: Option<u64>,
@@ -295,6 +306,10 @@ pub struct WriteContext<'a> {
     /// Placeholder fixups for heap references added via ChangeRef. After heaps
     /// are written, these locations are patched with resolved offsets.
     pub placeholder_fixups: Vec<PlaceholderFixup>,
+
+    /// Whether IMAGE_FILE_RELOCS_STRIPPED should be set in COFF characteristics.
+    /// True for x64 IL-only EXEs that need no relocations.
+    pub relocs_stripped: bool,
 }
 
 /// A placeholder fixup that needs to be applied after heaps are written.
@@ -414,6 +429,7 @@ impl<'a> WriteContext<'a> {
             text_section_size: 0,
 
             iat_offset: 0,
+            iat_size: 0,
             cor20_header_offset: 0,
             method_bodies_offset: 0,
             method_bodies_size: 0,
@@ -436,7 +452,8 @@ impl<'a> WriteContext<'a> {
             import_data_offset: None,
             import_data_rva: None,
             import_data_size: None,
-            import_table_bytes: None,
+            pending_imports: None,
+            native_entry_rva: None,
 
             export_data_offset: None,
             export_data_rva: None,
@@ -458,6 +475,7 @@ impl<'a> WriteContext<'a> {
             entry_point_token,
             bytes_written: 0,
             placeholder_fixups: Vec::new(),
+            relocs_stripped: false,
         })
     }
 
@@ -499,9 +517,12 @@ impl<'a> WriteContext<'a> {
         }
     }
 
-    /// Aligns to file alignment (typically 0x200).
-    pub fn align_to_file(&mut self) {
-        self.align_to(u64::from(self.file_alignment));
+    /// Aligns to file alignment (typically 0x200) and writes zero padding.
+    ///
+    /// This ensures the file contains actual padding bytes to match
+    /// the section's declared `SizeOfRawData` in the PE header.
+    pub fn align_to_file(&mut self) -> Result<()> {
+        self.align_to_with_padding(u64::from(self.file_alignment))
     }
 
     /// Aligns to 4-byte boundary.
