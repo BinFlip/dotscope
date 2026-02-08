@@ -35,7 +35,7 @@ use rustc_hash::FxHashSet;
 use crate::{
     analysis::{decode_x86, detect_x86_prologue, X86Function, X86PrologueKind, X86ToSsaTranslator},
     cilassembly::CilAssembly,
-    deobfuscation::codegen::SsaCodeGenerator,
+    compiler::SsaCodeGenerator,
     file::File,
     metadata::{
         method::{encode_method_body_header, MethodImplCodeType},

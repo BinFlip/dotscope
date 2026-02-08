@@ -30,7 +30,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use dotscope::deobfuscation::passes::NeutralizationPass;
+//! use dotscope::compiler::NeutralizationPass;
 //!
 //! let pass = NeutralizationPass::new(&removed_tokens);
 //! pass.run_on_method(&mut ssa, method_token, &ctx, &assembly)?;
@@ -43,7 +43,7 @@ use std::{
 
 use crate::{
     analysis::{find_token_dependencies, SsaFunction, SsaOp},
-    deobfuscation::{changes::EventKind, context::AnalysisContext, pass::SsaPass},
+    compiler::{CompilerContext, EventKind, SsaPass},
     metadata::token::Token,
     CilObject, Result,
 };
@@ -360,7 +360,7 @@ impl SsaPass for NeutralizationPass<'_> {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let neutralized = self.neutralize_method(ssa);

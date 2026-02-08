@@ -876,26 +876,36 @@ pub use crate::deobfuscation::{
 
 /// Pass system for SSA-based transformations.
 ///
-/// Create custom deobfuscation passes that operate on SSA form. The scheduler manages
+/// Create custom SSA passes that operate on SSA form. The scheduler manages
 /// pass execution order and fixpoint iteration.
-#[cfg(feature = "deobfuscation")]
-pub use crate::deobfuscation::{AnalysisContext, EventLog, PassScheduler, SsaPass};
+#[cfg(feature = "compiler")]
+pub use crate::compiler::{EventLog, PassScheduler, SsaPass};
 
-/// Built-in deobfuscation passes.
-///
-/// Standard passes for common deobfuscation tasks: constant propagation, dead code
-/// elimination, control flow simplification, and string decryption.
 #[cfg(feature = "deobfuscation")]
-pub use crate::deobfuscation::passes::{
-    ConstantPropagationPass, ControlFlowSimplificationPass, CopyPropagationPass,
-    DeadCodeEliminationPass, DecryptionPass, OpaquePredicatePass,
+pub use crate::deobfuscation::AnalysisContext;
+
+/// Built-in SSA optimization passes from the compiler module.
+///
+/// All generic SSA transformation passes: value propagation, control flow recovery,
+/// dead code elimination, strength reduction, loop optimization, and more.
+#[cfg(feature = "compiler")]
+pub use crate::compiler::{
+    AlgebraicSimplificationPass, BlockMergingPass, ConstantPropagationPass,
+    ControlFlowSimplificationPass, CopyPropagationPass, DeadCodeEliminationPass,
+    DeadMethodEliminationPass, GlobalValueNumberingPass, InliningPass, JumpThreadingPass, LicmPass,
+    LoopCanonicalizationPass, OpaquePredicatePass, ReassociationPass, StrengthReductionPass,
+    ValueRangePropagationPass,
 };
+
+/// Deobfuscation-specific SSA passes.
+#[cfg(feature = "deobfuscation")]
+pub use crate::deobfuscation::DecryptionPass;
 
 /// Code generation from SSA.
 ///
-/// Convert SSA form back to CIL bytecode after deobfuscation transformations.
-#[cfg(feature = "deobfuscation")]
-pub use crate::deobfuscation::SsaCodeGenerator;
+/// Convert SSA form back to CIL bytecode after transformations.
+#[cfg(feature = "compiler")]
+pub use crate::compiler::SsaCodeGenerator;
 
 // ================================================================================================
 // Emulation Engine

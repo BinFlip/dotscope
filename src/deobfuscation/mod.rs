@@ -70,7 +70,7 @@
 //!
 //! ## Engine
 //!
-//! The main entry point for deobfuscation ([`DeobfuscationEngine`](crate::deobfuscation::DeobfuscationEngine)):
+//! The main entry point for deobfuscation ([`crate::deobfuscation::DeobfuscationEngine`]):
 //!
 //! - Orchestrates detection, analysis, pass execution, and postprocessing
 //! - Manages obfuscator support for detection and specialized handling
@@ -78,60 +78,60 @@
 //!
 //! ## Obfuscator System
 //!
-//! Extensible obfuscator detection and handling ([`Obfuscator`](crate::deobfuscation::Obfuscator)):
+//! Extensible obfuscator detection and handling ([`crate::deobfuscation::Obfuscator`]):
 //!
-//! - [`ObfuscatorDetector`](crate::deobfuscation::ObfuscatorDetector) - Runs obfuscators to identify which one was used
-//! - [`ObfuscatorRegistry`](crate::deobfuscation::ObfuscatorRegistry) - Manages registered obfuscators
-//! - [`DetectionScore`](crate::deobfuscation::DetectionScore) / [`DetectionResult`](crate::deobfuscation::DetectionResult) - Confidence-based detection
+//! - [`crate::deobfuscation::ObfuscatorDetector`] - Runs obfuscators to identify which one was used
+//! - [`crate::deobfuscation::ObfuscatorRegistry`] - Manages registered obfuscators
+//! - [`crate::deobfuscation::DetectionScore`] / [`crate::deobfuscation::DetectionResult`] - Confidence-based detection
 //!
 //! ## Pass System
 //!
-//! SSA-based transformation passes ([`SsaPass`](crate::deobfuscation::SsaPass)):
+//! SSA-based transformation passes ([`crate::compiler::SsaPass`]):
 //!
-//! - [`PassScheduler`](crate::deobfuscation::PassScheduler) - Manages pass execution order and fixpoint iteration
-//! - [`EventLog`](crate::deobfuscation::EventLog) - Tracks changes made by passes
-//! - [`AnalysisContext`](crate::deobfuscation::AnalysisContext) - Shared interprocedural analysis data
+//! - [`crate::compiler::PassScheduler`] - Manages pass execution order and fixpoint iteration
+//! - [`crate::compiler::EventLog`] - Tracks changes made by passes
+//! - [`crate::deobfuscation::AnalysisContext`] - Shared interprocedural analysis data
 //!
 //! # Built-in Passes
 //!
 //! The framework includes a comprehensive set of SSA transformation passes.
-//! See the [`passes`](crate::deobfuscation::passes) module for detailed documentation of each pass.
+//! See the [`compiler`](crate::compiler) module for detailed documentation of each pass.
 //!
 //! ## Value Propagation & Folding
 //!
 //! | Pass | Description |
 //! |------|-------------|
-//! | [`ConstantPropagationPass`](crate::deobfuscation::passes::ConstantPropagationPass) | Propagates and folds constant values using SCCP |
-//! | [`CopyPropagationPass`](crate::deobfuscation::passes::CopyPropagationPass) | Eliminates redundant copy operations and phi nodes |
-//! | [`GlobalValueNumberingPass`](crate::deobfuscation::passes::GlobalValueNumberingPass) | Eliminates redundant computations via value numbering |
-//! | [`StrengthReductionPass`](crate::deobfuscation::passes::StrengthReductionPass) | Replaces expensive operations with cheaper equivalents |
+//! | [`ConstantPropagationPass`](crate::compiler::ConstantPropagationPass) | Propagates and folds constant values using SCCP |
+//! | [`CopyPropagationPass`](crate::compiler::CopyPropagationPass) | Eliminates redundant copy operations and phi nodes |
+//! | [`GlobalValueNumberingPass`](crate::compiler::GlobalValueNumberingPass) | Eliminates redundant computations via value numbering |
+//! | [`StrengthReductionPass`](crate::compiler::StrengthReductionPass) | Replaces expensive operations with cheaper equivalents |
 //!
 //! ## Control Flow Recovery
 //!
 //! | Pass | Description |
 //! |------|-------------|
-//! | [`ControlFlowSimplificationPass`](crate::deobfuscation::passes::ControlFlowSimplificationPass) | Jump threading, branch simplification, dead tail removal |
-//! | [`CffReconstructionPass`](crate::deobfuscation::passes::CffReconstructionPass) | Z3-backed dispatcher analysis and CFG reconstruction |
-//! | [`LoopCanonicalizationPass`](crate::deobfuscation::passes::LoopCanonicalizationPass) | Ensures loops have single preheaders and latches |
+//! | [`ControlFlowSimplificationPass`](crate::compiler::ControlFlowSimplificationPass) | Jump threading, branch simplification, dead tail removal |
+//! | [`CffReconstructionPass`](crate::deobfuscation::CffReconstructionPass) | Z3-backed dispatcher analysis and CFG reconstruction |
+//! | [`LoopCanonicalizationPass`](crate::compiler::LoopCanonicalizationPass) | Ensures loops have single preheaders and latches |
 //!
 //! ## Dead Code Elimination
 //!
 //! | Pass | Description |
 //! |------|-------------|
-//! | [`DeadCodeEliminationPass`](crate::deobfuscation::passes::DeadCodeEliminationPass) | Removes unreachable blocks and unused definitions |
-//! | [`DeadMethodEliminationPass`](crate::deobfuscation::passes::DeadMethodEliminationPass) | Identifies and marks methods with no live callers |
+//! | [`DeadCodeEliminationPass`](crate::compiler::DeadCodeEliminationPass) | Removes unreachable blocks and unused definitions |
+//! | [`DeadMethodEliminationPass`](crate::compiler::DeadMethodEliminationPass) | Identifies and marks methods with no live callers |
 //!
 //! ## Predicate & Condition Handling
 //!
 //! | Pass | Description |
 //! |------|-------------|
-//! | [`OpaquePredicatePass`](crate::deobfuscation::passes::OpaquePredicatePass) | Removes always-true/false conditions, simplifies comparisons |
+//! | [`OpaquePredicatePass`](crate::compiler::OpaquePredicatePass) | Removes always-true/false conditions, simplifies comparisons |
 //!
 //! ## Decryption
 //!
 //! | Pass | Description |
 //! |------|-------------|
-//! | [`DecryptionPass`](crate::deobfuscation::passes::DecryptionPass) | Decrypts values via emulation of registered decryptor methods |
+//! | [`DecryptionPass`](crate::deobfuscation::DecryptionPass) | Decrypts values via emulation of registered decryptor methods |
 //!
 //! Decryptors are registered via:
 //! - Obfuscator-specific detection (e.g., ConfuserEx pattern matching)
@@ -141,7 +141,7 @@
 //!
 //! | Pass | Description |
 //! |------|-------------|
-//! | [`InliningPass`](crate::deobfuscation::passes::InliningPass) | Inlines small methods and constant-returning functions |
+//! | [`InliningPass`](crate::compiler::InliningPass) | Inlines small methods and constant-returning functions |
 //!
 //! # Usage
 //!
@@ -184,33 +184,25 @@
 //! ```
 
 // Infrastructure
-mod changes;
 mod cleanup;
 mod config;
 mod context;
 mod decryptors;
 mod detection;
-mod pass;
 mod result;
-mod scheduler;
 mod statemachine;
-mod summary;
+
+// Deobfuscation-specific SSA passes (moved from compiler/passes/)
+mod passes;
 
 // Engine and detector
 mod detector;
 mod engine;
 
-// Code generation
-mod codegen;
-
-// Built-in passes
-pub mod passes;
-
 // Obfuscator support
 mod obfuscators;
 
 // Core types
-pub use changes::{DerivedStats, Event, EventKind, EventLog};
 pub use cleanup::execute_cleanup;
 pub use config::{CleanupConfig, EngineConfig, ResolutionStrategy};
 pub use context::{AnalysisContext, HookFactory};
@@ -222,20 +214,15 @@ pub use obfuscators::{
     create_anti_tamper_stub_hook, create_lzma_hook, detect_confuserex, find_encrypted_methods,
     ConfuserExFindings, ConfuserExObfuscator, Obfuscator, ObfuscatorInfo, ObfuscatorRegistry,
 };
-pub use pass::SsaPass;
+pub use passes::{
+    CffReconstructionPass, ConversionStats, DecryptionPass, NativeMethodConversionPass,
+    NeutralizationPass, TraceTree, UnflattenConfig,
+};
 pub use result::DeobfuscationResult;
-pub use scheduler::PassScheduler;
 pub use statemachine::{
     CfgInfo, SsaOpKind, StateMachineCallSite, StateMachineProvider, StateMachineSemantics,
     StateMachineState, StateSlotOperation, StateUpdateCall,
 };
-pub use summary::{CallSiteInfo, MethodSummary, ParameterSummary};
-
-// Code generation
-pub use codegen::SsaCodeGenerator;
-
-// Native method conversion
-pub use passes::{ConversionStats, NativeMethodConversionPass};
 
 #[cfg(test)]
 mod tests {

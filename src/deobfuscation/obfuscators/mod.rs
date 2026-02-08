@@ -37,10 +37,8 @@ pub use registry::{ObfuscatorInfo, ObfuscatorRegistry};
 
 use crate::{
     cilassembly::CleanupRequest,
-    deobfuscation::{
-        changes::EventLog, config::EngineConfig, context::AnalysisContext,
-        detection::DetectionScore, pass::SsaPass,
-    },
+    compiler::{EventLog, SsaPass},
+    deobfuscation::{config::EngineConfig, context::AnalysisContext, detection::DetectionScore},
     CilObject, Result,
 };
 

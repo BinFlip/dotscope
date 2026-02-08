@@ -50,11 +50,7 @@ use crate::{
         ConstValue, DefUseIndex, SsaEvaluator, SsaFunction, SsaInstruction, SsaOp, SsaVarId,
         ValueRange,
     },
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-    },
+    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     CilObject, Result,
 };
@@ -1251,7 +1247,7 @@ impl SsaPass for OpaquePredicatePass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let changes = EventLog::new();

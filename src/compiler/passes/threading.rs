@@ -42,11 +42,7 @@ use std::sync::Arc;
 
 use crate::{
     analysis::{ConstValue, SsaCfg, SsaEvaluator, SsaFunction, SsaOp, SsaVarId},
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-    },
+    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     CilObject, Result,
 };
@@ -262,7 +258,7 @@ impl SsaPass for JumpThreadingPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
@@ -282,9 +278,9 @@ mod tests {
     use crate::analysis::{CallGraph, ConstValue, SsaBlock, SsaInstruction};
     use crate::test::helpers::test_assembly_arc;
 
-    fn test_context() -> AnalysisContext {
+    fn test_context() -> CompilerContext {
         let call_graph = Arc::new(CallGraph::new());
-        AnalysisContext::new(call_graph)
+        CompilerContext::new(call_graph)
     }
 
     #[test]

@@ -46,7 +46,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use crate::{
     analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
-    deobfuscation::context::AnalysisContext,
+    compiler::CompilerContext,
     metadata::token::Token,
     utils::graph::{algorithms::DominatorTree, NodeId},
     CilObject,
@@ -178,7 +178,7 @@ pub trait StateMachineProvider: Send + Sync + std::fmt::Debug {
     fn find_initializations(
         &self,
         ssa: &SsaFunction,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         method: Token,
         assembly: &Arc<CilObject>,
     ) -> Vec<(usize, usize, u32)>;
@@ -197,7 +197,7 @@ pub trait StateMachineProvider: Send + Sync + std::fmt::Debug {
         &self,
         var: SsaVarId,
         ssa: &SsaFunction,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         method: Token,
     ) -> Option<ConstValue> {
         // Check known_values from constant propagation

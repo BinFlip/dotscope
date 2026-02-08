@@ -29,11 +29,10 @@ use std::collections::HashMap;
 
 use crate::{
     analysis::{SsaFunction, SsaOp},
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
+    compiler::{
         pass::SsaPass,
         passes::{deadcode::find_dead_tails, utils::resolve_chain},
+        CompilerContext, EventKind, EventLog,
     },
     metadata::token::Token,
     Result,
@@ -295,7 +294,7 @@ impl SsaPass for ControlFlowSimplificationPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &std::sync::Arc<crate::CilObject>,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
@@ -322,14 +321,14 @@ mod tests {
     use super::*;
     use crate::{
         analysis::{CallGraph, ConstValue, SsaBlock, SsaFunctionBuilder, SsaInstruction, SsaVarId},
-        deobfuscation::passes::deadcode::find_dead_tails,
+        compiler::passes::deadcode::find_dead_tails,
         test::helpers::test_assembly_arc,
     };
 
     /// Helper to create a minimal analysis context for testing.
-    fn test_context() -> AnalysisContext {
+    fn test_context() -> CompilerContext {
         let call_graph = Arc::new(CallGraph::new());
-        AnalysisContext::new(call_graph)
+        CompilerContext::new(call_graph)
     }
 
     #[test]

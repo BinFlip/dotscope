@@ -1,20 +1,22 @@
-//! Pass scheduler for orchestrating deobfuscation pass execution.
+//! Pass scheduler for orchestrating SSA pass execution.
 //!
-//! The `PassScheduler` manages the execution of deobfuscation passes using
-//! a 4-phase pipeline , each phase runs to fixpoint with normalization after
+//! The `PassScheduler` manages the execution of SSA optimization passes using
+//! a 4-phase pipeline, each phase runs to fixpoint with normalization after
 //! each structural change.
 
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc,
+};
 
 use rayon::prelude::*;
 
 use crate::{
-    deobfuscation::{context::AnalysisContext, pass::SsaPass},
+    compiler::{context::CompilerContext, pass::SsaPass},
     CilObject, Result,
 };
 
-/// Orchestrates pass execution for deobfuscation.
+/// Orchestrates SSA pass execution in a phased pipeline.
 ///
 /// The scheduler runs passes in a 4-phase pipeline:
 ///
@@ -33,11 +35,21 @@ pub struct PassScheduler {
     stable_iterations: usize,
     /// Maximum iterations for a single phase before moving on.
     max_phase_iterations: usize,
+    /// Phase 1: Structure recovery (e.g., control-flow unflattening).
+    pub structure: Vec<Box<dyn SsaPass>>,
+    /// Phase 2: Value recovery (e.g., string/constant decryption).
+    pub value: Vec<Box<dyn SsaPass>>,
+    /// Phase 3: Simplification (e.g., opaque predicates, CFG recovery).
+    pub simplify: Vec<Box<dyn SsaPass>>,
+    /// Phase 4: Inlining (e.g., proxy/delegate inlining).
+    pub inline: Vec<Box<dyn SsaPass>>,
+    /// Normalization passes (DCE, GVN, const/copy propagation).
+    /// Run after each phase to clean up before the next.
+    pub normalize: Vec<Box<dyn SsaPass>>,
 }
 
 impl Default for PassScheduler {
     fn default() -> Self {
-        // Reduced from 20 to 5 since each phase now runs to fixpoint internally
         Self::new(5, 2, 15)
     }
 }
@@ -64,6 +76,11 @@ impl PassScheduler {
             max_iterations,
             stable_iterations,
             max_phase_iterations,
+            structure: Vec::new(),
+            value: Vec::new(),
+            simplify: Vec::new(),
+            inline: Vec::new(),
+            normalize: Vec::new(),
         }
     }
 
@@ -71,22 +88,23 @@ impl PassScheduler {
     ///
     /// # Arguments
     ///
-    /// * `ctx` - The analysis context.
+    /// * `ctx` - The compiler context.
     /// * `passes` - The passes to run in this phase.
+    /// * `max_phase_iterations` - Maximum iterations before stopping.
     /// * `assembly` - Shared reference to the assembly.
     ///
     /// # Returns
     ///
     /// `true` if any changes were made during this phase, `false` otherwise.
-    fn run_normalize_to_fixpoint(
-        &self,
-        ctx: &AnalysisContext,
+    fn normalize_to_fixpoint(
+        ctx: &CompilerContext,
         passes: &mut [Box<dyn SsaPass>],
+        max_phase_iterations: usize,
         assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let mut any_changed = false;
 
-        for _ in 0..self.max_phase_iterations {
+        for _ in 0..max_phase_iterations {
             let changed = Self::run_passes_once(ctx, passes, assembly)?;
 
             if !changed {
@@ -108,19 +126,20 @@ impl PassScheduler {
     ///
     /// # Arguments
     ///
-    /// * `ctx` - The analysis context.
+    /// * `ctx` - The compiler context.
     /// * `phase_passes` - The main passes for this phase.
     /// * `normalize_passes` - Normalization passes to run after each change.
+    /// * `max_phase_iterations` - Maximum iterations before stopping.
     /// * `assembly` - Shared reference to the assembly.
     ///
     /// # Returns
     ///
     /// `true` if any changes were made during this phase, `false` otherwise.
-    fn run_phase_to_fixpoint(
-        &self,
-        ctx: &AnalysisContext,
+    fn phase_to_fixpoint(
+        ctx: &CompilerContext,
         phase_passes: &mut [Box<dyn SsaPass>],
         normalize_passes: &mut [Box<dyn SsaPass>],
+        max_phase_iterations: usize,
         assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         if phase_passes.is_empty() {
@@ -129,7 +148,7 @@ impl PassScheduler {
 
         let mut phase_changed = false;
 
-        for _ in 0..self.max_phase_iterations {
+        for _ in 0..max_phase_iterations {
             let pass_changed = Self::run_passes_once(ctx, phase_passes, assembly)?;
             if !pass_changed {
                 break;
@@ -141,7 +160,7 @@ impl PassScheduler {
             // This is critical: normalization can expose new opportunities
             // for the phase passes on the next iteration
             if !normalize_passes.is_empty() {
-                self.run_normalize_to_fixpoint(ctx, normalize_passes, assembly)?;
+                Self::normalize_to_fixpoint(ctx, normalize_passes, max_phase_iterations, assembly)?;
             }
         }
 
@@ -153,9 +172,9 @@ impl PassScheduler {
     /// Returns `true` if any pass made changes, `false` otherwise.
     ///
     /// Per-method passes are executed in parallel using rayon. Each method's SSA
-    /// is processed independently, leveraging the thread-safe AnalysisContext.
+    /// is processed independently, leveraging the thread-safe CompilerContext.
     fn run_passes_once(
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         passes: &mut [Box<dyn SsaPass>],
         assembly: &Arc<CilObject>,
     ) -> Result<bool> {
@@ -254,12 +273,7 @@ impl PassScheduler {
     ///
     /// # Arguments
     ///
-    /// * `ctx` - The analysis context.
-    /// * `structure_passes` - Phase 1: Control-flow unflattening passes.
-    /// * `value_passes` - Phase 2: Decryption passes.
-    /// * `simplify_passes` - Phase 3: Opaque predicates + CFG recovery.
-    /// * `inline_passes` - Phase 4: Proxy/delegate inlining.
-    /// * `normalize_passes` - Normalization passes (DCE, GVN, const prop, etc.).
+    /// * `ctx` - The compiler context.
     /// * `assembly` - Shared reference to the assembly.
     ///
     /// # Returns
@@ -269,52 +283,73 @@ impl PassScheduler {
     /// # Errors
     ///
     /// Returns an error if any pass fails during execution.
-    #[allow(clippy::too_many_arguments)]
     pub fn run_pipeline(
-        &self,
-        ctx: &AnalysisContext,
-        structure_passes: &mut [Box<dyn SsaPass>],
-        value_passes: &mut [Box<dyn SsaPass>],
-        simplify_passes: &mut [Box<dyn SsaPass>],
-        inline_passes: &mut [Box<dyn SsaPass>],
-        normalize_passes: &mut [Box<dyn SsaPass>],
+        &mut self,
+        ctx: &CompilerContext,
         assembly: &Arc<CilObject>,
     ) -> Result<usize> {
         let mut stable_count = 0;
         let mut iterations = 0;
+        let max_phase = self.max_phase_iterations;
+        let max_iterations = self.max_iterations;
+        let stable_iterations = self.stable_iterations;
 
-        for iteration in 0..self.max_iterations {
+        for iteration in 0..max_iterations {
             iterations = iteration + 1;
             let mut iteration_changed = false;
 
             // Phase 1: Structure Recovery (unflattening)
             // Run to fixpoint with normalize after each change
-            if self.run_phase_to_fixpoint(ctx, structure_passes, normalize_passes, assembly)? {
+            if Self::phase_to_fixpoint(
+                ctx,
+                &mut self.structure,
+                &mut self.normalize,
+                max_phase,
+                assembly,
+            )? {
                 iteration_changed = true;
             }
 
             // Phase 2: Value Recovery (decryption)
             // Run to fixpoint with normalize after each change
-            if self.run_phase_to_fixpoint(ctx, value_passes, normalize_passes, assembly)? {
+            if Self::phase_to_fixpoint(
+                ctx,
+                &mut self.value,
+                &mut self.normalize,
+                max_phase,
+                assembly,
+            )? {
                 iteration_changed = true;
             }
 
             // Phase 3: Simplification (opaque predicates, CFG recovery)
             // Run to fixpoint with normalize after each change
-            if self.run_phase_to_fixpoint(ctx, simplify_passes, normalize_passes, assembly)? {
+            if Self::phase_to_fixpoint(
+                ctx,
+                &mut self.simplify,
+                &mut self.normalize,
+                max_phase,
+                assembly,
+            )? {
                 iteration_changed = true;
             }
 
             // Phase 4: Inlining (proxy/delegate inlining)
             // Run to fixpoint with normalize after each change
-            if self.run_phase_to_fixpoint(ctx, inline_passes, normalize_passes, assembly)? {
+            if Self::phase_to_fixpoint(
+                ctx,
+                &mut self.inline,
+                &mut self.normalize,
+                max_phase,
+                assembly,
+            )? {
                 iteration_changed = true;
             }
 
             // This ensures DCE, const prop, etc. run even if phase passes don't make changes
-            if iteration == 0 && !iteration_changed && !normalize_passes.is_empty() {
+            if iteration == 0 && !iteration_changed && !self.normalize.is_empty() {
                 iteration_changed =
-                    self.run_normalize_to_fixpoint(ctx, normalize_passes, assembly)?;
+                    Self::normalize_to_fixpoint(ctx, &mut self.normalize, max_phase, assembly)?;
             }
 
             // Check for global fixpoint
@@ -322,7 +357,7 @@ impl PassScheduler {
                 stable_count = 0;
             } else {
                 stable_count += 1;
-                if stable_count >= self.stable_iterations {
+                if stable_count >= stable_iterations {
                     break;
                 }
             }
@@ -334,10 +369,14 @@ impl PassScheduler {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-    use crate::analysis::SsaFunction;
-    use crate::deobfuscation::changes::EventKind;
-    use crate::metadata::token::Token;
+    use std::sync::Arc;
+
+    use crate::{
+        analysis::SsaFunction,
+        compiler::{context::CompilerContext, pass::SsaPass, EventKind, PassScheduler},
+        metadata::token::Token,
+        CilObject, Result,
+    };
 
     struct TestPass {
         name: &'static str,
@@ -362,7 +401,7 @@ mod tests {
             &self,
             _ssa: &mut SsaFunction,
             method_token: Token,
-            ctx: &AnalysisContext,
+            ctx: &CompilerContext,
             _assembly: &Arc<CilObject>,
         ) -> Result<bool> {
             for i in 0..self.changes_to_make {

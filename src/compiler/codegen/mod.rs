@@ -29,7 +29,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use dotscope::deobfuscation::SsaCodeGenerator;
+//! use dotscope::compiler::SsaCodeGenerator;
 //!
 //! let generator = SsaCodeGenerator::new();
 //! let (bytecode, max_stack, locals) = generator.generate(&ssa_function)?;

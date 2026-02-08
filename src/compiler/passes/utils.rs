@@ -1,4 +1,4 @@
-//! Shared utilities for deobfuscation passes.
+//! Shared utilities for SSA transformation passes.
 //!
 //! This module contains common functionality used by multiple passes to avoid
 //! code duplication and ensure consistent behavior.

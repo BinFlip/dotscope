@@ -184,8 +184,8 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{
     assembly::Operand,
     cilassembly::{CilAssembly, GeneratorConfig},
+    compiler::{EventKind, EventLog},
     deobfuscation::{
-        changes::{EventKind, EventLog},
         detection::{DetectionEvidence, DetectionScore},
         obfuscators::confuserex::{
             candidates::{find_candidates, ProtectionType},

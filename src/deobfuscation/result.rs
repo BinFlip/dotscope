@@ -5,9 +5,9 @@
 
 use std::time::Duration;
 
-use crate::deobfuscation::{
-    changes::{DerivedStats, EventLog},
-    detection::DetectionResult,
+use crate::{
+    compiler::{DerivedStats, EventLog},
+    deobfuscation::detection::DetectionResult,
 };
 
 /// Result of running deobfuscation.

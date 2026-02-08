@@ -32,12 +32,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     analysis::SsaFunction,
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-        passes::utils::resolve_chain,
-    },
+    compiler::{pass::SsaPass, passes::utils::resolve_chain, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     CilObject, Result,
 };
@@ -203,7 +198,7 @@ impl SsaPass for BlockMergingPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
@@ -245,7 +240,7 @@ mod tests {
         });
 
         let pass = BlockMergingPass::new();
-        let ctx = crate::deobfuscation::context::AnalysisContext::new(std::sync::Arc::new(
+        let ctx = crate::compiler::CompilerContext::new(std::sync::Arc::new(
             crate::analysis::CallGraph::new(),
         ));
         let assembly = test_assembly_arc();
@@ -285,7 +280,7 @@ mod tests {
         });
 
         let pass = BlockMergingPass::new();
-        let ctx = crate::deobfuscation::context::AnalysisContext::new(std::sync::Arc::new(
+        let ctx = crate::compiler::CompilerContext::new(std::sync::Arc::new(
             crate::analysis::CallGraph::new(),
         ));
         let assembly = test_assembly_arc();

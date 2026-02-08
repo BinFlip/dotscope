@@ -318,8 +318,8 @@ use crate::{
         ConstValue, PhiTaintMode, SsaFunction, SsaOp, SsaVarId, TaintAnalysis, TaintConfig,
     },
     assembly::Operand,
+    compiler::CompilerContext,
     deobfuscation::{
-        context::AnalysisContext,
         detection::{DetectionEvidence, DetectionScore},
         obfuscators::confuserex::findings::ConfuserExFindings,
         CfgInfo, StateMachineCallSite, StateMachineProvider, StateMachineSemantics,
@@ -424,7 +424,7 @@ impl StateMachineProvider for ConfuserExStateMachine {
     fn find_initializations(
         &self,
         ssa: &SsaFunction,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         method_token: Token,
         _assembly: &Arc<CilObject>,
     ) -> Vec<(usize, usize, u32)> {

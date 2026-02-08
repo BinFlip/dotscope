@@ -38,11 +38,7 @@ use std::{
 
 use crate::{
     analysis::{ConstValue, PhiNode, SsaBlock, SsaCfg, SsaFunction, SsaOp, SsaVarId, ValueRange},
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-    },
+    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     utils::graph::{NodeId, RootedGraph, Successors},
     CilObject, Result,
@@ -82,7 +78,7 @@ impl SsaPass for ValueRangePropagationPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         // Run range analysis

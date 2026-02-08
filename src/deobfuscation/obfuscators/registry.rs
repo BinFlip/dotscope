@@ -6,9 +6,8 @@
 use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    deobfuscation::{
-        detection::DetectionScore, obfuscators::Obfuscator, pass::SsaPass, ConfuserExObfuscator,
-    },
+    compiler::SsaPass,
+    deobfuscation::{detection::DetectionScore, obfuscators::Obfuscator, ConfuserExObfuscator},
     CilObject,
 };
 

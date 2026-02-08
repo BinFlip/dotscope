@@ -6,10 +6,10 @@
 use std::sync::Arc;
 
 use crate::{
+    compiler::SsaPass,
     deobfuscation::{
         detection::{DetectionResult, DetectionScore},
         obfuscators::{Obfuscator, ObfuscatorRegistry},
-        pass::SsaPass,
     },
     CilObject,
 };

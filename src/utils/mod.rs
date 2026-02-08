@@ -74,7 +74,7 @@ pub use io::{
     write_compressed_uint, write_le, write_le_at, write_le_at_dyn, write_prefixed_string_utf16,
     write_prefixed_string_utf8, write_string_at, write_string_utf8, CilIO,
 };
-#[cfg(feature = "deobfuscation")]
+#[cfg(feature = "compiler")]
 pub use math::is_power_of_two;
 pub use math::to_u32;
 pub use synchronization::FailFastBarrier;

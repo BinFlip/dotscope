@@ -36,7 +36,8 @@ use std::{
 use clap::{Parser, Subcommand};
 use dotscope::{
     analysis::{CallGraph, NodeId, SsaFunction},
-    deobfuscation::{DeobfuscationEngine, EngineConfig, EventKind},
+    compiler::EventKind,
+    deobfuscation::{DeobfuscationEngine, EngineConfig},
     metadata::{
         diagnostics::{DiagnosticSeverity, Diagnostics},
         method::MethodRc,

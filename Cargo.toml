@@ -76,11 +76,15 @@ legacy-crypto = ["dep:sha1", "dep:md-5", "dep:des"]
 # Disable to reduce compilation time if you only need metadata parsing.
 emulation = ["dep:imbl"]
 
+# Compiler infrastructure: SSA optimization passes, code generation, pass scheduler.
+# Standalone provides SSA-to-CIL codegen. With deobfuscation, adds pass infrastructure.
+compiler = []
+
 # Deobfuscation framework with transformation passes and obfuscator support.
-# Automatically enables emulation (required for value computation during deobfuscation).
+# Automatically enables compiler and emulation.
 # Includes: Z3 symbolic solver (control flow unflattening), iced-x86 (native code analysis).
 # Disable to reduce compilation time if you only need metadata parsing/analysis.
-deobfuscation = ["dep:z3", "dep:iced-x86", "emulation"]
+deobfuscation = ["compiler", "dep:z3", "dep:iced-x86", "emulation"]
 
 # Skip expensive validation tests that use ProjectLoader with dependency resolution.
 # These tests are slow on CI runners with limited cores/IO. Use this feature on slow runners (e.g., macOS/Windows CI).

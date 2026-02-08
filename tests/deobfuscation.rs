@@ -19,9 +19,8 @@ use dotscope::{
     assembly::{
         decode_blocks, decode_stream, Immediate, Instruction, InstructionAssembler, Operand,
     },
-    deobfuscation::{
-        AnalysisContext, DeobfuscationEngine, DerivedStats, EngineConfig, SsaCodeGenerator,
-    },
+    compiler::{DerivedStats, SsaCodeGenerator},
+    deobfuscation::{AnalysisContext, DeobfuscationEngine, EngineConfig},
     metadata::token::Token,
     CilObject, Parser, Result,
 };

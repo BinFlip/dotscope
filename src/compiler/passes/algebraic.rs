@@ -34,11 +34,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     analysis::{simplify_op, ConstValue, SimplifyResult, SsaFunction, SsaOp, SsaVarId},
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-    },
+    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     CilObject, Result,
 };
@@ -174,7 +170,7 @@ impl SsaPass for AlgebraicSimplificationPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let mut changes = EventLog::new();

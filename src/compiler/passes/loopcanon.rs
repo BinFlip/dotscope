@@ -66,11 +66,7 @@ use crate::{
         LoopInfo, PhiNode, PhiOperand, SsaBlock, SsaFunction, SsaInstruction, SsaLoopAnalysis,
         SsaOp, SsaVarId, VariableOrigin,
     },
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-    },
+    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     utils::graph::NodeId,
     CilObject, Result,
@@ -84,7 +80,7 @@ use crate::{
 /// # Example
 ///
 /// ```rust,ignore
-/// use dotscope::deobfuscation::passes::LoopCanonicalizationPass;
+/// use dotscope::compiler::LoopCanonicalizationPass;
 ///
 /// let pass = LoopCanonicalizationPass::new();
 /// let changes = pass.run_on_method(&mut ssa, method_token, &ctx)?;
@@ -486,7 +482,7 @@ impl SsaPass for LoopCanonicalizationPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         // Skip very small functions (no loops possible)

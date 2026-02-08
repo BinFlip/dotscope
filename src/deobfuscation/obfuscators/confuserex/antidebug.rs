@@ -156,12 +156,10 @@ use std::{
 use crate::{
     analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
     assembly::Operand,
+    compiler::{CompilerContext, EventKind, EventLog, SsaPass},
     deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
         detection::{DetectionEvidence, DetectionScore},
         obfuscators::confuserex::findings::ConfuserExFindings,
-        pass::SsaPass,
     },
     metadata::{method::MethodImplCodeType, token::Token, typesystem::CilTypeReference},
     CilObject, Result,
@@ -678,7 +676,7 @@ impl SsaPass for ConfuserExAntiDebugPass {
         "ConfuserExAntiDebug"
     }
 
-    fn should_run(&self, method_token: Token, _ctx: &AnalysisContext) -> bool {
+    fn should_run(&self, method_token: Token, _ctx: &CompilerContext) -> bool {
         // Run on known anti-debug methods
         if self.anti_debug_method_tokens.contains(&method_token) {
             return true;
@@ -698,7 +696,7 @@ impl SsaPass for ConfuserExAntiDebugPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         // Check if we should process this method

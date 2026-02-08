@@ -39,11 +39,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use crate::{
     analysis::{ConstValue, DefUseIndex, SsaFunction, SsaOp, SsaVarId},
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-    },
+    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     utils::is_power_of_two,
     CilObject, Result,
@@ -256,7 +252,7 @@ impl StrengthReductionPass {
     fn find_candidates(
         ssa: &SsaFunction,
         index: &DefUseIndex,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         method_token: Token,
     ) -> Vec<ReductionCandidate> {
         let mut candidates = Vec::new();
@@ -287,7 +283,7 @@ impl StrengthReductionPass {
         op: &SsaOp,
         location: InstrLocation,
         checker: &ReductionChecker<'_>,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         method_token: Token,
     ) -> Option<ReductionCandidate> {
         match op {
@@ -351,7 +347,7 @@ impl StrengthReductionPass {
     }
 
     /// Checks if a variable is provably non-negative via range analysis.
-    fn is_provably_non_negative(var: SsaVarId, ctx: &AnalysisContext, method_token: Token) -> bool {
+    fn is_provably_non_negative(var: SsaVarId, ctx: &CompilerContext, method_token: Token) -> bool {
         ctx.with_known_range(method_token, var, |r| r.is_always_non_negative())
             .unwrap_or(false)
     }
@@ -399,7 +395,7 @@ impl SsaPass for StrengthReductionPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let mut changes = EventLog::new();

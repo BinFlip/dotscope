@@ -1,17 +1,16 @@
-//! Pass traits and infrastructure for the deobfuscation pipeline.
+//! Pass traits and infrastructure for the SSA optimization pipeline.
 //!
-//! This module defines the `SsaPass` trait that all deobfuscation passes implement.
-//! Passes are organized into a fixed pipeline following the canonical 8-phase
-//! deobfuscation sequence used by state-of-the-art tools.
+//! This module defines the `SsaPass` trait that all SSA transformation passes implement.
+//! Passes are organized into a fixed pipeline following a canonical multi-phase
+//! optimization sequence.
 
 use std::sync::Arc;
 
 use crate::{
-    analysis::SsaFunction, deobfuscation::context::AnalysisContext, metadata::token::Token,
-    CilObject, Result,
+    analysis::SsaFunction, compiler::CompilerContext, metadata::token::Token, CilObject, Result,
 };
 
-/// A deobfuscation pass that operates on SSA form.
+/// An SSA transformation pass that operates on SSA form.
 ///
 /// All passes must be thread-safe (Send + Sync) to allow parallel execution.
 /// Passes receive mutable access to the SSA function and shared access to
@@ -20,7 +19,7 @@ use crate::{
 /// # Pipeline Integration
 ///
 /// Passes don't declare their own priority or triggers. Instead, the scheduler
-/// runs passes in a fixed pipeline order based on the canonical deobfuscation
+/// runs passes in a fixed pipeline order based on a canonical optimization
 /// sequence:
 ///
 /// 1. **Normalize**: ADCE, GVN, constant folding (loop until stable)
@@ -50,7 +49,7 @@ pub trait SsaPass: Send + Sync {
     /// can be inaccurate for obfuscated code (e.g., CFF hides call sites).
     /// All methods with SSA are processed; dead method filtering is handled
     /// during code generation.
-    fn should_run(&self, _method_token: Token, _ctx: &AnalysisContext) -> bool {
+    fn should_run(&self, _method_token: Token, _ctx: &CompilerContext) -> bool {
         true
     }
 
@@ -64,7 +63,7 @@ pub trait SsaPass: Send + Sync {
     ///
     /// * `ssa` - The SSA function to transform.
     /// * `method_token` - The metadata token of the method.
-    /// * `ctx` - The analysis context (thread-safe, uses shared reference).
+    /// * `ctx` - The compiler context (thread-safe, uses shared reference).
     /// * `assembly` - Shared reference to the assembly (for emulation, lookups, etc.).
     ///
     /// # Errors
@@ -74,7 +73,7 @@ pub trait SsaPass: Send + Sync {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         assembly: &Arc<CilObject>,
     ) -> Result<bool>;
 
@@ -87,13 +86,13 @@ pub trait SsaPass: Send + Sync {
     ///
     /// # Arguments
     ///
-    /// * `ctx` - The analysis context (thread-safe, uses shared reference).
+    /// * `ctx` - The compiler context (thread-safe, uses shared reference).
     /// * `assembly` - Shared reference to the assembly.
     ///
     /// # Errors
     ///
     /// Returns an error if the pass fails to process the assembly.
-    fn run_global(&self, _ctx: &AnalysisContext, _assembly: &Arc<CilObject>) -> Result<bool> {
+    fn run_global(&self, _ctx: &CompilerContext, _assembly: &Arc<CilObject>) -> Result<bool> {
         Ok(false)
     }
 
@@ -112,7 +111,7 @@ pub trait SsaPass: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if initialization fails.
-    fn initialize(&mut self, _ctx: &AnalysisContext) -> Result<()> {
+    fn initialize(&mut self, _ctx: &CompilerContext) -> Result<()> {
         Ok(())
     }
 
@@ -123,7 +122,7 @@ pub trait SsaPass: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if finalization fails.
-    fn finalize(&mut self, _ctx: &AnalysisContext) -> Result<()> {
+    fn finalize(&mut self, _ctx: &CompilerContext) -> Result<()> {
         Ok(())
     }
 

@@ -31,11 +31,7 @@ use std::{
 
 use crate::{
     analysis::{PhiAnalyzer, SsaCfg, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-    },
+    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     utils::graph::{algorithms, NodeId},
     CilObject, Result,
@@ -1021,7 +1017,7 @@ impl SsaPass for DeadCodeEliminationPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
@@ -1112,14 +1108,14 @@ impl SsaPass for DeadMethodEliminationPass {
         &self,
         _ssa: &mut SsaFunction,
         _method_token: Token,
-        _ctx: &AnalysisContext,
+        _ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         // This is a global pass, so run_on_method is not used
         Ok(false)
     }
 
-    fn run_global(&self, ctx: &AnalysisContext, _assembly: &Arc<CilObject>) -> Result<bool> {
+    fn run_global(&self, ctx: &CompilerContext, _assembly: &Arc<CilObject>) -> Result<bool> {
         let changes = EventLog::new();
 
         // Build a live call graph from actual SSA calls (not the static call graph).
@@ -1200,9 +1196,9 @@ mod tests {
     use crate::test::helpers::test_assembly_arc;
 
     // Helper to create a minimal analysis context for testing
-    fn test_context() -> AnalysisContext {
+    fn test_context() -> CompilerContext {
         let call_graph = Arc::new(CallGraph::new());
-        AnalysisContext::new(call_graph)
+        CompilerContext::new(call_graph)
     }
 
     #[test]

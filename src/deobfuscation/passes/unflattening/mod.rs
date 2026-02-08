@@ -39,9 +39,12 @@ pub use tracer::{trace_method_tree, TraceTree};
 
 use std::sync::Arc;
 
+use dashmap::DashSet;
+
 use crate::{
     analysis::SsaFunction,
-    deobfuscation::{context::AnalysisContext, pass::SsaPass},
+    compiler::{CompilerContext, SsaPass},
+    deobfuscation::context::AnalysisContext,
     metadata::token::Token,
     CilObject, Result,
 };
@@ -194,33 +197,41 @@ impl UnflattenConfig {
 /// This pass detects and reverses control flow flattening, a common
 /// obfuscation technique that converts structured control flow into
 /// a state machine.
-///
-/// # Example
-///
-/// ```rust,no_run
-/// use dotscope::deobfuscation::passes::{CffReconstructionPass, UnflattenConfig};
-///
-/// let pass = CffReconstructionPass::new(UnflattenConfig::default());
-/// // Pass is used by the deobfuscation engine
-/// ```
 pub struct CffReconstructionPass {
     config: UnflattenConfig,
+    /// Successfully unflattened dispatcher methods (shared with deob engine).
+    unflattened_dispatchers: Arc<DashSet<Token>>,
+    /// All detected dispatcher methods (shared with deob engine).
+    dispatchers: Arc<DashSet<Token>>,
 }
 
 impl Default for CffReconstructionPass {
     fn default() -> Self {
-        Self::new(UnflattenConfig::default())
+        Self {
+            config: UnflattenConfig::default(),
+            unflattened_dispatchers: Arc::new(DashSet::new()),
+            dispatchers: Arc::new(DashSet::new()),
+        }
     }
 }
 
 impl CffReconstructionPass {
-    /// Creates a new CFF reconstruction pass with the given configuration.
+    /// Creates a new CFF reconstruction pass from an analysis context.
+    ///
+    /// Captures shared references to the context's dispatcher sets so the engine
+    /// can inspect which dispatchers were found and unflattened after the pipeline.
     #[must_use]
-    pub fn new(config: UnflattenConfig) -> Self {
-        Self { config }
+    pub fn new(ctx: &AnalysisContext, config: UnflattenConfig) -> Self {
+        Self {
+            config,
+            unflattened_dispatchers: Arc::clone(&ctx.unflattened_dispatchers),
+            dispatchers: Arc::clone(&ctx.dispatchers),
+        }
     }
 
-    /// Creates a pass with default configuration.
+    /// Creates a pass with default configuration and standalone state.
+    ///
+    /// Suitable for testing or standalone usage without an analysis context.
     #[must_use]
     pub fn with_defaults() -> Self {
         Self::default()
@@ -240,11 +251,11 @@ impl SsaPass for CffReconstructionPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         // Skip if already unflattened in a previous pass
-        if ctx.unflattened_dispatchers.contains(&method_token) {
+        if self.unflattened_dispatchers.contains(&method_token) {
             return Ok(false);
         }
 
@@ -267,8 +278,9 @@ impl SsaPass for CffReconstructionPass {
                 *ssa = patched;
 
                 // Mark as successfully unflattened
-                ctx.unflattened_dispatchers.insert(method_token);
-                ctx.mark_dispatcher(method_token);
+                self.unflattened_dispatchers.insert(method_token);
+                self.dispatchers.insert(method_token);
+                ctx.no_inline.insert(method_token);
 
                 // Clear any cached known values since SSA changed
                 ctx.clear_known_values(method_token);
@@ -290,10 +302,8 @@ mod tests {
             SsaInstruction, SsaOp, SsaVarId, VariableOrigin,
         },
         assembly::{decode_blocks, InstructionAssembler},
-        deobfuscation::{
-            passes::unflattening::{detection::CffDetector, dispatcher::Dispatcher},
-            DeobfuscationEngine, EngineConfig,
-        },
+        deobfuscation::passes::unflattening::{detection::CffDetector, dispatcher::Dispatcher},
+        deobfuscation::{DeobfuscationEngine, EngineConfig},
         metadata::token::Token,
         CilObject,
     };

@@ -39,11 +39,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     analysis::{ConstValue, DefUseIndex, SsaFunction, SsaOp, SsaVarId},
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-    },
+    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     CilObject, Result,
 };
@@ -404,7 +400,7 @@ impl SsaPass for ReassociationPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let mut changes = EventLog::new();

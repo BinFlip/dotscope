@@ -1,7 +1,7 @@
-//! Unified event logging for the deobfuscation engine.
+//! Unified event logging for the SSA compiler pipeline.
 //!
 //! This module provides a flexible event logging system that captures all
-//! activity during deobfuscation - from individual instruction changes to
+//! activity during SSA compilation - from individual instruction changes to
 //! engine-level decisions. Events can be inspected for debugging or safely
 //! ignored when not needed.
 //!
@@ -16,7 +16,7 @@
 //! # Example
 //!
 //! ```rust,ignore
-//! use dotscope::deobfuscation::{EventLog, EventKind};
+//! use dotscope::compiler::{EventLog, EventKind};
 //!
 //! let mut log = EventLog::new();
 //!
@@ -32,8 +32,10 @@
 //! println!("{}", log.summary());
 //! ```
 
-use std::collections::{HashMap, HashSet};
-use std::time::Duration;
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use crate::metadata::token::Token;
 
@@ -90,9 +92,9 @@ pub enum EventKind {
 
     /// Obfuscator detection completed.
     DetectionComplete,
-    /// A deobfuscation pass started.
+    /// An SSA pass started.
     PassStarted,
-    /// A deobfuscation pass completed.
+    /// An SSA pass completed.
     PassCompleted,
     /// Method processing started.
     MethodProcessingStarted,

@@ -38,7 +38,8 @@ use std::collections::HashSet;
 
 use crate::{
     cilassembly::{CilAssembly, CleanupRequest, GeneratorConfig},
-    deobfuscation::{changes::EventKind, context::AnalysisContext},
+    compiler::EventKind,
+    deobfuscation::context::AnalysisContext,
     metadata::{
         method::MethodAccessFlags,
         tables::{FieldRaw, MethodDefRaw, TypeDefRaw},

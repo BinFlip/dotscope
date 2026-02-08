@@ -54,7 +54,7 @@ use std::{
 
 use crate::{
     analysis::{LoopAnalyzer, LoopInfo, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
-    deobfuscation::{changes::EventKind, context::AnalysisContext, pass::SsaPass},
+    compiler::{pass::SsaPass, CompilerContext, EventKind},
     metadata::token::Token,
     utils::graph::NodeId,
     CilObject, Result,
@@ -92,7 +92,7 @@ impl SsaPass for LicmPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let forest = LoopAnalyzer::new(ssa).analyze();
@@ -373,7 +373,7 @@ fn feeds_phi_back_edge(ssa: &SsaFunction, loop_info: &LoopInfo, var: SsaVarId) -
 mod tests {
     use crate::{
         analysis::{ConstValue, LoopAnalyzer, MethodRef, SsaFunctionBuilder, SsaOp, SsaVarId},
-        deobfuscation::{pass::SsaPass, passes::LicmPass},
+        compiler::{LicmPass, SsaPass},
         metadata::token::Token,
     };
 

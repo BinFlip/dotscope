@@ -48,11 +48,7 @@ use crate::{
         ConstValue, DefSite, MethodRef, ReturnInfo, SsaFunction, SsaInstruction, SsaOp, SsaVarId,
         SsaVariable, VariableOrigin,
     },
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-    },
+    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::{tables::MemberRefSignature, token::Token, typesystem::CilTypeReference},
     CilObject, Result,
 };
@@ -99,7 +95,7 @@ struct InliningContext<'a> {
     /// Token of the method being processed
     caller_token: Token,
     /// The analysis context with method summaries, call graph, etc.
-    analysis_ctx: &'a AnalysisContext,
+    analysis_ctx: &'a CompilerContext,
     /// The assembly for resolving tokens
     assembly: &'a Arc<CilObject>,
     /// Event log for recording changes
@@ -123,7 +119,7 @@ impl<'a> InliningContext<'a> {
         pass: &'a InliningPass,
         caller_ssa: &'a mut SsaFunction,
         caller_token: Token,
-        analysis_ctx: &'a AnalysisContext,
+        analysis_ctx: &'a CompilerContext,
         assembly: &'a Arc<CilObject>,
     ) -> Self {
         Self {
@@ -174,13 +170,8 @@ impl<'a> InliningContext<'a> {
             return false;
         }
 
-        // Check if this is a registered decryptor - don't inline those
-        if self.analysis_ctx.decryptors.is_decryptor(callee_token) {
-            return false;
-        }
-
-        // Check if this is a dispatcher - don't inline those
-        if self.analysis_ctx.dispatchers.contains(&callee_token) {
+        // Check if this method should not be inlined (decryptors, dispatchers, etc.)
+        if self.analysis_ctx.no_inline.contains(&callee_token) {
             return false;
         }
 
@@ -1200,7 +1191,7 @@ impl SsaPass for InliningPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         // Create method-specific inlining context
@@ -1232,18 +1223,18 @@ mod tests {
 
     use crate::{
         analysis::{CallGraph, ConstValue, MethodRef, SsaFunctionBuilder, SsaOp, SsaVarId},
-        deobfuscation::{
-            context::AnalysisContext,
-            pass::SsaPass,
+        compiler::CompilerContext,
+        compiler::{
             passes::inlining::{InliningContext, InliningPass},
+            SsaPass,
         },
         metadata::token::Token,
         test::helpers::test_assembly_arc,
         CilObject,
     };
 
-    fn test_context() -> AnalysisContext {
-        AnalysisContext::new(Arc::new(CallGraph::new()))
+    fn test_context() -> CompilerContext {
+        CompilerContext::new(Arc::new(CallGraph::new()))
     }
 
     /// Returns a cached test assembly for use in tests.

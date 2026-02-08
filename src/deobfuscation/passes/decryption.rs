@@ -73,15 +73,14 @@ use crate::{
     analysis::{
         ConstEvaluator, ConstValue, PhiAnalyzer, SsaCfg, SsaEvaluator, SsaFunction, SsaOp, SsaVarId,
     },
+    compiler::{CompilerContext, EventKind, EventLog, SsaPass},
     deobfuscation::{
-        changes::{EventKind, EventLog},
         context::AnalysisContext,
-        decryptors::FailureReason,
-        pass::SsaPass,
+        decryptors::{DecryptorContext, FailureReason},
         CfgInfo, StateMachineProvider, StateMachineState, StateUpdateCall,
     },
     emulation::{
-        EmValue, EmulationError, EmulationOutcome, EmulationProcess, EmulationThread,
+        EmValue, EmulationError, EmulationOutcome, EmulationProcess, EmulationThread, Hook,
         ProcessBuilder, StepResult,
     },
     metadata::token::Token,
@@ -117,6 +116,18 @@ use crate::{
 ///
 /// If warmup methods are registered but fail to execute, the `warmup_failed`
 /// flag is set and all subsequent decryption attempts are skipped.
+/// A factory function that creates a new [`Hook`] instance.
+///
+/// Hook factories are used instead of storing hooks directly because hooks
+/// contain non-Clone types (closures, trait objects). Each emulation process
+/// gets fresh hook instances by calling all registered factories.
+pub type HookFactory = Box<dyn Fn() -> Hook + Send + Sync>;
+
+/// Decrypts obfuscated constant values by emulating decryptor methods.
+///
+/// This pass identifies calls to registered decryptor methods, emulates them
+/// to recover the original constant values, and replaces the calls with the
+/// decrypted constants directly in the SSA graph.
 pub struct DecryptionPass {
     /// Template emulation process for Copy-on-Write forking.
     ///
@@ -126,6 +137,20 @@ pub struct DecryptionPass {
     template_process: RwLock<Option<EmulationProcess>>,
     /// Set to true if warmup failed - disables all decryption.
     warmup_failed: AtomicBool,
+
+    // ── Deobfuscation-specific state (captured at construction time) ────
+    /// Decryptor tracking context (shared with AnalysisContext).
+    decryptors: Arc<DecryptorContext>,
+    /// Hook factories for creating obfuscator-specific emulation hooks.
+    emulation_hooks: Arc<boxcar::Vec<HookFactory>>,
+    /// Methods to execute during template warmup (e.g., .cctors).
+    warmup_methods: Arc<boxcar::Vec<Token>>,
+    /// State machine providers for order-dependent decryption.
+    statemachine_providers: Arc<boxcar::Vec<Arc<dyn StateMachineProvider>>>,
+    /// Maximum instructions for emulation.
+    emulation_max_instructions: u64,
+    /// Tracing configuration for emulation.
+    tracing_config: Option<crate::emulation::TracingConfig>,
 }
 
 /// Owned CFG analysis info, storing dominator tree and predecessors.
@@ -153,17 +178,36 @@ impl CfgInfoOwned {
 
 impl Default for DecryptionPass {
     fn default() -> Self {
-        Self::new()
+        Self {
+            template_process: RwLock::new(None),
+            warmup_failed: AtomicBool::new(false),
+            decryptors: Arc::new(DecryptorContext::new()),
+            emulation_hooks: Arc::new(boxcar::Vec::new()),
+            warmup_methods: Arc::new(boxcar::Vec::new()),
+            statemachine_providers: Arc::new(boxcar::Vec::new()),
+            emulation_max_instructions: 5_000_000,
+            tracing_config: None,
+        }
     }
 }
 
 impl DecryptionPass {
-    /// Creates a new constant decryption pass.
+    /// Creates a new constant decryption pass from an analysis context.
+    ///
+    /// Captures shared references to the context's decryptors, emulation hooks,
+    /// warmup methods, and state machine providers so the pass can operate
+    /// independently during pipeline execution.
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(ctx: &AnalysisContext) -> Self {
         Self {
             template_process: RwLock::new(None),
             warmup_failed: AtomicBool::new(false),
+            decryptors: Arc::clone(&ctx.decryptors),
+            emulation_hooks: Arc::clone(&ctx.emulation_hooks),
+            warmup_methods: Arc::clone(&ctx.warmup_methods),
+            statemachine_providers: Arc::clone(&ctx.statemachine_providers),
+            emulation_max_instructions: ctx.config.emulation_max_instructions,
+            tracing_config: ctx.config.tracing.clone(),
         }
     }
 
@@ -187,12 +231,13 @@ impl DecryptionPass {
     /// Returns an error if warmup fails. This prevents incorrect decryption
     /// results when the decryptor's initialization state is incomplete.
     fn create_template_process(
-        ctx: &AnalysisContext,
+        &self,
+        ctx: &CompilerContext,
         assembly: &Arc<CilObject>,
     ) -> Result<EmulationProcess> {
         // Use a higher instruction limit for template creation + warmup
         // Warmup may involve expensive operations like LZMA decompression
-        let warmup_instruction_limit = ctx.emulation_max_instructions().max(10_000_000);
+        let warmup_instruction_limit = self.emulation_max_instructions.max(10_000_000);
 
         let mut builder = ProcessBuilder::new()
             .assembly_arc(Arc::clone(assembly))
@@ -201,7 +246,7 @@ impl DecryptionPass {
             .name("decryption_template");
 
         // Add tracing configuration if provided
-        if let Some(ref tracing) = ctx.config.tracing {
+        if let Some(ref tracing) = self.tracing_config {
             // Set context to "decryption" for the decryption pass
             // This includes warmup and all forked decryption calls
             let decryption_tracing = tracing.clone().with_context("decryption");
@@ -209,14 +254,14 @@ impl DecryptionPass {
         }
 
         // Add obfuscator-specific hooks
-        for hook in ctx.create_emulation_hooks() {
-            builder = builder.hook(hook);
+        for (_, factory) in self.emulation_hooks.iter() {
+            builder = builder.hook(factory());
         }
 
         let process = builder.build()?;
 
         // Execute warmup methods (e.g., .cctors that initialize decryptor state)
-        let warmup_methods = ctx.warmup_methods();
+        let warmup_methods: Vec<Token> = self.warmup_methods.iter().map(|(_, &m)| m).collect();
         if !warmup_methods.is_empty() {
             for warmup_token in &warmup_methods {
                 // Execute the warmup method - failure aborts decryption
@@ -277,13 +322,26 @@ impl DecryptionPass {
         Ok(process)
     }
 
+    /// Finds the state machine provider that applies to a method.
+    fn get_statemachine_provider_for_method(
+        &self,
+        method: Token,
+    ) -> Option<Arc<dyn StateMachineProvider>> {
+        for (_, provider) in self.statemachine_providers.iter() {
+            if provider.applies_to_method(method) {
+                return Some(Arc::clone(provider));
+            }
+        }
+        None
+    }
+
     /// Forks the template emulation process for a decryption call.
     ///
     /// Initializes the template on first call, then returns O(1) forks.
     /// If warmup previously failed, returns an error immediately.
     fn fork_template_process(
         &self,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         assembly: &Arc<CilObject>,
     ) -> Result<EmulationProcess> {
         if self.warmup_failed.load(Ordering::Relaxed) {
@@ -323,7 +381,7 @@ impl DecryptionPass {
         }
 
         // Create and store the template (warmup runs here, may fail)
-        match Self::create_template_process(ctx, assembly) {
+        match self.create_template_process(ctx, assembly) {
             Ok(process) => {
                 let forked = process.fork();
                 *guard = Some(process);
@@ -356,10 +414,10 @@ impl DecryptionPass {
         &self,
         decryptor: Token,
         args: &[ConstValue],
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         assembly: &Arc<CilObject>,
     ) -> (Option<ConstValue>, Option<FailureReason>) {
-        if let Some(cached) = ctx
+        if let Some(cached) = self
             .decryptors
             .with_cached(decryptor, args, ConstValue::clone)
         {
@@ -369,7 +427,7 @@ impl DecryptionPass {
         let (result, failure) = self.emulate_call(decryptor, args, ctx, assembly);
 
         if let Some(ref value) = result {
-            ctx.decryptors.cache_value(decryptor, args, value.clone());
+            self.decryptors.cache_value(decryptor, args, value.clone());
         }
 
         (result, failure)
@@ -396,7 +454,7 @@ impl DecryptionPass {
         &self,
         method: Token,
         args: &[ConstValue],
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         assembly: &Arc<CilObject>,
     ) -> (Option<ConstValue>, Option<FailureReason>) {
         // Fork from the template process - O(1) due to CoW semantics.
@@ -564,7 +622,7 @@ impl DecryptionPass {
     fn get_arg_constants(
         args: &[SsaVarId],
         ssa: &SsaFunction,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         method_token: Token,
     ) -> Option<Vec<ConstValue>> {
         let mut constants = Vec::with_capacity(args.len());
@@ -652,7 +710,7 @@ impl DecryptionPass {
     fn trace_to_constant(
         var: SsaVarId,
         ssa: &SsaFunction,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         method_token: Token,
         visited: &mut HashSet<SsaVarId>,
         cache: &mut HashMap<SsaVarId, Option<ConstValue>>,
@@ -783,7 +841,7 @@ impl DecryptionPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         assembly: &Arc<CilObject>,
         provider: &dyn StateMachineProvider,
     ) -> Result<(bool, EventLog)> {
@@ -802,7 +860,7 @@ impl DecryptionPass {
         let cfg_info = self.build_cfg_info(ssa);
 
         // Find decryptor call sites using the provider's pattern matching
-        let decryptor_tokens = ctx.decryptors.registered_tokens();
+        let decryptor_tokens = self.decryptors.registered_tokens();
         let call_sites =
             provider.find_decryptor_call_sites(ssa, &state_updates, &decryptor_tokens, assembly);
 
@@ -820,10 +878,13 @@ impl DecryptionPass {
         for call_site in &call_sites {
             let location = call_site.location();
 
-            if ctx.decryptors.is_already_decrypted(method_token, location) {
+            if self.decryptors.is_already_decrypted(method_token, location) {
                 continue;
             }
-            if ctx.decryptors.has_permanent_failure(method_token, location) {
+            if self
+                .decryptors
+                .has_permanent_failure(method_token, location)
+            {
                 continue;
             }
 
@@ -929,7 +990,7 @@ impl DecryptionPass {
                 self.try_decrypt_at_call(call_site.decryptor, &args, ctx, assembly);
 
             if let Some(value) = result {
-                ctx.decryptors.record_success(
+                self.decryptors.record_success(
                     call_site.decryptor,
                     method_token,
                     location,
@@ -966,7 +1027,7 @@ impl DecryptionPass {
 
         // Record failures
         for (decryptor, location, reason) in &failures {
-            ctx.decryptors
+            self.decryptors
                 .record_failure(*decryptor, method_token, *location, reason.clone());
 
             changes
@@ -1013,7 +1074,7 @@ impl DecryptionPass {
         relevant_updates: &[usize],
         all_updates: &[StateUpdateCall],
         ssa: &SsaFunction,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         method_token: Token,
     ) {
         let mut cache = HashMap::new();
@@ -1126,13 +1187,13 @@ impl SsaPass for DecryptionPass {
         "Decrypts obfuscated values by emulating registered decryptor methods"
     }
 
-    fn initialize(&mut self, _ctx: &AnalysisContext) -> Result<()> {
+    fn initialize(&mut self, _ctx: &CompilerContext) -> Result<()> {
         // This pass relies on DecryptorContext being populated by obfuscator
         // detection before it runs. No additional setup needed.
         Ok(())
     }
 
-    fn finalize(&mut self, _ctx: &AnalysisContext) -> Result<()> {
+    fn finalize(&mut self, _ctx: &CompilerContext) -> Result<()> {
         // Clear the template process to release its Arc<CilObject> reference.
         // This is needed so the assembly can be unwrapped for code generation.
         *self
@@ -1146,11 +1207,11 @@ impl SsaPass for DecryptionPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         // Early exit if no decryptors are registered
-        if !ctx.decryptors.has_decryptors() {
+        if !self.decryptors.has_decryptors() {
             return Ok(false);
         }
 
@@ -1162,7 +1223,7 @@ impl SsaPass for DecryptionPass {
         // Check if this method uses a state machine (CFG mode) - requires sequential processing
         // Track changes separately so we can still process remaining non-state-machine calls
         let mut state_machine_changed = false;
-        if let Some(provider) = ctx.get_statemachine_provider_for_method(method_token) {
+        if let Some(provider) = self.get_statemachine_provider_for_method(method_token) {
             let (changed, sm_changes) =
                 self.process_state_machine_mode(ssa, method_token, ctx, assembly, &*provider)?;
             if !sm_changes.is_empty() {
@@ -1191,16 +1252,19 @@ impl SsaPass for DecryptionPass {
                 };
 
                 let Some(dest) = dest else { continue };
-                let Some(decryptor) = ctx.decryptors.resolve_decryptor(call_target) else {
+                let Some(decryptor) = self.decryptors.resolve_decryptor(call_target) else {
                     continue;
                 };
 
                 let location = block_idx * 1000 + instr_idx;
 
-                if ctx.decryptors.is_already_decrypted(method_token, location) {
+                if self.decryptors.is_already_decrypted(method_token, location) {
                     continue;
                 }
-                if ctx.decryptors.has_permanent_failure(method_token, location) {
+                if self
+                    .decryptors
+                    .has_permanent_failure(method_token, location)
+                {
                     continue;
                 }
 
@@ -1258,7 +1322,7 @@ impl SsaPass for DecryptionPass {
 
         // Phase 3: Apply results (sequential - SSA mutation not thread-safe)
         for (block_idx, instr_idx, dest, decryptor, location, value) in successes {
-            ctx.decryptors
+            self.decryptors
                 .record_success(decryptor, method_token, location, value.clone());
 
             changes
@@ -1277,7 +1341,7 @@ impl SsaPass for DecryptionPass {
 
         // Record failures
         for (decryptor, location, reason) in &failures {
-            ctx.decryptors
+            self.decryptors
                 .record_failure(*decryptor, method_token, *location, reason.clone());
 
             changes
@@ -1304,9 +1368,9 @@ mod tests {
 
     use crate::{
         analysis::{CallGraph, ConstValue, MethodRef, SsaFunction, SsaFunctionBuilder, SsaVarId},
+        compiler::SsaPass,
         deobfuscation::{
-            context::AnalysisContext, pass::SsaPass, passes::decryption::DecryptionPass,
-            DeobfuscationEngine, EngineConfig,
+            context::AnalysisContext, passes::DecryptionPass, DeobfuscationEngine, EngineConfig,
         },
         metadata::token::Token,
         test::helpers::test_assembly_arc,
@@ -1320,7 +1384,8 @@ mod tests {
 
     #[test]
     fn test_pass_creation() {
-        let pass = DecryptionPass::new();
+        let ctx = create_test_context();
+        let pass = DecryptionPass::new(&ctx);
         assert_eq!(pass.name(), "decryption");
         assert!(!pass.description().is_empty());
     }
@@ -1333,8 +1398,8 @@ mod tests {
 
     #[test]
     fn test_run_no_decryptors() {
-        let pass = DecryptionPass::new();
         let ctx = create_test_context();
+        let pass = DecryptionPass::new(&ctx);
 
         let method_token = Token::new(0x06000001);
         let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
@@ -1353,12 +1418,13 @@ mod tests {
 
     #[test]
     fn test_run_with_decryptor_no_calls() {
-        let pass = DecryptionPass::new();
         let ctx = create_test_context();
 
         // Register a decryptor
         let decryptor_token = Token::new(0x06000002);
         ctx.decryptors.register(decryptor_token);
+
+        let pass = DecryptionPass::new(&ctx);
 
         let method_token = Token::new(0x06000001);
         let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
@@ -1377,12 +1443,13 @@ mod tests {
 
     #[test]
     fn test_run_call_to_decryptor_no_dest() {
-        let pass = DecryptionPass::new();
         let ctx = create_test_context();
 
         // Register a decryptor
         let decryptor_token = Token::new(0x06000002);
         ctx.decryptors.register(decryptor_token);
+
+        let pass = DecryptionPass::new(&ctx);
 
         let method_token = Token::new(0x06000001);
         let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
@@ -1402,12 +1469,13 @@ mod tests {
 
     #[test]
     fn test_run_call_to_decryptor_non_constant_args() {
-        let pass = DecryptionPass::new();
         let ctx = create_test_context();
 
         // Register a decryptor
         let decryptor_token = Token::new(0x06000002);
         ctx.decryptors.register(decryptor_token);
+
+        let pass = DecryptionPass::new(&ctx);
 
         let method_token = Token::new(0x06000001);
         let mut ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
@@ -1431,12 +1499,13 @@ mod tests {
 
     #[test]
     fn test_run_call_to_non_decryptor() {
-        let pass = DecryptionPass::new();
         let ctx = create_test_context();
 
         // Register a decryptor
         let decryptor_token = Token::new(0x06000002);
         ctx.decryptors.register(decryptor_token);
+
+        let pass = DecryptionPass::new(&ctx);
 
         let method_token = Token::new(0x06000001);
         let other_method = Token::new(0x06000003);
@@ -1456,7 +1525,6 @@ mod tests {
 
     #[test]
     fn test_methodspec_resolution() {
-        let pass = DecryptionPass::new();
         let ctx = create_test_context();
 
         // Register a decryptor and map a MethodSpec to it
@@ -1465,6 +1533,8 @@ mod tests {
         ctx.decryptors.register(decryptor_token);
         ctx.decryptors
             .map_methodspec(methodspec_token, decryptor_token);
+
+        let pass = DecryptionPass::new(&ctx);
 
         let method_token = Token::new(0x06000001);
         let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
@@ -1495,8 +1565,8 @@ mod tests {
 
     #[test]
     fn test_pass_initialize() {
-        let mut pass = DecryptionPass::new();
         let ctx = create_test_context();
+        let mut pass = DecryptionPass::new(&ctx);
 
         let result = pass.initialize(&ctx);
         assert!(result.is_ok());

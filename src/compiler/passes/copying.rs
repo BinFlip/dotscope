@@ -44,12 +44,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     analysis::{PhiAnalyzer, SsaFunction, SsaType, SsaVarId, VariableOrigin},
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-        passes::utils::resolve_chain,
-    },
+    compiler::{pass::SsaPass, passes::utils::resolve_chain, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     CilObject, Result,
 };
@@ -254,7 +249,7 @@ impl SsaPass for CopyPropagationPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
@@ -286,15 +281,16 @@ mod tests {
             SsaFunction, SsaFunctionBuilder, SsaInstruction, SsaOp, SsaVarId, SsaVariable,
             VariableOrigin,
         },
-        deobfuscation::{context::AnalysisContext, pass::SsaPass, passes::CopyPropagationPass},
+        compiler::CompilerContext,
+        compiler::{CopyPropagationPass, SsaPass},
         metadata::token::Token,
         test::helpers::test_assembly_arc,
     };
 
     /// Helper to create a minimal analysis context for testing.
-    fn test_context() -> AnalysisContext {
+    fn test_context() -> CompilerContext {
         let call_graph = Arc::new(CallGraph::new());
-        AnalysisContext::new(call_graph)
+        CompilerContext::new(call_graph)
     }
 
     #[test]

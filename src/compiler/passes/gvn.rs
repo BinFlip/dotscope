@@ -39,11 +39,7 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     analysis::{BinaryOpKind, SsaFunction, SsaOp, SsaVarId, UnaryOpKind},
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-    },
+    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     CilObject, Result,
 };
@@ -182,7 +178,7 @@ impl SsaPass for GlobalValueNumberingPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let mut changes = EventLog::new();

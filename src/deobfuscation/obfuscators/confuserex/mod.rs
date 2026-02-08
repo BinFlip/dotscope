@@ -173,10 +173,10 @@ use std::{
 
 use crate::{
     cilassembly::{CilAssembly, CleanupRequest, GeneratorConfig},
+    compiler::{EventLog, SsaPass},
     deobfuscation::{
-        changes::EventLog, config::EngineConfig, context::AnalysisContext,
-        detection::DetectionScore, obfuscators::Obfuscator, pass::SsaPass,
-        NativeMethodConversionPass,
+        config::EngineConfig, context::AnalysisContext, detection::DetectionScore,
+        obfuscators::Obfuscator, passes::NativeMethodConversionPass,
     },
     emulation::TracingConfig,
     metadata::{
@@ -692,10 +692,8 @@ impl Obfuscator for ConfuserExObfuscator {
 #[cfg(test)]
 mod tests {
     use crate::{
-        deobfuscation::{
-            changes::EventLog,
-            obfuscators::{confuserex::ConfuserExObfuscator, Obfuscator},
-        },
+        compiler::EventLog,
+        deobfuscation::obfuscators::{confuserex::ConfuserExObfuscator, Obfuscator},
         CilObject, Result, ValidationConfig,
     };
 

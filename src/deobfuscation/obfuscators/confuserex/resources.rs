@@ -35,8 +35,8 @@ use std::sync::Arc;
 use crate::{
     assembly::Operand,
     cilassembly::{CilAssembly, GeneratorConfig},
+    compiler::EventLog,
     deobfuscation::{
-        changes::EventLog,
         detection::{DetectionEvidence, DetectionScore},
         obfuscators::confuserex::{
             candidates::{find_candidates, ProtectionType},
@@ -655,12 +655,10 @@ fn try_emulate_resource_decryptor(
 #[cfg(test)]
 mod tests {
     use crate::{
-        deobfuscation::{
-            changes::EventLog,
-            obfuscators::confuserex::{
-                candidates::{find_candidates, ProtectionType},
-                resources::decrypt_resources,
-            },
+        compiler::EventLog,
+        deobfuscation::obfuscators::confuserex::{
+            candidates::{find_candidates, ProtectionType},
+            resources::decrypt_resources,
         },
         CilObject, ValidationConfig,
     };

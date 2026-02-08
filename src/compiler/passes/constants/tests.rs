@@ -4,10 +4,10 @@ use super::*;
 use crate::analysis::{CallGraph, SsaFunctionBuilder, SsaType};
 use crate::test::helpers::test_assembly_arc;
 
-/// Creates a test analysis context.
-fn test_context() -> AnalysisContext {
+/// Creates a test compiler context.
+fn test_context() -> CompilerContext {
     let call_graph = Arc::new(CallGraph::new());
-    AnalysisContext::new(call_graph)
+    CompilerContext::new(call_graph)
 }
 
 #[test]

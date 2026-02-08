@@ -11,27 +11,23 @@ use rayon::prelude::*;
 use crate::{
     analysis::{CallGraph, SsaFunction, SsaOp, SsaType},
     cilassembly::GeneratorConfig,
+    compiler::{
+        AlgebraicSimplificationPass, BlockMergingPass, CallSiteInfo, ConstantPropagationPass,
+        ControlFlowSimplificationPass, CopyPropagationPass, DeadCodeEliminationPass,
+        DeadMethodEliminationPass, EventKind, EventLog, GlobalValueNumberingPass, InliningPass,
+        JumpThreadingPass, LicmPass, MethodSummary, OpaquePredicatePass, ParameterSummary,
+        PassScheduler, ReassociationPass, SsaCodeGenerator, SsaPass, StrengthReductionPass,
+        ValueRangePropagationPass,
+    },
     deobfuscation::{
-        changes::{EventKind, EventLog},
         cleanup::execute_cleanup,
-        codegen::SsaCodeGenerator,
         config::EngineConfig,
         context::AnalysisContext,
         detection::DetectionResult,
         detector::ObfuscatorDetector,
         obfuscators::Obfuscator,
-        pass::SsaPass,
-        passes::{
-            AlgebraicSimplificationPass, BlockMergingPass, CffReconstructionPass,
-            ConstantPropagationPass, ControlFlowSimplificationPass, CopyPropagationPass,
-            DeadCodeEliminationPass, DeadMethodEliminationPass, DecryptionPass,
-            GlobalValueNumberingPass, InliningPass, JumpThreadingPass, LicmPass,
-            NeutralizationPass, OpaquePredicatePass, ReassociationPass, StrengthReductionPass,
-            ValueRangePropagationPass,
-        },
+        passes::{CffReconstructionPass, DecryptionPass, NeutralizationPass, UnflattenConfig},
         result::DeobfuscationResult,
-        scheduler::PassScheduler,
-        summary::{CallSiteInfo, MethodSummary, ParameterSummary},
     },
     metadata::{
         method::{
@@ -91,22 +87,8 @@ pub struct DeobfuscationEngine {
     config: EngineConfig,
     /// Obfuscator detector.
     detector: ObfuscatorDetector,
-    /// Pass scheduler.
+    /// Pass scheduler (owns all pass vectors and orchestrates execution).
     scheduler: PassScheduler,
-
-    // Pipeline passes (built once in constructor)
-    // 4-phase architecture: each phase runs to fixpoint with normalize after changes
-    /// Phase 1: Structure recovery (control-flow unflattening).
-    structure_passes: Vec<Box<dyn SsaPass>>,
-    /// Phase 2: Value recovery (string/constant decryption).
-    value_passes: Vec<Box<dyn SsaPass>>,
-    /// Phase 3: Simplification (opaque predicates + CFG recovery).
-    simplify_passes: Vec<Box<dyn SsaPass>>,
-    /// Phase 4: Proxy/delegate inlining.
-    inline_passes: Vec<Box<dyn SsaPass>>,
-    /// Normalization passes (DCE, GVN, constant/copy propagation).
-    /// Run after each structural change in every phase.
-    normalize_passes: Vec<Box<dyn SsaPass>>,
 }
 
 impl Default for DeobfuscationEngine {
@@ -127,76 +109,76 @@ impl DeobfuscationEngine {
     /// A new `DeobfuscationEngine` instance ready to process assemblies.
     #[must_use]
     pub fn new(config: EngineConfig) -> Self {
-        let scheduler = PassScheduler::new(
+        let mut scheduler = PassScheduler::new(
             config.max_iterations,
             config.stable_iterations,
             config.max_phase_iterations,
         );
 
         // Phase 1: Structure recovery (control-flow unflattening)
-        let mut structure_passes: Vec<Box<dyn SsaPass>> = Vec::new();
-        if config.enable_control_flow_simplification {
-            structure_passes.push(Box::new(CffReconstructionPass::with_defaults()));
-        }
+        // Populated by create_deob_passes() after AnalysisContext is built.
 
         // Phase 2: Value recovery (decryption)
-        // DecryptionPass uses the DecryptorContext which is populated during detection by:
-        // - Obfuscator-specific detectors (ConfuserEx, etc.) with high confidence
-        // - Heuristic detectors that identify potential decryptors by signature
-        let mut value_passes: Vec<Box<dyn SsaPass>> = Vec::new();
-        if config.enable_string_decryption {
-            value_passes.push(Box::new(DecryptionPass::new()));
-        }
+        // Populated by create_deob_passes() after AnalysisContext is built.
 
         // Phase 3: Simplification (opaque predicates + CFG recovery + jump threading + range propagation)
-        // Combined from old phases 3 and 4, plus new jump threading and value range propagation
-        let mut simplify_passes: Vec<Box<dyn SsaPass>> = Vec::new();
         if config.enable_opaque_predicate_removal {
-            simplify_passes.push(Box::new(OpaquePredicatePass::new()));
-            simplify_passes.push(Box::new(ValueRangePropagationPass::new()));
+            scheduler
+                .simplify
+                .push(Box::new(OpaquePredicatePass::new()));
+            scheduler
+                .simplify
+                .push(Box::new(ValueRangePropagationPass::new()));
         }
         if config.enable_control_flow_simplification {
-            simplify_passes.push(Box::new(ControlFlowSimplificationPass::new()));
-            simplify_passes.push(Box::new(JumpThreadingPass::new()));
+            scheduler
+                .simplify
+                .push(Box::new(ControlFlowSimplificationPass::new()));
+            scheduler.simplify.push(Box::new(JumpThreadingPass::new()));
         }
 
         // Phase 4: Proxy/delegate inlining
-        let mut inline_passes: Vec<Box<dyn SsaPass>> = Vec::new();
         if config.enable_inlining {
-            inline_passes.push(Box::new(InliningPass::with_threshold(
+            scheduler.inline.push(Box::new(InliningPass::with_threshold(
                 config.inline_threshold,
             )));
         }
 
         // Normalization passes (run after each structural change in every phase)
-        let mut normalize_passes: Vec<Box<dyn SsaPass>> = Vec::new();
         if config.enable_dead_code_elimination {
-            normalize_passes.push(Box::new(DeadCodeEliminationPass::new()));
-            normalize_passes.push(Box::new(BlockMergingPass::new()));
-            normalize_passes.push(Box::new(LicmPass::new()));
+            scheduler
+                .normalize
+                .push(Box::new(DeadCodeEliminationPass::new()));
+            scheduler.normalize.push(Box::new(BlockMergingPass::new()));
+            scheduler.normalize.push(Box::new(LicmPass::new()));
         }
         if config.enable_constant_propagation {
-            normalize_passes.push(Box::new(ReassociationPass::new()));
-            normalize_passes.push(Box::new(ConstantPropagationPass::new()));
-            normalize_passes.push(Box::new(GlobalValueNumberingPass::new()));
+            scheduler.normalize.push(Box::new(ReassociationPass::new()));
+            scheduler
+                .normalize
+                .push(Box::new(ConstantPropagationPass::new()));
+            scheduler
+                .normalize
+                .push(Box::new(GlobalValueNumberingPass::new()));
         }
         if config.enable_copy_propagation {
-            normalize_passes.push(Box::new(CopyPropagationPass::new()));
+            scheduler
+                .normalize
+                .push(Box::new(CopyPropagationPass::new()));
         }
         if config.enable_strength_reduction {
-            normalize_passes.push(Box::new(StrengthReductionPass::new()));
-            normalize_passes.push(Box::new(AlgebraicSimplificationPass::new()));
+            scheduler
+                .normalize
+                .push(Box::new(StrengthReductionPass::new()));
+            scheduler
+                .normalize
+                .push(Box::new(AlgebraicSimplificationPass::new()));
         }
 
         Self {
             config,
             detector: ObfuscatorDetector::new(),
             scheduler,
-            structure_passes,
-            value_passes,
-            simplify_passes,
-            inline_passes,
-            normalize_passes,
         }
     }
 
@@ -325,7 +307,7 @@ impl DeobfuscationEngine {
         let assembly_arc = Arc::new(assembly);
 
         // Build analysis context (doesn't store assembly)
-        let mut ctx = self.build_context(&assembly_arc, detection.clone())?;
+        let ctx = self.build_context(&assembly_arc, detection.clone())?;
 
         // Initialize context with obfuscator-specific data
         // This registers decryptors and other state needed by SSA passes
@@ -336,8 +318,19 @@ impl DeobfuscationEngine {
             // These run after value recovery (decryption) to clean up obfuscator artifacts
             let obfuscator_passes = obfuscator.passes();
             if !obfuscator_passes.is_empty() {
-                self.simplify_passes.extend(obfuscator_passes);
+                self.scheduler.simplify.extend(obfuscator_passes);
             }
+        }
+
+        // Create deob passes that share state with the AnalysisContext
+        self.create_deob_passes(&ctx);
+
+        // Populate no_inline from dispatchers and registered decryptors
+        for token in ctx.dispatchers.iter() {
+            ctx.compiler.no_inline.insert(*token);
+        }
+        for token in ctx.decryptors.registered_tokens() {
+            ctx.compiler.no_inline.insert(token);
         }
 
         // Interprocedural analysis
@@ -405,7 +398,7 @@ impl DeobfuscationEngine {
         // All cleanup happens in one pass to avoid RID staleness issues.
         let assembly = execute_cleanup(assembly, cleanup_request, &ctx)?;
 
-        let events = std::mem::take(&mut ctx.events);
+        let events = ctx.compiler.events.take();
         Ok((assembly, events, iterations))
     }
 
@@ -511,6 +504,9 @@ impl DeobfuscationEngine {
             obfuscator.initialize_context(&ctx, &assembly);
         }
 
+        // Create deob passes that share state with the AnalysisContext
+        self.create_deob_passes(&ctx);
+
         // Extract just the target method's SSA, process only this method
         let target_ssa = ctx
             .ssa_functions
@@ -578,6 +574,9 @@ impl DeobfuscationEngine {
         let call_graph = Arc::new(CallGraph::new());
         let ctx = AnalysisContext::new(call_graph);
 
+        // Create deob passes that share state with the AnalysisContext
+        self.create_deob_passes(&ctx);
+
         // Take ownership of SSA temporarily
         let ssa_owned = std::mem::replace(ssa, SsaFunction::new(0, 0));
         ctx.ssa_functions.insert(method_token, ssa_owned);
@@ -600,6 +599,28 @@ impl DeobfuscationEngine {
             .with_timing(start.elapsed(), iterations))
     }
 
+    /// Creates deobfuscation-specific passes that share state with the analysis context.
+    ///
+    /// Called after `build_context` and `initialize_context` to populate the
+    /// structure (CFF unflattening) and value (decryption) pass vectors.
+    fn create_deob_passes(&mut self, ctx: &AnalysisContext) {
+        self.scheduler.structure.clear();
+        self.scheduler.value.clear();
+        if self.config.enable_control_flow_simplification {
+            self.scheduler
+                .structure
+                .push(Box::new(CffReconstructionPass::new(
+                    ctx,
+                    UnflattenConfig::default(),
+                )));
+        }
+        if self.config.enable_string_decryption {
+            self.scheduler
+                .value
+                .push(Box::new(DecryptionPass::new(ctx)));
+        }
+    }
+
     /// Runs the deobfuscation pipeline on an already-prepared context.
     ///
     /// This is the shared internal implementation used by all public APIs.
@@ -611,15 +632,7 @@ impl DeobfuscationEngine {
         ctx: &AnalysisContext,
         assembly: &Arc<CilObject>,
     ) -> Result<usize> {
-        self.scheduler.run_pipeline(
-            ctx,
-            &mut self.structure_passes,
-            &mut self.value_passes,
-            &mut self.simplify_passes,
-            &mut self.inline_passes,
-            &mut self.normalize_passes,
-            assembly,
-        )
+        self.scheduler.run_pipeline(ctx, assembly)
     }
 
     /// Generates bytecode from optimized SSA and writes it back to the assembly.
@@ -1209,9 +1222,10 @@ mod tests {
             ConstValue, FieldRef, MethodPurity, MethodRef, ReturnInfo, SsaBlock, SsaFunction,
             SsaInstruction, SsaOp, SsaVarId,
         },
+        compiler::EventLog,
         deobfuscation::{
-            changes::EventLog, config::EngineConfig, detection::DetectionResult,
-            engine::DeobfuscationEngine, result::DeobfuscationResult,
+            config::EngineConfig, detection::DetectionResult, engine::DeobfuscationEngine,
+            result::DeobfuscationResult,
         },
         metadata::token::Token,
     };
@@ -1241,11 +1255,14 @@ mod tests {
     fn test_pipeline_passes_default() {
         let engine = DeobfuscationEngine::default();
 
-        // Engine should have passes in each enabled phase (built in constructor)
-        assert!(!engine.structure_passes.is_empty()); // Control-flow unflattening (Phase 1)
-        assert!(!engine.value_passes.is_empty()); // Decryption (Phase 2)
-        assert!(!engine.simplify_passes.is_empty()); // Opaque predicates + CFG (Phase 3)
-        assert!(!engine.normalize_passes.is_empty()); // DCE, constant prop, GVN, copy prop, strength reduction
+        // Deob passes (structure, value) start empty — populated by create_deob_passes()
+        // after detection builds an AnalysisContext.
+        assert!(engine.scheduler.structure.is_empty()); // Populated later with CffReconstructionPass
+        assert!(engine.scheduler.value.is_empty()); // Populated later with DecryptionPass
+
+        // Generic compiler passes are always present from the constructor.
+        assert!(!engine.scheduler.simplify.is_empty()); // Opaque predicates + CFG (Phase 3)
+        assert!(!engine.scheduler.normalize.is_empty()); // DCE, constant prop, GVN, copy prop, strength reduction
     }
 
     #[test]
@@ -1264,10 +1281,10 @@ mod tests {
         let engine = DeobfuscationEngine::new(config);
 
         // Reassociation + constant propagation + GVN should be in normalize
-        assert_eq!(engine.normalize_passes.len(), 3); // ReassociationPass + ConstantPropagationPass + GVN
-        assert!(engine.simplify_passes.is_empty()); // No opaque pred or CFG
-        assert!(engine.structure_passes.is_empty()); // No unflattening
-        assert!(engine.value_passes.is_empty()); // No decryption
+        assert_eq!(engine.scheduler.normalize.len(), 3); // ReassociationPass + ConstantPropagationPass + GVN
+        assert!(engine.scheduler.simplify.is_empty()); // No opaque pred or CFG
+        assert!(engine.scheduler.structure.is_empty()); // No unflattening
+        assert!(engine.scheduler.value.is_empty()); // No decryption
     }
 
     #[test]

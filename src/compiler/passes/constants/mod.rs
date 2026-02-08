@@ -40,11 +40,7 @@ use crate::{
         simplify_op, CmpKind, ConstValue, ConstantPropagation, SccpResult, SimplifyResult, SsaCfg,
         SsaFunction, SsaOp, SsaType, SsaVarId,
     },
-    deobfuscation::{
-        changes::{EventKind, EventLog},
-        context::AnalysisContext,
-        pass::SsaPass,
-    },
+    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     CilObject, Result,
 };
@@ -1103,7 +1099,7 @@ impl SsaPass for ConstantPropagationPass {
         &self,
         ssa: &mut SsaFunction,
         method_token: Token,
-        ctx: &AnalysisContext,
+        ctx: &CompilerContext,
         _assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let mut changes = EventLog::new();

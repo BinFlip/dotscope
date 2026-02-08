@@ -431,37 +431,37 @@ pub mod analysis;
 /// # Key Components
 ///
 /// ## Engine
-/// - [`deobfuscation::DeobfuscationEngine`] - Main entry point for deobfuscation
-/// - [`deobfuscation::EngineConfig`] - Engine configuration options
-/// - [`deobfuscation::PassScheduler`] - Manages pass execution and fixpoint iteration
-/// - [`deobfuscation::AnalysisContext`] - Shared interprocedural analysis data
+/// - [`crate::deobfuscation::DeobfuscationEngine`] - Main entry point for deobfuscation
+/// - [`crate::deobfuscation::EngineConfig`] - Engine configuration options
+/// - [`crate::compiler::PassScheduler`] - Manages pass execution and fixpoint iteration
+/// - [`crate::deobfuscation::AnalysisContext`] - Shared interprocedural analysis data
 ///
 /// ## Obfuscator System
-/// - [`deobfuscation::Obfuscator`] - Trait for obfuscator-specific handling
-/// - [`deobfuscation::ObfuscatorDetector`] - Runs obfuscators for detection
-/// - [`deobfuscation::DetectionScore`] - Confidence-based detection scoring
+/// - [`crate::deobfuscation::Obfuscator`] - Trait for obfuscator-specific handling
+/// - [`crate::deobfuscation::ObfuscatorDetector`] - Runs obfuscators for detection
+/// - [`crate::deobfuscation::DetectionScore`] - Confidence-based detection scoring
 ///
 /// ## Built-in Passes
 ///
 /// Value propagation and folding:
-/// - [`deobfuscation::passes::ConstantPropagationPass`] - SCCP-based constant propagation
-/// - [`deobfuscation::passes::CopyPropagationPass`] - Eliminates redundant copies and phi nodes
-/// - [`deobfuscation::passes::GlobalValueNumberingPass`] - Common subexpression elimination
-/// - [`deobfuscation::passes::StrengthReductionPass`] - Replaces expensive ops with cheaper equivalents
+/// - [`crate::compiler::ConstantPropagationPass`] - SCCP-based constant propagation
+/// - [`crate::compiler::CopyPropagationPass`] - Eliminates redundant copies and phi nodes
+/// - [`crate::compiler::GlobalValueNumberingPass`] - Common subexpression elimination
+/// - [`crate::compiler::StrengthReductionPass`] - Replaces expensive ops with cheaper equivalents
 ///
 /// Control flow recovery:
-/// - [`deobfuscation::passes::ControlFlowSimplificationPass`] - Jump threading, branch simplification
-/// - [`deobfuscation::passes::CffReconstructionPass`] - Z3-backed dispatcher analysis and CFG reconstruction
-/// - [`deobfuscation::passes::LoopCanonicalizationPass`] - Ensures single preheaders and latches
+/// - [`crate::compiler::ControlFlowSimplificationPass`] - Jump threading, branch simplification
+/// - [`crate::deobfuscation::CffReconstructionPass`] - Z3-backed dispatcher analysis and CFG reconstruction
+/// - [`crate::compiler::LoopCanonicalizationPass`] - Ensures single preheaders and latches
 ///
 /// Dead code elimination:
-/// - [`deobfuscation::passes::DeadCodeEliminationPass`] - Removes unreachable blocks
-/// - [`deobfuscation::passes::DeadMethodEliminationPass`] - Identifies methods with no callers
+/// - [`crate::compiler::DeadCodeEliminationPass`] - Removes unreachable blocks
+/// - [`crate::compiler::DeadMethodEliminationPass`] - Identifies methods with no callers
 ///
 /// Other passes:
-/// - [`deobfuscation::passes::OpaquePredicatePass`] - Removes always-true/false conditions
-/// - [`deobfuscation::passes::DecryptionPass`] - Decrypts values via emulation
-/// - [`deobfuscation::passes::InliningPass`] - Inlines small methods
+/// - [`crate::compiler::OpaquePredicatePass`] - Removes always-true/false conditions
+/// - [`crate::deobfuscation::DecryptionPass`] - Decrypts values via emulation
+/// - [`crate::compiler::InliningPass`] - Inlines small methods
 ///
 /// # Usage Example
 ///
@@ -478,6 +478,14 @@ pub mod analysis;
 /// ```
 #[cfg(feature = "deobfuscation")]
 pub mod deobfuscation;
+
+/// Compiler infrastructure for SSA-based code transformations.
+///
+/// Provides SSA optimization passes, code generation (SSA → CIL), and
+/// pass scheduling with fixpoint iteration. This is the middle layer between
+/// [`analysis`] (CIL → SSA) and [`deobfuscation`] (orchestration).
+#[cfg(feature = "compiler")]
+pub mod compiler;
 
 /// CIL emulation engine for .NET bytecode execution.
 ///
