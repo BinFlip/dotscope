@@ -59,15 +59,21 @@ jobs:
     - name: Install Z3 and dotnet-ildasm tool (Windows)
       if: runner.os == 'Windows'
       run: |
-        choco install z3 -y
         dotnet tool install --global dotnet-ildasm
-        # Find Z3 installation and set environment variables for z3-sys
-        $z3Path = Get-ChildItem -Path "C:\ProgramData\chocolatey\lib\z3\tools" -Directory | Select-Object -First 1
-        $z3Header = Join-Path $z3Path.FullName "include\z3.h"
-        $z3Lib = Join-Path $z3Path.FullName "bin"
-        echo "Z3_SYS_Z3_HEADER=$z3Header" >> $env:GITHUB_ENV
-        echo "LIBZ3_SYS_LIB_DIR=$z3Lib" >> $env:GITHUB_ENV
-        echo "Found Z3 at: $($z3Path.FullName)"
+        # Download Z3 from GitHub releases (more reliable than Chocolatey)
+        $z3Version = "4.13.4"
+        $z3Url = "https://github.com/Z3Prover/z3/releases/download/z3-$z3Version/z3-$z3Version-x64-win.zip"
+        $z3Zip = "$env:RUNNER_TEMP\z3.zip"
+        $z3Dir = "$env:RUNNER_TEMP\z3"
+        Invoke-WebRequest -Uri $z3Url -OutFile $z3Zip
+        Expand-Archive -Path $z3Zip -DestinationPath $z3Dir
+        $z3Root = Get-ChildItem -Path $z3Dir -Directory | Select-Object -First 1
+        echo "Z3_SYS_Z3_HEADER=$(Join-Path $z3Root.FullName 'include\z3.h')" >> $env:GITHUB_ENV
+        echo "LIBZ3_SYS_LIB_DIR=$(Join-Path $z3Root.FullName 'bin')" >> $env:GITHUB_ENV
+        # Add Z3 bin to PATH so libz3.dll is found at runtime
+        echo "$(Join-Path $z3Root.FullName 'bin')" >> $env:GITHUB_PATH
+        echo "Installed Z3 $z3Version at: $($z3Root.FullName)"
+        ls (Join-Path $z3Root.FullName 'bin')
       shell: pwsh
 
     - name: Setup Rust cache
@@ -83,7 +89,7 @@ jobs:
 
     - name: Check compilation
       run: cargo check
-      
+
     - name: Run tests (Linux - full)
       if: runner.os == 'Linux'
       run: cargo test --release --lib --verbose
@@ -95,7 +101,7 @@ jobs:
     - name: Run doc tests (Linux only)
       if: runner.os == 'Linux'
       run: cargo test --release --doc
-      
+
     - name: Check documentation
       run: cargo doc --no-deps
 
@@ -222,7 +228,7 @@ jobs:
       uses: taiki-e/install-action@cargo-llvm-cov
       
     - name: Generate code coverage
-      run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      run: cargo llvm-cov --workspace --features skip-expensive-tests --lcov --output-path lcov.info
       
     - name: Upload to codecov.io
       uses: codecov/codecov-action@v5
