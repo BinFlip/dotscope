@@ -69,7 +69,7 @@ jobs:
         Expand-Archive -Path $z3Zip -DestinationPath $z3Dir
         $z3Root = Get-ChildItem -Path $z3Dir -Directory | Select-Object -First 1
         echo "Z3_SYS_Z3_HEADER=$(Join-Path $z3Root.FullName 'include\z3.h')" >> $env:GITHUB_ENV
-        echo "LIBZ3_SYS_LIB_DIR=$(Join-Path $z3Root.FullName 'bin')" >> $env:GITHUB_ENV
+        echo "Z3_LIBRARY_PATH_OVERRIDE=$(Join-Path $z3Root.FullName 'bin')" >> $env:GITHUB_ENV
         # Add Z3 bin to PATH so libz3.dll is found at runtime
         echo "$(Join-Path $z3Root.FullName 'bin')" >> $env:GITHUB_PATH
         echo "Installed Z3 $z3Version at: $($z3Root.FullName)"
