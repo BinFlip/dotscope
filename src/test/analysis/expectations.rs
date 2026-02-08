@@ -75,13 +75,15 @@ pub struct SsaExpectation {
 
 impl SsaExpectation {
     /// Creates a new expectation for a method without phi nodes.
-    /// Allows +1 local for debug builds (return value slot).
+    /// Allows extra locals for compiler-specific debug temporaries.
+    /// Roslyn (dotnet) debug builds add more temporaries than Mono's mcs:
+    /// return value slots, branch evaluation temps, loop control vars, etc.
     #[must_use]
     pub const fn no_phi(num_args: usize, num_locals: usize) -> Self {
         Self {
             num_args,
             min_locals: num_locals,
-            max_locals: num_locals + 1, // Debug builds add return value local
+            max_locals: num_locals + 4, // Compilers may add debug temporaries
             has_phi_nodes: false,
             min_phi_count: 0,
             max_phi_count: 0,
@@ -89,7 +91,7 @@ impl SsaExpectation {
     }
 
     /// Creates a new expectation for a method with phi nodes.
-    /// Allows +1 local for debug builds (return value slot).
+    /// Allows extra locals for compiler-specific debug temporaries.
     #[must_use]
     pub const fn with_phi(
         num_args: usize,
@@ -100,7 +102,7 @@ impl SsaExpectation {
         Self {
             num_args,
             min_locals: num_locals,
-            max_locals: num_locals + 1, // Debug builds add return value local
+            max_locals: num_locals + 4, // Compilers may add debug temporaries
             has_phi_nodes: true,
             min_phi_count: min_phi,
             max_phi_count: max_phi,

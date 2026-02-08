@@ -360,21 +360,41 @@ pub fn fixup_data_directories(ctx: &mut WriteContext) -> Result<()> {
     let dd_offset = if ctx.is_pe32_plus { 112 } else { 96 };
     let dd_base = ctx.optional_header_offset + dd_offset;
 
-    // IAT (index 12) - at the very start of .text section
-    let iat_rva = ctx.text_section_rva;
-    let iat_size = u32::try_from(ctx.iat_size).unwrap_or(8);
-    ctx.write_u32_at(dd_base + 12 * 8, iat_rva)?;
-    ctx.write_u32_at(dd_base + 12 * 8 + 4, iat_size)?;
+    // IAT (index 12) and CLR Runtime Header (index 14)
+    // When the assembly has native imports (IAT was written), the layout is:
+    //   .text start → IAT → COR20 header → ...
+    // When no native imports exist (.NET Core PE32+ without mscoree.dll):
+    //   .text start → COR20 header → ...
+    let has_iat = ctx.iat_size > 0;
+    if has_iat {
+        let iat_rva = ctx.text_section_rva;
+        let iat_size = u32::try_from(ctx.iat_size).unwrap_or(8);
+        ctx.write_u32_at(dd_base + 12 * 8, iat_rva)?;
+        ctx.write_u32_at(dd_base + 12 * 8 + 4, iat_size)?;
 
-    // CLR Runtime Header (index 14) - immediately after IAT
-    let clr_rva = ctx.text_section_rva + iat_size;
-    ctx.write_u32_at(dd_base + 14 * 8, clr_rva)?;
-    ctx.write_u32_at(dd_base + 14 * 8 + 4, COR20_HEADER_SIZE)?;
+        // CLR header sits immediately after IAT
+        let clr_rva = ctx.text_section_rva + iat_size;
+        ctx.write_u32_at(dd_base + 14 * 8, clr_rva)?;
+        ctx.write_u32_at(dd_base + 14 * 8 + 4, COR20_HEADER_SIZE)?;
+    } else {
+        // No IAT - zero the IAT data directory
+        ctx.write_u32_at(dd_base + 12 * 8, 0)?;
+        ctx.write_u32_at(dd_base + 12 * 8 + 4, 0)?;
+
+        // CLR header sits at the very start of .text section
+        let clr_rva = ctx.text_section_rva;
+        ctx.write_u32_at(dd_base + 14 * 8, clr_rva)?;
+        ctx.write_u32_at(dd_base + 14 * 8 + 4, COR20_HEADER_SIZE)?;
+    }
 
     // Import Table (index 1)
     if let (Some(rva), Some(size)) = (ctx.import_data_rva, ctx.import_data_size) {
         ctx.write_u32_at(dd_base + 8, rva)?;
         ctx.write_u32_at(dd_base + 8 + 4, size)?;
+    } else {
+        // No import table - zero the directory entry
+        ctx.write_u32_at(dd_base + 8, 0)?;
+        ctx.write_u32_at(dd_base + 8 + 4, 0)?;
     }
 
     // Export Table (index 0)

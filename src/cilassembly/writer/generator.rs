@@ -362,7 +362,14 @@ impl<'a> PeGenerator<'a> {
         ctx.text_section_offset = ctx.pos();
 
         // Phase 2: Write .text section content
-        self.write_iat(&mut ctx)?;
+        // Only write IAT for assemblies that need native imports (e.g., mscoree.dll).
+        // .NET Core PE32+ assemblies typically have no IAT, no import table, and no
+        // native entry point. Adding these unconditionally triggers CoreCLR's
+        // CheckILOnly validation which requires matching base relocations, causing
+        // BadImageFormatException for assemblies that originally lacked them.
+        if self.needs_native_imports() {
+            self.write_iat(&mut ctx)?;
+        }
         self.write_cor20_header(&mut ctx)?;
 
         // Pre-compute heap offsets early - needed for method bodies that reference
@@ -426,7 +433,9 @@ impl<'a> PeGenerator<'a> {
         ctx.metadata_size = ctx.pos() - ctx.metadata_offset;
 
         // Write import/export data (if present)
-        self.write_import_data(&mut ctx)?;
+        if self.needs_native_imports() {
+            self.write_import_data(&mut ctx)?;
+        }
         self.write_export_data(&mut ctx)?;
 
         // Calculate .text section size and update sections vector
@@ -909,6 +918,30 @@ impl<'a> PeGenerator<'a> {
         const IMAGE_FILE_DLL: u16 = 0x2000;
         let characteristics = self.assembly.view().file().header().characteristics;
         (characteristics & IMAGE_FILE_DLL) != 0
+    }
+
+    /// Checks if this assembly needs native import table entries.
+    ///
+    /// Returns `true` if the original PE had native imports (e.g., mscoree.dll)
+    /// or if the user has added new native imports. .NET Core assemblies compiled
+    /// for x64 typically have no IAT, no import table, and no native entry point;
+    /// adding these unconditionally triggers CoreCLR's `CheckILOnly` validation
+    /// which requires matching base relocations.
+    fn needs_native_imports(&self) -> bool {
+        let view = self.assembly.view();
+
+        // Check if original PE had any imports
+        if view.file().imports().is_some() {
+            return true;
+        }
+
+        // Check if user has added any native imports
+        let user_imports = self.assembly.changes().native_imports().native();
+        if !user_imports.is_empty() {
+            return true;
+        }
+
+        false
     }
 
     /// Writes the COR20 (CLR) header.
