@@ -258,6 +258,15 @@ pub struct WriteContext<'a> {
     /// a file offset rather than RVA.
     pub original_certificate_dir: Option<(u32, u32)>,
 
+    /// File offset where embedded PE resources were written in the new .text section.
+    /// Some assemblies (e.g., WindowsBase.dll) embed Win32 PE resources directly in
+    /// .text rather than in a separate .rsrc section. When rewriting .text, these
+    /// must be carried over and the Resource data directory updated.
+    pub pe_resource_offset: u64,
+
+    /// Size of embedded PE resource data written to .text (0 if none).
+    pub pe_resource_size: u32,
+
     /// Mapping from placeholder method RVAs to actual RVAs. During table writing,
     /// method RVAs are written as placeholders. After method bodies are written,
     /// this map is used to patch the correct RVAs.
@@ -462,6 +471,8 @@ impl<'a> WriteContext<'a> {
 
             original_debug_dir: None,
             original_certificate_dir: None,
+            pe_resource_offset: 0,
+            pe_resource_size: 0,
 
             method_body_rva_map: HashMap::new(),
             field_data_rva_map: HashMap::new(),

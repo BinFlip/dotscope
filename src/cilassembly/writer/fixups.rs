@@ -403,7 +403,7 @@ pub fn fixup_data_directories(ctx: &mut WriteContext) -> Result<()> {
         ctx.write_u32_at(dd_base + 4, size)?;
     }
 
-    // Resource Table (index 2) - find .rsrc section in sections vector
+    // Resource Table (index 2) - find .rsrc section or embedded PE resources
     let rsrc_section = ctx
         .sections
         .iter()
@@ -413,6 +413,15 @@ pub fn fixup_data_directories(ctx: &mut WriteContext) -> Result<()> {
             ctx.write_u32_at(dd_base + 2 * 8, rva)?;
             ctx.write_u32_at(dd_base + 2 * 8 + 4, size)?;
         }
+    } else if ctx.pe_resource_size > 0 {
+        // Resources were embedded in .text and carried over
+        let rva = ctx.offset_to_rva(ctx.pe_resource_offset);
+        ctx.write_u32_at(dd_base + 2 * 8, rva)?;
+        ctx.write_u32_at(dd_base + 2 * 8 + 4, ctx.pe_resource_size)?;
+    } else {
+        // No resources at all - zero the directory entry
+        ctx.write_u32_at(dd_base + 2 * 8, 0)?;
+        ctx.write_u32_at(dd_base + 2 * 8 + 4, 0)?;
     }
 
     // Base Relocation Table (index 5) - find .reloc section in sections vector

@@ -438,6 +438,10 @@ impl<'a> PeGenerator<'a> {
         }
         self.write_export_data(&mut ctx)?;
 
+        // Write embedded PE resources if the original assembly had Win32 resources
+        // in .text (no .rsrc section). These must be carried over to the new .text.
+        self.write_embedded_pe_resources(&mut ctx)?;
+
         // Calculate .text section size and update sections vector
         ctx.text_section_size = ctx.pos() - ctx.text_section_offset;
         let text_size_u32 = u32::try_from(ctx.text_section_size).unwrap_or(u32::MAX);
@@ -2431,6 +2435,63 @@ impl<'a> PeGenerator<'a> {
             ctx.export_table_bytes = Some(export_data_bytes.clone());
             ctx.write(&export_data_bytes)?;
         }
+
+        Ok(())
+    }
+
+    /// Writes embedded PE resources into the .text section if applicable.
+    ///
+    /// Some assemblies (e.g., WindowsBase.dll) embed Win32 PE resources directly
+    /// in the .text section rather than in a separate .rsrc section. The PE data
+    /// directory index 2 (ResourceTable) points into .text in these cases.
+    ///
+    /// Since the writer completely rewrites .text, these resources would be lost
+    /// unless explicitly carried over. This method detects the case and copies
+    /// the resource data into the new .text section, adjusting internal RVAs
+    /// via `relocate_resource_section()`.
+    fn write_embedded_pe_resources(&self, ctx: &mut WriteContext) -> Result<()> {
+        let view = self.assembly.view();
+        let file = view.file();
+
+        // Check if the original PE has a resource directory
+        let (res_rva, res_size) = match file.get_data_directory(DataDirectoryType::ResourceTable) {
+            Some((rva, size)) if rva != 0 && size != 0 => (rva, size),
+            _ => return Ok(()),
+        };
+
+        // Check if there's a .rsrc section — if so, resources are handled there
+        let has_rsrc_section = file.sections().iter().any(|s| s.name.starts_with(".rsrc"));
+        if has_rsrc_section {
+            return Ok(());
+        }
+
+        // Resources are embedded in .text — read from original file
+        let offset = match file.rva_to_offset(res_rva as usize) {
+            Ok(off) => off,
+            Err(_) => return Ok(()), // Can't resolve, skip
+        };
+
+        let data = match file.data().get(offset..offset + res_size as usize) {
+            Some(d) => d,
+            None => return Ok(()), // Out of bounds, skip
+        };
+
+        // Write at aligned position in new .text
+        ctx.align_to_4();
+        let write_offset = ctx.pos();
+        let new_rva = ctx.current_rva();
+
+        // Clone and relocate the resource directory entries if RVA changed
+        if res_rva == new_rva {
+            ctx.write(data)?;
+        } else {
+            let mut rsrc_data = data.to_vec();
+            relocate_resource_section(&mut rsrc_data, res_rva, new_rva)?;
+            ctx.write(&rsrc_data)?;
+        }
+
+        ctx.pe_resource_offset = write_offset;
+        ctx.pe_resource_size = res_size;
 
         Ok(())
     }
