@@ -46,7 +46,7 @@
 //! // Arithmetic operations
 //! let a = EmValue::I32(10);
 //! let b = EmValue::I32(3);
-//! let sum = a.clone().binary_op(b.clone(), BinaryOp::Add, PointerSize::Bit64).unwrap();
+//! let sum = a.binary_op(&b, BinaryOp::Add, PointerSize::Bit64).unwrap();
 //! assert_eq!(sum, EmValue::I32(13));
 //!
 //! // Comparisons
@@ -750,17 +750,17 @@ impl EmValue {
     /// let a = EmValue::I32(10);
     /// let b = EmValue::I32(3);
     ///
-    /// let sum = a.clone().binary_op(b.clone(), BinaryOp::Add, PointerSize::Bit64).unwrap();
+    /// let sum = a.binary_op(&b, BinaryOp::Add, PointerSize::Bit64).unwrap();
     /// assert_eq!(sum, EmValue::I32(13));
     ///
-    /// let product = a.binary_op(b, BinaryOp::Mul, PointerSize::Bit64).unwrap();
+    /// let product = a.binary_op(&b, BinaryOp::Mul, PointerSize::Bit64).unwrap();
     /// assert_eq!(product, EmValue::I32(30));
     /// ```
     ///
     /// # Errors
     ///
     /// Returns error if operation is invalid for the operand types or on overflow.
-    pub fn binary_op(self, other: Self, op: BinaryOp, ptr_size: PointerSize) -> Result<Self> {
+    pub fn binary_op(&self, other: &Self, op: BinaryOp, ptr_size: PointerSize) -> Result<Self> {
         if let EmValue::Symbolic(ref sym) = self {
             return Ok(EmValue::Symbolic(SymbolicValue::derived(
                 sym.cil_flavor.clone(),
@@ -832,7 +832,7 @@ impl EmValue {
     /// # Errors
     ///
     /// Returns error if operation is invalid for the operand type.
-    pub fn unary_op(self, op: UnaryOp, ptr_size: PointerSize) -> Result<Self> {
+    pub fn unary_op(&self, op: UnaryOp, ptr_size: PointerSize) -> Result<Self> {
         // Handle symbolic operands
         if let EmValue::Symbolic(ref sym) = self {
             return Ok(EmValue::Symbolic(SymbolicValue::derived(
@@ -931,7 +931,7 @@ impl EmValue {
     /// # Errors
     ///
     /// Returns error if conversion is invalid or would overflow (for checked conversions).
-    pub fn convert(self, conv: ConversionType, ptr_size: PointerSize) -> Result<Self> {
+    pub fn convert(&self, conv: ConversionType, ptr_size: PointerSize) -> Result<Self> {
         // Handle symbolic values
         if let EmValue::Symbolic(_) = self {
             return Ok(EmValue::Symbolic(SymbolicValue::derived(
@@ -979,57 +979,57 @@ impl EmValue {
         }
     }
 
-    fn add(self, other: Self) -> Result<Self> {
+    fn add(&self, other: &Self) -> Result<Self> {
         match (self, other) {
-            (EmValue::I32(a), EmValue::I32(b)) => Ok(EmValue::I32(a.wrapping_add(b))),
-            (EmValue::I64(a), EmValue::I64(b)) => Ok(EmValue::I64(a.wrapping_add(b))),
+            (EmValue::I32(a), EmValue::I32(b)) => Ok(EmValue::I32(a.wrapping_add(*b))),
+            (EmValue::I64(a), EmValue::I64(b)) => Ok(EmValue::I64(a.wrapping_add(*b))),
             (EmValue::NativeInt(a), EmValue::NativeInt(b)) => {
-                Ok(EmValue::NativeInt(a.wrapping_add(b)))
+                Ok(EmValue::NativeInt(a.wrapping_add(*b)))
             }
             (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => {
-                Ok(EmValue::NativeUInt(a.wrapping_add(b)))
+                Ok(EmValue::NativeUInt(a.wrapping_add(*b)))
             }
             (EmValue::F32(a), EmValue::F32(b)) => Ok(EmValue::F32(a + b)),
             (EmValue::F64(a), EmValue::F64(b)) => Ok(EmValue::F64(a + b)),
             // Mixed native int operations
             (EmValue::NativeInt(a), EmValue::I32(b)) => {
-                Ok(EmValue::NativeInt(a.wrapping_add(i64::from(b))))
+                Ok(EmValue::NativeInt(a.wrapping_add(i64::from(*b))))
             }
             (EmValue::I32(a), EmValue::NativeInt(b)) => {
-                Ok(EmValue::NativeInt(i64::from(a).wrapping_add(b)))
+                Ok(EmValue::NativeInt(i64::from(*a).wrapping_add(*b)))
             }
             // Mixed NativeUInt + NativeInt (treat as unsigned addition)
             (EmValue::NativeUInt(a), EmValue::NativeInt(b)) => {
-                Ok(EmValue::NativeUInt(a.wrapping_add(b as u64)))
+                Ok(EmValue::NativeUInt(a.wrapping_add(*b as u64)))
             }
             (EmValue::NativeInt(a), EmValue::NativeUInt(b)) => {
-                Ok(EmValue::NativeUInt((a as u64).wrapping_add(b)))
+                Ok(EmValue::NativeUInt((*a as u64).wrapping_add(*b)))
             }
             // NativeUInt + I32
             (EmValue::NativeUInt(a), EmValue::I32(b)) => {
-                Ok(EmValue::NativeUInt(a.wrapping_add(b as u64)))
+                Ok(EmValue::NativeUInt(a.wrapping_add(*b as u64)))
             }
             (EmValue::I32(a), EmValue::NativeUInt(b)) => {
-                Ok(EmValue::NativeUInt((a as u64).wrapping_add(b)))
+                Ok(EmValue::NativeUInt((*a as u64).wrapping_add(*b)))
             }
             // Pointer arithmetic: UnmanagedPtr + integer offsets
             (EmValue::UnmanagedPtr(a), EmValue::I32(b)) => {
-                Ok(EmValue::UnmanagedPtr(a.wrapping_add(b as u64)))
+                Ok(EmValue::UnmanagedPtr(a.wrapping_add(*b as u64)))
             }
             (EmValue::I32(a), EmValue::UnmanagedPtr(b)) => {
-                Ok(EmValue::UnmanagedPtr((a as u64).wrapping_add(b)))
+                Ok(EmValue::UnmanagedPtr((*a as u64).wrapping_add(*b)))
             }
             (EmValue::UnmanagedPtr(a), EmValue::NativeInt(b)) => {
-                Ok(EmValue::UnmanagedPtr(a.wrapping_add(b as u64)))
+                Ok(EmValue::UnmanagedPtr(a.wrapping_add(*b as u64)))
             }
             (EmValue::NativeInt(a), EmValue::UnmanagedPtr(b)) => {
-                Ok(EmValue::UnmanagedPtr((a as u64).wrapping_add(b)))
+                Ok(EmValue::UnmanagedPtr((*a as u64).wrapping_add(*b)))
             }
             (EmValue::UnmanagedPtr(a), EmValue::NativeUInt(b)) => {
-                Ok(EmValue::UnmanagedPtr(a.wrapping_add(b)))
+                Ok(EmValue::UnmanagedPtr(a.wrapping_add(*b)))
             }
             (EmValue::NativeUInt(a), EmValue::UnmanagedPtr(b)) => {
-                Ok(EmValue::UnmanagedPtr(a.wrapping_add(b)))
+                Ok(EmValue::UnmanagedPtr(a.wrapping_add(*b)))
             }
             (a, b) => Err(EmulationError::InvalidOperationTypes {
                 operation: "add".to_string(),
@@ -1039,9 +1039,8 @@ impl EmValue {
         }
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn add_ovf(self, other: Self, unsigned: bool) -> Result<Self> {
-        match (&self, &other) {
+    fn add_ovf(&self, other: &Self, unsigned: bool) -> Result<Self> {
+        match (self, other) {
             (EmValue::I32(a), EmValue::I32(b)) => {
                 if unsigned {
                     let (result, overflow) = (*a as u32).overflowing_add(*b as u32);
@@ -1078,52 +1077,52 @@ impl EmValue {
         }
     }
 
-    fn sub(self, other: Self) -> Result<Self> {
+    fn sub(&self, other: &Self) -> Result<Self> {
         match (self, other) {
-            (EmValue::I32(a), EmValue::I32(b)) => Ok(EmValue::I32(a.wrapping_sub(b))),
-            (EmValue::I64(a), EmValue::I64(b)) => Ok(EmValue::I64(a.wrapping_sub(b))),
+            (EmValue::I32(a), EmValue::I32(b)) => Ok(EmValue::I32(a.wrapping_sub(*b))),
+            (EmValue::I64(a), EmValue::I64(b)) => Ok(EmValue::I64(a.wrapping_sub(*b))),
             (EmValue::NativeInt(a), EmValue::NativeInt(b)) => {
-                Ok(EmValue::NativeInt(a.wrapping_sub(b)))
+                Ok(EmValue::NativeInt(a.wrapping_sub(*b)))
             }
             (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => {
-                Ok(EmValue::NativeUInt(a.wrapping_sub(b)))
+                Ok(EmValue::NativeUInt(a.wrapping_sub(*b)))
             }
             (EmValue::F32(a), EmValue::F32(b)) => Ok(EmValue::F32(a - b)),
             (EmValue::F64(a), EmValue::F64(b)) => Ok(EmValue::F64(a - b)),
             // Mixed native int operations
             (EmValue::NativeInt(a), EmValue::I32(b)) => {
-                Ok(EmValue::NativeInt(a.wrapping_sub(i64::from(b))))
+                Ok(EmValue::NativeInt(a.wrapping_sub(i64::from(*b))))
             }
             (EmValue::I32(a), EmValue::NativeInt(b)) => {
-                Ok(EmValue::NativeInt(i64::from(a).wrapping_sub(b)))
+                Ok(EmValue::NativeInt(i64::from(*a).wrapping_sub(*b)))
             }
             // Mixed NativeUInt - NativeInt (treat as unsigned subtraction)
             (EmValue::NativeUInt(a), EmValue::NativeInt(b)) => {
-                Ok(EmValue::NativeUInt(a.wrapping_sub(b as u64)))
+                Ok(EmValue::NativeUInt(a.wrapping_sub(*b as u64)))
             }
             (EmValue::NativeInt(a), EmValue::NativeUInt(b)) => {
-                Ok(EmValue::NativeUInt((a as u64).wrapping_sub(b)))
+                Ok(EmValue::NativeUInt((*a as u64).wrapping_sub(*b)))
             }
             // NativeUInt - I32
             (EmValue::NativeUInt(a), EmValue::I32(b)) => {
-                Ok(EmValue::NativeUInt(a.wrapping_sub(b as u64)))
+                Ok(EmValue::NativeUInt(a.wrapping_sub(*b as u64)))
             }
             (EmValue::I32(a), EmValue::NativeUInt(b)) => {
-                Ok(EmValue::NativeUInt((a as u64).wrapping_sub(b)))
+                Ok(EmValue::NativeUInt((*a as u64).wrapping_sub(*b)))
             }
             // Pointer arithmetic: UnmanagedPtr - integer offsets
             (EmValue::UnmanagedPtr(a), EmValue::I32(b)) => {
-                Ok(EmValue::UnmanagedPtr(a.wrapping_sub(b as u64)))
+                Ok(EmValue::UnmanagedPtr(a.wrapping_sub(*b as u64)))
             }
             (EmValue::UnmanagedPtr(a), EmValue::NativeInt(b)) => {
-                Ok(EmValue::UnmanagedPtr(a.wrapping_sub(b as u64)))
+                Ok(EmValue::UnmanagedPtr(a.wrapping_sub(*b as u64)))
             }
             (EmValue::UnmanagedPtr(a), EmValue::NativeUInt(b)) => {
-                Ok(EmValue::UnmanagedPtr(a.wrapping_sub(b)))
+                Ok(EmValue::UnmanagedPtr(a.wrapping_sub(*b)))
             }
             // Pointer difference (ptr - ptr = native int)
             (EmValue::UnmanagedPtr(a), EmValue::UnmanagedPtr(b)) => {
-                Ok(EmValue::NativeInt(a.wrapping_sub(b) as i64))
+                Ok(EmValue::NativeInt(a.wrapping_sub(*b) as i64))
             }
             (a, b) => Err(EmulationError::InvalidOperationTypes {
                 operation: "sub".to_string(),
@@ -1133,9 +1132,8 @@ impl EmValue {
         }
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn sub_ovf(self, other: Self, unsigned: bool) -> Result<Self> {
-        match (&self, &other) {
+    fn sub_ovf(&self, other: &Self, unsigned: bool) -> Result<Self> {
+        match (self, other) {
             (EmValue::I32(a), EmValue::I32(b)) => {
                 if unsigned {
                     let (result, overflow) = (*a as u32).overflowing_sub(*b as u32);
@@ -1172,38 +1170,38 @@ impl EmValue {
         }
     }
 
-    fn mul(self, other: Self) -> Result<Self> {
+    fn mul(&self, other: &Self) -> Result<Self> {
         match (self, other) {
-            (EmValue::I32(a), EmValue::I32(b)) => Ok(EmValue::I32(a.wrapping_mul(b))),
-            (EmValue::I64(a), EmValue::I64(b)) => Ok(EmValue::I64(a.wrapping_mul(b))),
+            (EmValue::I32(a), EmValue::I32(b)) => Ok(EmValue::I32(a.wrapping_mul(*b))),
+            (EmValue::I64(a), EmValue::I64(b)) => Ok(EmValue::I64(a.wrapping_mul(*b))),
             (EmValue::NativeInt(a), EmValue::NativeInt(b)) => {
-                Ok(EmValue::NativeInt(a.wrapping_mul(b)))
+                Ok(EmValue::NativeInt(a.wrapping_mul(*b)))
             }
             (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => {
-                Ok(EmValue::NativeUInt(a.wrapping_mul(b)))
+                Ok(EmValue::NativeUInt(a.wrapping_mul(*b)))
             }
             (EmValue::F32(a), EmValue::F32(b)) => Ok(EmValue::F32(a * b)),
             (EmValue::F64(a), EmValue::F64(b)) => Ok(EmValue::F64(a * b)),
             // Mixed native int operations (per CIL spec, widen to NativeInt)
             (EmValue::NativeInt(a), EmValue::I32(b)) => {
-                Ok(EmValue::NativeInt(a.wrapping_mul(i64::from(b))))
+                Ok(EmValue::NativeInt(a.wrapping_mul(i64::from(*b))))
             }
             (EmValue::I32(a), EmValue::NativeInt(b)) => {
-                Ok(EmValue::NativeInt(i64::from(a).wrapping_mul(b)))
+                Ok(EmValue::NativeInt(i64::from(*a).wrapping_mul(*b)))
             }
             // Mixed NativeUInt operations
             (EmValue::NativeUInt(a), EmValue::NativeInt(b)) => {
-                Ok(EmValue::NativeUInt(a.wrapping_mul(b as u64)))
+                Ok(EmValue::NativeUInt(a.wrapping_mul(*b as u64)))
             }
             (EmValue::NativeInt(a), EmValue::NativeUInt(b)) => {
-                Ok(EmValue::NativeUInt((a as u64).wrapping_mul(b)))
+                Ok(EmValue::NativeUInt((*a as u64).wrapping_mul(*b)))
             }
             // NativeUInt + I32
             (EmValue::NativeUInt(a), EmValue::I32(b)) => {
-                Ok(EmValue::NativeUInt(a.wrapping_mul(b as u64)))
+                Ok(EmValue::NativeUInt(a.wrapping_mul(*b as u64)))
             }
             (EmValue::I32(a), EmValue::NativeUInt(b)) => {
-                Ok(EmValue::NativeUInt((a as u64).wrapping_mul(b)))
+                Ok(EmValue::NativeUInt((*a as u64).wrapping_mul(*b)))
             }
             (a, b) => Err(EmulationError::InvalidOperationTypes {
                 operation: "mul".to_string(),
@@ -1213,9 +1211,8 @@ impl EmValue {
         }
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn mul_ovf(self, other: Self, unsigned: bool) -> Result<Self> {
-        match (&self, &other) {
+    fn mul_ovf(&self, other: &Self, unsigned: bool) -> Result<Self> {
+        match (self, other) {
             (EmValue::I32(a), EmValue::I32(b)) => {
                 if unsigned {
                     let ua = *a as u32;
@@ -1250,9 +1247,9 @@ impl EmValue {
         }
     }
 
-    fn div(self, other: Self, unsigned: bool) -> Result<Self> {
+    fn div(&self, other: &Self, unsigned: bool) -> Result<Self> {
         // Check for division by zero first
-        let is_zero = match &other {
+        let is_zero = match other {
             EmValue::I32(v) => *v == 0,
             EmValue::I64(v) | EmValue::NativeInt(v) => *v == 0,
             EmValue::NativeUInt(v) => *v == 0,
@@ -1269,10 +1266,10 @@ impl EmValue {
         match (self, other) {
             (EmValue::I32(a), EmValue::I32(b)) => {
                 if unsigned {
-                    Ok(EmValue::I32(((a as u32) / (b as u32)) as i32))
+                    Ok(EmValue::I32(((*a as u32) / (*b as u32)) as i32))
                 } else {
                     // Handle MIN / -1 overflow case
-                    if a == i32::MIN && b == -1 {
+                    if *a == i32::MIN && *b == -1 {
                         Ok(EmValue::I32(i32::MIN)) // Wrapping behavior
                     } else {
                         Ok(EmValue::I32(a / b))
@@ -1281,8 +1278,8 @@ impl EmValue {
             }
             (EmValue::I64(a), EmValue::I64(b)) => {
                 if unsigned {
-                    Ok(EmValue::I64(((a as u64) / (b as u64)) as i64))
-                } else if a == i64::MIN && b == -1 {
+                    Ok(EmValue::I64(((*a as u64) / (*b as u64)) as i64))
+                } else if *a == i64::MIN && *b == -1 {
                     Ok(EmValue::I64(i64::MIN))
                 } else {
                     Ok(EmValue::I64(a / b))
@@ -1290,8 +1287,8 @@ impl EmValue {
             }
             (EmValue::NativeInt(a), EmValue::NativeInt(b)) => {
                 if unsigned {
-                    Ok(EmValue::NativeInt(((a as u64) / (b as u64)) as i64))
-                } else if a == i64::MIN && b == -1 {
+                    Ok(EmValue::NativeInt(((*a as u64) / (*b as u64)) as i64))
+                } else if *a == i64::MIN && *b == -1 {
                     Ok(EmValue::NativeInt(i64::MIN))
                 } else {
                     Ok(EmValue::NativeInt(a / b))
@@ -1308,9 +1305,9 @@ impl EmValue {
         }
     }
 
-    fn rem(self, other: Self, unsigned: bool) -> Result<Self> {
+    fn rem(&self, other: &Self, unsigned: bool) -> Result<Self> {
         // Check for division by zero
-        let is_zero = match &other {
+        let is_zero = match other {
             EmValue::I32(v) => *v == 0,
             EmValue::I64(v) | EmValue::NativeInt(v) => *v == 0,
             EmValue::NativeUInt(v) => *v == 0,
@@ -1324,10 +1321,10 @@ impl EmValue {
         match (self, other) {
             (EmValue::I32(a), EmValue::I32(b)) => {
                 if unsigned {
-                    Ok(EmValue::I32(((a as u32) % (b as u32)) as i32))
+                    Ok(EmValue::I32(((*a as u32) % (*b as u32)) as i32))
                 } else {
                     // Handle MIN % -1 case (result is 0)
-                    if a == i32::MIN && b == -1 {
+                    if *a == i32::MIN && *b == -1 {
                         Ok(EmValue::I32(0))
                     } else {
                         Ok(EmValue::I32(a % b))
@@ -1336,8 +1333,8 @@ impl EmValue {
             }
             (EmValue::I64(a), EmValue::I64(b)) => {
                 if unsigned {
-                    Ok(EmValue::I64(((a as u64) % (b as u64)) as i64))
-                } else if a == i64::MIN && b == -1 {
+                    Ok(EmValue::I64(((*a as u64) % (*b as u64)) as i64))
+                } else if *a == i64::MIN && *b == -1 {
                     Ok(EmValue::I64(0))
                 } else {
                     Ok(EmValue::I64(a % b))
@@ -1345,8 +1342,8 @@ impl EmValue {
             }
             (EmValue::NativeInt(a), EmValue::NativeInt(b)) => {
                 if unsigned {
-                    Ok(EmValue::NativeInt(((a as u64) % (b as u64)) as i64))
-                } else if a == i64::MIN && b == -1 {
+                    Ok(EmValue::NativeInt(((*a as u64) % (*b as u64)) as i64))
+                } else if *a == i64::MIN && *b == -1 {
                     Ok(EmValue::NativeInt(0))
                 } else {
                     Ok(EmValue::NativeInt(a % b))
@@ -1363,7 +1360,7 @@ impl EmValue {
         }
     }
 
-    fn bitand(self, other: Self) -> Result<Self> {
+    fn bitand(&self, other: &Self) -> Result<Self> {
         match (self, other) {
             (EmValue::I32(a), EmValue::I32(b)) => Ok(EmValue::I32(a & b)),
             (EmValue::I64(a), EmValue::I64(b)) => Ok(EmValue::I64(a & b)),
@@ -1377,7 +1374,7 @@ impl EmValue {
         }
     }
 
-    fn bitor(self, other: Self) -> Result<Self> {
+    fn bitor(&self, other: &Self) -> Result<Self> {
         match (self, other) {
             (EmValue::I32(a), EmValue::I32(b)) => Ok(EmValue::I32(a | b)),
             (EmValue::I64(a), EmValue::I64(b)) => Ok(EmValue::I64(a | b)),
@@ -1391,7 +1388,7 @@ impl EmValue {
         }
     }
 
-    fn bitxor(self, other: Self) -> Result<Self> {
+    fn bitxor(&self, other: &Self) -> Result<Self> {
         match (self, other) {
             (EmValue::I32(a), EmValue::I32(b)) => Ok(EmValue::I32(a ^ b)),
             (EmValue::I64(a), EmValue::I64(b)) => Ok(EmValue::I64(a ^ b)),
@@ -1405,10 +1402,9 @@ impl EmValue {
         }
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn shl(self, other: Self) -> Result<Self> {
+    fn shl(&self, other: &Self) -> Result<Self> {
         // Shift amount is always taken from the low bits (masked by type width - 1)
-        let shift = match other {
+        let shift = match *other {
             EmValue::I32(v) => v as u32,
             EmValue::I64(v) | EmValue::NativeInt(v) => v as u32,
             EmValue::NativeUInt(v) => v as u32,
@@ -1421,22 +1417,21 @@ impl EmValue {
             }
         };
 
-        match self {
+        match *self {
             EmValue::I32(a) => Ok(EmValue::I32(a.wrapping_shl(shift & 31))),
             EmValue::I64(a) => Ok(EmValue::I64(a.wrapping_shl(shift & 63))),
             EmValue::NativeInt(a) => Ok(EmValue::NativeInt(a.wrapping_shl(shift & 63))),
             EmValue::NativeUInt(a) => Ok(EmValue::NativeUInt(a.wrapping_shl(shift & 63))),
-            a => Err(EmulationError::InvalidOperationTypes {
+            _ => Err(EmulationError::InvalidOperationTypes {
                 operation: "shl".to_string(),
-                operand_types: format!("{}, _", a.cil_flavor()),
+                operand_types: format!("{}, _", self.cil_flavor()),
             }
             .into()),
         }
     }
 
-    #[allow(clippy::needless_pass_by_value)]
-    fn shr(self, other: Self, unsigned: bool) -> Result<Self> {
-        let shift = match other {
+    fn shr(&self, other: &Self, unsigned: bool) -> Result<Self> {
+        let shift = match *other {
             EmValue::I32(v) => v as u32,
             EmValue::I64(v) | EmValue::NativeInt(v) => v as u32,
             EmValue::NativeUInt(v) => v as u32,
@@ -1449,7 +1444,7 @@ impl EmValue {
             }
         };
 
-        match self {
+        match *self {
             EmValue::I32(a) => {
                 if unsigned {
                     Ok(EmValue::I32((a as u32).wrapping_shr(shift & 31) as i32))
@@ -1474,38 +1469,38 @@ impl EmValue {
                 }
             }
             EmValue::NativeUInt(a) => Ok(EmValue::NativeUInt(a.wrapping_shr(shift & 63))),
-            a => Err(EmulationError::InvalidOperationTypes {
+            _ => Err(EmulationError::InvalidOperationTypes {
                 operation: if unsigned { "shr.un" } else { "shr" }.to_string(),
-                operand_types: format!("{}, _", a.cil_flavor()),
+                operand_types: format!("{}, _", self.cil_flavor()),
             }
             .into()),
         }
     }
 
-    fn neg(self) -> Result<Self> {
-        match self {
+    fn neg(&self) -> Result<Self> {
+        match *self {
             EmValue::I32(a) => Ok(EmValue::I32(a.wrapping_neg())),
             EmValue::I64(a) => Ok(EmValue::I64(a.wrapping_neg())),
             EmValue::NativeInt(a) => Ok(EmValue::NativeInt(a.wrapping_neg())),
             EmValue::F32(a) => Ok(EmValue::F32(-a)),
             EmValue::F64(a) => Ok(EmValue::F64(-a)),
-            a => Err(EmulationError::InvalidOperationTypes {
+            _ => Err(EmulationError::InvalidOperationTypes {
                 operation: "neg".to_string(),
-                operand_types: a.cil_flavor().to_string(),
+                operand_types: self.cil_flavor().to_string(),
             }
             .into()),
         }
     }
 
-    fn not(self) -> Result<Self> {
-        match self {
+    fn not(&self) -> Result<Self> {
+        match *self {
             EmValue::I32(a) => Ok(EmValue::I32(!a)),
             EmValue::I64(a) => Ok(EmValue::I64(!a)),
             EmValue::NativeInt(a) => Ok(EmValue::NativeInt(!a)),
             EmValue::NativeUInt(a) => Ok(EmValue::NativeUInt(!a)),
-            a => Err(EmulationError::InvalidOperationTypes {
+            _ => Err(EmulationError::InvalidOperationTypes {
                 operation: "not".to_string(),
-                operand_types: a.cil_flavor().to_string(),
+                operand_types: self.cil_flavor().to_string(),
             }
             .into()),
         }
@@ -1642,50 +1637,50 @@ impl EmValue {
         self.cmp_lt(other, unsigned).map(|r| !r)
     }
 
-    fn conv_i1(self) -> Result<Self> {
+    fn conv_i1(&self) -> Result<Self> {
         let value = self.to_i64()?;
         // Truncate to 8 bits, then sign-extend to i32
         Ok(EmValue::I32(value as i8 as i32))
     }
 
-    fn conv_i2(self) -> Result<Self> {
+    fn conv_i2(&self) -> Result<Self> {
         let value = self.to_i64()?;
         Ok(EmValue::I32(value as i16 as i32))
     }
 
-    fn conv_i4(self) -> Result<Self> {
+    fn conv_i4(&self) -> Result<Self> {
         let value = self.to_i64()?;
         Ok(EmValue::I32(value as i32))
     }
 
-    fn conv_i8(self) -> Result<Self> {
+    fn conv_i8(&self) -> Result<Self> {
         let value = self.to_i64()?;
         Ok(EmValue::I64(value))
     }
 
-    fn conv_u1(self) -> Result<Self> {
+    fn conv_u1(&self) -> Result<Self> {
         let value = self.to_i64()?;
         // Truncate to 8 bits, then zero-extend to i32
         Ok(EmValue::I32((value as u8) as i32))
     }
 
-    fn conv_u2(self) -> Result<Self> {
+    fn conv_u2(&self) -> Result<Self> {
         let value = self.to_i64()?;
         Ok(EmValue::I32((value as u16) as i32))
     }
 
-    fn conv_u4(self) -> Result<Self> {
+    fn conv_u4(&self) -> Result<Self> {
         let value = self.to_i64()?;
         Ok(EmValue::I32(value as u32 as i32))
     }
 
-    fn conv_u8(self) -> Result<Self> {
+    fn conv_u8(&self) -> Result<Self> {
         let value = self.to_u64()?;
         Ok(EmValue::I64(value as i64))
     }
 
-    fn conv_r4(self) -> Result<Self> {
-        match self {
+    fn conv_r4(&self) -> Result<Self> {
+        match *self {
             EmValue::I32(v) => Ok(EmValue::F32(v as f32)),
             EmValue::I64(v) | EmValue::NativeInt(v) => Ok(EmValue::F32(v as f32)),
             EmValue::NativeUInt(v) => Ok(EmValue::F32(v as f32)),
@@ -1699,8 +1694,8 @@ impl EmValue {
         }
     }
 
-    fn conv_r8(self) -> Result<Self> {
-        match self {
+    fn conv_r8(&self) -> Result<Self> {
+        match *self {
             EmValue::I32(v) => Ok(EmValue::F64(f64::from(v))),
             EmValue::I64(v) | EmValue::NativeInt(v) => Ok(EmValue::F64(v as f64)),
             EmValue::NativeUInt(v) => Ok(EmValue::F64(v as f64)),
@@ -1714,17 +1709,17 @@ impl EmValue {
         }
     }
 
-    fn conv_i(self, ptr_size: PointerSize) -> Result<Self> {
+    fn conv_i(&self, ptr_size: PointerSize) -> Result<Self> {
         let value = ptr_size.mask_signed(self.to_i64()?);
         Ok(EmValue::NativeInt(value))
     }
 
-    fn conv_u(self, ptr_size: PointerSize) -> Result<Self> {
+    fn conv_u(&self, ptr_size: PointerSize) -> Result<Self> {
         let value = ptr_size.mask_unsigned(self.to_u64()?);
         Ok(EmValue::NativeUInt(value))
     }
 
-    fn conv_r_un(self) -> Result<Self> {
+    fn conv_r_un(&self) -> Result<Self> {
         // Convert unsigned integer to float
         let value = self.to_u64()?;
         Ok(EmValue::F64(value as f64))
@@ -1732,7 +1727,7 @@ impl EmValue {
 
     // Checked conversions
 
-    fn conv_i1_ovf(self, unsigned_source: bool) -> Result<Self> {
+    fn conv_i1_ovf(&self, unsigned_source: bool) -> Result<Self> {
         let value = if unsigned_source {
             self.to_u64()? as i64
         } else {
@@ -1746,7 +1741,7 @@ impl EmValue {
         }
     }
 
-    fn conv_i2_ovf(self, unsigned_source: bool) -> Result<Self> {
+    fn conv_i2_ovf(&self, unsigned_source: bool) -> Result<Self> {
         let value = if unsigned_source {
             self.to_u64()? as i64
         } else {
@@ -1760,7 +1755,7 @@ impl EmValue {
         }
     }
 
-    fn conv_i4_ovf(self, unsigned_source: bool) -> Result<Self> {
+    fn conv_i4_ovf(&self, unsigned_source: bool) -> Result<Self> {
         let value = if unsigned_source {
             self.to_u64()? as i64
         } else {
@@ -1774,7 +1769,7 @@ impl EmValue {
         }
     }
 
-    fn conv_i8_ovf(self, unsigned_source: bool) -> Result<Self> {
+    fn conv_i8_ovf(&self, unsigned_source: bool) -> Result<Self> {
         if unsigned_source {
             let value = self.to_u64()?;
             if value > i64::MAX as u64 {
@@ -1789,7 +1784,7 @@ impl EmValue {
         }
     }
 
-    fn conv_u1_ovf(self, unsigned_source: bool) -> Result<Self> {
+    fn conv_u1_ovf(&self, unsigned_source: bool) -> Result<Self> {
         let value = if unsigned_source {
             self.to_u64()?
         } else {
@@ -1807,7 +1802,7 @@ impl EmValue {
         }
     }
 
-    fn conv_u2_ovf(self, unsigned_source: bool) -> Result<Self> {
+    fn conv_u2_ovf(&self, unsigned_source: bool) -> Result<Self> {
         let value = if unsigned_source {
             self.to_u64()?
         } else {
@@ -1825,7 +1820,7 @@ impl EmValue {
         }
     }
 
-    fn conv_u4_ovf(self, unsigned_source: bool) -> Result<Self> {
+    fn conv_u4_ovf(&self, unsigned_source: bool) -> Result<Self> {
         let value = if unsigned_source {
             self.to_u64()?
         } else {
@@ -1843,7 +1838,7 @@ impl EmValue {
         }
     }
 
-    fn conv_u8_ovf(self, unsigned_source: bool) -> Result<Self> {
+    fn conv_u8_ovf(&self, unsigned_source: bool) -> Result<Self> {
         if unsigned_source {
             // No overflow possible for unsigned -> u64
             let value = self.to_u64()?;
@@ -1858,7 +1853,7 @@ impl EmValue {
         }
     }
 
-    fn conv_i_ovf(self, unsigned_source: bool) -> Result<Self> {
+    fn conv_i_ovf(&self, unsigned_source: bool) -> Result<Self> {
         // Native int - for 64-bit emulation, same as i8
         self.conv_i8_ovf(unsigned_source).map(|v| match v {
             EmValue::I64(n) => EmValue::NativeInt(n),
@@ -1866,7 +1861,7 @@ impl EmValue {
         })
     }
 
-    fn conv_u_ovf(self, unsigned_source: bool) -> Result<Self> {
+    fn conv_u_ovf(&self, unsigned_source: bool) -> Result<Self> {
         if unsigned_source {
             let value = self.to_u64()?;
             Ok(EmValue::NativeUInt(value))
@@ -1945,7 +1940,7 @@ mod tests {
         let a = EmValue::I32(10);
         let b = EmValue::I32(20);
         assert_eq!(
-            a.binary_op(b, BinaryOp::Add, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::Add, PointerSize::Bit64).unwrap(),
             EmValue::I32(30)
         );
     }
@@ -1955,7 +1950,7 @@ mod tests {
         let a = EmValue::I32(i32::MAX);
         let b = EmValue::I32(1);
         assert_eq!(
-            a.binary_op(b, BinaryOp::Add, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::Add, PointerSize::Bit64).unwrap(),
             EmValue::I32(i32::MIN)
         );
     }
@@ -1965,7 +1960,7 @@ mod tests {
         let a = EmValue::I64(100);
         let b = EmValue::I64(200);
         assert_eq!(
-            a.binary_op(b, BinaryOp::Add, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::Add, PointerSize::Bit64).unwrap(),
             EmValue::I64(300)
         );
     }
@@ -1975,7 +1970,7 @@ mod tests {
         let a = EmValue::F64(1.5);
         let b = EmValue::F64(2.5);
         assert_eq!(
-            a.binary_op(b, BinaryOp::Add, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::Add, PointerSize::Bit64).unwrap(),
             EmValue::F64(4.0)
         );
     }
@@ -1985,7 +1980,7 @@ mod tests {
         let a = EmValue::I32(i32::MAX);
         let b = EmValue::I32(1);
         assert!(matches!(
-            a.binary_op(b, BinaryOp::AddOvf, PointerSize::Bit64),
+            a.binary_op(&b,BinaryOp::AddOvf, PointerSize::Bit64),
             Err(Error::Emulation(ref e)) if matches!(e.as_ref(), EmulationError::ArithmeticOverflow)
         ));
     }
@@ -1995,7 +1990,7 @@ mod tests {
         let a = EmValue::I32(30);
         let b = EmValue::I32(20);
         assert_eq!(
-            a.binary_op(b, BinaryOp::Sub, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::Sub, PointerSize::Bit64).unwrap(),
             EmValue::I32(10)
         );
     }
@@ -2005,7 +2000,7 @@ mod tests {
         let a = EmValue::I32(6);
         let b = EmValue::I32(7);
         assert_eq!(
-            a.binary_op(b, BinaryOp::Mul, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::Mul, PointerSize::Bit64).unwrap(),
             EmValue::I32(42)
         );
     }
@@ -2015,7 +2010,7 @@ mod tests {
         let a = EmValue::I32(42);
         let b = EmValue::I32(6);
         assert_eq!(
-            a.binary_op(b, BinaryOp::Div, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::Div, PointerSize::Bit64).unwrap(),
             EmValue::I32(7)
         );
     }
@@ -2025,7 +2020,7 @@ mod tests {
         let a = EmValue::I32(42);
         let b = EmValue::I32(0);
         assert!(matches!(
-            a.binary_op(b, BinaryOp::Div, PointerSize::Bit64),
+            a.binary_op(&b,BinaryOp::Div, PointerSize::Bit64),
             Err(Error::Emulation(ref e)) if matches!(e.as_ref(), EmulationError::DivisionByZero)
         ));
     }
@@ -2034,7 +2029,9 @@ mod tests {
     fn test_binary_op_div_unsigned() {
         let a = EmValue::I32(-1); // 0xFFFFFFFF as unsigned
         let b = EmValue::I32(2);
-        let result = a.binary_op(b, BinaryOp::DivUn, PointerSize::Bit64).unwrap();
+        let result = a
+            .binary_op(&b, BinaryOp::DivUn, PointerSize::Bit64)
+            .unwrap();
         // -1 as u32 is 0xFFFFFFFF = 4294967295, divided by 2 is 2147483647
         assert_eq!(result, EmValue::I32(0x7FFFFFFF));
     }
@@ -2044,7 +2041,7 @@ mod tests {
         let a = EmValue::I32(17);
         let b = EmValue::I32(5);
         assert_eq!(
-            a.binary_op(b, BinaryOp::Rem, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::Rem, PointerSize::Bit64).unwrap(),
             EmValue::I32(2)
         );
     }
@@ -2054,7 +2051,7 @@ mod tests {
         let a = EmValue::I32(0xFF00);
         let b = EmValue::I32(0x0FF0);
         assert_eq!(
-            a.binary_op(b, BinaryOp::And, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::And, PointerSize::Bit64).unwrap(),
             EmValue::I32(0x0F00)
         );
     }
@@ -2064,7 +2061,7 @@ mod tests {
         let a = EmValue::I32(0xFF00);
         let b = EmValue::I32(0x00FF);
         assert_eq!(
-            a.binary_op(b, BinaryOp::Or, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::Or, PointerSize::Bit64).unwrap(),
             EmValue::I32(0xFFFF)
         );
     }
@@ -2074,7 +2071,7 @@ mod tests {
         let a = EmValue::I32(0xFFFF);
         let b = EmValue::I32(0x0F0F);
         assert_eq!(
-            a.binary_op(b, BinaryOp::Xor, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::Xor, PointerSize::Bit64).unwrap(),
             EmValue::I32(0xF0F0)
         );
     }
@@ -2084,7 +2081,7 @@ mod tests {
         let a = EmValue::I32(1);
         let b = EmValue::I32(4);
         assert_eq!(
-            a.binary_op(b, BinaryOp::Shl, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::Shl, PointerSize::Bit64).unwrap(),
             EmValue::I32(16)
         );
     }
@@ -2095,7 +2092,7 @@ mod tests {
         let b = EmValue::I32(2);
         // Arithmetic shift right preserves sign
         assert_eq!(
-            a.binary_op(b, BinaryOp::Shr, PointerSize::Bit64).unwrap(),
+            a.binary_op(&b, BinaryOp::Shr, PointerSize::Bit64).unwrap(),
             EmValue::I32(-2)
         );
     }
@@ -2105,7 +2102,9 @@ mod tests {
         let a = EmValue::I32(-8);
         let b = EmValue::I32(2);
         // Logical shift right fills with zeros
-        let result = a.binary_op(b, BinaryOp::ShrUn, PointerSize::Bit64).unwrap();
+        let result = a
+            .binary_op(&b, BinaryOp::ShrUn, PointerSize::Bit64)
+            .unwrap();
         // -8 as u32 >> 2 = 0xFFFFFFF8 >> 2 = 0x3FFFFFFE
         assert_eq!(result, EmValue::I32(0x3FFFFFFE_u32 as i32));
     }
@@ -2115,7 +2114,7 @@ mod tests {
         let a = EmValue::I32(1);
         let b = EmValue::I64(1);
         assert!(matches!(
-            a.binary_op(b, BinaryOp::Add, PointerSize::Bit64),
+            a.binary_op(&b,BinaryOp::Add, PointerSize::Bit64),
             Err(Error::Emulation(ref e)) if matches!(e.as_ref(), EmulationError::InvalidOperationTypes { .. })
         ));
     }

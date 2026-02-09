@@ -59,20 +59,15 @@
 //! call Console::WriteLine(v0)
 //! ```
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, Mutex, RwLock,
-    },
+use std::sync::{
+    atomic::{AtomicBool, Ordering},
+    Arc, Mutex, RwLock,
 };
 
 use rayon::prelude::*;
 
 use crate::{
-    analysis::{
-        ConstEvaluator, ConstValue, PhiAnalyzer, SsaCfg, SsaEvaluator, SsaFunction, SsaOp, SsaVarId,
-    },
+    analysis::{ConstValue, SsaCfg, SsaFunction, SsaOp, SsaVarId, ValueResolver},
     compiler::{CompilerContext, EventKind, EventLog, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
@@ -602,7 +597,7 @@ impl DecryptionPass {
         None
     }
 
-    /// Gets constant values for call arguments, tracing through PHI nodes.
+    /// Gets constant values for call arguments using the [`ValueResolver`].
     ///
     /// This function supports PHI-aware tracing: if an argument is defined by
     /// a PHI node where all operands resolve to the same constant, that constant
@@ -612,226 +607,16 @@ impl DecryptionPass {
     /// # Arguments
     ///
     /// * `args` - The SSA variable IDs of the arguments.
-    /// * `ssa` - The SSA function for definition lookup.
-    /// * `ctx` - The analysis context for value lookup.
-    /// * `method_token` - The method containing the call.
+    /// * `resolver` - The value resolver pre-loaded with known values.
     ///
     /// # Returns
     ///
     /// A vector of constant values if all arguments resolve to constants, `None` otherwise.
     fn get_arg_constants(
         args: &[SsaVarId],
-        ssa: &SsaFunction,
-        ctx: &CompilerContext,
-        method_token: Token,
-        ptr_size: PointerSize,
+        resolver: &mut ValueResolver<'_>,
     ) -> Option<Vec<ConstValue>> {
-        let mut constants = Vec::with_capacity(args.len());
-        // Cache to avoid recomputing the same variable's value
-        let mut cache: HashMap<SsaVarId, Option<ConstValue>> = HashMap::new();
-        let mut visited = HashSet::new();
-
-        for arg in args {
-            if let Some(val) = Self::trace_to_constant(
-                *arg,
-                ssa,
-                ctx,
-                method_token,
-                &mut visited,
-                &mut cache,
-                ptr_size,
-            ) {
-                constants.push(val);
-            } else {
-                return None; // Need all args to be constant
-            }
-        }
-
-        Some(constants)
-    }
-
-    /// Tries to resolve an XOR operand using path-aware evaluation.
-    ///
-    /// This handles CFG-based constant encoding where:
-    /// ```text
-    /// actual_id = encoded_constant XOR state_value
-    /// ```
-    ///
-    /// The state_value comes from control flow state (like CFGCtx.Next() in ConfuserEx).
-    /// SsaEvaluator can trace these values along execution paths.
-    ///
-    /// # Arguments
-    ///
-    /// * `ssa` - The SSA function
-    /// * `unknown_var` - The variable we couldn't trace to a constant
-    /// * `known_const` - The constant we did find
-    /// * `known_is_left` - True if known_const is the left operand of XOR
-    ///
-    /// # Returns
-    ///
-    /// The XOR result if path-aware evaluation succeeds, None otherwise.
-    fn try_path_aware_xor(
-        ssa: &SsaFunction,
-        unknown_var: SsaVarId,
-        known_const: &ConstValue,
-        _known_is_left: bool,
-        ptr_size: PointerSize,
-    ) -> Option<ConstValue> {
-        // Only attempt path-aware evaluation if the unknown var is from a Call.
-        // This avoids expensive evaluation for variables that won't resolve anyway.
-        // The CFGCtx.Next() pattern produces Call results that we want to trace.
-        let op = ssa.get_definition(unknown_var)?;
-
-        // Only try for Call results - these are the CFGCtx.Next() pattern
-        if !matches!(op, SsaOp::Call { .. }) {
-            return None;
-        }
-
-        // Use SsaEvaluator to try resolving the unknown variable
-        let mut eval = SsaEvaluator::new(ssa, ptr_size);
-
-        // Try to resolve with trace - use a smaller depth to avoid runaway
-        let resolved = eval.resolve_with_trace(unknown_var, 15)?;
-        match resolved.as_constant() {
-            Some(const_val) => known_const.bitwise_xor(const_val, ptr_size),
-            _ => None,
-        }
-    }
-
-    /// Traces an SSA variable to a constant value, following PHI nodes.
-    ///
-    /// The algorithm:
-    /// 1. Check cache for previously computed result
-    /// 2. Check if the variable is in known_values (from constant propagation)
-    /// 3. Check if it's defined by a Const instruction
-    /// 4. If defined by a PHI node, check if all operands resolve to the same constant
-    ///
-    /// Uses a visited set to prevent infinite recursion with cyclic PHIs,
-    /// and a cache to avoid recomputing values for the same variable.
-    ///
-    /// # Limitations
-    ///
-    /// This function cannot trace through memory operations (field loads, array
-    /// element loads, etc.). In obfuscators like ConfuserEx "maximum" mode where
-    /// decryption keys are stored in arrays/fields rather than passed as direct
-    /// constants, this function will return `None` for those arguments.
-    fn trace_to_constant(
-        var: SsaVarId,
-        ssa: &SsaFunction,
-        ctx: &CompilerContext,
-        method_token: Token,
-        visited: &mut HashSet<SsaVarId>,
-        cache: &mut HashMap<SsaVarId, Option<ConstValue>>,
-        ptr_size: PointerSize,
-    ) -> Option<ConstValue> {
-        // Check cache first
-        if let Some(cached) = cache.get(&var) {
-            return cached.clone();
-        }
-
-        // Prevent infinite recursion
-        if !visited.insert(var) {
-            return None;
-        }
-
-        // 1. Check known_values from constant propagation
-        if let Some(val) = ctx.with_known_value(method_token, var, |v| v.clone()) {
-            cache.insert(var, Some(val.clone()));
-            return Some(val);
-        }
-
-        // 2. Check if defined by an instruction
-        if let Some(op) = ssa.get_definition(var) {
-            let result = match op {
-                SsaOp::Const { value, .. } => Some(value.clone()),
-
-                // Special handling for XOR - common in CFG-based constant encoding
-                // Pattern: actual_id = encoded_constant XOR state_value
-                SsaOp::Xor { left, right, .. } => {
-                    let left_const = Self::trace_to_constant(
-                        *left,
-                        ssa,
-                        ctx,
-                        method_token,
-                        visited,
-                        cache,
-                        ptr_size,
-                    );
-                    let right_const = Self::trace_to_constant(
-                        *right,
-                        ssa,
-                        ctx,
-                        method_token,
-                        visited,
-                        cache,
-                        ptr_size,
-                    );
-
-                    match (left_const, right_const) {
-                        // Both constants - compute XOR directly
-                        (Some(l), Some(r)) => l.bitwise_xor(&r, ptr_size),
-
-                        // Left is constant, try path-aware evaluation for right
-                        (Some(l), None) => {
-                            Self::try_path_aware_xor(ssa, *right, &l, true, ptr_size)
-                        }
-
-                        // Right is constant, try path-aware evaluation for left
-                        (None, Some(r)) => {
-                            Self::try_path_aware_xor(ssa, *left, &r, false, ptr_size)
-                        }
-
-                        // Neither is constant
-                        (None, None) => None,
-                    }
-                }
-
-                // Other operations cannot be traced to constants
-                _ => None,
-            };
-
-            cache.insert(var, result.clone());
-            return result;
-        }
-
-        // 3. Check if defined by a PHI node using O(1) lookup
-        if let Some((_, phi)) = ssa.find_phi_defining(var) {
-            let operands = phi.operands();
-            if operands.is_empty() {
-                cache.insert(var, None);
-                return None;
-            }
-
-            // Create a ConstEvaluator and inject known values for PHI operands
-            let mut evaluator = ConstEvaluator::new(ssa, ptr_size);
-            for operand in operands {
-                let op_var = operand.value();
-                // First check ctx.known_values, then try tracing recursively
-                if let Some(val) = ctx.with_known_value(method_token, op_var, |v| v.clone()) {
-                    evaluator.set_known(op_var, val);
-                } else if let Some(val) = Self::trace_to_constant(
-                    op_var,
-                    ssa,
-                    ctx,
-                    method_token,
-                    visited,
-                    cache,
-                    ptr_size,
-                ) {
-                    evaluator.set_known(op_var, val);
-                }
-            }
-
-            // Use PhiAnalyzer for uniform constant check
-            let analyzer = PhiAnalyzer::new(ssa);
-            let result = analyzer.uniform_constant(phi, &mut evaluator);
-            cache.insert(var, result.clone());
-            return result;
-        }
-
-        // Variable not found
-        cache.insert(var, None);
-        None
+        resolver.resolve_all(args)
     }
 
     /// Processes CFG mode decryption for a method using dominator-based path analysis.
@@ -934,53 +719,38 @@ impl DecryptionPass {
             let relevant_updates =
                 provider.collect_updates_for_call(call_site, &state_updates, &cfg_info.as_ref());
 
+            // Construct ValueResolver for this iteration (reborrow ssa as shared)
+            let mut resolver = ValueResolver::new(&*ssa, ptr_size).with_path_aware_fallback();
+            resolver.load_known_values(ctx, method_token);
+
             // Simulate the relevant state updates in order
             self.simulate_state_updates(
                 &mut state,
                 &relevant_updates,
                 &state_updates,
-                ssa,
-                ctx,
-                method_token,
-                ptr_size,
+                &mut resolver,
             );
 
             // Simulate the feeding update call itself
             let feeding_update = &state_updates[call_site.feeding_update_idx];
-            let mut cache = HashMap::new();
-            let mut visited = HashSet::new();
 
             #[allow(clippy::cast_sign_loss)]
-            let flag = Self::trace_to_constant(
-                feeding_update.flag_var,
-                ssa,
-                ctx,
-                method_token,
-                &mut visited,
-                &mut cache,
-                ptr_size,
-            )
-            .and_then(|v| match v {
-                ConstValue::I32(x) => Some(x as u8),
-                ConstValue::I64(x) => Some(x as u8),
-                _ => None,
-            });
+            let flag = resolver
+                .resolve(feeding_update.flag_var)
+                .and_then(|v| match v {
+                    ConstValue::I32(x) => Some(x as u8),
+                    ConstValue::I64(x) => Some(x as u8),
+                    _ => None,
+                });
 
             #[allow(clippy::cast_sign_loss)]
-            let increment = Self::trace_to_constant(
-                feeding_update.increment_var,
-                ssa,
-                ctx,
-                method_token,
-                &mut visited,
-                &mut cache,
-                ptr_size,
-            )
-            .and_then(|v| match v {
-                ConstValue::I32(x) => Some(x as u32),
-                ConstValue::I64(x) => Some(x as u32),
-                _ => None,
-            });
+            let increment = resolver
+                .resolve(feeding_update.increment_var)
+                .and_then(|v| match v {
+                    ConstValue::I32(x) => Some(x as u32),
+                    ConstValue::I64(x) => Some(x as u32),
+                    _ => None,
+                });
 
             let (Some(flag), Some(increment)) = (flag, increment) else {
                 failures.push((
@@ -995,20 +765,13 @@ impl DecryptionPass {
 
             // Get the encoded constant
             #[allow(clippy::cast_possible_truncation)]
-            let encoded = Self::trace_to_constant(
-                call_site.encoded_var,
-                ssa,
-                ctx,
-                method_token,
-                &mut visited,
-                &mut cache,
-                ptr_size,
-            )
-            .and_then(|v| match v {
-                ConstValue::I32(x) => Some(x),
-                ConstValue::I64(x) => Some(x as i32),
-                _ => None,
-            });
+            let encoded = resolver
+                .resolve(call_site.encoded_var)
+                .and_then(|v| match v {
+                    ConstValue::I32(x) => Some(x),
+                    ConstValue::I64(x) => Some(x as i32),
+                    _ => None,
+                });
 
             let Some(encoded) = encoded else {
                 failures.push((
@@ -1111,48 +874,26 @@ impl DecryptionPass {
         state: &mut StateMachineState,
         relevant_updates: &[usize],
         all_updates: &[StateUpdateCall],
-        ssa: &SsaFunction,
-        ctx: &CompilerContext,
-        method_token: Token,
-        ptr_size: PointerSize,
+        resolver: &mut ValueResolver<'_>,
     ) {
-        let mut cache = HashMap::new();
-        let mut visited = HashSet::new();
-
         for &idx in relevant_updates {
             let update = &all_updates[idx];
 
             #[allow(clippy::cast_sign_loss)]
-            let flag = Self::trace_to_constant(
-                update.flag_var,
-                ssa,
-                ctx,
-                method_token,
-                &mut visited,
-                &mut cache,
-                ptr_size,
-            )
-            .and_then(|v| match v {
+            let flag = resolver.resolve(update.flag_var).and_then(|v| match v {
                 ConstValue::I32(x) => Some(x as u8),
                 ConstValue::I64(x) => Some(x as u8),
                 _ => None,
             });
 
             #[allow(clippy::cast_sign_loss)]
-            let inc = Self::trace_to_constant(
-                update.increment_var,
-                ssa,
-                ctx,
-                method_token,
-                &mut visited,
-                &mut cache,
-                ptr_size,
-            )
-            .and_then(|v| match v {
-                ConstValue::I32(x) => Some(x as u32),
-                ConstValue::I64(x) => Some(x as u32),
-                _ => None,
-            });
+            let inc = resolver
+                .resolve(update.increment_var)
+                .and_then(|v| match v {
+                    ConstValue::I32(x) => Some(x as u32),
+                    ConstValue::I64(x) => Some(x as u32),
+                    _ => None,
+                });
 
             if let (Some(flag), Some(inc)) = (flag, inc) {
                 let _ = state.next_u32(flag, inc);
@@ -1285,6 +1026,9 @@ impl SsaPass for DecryptionPass {
 
         let changes = EventLog::new();
 
+        let mut resolver = ValueResolver::new(&*ssa, ptr_size);
+        resolver.load_known_values(ctx, method_token);
+
         // Phase 1: Collect decryption candidates (sequential)
         // Tuple: (block_idx, instr_idx, dest, decryptor, location, args)
         let mut candidates: Vec<(usize, usize, SsaVarId, Token, usize, Vec<ConstValue>)> =
@@ -1317,14 +1061,13 @@ impl SsaPass for DecryptionPass {
                     continue;
                 }
 
-                let arg_constants = if let Some(evaluated) =
-                    Self::get_arg_constants(args, ssa, ctx, method_token, ptr_size)
-                {
-                    evaluated
-                } else {
-                    failures.push((decryptor, location, FailureReason::NonConstantArgs));
-                    continue;
-                };
+                let arg_constants =
+                    if let Some(evaluated) = Self::get_arg_constants(args, &mut resolver) {
+                        evaluated
+                    } else {
+                        failures.push((decryptor, location, FailureReason::NonConstantArgs));
+                        continue;
+                    };
 
                 candidates.push((
                     block_idx,
@@ -1416,7 +1159,10 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        analysis::{CallGraph, ConstValue, MethodRef, SsaFunction, SsaFunctionBuilder, SsaVarId},
+        analysis::{
+            CallGraph, ConstValue, MethodRef, SsaFunction, SsaFunctionBuilder, SsaVarId,
+            ValueResolver,
+        },
         compiler::SsaPass,
         deobfuscation::{
             context::AnalysisContext, passes::DecryptionPass, DeobfuscationEngine, EngineConfig,
@@ -1633,9 +1379,10 @@ mod tests {
         ctx.add_known_value(method, var1, ConstValue::I32(42));
         ctx.add_known_value(method, var2, ConstValue::I32(100));
 
+        let mut resolver = ValueResolver::new(&ssa, PointerSize::Bit64);
+        resolver.load_known_values(&ctx, method);
         let args = vec![var1, var2];
-        let result =
-            DecryptionPass::get_arg_constants(&args, &ssa, &ctx, method, PointerSize::Bit64);
+        let result = DecryptionPass::get_arg_constants(&args, &mut resolver);
 
         assert!(result.is_some());
         let constants = result.unwrap();
@@ -1656,9 +1403,10 @@ mod tests {
         ctx.add_known_value(method, var1, ConstValue::I32(42));
         // var2 not set
 
+        let mut resolver = ValueResolver::new(&ssa, PointerSize::Bit64);
+        resolver.load_known_values(&ctx, method);
         let args = vec![var1, var2];
-        let result =
-            DecryptionPass::get_arg_constants(&args, &ssa, &ctx, method, PointerSize::Bit64);
+        let result = DecryptionPass::get_arg_constants(&args, &mut resolver);
 
         // Should return None because not all args are known
         assert!(result.is_none());
@@ -1669,10 +1417,11 @@ mod tests {
         let ctx = create_test_context();
         let ssa = SsaFunction::new(0, 0);
         let method = Token::new(0x06000001);
-        let args: Vec<SsaVarId> = vec![];
 
-        let result =
-            DecryptionPass::get_arg_constants(&args, &ssa, &ctx, method, PointerSize::Bit64);
+        let mut resolver = ValueResolver::new(&ssa, PointerSize::Bit64);
+        resolver.load_known_values(&ctx, method);
+        let args: Vec<SsaVarId> = vec![];
+        let result = DecryptionPass::get_arg_constants(&args, &mut resolver);
         assert!(result.is_some());
         assert!(result.unwrap().is_empty());
     }

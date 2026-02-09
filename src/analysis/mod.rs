@@ -99,7 +99,7 @@ pub use ssa::{
     SsaCfg, SsaConverter, SsaEvaluator, SsaExceptionHandler, SsaFunction, SsaFunctionBuilder,
     SsaFunctionContext, SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable, StackSimulator,
     SymbolicEvaluator, SymbolicExpr, SymbolicOp, TypeClass, TypeContext, TypeRef, UnaryOpInfo,
-    UnaryOpKind, UseSite, VariableOrigin,
+    UnaryOpKind, UseSite, ValueResolver, VariableOrigin,
 };
 pub use taint::{
     cff_taint_config, find_blocks_jumping_to, find_token_dependencies, PhiTaintMode, TaintAnalysis,

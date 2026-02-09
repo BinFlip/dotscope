@@ -59,10 +59,10 @@
 //! let a = EmValue::I32(10);
 //! let b = EmValue::I32(3);
 //!
-//! let sum = a.clone().binary_op(b.clone(), BinaryOp::Add, PointerSize::Bit64).unwrap();
+//! let sum = a.binary_op(&b, BinaryOp::Add, PointerSize::Bit64).unwrap();
 //! assert_eq!(sum, EmValue::I32(13));
 //!
-//! let product = a.binary_op(b, BinaryOp::Mul, PointerSize::Bit64).unwrap();
+//! let product = a.binary_op(&b, BinaryOp::Mul, PointerSize::Bit64).unwrap();
 //! assert_eq!(product, EmValue::I32(30));
 //! ```
 //!

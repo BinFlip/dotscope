@@ -542,15 +542,15 @@ pub mod compiler;
 /// let a = EmValue::I32(10);
 /// let b = EmValue::I32(3);
 ///
-/// let sum = a.clone().binary_op(b.clone(), BinaryOp::Add, PointerSize::Bit64).unwrap();
+/// let sum = a.binary_op(&b, BinaryOp::Add, PointerSize::Bit64).unwrap();
 /// assert_eq!(sum, EmValue::I32(13));
 /// assert_eq!(sum.cil_flavor(), CilFlavor::I4);
 ///
 /// // Division, bitwise, and comparison operations
-/// let div = a.clone().binary_op(b.clone(), BinaryOp::Div, PointerSize::Bit64).unwrap();
+/// let div = a.binary_op(&b, BinaryOp::Div, PointerSize::Bit64).unwrap();
 /// assert_eq!(div, EmValue::I32(3));
 ///
-/// let xor = a.clone().binary_op(b.clone(), BinaryOp::Xor, PointerSize::Bit64).unwrap();
+/// let xor = a.binary_op(&b, BinaryOp::Xor, PointerSize::Bit64).unwrap();
 /// assert_eq!(xor, EmValue::I32(10 ^ 3));
 /// # }
 /// # #[cfg(not(feature = "emulation"))]

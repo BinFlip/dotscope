@@ -86,6 +86,7 @@ mod ops;
 mod patterns;
 mod phi;
 mod phis;
+mod resolver;
 mod stack;
 mod symbolic;
 mod types;
@@ -111,6 +112,7 @@ pub use ops::{BinaryOpInfo, BinaryOpKind, CmpKind, SsaOp, UnaryOpInfo, UnaryOpKi
 pub use patterns::{DispatcherPattern, PatternDetector, SourceBlock};
 pub use phi::{PhiNode, PhiOperand};
 pub use phis::PhiAnalyzer;
+pub use resolver::ValueResolver;
 pub use stack::{SimulationResult, StackSimulator, StackSlot, StackSlotSource};
 // SymbolicExpr, SymbolicOp, SymbolicEvaluator are always available for value tracking
 pub use symbolic::{SymbolicEvaluator, SymbolicExpr, SymbolicOp};

@@ -176,7 +176,7 @@ impl Interpreter {
     ) -> Result<StepResult> {
         let right = thread.pop()?;
         let left = thread.pop()?;
-        let result = left.binary_op(right, op, ptr_size)?;
+        let result = left.binary_op(&right, op, ptr_size)?;
         thread.push(result)?;
         Ok(StepResult::Continue)
     }
