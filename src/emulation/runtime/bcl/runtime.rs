@@ -226,7 +226,9 @@ fn runtime_helpers_initialize_array_pre(
         .unwrap_or(CilFlavor::U1);
 
     // Calculate element size in bytes
-    let element_size = element_type.element_size().unwrap_or(1);
+    let Some(element_size) = element_type.element_size(ctx.pointer_size) else {
+        return PreHookResult::Bypass(None);
+    };
 
     // Calculate total bytes to read
     let total_bytes = array_len * element_size;
@@ -426,8 +428,10 @@ fn runtime_helpers_run_module_constructor_pre(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::{runtime::hook::HookManager, HeapRef};
-    use crate::metadata::token::Token;
+    use crate::{
+        emulation::{runtime::hook::HookManager, HeapRef},
+        metadata::{token::Token, typesystem::PointerSize},
+    };
 
     #[test]
     fn test_register_hooks() {
@@ -445,6 +449,7 @@ mod tests {
             "System.Runtime.CompilerServices",
             "RuntimeHelpers",
             "GetHashCode",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -467,6 +472,7 @@ mod tests {
             "System.Runtime.CompilerServices",
             "RuntimeHelpers",
             "Equals",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -489,6 +495,7 @@ mod tests {
             "System.Runtime.CompilerServices",
             "RuntimeHelpers",
             "Equals",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -509,6 +516,7 @@ mod tests {
             "System.Runtime.CompilerServices",
             "RuntimeHelpers",
             "GetObjectValue",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 

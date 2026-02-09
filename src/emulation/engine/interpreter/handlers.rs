@@ -10,17 +10,18 @@ use std::sync::Arc;
 use crate::{
     assembly::Instruction,
     emulation::{
-        engine::{error::EmulationError, result::StepResult},
+        engine::{error::EmulationError, interpreter::Interpreter, result::StepResult},
         memory::AddressSpace,
         thread::EmulationThread,
         BinaryOp, CompareOp, ConversionType, EmValue, HeapObject, HeapRef, ManagedPointer,
         PointerTarget, SymbolicValue, TaintSource, UnaryOp,
     },
-    metadata::{token::Token, typesystem::CilFlavor},
+    metadata::{
+        token::Token,
+        typesystem::{CilFlavor, PointerSize},
+    },
     Error, Result,
 };
-
-use super::Interpreter;
 
 /// Implementation of instruction handler methods for the interpreter.
 ///
@@ -168,10 +169,14 @@ impl Interpreter {
     /// # Errors
     ///
     /// Returns an error if the stack has fewer than two values or type mismatch occurs.
-    pub(super) fn binary_op(thread: &mut EmulationThread, op: BinaryOp) -> Result<StepResult> {
+    pub(super) fn binary_op(
+        thread: &mut EmulationThread,
+        op: BinaryOp,
+        ptr_size: PointerSize,
+    ) -> Result<StepResult> {
         let right = thread.pop()?;
         let left = thread.pop()?;
-        let result = left.binary_op(right, op)?;
+        let result = left.binary_op(right, op, ptr_size)?;
         thread.push(result)?;
         Ok(StepResult::Continue)
     }
@@ -188,9 +193,13 @@ impl Interpreter {
     /// # Errors
     ///
     /// Returns an error if the stack is empty or type mismatch occurs.
-    pub(super) fn unary_op(thread: &mut EmulationThread, op: UnaryOp) -> Result<StepResult> {
+    pub(super) fn unary_op(
+        thread: &mut EmulationThread,
+        op: UnaryOp,
+        ptr_size: PointerSize,
+    ) -> Result<StepResult> {
         let value = thread.pop()?;
-        let result = value.unary_op(op)?;
+        let result = value.unary_op(op, ptr_size)?;
         thread.push(result)?;
         Ok(StepResult::Continue)
     }
@@ -231,9 +240,10 @@ impl Interpreter {
     pub(super) fn convert(
         thread: &mut EmulationThread,
         conv_type: ConversionType,
+        ptr_size: PointerSize,
     ) -> Result<StepResult> {
         let value = thread.pop()?;
-        let result = value.convert(conv_type)?;
+        let result = value.convert(conv_type, ptr_size)?;
         thread.push(result)?;
         Ok(StepResult::Continue)
     }
@@ -1460,13 +1470,16 @@ impl Interpreter {
                         EmValue::I64(val)
                     }
                     (&CilFlavor::I, _) => {
-                        // On 64-bit, native int is 8 bytes; on 32-bit, it's 4 bytes
-                        // We treat it as 8 bytes for our emulator
-                        let bytes = address_space.read(ptr_addr, 8)?;
-                        let val = i64::from_le_bytes([
-                            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
-                            bytes[7],
-                        ]);
+                        // Native int is pointer-sized: 4 bytes on PE32, 8 bytes on PE32+
+                        let bytes = address_space.read(ptr_addr, read_size)?;
+                        let val = if read_size == 4 {
+                            i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i64
+                        } else {
+                            i64::from_le_bytes([
+                                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
+                                bytes[6], bytes[7],
+                            ])
+                        };
                         EmValue::NativeInt(val)
                     }
                     (&CilFlavor::R4, _) => {
@@ -1484,11 +1497,15 @@ impl Interpreter {
                     }
                     (&CilFlavor::Object, _) => {
                         // For object references, treat as pointer-sized value
-                        let bytes = address_space.read(ptr_addr, 8)?;
-                        let val = u64::from_le_bytes([
-                            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
-                            bytes[7],
-                        ]);
+                        let bytes = address_space.read(ptr_addr, read_size)?;
+                        let val = if read_size == 4 {
+                            u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64
+                        } else {
+                            u64::from_le_bytes([
+                                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
+                                bytes[6], bytes[7],
+                            ])
+                        };
                         EmValue::UnmanagedPtr(val)
                     }
                     (_, _) => {
@@ -1644,8 +1661,14 @@ impl Interpreter {
                         }
                     },
                     (&CilFlavor::I, _) => match &value {
-                        EmValue::NativeInt(v) => v.to_le_bytes().to_vec(),
-                        EmValue::NativeUInt(v) => v.to_le_bytes().to_vec(),
+                        EmValue::NativeInt(v) => match write_size {
+                            4 => (*v as i32).to_le_bytes().to_vec(),
+                            _ => v.to_le_bytes().to_vec(),
+                        },
+                        EmValue::NativeUInt(v) => match write_size {
+                            4 => (*v as u32).to_le_bytes().to_vec(),
+                            _ => v.to_le_bytes().to_vec(),
+                        },
                         _ => {
                             return Err(EmulationError::TypeMismatch {
                                 operation: "stind.i",
@@ -1679,10 +1702,14 @@ impl Interpreter {
                     },
                     #[allow(clippy::match_same_arms)]
                     (&CilFlavor::Object, _) => match &value {
-                        EmValue::UnmanagedPtr(v) | EmValue::NativeUInt(v) => {
-                            v.to_le_bytes().to_vec()
-                        }
-                        EmValue::NativeInt(v) => v.to_le_bytes().to_vec(),
+                        EmValue::UnmanagedPtr(v) | EmValue::NativeUInt(v) => match write_size {
+                            4 => (*v as u32).to_le_bytes().to_vec(),
+                            _ => v.to_le_bytes().to_vec(),
+                        },
+                        EmValue::NativeInt(v) => match write_size {
+                            4 => (*v as i32).to_le_bytes().to_vec(),
+                            _ => v.to_le_bytes().to_vec(),
+                        },
                         _ => {
                             return Err(EmulationError::TypeMismatch {
                                 operation: "stind.ref",

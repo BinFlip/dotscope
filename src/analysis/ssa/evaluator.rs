@@ -39,7 +39,7 @@
 //! ```rust,ignore
 //! use dotscope::analysis::{SsaEvaluator, SymbolicExpr};
 //!
-//! let mut eval = SsaEvaluator::new(&ssa);
+//! let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
 //!
 //! // Set known concrete values
 //! eval.set_concrete(state_var, initial_state);
@@ -65,11 +65,14 @@
 
 use std::collections::HashMap;
 
-use crate::analysis::ssa::{
-    constraints::Constraint,
-    memory::{MemoryLocation, MemoryState},
-    symbolic::{SymbolicExpr, SymbolicOp},
-    CmpKind, ConstValue, SsaFunction, SsaOp, SsaType, SsaVarId,
+use crate::{
+    analysis::ssa::{
+        constraints::Constraint,
+        memory::{MemoryLocation, MemoryState},
+        symbolic::{SymbolicExpr, SymbolicOp},
+        CmpKind, ConstValue, SsaFunction, SsaOp, SsaType, SsaVarId,
+    },
+    metadata::typesystem::PointerSize,
 };
 
 /// Result of evaluating a control flow decision.
@@ -291,6 +294,8 @@ pub struct SsaEvaluator<'a> {
     path: Vec<usize>,
     /// Memory state tracking for fields. Only used if `config.track_memory`.
     memory: MemoryState,
+    /// Target pointer size for native int/uint masking.
+    pointer_size: PointerSize,
 }
 
 impl<'a> SsaEvaluator<'a> {
@@ -298,9 +303,14 @@ impl<'a> SsaEvaluator<'a> {
     ///
     /// The evaluator starts with no known values. Use the `set_*` methods
     /// to provide initial values for input variables.
+    ///
+    /// # Arguments
+    ///
+    /// * `ssa` - The SSA function to evaluate.
+    /// * `ptr_size` - Target pointer size for native int/uint masking.
     #[must_use]
-    pub fn new(ssa: &'a SsaFunction) -> Self {
-        Self::with_config(ssa, EvaluatorConfig::default())
+    pub fn new(ssa: &'a SsaFunction, ptr_size: PointerSize) -> Self {
+        Self::with_config(ssa, EvaluatorConfig::default(), ptr_size)
     }
 
     /// Creates an evaluator with the specified configuration.
@@ -309,8 +319,13 @@ impl<'a> SsaEvaluator<'a> {
     ///
     /// * `ssa` - The SSA function to evaluate.
     /// * `config` - Configuration controlling evaluator behavior.
+    /// * `ptr_size` - Target pointer size for native int/uint masking.
     #[must_use]
-    pub fn with_config(ssa: &'a SsaFunction, config: EvaluatorConfig) -> Self {
+    pub fn with_config(
+        ssa: &'a SsaFunction,
+        config: EvaluatorConfig,
+        ptr_size: PointerSize,
+    ) -> Self {
         Self {
             ssa,
             values: HashMap::new(),
@@ -319,6 +334,7 @@ impl<'a> SsaEvaluator<'a> {
             config,
             path: Vec::new(),
             memory: MemoryState::new(),
+            pointer_size: ptr_size,
         }
     }
 
@@ -326,17 +342,32 @@ impl<'a> SsaEvaluator<'a> {
     ///
     /// This is equivalent to `PathAwareEvaluator::with_memory_tracking()` and is
     /// the recommended configuration for CFF deobfuscation.
+    ///
+    /// # Arguments
+    ///
+    /// * `ssa` - The SSA function to evaluate.
+    /// * `ptr_size` - Target pointer size for native int/uint masking.
     #[must_use]
-    pub fn path_aware(ssa: &'a SsaFunction) -> Self {
-        Self::with_config(ssa, EvaluatorConfig::path_aware())
+    pub fn path_aware(ssa: &'a SsaFunction, ptr_size: PointerSize) -> Self {
+        Self::with_config(ssa, EvaluatorConfig::path_aware(), ptr_size)
     }
 
     /// Creates an evaluator with pre-populated concrete values.
     ///
     /// Useful when you already have a set of known constants from SCCP or
     /// other analyses.
+    ///
+    /// # Arguments
+    ///
+    /// * `ssa` - The SSA function to evaluate.
+    /// * `values` - Pre-populated concrete values.
+    /// * `ptr_size` - Target pointer size for native int/uint masking.
     #[must_use]
-    pub fn with_values(ssa: &'a SsaFunction, values: HashMap<SsaVarId, ConstValue>) -> Self {
+    pub fn with_values(
+        ssa: &'a SsaFunction,
+        values: HashMap<SsaVarId, ConstValue>,
+        ptr_size: PointerSize,
+    ) -> Self {
         let exprs = values
             .into_iter()
             .map(|(k, v)| (k, SymbolicExpr::constant(v)))
@@ -349,7 +380,14 @@ impl<'a> SsaEvaluator<'a> {
             config: EvaluatorConfig::default(),
             path: Vec::new(),
             memory: MemoryState::new(),
+            pointer_size: ptr_size,
         }
+    }
+
+    /// Returns the target pointer size.
+    #[must_use]
+    pub fn pointer_size(&self) -> PointerSize {
+        self.pointer_size
     }
 
     /// Returns a reference to the underlying SSA function.
@@ -1340,7 +1378,11 @@ impl<'a> SsaEvaluator<'a> {
         let right_expr = self.values.get(&right)?;
 
         // Build expression and simplify (handles constant folding automatically)
-        let result = SymbolicExpr::binary(op, left_expr.clone(), right_expr.clone()).simplify();
+        let result = SymbolicExpr::binary(op, left_expr.clone(), right_expr.clone())
+            .simplify(self.pointer_size);
+
+        // Mask native int/uint results to target pointer width
+        let result = self.mask_symbolic_native(result);
 
         self.values.insert(dest, result.clone());
         Some(result)
@@ -1356,10 +1398,28 @@ impl<'a> SsaEvaluator<'a> {
         let operand_expr = self.values.get(&operand)?;
 
         // Build expression and simplify
-        let result = SymbolicExpr::unary(op, operand_expr.clone()).simplify();
+        let result = SymbolicExpr::unary(op, operand_expr.clone()).simplify(self.pointer_size);
+
+        // Mask native int/uint results to target pointer width
+        let result = self.mask_symbolic_native(result);
 
         self.values.insert(dest, result.clone());
         Some(result)
+    }
+
+    /// Masks a `SymbolicExpr` constant to the target pointer width if it contains
+    /// a `NativeInt` or `NativeUInt` value.
+    fn mask_symbolic_native(&self, expr: SymbolicExpr) -> SymbolicExpr {
+        if let Some(cv) = expr.as_constant() {
+            match cv {
+                ConstValue::NativeInt(_) | ConstValue::NativeUInt(_) => {
+                    SymbolicExpr::constant(cv.clone().mask_native(self.pointer_size))
+                }
+                _ => expr,
+            }
+        } else {
+            expr
+        }
     }
 
     /// Applies a CIL type conversion to a value, returning the properly typed ConstValue.
@@ -1389,14 +1449,28 @@ impl<'a> SsaEvaluator<'a> {
                 }
             }
             SsaType::U16 => ConstValue::U16(value as u16),
-            SsaType::I32 | SsaType::NativeInt => {
+            SsaType::I32 => {
                 if unsigned {
                     ConstValue::I32((value as u32) as i32)
                 } else {
                     ConstValue::I32(value as i32)
                 }
             }
-            SsaType::U32 | SsaType::NativeUInt => ConstValue::U32(value as u32),
+            SsaType::U32 => ConstValue::U32(value as u32),
+            SsaType::NativeInt => match self.pointer_size {
+                PointerSize::Bit32 => {
+                    if unsigned {
+                        ConstValue::NativeInt((value as u32) as i32 as i64)
+                    } else {
+                        ConstValue::NativeInt(value as i32 as i64)
+                    }
+                }
+                PointerSize::Bit64 => ConstValue::NativeInt(value),
+            },
+            SsaType::NativeUInt => match self.pointer_size {
+                PointerSize::Bit32 => ConstValue::NativeUInt(value as u32 as u64),
+                PointerSize::Bit64 => ConstValue::NativeUInt(value as u64),
+            },
             SsaType::I64 => ConstValue::I64(value),
             SsaType::U64 => ConstValue::U64(value as u64),
             SsaType::F32 => {
@@ -1484,7 +1558,7 @@ impl<'a> SsaEvaluator<'a> {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let mut eval = SsaEvaluator::new(&ssa);
+    /// let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
     /// eval.set_concrete(state_var, initial_state);
     /// eval.evaluate_block(0);
     ///
@@ -1664,7 +1738,7 @@ impl<'a> SsaEvaluator<'a> {
     /// # Example
     ///
     /// ```rust,ignore
-    /// let mut eval = SsaEvaluator::new(&ssa);
+    /// let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
     /// eval.set_concrete(state_var, initial_state);
     ///
     /// let trace = eval.execute(0, Some(state_var), 1000);
@@ -1746,7 +1820,7 @@ mod tests {
             (ssa, v0_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
 
         assert_eq!(eval.get_concrete(v0).and_then(ConstValue::as_i32), Some(42));
@@ -1767,7 +1841,7 @@ mod tests {
             (ssa, v2_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
 
         assert_eq!(eval.get_concrete(v2).and_then(ConstValue::as_i32), Some(42));
@@ -1795,7 +1869,7 @@ mod tests {
             (ssa, current_state_out, next_state_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         // Set the input state (this would come from the dispatcher)
         eval.set_concrete(current_state, ConstValue::I32(120931986)); // The XORed state value
 
@@ -1820,7 +1894,7 @@ mod tests {
             (ssa, v2_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
 
         // 120931986 % 13 = 6
@@ -1843,7 +1917,7 @@ mod tests {
             (ssa, v2_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
 
         // Should wrap around
@@ -1872,7 +1946,7 @@ mod tests {
             (ssa, ceq_out, clt_out, cgt_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
 
         assert_eq!(
@@ -1894,7 +1968,7 @@ mod tests {
         let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
             f.block(0, |b| b.ret());
         });
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
 
         let v0 = SsaVarId::new();
         eval.set_concrete(v0, ConstValue::I32(12345));
@@ -1925,7 +1999,7 @@ mod tests {
             (ssa, v2_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
 
         // Result should be unknown (not set)
@@ -1949,7 +2023,7 @@ mod tests {
             (ssa, arg0_out, v2_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         // Mark the argument as symbolic
         eval.set_symbolic(arg0, "arg0");
         eval.evaluate_block(0);
@@ -1981,7 +2055,7 @@ mod tests {
             (ssa, state_out, result_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         // Mark state as symbolic
         eval.set_symbolic(state_var, "state");
         eval.evaluate_block(0);
@@ -1990,7 +2064,7 @@ mod tests {
         assert!(eval.is_symbolic(result_var));
 
         // Now with concrete value
-        let mut eval2 = SsaEvaluator::new(&ssa);
+        let mut eval2 = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval2.set_concrete(state_var, ConstValue::I32(-638481665_i32));
         eval2.evaluate_block(0);
 
@@ -2022,13 +2096,13 @@ mod tests {
         };
 
         // With symbolic input
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.set_symbolic(arg0, "state");
         eval.evaluate_block(0);
         assert!(eval.is_symbolic(result));
 
         // With concrete input - should produce concrete result
-        let mut eval2 = SsaEvaluator::new(&ssa);
+        let mut eval2 = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval2.set_concrete(arg0, ConstValue::I32(120931986));
         eval2.evaluate_block(0);
         assert!(eval2.is_concrete(result));
@@ -2046,7 +2120,7 @@ mod tests {
         initial.insert(v0, ConstValue::I64(42));
         initial.insert(v1, ConstValue::I64(100));
 
-        let eval = SsaEvaluator::with_values(&ssa, initial);
+        let eval = SsaEvaluator::with_values(&ssa, initial, PointerSize::Bit64);
 
         assert_eq!(eval.get_concrete(v0).and_then(ConstValue::as_i64), Some(42));
         assert_eq!(
@@ -2071,7 +2145,7 @@ mod tests {
             (ssa, v0_out, v1_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.set_symbolic(v0, "arg0"); // symbolic
         eval.evaluate_block(0); // v1 = 42 (concrete)
 
@@ -2095,7 +2169,7 @@ mod tests {
             (ssa, v1_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
 
         // 256 truncated to u8 should be 0
@@ -2117,7 +2191,7 @@ mod tests {
             (ssa, v1_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
 
         // 255 as i8 is -1, sign-extended to i32
@@ -2138,7 +2212,7 @@ mod tests {
             (ssa, arg0_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         assert!(eval.is_unknown(arg0));
 
         // Add equality constraint
@@ -2157,16 +2231,16 @@ mod tests {
         // Test constraint conflict detection
         let c1 = Constraint::Equal(ConstValue::I32(5));
         let c2 = Constraint::Equal(ConstValue::I32(10));
-        assert!(c1.conflicts_with(&c2));
+        assert!(c1.conflicts_with(&c2, PointerSize::Bit64));
 
         let c3 = Constraint::NotEqual(ConstValue::I32(5));
-        assert!(c1.conflicts_with(&c3));
+        assert!(c1.conflicts_with(&c3, PointerSize::Bit64));
 
         let c4 = Constraint::GreaterThan(ConstValue::I32(5));
-        assert!(c1.conflicts_with(&c4)); // 5 is not > 5
+        assert!(c1.conflicts_with(&c4, PointerSize::Bit64)); // 5 is not > 5
 
         let c5 = Constraint::GreaterThan(ConstValue::I32(4));
-        assert!(!c1.conflicts_with(&c5)); // 5 > 4 is ok
+        assert!(!c1.conflicts_with(&c5, PointerSize::Bit64)); // 5 > 4 is ok
     }
 
     #[test]
@@ -2202,7 +2276,7 @@ mod tests {
             (ssa, v0_out, v1_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
 
         // First evaluate entry block to establish initial values
         eval.evaluate_block(0);
@@ -2226,7 +2300,7 @@ mod tests {
             f.block(0, |b| b.ret());
         });
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
 
         // Empty loop blocks should return 0 iterations
         let iterations = eval.evaluate_loop_to_fixpoint(&[], 10);
@@ -2278,7 +2352,7 @@ mod tests {
         ssa.add_block(b2);
 
         // Evaluate B0 first to set v0
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
         assert_eq!(eval.get_concrete(v0).and_then(ConstValue::as_i32), Some(10));
 
@@ -2292,7 +2366,7 @@ mod tests {
         );
 
         // Fresh evaluator: evaluate B1 first to set v1
-        let mut eval2 = SsaEvaluator::new(&ssa);
+        let mut eval2 = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval2.evaluate_block(1);
         assert_eq!(
             eval2.get_concrete(v1).and_then(ConstValue::as_i32),
@@ -2361,7 +2435,7 @@ mod tests {
         ssa.add_block(b1);
 
         // Evaluate B0 to set v1=10, v2=20
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
         assert_eq!(eval.get_concrete(v1).and_then(ConstValue::as_i32), Some(10));
         assert_eq!(eval.get_concrete(v2).and_then(ConstValue::as_i32), Some(20));
@@ -2432,7 +2506,7 @@ mod tests {
         blk1.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
         ssa.add_block(blk1);
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
         eval.set_predecessor(Some(0));
         eval.evaluate_block(1);
@@ -2489,7 +2563,7 @@ mod tests {
         ssa.add_block(blk1);
 
         // Coming from B0
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
         eval.set_predecessor(Some(0));
         eval.evaluate_block(1);
@@ -2550,7 +2624,7 @@ mod tests {
         ssa.add_block(blk2);
 
         // Phase 1: Require predecessor context for phi evaluation
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
         eval.evaluate_block(1);
 
@@ -2563,7 +2637,7 @@ mod tests {
         );
 
         // With predecessor set - should get 42 from v0
-        let mut eval2 = SsaEvaluator::new(&ssa);
+        let mut eval2 = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval2.evaluate_block(0);
         eval2.set_predecessor(Some(0));
         eval2.evaluate_block(2);
@@ -2614,7 +2688,7 @@ mod tests {
         blk2.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(v2) }));
         ssa.add_block(blk2);
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0);
         eval.evaluate_block(1);
         // No predecessor set - should be unknown
@@ -2635,7 +2709,7 @@ mod tests {
             f.block(2, |b| b.ret());
         });
 
-        let eval = SsaEvaluator::new(&ssa);
+        let eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         let result = eval.next_block(0);
         assert_eq!(result, ControlFlow::Continue(2));
     }
@@ -2647,7 +2721,7 @@ mod tests {
             f.block(0, |b| b.ret());
         });
 
-        let eval = SsaEvaluator::new(&ssa);
+        let eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         let result = eval.next_block(0);
         assert_eq!(result, ControlFlow::Terminal);
     }
@@ -2669,7 +2743,7 @@ mod tests {
             (ssa, cond_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0); // Evaluate to set cond = true
         let result = eval.next_block(0);
         assert_eq!(result, ControlFlow::Continue(1));
@@ -2693,7 +2767,7 @@ mod tests {
             (ssa, cond_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         eval.evaluate_block(0); // Evaluate to set cond = false
         let result = eval.next_block(0);
         assert_eq!(result, ControlFlow::Continue(2));
@@ -2715,7 +2789,7 @@ mod tests {
             (ssa, cond_out)
         };
 
-        let eval = SsaEvaluator::new(&ssa);
+        let eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         // Don't evaluate - cond is unknown
         assert!(eval.is_unknown(cond));
         let result = eval.next_block(0);
@@ -2746,7 +2820,7 @@ mod tests {
             (ssa, v0_out, v1_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         let trace = eval.execute(0, None, 100);
 
         assert!(trace.is_complete());
@@ -2781,7 +2855,7 @@ mod tests {
             (ssa, state_out, cmp_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         let trace = eval.execute(0, Some(state), 100);
 
         assert!(trace.is_complete());
@@ -2801,7 +2875,7 @@ mod tests {
             f.block(0, |b| b.jump(0)); // Self-loop
         });
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         let trace = eval.execute(0, None, 5);
 
         assert!(!trace.is_complete()); // Did not complete
@@ -2831,7 +2905,7 @@ mod tests {
             (ssa, state_out)
         };
 
-        let mut eval = SsaEvaluator::new(&ssa);
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         let trace = eval.execute(0, Some(state), 100);
 
         assert!(trace.is_complete());

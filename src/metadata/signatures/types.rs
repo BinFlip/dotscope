@@ -147,9 +147,12 @@
 //! - **.NET Runtime Source**: [CoreCLR metadata implementation](https://github.com/dotnet/runtime/tree/main/src/coreclr/md)
 //! - **CLI Specification**: Partition I (Architecture), Partition II (Metadata)
 
-use crate::metadata::{
-    token::Token,
-    typesystem::{ArrayDimensions, CilPrimitive, CilPrimitiveKind},
+use crate::{
+    metadata::{
+        token::Token,
+        typesystem::{ArrayDimensions, CilPrimitive, CilPrimitiveKind},
+    },
+    prelude::PointerSize,
 };
 
 /// Represents a custom modifier with its required/optional flag and type reference.
@@ -3478,25 +3481,28 @@ impl TypeSignature {
     /// | I8, U8, R8 | 8 |
     /// | I, U (native int) | 4 or 8 (platform-dependent) |
     ///
+    /// # Arguments
+    ///
+    /// * `ptr_size` - The target pointer size, used for native int/uint types.
+    ///
     /// # Examples
     ///
     /// ```rust
-    /// use dotscope::metadata::signatures::TypeSignature;
+    /// use dotscope::metadata::{signatures::TypeSignature, typesystem::PointerSize};
     ///
-    /// assert_eq!(TypeSignature::I4.byte_size(), Some(4));
-    /// assert_eq!(TypeSignature::I8.byte_size(), Some(8));
-    /// assert_eq!(TypeSignature::Boolean.byte_size(), Some(1));
-    /// assert_eq!(TypeSignature::String.byte_size(), None); // Reference type
+    /// assert_eq!(TypeSignature::I4.byte_size(PointerSize::Bit64), Some(4));
+    /// assert_eq!(TypeSignature::I8.byte_size(PointerSize::Bit64), Some(8));
+    /// assert_eq!(TypeSignature::Boolean.byte_size(PointerSize::Bit64), Some(1));
+    /// assert_eq!(TypeSignature::String.byte_size(PointerSize::Bit64), None); // Reference type
     /// ```
     #[must_use]
-    pub fn byte_size(&self) -> Option<usize> {
+    pub fn byte_size(&self, ptr_size: PointerSize) -> Option<usize> {
         match self {
             TypeSignature::Boolean | TypeSignature::I1 | TypeSignature::U1 => Some(1),
             TypeSignature::Char | TypeSignature::I2 | TypeSignature::U2 => Some(2),
             TypeSignature::I4 | TypeSignature::U4 | TypeSignature::R4 => Some(4),
             TypeSignature::I8 | TypeSignature::U8 | TypeSignature::R8 => Some(8),
-            // Native int - assume 4 bytes for emulation (32-bit target)
-            TypeSignature::I | TypeSignature::U => Some(4),
+            TypeSignature::I | TypeSignature::U => Some(ptr_size.bytes()),
             // Reference types, arrays, generics, etc. don't have fixed sizes
             _ => None,
         }

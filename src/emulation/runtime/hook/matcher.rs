@@ -580,10 +580,16 @@ impl HookMatcher for NativeMethodMatcher {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::metadata::token::Token;
+    use crate::metadata::{token::Token, typesystem::PointerSize};
 
     fn create_test_context<'a>() -> HookContext<'a> {
-        HookContext::new(Token::new(0x06000001), "System", "String", "Concat")
+        HookContext::new(
+            Token::new(0x06000001),
+            "System",
+            "String",
+            "Concat",
+            PointerSize::Bit64,
+        )
     }
 
     #[test]

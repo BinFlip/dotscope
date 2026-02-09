@@ -860,8 +860,10 @@ fn unicode_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::runtime::hook::HookManager;
-    use crate::test::emulation::create_test_thread;
+    use crate::{
+        emulation::runtime::hook::HookManager, metadata::typesystem::PointerSize,
+        test::emulation::create_test_thread,
+    };
 
     #[test]
     fn test_register_hooks() {
@@ -881,6 +883,7 @@ mod tests {
             "System.Text",
             "UTF8Encoding",
             "GetBytes",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -907,6 +910,7 @@ mod tests {
             "System.Text",
             "UTF8Encoding",
             "GetString",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -930,6 +934,7 @@ mod tests {
             "System.Text",
             "ASCIIEncoding",
             "GetBytes",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -956,6 +961,7 @@ mod tests {
             "System.Text",
             "UnicodeEncoding",
             "GetBytes",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -987,6 +993,7 @@ mod tests {
             "System.Text",
             "UnicodeEncoding",
             "GetString",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -1010,6 +1017,7 @@ mod tests {
             "System.Text",
             "Encoding",
             "GetEncoding",
+            PointerSize::Bit64,
         )
         .with_args(&args);
         let result = encoding_get_encoding_pre(&ctx, &mut thread);
@@ -1025,6 +1033,7 @@ mod tests {
             "System.Text",
             "Encoding",
             "GetEncoding",
+            PointerSize::Bit64,
         )
         .with_args(&args);
         let result = encoding_get_encoding_pre(&ctx, &mut thread);

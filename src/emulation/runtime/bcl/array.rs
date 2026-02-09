@@ -56,13 +56,15 @@
 //!
 //! Many string decryption routines work on character arrays using `Array.Reverse`.
 
-use crate::emulation::{
-    memory::HeapObject,
-    runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
-    thread::EmulationThread,
-    EmValue,
+use crate::{
+    emulation::{
+        memory::HeapObject,
+        runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
+        thread::EmulationThread,
+        EmValue,
+    },
+    metadata::typesystem::CilFlavor,
 };
-use crate::metadata::typesystem::CilFlavor;
 
 /// Converts a `usize` to an `i32` for .NET array length returns.
 #[must_use]
@@ -707,6 +709,8 @@ fn buffer_block_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
         return PreHookResult::Bypass(None);
     }
 
+    let ptr_size = ctx.pointer_size;
+
     // Extract source array bytes
     let (src_bytes, _src_elem_size): (Vec<u8>, usize) = {
         let src_obj = match thread.heap().get(src_ref) {
@@ -718,12 +722,12 @@ fn buffer_block_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
                 elements,
                 element_type,
             } => {
-                let elem_size = element_type
-                    .element_size()
-                    .unwrap_or(std::mem::size_of::<usize>());
+                let Some(elem_size) = element_type.element_size(ptr_size) else {
+                    return PreHookResult::Bypass(None);
+                };
                 let bytes: Vec<u8> = elements
                     .iter()
-                    .flat_map(|e| e.to_le_bytes(&element_type))
+                    .flat_map(|e| e.to_le_bytes(&element_type, ptr_size))
                     .collect();
                 (bytes, elem_size)
             }
@@ -744,9 +748,9 @@ fn buffer_block_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
             elements,
             element_type,
         } => {
-            let dst_elem_size = element_type
-                .element_size()
-                .unwrap_or(std::mem::size_of::<usize>());
+            let Some(dst_elem_size) = element_type.element_size(ptr_size) else {
+                return Ok(());
+            };
             let dst_byte_len = elements.len() * dst_elem_size;
 
             if dst_offset >= dst_byte_len {
@@ -756,7 +760,7 @@ fn buffer_block_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
             // Convert destination elements to bytes
             let mut dst_bytes: Vec<u8> = elements
                 .iter()
-                .flat_map(|e| e.to_le_bytes(element_type))
+                .flat_map(|e| e.to_le_bytes(element_type, ptr_size))
                 .collect();
 
             // Copy the bytes
@@ -767,7 +771,7 @@ fn buffer_block_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
             // Convert bytes back to elements
             for (i, chunk) in dst_bytes.chunks(dst_elem_size).enumerate() {
                 if i < elements.len() {
-                    elements[i] = EmValue::from_le_bytes(chunk, element_type);
+                    elements[i] = EmValue::from_le_bytes(chunk, element_type, ptr_size);
                 }
             }
 
@@ -831,9 +835,11 @@ fn buffer_byte_length_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::runtime::hook::HookManager;
-    use crate::metadata::token::Token;
-    use crate::test::emulation::create_test_thread;
+    use crate::{
+        emulation::runtime::hook::HookManager,
+        metadata::{token::Token, typesystem::PointerSize},
+        test::emulation::create_test_thread,
+    };
 
     #[test]
     fn test_register_hooks() {
@@ -848,8 +854,14 @@ mod tests {
         let arr = thread.heap_mut().alloc_array(CilFlavor::I4, 5).unwrap();
 
         let this = EmValue::ObjectRef(arr);
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "Array", "get_Length")
-            .with_this(Some(&this));
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "Array",
+            "get_Length",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this));
 
         let result = array_get_length_pre(&ctx, &mut thread);
         assert!(matches!(
@@ -865,15 +877,27 @@ mod tests {
 
         let this = EmValue::ObjectRef(arr);
         let set_args = [EmValue::I32(42), EmValue::I32(2)];
-        let set_ctx = HookContext::new(Token::new(0x0A000001), "System", "Array", "SetValue")
-            .with_this(Some(&this))
-            .with_args(&set_args);
+        let set_ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "Array",
+            "SetValue",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this))
+        .with_args(&set_args);
         array_set_value_pre(&set_ctx, &mut thread);
 
         let get_args = [EmValue::I32(2)];
-        let get_ctx = HookContext::new(Token::new(0x0A000001), "System", "Array", "GetValue")
-            .with_this(Some(&this))
-            .with_args(&get_args);
+        let get_ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "Array",
+            "GetValue",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this))
+        .with_args(&get_args);
         let result = array_get_value_pre(&get_ctx, &mut thread);
         assert!(matches!(
             result,
@@ -900,8 +924,14 @@ mod tests {
             .unwrap();
 
         let args = [EmValue::ObjectRef(arr)];
-        let ctx =
-            HookContext::new(Token::new(0x0A000001), "System", "Array", "Reverse").with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "Array",
+            "Reverse",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
         array_reverse_pre(&ctx, &mut thread);
 
         assert_eq!(
@@ -937,8 +967,14 @@ mod tests {
             .unwrap();
 
         let this = EmValue::ObjectRef(arr);
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "Array", "Clone")
-            .with_this(Some(&this));
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "Array",
+            "Clone",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this));
         let result = array_clone_pre(&ctx, &mut thread);
 
         if let PreHookResult::Bypass(Some(EmValue::ObjectRef(cloned))) = result {
@@ -966,8 +1002,14 @@ mod tests {
         let arr = thread.heap_mut().alloc_array(CilFlavor::I4, 5).unwrap();
 
         let args = [EmValue::ObjectRef(arr)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "Buffer", "ByteLength")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "Buffer",
+            "ByteLength",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
         let result = buffer_byte_length_pre(&ctx, &mut thread);
         assert!(matches!(
             result,

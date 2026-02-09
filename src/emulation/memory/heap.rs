@@ -47,7 +47,10 @@ use imbl::HashMap as ImHashMap;
 
 use crate::{
     emulation::{engine::EmulationError, EmValue, HeapRef},
-    metadata::{token::Token, typesystem::CilFlavor},
+    metadata::{
+        token::Token,
+        typesystem::{CilFlavor, PointerSize},
+    },
     Result,
 };
 
@@ -1166,14 +1169,14 @@ impl ManagedHeap {
     /// Returns `None` if the reference is invalid, not an array, or contains
     /// non-numeric types.
     #[must_use]
-    pub fn get_array_as_bytes(&self, heap_ref: HeapRef) -> Option<Vec<u8>> {
+    pub fn get_array_as_bytes(&self, heap_ref: HeapRef, ptr_size: PointerSize) -> Option<Vec<u8>> {
         let state = self.state.read().expect("heap lock poisoned");
         match state.objects.get(&heap_ref.id())? {
             HeapObject::Array {
                 elements,
                 element_type,
             } => {
-                let element_size = element_type.element_size().unwrap_or(1);
+                let element_size = element_type.element_size(ptr_size)?;
                 let mut bytes = Vec::with_capacity(elements.len() * element_size);
 
                 for e in elements.iter() {

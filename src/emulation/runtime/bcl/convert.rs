@@ -788,9 +788,11 @@ fn to_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHook
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::runtime::hook::HookManager;
-    use crate::metadata::token::Token;
-    use crate::test::emulation::create_test_thread;
+    use crate::{
+        emulation::runtime::hook::HookManager,
+        metadata::{token::Token, typesystem::PointerSize},
+        test::emulation::create_test_thread,
+    };
 
     #[test]
     fn test_register_hooks() {
@@ -810,6 +812,7 @@ mod tests {
             "System",
             "Convert",
             "ToBase64String",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -833,6 +836,7 @@ mod tests {
             "System",
             "Convert",
             "FromBase64String",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -854,8 +858,14 @@ mod tests {
 
         // From i32
         let args = [EmValue::I32(42)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "Convert", "ToInt32")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "Convert",
+            "ToInt32",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
         let result = to_int32_pre(&ctx, &mut thread);
         assert!(matches!(
             result,
@@ -865,8 +875,14 @@ mod tests {
         // From string
         let s = thread.heap_mut().alloc_string("123").unwrap();
         let args = [EmValue::ObjectRef(s)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "Convert", "ToInt32")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "Convert",
+            "ToInt32",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
         let result = to_int32_pre(&ctx, &mut thread);
         assert!(matches!(
             result,
@@ -880,8 +896,14 @@ mod tests {
 
         // From i32
         let args = [EmValue::I32(0)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "Convert", "ToBoolean")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "Convert",
+            "ToBoolean",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
         let result = to_boolean_pre(&ctx, &mut thread);
         assert!(matches!(
             result,
@@ -889,8 +911,14 @@ mod tests {
         ));
 
         let args = [EmValue::I32(1)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "Convert", "ToBoolean")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "Convert",
+            "ToBoolean",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
         let result = to_boolean_pre(&ctx, &mut thread);
         assert!(matches!(
             result,
@@ -900,8 +928,14 @@ mod tests {
         // From string
         let s = thread.heap_mut().alloc_string("true").unwrap();
         let args = [EmValue::ObjectRef(s)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "Convert", "ToBoolean")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "Convert",
+            "ToBoolean",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
         let result = to_boolean_pre(&ctx, &mut thread);
         assert!(matches!(
             result,

@@ -51,7 +51,7 @@ use crate::{
         ValueRange,
     },
     compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
-    metadata::token::Token,
+    metadata::{token::Token, typesystem::PointerSize},
     CilObject, Result,
 };
 
@@ -1160,8 +1160,9 @@ impl OpaquePredicatePass {
         ssa: &SsaFunction,
         condition: SsaVarId,
         block_idx: usize,
+        ptr_size: PointerSize,
     ) -> PredicateResult {
-        let mut evaluator = SsaEvaluator::new(ssa);
+        let mut evaluator = SsaEvaluator::new(ssa, ptr_size);
 
         // Evaluate all blocks up to and including the current block.
         // We use a simple forward pass - in complex cases with loops,
@@ -1248,7 +1249,7 @@ impl SsaPass for OpaquePredicatePass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let changes = EventLog::new();
 
@@ -1296,7 +1297,8 @@ impl SsaPass for OpaquePredicatePass {
                     // If pattern matching couldn't determine the result,
                     // try using SsaEvaluator for dataflow-based analysis
                     if result == PredicateResult::Unknown {
-                        result = Self::evaluate_with_tracked(ssa, *condition, block_idx);
+                        let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
+                        result = Self::evaluate_with_tracked(ssa, *condition, block_idx, ptr_size);
                     }
 
                     match result {

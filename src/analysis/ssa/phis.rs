@@ -17,7 +17,7 @@
 //! }
 //!
 //! // Check if all PHI operands resolve to the same constant
-//! let mut evaluator = ConstEvaluator::new(&ssa);
+//! let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
 //! if let Some(value) = analyzer.uniform_constant(phi, &mut evaluator) {
 //!     println!("PHI always produces: {:?}", value);
 //! }
@@ -338,9 +338,12 @@ impl<'a> PhiAnalyzer<'a> {
 mod tests {
     use std::collections::HashSet;
 
-    use crate::analysis::ssa::{
-        ConstEvaluator, ConstValue, DefSite, PhiAnalyzer, PhiNode, PhiOperand, SsaBlock,
-        SsaFunction, SsaInstruction, SsaOp, SsaVarId, SsaVariable, VariableOrigin,
+    use crate::{
+        analysis::ssa::{
+            ConstEvaluator, ConstValue, DefSite, PhiAnalyzer, PhiNode, PhiOperand, SsaBlock,
+            SsaFunction, SsaInstruction, SsaOp, SsaVarId, SsaVariable, VariableOrigin,
+        },
+        metadata::typesystem::PointerSize,
     };
 
     #[test]
@@ -445,7 +448,7 @@ mod tests {
         ssa.add_block(block);
 
         let analyzer = PhiAnalyzer::new(&ssa);
-        let mut evaluator = ConstEvaluator::new(&ssa);
+        let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
 
         // phi(v1, v2) where both are 42
         let phi_result = SsaVarId::new();
@@ -486,7 +489,7 @@ mod tests {
         ssa.add_block(block);
 
         let analyzer = PhiAnalyzer::new(&ssa);
-        let mut evaluator = ConstEvaluator::new(&ssa);
+        let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
 
         // phi(v1, v2) where v1=42 and v2=99
         let phi_result = SsaVarId::new();
@@ -501,7 +504,7 @@ mod tests {
     fn test_uniform_constant_empty_phi() {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
-        let mut evaluator = ConstEvaluator::new(&ssa);
+        let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
 
         // Empty PHI
         let phi_result = SsaVarId::new();
@@ -514,7 +517,7 @@ mod tests {
     fn test_uniform_constant_non_constant_operand() {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
-        let mut evaluator = ConstEvaluator::new(&ssa);
+        let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
 
         // phi(v1, v2) where neither is defined (not constant)
         let phi_result = SsaVarId::new();

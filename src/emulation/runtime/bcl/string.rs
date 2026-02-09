@@ -987,9 +987,11 @@ fn string_is_interned_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::runtime::hook::HookManager;
-    use crate::metadata::token::Token;
-    use crate::test::emulation::create_test_thread;
+    use crate::{
+        emulation::runtime::hook::HookManager,
+        metadata::{token::Token, typesystem::PointerSize},
+        test::emulation::create_test_thread,
+    };
 
     #[test]
     fn test_register_hooks() {
@@ -1005,8 +1007,14 @@ mod tests {
         let s2 = thread.heap_mut().alloc_string("World").unwrap();
 
         let args = [EmValue::ObjectRef(s1), EmValue::ObjectRef(s2)];
-        let ctx =
-            HookContext::new(Token::new(0x0A000001), "System", "String", "Concat").with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "String",
+            "Concat",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
 
         let result = string_concat_pre(&ctx, &mut thread);
 
@@ -1023,8 +1031,14 @@ mod tests {
         let s = thread.heap_mut().alloc_string("Hello").unwrap();
 
         let this = EmValue::ObjectRef(s);
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "String", "get_Length")
-            .with_this(Some(&this));
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "String",
+            "get_Length",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this));
 
         let result = string_get_length_pre(&ctx, &mut thread);
         assert!(matches!(
@@ -1039,8 +1053,14 @@ mod tests {
         let s = thread.heap_mut().alloc_string("hello").unwrap();
 
         let this = EmValue::ObjectRef(s);
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "String", "ToUpper")
-            .with_this(Some(&this));
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "String",
+            "ToUpper",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this));
 
         let result = string_to_upper_pre(&ctx, &mut thread);
 
@@ -1059,8 +1079,14 @@ mod tests {
 
         // Test null
         let args = [EmValue::Null];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "String", "IsNullOrEmpty")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "String",
+            "IsNullOrEmpty",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
         let result = string_is_null_or_empty_pre(&ctx, &mut thread);
         assert!(matches!(
             result,
@@ -1069,8 +1095,14 @@ mod tests {
 
         // Test empty
         let args = [EmValue::ObjectRef(empty)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "String", "IsNullOrEmpty")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "String",
+            "IsNullOrEmpty",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
         let result = string_is_null_or_empty_pre(&ctx, &mut thread);
         assert!(matches!(
             result,
@@ -1079,8 +1111,14 @@ mod tests {
 
         // Test non-empty
         let args = [EmValue::ObjectRef(non_empty)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "String", "IsNullOrEmpty")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "String",
+            "IsNullOrEmpty",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
         let result = string_is_null_or_empty_pre(&ctx, &mut thread);
         assert!(matches!(
             result,

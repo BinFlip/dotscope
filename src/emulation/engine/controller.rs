@@ -251,8 +251,11 @@ impl EmulationController {
         let context = EmulationContext::new(assembly);
 
         // Create interpreter
-        let mut interpreter =
-            Interpreter::new(self.config.limits.clone(), Arc::clone(&self.address_space));
+        let mut interpreter = Interpreter::new(
+            self.config.limits.clone(),
+            Arc::clone(&self.address_space),
+            self.config.pointer_size,
+        );
         interpreter.start();
 
         // Create emulation thread with initial call frame
@@ -293,8 +296,11 @@ impl EmulationController {
         let context = EmulationContext::new(assembly);
 
         // Create interpreter
-        let mut interpreter =
-            Interpreter::new(self.config.limits.clone(), Arc::clone(&self.address_space));
+        let mut interpreter = Interpreter::new(
+            self.config.limits.clone(),
+            Arc::clone(&self.address_space),
+            self.config.pointer_size,
+        );
         interpreter.start();
 
         // Create emulation thread with initial call frame
@@ -1945,7 +1951,8 @@ impl EmulationController {
 
             // Create native hook context
             let hook_context =
-                HookContext::native(method_token, dll, &function_name).with_args(&args);
+                HookContext::native(method_token, dll, &function_name, self.config.pointer_size)
+                    .with_args(&args);
 
             let guard = self
                 .runtime
@@ -2073,12 +2080,18 @@ impl EmulationController {
             };
 
         // Build hook context - use references to our owned strings
-        let hook_context = HookContext::new(method_token, &namespace, &type_name, &method_name)
-            .with_this(this_ref)
-            .with_args(method_args)
-            .with_internal(is_internal)
-            .with_param_types(param_types_ref)
-            .with_return_type(return_type);
+        let hook_context = HookContext::new(
+            method_token,
+            &namespace,
+            &type_name,
+            &method_name,
+            self.config.pointer_size,
+        )
+        .with_this(this_ref)
+        .with_args(method_args)
+        .with_internal(is_internal)
+        .with_param_types(param_types_ref)
+        .with_return_type(return_type);
 
         // Try to execute via hooks
         let guard = self
@@ -2179,6 +2192,7 @@ impl EmulationController {
                 &decl_type.namespace,
                 &decl_type.name,
                 ".ctor",
+                self.config.pointer_size,
             )
             .with_this(Some(&this_value))
             .with_args(&arg_values)
@@ -2346,11 +2360,16 @@ impl EmulationController {
 
         // Try to find a constructor hook using the hook system
         let this_value = EmValue::ObjectRef(obj_ref);
-        let hook_context =
-            HookContext::new(constructor_token, &namespace, &type_name_only, ".ctor")
-                .with_this(Some(&this_value))
-                .with_args(&args)
-                .with_internal(false); // MemberRef is external
+        let hook_context = HookContext::new(
+            constructor_token,
+            &namespace,
+            &type_name_only,
+            ".ctor",
+            self.config.pointer_size,
+        )
+        .with_this(Some(&this_value))
+        .with_args(&args)
+        .with_internal(false); // MemberRef is external
 
         let guard = self
             .runtime
@@ -2829,7 +2848,7 @@ impl EmulationController {
         context: &EmulationContext,
         type_token: Token,
     ) -> Result<()> {
-        let size = context.get_type_size(type_token);
+        let size = context.get_type_size(type_token, self.config.pointer_size);
 
         #[allow(clippy::cast_possible_truncation, clippy::cast_possible_wrap)]
         thread.push(EmValue::I32(size as i32))?; // Size bounded by type system

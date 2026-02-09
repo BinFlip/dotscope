@@ -32,7 +32,7 @@
 //! let cfg = SsaCfg::from_ssa(&ssa);
 //!
 //! // Use with SCCP
-//! let mut sccp = ConstantPropagation::new();
+//! let mut sccp = ConstantPropagation::new(PointerSize::Bit64);
 //! let results = sccp.analyze(&ssa, &cfg);
 //! ```
 //!

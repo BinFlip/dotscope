@@ -213,7 +213,7 @@ fn is_lzma_input(ctx: &HookContext<'_>, thread: &EmulationThread) -> bool {
         // Try to get array data from heap
         let Some(byte_data) = thread
             .heap()
-            .get_array_as_bytes(*heap_ref)
+            .get_array_as_bytes(*heap_ref, ctx.pointer_size)
             .or_else(|| thread.heap().get_byte_array(*heap_ref))
         else {
             continue;
@@ -249,7 +249,7 @@ fn lzma_decompression_handler(
         // Try to get array data from heap
         let Some(byte_data) = thread
             .heap()
-            .get_array_as_bytes(*heap_ref)
+            .get_array_as_bytes(*heap_ref, ctx.pointer_size)
             .or_else(|| thread.heap().get_byte_array(*heap_ref))
         else {
             continue;

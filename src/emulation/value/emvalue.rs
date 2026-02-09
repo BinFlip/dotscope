@@ -5,7 +5,10 @@ use std::fmt;
 use crate::{
     analysis::ConstValue,
     emulation::{value::symbolic::SymbolicValue, EmulationError},
-    metadata::{token::Token, typesystem::CilFlavor},
+    metadata::{
+        token::Token,
+        typesystem::{CilFlavor, PointerSize},
+    },
 };
 
 /// Runtime value during CIL emulation.
@@ -1398,24 +1401,27 @@ impl EmValue {
     /// the target CIL type. This is used for operations like `Buffer.BlockCopy`
     /// that work at the byte level.
     ///
+    /// For `NativeInt`/`NativeUInt`, serializes to 4 or 8 bytes based on `ptr_size`.
+    ///
     /// # Arguments
     ///
     /// * `flavor` - The CIL type flavor determining the byte width
+    /// * `ptr_size` - The pointer size for native integer serialization
     ///
     /// # Examples
     ///
     /// ```rust
     /// use dotscope::emulation::EmValue;
-    /// use dotscope::metadata::typesystem::CilFlavor;
+    /// use dotscope::metadata::typesystem::{CilFlavor, PointerSize};
     ///
     /// let value = EmValue::I32(0x12345678);
-    /// assert_eq!(value.to_le_bytes(&CilFlavor::I4), vec![0x78, 0x56, 0x34, 0x12]);
-    /// assert_eq!(value.to_le_bytes(&CilFlavor::I2), vec![0x78, 0x56]);
-    /// assert_eq!(value.to_le_bytes(&CilFlavor::I1), vec![0x78]);
+    /// assert_eq!(value.to_le_bytes(&CilFlavor::I4, PointerSize::Bit64), vec![0x78, 0x56, 0x34, 0x12]);
+    /// assert_eq!(value.to_le_bytes(&CilFlavor::I2, PointerSize::Bit64), vec![0x78, 0x56]);
+    /// assert_eq!(value.to_le_bytes(&CilFlavor::I1, PointerSize::Bit64), vec![0x78]);
     /// ```
     #[must_use]
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    pub fn to_le_bytes(&self, flavor: &CilFlavor) -> Vec<u8> {
+    pub fn to_le_bytes(&self, flavor: &CilFlavor, ptr_size: PointerSize) -> Vec<u8> {
         match (self, flavor) {
             (EmValue::I32(v), CilFlavor::I1 | CilFlavor::U1 | CilFlavor::Boolean) => {
                 vec![*v as u8]
@@ -1427,16 +1433,17 @@ impl EmValue {
             (EmValue::I64(v), _) => v.to_le_bytes().to_vec(),
             (EmValue::F32(v), _) => v.to_le_bytes().to_vec(),
             (EmValue::F64(v), _) => v.to_le_bytes().to_vec(),
-            (EmValue::NativeInt(v), _) => v.to_le_bytes().to_vec(),
-            (EmValue::NativeUInt(v), _) => v.to_le_bytes().to_vec(),
+            (EmValue::NativeInt(v), _) => match ptr_size {
+                PointerSize::Bit32 => (*v as i32).to_le_bytes().to_vec(),
+                PointerSize::Bit64 => v.to_le_bytes().to_vec(),
+            },
+            (EmValue::NativeUInt(v), _) => match ptr_size {
+                PointerSize::Bit32 => (*v as u32).to_le_bytes().to_vec(),
+                PointerSize::Bit64 => v.to_le_bytes().to_vec(),
+            },
             (EmValue::Bool(v), _) => vec![u8::from(*v)],
             (EmValue::Char(v), _) => (*v as u16).to_le_bytes().to_vec(),
-            _ => vec![
-                0;
-                flavor
-                    .element_size()
-                    .unwrap_or(std::mem::size_of::<usize>())
-            ],
+            _ => vec![0; flavor.element_size(ptr_size).unwrap_or(ptr_size.bytes())],
         }
     }
 
@@ -1445,24 +1452,27 @@ impl EmValue {
     /// This is the inverse of [`to_le_bytes`](Self::to_le_bytes). The number of bytes
     /// consumed depends on the `flavor` parameter.
     ///
+    /// For `CilFlavor::I` / `CilFlavor::U`, reads 4 or 8 bytes based on `ptr_size`.
+    ///
     /// # Arguments
     ///
     /// * `bytes` - The source bytes in little-endian order
     /// * `flavor` - The CIL type flavor determining how to interpret the bytes
+    /// * `ptr_size` - The pointer size for native integer deserialization
     ///
     /// # Examples
     ///
     /// ```rust
     /// use dotscope::emulation::EmValue;
-    /// use dotscope::metadata::typesystem::CilFlavor;
+    /// use dotscope::metadata::typesystem::{CilFlavor, PointerSize};
     ///
     /// let bytes = [0x78, 0x56, 0x34, 0x12];
-    /// assert_eq!(EmValue::from_le_bytes(&bytes, &CilFlavor::I4), EmValue::I32(0x12345678));
-    /// assert_eq!(EmValue::from_le_bytes(&bytes, &CilFlavor::I2), EmValue::I32(0x5678));
-    /// assert_eq!(EmValue::from_le_bytes(&bytes, &CilFlavor::I1), EmValue::I32(0x78));
+    /// assert_eq!(EmValue::from_le_bytes(&bytes, &CilFlavor::I4, PointerSize::Bit64), EmValue::I32(0x12345678));
+    /// assert_eq!(EmValue::from_le_bytes(&bytes, &CilFlavor::I2, PointerSize::Bit64), EmValue::I32(0x5678));
+    /// assert_eq!(EmValue::from_le_bytes(&bytes, &CilFlavor::I1, PointerSize::Bit64), EmValue::I32(0x78));
     /// ```
     #[must_use]
-    pub fn from_le_bytes(bytes: &[u8], flavor: &CilFlavor) -> EmValue {
+    pub fn from_le_bytes(bytes: &[u8], flavor: &CilFlavor, ptr_size: PointerSize) -> EmValue {
         match flavor {
             CilFlavor::I1 | CilFlavor::U1 | CilFlavor::Boolean => {
                 EmValue::I32(i32::from(bytes.first().copied().unwrap_or(0)))
@@ -1491,17 +1501,28 @@ impl EmValue {
                     EmValue::I64(i64::from_le_bytes(arr))
                 }
             }
-            CilFlavor::I | CilFlavor::U => {
-                // Native int - assume 64-bit
-                let arr: [u8; 8] = bytes[..8.min(bytes.len())]
-                    .try_into()
-                    .unwrap_or([0, 0, 0, 0, 0, 0, 0, 0]);
-                if matches!(flavor, CilFlavor::I) {
-                    EmValue::NativeInt(i64::from_le_bytes(arr))
-                } else {
-                    EmValue::NativeUInt(u64::from_le_bytes(arr))
+            CilFlavor::I | CilFlavor::U => match ptr_size {
+                PointerSize::Bit32 => {
+                    let arr: [u8; 4] = bytes[..4.min(bytes.len())]
+                        .try_into()
+                        .unwrap_or([0, 0, 0, 0]);
+                    if matches!(flavor, CilFlavor::I) {
+                        EmValue::NativeInt(i32::from_le_bytes(arr) as i64)
+                    } else {
+                        EmValue::NativeUInt(u32::from_le_bytes(arr) as u64)
+                    }
                 }
-            }
+                PointerSize::Bit64 => {
+                    let arr: [u8; 8] = bytes[..8.min(bytes.len())]
+                        .try_into()
+                        .unwrap_or([0, 0, 0, 0, 0, 0, 0, 0]);
+                    if matches!(flavor, CilFlavor::I) {
+                        EmValue::NativeInt(i64::from_le_bytes(arr))
+                    } else {
+                        EmValue::NativeUInt(u64::from_le_bytes(arr))
+                    }
+                }
+            },
             _ => EmValue::I32(0),
         }
     }

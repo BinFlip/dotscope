@@ -7,9 +7,12 @@
 
 use std::collections::HashMap;
 
-use crate::analysis::ssa::{
-    symbolic::{expr::SymbolicExpr, ops::SymbolicOp},
-    ConstValue, SsaFunction, SsaOp, SsaVarId,
+use crate::{
+    analysis::ssa::{
+        symbolic::{expr::SymbolicExpr, ops::SymbolicOp},
+        ConstValue, SsaFunction, SsaOp, SsaVarId,
+    },
+    metadata::typesystem::PointerSize,
 };
 
 /// Symbolic evaluator that builds expression trees from SSA operations.
@@ -22,6 +25,8 @@ pub struct SymbolicEvaluator<'a> {
     ssa: &'a SsaFunction,
     /// Expressions computed for each variable.
     expressions: HashMap<SsaVarId, SymbolicExpr>,
+    /// Target pointer size for native int/uint masking.
+    pointer_size: PointerSize,
 }
 
 impl<'a> SymbolicEvaluator<'a> {
@@ -34,15 +39,17 @@ impl<'a> SymbolicEvaluator<'a> {
     /// # Arguments
     ///
     /// * `ssa` - The SSA function to evaluate.
+    /// * `ptr_size` - Target pointer size for native int/uint masking.
     ///
     /// # Returns
     ///
     /// A new evaluator with no expressions.
     #[must_use]
-    pub fn new(ssa: &'a SsaFunction) -> Self {
+    pub fn new(ssa: &'a SsaFunction, ptr_size: PointerSize) -> Self {
         Self {
             ssa,
             expressions: HashMap::new(),
+            pointer_size: ptr_size,
         }
     }
 
@@ -101,7 +108,9 @@ impl<'a> SymbolicEvaluator<'a> {
     /// A simplified copy of the expression, or `None` if not yet evaluated.
     #[must_use]
     pub fn get_simplified(&self, var: SsaVarId) -> Option<SymbolicExpr> {
-        self.expressions.get(&var).map(SymbolicExpr::simplify)
+        self.expressions
+            .get(&var)
+            .map(|e| e.simplify(self.pointer_size))
     }
 
     /// Returns all computed expressions.
@@ -301,7 +310,7 @@ impl<'a> SymbolicEvaluator<'a> {
             .cloned()
             .unwrap_or_else(|| SymbolicExpr::variable(right));
 
-        let result = SymbolicExpr::binary(op, left_expr, right_expr).simplify();
+        let result = SymbolicExpr::binary(op, left_expr, right_expr).simplify(self.pointer_size);
         self.expressions.insert(dest, result);
     }
 
@@ -322,7 +331,7 @@ impl<'a> SymbolicEvaluator<'a> {
             .cloned()
             .unwrap_or_else(|| SymbolicExpr::variable(operand));
 
-        let result = SymbolicExpr::unary(op, operand_expr).simplify();
+        let result = SymbolicExpr::unary(op, operand_expr).simplify(self.pointer_size);
         self.expressions.insert(dest, result);
     }
 }

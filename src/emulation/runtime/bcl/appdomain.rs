@@ -540,8 +540,10 @@ fn delegate_ctor_pre(_ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pr
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::runtime::hook::HookManager;
-    use crate::test::emulation::create_test_thread;
+    use crate::{
+        emulation::runtime::hook::HookManager, metadata::typesystem::PointerSize,
+        test::emulation::create_test_thread,
+    };
 
     #[test]
     fn test_register_hooks() {
@@ -557,6 +559,7 @@ mod tests {
             "System",
             "AppDomain",
             "get_CurrentDomain",
+            PointerSize::Bit64,
         );
 
         let mut thread = create_test_thread();
@@ -575,6 +578,7 @@ mod tests {
             "System.Reflection",
             "Assembly",
             "Load",
+            PointerSize::Bit64,
         );
 
         let mut thread = create_test_thread();

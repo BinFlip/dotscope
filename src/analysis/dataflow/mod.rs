@@ -27,7 +27,7 @@
 //! let ssa = SsaConverter::build(&graph, num_args, num_locals, resolver)?;
 //!
 //! // Run constant propagation
-//! let analysis = ConstantPropagation::new(&ssa);
+//! let analysis = ConstantPropagation::new(PointerSize::Bit64);
 //! let mut solver = DataFlowSolver::new(analysis, &ssa, &graph);
 //! solver.solve();
 //!
@@ -61,8 +61,11 @@ pub use solver::DataFlowSolver;
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::{cfg::ControlFlowGraph, ssa::SsaConverter};
-    use crate::assembly::{decode_blocks, InstructionAssembler};
+    use crate::{
+        analysis::{cfg::ControlFlowGraph, ssa::SsaConverter},
+        assembly::{decode_blocks, InstructionAssembler},
+        metadata::typesystem::PointerSize,
+    };
 
     /// Helper to build CFG from assembled bytecode.
     fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph<'static> {
@@ -300,7 +303,7 @@ mod tests {
 
         let (ssa, cfg) = build_ssa(asm, 0, 0);
 
-        let mut sccp = ConstantPropagation::new();
+        let mut sccp = ConstantPropagation::new(PointerSize::Bit64);
         let results = sccp.analyze(&ssa, &cfg);
 
         // The entry block should be executable
@@ -343,7 +346,7 @@ mod tests {
 
         let (ssa, cfg) = build_ssa(asm, 0, 1);
 
-        let mut sccp = ConstantPropagation::new();
+        let mut sccp = ConstantPropagation::new(PointerSize::Bit64);
         let results = sccp.analyze(&ssa, &cfg);
 
         // Entry block should be executable
@@ -384,7 +387,7 @@ mod tests {
 
         let (ssa, cfg) = build_ssa(asm, 1, 1);
 
-        let mut sccp = ConstantPropagation::new();
+        let mut sccp = ConstantPropagation::new(PointerSize::Bit64);
         let results = sccp.analyze(&ssa, &cfg);
 
         // All blocks should be executable

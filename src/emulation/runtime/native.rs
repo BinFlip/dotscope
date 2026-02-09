@@ -547,14 +547,14 @@ mod tests {
             runtime::{HookContext, HookManager, PreHookResult},
             EmValue,
         },
-        metadata::token::Token,
+        metadata::{token::Token, typesystem::PointerSize},
         test::emulation::create_test_thread,
     };
 
     use super::register;
 
     fn create_native_context<'a>(dll: &'a str, function: &'a str) -> HookContext<'a> {
-        HookContext::native(Token::new(0x06000001), dll, function)
+        HookContext::native(Token::new(0x06000001), dll, function, PointerSize::Bit64)
     }
 
     #[test]

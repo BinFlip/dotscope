@@ -13,7 +13,10 @@ use std::sync::Arc;
 
 use crate::{
     emulation::{EmValue, EmulationThread},
-    metadata::{token::Token, typesystem::CilFlavor},
+    metadata::{
+        token::Token,
+        typesystem::{CilFlavor, PointerSize},
+    },
 };
 
 /// Priority level for hooks, controlling evaluation order.
@@ -165,6 +168,9 @@ pub struct HookContext<'a> {
     ///
     /// `None` if type information could not be resolved or the method returns void.
     pub return_type: Option<CilFlavor>,
+
+    /// Target pointer size for native int/uint types.
+    pub pointer_size: PointerSize,
 }
 
 impl<'a> HookContext<'a> {
@@ -179,12 +185,14 @@ impl<'a> HookContext<'a> {
     /// * `namespace` - The method's namespace
     /// * `type_name` - The containing type's name
     /// * `method_name` - The method's name
+    /// * `ptr_size` - Target pointer size for native int/uint types
     #[must_use]
     pub fn new(
         method_token: Token,
         namespace: &'a str,
         type_name: &'a str,
         method_name: &'a str,
+        ptr_size: PointerSize,
     ) -> Self {
         Self {
             method_token,
@@ -198,6 +206,7 @@ impl<'a> HookContext<'a> {
             dll_name: None,
             param_types: None,
             return_type: None,
+            pointer_size: ptr_size,
         }
     }
 
@@ -208,8 +217,14 @@ impl<'a> HookContext<'a> {
     /// * `method_token` - The token of the method being called
     /// * `dll_name` - The name of the native DLL
     /// * `function_name` - The native function name
+    /// * `ptr_size` - Target pointer size for native int/uint types
     #[must_use]
-    pub fn native(method_token: Token, dll_name: &'a str, function_name: &'a str) -> Self {
+    pub fn native(
+        method_token: Token,
+        dll_name: &'a str,
+        function_name: &'a str,
+        ptr_size: PointerSize,
+    ) -> Self {
         Self {
             method_token,
             namespace: "",
@@ -222,6 +237,7 @@ impl<'a> HookContext<'a> {
             dll_name: Some(dll_name),
             param_types: None,
             return_type: None,
+            pointer_size: ptr_size,
         }
     }
 
@@ -450,9 +466,15 @@ mod tests {
 
     #[test]
     fn test_hook_context_builder() {
-        let ctx = HookContext::new(Token::new(0x06000001), "System", "String", "Concat")
-            .with_internal(false)
-            .with_return_type(Some(CilFlavor::String));
+        let ctx = HookContext::new(
+            Token::new(0x06000001),
+            "System",
+            "String",
+            "Concat",
+            PointerSize::Bit64,
+        )
+        .with_internal(false)
+        .with_return_type(Some(CilFlavor::String));
 
         assert_eq!(ctx.namespace, "System");
         assert_eq!(ctx.type_name, "String");

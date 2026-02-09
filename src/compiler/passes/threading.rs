@@ -43,7 +43,7 @@ use std::sync::Arc;
 use crate::{
     analysis::{ConstValue, SsaCfg, SsaEvaluator, SsaFunction, SsaOp, SsaVarId},
     compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
-    metadata::token::Token,
+    metadata::{token::Token, typesystem::PointerSize},
     CilObject, Result,
 };
 
@@ -83,8 +83,9 @@ impl JumpThreadingPass {
         condition: SsaVarId,
         true_target: usize,
         false_target: usize,
+        ptr_size: PointerSize,
     ) -> Option<usize> {
-        let mut eval = SsaEvaluator::new(ssa);
+        let mut eval = SsaEvaluator::new(ssa, ptr_size);
 
         // Evaluate the predecessor block to establish any constant values
         eval.evaluate_block(pred_block);
@@ -178,7 +179,12 @@ impl JumpThreadingPass {
     }
 
     /// Runs jump threading on the SSA function.
-    fn run_threading(ssa: &mut SsaFunction, method_token: Token, changes: &mut EventLog) -> bool {
+    fn run_threading(
+        ssa: &mut SsaFunction,
+        method_token: Token,
+        changes: &mut EventLog,
+        ptr_size: PointerSize,
+    ) -> bool {
         if ssa.is_empty() {
             return false;
         }
@@ -208,6 +214,7 @@ impl JumpThreadingPass {
                     *condition,
                     *true_target,
                     *false_target,
+                    ptr_size,
                 ) {
                     // Only thread if we're actually changing the control flow
                     // (i.e., the predecessor doesn't already go directly to target)
@@ -259,10 +266,11 @@ impl SsaPass for JumpThreadingPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        assembly: &Arc<CilObject>,
     ) -> Result<bool> {
+        let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
         let mut changes = EventLog::new();
-        let changed = Self::run_threading(ssa, method_token, &mut changes);
+        let changed = Self::run_threading(ssa, method_token, &mut changes, ptr_size);
 
         if changed {
             ctx.events.merge(changes);

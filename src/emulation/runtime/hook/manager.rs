@@ -243,9 +243,11 @@ impl std::fmt::Debug for HookManager {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::HookPriority;
-    use crate::metadata::token::Token;
-    use crate::test::emulation::create_test_thread;
+    use crate::{
+        emulation::HookPriority,
+        metadata::{token::Token, typesystem::PointerSize},
+        test::emulation::create_test_thread,
+    };
 
     #[test]
     fn test_hook_manager_empty() {
@@ -293,7 +295,13 @@ mod tests {
     fn test_execute_no_match() {
         let manager = HookManager::new();
         let mut thread = create_test_thread();
-        let context = HookContext::new(Token::new(0x06000001), "System", "String", "Concat");
+        let context = HookContext::new(
+            Token::new(0x06000001),
+            "System",
+            "String",
+            "Concat",
+            PointerSize::Bit64,
+        );
 
         let outcome = manager
             .execute(&context, &mut thread, |_| Some(EmValue::I32(100)))
@@ -314,7 +322,13 @@ mod tests {
                 .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(42)))),
         );
 
-        let context = HookContext::new(Token::new(0x06000001), "System", "String", "Test");
+        let context = HookContext::new(
+            Token::new(0x06000001),
+            "System",
+            "String",
+            "Test",
+            PointerSize::Bit64,
+        );
         let original_called = std::sync::atomic::AtomicBool::new(false);
 
         let outcome = manager
@@ -352,7 +366,13 @@ mod tests {
                 }),
         );
 
-        let context = HookContext::new(Token::new(0x06000001), "System", "String", "Test");
+        let context = HookContext::new(
+            Token::new(0x06000001),
+            "System",
+            "String",
+            "Test",
+            PointerSize::Bit64,
+        );
         let outcome = manager
             .execute(
                 &context,
@@ -379,7 +399,13 @@ mod tests {
                 .pre(|_ctx, _thread| PreHookResult::Error("test error".to_string())),
         );
 
-        let context = HookContext::new(Token::new(0x06000001), "System", "String", "Test");
+        let context = HookContext::new(
+            Token::new(0x06000001),
+            "System",
+            "String",
+            "Test",
+            PointerSize::Bit64,
+        );
         let result = manager.execute(&context, &mut thread, |_| Some(EmValue::I32(100)));
 
         // Should return an error, not an outcome
@@ -401,7 +427,13 @@ mod tests {
                 .post(|_ctx, _thread, _result| PostHookResult::Keep),
         );
 
-        let context = HookContext::new(Token::new(0x06000001), "System", "String", "Test");
+        let context = HookContext::new(
+            Token::new(0x06000001),
+            "System",
+            "String",
+            "Test",
+            PointerSize::Bit64,
+        );
         let outcome = manager
             .execute(&context, &mut thread, |_| Some(EmValue::I32(123)))
             .unwrap();
@@ -424,7 +456,13 @@ mod tests {
                 .post(|_ctx, _thread, _result| PostHookResult::Error("post error".to_string())),
         );
 
-        let context = HookContext::new(Token::new(0x06000001), "System", "String", "Test");
+        let context = HookContext::new(
+            Token::new(0x06000001),
+            "System",
+            "String",
+            "Test",
+            PointerSize::Bit64,
+        );
         let result = manager.execute(&context, &mut thread, |_| Some(EmValue::I32(100)));
 
         // Should return an error, not an outcome

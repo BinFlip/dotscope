@@ -280,7 +280,7 @@ fn gchandle_from_intptr_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::runtime::hook::HookManager;
+    use crate::{emulation::runtime::hook::HookManager, metadata::typesystem::PointerSize};
 
     #[test]
     fn test_register_hooks() {
@@ -300,6 +300,7 @@ mod tests {
             "System.Runtime.InteropServices",
             "GCHandle",
             "Alloc",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -321,6 +322,7 @@ mod tests {
             "System.Runtime.InteropServices",
             "GCHandle",
             "AddrOfPinnedObject",
+            PointerSize::Bit64,
         )
         .with_this(Some(&EmValue::NativeInt(0x1000)));
 
@@ -342,6 +344,7 @@ mod tests {
             "System.Runtime.InteropServices",
             "GCHandle",
             "get_Target",
+            PointerSize::Bit64,
         )
         .with_this(Some(&EmValue::NativeInt(42)));
 
@@ -363,6 +366,7 @@ mod tests {
             "System.Runtime.InteropServices",
             "GCHandle",
             "get_Target",
+            PointerSize::Bit64,
         )
         .with_this(Some(&EmValue::NativeInt(0)));
 
@@ -387,6 +391,7 @@ mod tests {
             "System.Runtime.InteropServices",
             "GCHandle",
             "Alloc",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -402,6 +407,7 @@ mod tests {
             "System.Runtime.InteropServices",
             "GCHandle",
             "get_Target",
+            PointerSize::Bit64,
         )
         .with_this(Some(&handle));
 

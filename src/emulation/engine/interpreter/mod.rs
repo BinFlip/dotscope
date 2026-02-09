@@ -21,7 +21,10 @@ use crate::{
         thread::EmulationThread,
         BinaryOp, CompareOp, ConversionType, EmValue, UnaryOp,
     },
-    metadata::{token::Token, typesystem::CilFlavor},
+    metadata::{
+        token::Token,
+        typesystem::{CilFlavor, PointerSize},
+    },
     Result,
 };
 
@@ -37,7 +40,7 @@ use crate::{
 /// use dotscope::emulation::{Interpreter, EmulationContext, EmulationLimits};
 ///
 /// let limits = EmulationLimits::default();
-/// let mut interpreter = Interpreter::new(limits, address_space);
+/// let mut interpreter = Interpreter::new(limits, address_space, PointerSize::Bit64);
 ///
 /// // Execute instructions one at a time
 /// loop {
@@ -72,21 +75,30 @@ pub struct Interpreter {
 
     /// Shared address space for memory operations (PE images, mapped data, heap, statics).
     address_space: Arc<AddressSpace>,
+
+    /// Target pointer size for native int/uint operations.
+    pointer_size: PointerSize,
 }
 
 impl Interpreter {
-    /// Creates a new interpreter with the given execution limits and address space.
+    /// Creates a new interpreter with the given execution limits, address space,
+    /// and target pointer size.
     ///
     /// # Arguments
     ///
     /// * `limits` - Execution limits to enforce during emulation.
     /// * `address_space` - Shared address space for all memory operations.
+    /// * `pointer_size` - Target pointer size for native int/uint types.
     ///
     /// # Returns
     ///
     /// A new interpreter ready for execution.
     #[must_use]
-    pub fn new(limits: EmulationLimits, address_space: Arc<AddressSpace>) -> Self {
+    pub fn new(
+        limits: EmulationLimits,
+        address_space: Arc<AddressSpace>,
+        pointer_size: PointerSize,
+    ) -> Self {
         Interpreter {
             ip: InstructionPointer::new(Token::new(0)),
             limits,
@@ -95,6 +107,7 @@ impl Interpreter {
             volatile_prefix: false,
             unaligned_prefix: None,
             address_space,
+            pointer_size,
         }
     }
 
@@ -686,22 +699,37 @@ impl Interpreter {
                 Self::load_indirect_sized(thread, &self.address_space, &CilFlavor::I4, 4, false)
             } // ldind.u4
             0x4C => Self::load_indirect_sized(thread, &self.address_space, &CilFlavor::I8, 8, true), // ldind.i8
-            0x4D => Self::load_indirect_sized(thread, &self.address_space, &CilFlavor::I, 8, true), // ldind.i
+            0x4D => Self::load_indirect_sized(
+                thread,
+                &self.address_space,
+                &CilFlavor::I,
+                self.pointer_size.bytes(),
+                true,
+            ), // ldind.i
             0x4E => {
                 Self::load_indirect_sized(thread, &self.address_space, &CilFlavor::R4, 4, false)
             } // ldind.r4
             0x4F => {
                 Self::load_indirect_sized(thread, &self.address_space, &CilFlavor::R8, 8, false)
             } // ldind.r8
-            0x50 => {
-                Self::load_indirect_sized(thread, &self.address_space, &CilFlavor::Object, 8, false)
-            } // ldind.ref
+            0x50 => Self::load_indirect_sized(
+                thread,
+                &self.address_space,
+                &CilFlavor::Object,
+                self.pointer_size.bytes(),
+                false,
+            ), // ldind.ref
 
             // ================================================================
             // Indirect Store (0x51 - 0x57)
             // All small integer stores (i1, i2, i4) take I32 per CIL spec
             // ================================================================
-            0x51 => Self::store_indirect_sized(thread, &self.address_space, &CilFlavor::Object, 8), // stind.ref
+            0x51 => Self::store_indirect_sized(
+                thread,
+                &self.address_space,
+                &CilFlavor::Object,
+                self.pointer_size.bytes(),
+            ), // stind.ref
             0x52 => Self::store_indirect_sized(thread, &self.address_space, &CilFlavor::I4, 1), // stind.i1
             0x53 => Self::store_indirect_sized(thread, &self.address_space, &CilFlavor::I4, 2), // stind.i2
             0x54 => Self::store_indirect_sized(thread, &self.address_space, &CilFlavor::I4, 4), // stind.i4
@@ -712,39 +740,39 @@ impl Interpreter {
             // ================================================================
             // Arithmetic (0x58 - 0x66)
             // ================================================================
-            0x58 => Self::binary_op(thread, BinaryOp::Add), // add
-            0x59 => Self::binary_op(thread, BinaryOp::Sub), // sub
-            0x5A => Self::binary_op(thread, BinaryOp::Mul), // mul
-            0x5B => Self::binary_op(thread, BinaryOp::Div), // div
-            0x5C => Self::binary_op(thread, BinaryOp::DivUn), // div.un
-            0x5D => Self::binary_op(thread, BinaryOp::Rem), // rem
-            0x5E => Self::binary_op(thread, BinaryOp::RemUn), // rem.un
-            0x5F => Self::binary_op(thread, BinaryOp::And), // and
-            0x60 => Self::binary_op(thread, BinaryOp::Or),  // or
-            0x61 => Self::binary_op(thread, BinaryOp::Xor), // xor
-            0x62 => Self::binary_op(thread, BinaryOp::Shl), // shl
-            0x63 => Self::binary_op(thread, BinaryOp::Shr), // shr
-            0x64 => Self::binary_op(thread, BinaryOp::ShrUn), // shr.un
-            0x65 => Self::unary_op(thread, UnaryOp::Neg),   // neg
-            0x66 => Self::unary_op(thread, UnaryOp::Not),   // not
+            0x58 => Self::binary_op(thread, BinaryOp::Add, self.pointer_size), // add
+            0x59 => Self::binary_op(thread, BinaryOp::Sub, self.pointer_size), // sub
+            0x5A => Self::binary_op(thread, BinaryOp::Mul, self.pointer_size), // mul
+            0x5B => Self::binary_op(thread, BinaryOp::Div, self.pointer_size), // div
+            0x5C => Self::binary_op(thread, BinaryOp::DivUn, self.pointer_size), // div.un
+            0x5D => Self::binary_op(thread, BinaryOp::Rem, self.pointer_size), // rem
+            0x5E => Self::binary_op(thread, BinaryOp::RemUn, self.pointer_size), // rem.un
+            0x5F => Self::binary_op(thread, BinaryOp::And, self.pointer_size), // and
+            0x60 => Self::binary_op(thread, BinaryOp::Or, self.pointer_size),  // or
+            0x61 => Self::binary_op(thread, BinaryOp::Xor, self.pointer_size), // xor
+            0x62 => Self::binary_op(thread, BinaryOp::Shl, self.pointer_size), // shl
+            0x63 => Self::binary_op(thread, BinaryOp::Shr, self.pointer_size), // shr
+            0x64 => Self::binary_op(thread, BinaryOp::ShrUn, self.pointer_size), // shr.un
+            0x65 => Self::unary_op(thread, UnaryOp::Neg, self.pointer_size),   // neg
+            0x66 => Self::unary_op(thread, UnaryOp::Not, self.pointer_size),   // not
 
             // ================================================================
             // Conversions (0x67 - 0x76, 0xD1 - 0xD3)
             // ================================================================
-            0x67 => Self::convert(thread, ConversionType::I1), // conv.i1
-            0x68 => Self::convert(thread, ConversionType::I2), // conv.i2
-            0x69 => Self::convert(thread, ConversionType::I4), // conv.i4
-            0x6A => Self::convert(thread, ConversionType::I8), // conv.i8
-            0x6B => Self::convert(thread, ConversionType::R4), // conv.r4
-            0x6C => Self::convert(thread, ConversionType::R8), // conv.r8
-            0x6D => Self::convert(thread, ConversionType::U4), // conv.u4
-            0x6E => Self::convert(thread, ConversionType::U8), // conv.u8
-            0x76 => Self::convert(thread, ConversionType::RUn), // conv.r.un
+            0x67 => Self::convert(thread, ConversionType::I1, self.pointer_size), // conv.i1
+            0x68 => Self::convert(thread, ConversionType::I2, self.pointer_size), // conv.i2
+            0x69 => Self::convert(thread, ConversionType::I4, self.pointer_size), // conv.i4
+            0x6A => Self::convert(thread, ConversionType::I8, self.pointer_size), // conv.i8
+            0x6B => Self::convert(thread, ConversionType::R4, self.pointer_size), // conv.r4
+            0x6C => Self::convert(thread, ConversionType::R8, self.pointer_size), // conv.r8
+            0x6D => Self::convert(thread, ConversionType::U4, self.pointer_size), // conv.u4
+            0x6E => Self::convert(thread, ConversionType::U8, self.pointer_size), // conv.u8
+            0x76 => Self::convert(thread, ConversionType::RUn, self.pointer_size), // conv.r.un
 
-            0xD1 => Self::convert(thread, ConversionType::U2), // conv.u2
-            0xD2 => Self::convert(thread, ConversionType::U1), // conv.u1
-            0xD3 => Self::convert(thread, ConversionType::I),  // conv.i
-            0xE0 => Self::convert(thread, ConversionType::U),  // conv.u
+            0xD1 => Self::convert(thread, ConversionType::U2, self.pointer_size), // conv.u2
+            0xD2 => Self::convert(thread, ConversionType::U1, self.pointer_size), // conv.u1
+            0xD3 => Self::convert(thread, ConversionType::I, self.pointer_size),  // conv.i
+            0xE0 => Self::convert(thread, ConversionType::U, self.pointer_size),  // conv.u
 
             // ================================================================
             // Load String (0x72)
@@ -905,7 +933,12 @@ impl Interpreter {
                     .ok_or_else(|| Self::invalid_operand(instruction, "branch target"))?;
                 Ok(StepResult::Leave { target })
             }
-            0xDF => Self::store_indirect_sized(thread, &self.address_space, &CilFlavor::I, 8), // stind.i
+            0xDF => Self::store_indirect_sized(
+                thread,
+                &self.address_space,
+                &CilFlavor::I,
+                self.pointer_size.bytes(),
+            ), // stind.i
 
             // ================================================================
             // Typed Reference Operations (0xC2, 0xC6)
@@ -947,18 +980,18 @@ impl Interpreter {
             // ================================================================
             // Overflow-checked conversions (0xD4, 0xD5)
             // ================================================================
-            0xD4 => Self::convert(thread, ConversionType::IOvf), // conv.ovf.i
-            0xD5 => Self::convert(thread, ConversionType::UOvf), // conv.ovf.u
+            0xD4 => Self::convert(thread, ConversionType::IOvf, self.pointer_size), // conv.ovf.i
+            0xD5 => Self::convert(thread, ConversionType::UOvf, self.pointer_size), // conv.ovf.u
 
             // ================================================================
             // Overflow-checked arithmetic (0xD6 - 0xDB)
             // ================================================================
-            0xD6 => Self::binary_op(thread, BinaryOp::AddOvf), // add.ovf
-            0xD7 => Self::binary_op(thread, BinaryOp::AddOvfUn), // add.ovf.un
-            0xD8 => Self::binary_op(thread, BinaryOp::MulOvf), // mul.ovf
-            0xD9 => Self::binary_op(thread, BinaryOp::MulOvfUn), // mul.ovf.un
-            0xDA => Self::binary_op(thread, BinaryOp::SubOvf), // sub.ovf
-            0xDB => Self::binary_op(thread, BinaryOp::SubOvfUn), // sub.ovf.un
+            0xD6 => Self::binary_op(thread, BinaryOp::AddOvf, self.pointer_size), // add.ovf
+            0xD7 => Self::binary_op(thread, BinaryOp::AddOvfUn, self.pointer_size), // add.ovf.un
+            0xD8 => Self::binary_op(thread, BinaryOp::MulOvf, self.pointer_size), // mul.ovf
+            0xD9 => Self::binary_op(thread, BinaryOp::MulOvfUn, self.pointer_size), // mul.ovf.un
+            0xDA => Self::binary_op(thread, BinaryOp::SubOvf, self.pointer_size), // sub.ovf
+            0xDB => Self::binary_op(thread, BinaryOp::SubOvfUn, self.pointer_size), // sub.ovf.un
 
             // ================================================================
             // Boxing (0x8C)
@@ -1235,28 +1268,28 @@ impl Interpreter {
             // ================================================================
             // Overflow-checked conversions (0xFE 0x82 - 0x8A)
             // ================================================================
-            0x82 => Self::convert(thread, ConversionType::I1Ovf), // conv.ovf.i1
-            0x83 => Self::convert(thread, ConversionType::U1Ovf), // conv.ovf.u1
-            0x84 => Self::convert(thread, ConversionType::I2Ovf), // conv.ovf.i2
-            0x85 => Self::convert(thread, ConversionType::U2Ovf), // conv.ovf.u2
-            0x86 => Self::convert(thread, ConversionType::I4Ovf), // conv.ovf.i4
-            0x87 => Self::convert(thread, ConversionType::U4Ovf), // conv.ovf.u4
-            0x88 => Self::convert(thread, ConversionType::I8Ovf), // conv.ovf.i8
-            0x89 => Self::convert(thread, ConversionType::U8Ovf), // conv.ovf.u8
-            0x8A => Self::convert(thread, ConversionType::IOvf),  // conv.ovf.i
-            0x8B => Self::convert(thread, ConversionType::UOvf),  // conv.ovf.u
+            0x82 => Self::convert(thread, ConversionType::I1Ovf, self.pointer_size), // conv.ovf.i1
+            0x83 => Self::convert(thread, ConversionType::U1Ovf, self.pointer_size), // conv.ovf.u1
+            0x84 => Self::convert(thread, ConversionType::I2Ovf, self.pointer_size), // conv.ovf.i2
+            0x85 => Self::convert(thread, ConversionType::U2Ovf, self.pointer_size), // conv.ovf.u2
+            0x86 => Self::convert(thread, ConversionType::I4Ovf, self.pointer_size), // conv.ovf.i4
+            0x87 => Self::convert(thread, ConversionType::U4Ovf, self.pointer_size), // conv.ovf.u4
+            0x88 => Self::convert(thread, ConversionType::I8Ovf, self.pointer_size), // conv.ovf.i8
+            0x89 => Self::convert(thread, ConversionType::U8Ovf, self.pointer_size), // conv.ovf.u8
+            0x8A => Self::convert(thread, ConversionType::IOvf, self.pointer_size),  // conv.ovf.i
+            0x8B => Self::convert(thread, ConversionType::UOvf, self.pointer_size),  // conv.ovf.u
 
             // conv.ovf.*.un variants
-            0xB3 => Self::convert(thread, ConversionType::I1OvfUn), // conv.ovf.i1.un
-            0xB4 => Self::convert(thread, ConversionType::U1OvfUn), // conv.ovf.u1.un
-            0xB5 => Self::convert(thread, ConversionType::I2OvfUn), // conv.ovf.i2.un
-            0xB6 => Self::convert(thread, ConversionType::U2OvfUn), // conv.ovf.u2.un
-            0xB7 => Self::convert(thread, ConversionType::I4OvfUn), // conv.ovf.i4.un
-            0xB8 => Self::convert(thread, ConversionType::U4OvfUn), // conv.ovf.u4.un
-            0xB9 => Self::convert(thread, ConversionType::I8OvfUn), // conv.ovf.i8.un
-            0xBA => Self::convert(thread, ConversionType::U8OvfUn), // conv.ovf.u8.un
-            0xBB => Self::convert(thread, ConversionType::IOvfUn),  // conv.ovf.i.un
-            0xBC => Self::convert(thread, ConversionType::UOvfUn),  // conv.ovf.u.un
+            0xB3 => Self::convert(thread, ConversionType::I1OvfUn, self.pointer_size), // conv.ovf.i1.un
+            0xB4 => Self::convert(thread, ConversionType::U1OvfUn, self.pointer_size), // conv.ovf.u1.un
+            0xB5 => Self::convert(thread, ConversionType::I2OvfUn, self.pointer_size), // conv.ovf.i2.un
+            0xB6 => Self::convert(thread, ConversionType::U2OvfUn, self.pointer_size), // conv.ovf.u2.un
+            0xB7 => Self::convert(thread, ConversionType::I4OvfUn, self.pointer_size), // conv.ovf.i4.un
+            0xB8 => Self::convert(thread, ConversionType::U4OvfUn, self.pointer_size), // conv.ovf.u4.un
+            0xB9 => Self::convert(thread, ConversionType::I8OvfUn, self.pointer_size), // conv.ovf.i8.un
+            0xBA => Self::convert(thread, ConversionType::U8OvfUn, self.pointer_size), // conv.ovf.u8.un
+            0xBB => Self::convert(thread, ConversionType::IOvfUn, self.pointer_size), // conv.ovf.i.un
+            0xBC => Self::convert(thread, ConversionType::UOvfUn, self.pointer_size), // conv.ovf.u.un
 
             // ================================================================
             // Unimplemented

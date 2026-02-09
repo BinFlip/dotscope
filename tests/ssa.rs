@@ -16,7 +16,10 @@ use dotscope::{
         SsaVarId, SymbolicEvaluator, SymbolicExpr,
     },
     assembly::{decode_blocks, InstructionAssembler},
-    metadata::{method::ExceptionHandlerFlags, token::Token, validation::ValidationConfig},
+    metadata::{
+        method::ExceptionHandlerFlags, token::Token, typesystem::PointerSize,
+        validation::ValidationConfig,
+    },
     CilObject, Result,
 };
 
@@ -207,7 +210,7 @@ fn test_symbolic_eval_constant() -> Result<()> {
     asm.ldc_i4(42)?.ret()?;
 
     let ssa = ssa_from_asm(asm, 0, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     // Evaluate block 0
     eval.evaluate_block(0);
@@ -225,7 +228,7 @@ fn test_symbolic_eval_arithmetic() -> Result<()> {
     asm.ldarg_0()?.ldarg_1()?.add()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 2, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     // Set symbolic values for arguments (look up by origin, not index)
     eval.set_symbolic(arg_var_id(&ssa, 0), "arg0");
@@ -246,7 +249,7 @@ fn test_symbolic_eval_constant_folding() -> Result<()> {
     asm.ldc_i4(10)?.ldc_i4(32)?.add()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 0, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.evaluate_block(0);
 
@@ -270,7 +273,7 @@ fn test_symbolic_eval_with_set_constant() -> Result<()> {
     asm.ldarg_0()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 1, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     // Set arg0 to constant 100
     eval.set_constant(SsaVarId::from_index(0), ConstValue::I32(100));
@@ -839,7 +842,7 @@ fn test_symbolic_eval_undefined_variable() -> Result<()> {
     asm.ldarg_0()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 1, 0)?;
-    let eval = SymbolicEvaluator::new(&ssa);
+    let eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     // Variable that was never set should return None
     assert!(eval.get_expression(SsaVarId::from_index(999)).is_none());
@@ -853,7 +856,7 @@ fn test_symbolic_eval_get_simplified() -> Result<()> {
     asm.ldc_i4(10)?.ldc_i4(5)?.add()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 0, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     // Set a constant
     eval.set_constant(SsaVarId::from_index(0), ConstValue::I32(42));
@@ -880,7 +883,7 @@ fn test_symbolic_eval_multiple_blocks() -> Result<()> {
         .ret()?;
 
     let ssa = ssa_from_asm(asm, 1, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     // Evaluate multiple blocks
     eval.evaluate_blocks(&[0, 1, 2]);
@@ -897,7 +900,7 @@ fn test_symbolic_eval_invalid_block() -> Result<()> {
     asm.ret()?;
 
     let ssa = ssa_from_asm(asm, 0, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     // Evaluating invalid block should not panic
     eval.evaluate_block(999);
@@ -912,13 +915,13 @@ fn test_symbolic_eval_negation() -> Result<()> {
     asm.ldc_i4(5)?.neg()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 0, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.evaluate_block(0);
 
     // Find the negation result - should be constant -5 after simplification
     let has_neg_result = eval.expressions().values().any(|expr| {
-        let simplified = expr.simplify();
+        let simplified = expr.simplify(PointerSize::Bit64);
         simplified.as_constant().and_then(ConstValue::as_i32) == Some(-5)
     });
     assert!(has_neg_result, "Expected neg(5) to simplify to -5");
@@ -933,7 +936,7 @@ fn test_symbolic_eval_division() -> Result<()> {
     asm.ldarg_0()?.ldarg_1()?.div()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 2, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.set_symbolic(arg_var_id(&ssa, 0), "a");
     eval.set_symbolic(arg_var_id(&ssa, 1), "b");
@@ -955,7 +958,7 @@ fn test_symbolic_eval_division() -> Result<()> {
     let div_result = eval.expressions().values().find_map(|expr| {
         let vars = expr.named_variables();
         if vars.contains("a") && vars.contains("b") {
-            expr.evaluate_named(&bindings)
+            expr.evaluate_named(&bindings, PointerSize::Bit64)
         } else {
             None
         }
@@ -976,7 +979,7 @@ fn test_symbolic_eval_comparison() -> Result<()> {
     asm.ldarg_0()?.ldarg_1()?.ceq()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 2, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.set_symbolic(arg_var_id(&ssa, 0), "x");
     eval.set_symbolic(arg_var_id(&ssa, 1), "y");
@@ -1001,7 +1004,7 @@ fn test_symbolic_eval_comparison() -> Result<()> {
             .into_iter()
             .collect();
     assert_eq!(
-        expr.evaluate_named(&equal_bindings)
+        expr.evaluate_named(&equal_bindings, PointerSize::Bit64)
             .and_then(|v| v.as_i32()),
         Some(1),
         "5 == 5 should be 1"
@@ -1013,7 +1016,7 @@ fn test_symbolic_eval_comparison() -> Result<()> {
             .into_iter()
             .collect();
     assert_eq!(
-        expr.evaluate_named(&unequal_bindings)
+        expr.evaluate_named(&unequal_bindings, PointerSize::Bit64)
             .and_then(|v| v.as_i32()),
         Some(0),
         "5 == 10 should be 0"
@@ -1034,7 +1037,7 @@ fn test_symbolic_eval_xor_pattern() -> Result<()> {
         .ret()?;
 
     let ssa = ssa_from_asm(asm, 1, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.set_symbolic(arg_var_id(&ssa, 0), "input");
 
@@ -1061,26 +1064,32 @@ fn test_symbolic_eval_xor_pattern() -> Result<()> {
     let bindings: HashMap<&str, ConstValue> =
         [("input", ConstValue::I32(42))].into_iter().collect();
 
-    let any_correct = exprs_with_input
-        .iter()
-        .any(|expr| expr.evaluate_named(&bindings).and_then(|v| v.as_i32()) == Some(42));
+    let any_correct = exprs_with_input.iter().any(|expr| {
+        expr.evaluate_named(&bindings, PointerSize::Bit64)
+            .and_then(|v| v.as_i32())
+            == Some(42)
+    });
     assert!(any_correct, "x ^ k ^ k should simplify to x (expected 42)");
 
     // Verify with different values
     let bindings2: HashMap<&str, ConstValue> = [("input", ConstValue::I32(0x7FFFFFFF))]
         .into_iter()
         .collect();
-    let any_correct2 = exprs_with_input
-        .iter()
-        .any(|expr| expr.evaluate_named(&bindings2).and_then(|v| v.as_i32()) == Some(0x7FFFFFFF));
+    let any_correct2 = exprs_with_input.iter().any(|expr| {
+        expr.evaluate_named(&bindings2, PointerSize::Bit64)
+            .and_then(|v| v.as_i32())
+            == Some(0x7FFFFFFF)
+    });
     assert!(any_correct2, "XOR self-inverse property should hold");
 
     // Test with negative value
     let bindings3: HashMap<&str, ConstValue> =
         [("input", ConstValue::I32(-1))].into_iter().collect();
-    let any_correct3 = exprs_with_input
-        .iter()
-        .any(|expr| expr.evaluate_named(&bindings3).and_then(|v| v.as_i32()) == Some(-1));
+    let any_correct3 = exprs_with_input.iter().any(|expr| {
+        expr.evaluate_named(&bindings3, PointerSize::Bit64)
+            .and_then(|v| v.as_i32())
+            == Some(-1)
+    });
     assert!(any_correct3, "XOR with -1 should return -1");
 
     Ok(())
@@ -1093,7 +1102,7 @@ fn test_symbolic_eval_copy_operation() -> Result<()> {
     asm.ldarg_0()?.dup()?.add()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 1, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.set_symbolic(arg_var_id(&ssa, 0), "x");
 
@@ -1111,14 +1120,16 @@ fn test_symbolic_eval_copy_operation() -> Result<()> {
     // Test: x + x should equal 2*x
     let bindings: HashMap<&str, ConstValue> = [("x", ConstValue::I32(7))].into_iter().collect();
     assert_eq!(
-        expr.evaluate_named(&bindings).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(14),
         "7 + 7 = 14"
     );
 
     let bindings2: HashMap<&str, ConstValue> = [("x", ConstValue::I32(-5))].into_iter().collect();
     assert_eq!(
-        expr.evaluate_named(&bindings2).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings2, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(-10),
         "-5 + -5 = -10"
     );
@@ -1138,7 +1149,7 @@ fn test_symbolic_eval_shift_operations() -> Result<()> {
         .ret()?;
 
     let ssa = ssa_from_asm(asm, 1, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.set_symbolic(arg_var_id(&ssa, 0), "x");
 
@@ -1157,7 +1168,8 @@ fn test_symbolic_eval_shift_operations() -> Result<()> {
     // Test: (10 << 2) >> 1 = 40 >> 1 = 20
     let bindings: HashMap<&str, ConstValue> = [("x", ConstValue::I32(10))].into_iter().collect();
     assert_eq!(
-        expr.evaluate_named(&bindings).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(20),
         "(10 << 2) >> 1 = 20"
     );
@@ -1165,7 +1177,8 @@ fn test_symbolic_eval_shift_operations() -> Result<()> {
     // Test: (3 << 2) >> 1 = 12 >> 1 = 6
     let bindings2: HashMap<&str, ConstValue> = [("x", ConstValue::I32(3))].into_iter().collect();
     assert_eq!(
-        expr.evaluate_named(&bindings2).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings2, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(6),
         "(3 << 2) >> 1 = 6"
     );
@@ -1185,7 +1198,7 @@ fn test_symbolic_eval_bitwise_and_or() -> Result<()> {
         .ret()?;
 
     let ssa = ssa_from_asm(asm, 1, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.set_symbolic(arg_var_id(&ssa, 0), "x");
 
@@ -1205,7 +1218,8 @@ fn test_symbolic_eval_bitwise_and_or() -> Result<()> {
     let bindings: HashMap<&str, ConstValue> =
         [("x", ConstValue::I32(0x1234))].into_iter().collect();
     assert_eq!(
-        expr.evaluate_named(&bindings).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(0x134),
         "(0x1234 & 0xFF) | 0x100 = 0x134"
     );
@@ -1213,7 +1227,8 @@ fn test_symbolic_eval_bitwise_and_or() -> Result<()> {
     // Test: (0xAB & 0xFF) | 0x100 = 0xAB | 0x100 = 0x1AB
     let bindings2: HashMap<&str, ConstValue> = [("x", ConstValue::I32(0xAB))].into_iter().collect();
     assert_eq!(
-        expr.evaluate_named(&bindings2).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings2, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(0x1AB),
         "(0xAB & 0xFF) | 0x100 = 0x1AB"
     );
@@ -1228,7 +1243,7 @@ fn test_symbolic_eval_remainder() -> Result<()> {
     asm.ldarg_0()?.ldc_i4(7)?.rem()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 1, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.set_symbolic(arg_var_id(&ssa, 0), "n");
 
@@ -1246,7 +1261,8 @@ fn test_symbolic_eval_remainder() -> Result<()> {
     // Test: 23 % 7 = 2
     let bindings: HashMap<&str, ConstValue> = [("n", ConstValue::I32(23))].into_iter().collect();
     assert_eq!(
-        expr.evaluate_named(&bindings).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(2),
         "23 % 7 = 2"
     );
@@ -1254,7 +1270,8 @@ fn test_symbolic_eval_remainder() -> Result<()> {
     // Test: 14 % 7 = 0
     let bindings2: HashMap<&str, ConstValue> = [("n", ConstValue::I32(14))].into_iter().collect();
     assert_eq!(
-        expr.evaluate_named(&bindings2).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings2, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(0),
         "14 % 7 = 0"
     );
@@ -1262,7 +1279,8 @@ fn test_symbolic_eval_remainder() -> Result<()> {
     // Test: -10 % 7 = -3 (C-style signed remainder)
     let bindings3: HashMap<&str, ConstValue> = [("n", ConstValue::I32(-10))].into_iter().collect();
     assert_eq!(
-        expr.evaluate_named(&bindings3).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings3, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(-3),
         "-10 % 7 = -3"
     );
@@ -1277,7 +1295,7 @@ fn test_symbolic_eval_conversion() -> Result<()> {
     asm.ldarg_0()?.conv_i8()?.conv_i4()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 1, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.set_symbolic(arg_var_id(&ssa, 0), "x");
 
@@ -1302,7 +1320,7 @@ fn test_symbolic_eval_conversion() -> Result<()> {
     let bindings: HashMap<&str, ConstValue> = [("x", ConstValue::I32(42))].into_iter().collect();
     let result = conversion_result
         .unwrap()
-        .evaluate_named(&bindings)
+        .evaluate_named(&bindings, PointerSize::Bit64)
         .and_then(|v| v.as_i32());
     assert_eq!(
         result,
@@ -1862,7 +1880,7 @@ fn test_symbolic_expr_complex_computation() -> Result<()> {
         .ret()?;
 
     let ssa = ssa_from_asm(asm, 2, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.set_symbolic(arg_var_id(&ssa, 0), "x");
     eval.set_symbolic(arg_var_id(&ssa, 1), "y");
@@ -1887,7 +1905,8 @@ fn test_symbolic_expr_complex_computation() -> Result<()> {
             .into_iter()
             .collect();
     assert_eq!(
-        expr.evaluate_named(&bindings).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(9),
         "((5+1)*2) - (9/3) = 9"
     );
@@ -1898,7 +1917,8 @@ fn test_symbolic_expr_complex_computation() -> Result<()> {
             .into_iter()
             .collect();
     assert_eq!(
-        expr.evaluate_named(&bindings2).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings2, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(2),
         "((0+1)*2) - (0/3) = 2"
     );
@@ -1909,7 +1929,8 @@ fn test_symbolic_expr_complex_computation() -> Result<()> {
             .into_iter()
             .collect();
     assert_eq!(
-        expr.evaluate_named(&bindings3).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings3, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(12),
         "((10+1)*2) - (30/3) = 12"
     );
@@ -1924,7 +1945,7 @@ fn test_symbolic_eval_cgt_unsigned() -> Result<()> {
     asm.ldarg_0()?.ldarg_1()?.cgt_un()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 2, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.set_symbolic(arg_var_id(&ssa, 0), "a");
     eval.set_symbolic(arg_var_id(&ssa, 1), "b");
@@ -1946,7 +1967,8 @@ fn test_symbolic_eval_cgt_unsigned() -> Result<()> {
             .into_iter()
             .collect();
     assert_eq!(
-        expr.evaluate_named(&bindings1).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings1, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(1),
         "10 >u 5 should be 1"
     );
@@ -1957,7 +1979,8 @@ fn test_symbolic_eval_cgt_unsigned() -> Result<()> {
             .into_iter()
             .collect();
     assert_eq!(
-        expr.evaluate_named(&bindings2).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings2, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(0),
         "5 >u 10 should be 0"
     );
@@ -1968,7 +1991,8 @@ fn test_symbolic_eval_cgt_unsigned() -> Result<()> {
             .into_iter()
             .collect();
     assert_eq!(
-        expr.evaluate_named(&bindings3).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings3, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(1),
         "-1 >u 1 should be 1 (unsigned)"
     );
@@ -1983,7 +2007,7 @@ fn test_symbolic_eval_clt_unsigned() -> Result<()> {
     asm.ldarg_0()?.ldarg_1()?.clt_un()?.ret()?;
 
     let ssa = ssa_from_asm(asm, 2, 0)?;
-    let mut eval = SymbolicEvaluator::new(&ssa);
+    let mut eval = SymbolicEvaluator::new(&ssa, PointerSize::Bit64);
 
     eval.set_symbolic(arg_var_id(&ssa, 0), "a");
     eval.set_symbolic(arg_var_id(&ssa, 1), "b");
@@ -2005,7 +2029,8 @@ fn test_symbolic_eval_clt_unsigned() -> Result<()> {
             .into_iter()
             .collect();
     assert_eq!(
-        expr.evaluate_named(&bindings1).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings1, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(1),
         "5 <u 10 should be 1"
     );
@@ -2016,7 +2041,8 @@ fn test_symbolic_eval_clt_unsigned() -> Result<()> {
             .into_iter()
             .collect();
     assert_eq!(
-        expr.evaluate_named(&bindings2).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings2, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(0),
         "10 <u 5 should be 0"
     );
@@ -2027,7 +2053,8 @@ fn test_symbolic_eval_clt_unsigned() -> Result<()> {
             .into_iter()
             .collect();
     assert_eq!(
-        expr.evaluate_named(&bindings3).and_then(|v| v.as_i32()),
+        expr.evaluate_named(&bindings3, PointerSize::Bit64)
+            .and_then(|v| v.as_i32()),
         Some(1),
         "1 <u -1 should be 1 (unsigned)"
     );

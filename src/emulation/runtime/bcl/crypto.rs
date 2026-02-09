@@ -418,10 +418,6 @@ fn register_bitconverter_hooks(manager: &mut HookManager) {
     );
 }
 
-// =============================================================================
-// Hash Algorithm Hooks
-// =============================================================================
-
 /// Hook for `System.Security.Cryptography.MD5.Create` method.
 ///
 /// Creates a new MD5 hash algorithm instance.
@@ -653,10 +649,6 @@ fn sha256_compute_hash_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
         _ => PreHookResult::Bypass(Some(EmValue::Null)),
     }
 }
-
-// =============================================================================
-// Symmetric Encryption Hooks
-// =============================================================================
 
 /// Hook for `System.Security.Cryptography.Aes.Create` method.
 ///
@@ -907,10 +899,6 @@ fn triple_des_create_pre(_ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
     }
 }
-
-// =============================================================================
-// Transform and CryptoStream Hooks
-// =============================================================================
 
 /// Hook for `System.Security.Cryptography.ICryptoTransform.TransformFinalBlock` method.
 ///
@@ -1236,10 +1224,6 @@ fn crypto_stream_flush_final_block_pre(
     PreHookResult::Bypass(None)
 }
 
-// =============================================================================
-// Key Derivation Hooks
-// =============================================================================
-
 /// Hook for `System.Security.Cryptography.PasswordDeriveBytes..ctor` constructor.
 ///
 /// Initializes PBKDF1-based key derivation with password and salt.
@@ -1468,10 +1452,6 @@ fn rfc2898_derive_bytes_get_bytes_pre(
     }
 }
 
-// =============================================================================
-// BitConverter Hooks
-// =============================================================================
-
 /// Hook for `System.BitConverter.GetBytes` method.
 ///
 /// Converts a primitive value to its byte array representation (little-endian).
@@ -1636,15 +1616,13 @@ fn bitconverter_to_uint32_pre(
     PreHookResult::Bypass(Some(EmValue::I32(signed_value)))
 }
 
-// =============================================================================
-// Tests
-// =============================================================================
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::runtime::hook::HookManager;
-    use crate::test::emulation::create_test_thread;
+    use crate::{
+        emulation::runtime::hook::HookManager, metadata::typesystem::PointerSize,
+        test::emulation::create_test_thread,
+    };
 
     #[test]
     fn test_register_hooks() {
@@ -1683,6 +1661,7 @@ mod tests {
             "System.Security.Cryptography",
             "SHA256",
             "Create",
+            PointerSize::Bit64,
         );
 
         let result = sha256_create_pre(&ctx, &mut thread);
@@ -1703,6 +1682,7 @@ mod tests {
             "System.Security.Cryptography",
             "SHA256",
             "ComputeHash",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -1724,6 +1704,7 @@ mod tests {
             "System.Security.Cryptography",
             "Aes",
             "Create",
+            PointerSize::Bit64,
         );
 
         let result = aes_create_pre(&ctx, &mut thread);
@@ -1741,6 +1722,7 @@ mod tests {
             "System.Security.Cryptography",
             "RijndaelManaged",
             ".ctor",
+            PointerSize::Bit64,
         );
 
         let result = rijndael_ctor_pre(&ctx, &mut thread);
@@ -1763,6 +1745,7 @@ mod tests {
             "System.Security.Cryptography",
             "SymmetricAlgorithm",
             "CreateDecryptor",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
 
@@ -1781,6 +1764,7 @@ mod tests {
             "System.Security.Cryptography",
             "SymmetricAlgorithm",
             "set_Key",
+            PointerSize::Bit64,
         )
         .with_args(&[EmValue::Null]);
 
@@ -1796,6 +1780,7 @@ mod tests {
             "System.Security.Cryptography",
             "SymmetricAlgorithm",
             "set_IV",
+            PointerSize::Bit64,
         )
         .with_args(&[EmValue::Null]);
 
@@ -1814,6 +1799,7 @@ mod tests {
             "System.Security.Cryptography",
             "ICryptoTransform",
             "TransformFinalBlock",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -1836,6 +1822,7 @@ mod tests {
             "System.Security.Cryptography",
             "Rfc2898DeriveBytes",
             "GetBytes",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -1853,8 +1840,14 @@ mod tests {
     fn test_bitconverter_get_bytes_hook() {
         let mut thread = create_test_thread();
         let args = [EmValue::I32(0x12345678)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "BitConverter", "GetBytes")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "BitConverter",
+            "GetBytes",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
 
         let result = bitconverter_get_bytes_pre(&ctx, &mut thread);
 
@@ -1875,8 +1868,14 @@ mod tests {
             .unwrap();
 
         let args = [EmValue::ObjectRef(bytes), EmValue::I32(0)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "BitConverter", "ToInt32")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "BitConverter",
+            "ToInt32",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
 
         let result = bitconverter_to_int32_pre(&ctx, &mut thread);
         assert!(matches!(
@@ -1894,8 +1893,14 @@ mod tests {
             .unwrap();
 
         let args = [EmValue::ObjectRef(bytes), EmValue::I32(0)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "BitConverter", "ToInt64")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "BitConverter",
+            "ToInt64",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
 
         let result = bitconverter_to_int64_pre(&ctx, &mut thread);
         assert!(matches!(
@@ -1913,8 +1918,14 @@ mod tests {
             .unwrap();
 
         let args = [EmValue::ObjectRef(bytes), EmValue::I32(0)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "BitConverter", "ToUInt32")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "BitConverter",
+            "ToUInt32",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
 
         let result = bitconverter_to_uint32_pre(&ctx, &mut thread);
         assert!(matches!(
@@ -1928,7 +1939,7 @@ mod tests {
 #[cfg(feature = "legacy-crypto")]
 mod legacy_tests {
     use super::*;
-    use crate::test::emulation::create_test_thread;
+    use crate::{metadata::typesystem::PointerSize, test::emulation::create_test_thread};
 
     #[test]
     fn test_md5_hash() {
@@ -1978,6 +1989,7 @@ mod legacy_tests {
             "System.Security.Cryptography",
             "MD5",
             "Create",
+            PointerSize::Bit64,
         );
 
         let result = md5_create_pre(&ctx, &mut thread);
@@ -1998,6 +2010,7 @@ mod legacy_tests {
             "System.Security.Cryptography",
             "MD5",
             "ComputeHash",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -2019,6 +2032,7 @@ mod legacy_tests {
             "System.Security.Cryptography",
             "SHA1",
             "Create",
+            PointerSize::Bit64,
         );
 
         let result = sha1_create_pre(&ctx, &mut thread);
@@ -2039,6 +2053,7 @@ mod legacy_tests {
             "System.Security.Cryptography",
             "SHA1",
             "ComputeHash",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 
@@ -2060,6 +2075,7 @@ mod legacy_tests {
             "System.Security.Cryptography",
             "DES",
             "Create",
+            PointerSize::Bit64,
         );
 
         let result = des_create_pre(&ctx, &mut thread);
@@ -2077,6 +2093,7 @@ mod legacy_tests {
             "System.Security.Cryptography",
             "TripleDES",
             "Create",
+            PointerSize::Bit64,
         );
 
         let result = triple_des_create_pre(&ctx, &mut thread);
@@ -2095,6 +2112,7 @@ mod legacy_tests {
             "System.Security.Cryptography",
             "PasswordDeriveBytes",
             "GetBytes",
+            PointerSize::Bit64,
         )
         .with_args(&args);
 

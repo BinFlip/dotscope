@@ -40,7 +40,7 @@
 //!
 //! // Create interpreter with limits
 //! let limits = EmulationLimits::default();
-//! let mut interpreter = Interpreter::new(limits, address_space);
+//! let mut interpreter = Interpreter::new(limits, address_space, PointerSize::Bit64);
 //!
 //! // Execute instructions
 //! loop {
@@ -84,6 +84,7 @@ mod tests {
         },
         file::parser::Parser,
         metadata::{token::Token, typesystem::CilFlavor},
+        prelude::PointerSize,
         project::ProjectLoader,
         test::emulation::create_test_thread,
         Result,
@@ -113,7 +114,7 @@ mod tests {
         let address_space = Arc::new(AddressSpace::new());
         let capture = Arc::new(CaptureContext::new());
         let fake_objects = SharedFakeObjects::new(address_space.managed_heap());
-        let interpreter = Interpreter::new(limits, Arc::clone(&address_space));
+        let interpreter = Interpreter::new(limits, Arc::clone(&address_space), PointerSize::Bit64);
         let mut thread =
             EmulationThread::new(ThreadId::MAIN, address_space, capture, None, fake_objects);
 

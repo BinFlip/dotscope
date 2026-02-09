@@ -9,7 +9,7 @@
 //! ```rust,ignore
 //! use dotscope::analysis::{ConstEvaluator, SsaFunction};
 //!
-//! let mut evaluator = ConstEvaluator::new(&ssa);
+//! let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
 //!
 //! // Inject known values from external analysis
 //! evaluator.set_known(state_var, ConstValue::I32(42));
@@ -25,7 +25,10 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::analysis::ssa::{ConstValue, SsaFunction, SsaOp, SsaVarId};
+use crate::{
+    analysis::ssa::{ConstValue, SsaFunction, SsaOp, SsaVarId},
+    metadata::typesystem::PointerSize,
+};
 
 /// Evaluates SSA operations to constant values.
 ///
@@ -52,6 +55,9 @@ pub struct ConstEvaluator<'a> {
 
     /// Maximum recursion depth.
     max_depth: usize,
+
+    /// Target pointer size for native int/uint masking.
+    pointer_size: PointerSize,
 }
 
 impl<'a> ConstEvaluator<'a> {
@@ -63,9 +69,10 @@ impl<'a> ConstEvaluator<'a> {
     /// # Arguments
     ///
     /// * `ssa` - The SSA function to evaluate.
+    /// * `ptr_size` - Target pointer size for native int/uint masking.
     #[must_use]
-    pub fn new(ssa: &'a SsaFunction) -> Self {
-        Self::with_max_depth(ssa, Self::DEFAULT_MAX_DEPTH)
+    pub fn new(ssa: &'a SsaFunction, ptr_size: PointerSize) -> Self {
+        Self::with_max_depth(ssa, Self::DEFAULT_MAX_DEPTH, ptr_size)
     }
 
     /// Creates an evaluator with a custom depth limit.
@@ -74,13 +81,15 @@ impl<'a> ConstEvaluator<'a> {
     ///
     /// * `ssa` - The SSA function to evaluate.
     /// * `max_depth` - Maximum recursion depth for evaluation.
+    /// * `ptr_size` - Target pointer size for native int/uint masking.
     #[must_use]
-    pub fn with_max_depth(ssa: &'a SsaFunction, max_depth: usize) -> Self {
+    pub fn with_max_depth(ssa: &'a SsaFunction, max_depth: usize, ptr_size: PointerSize) -> Self {
         Self {
             ssa,
             cache: HashMap::new(),
             visiting: HashSet::new(),
             max_depth,
+            pointer_size: ptr_size,
         }
     }
 
@@ -179,47 +188,47 @@ impl<'a> ConstEvaluator<'a> {
             SsaOp::Xor { left, right, .. } => {
                 let l = self.evaluate_var_depth(*left, depth + 1)?;
                 let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.bitwise_xor(&r)
+                l.bitwise_xor(&r, self.pointer_size)
             }
             SsaOp::And { left, right, .. } => {
                 let l = self.evaluate_var_depth(*left, depth + 1)?;
                 let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.bitwise_and(&r)
+                l.bitwise_and(&r, self.pointer_size)
             }
             SsaOp::Or { left, right, .. } => {
                 let l = self.evaluate_var_depth(*left, depth + 1)?;
                 let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.bitwise_or(&r)
+                l.bitwise_or(&r, self.pointer_size)
             }
             SsaOp::Add { left, right, .. } => {
                 let l = self.evaluate_var_depth(*left, depth + 1)?;
                 let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.add(&r)
+                l.add(&r, self.pointer_size)
             }
             SsaOp::Sub { left, right, .. } => {
                 let l = self.evaluate_var_depth(*left, depth + 1)?;
                 let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.sub(&r)
+                l.sub(&r, self.pointer_size)
             }
             SsaOp::Mul { left, right, .. } => {
                 let l = self.evaluate_var_depth(*left, depth + 1)?;
                 let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.mul(&r)
+                l.mul(&r, self.pointer_size)
             }
             SsaOp::Div { left, right, .. } => {
                 let l = self.evaluate_var_depth(*left, depth + 1)?;
                 let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.div(&r)
+                l.div(&r, self.pointer_size)
             }
             SsaOp::Rem { left, right, .. } => {
                 let l = self.evaluate_var_depth(*left, depth + 1)?;
                 let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.rem(&r)
+                l.rem(&r, self.pointer_size)
             }
             SsaOp::Shl { value, amount, .. } => {
                 let v = self.evaluate_var_depth(*value, depth + 1)?;
                 let a = self.evaluate_var_depth(*amount, depth + 1)?;
-                v.shl(&a)
+                v.shl(&a, self.pointer_size)
             }
             SsaOp::Shr {
                 value,
@@ -229,17 +238,17 @@ impl<'a> ConstEvaluator<'a> {
             } => {
                 let v = self.evaluate_var_depth(*value, depth + 1)?;
                 let a = self.evaluate_var_depth(*amount, depth + 1)?;
-                v.shr(&a, *unsigned)
+                v.shr(&a, *unsigned, self.pointer_size)
             }
 
             // Unary operations
             SsaOp::Neg { operand, .. } => {
                 let v = self.evaluate_var_depth(*operand, depth + 1)?;
-                v.negate()
+                v.negate(self.pointer_size)
             }
             SsaOp::Not { operand, .. } => {
                 let v = self.evaluate_var_depth(*operand, depth + 1)?;
-                v.bitwise_not()
+                v.bitwise_not(self.pointer_size)
             }
 
             // Comparison operations - use typed ConstValue methods
@@ -286,7 +295,7 @@ impl<'a> ConstEvaluator<'a> {
             } => {
                 let l = self.evaluate_var_depth(*left, depth + 1)?;
                 let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.add_checked(&r, *unsigned)
+                l.add_checked(&r, *unsigned, self.pointer_size)
             }
             SsaOp::SubOvf {
                 left,
@@ -296,7 +305,7 @@ impl<'a> ConstEvaluator<'a> {
             } => {
                 let l = self.evaluate_var_depth(*left, depth + 1)?;
                 let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.sub_checked(&r, *unsigned)
+                l.sub_checked(&r, *unsigned, self.pointer_size)
             }
             SsaOp::MulOvf {
                 left,
@@ -306,7 +315,7 @@ impl<'a> ConstEvaluator<'a> {
             } => {
                 let l = self.evaluate_var_depth(*left, depth + 1)?;
                 let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.mul_checked(&r, *unsigned)
+                l.mul_checked(&r, *unsigned, self.pointer_size)
             }
 
             // Type conversion
@@ -319,9 +328,9 @@ impl<'a> ConstEvaluator<'a> {
             } => {
                 let v = self.evaluate_var_depth(*operand, depth + 1)?;
                 if *overflow_check {
-                    v.convert_to_checked(target, *unsigned)
+                    v.convert_to_checked(target, *unsigned, self.pointer_size)
                 } else {
-                    v.convert_to(target, *unsigned)
+                    v.convert_to(target, *unsigned, self.pointer_size)
                 }
             }
 
@@ -359,9 +368,12 @@ impl<'a> ConstEvaluator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use crate::analysis::ssa::{
-        ConstEvaluator, ConstValue, DefSite, SsaBlock, SsaFunction, SsaInstruction, SsaOp,
-        SsaVarId, SsaVariable, VariableOrigin,
+    use crate::{
+        analysis::ssa::{
+            ConstEvaluator, ConstValue, DefSite, SsaBlock, SsaFunction, SsaInstruction, SsaOp,
+            SsaVarId, SsaVariable, VariableOrigin,
+        },
+        metadata::typesystem::PointerSize,
     };
 
     #[test]
@@ -381,7 +393,7 @@ mod tests {
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
         ssa.add_block(block);
 
-        let mut evaluator = ConstEvaluator::new(&ssa);
+        let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
         let result = evaluator.evaluate_var(var_id);
 
         assert_eq!(result, Some(ConstValue::I32(42)));
@@ -413,7 +425,7 @@ mod tests {
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
         ssa.add_block(block);
 
-        let mut evaluator = ConstEvaluator::new(&ssa);
+        let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
         let result = evaluator.evaluate_var(v1_id);
 
         assert_eq!(result, Some(ConstValue::I32(100)));
@@ -424,7 +436,7 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let var_id = SsaVarId::new();
 
-        let mut evaluator = ConstEvaluator::new(&ssa);
+        let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
         evaluator.set_known(var_id, ConstValue::I32(999));
 
         let result = evaluator.evaluate_var(var_id);
@@ -437,7 +449,7 @@ mod tests {
         let var1 = SsaVarId::new();
         let var2 = SsaVarId::new();
 
-        let mut evaluator = ConstEvaluator::new(&ssa);
+        let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
         evaluator.set_known(var1, ConstValue::I32(1));
         evaluator.set_known(var2, ConstValue::I32(2));
 

@@ -45,7 +45,7 @@ use crate::{
     analysis::SsaFunction,
     compiler::{CompilerContext, SsaPass},
     deobfuscation::context::AnalysisContext,
-    metadata::token::Token,
+    metadata::{token::Token, typesystem::PointerSize},
     CilObject, Result,
 };
 
@@ -140,6 +140,12 @@ pub struct UnflattenConfig {
     /// Prevents stack overflow when building the trace tree. Limits how
     /// deeply nested the tree can become from forking at user branches.
     pub max_tree_depth: usize,
+
+    /// Target pointer size for SSA evaluation.
+    ///
+    /// Derived from the PE header. Used by the SSA evaluator for
+    /// pointer-sized arithmetic during tracing.
+    pub pointer_size: PointerSize,
 }
 
 impl Default for UnflattenConfig {
@@ -152,6 +158,7 @@ impl Default for UnflattenConfig {
             max_eval_depth: 30,
             max_block_visits: 10000,
             max_tree_depth: 100,
+            pointer_size: PointerSize::Bit32,
         }
     }
 }
@@ -171,6 +178,7 @@ impl UnflattenConfig {
             max_eval_depth: 25,
             max_block_visits: 5000,
             max_tree_depth: 75,
+            pointer_size: PointerSize::Bit32,
         }
     }
 
@@ -188,6 +196,7 @@ impl UnflattenConfig {
             max_eval_depth: 50,
             max_block_visits: 20000,
             max_tree_depth: 150,
+            pointer_size: PointerSize::Bit32,
         }
     }
 }
@@ -252,7 +261,7 @@ impl SsaPass for CffReconstructionPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         // Skip if already unflattened in a previous pass
         if self.unflattened_dispatchers.contains(&method_token) {
@@ -269,7 +278,9 @@ impl SsaPass for CffReconstructionPass {
         // - It preserves the original SSA structure (variables, phi nodes)
         // - It handles user branches correctly (non-state-dependent conditions)
         // - DCE naturally cleans up unreachable dispatcher code
-        match unflatten_with_tree(ssa, &self.config)? {
+        let mut config = self.config.clone();
+        config.pointer_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
+        match unflatten_with_tree(ssa, &config)? {
             Some(mut patched) => {
                 // After CFF unflattening, the CFG structure has changed significantly.
                 // Rebuild SSA form to ensure PHI nodes are correct for the new CFG.

@@ -17,7 +17,7 @@ use crate::{
             TableAccess, TypeSpecRaw,
         },
         token::Token,
-        typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeReference},
+        typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeReference, PointerSize},
     },
     prelude::ExceptionHandlerFlags,
     CilObject, Result,
@@ -1114,17 +1114,18 @@ impl EmulationContext {
     /// This method computes the size based on:
     /// 1. Explicit `ClassLayout.class_size` if defined for the type
     /// 2. Primitive type sizes based on the `CilFlavor`
-    /// 3. A default size of 4 bytes (pointer-sized on 32-bit) for unknown types
+    /// 3. A default pointer-sized value for unknown types
     ///
     /// # Arguments
     ///
     /// * `type_token` - Token of the type to get size for
+    /// * `ptr_size` - Target pointer size for native int/uint types
     ///
     /// # Returns
     ///
     /// The size of the type in bytes.
     #[must_use]
-    pub fn get_type_size(&self, type_token: Token) -> usize {
+    pub fn get_type_size(&self, type_token: Token, ptr_size: PointerSize) -> usize {
         // Try to get the type from the registry
         if let Some(cil_type) = self.get_type(type_token) {
             // First check for explicit ClassLayout size
@@ -1133,11 +1134,11 @@ impl EmulationContext {
             }
 
             // Otherwise compute from the flavor
-            return Self::flavor_to_size(cil_type.flavor());
+            return Self::flavor_to_size(cil_type.flavor(), ptr_size);
         }
 
         // Default size for unknown types (pointer-sized)
-        std::mem::size_of::<usize>()
+        ptr_size.bytes()
     }
 
     /// Computes the size in bytes for a CilFlavor.
@@ -1145,12 +1146,13 @@ impl EmulationContext {
     /// # Arguments
     ///
     /// * `flavor` - The CIL type flavor
+    /// * `ptr_size` - Target pointer size for native int/uint and reference types
     ///
     /// # Returns
     ///
     /// The size in bytes for the given flavor.
     #[must_use]
-    pub fn flavor_to_size(flavor: &CilFlavor) -> usize {
+    pub fn flavor_to_size(flavor: &CilFlavor, ptr_size: PointerSize) -> usize {
         match flavor {
             CilFlavor::Void => 0,
             CilFlavor::Boolean | CilFlavor::I1 | CilFlavor::U1 => 1,
@@ -1158,9 +1160,9 @@ impl EmulationContext {
             CilFlavor::I4 | CilFlavor::U4 | CilFlavor::R4 => 4,
             CilFlavor::I8 | CilFlavor::U8 | CilFlavor::R8 => 8,
             // TypedRef is two pointers (value + type)
-            CilFlavor::TypedRef { .. } => std::mem::size_of::<usize>() * 2,
+            CilFlavor::TypedRef { .. } => ptr_size.bytes() * 2,
             // Pointer-sized types (native ints, reference types, and other types)
-            _ => std::mem::size_of::<usize>(),
+            _ => ptr_size.bytes(),
         }
     }
 

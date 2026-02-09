@@ -1460,18 +1460,21 @@ impl CilFlavor {
     /// This is used for array initialization to determine how many bytes to read
     /// from the PE file for each array element.
     ///
+    /// # Arguments
+    ///
+    /// * `ptr_size` - The target pointer size, used for native int/uint types.
+    ///
     /// # Returns
     ///
     /// The size in bytes, or `None` for types without a fixed size (objects, arrays, etc.)
     #[must_use]
-    pub fn element_size(&self) -> Option<usize> {
+    pub fn element_size(&self, ptr_size: PointerSize) -> Option<usize> {
         match self {
             CilFlavor::Boolean | CilFlavor::I1 | CilFlavor::U1 => Some(1),
             CilFlavor::Char | CilFlavor::I2 | CilFlavor::U2 => Some(2),
             CilFlavor::I4 | CilFlavor::U4 | CilFlavor::R4 => Some(4),
             CilFlavor::I8 | CilFlavor::U8 | CilFlavor::R8 => Some(8),
-            // Native int/uint are pointer-sized; assume 8 bytes for 64-bit
-            CilFlavor::I | CilFlavor::U => Some(8),
+            CilFlavor::I | CilFlavor::U => Some(ptr_size.bytes()),
             // Reference types and complex types don't have a fixed byte size
             _ => None,
         }
@@ -1608,6 +1611,74 @@ impl From<&TypeSignature> for CilFlavor {
 
             // Field signature marker
             TypeSignature::Field => CilFlavor::Unknown,
+        }
+    }
+}
+
+/// Target pointer width for native int/uint types.
+///
+/// Per ECMA-335, `native int` and `native uint` (`System.IntPtr` / `System.UIntPtr`)
+/// are pointer-sized: 4 bytes on PE32 (32-bit) targets, 8 bytes on PE32+ (64-bit) targets.
+///
+/// Derived from the PE header: PE32 → `Bit32`, PE32+ → `Bit64`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PointerSize {
+    /// 32-bit target (4-byte pointers)
+    Bit32,
+    /// 64-bit target (8-byte pointers)
+    Bit64,
+}
+
+impl PointerSize {
+    /// Creates a `PointerSize` from the PE header's bitness flag.
+    ///
+    /// PE32 binaries are 32-bit (`Bit32`), PE32+ binaries are 64-bit (`Bit64`).
+    ///
+    /// # Arguments
+    ///
+    /// * `is_64bit` - `true` for PE32+ (64-bit), `false` for PE32 (32-bit)
+    #[must_use]
+    pub fn from_pe(is_64bit: bool) -> Self {
+        if is_64bit {
+            Self::Bit64
+        } else {
+            Self::Bit32
+        }
+    }
+
+    /// Returns the pointer size in bytes.
+    #[must_use]
+    pub fn bytes(self) -> usize {
+        match self {
+            Self::Bit32 => 4,
+            Self::Bit64 => 8,
+        }
+    }
+
+    /// Returns the pointer size in bits.
+    #[must_use]
+    pub fn bits(self) -> u32 {
+        match self {
+            Self::Bit32 => 32,
+            Self::Bit64 => 64,
+        }
+    }
+
+    /// Masks and sign-extends a signed value to the target pointer width.
+    #[must_use]
+    pub fn mask_signed(self, value: i64) -> i64 {
+        match self {
+            Self::Bit32 => value as i32 as i64,
+            Self::Bit64 => value,
+        }
+    }
+
+    /// Masks and zero-extends an unsigned value to the target pointer width.
+    #[must_use]
+    pub fn mask_unsigned(self, value: u64) -> u64 {
+        match self {
+            Self::Bit32 => value as u32 as u64,
+            Self::Bit64 => value,
         }
     }
 }

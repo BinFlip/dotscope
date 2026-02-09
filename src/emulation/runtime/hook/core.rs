@@ -307,12 +307,13 @@ impl Hook {
     ///
     /// ```rust,no_run
     /// use dotscope::emulation::{Hook, EmValue, HookContext, EmulationThread};
+    /// use dotscope::metadata::typesystem::PointerSize;
     ///
     /// let hook = Hook::new("lzma-detector")
     ///     .match_runtime("lzma-header", |ctx: &HookContext<'_>, thread: &EmulationThread| {
     ///         // Check if first arg is a byte[] starting with LZMA magic
     ///         if let Some(EmValue::ObjectRef(r)) = ctx.args.first() {
-    ///             if let Some(bytes) = thread.heap().get_array_as_bytes(*r) {
+    ///             if let Some(bytes) = thread.heap().get_array_as_bytes(*r, PointerSize::Bit64) {
     ///                 return bytes.len() >= 5 && bytes[0] == 0x5D;
     ///             }
     ///         }

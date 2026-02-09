@@ -27,8 +27,9 @@
 //!
 //! ```rust,ignore
 //! use dotscope::analysis::{PatternDetector, SsaFunction};
+//! use dotscope::metadata::typesystem::PointerSize;
 //!
-//! let detector = PatternDetector::new(&ssa);
+//! let detector = PatternDetector::new(&ssa, PointerSize::Bit32);
 //!
 //! // Find dispatcher patterns
 //! let dispatchers = detector.find_dispatchers();
@@ -46,8 +47,11 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::analysis::ssa::{
-    evaluator::SsaEvaluator, symbolic::SymbolicExpr, ConstValue, SsaFunction, SsaOp, SsaVarId,
+use crate::{
+    analysis::ssa::{
+        evaluator::SsaEvaluator, symbolic::SymbolicExpr, ConstValue, SsaFunction, SsaOp, SsaVarId,
+    },
+    metadata::typesystem::PointerSize,
 };
 
 /// Detects common obfuscation patterns in SSA form.
@@ -61,13 +65,14 @@ use crate::analysis::ssa::{
 #[derive(Debug)]
 pub struct PatternDetector<'a> {
     ssa: &'a SsaFunction,
+    pointer_size: PointerSize,
 }
 
 impl<'a> PatternDetector<'a> {
     /// Creates a new pattern detector for the given SSA function.
     #[must_use]
-    pub fn new(ssa: &'a SsaFunction) -> Self {
-        Self { ssa }
+    pub fn new(ssa: &'a SsaFunction, pointer_size: PointerSize) -> Self {
+        Self { ssa, pointer_size }
     }
 
     /// Returns the underlying SSA function.
@@ -211,7 +216,7 @@ impl<'a> PatternDetector<'a> {
         block_idx: usize,
         switch_var: SsaVarId,
     ) -> Option<SymbolicExpr> {
-        let mut eval = SsaEvaluator::new(self.ssa);
+        let mut eval = SsaEvaluator::new(self.ssa, self.pointer_size);
 
         // Mark all phi results as symbolic (they come from different paths)
         if let Some(block) = self.ssa.block(block_idx) {
@@ -331,7 +336,7 @@ impl<'a> PatternDetector<'a> {
         block_idx: usize,
         dispatcher: &DispatcherPattern,
     ) -> Option<SymbolicExpr> {
-        let mut eval = SsaEvaluator::new(self.ssa);
+        let mut eval = SsaEvaluator::new(self.ssa, self.pointer_size);
 
         // Set phi nodes in this block as symbolic
         if let Some(block) = self.ssa.block(block_idx) {
@@ -394,7 +399,7 @@ impl<'a> PatternDetector<'a> {
         bindings.insert("state", concrete_state.clone());
 
         // Evaluate the dispatch expression
-        let case_idx = dispatch_expr.evaluate_named(&bindings)?;
+        let case_idx = dispatch_expr.evaluate_named(&bindings, self.pointer_size)?;
 
         // Convert to usize and check bounds
         let idx = case_idx.as_i64().and_then(|v| usize::try_from(v).ok())?;
@@ -434,7 +439,7 @@ impl<'a> PatternDetector<'a> {
         };
 
         // Evaluate the block to see if condition is determinable
-        let mut eval = SsaEvaluator::new(self.ssa);
+        let mut eval = SsaEvaluator::new(self.ssa, self.pointer_size);
 
         // Set phi nodes as symbolic
         for phi in block.phi_nodes() {
@@ -615,7 +620,7 @@ mod tests {
             f.block(0, |b| b.ret());
         });
 
-        let detector = PatternDetector::new(&ssa);
+        let detector = PatternDetector::new(&ssa, PointerSize::Bit32);
         assert_eq!(detector.ssa().block_count(), 1);
     }
 
@@ -628,7 +633,7 @@ mod tests {
             });
         });
 
-        let detector = PatternDetector::new(&ssa);
+        let detector = PatternDetector::new(&ssa, PointerSize::Bit32);
         let dispatchers = detector.find_dispatchers();
         assert!(dispatchers.is_empty());
     }

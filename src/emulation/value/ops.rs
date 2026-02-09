@@ -41,11 +41,12 @@
 //!
 //! ```rust
 //! use dotscope::emulation::{EmValue, BinaryOp, CompareOp, ConversionType};
+//! use dotscope::metadata::typesystem::PointerSize;
 //!
 //! // Arithmetic operations
 //! let a = EmValue::I32(10);
 //! let b = EmValue::I32(3);
-//! let sum = a.clone().binary_op(b.clone(), BinaryOp::Add).unwrap();
+//! let sum = a.clone().binary_op(b.clone(), BinaryOp::Add, PointerSize::Bit64).unwrap();
 //! assert_eq!(sum, EmValue::I32(13));
 //!
 //! // Comparisons
@@ -53,7 +54,7 @@
 //! assert_eq!(cmp, EmValue::I32(1)); // 10 > 3
 //!
 //! // Conversions
-//! let converted = EmValue::I32(42).convert(ConversionType::I8).unwrap();
+//! let converted = EmValue::I32(42).convert(ConversionType::I8, PointerSize::Bit64).unwrap();
 //! assert_eq!(converted, EmValue::I64(42));
 //! ```
 
@@ -75,7 +76,7 @@ use crate::{
         engine::EmulationError,
         value::{EmValue, SymbolicValue, TaintSource},
     },
-    metadata::typesystem::CilFlavor,
+    metadata::typesystem::{CilFlavor, PointerSize},
     Result,
 };
 
@@ -283,13 +284,14 @@ impl fmt::Display for BinaryOp {
 ///
 /// ```rust
 /// use dotscope::emulation::{EmValue, UnaryOp};
+/// use dotscope::metadata::typesystem::PointerSize;
 ///
 /// let value = EmValue::I32(42);
-/// let negated = value.unary_op(UnaryOp::Neg).unwrap();
+/// let negated = value.unary_op(UnaryOp::Neg, PointerSize::Bit64).unwrap();
 /// assert_eq!(negated, EmValue::I32(-42));
 ///
 /// let bits = EmValue::I32(0x0F);
-/// let inverted = bits.unary_op(UnaryOp::Not).unwrap();
+/// let inverted = bits.unary_op(UnaryOp::Not, PointerSize::Bit64).unwrap();
 /// assert_eq!(inverted, EmValue::I32(!0x0F));
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -465,20 +467,21 @@ impl fmt::Display for CompareOp {
 ///
 /// ```rust
 /// use dotscope::emulation::{EmValue, ConversionType};
+/// use dotscope::metadata::typesystem::PointerSize;
 ///
 /// // Widening conversion (always succeeds)
 /// let i32_val = EmValue::I32(42);
-/// let i64_val = i32_val.convert(ConversionType::I8).unwrap();
+/// let i64_val = i32_val.convert(ConversionType::I8, PointerSize::Bit64).unwrap();
 /// assert_eq!(i64_val, EmValue::I64(42));
 ///
 /// // Truncating conversion
 /// let large = EmValue::I32(300);
-/// let truncated = large.convert(ConversionType::I1).unwrap();
+/// let truncated = large.convert(ConversionType::I1, PointerSize::Bit64).unwrap();
 /// assert_eq!(truncated, EmValue::I32(44)); // 300 & 0xFF = 44, sign-extended
 ///
 /// // Checked conversion that overflows
 /// let value = EmValue::I32(200);
-/// assert!(value.convert(ConversionType::I1Ovf).is_err()); // 200 > 127
+/// assert!(value.convert(ConversionType::I1Ovf, PointerSize::Bit64).is_err()); // 200 > 127
 /// ```
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum ConversionType {
@@ -742,21 +745,22 @@ impl EmValue {
     ///
     /// ```rust
     /// use dotscope::emulation::{EmValue, BinaryOp};
+    /// use dotscope::metadata::typesystem::PointerSize;
     ///
     /// let a = EmValue::I32(10);
     /// let b = EmValue::I32(3);
     ///
-    /// let sum = a.clone().binary_op(b.clone(), BinaryOp::Add).unwrap();
+    /// let sum = a.clone().binary_op(b.clone(), BinaryOp::Add, PointerSize::Bit64).unwrap();
     /// assert_eq!(sum, EmValue::I32(13));
     ///
-    /// let product = a.binary_op(b, BinaryOp::Mul).unwrap();
+    /// let product = a.binary_op(b, BinaryOp::Mul, PointerSize::Bit64).unwrap();
     /// assert_eq!(product, EmValue::I32(30));
     /// ```
     ///
     /// # Errors
     ///
     /// Returns error if operation is invalid for the operand types or on overflow.
-    pub fn binary_op(self, other: Self, op: BinaryOp) -> Result<Self> {
+    pub fn binary_op(self, other: Self, op: BinaryOp, ptr_size: PointerSize) -> Result<Self> {
         if let EmValue::Symbolic(ref sym) = self {
             return Ok(EmValue::Symbolic(SymbolicValue::derived(
                 sym.cil_flavor.clone(),
@@ -770,7 +774,7 @@ impl EmValue {
             )));
         }
 
-        match op {
+        let result = match op {
             BinaryOp::Add => self.add(other),
             BinaryOp::AddOvf => self.add_ovf(other, false),
             BinaryOp::AddOvfUn => self.add_ovf(other, true),
@@ -790,7 +794,14 @@ impl EmValue {
             BinaryOp::Shl => self.shl(other),
             BinaryOp::Shr => self.shr(other, false),
             BinaryOp::ShrUn => self.shr(other, true),
-        }
+        }?;
+
+        // Mask native int/uint results to the target pointer width
+        Ok(match result {
+            EmValue::NativeInt(v) => EmValue::NativeInt(ptr_size.mask_signed(v)),
+            EmValue::NativeUInt(v) => EmValue::NativeUInt(ptr_size.mask_unsigned(v)),
+            other => other,
+        })
     }
 
     /// Performs a unary operation on this value.
@@ -807,20 +818,21 @@ impl EmValue {
     ///
     /// ```rust
     /// use dotscope::emulation::{EmValue, UnaryOp};
+    /// use dotscope::metadata::typesystem::PointerSize;
     ///
     /// let a = EmValue::I32(42);
-    /// let neg = a.unary_op(UnaryOp::Neg).unwrap();
+    /// let neg = a.unary_op(UnaryOp::Neg, PointerSize::Bit64).unwrap();
     /// assert_eq!(neg, EmValue::I32(-42));
     ///
     /// let b = EmValue::I32(0xFF);
-    /// let not = b.unary_op(UnaryOp::Not).unwrap();
+    /// let not = b.unary_op(UnaryOp::Not, PointerSize::Bit64).unwrap();
     /// assert_eq!(not, EmValue::I32(!0xFF));
     /// ```
     ///
     /// # Errors
     ///
     /// Returns error if operation is invalid for the operand type.
-    pub fn unary_op(self, op: UnaryOp) -> Result<Self> {
+    pub fn unary_op(self, op: UnaryOp, ptr_size: PointerSize) -> Result<Self> {
         // Handle symbolic operands
         if let EmValue::Symbolic(ref sym) = self {
             return Ok(EmValue::Symbolic(SymbolicValue::derived(
@@ -829,10 +841,17 @@ impl EmValue {
             )));
         }
 
-        match op {
+        let result = match op {
             UnaryOp::Neg => self.neg(),
             UnaryOp::Not => self.not(),
-        }
+        }?;
+
+        // Mask native int/uint results to the target pointer width
+        Ok(match result {
+            EmValue::NativeInt(v) => EmValue::NativeInt(ptr_size.mask_signed(v)),
+            EmValue::NativeUInt(v) => EmValue::NativeUInt(ptr_size.mask_unsigned(v)),
+            other => other,
+        })
     }
 
     /// Performs a comparison operation on two values.
@@ -902,16 +921,17 @@ impl EmValue {
     ///
     /// ```rust
     /// use dotscope::emulation::{EmValue, ConversionType};
+    /// use dotscope::metadata::typesystem::PointerSize;
     ///
     /// let i32_val = EmValue::I32(42);
-    /// let i64_val = i32_val.convert(ConversionType::I8).unwrap();
+    /// let i64_val = i32_val.convert(ConversionType::I8, PointerSize::Bit64).unwrap();
     /// assert_eq!(i64_val, EmValue::I64(42));
     /// ```
     ///
     /// # Errors
     ///
     /// Returns error if conversion is invalid or would overflow (for checked conversions).
-    pub fn convert(self, conv: ConversionType) -> Result<Self> {
+    pub fn convert(self, conv: ConversionType, ptr_size: PointerSize) -> Result<Self> {
         // Handle symbolic values
         if let EmValue::Symbolic(_) = self {
             return Ok(EmValue::Symbolic(SymbolicValue::derived(
@@ -931,8 +951,8 @@ impl EmValue {
             ConversionType::U8 => self.conv_u8(),
             ConversionType::R4 => self.conv_r4(),
             ConversionType::R8 => self.conv_r8(),
-            ConversionType::I => self.conv_i(),
-            ConversionType::U => self.conv_u(),
+            ConversionType::I => self.conv_i(ptr_size),
+            ConversionType::U => self.conv_u(ptr_size),
             ConversionType::RUn => self.conv_r_un(),
             // Checked conversions
             ConversionType::I1Ovf => self.conv_i1_ovf(false),
@@ -1694,13 +1714,13 @@ impl EmValue {
         }
     }
 
-    fn conv_i(self) -> Result<Self> {
-        let value = self.to_i64()?;
+    fn conv_i(self, ptr_size: PointerSize) -> Result<Self> {
+        let value = ptr_size.mask_signed(self.to_i64()?);
         Ok(EmValue::NativeInt(value))
     }
 
-    fn conv_u(self) -> Result<Self> {
-        let value = self.to_u64()?;
+    fn conv_u(self, ptr_size: PointerSize) -> Result<Self> {
+        let value = ptr_size.mask_unsigned(self.to_u64()?);
         Ok(EmValue::NativeUInt(value))
     }
 
@@ -1918,13 +1938,16 @@ impl EmValue {
 #[cfg(test)]
 mod tests {
     use super::{super::HeapRef, *};
-    use crate::Error;
+    use crate::{metadata::typesystem::PointerSize, Error};
 
     #[test]
     fn test_binary_op_add_i32() {
         let a = EmValue::I32(10);
         let b = EmValue::I32(20);
-        assert_eq!(a.binary_op(b, BinaryOp::Add).unwrap(), EmValue::I32(30));
+        assert_eq!(
+            a.binary_op(b, BinaryOp::Add, PointerSize::Bit64).unwrap(),
+            EmValue::I32(30)
+        );
     }
 
     #[test]
@@ -1932,7 +1955,7 @@ mod tests {
         let a = EmValue::I32(i32::MAX);
         let b = EmValue::I32(1);
         assert_eq!(
-            a.binary_op(b, BinaryOp::Add).unwrap(),
+            a.binary_op(b, BinaryOp::Add, PointerSize::Bit64).unwrap(),
             EmValue::I32(i32::MIN)
         );
     }
@@ -1941,14 +1964,20 @@ mod tests {
     fn test_binary_op_add_i64() {
         let a = EmValue::I64(100);
         let b = EmValue::I64(200);
-        assert_eq!(a.binary_op(b, BinaryOp::Add).unwrap(), EmValue::I64(300));
+        assert_eq!(
+            a.binary_op(b, BinaryOp::Add, PointerSize::Bit64).unwrap(),
+            EmValue::I64(300)
+        );
     }
 
     #[test]
     fn test_binary_op_add_f64() {
         let a = EmValue::F64(1.5);
         let b = EmValue::F64(2.5);
-        assert_eq!(a.binary_op(b, BinaryOp::Add).unwrap(), EmValue::F64(4.0));
+        assert_eq!(
+            a.binary_op(b, BinaryOp::Add, PointerSize::Bit64).unwrap(),
+            EmValue::F64(4.0)
+        );
     }
 
     #[test]
@@ -1956,7 +1985,7 @@ mod tests {
         let a = EmValue::I32(i32::MAX);
         let b = EmValue::I32(1);
         assert!(matches!(
-            a.binary_op(b, BinaryOp::AddOvf),
+            a.binary_op(b, BinaryOp::AddOvf, PointerSize::Bit64),
             Err(Error::Emulation(ref e)) if matches!(e.as_ref(), EmulationError::ArithmeticOverflow)
         ));
     }
@@ -1965,21 +1994,30 @@ mod tests {
     fn test_binary_op_sub() {
         let a = EmValue::I32(30);
         let b = EmValue::I32(20);
-        assert_eq!(a.binary_op(b, BinaryOp::Sub).unwrap(), EmValue::I32(10));
+        assert_eq!(
+            a.binary_op(b, BinaryOp::Sub, PointerSize::Bit64).unwrap(),
+            EmValue::I32(10)
+        );
     }
 
     #[test]
     fn test_binary_op_mul() {
         let a = EmValue::I32(6);
         let b = EmValue::I32(7);
-        assert_eq!(a.binary_op(b, BinaryOp::Mul).unwrap(), EmValue::I32(42));
+        assert_eq!(
+            a.binary_op(b, BinaryOp::Mul, PointerSize::Bit64).unwrap(),
+            EmValue::I32(42)
+        );
     }
 
     #[test]
     fn test_binary_op_div() {
         let a = EmValue::I32(42);
         let b = EmValue::I32(6);
-        assert_eq!(a.binary_op(b, BinaryOp::Div).unwrap(), EmValue::I32(7));
+        assert_eq!(
+            a.binary_op(b, BinaryOp::Div, PointerSize::Bit64).unwrap(),
+            EmValue::I32(7)
+        );
     }
 
     #[test]
@@ -1987,7 +2025,7 @@ mod tests {
         let a = EmValue::I32(42);
         let b = EmValue::I32(0);
         assert!(matches!(
-            a.binary_op(b, BinaryOp::Div),
+            a.binary_op(b, BinaryOp::Div, PointerSize::Bit64),
             Err(Error::Emulation(ref e)) if matches!(e.as_ref(), EmulationError::DivisionByZero)
         ));
     }
@@ -1996,7 +2034,7 @@ mod tests {
     fn test_binary_op_div_unsigned() {
         let a = EmValue::I32(-1); // 0xFFFFFFFF as unsigned
         let b = EmValue::I32(2);
-        let result = a.binary_op(b, BinaryOp::DivUn).unwrap();
+        let result = a.binary_op(b, BinaryOp::DivUn, PointerSize::Bit64).unwrap();
         // -1 as u32 is 0xFFFFFFFF = 4294967295, divided by 2 is 2147483647
         assert_eq!(result, EmValue::I32(0x7FFFFFFF));
     }
@@ -2005,35 +2043,50 @@ mod tests {
     fn test_binary_op_rem() {
         let a = EmValue::I32(17);
         let b = EmValue::I32(5);
-        assert_eq!(a.binary_op(b, BinaryOp::Rem).unwrap(), EmValue::I32(2));
+        assert_eq!(
+            a.binary_op(b, BinaryOp::Rem, PointerSize::Bit64).unwrap(),
+            EmValue::I32(2)
+        );
     }
 
     #[test]
     fn test_binary_op_and() {
         let a = EmValue::I32(0xFF00);
         let b = EmValue::I32(0x0FF0);
-        assert_eq!(a.binary_op(b, BinaryOp::And).unwrap(), EmValue::I32(0x0F00));
+        assert_eq!(
+            a.binary_op(b, BinaryOp::And, PointerSize::Bit64).unwrap(),
+            EmValue::I32(0x0F00)
+        );
     }
 
     #[test]
     fn test_binary_op_or() {
         let a = EmValue::I32(0xFF00);
         let b = EmValue::I32(0x00FF);
-        assert_eq!(a.binary_op(b, BinaryOp::Or).unwrap(), EmValue::I32(0xFFFF));
+        assert_eq!(
+            a.binary_op(b, BinaryOp::Or, PointerSize::Bit64).unwrap(),
+            EmValue::I32(0xFFFF)
+        );
     }
 
     #[test]
     fn test_binary_op_xor() {
         let a = EmValue::I32(0xFFFF);
         let b = EmValue::I32(0x0F0F);
-        assert_eq!(a.binary_op(b, BinaryOp::Xor).unwrap(), EmValue::I32(0xF0F0));
+        assert_eq!(
+            a.binary_op(b, BinaryOp::Xor, PointerSize::Bit64).unwrap(),
+            EmValue::I32(0xF0F0)
+        );
     }
 
     #[test]
     fn test_binary_op_shl() {
         let a = EmValue::I32(1);
         let b = EmValue::I32(4);
-        assert_eq!(a.binary_op(b, BinaryOp::Shl).unwrap(), EmValue::I32(16));
+        assert_eq!(
+            a.binary_op(b, BinaryOp::Shl, PointerSize::Bit64).unwrap(),
+            EmValue::I32(16)
+        );
     }
 
     #[test]
@@ -2041,7 +2094,10 @@ mod tests {
         let a = EmValue::I32(-8);
         let b = EmValue::I32(2);
         // Arithmetic shift right preserves sign
-        assert_eq!(a.binary_op(b, BinaryOp::Shr).unwrap(), EmValue::I32(-2));
+        assert_eq!(
+            a.binary_op(b, BinaryOp::Shr, PointerSize::Bit64).unwrap(),
+            EmValue::I32(-2)
+        );
     }
 
     #[test]
@@ -2049,7 +2105,7 @@ mod tests {
         let a = EmValue::I32(-8);
         let b = EmValue::I32(2);
         // Logical shift right fills with zeros
-        let result = a.binary_op(b, BinaryOp::ShrUn).unwrap();
+        let result = a.binary_op(b, BinaryOp::ShrUn, PointerSize::Bit64).unwrap();
         // -8 as u32 >> 2 = 0xFFFFFFF8 >> 2 = 0x3FFFFFFE
         assert_eq!(result, EmValue::I32(0x3FFFFFFE_u32 as i32));
     }
@@ -2059,7 +2115,7 @@ mod tests {
         let a = EmValue::I32(1);
         let b = EmValue::I64(1);
         assert!(matches!(
-            a.binary_op(b, BinaryOp::Add),
+            a.binary_op(b, BinaryOp::Add, PointerSize::Bit64),
             Err(Error::Emulation(ref e)) if matches!(e.as_ref(), EmulationError::InvalidOperationTypes { .. })
         ));
     }
@@ -2067,14 +2123,17 @@ mod tests {
     #[test]
     fn test_unary_neg_i32() {
         let a = EmValue::I32(42);
-        assert_eq!(a.unary_op(UnaryOp::Neg).unwrap(), EmValue::I32(-42));
+        assert_eq!(
+            a.unary_op(UnaryOp::Neg, PointerSize::Bit64).unwrap(),
+            EmValue::I32(-42)
+        );
     }
 
     #[test]
     fn test_unary_neg_f64() {
         let a = EmValue::F64(std::f64::consts::PI);
         assert_eq!(
-            a.unary_op(UnaryOp::Neg).unwrap(),
+            a.unary_op(UnaryOp::Neg, PointerSize::Bit64).unwrap(),
             EmValue::F64(-std::f64::consts::PI)
         );
     }
@@ -2082,14 +2141,17 @@ mod tests {
     #[test]
     fn test_unary_not_i32() {
         let a = EmValue::I32(0);
-        assert_eq!(a.unary_op(UnaryOp::Not).unwrap(), EmValue::I32(-1));
+        assert_eq!(
+            a.unary_op(UnaryOp::Not, PointerSize::Bit64).unwrap(),
+            EmValue::I32(-1)
+        );
     }
 
     #[test]
     fn test_unary_not_pattern() {
         let a = EmValue::I32(0x0F0F0F0F);
         assert_eq!(
-            a.unary_op(UnaryOp::Not).unwrap(),
+            a.unary_op(UnaryOp::Not, PointerSize::Bit64).unwrap(),
             EmValue::I32(0xF0F0F0F0_u32 as i32)
         );
     }
@@ -2170,12 +2232,12 @@ mod tests {
     fn test_conv_i1() {
         let a = EmValue::I32(300);
         // 300 truncated to 8 bits is 44, then sign-extended
-        let result = a.convert(ConversionType::I1).unwrap();
+        let result = a.convert(ConversionType::I1, PointerSize::Bit64).unwrap();
         assert_eq!(result, EmValue::I32(44));
 
         let b = EmValue::I32(-1);
         // -1 as i8 is -1, sign-extended to i32 is -1
-        let result = b.convert(ConversionType::I1).unwrap();
+        let result = b.convert(ConversionType::I1, PointerSize::Bit64).unwrap();
         assert_eq!(result, EmValue::I32(-1));
     }
 
@@ -2183,21 +2245,21 @@ mod tests {
     fn test_conv_u1() {
         let a = EmValue::I32(-1);
         // -1 truncated to u8 is 255, zero-extended to i32
-        let result = a.convert(ConversionType::U1).unwrap();
+        let result = a.convert(ConversionType::U1, PointerSize::Bit64).unwrap();
         assert_eq!(result, EmValue::I32(255));
     }
 
     #[test]
     fn test_conv_i8() {
         let a = EmValue::I32(42);
-        let result = a.convert(ConversionType::I8).unwrap();
+        let result = a.convert(ConversionType::I8, PointerSize::Bit64).unwrap();
         assert_eq!(result, EmValue::I64(42));
     }
 
     #[test]
     fn test_conv_u8() {
         let a = EmValue::I32(-1);
-        let result = a.convert(ConversionType::U8).unwrap();
+        let result = a.convert(ConversionType::U8, PointerSize::Bit64).unwrap();
         // -1 as u32 zero-extended to u64, stored as i64
         assert_eq!(result, EmValue::I64(0xFFFFFFFF));
     }
@@ -2205,14 +2267,14 @@ mod tests {
     #[test]
     fn test_conv_r4() {
         let a = EmValue::I32(42);
-        let result = a.convert(ConversionType::R4).unwrap();
+        let result = a.convert(ConversionType::R4, PointerSize::Bit64).unwrap();
         assert_eq!(result, EmValue::F32(42.0));
     }
 
     #[test]
     fn test_conv_r8() {
         let a = EmValue::I32(42);
-        let result = a.convert(ConversionType::R8).unwrap();
+        let result = a.convert(ConversionType::R8, PointerSize::Bit64).unwrap();
         assert_eq!(result, EmValue::F64(42.0));
     }
 
@@ -2221,7 +2283,7 @@ mod tests {
         let a = EmValue::I32(200);
         // 200 > 127, overflow
         assert!(matches!(
-            a.convert(ConversionType::I1Ovf),
+            a.convert(ConversionType::I1Ovf, PointerSize::Bit64),
             Err(Error::Emulation(ref e)) if matches!(e.as_ref(), EmulationError::ArithmeticOverflow)
         ));
     }
@@ -2231,7 +2293,7 @@ mod tests {
         let a = EmValue::I32(-1);
         // Negative value to unsigned, overflow
         assert!(matches!(
-            a.convert(ConversionType::U1Ovf),
+            a.convert(ConversionType::U1Ovf, PointerSize::Bit64),
             Err(Error::Emulation(ref e)) if matches!(e.as_ref(), EmulationError::ArithmeticOverflow)
         ));
     }
@@ -2240,7 +2302,7 @@ mod tests {
     fn test_conv_r_un() {
         let a = EmValue::I32(-1);
         // -1 as u32 is 4294967295, converted to float
-        let result = a.convert(ConversionType::RUn).unwrap();
+        let result = a.convert(ConversionType::RUn, PointerSize::Bit64).unwrap();
         assert_eq!(result, EmValue::F64(4294967295.0));
     }
 

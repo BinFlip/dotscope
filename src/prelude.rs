@@ -278,8 +278,8 @@ pub use crate::metadata::imports::ImportType;
 /// types for comprehensive .NET type system analysis.
 pub use crate::metadata::typesystem::{
     CilFlavor, CilModifier, CilPrimitive, CilPrimitiveData, CilPrimitiveKind, CilType, CilTypeList,
-    CilTypeRc, CilTypeRef, CilTypeRefList, CilTypeReference, TypeRegistry, TypeResolver,
-    TypeSignatureEncoder, TypeSource,
+    CilTypeRc, CilTypeRef, CilTypeRefList, CilTypeReference, PointerSize, TypeRegistry,
+    TypeResolver, TypeSignatureEncoder, TypeSource,
 };
 
 // ================================================================================================

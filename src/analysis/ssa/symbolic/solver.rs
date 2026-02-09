@@ -6,7 +6,10 @@
 
 use std::collections::HashMap;
 
-use crate::analysis::ssa::symbolic::{expr::SymbolicExpr, ops::SymbolicOp};
+use crate::{
+    analysis::ssa::symbolic::{expr::SymbolicExpr, ops::SymbolicOp},
+    metadata::typesystem::PointerSize,
+};
 
 /// Z3-based constraint solver for symbolic expressions.
 ///
@@ -352,7 +355,12 @@ impl Z3Solver {
     ///
     /// `Some(value)` if the expression is constant, `None` if it varies.
     #[must_use]
-    pub fn is_constant_expression(&self, expr: &SymbolicExpr, var_name: &str) -> Option<i64> {
+    pub fn is_constant_expression(
+        &self,
+        expr: &SymbolicExpr,
+        var_name: &str,
+        ptr_size: PointerSize,
+    ) -> Option<i64> {
         // Check if there are at least two different outputs for different inputs
         let solver = z3::Solver::new();
 
@@ -376,7 +384,7 @@ impl Z3Solver {
             z3::SatResult::Unsat => {
                 // Expression is constant - find the value
                 // Evaluate with any input (e.g., 0)
-                if let Some(c) = expr.substitute_named(var_name, 0).as_i64() {
+                if let Some(c) = expr.substitute_named(var_name, 0, ptr_size).as_i64() {
                     Some(c)
                 } else {
                     // Try Z3 to find the constant value
@@ -514,7 +522,10 @@ impl Z3Solver {
 
 #[cfg(test)]
 mod tests {
-    use crate::analysis::ssa::symbolic::{expr::SymbolicExpr, ops::SymbolicOp, solver::Z3Solver};
+    use crate::{
+        analysis::ssa::symbolic::{expr::SymbolicExpr, ops::SymbolicOp, solver::Z3Solver},
+        metadata::typesystem::PointerSize,
+    };
 
     #[test]
     fn test_z3_simple_solve() {
@@ -739,7 +750,7 @@ mod tests {
             SymbolicExpr::constant_i32(3),
         );
 
-        let result = solver.is_constant_expression(&expr, "x");
+        let result = solver.is_constant_expression(&expr, "x", PointerSize::Bit64);
         assert_eq!(result, Some(8), "5 + 3 should be constant 8");
     }
 
@@ -754,7 +765,7 @@ mod tests {
             SymbolicExpr::constant_i32(3),
         );
 
-        let result = solver.is_constant_expression(&expr, "x");
+        let result = solver.is_constant_expression(&expr, "x", PointerSize::Bit64);
         assert_eq!(result, None, "x + 3 should not be constant");
     }
 }

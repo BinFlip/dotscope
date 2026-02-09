@@ -25,7 +25,10 @@
 //! - Dead code detection
 //! - Path-sensitive constant propagation
 
-use crate::analysis::ssa::{ConstValue, SsaVarId};
+use crate::{
+    analysis::ssa::{ConstValue, SsaVarId},
+    metadata::typesystem::PointerSize,
+};
 
 /// A constraint on a variable's value derived from branch conditions.
 ///
@@ -79,8 +82,13 @@ impl Constraint {
     }
 
     /// Checks if this constraint conflicts with another (both can't be true).
+    ///
+    /// # Arguments
+    ///
+    /// * `other` - The other constraint to check against.
+    /// * `ptr_size` - Target pointer size for native int/uint masking.
     #[must_use]
-    pub fn conflicts_with(&self, other: &Constraint) -> bool {
+    pub fn conflicts_with(&self, other: &Constraint, ptr_size: PointerSize) -> bool {
         match (self, other) {
             // x == a conflicts with x == b (if a != b)
             (Self::Equal(a), Self::Equal(b)) => a != b,
@@ -102,7 +110,7 @@ impl Constraint {
                 // x > a AND x < b requires b > a + 1 (there must be room for at least one integer)
                 // Conflicts when b <= a + 1
                 let one = ConstValue::I32(1);
-                a.add(&one)
+                a.add(&one, ptr_size)
                     .and_then(|a_plus_1| b.cgt(&a_plus_1))
                     .is_none_or(|r| r.is_zero())
             }
@@ -170,7 +178,13 @@ impl PathConstraint {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        analysis::ssa::{
+            constraints::{Constraint, PathConstraint},
+            ConstValue, SsaVarId,
+        },
+        metadata::typesystem::PointerSize,
+    };
 
     #[test]
     fn test_constraint_satisfied() {
@@ -195,16 +209,16 @@ mod tests {
     fn test_constraint_conflicts() {
         let c1 = Constraint::Equal(ConstValue::I32(5));
         let c2 = Constraint::Equal(ConstValue::I32(10));
-        assert!(c1.conflicts_with(&c2));
+        assert!(c1.conflicts_with(&c2, PointerSize::Bit64));
 
         let c3 = Constraint::NotEqual(ConstValue::I32(5));
-        assert!(c1.conflicts_with(&c3));
+        assert!(c1.conflicts_with(&c3, PointerSize::Bit64));
 
         let c4 = Constraint::GreaterThan(ConstValue::I32(5));
-        assert!(c1.conflicts_with(&c4)); // 5 is not > 5
+        assert!(c1.conflicts_with(&c4, PointerSize::Bit64)); // 5 is not > 5
 
         let c5 = Constraint::GreaterThan(ConstValue::I32(4));
-        assert!(!c1.conflicts_with(&c5)); // 5 > 4 is ok
+        assert!(!c1.conflicts_with(&c5, PointerSize::Bit64)); // 5 > 4 is ok
     }
 
     #[test]

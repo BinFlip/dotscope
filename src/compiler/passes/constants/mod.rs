@@ -41,7 +41,7 @@ use crate::{
         SsaFunction, SsaOp, SsaType, SsaVarId,
     },
     compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
-    metadata::token::Token,
+    metadata::{token::Token, typesystem::PointerSize},
     CilObject, Result,
 };
 
@@ -143,6 +143,7 @@ impl ConstantPropagationPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         changes: &mut EventLog,
+        ptr_size: PointerSize,
     ) -> HashMap<SsaVarId, ConstValue> {
         let block_count = ssa.block_count();
         if block_count == 0 {
@@ -156,7 +157,7 @@ impl ConstantPropagationPass {
 
         // Build CFG from SSA and run SCCP analysis using the dataflow framework
         let cfg = SsaCfg::from_ssa(ssa);
-        let mut sccp = ConstantPropagation::new();
+        let mut sccp = ConstantPropagation::new(ptr_size);
         let sccp_result = sccp.analyze(ssa, &cfg);
 
         // Collect constants from SCCP result
@@ -176,13 +177,13 @@ impl ConstantPropagationPass {
             Self::simplify_involutory_ops(ssa, method_token, changes);
 
             // Run conversion folding
-            Self::fold_conversions(ssa, &mut constants, method_token, changes);
+            Self::fold_conversions(ssa, &mut constants, method_token, changes, ptr_size);
 
             // Eliminate redundant conversions
             Self::eliminate_redundant_conversions(ssa, method_token, changes);
 
             // Run overflow-checked operation folding
-            Self::fold_overflow_checked_ops(ssa, &mut constants, method_token, changes);
+            Self::fold_overflow_checked_ops(ssa, &mut constants, method_token, changes, ptr_size);
 
             // If no new constants discovered, we're done
             if constants.len() == prev_count {
@@ -307,6 +308,7 @@ impl ConstantPropagationPass {
         constants: &mut HashMap<SsaVarId, ConstValue>,
         method_token: Token,
         changes: &mut EventLog,
+        ptr_size: PointerSize,
     ) {
         let mut new_constants: Vec<(SsaVarId, ConstValue, usize, usize)> = Vec::new();
 
@@ -322,9 +324,9 @@ impl ConstantPropagationPass {
                 {
                     if let Some(operand_val) = constants.get(operand) {
                         let result = if *overflow_check {
-                            operand_val.convert_to_checked(target, *unsigned)
+                            operand_val.convert_to_checked(target, *unsigned, ptr_size)
                         } else {
-                            operand_val.convert_to(target, *unsigned)
+                            operand_val.convert_to(target, *unsigned, ptr_size)
                         };
                         if let Some(result) = result {
                             new_constants.push((*dest, result, block_idx, instr_idx));
@@ -671,12 +673,15 @@ impl ConstantPropagationPass {
         constants: &mut HashMap<SsaVarId, ConstValue>,
         method_token: Token,
         changes: &mut EventLog,
+        ptr_size: PointerSize,
     ) {
         let mut new_constants: Vec<(SsaVarId, ConstValue, usize, usize)> = Vec::new();
 
         for (block_idx, block) in ssa.iter_blocks() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                if let Some((dest, value)) = Self::check_overflow_op(instr.op(), constants) {
+                if let Some((dest, value)) =
+                    Self::check_overflow_op(instr.op(), constants, ptr_size)
+                {
                     new_constants.push((dest, value, block_idx, instr_idx));
                 }
             }
@@ -708,6 +713,7 @@ impl ConstantPropagationPass {
     fn check_overflow_op(
         op: &SsaOp,
         constants: &HashMap<SsaVarId, ConstValue>,
+        ptr_size: PointerSize,
     ) -> Option<(SsaVarId, ConstValue)> {
         match op {
             SsaOp::AddOvf {
@@ -728,7 +734,7 @@ impl ConstantPropagationPass {
                 } else {
                     let (_, overflow) = lv.overflowing_add(rv);
                     if !overflow {
-                        return Some((*dest, l.add(r)?));
+                        return Some((*dest, l.add(r, ptr_size)?));
                     }
                 }
                 None
@@ -752,7 +758,7 @@ impl ConstantPropagationPass {
                 } else {
                     let (_, overflow) = lv.overflowing_sub(rv);
                     if !overflow {
-                        return Some((*dest, l.sub(r)?));
+                        return Some((*dest, l.sub(r, ptr_size)?));
                     }
                 }
                 None
@@ -785,7 +791,7 @@ impl ConstantPropagationPass {
                 } else {
                     let (_, overflow) = lv.overflowing_mul(rv);
                     if !overflow {
-                        return Some((*dest, l.mul(r)?));
+                        return Some((*dest, l.mul(r, ptr_size)?));
                     }
                 }
                 None
@@ -1100,12 +1106,13 @@ impl SsaPass for ConstantPropagationPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        assembly: &Arc<CilObject>,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
+        let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
 
         // Run constant propagation and transformation
-        let constants = Self::run_constant_propagation(ssa, method_token, &mut changes);
+        let constants = Self::run_constant_propagation(ssa, method_token, &mut changes, ptr_size);
 
         // Cache the constants we found for other passes
         for (var, value) in &constants {

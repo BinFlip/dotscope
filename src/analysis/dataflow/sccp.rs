@@ -53,6 +53,7 @@ use crate::{
         dataflow::lattice::MeetSemiLattice, ConstValue, PhiNode, SsaBlock, SsaFunction, SsaOp,
         SsaVarId,
     },
+    metadata::typesystem::PointerSize,
     utils::graph::{NodeId, RootedGraph, Successors},
 };
 
@@ -66,7 +67,7 @@ use crate::{
 /// ```rust,ignore
 /// use dotscope::analysis::{ConstantPropagation, ScalarValue};
 ///
-/// let mut sccp = ConstantPropagation::new();
+/// let mut sccp = ConstantPropagation::new(PointerSize::Bit64);
 /// let results = sccp.analyze(&ssa, &graph);
 ///
 /// // Check if a variable is constant
@@ -88,12 +89,18 @@ pub struct ConstantPropagation {
     /// Back edges: edges where the target was already executable when the edge was added.
     /// These represent loop back edges and their values should be treated as unknown.
     back_edges: HashSet<(usize, usize)>,
+    /// Target pointer size for native int/uint masking.
+    pointer_size: PointerSize,
 }
 
 impl ConstantPropagation {
     /// Creates a new constant propagation analysis.
+    ///
+    /// # Arguments
+    ///
+    /// * `ptr_size` - Target pointer size for native int/uint masking.
     #[must_use]
-    pub fn new() -> Self {
+    pub fn new(ptr_size: PointerSize) -> Self {
         Self {
             values: HashMap::new(),
             executable_edges: HashSet::new(),
@@ -101,6 +108,7 @@ impl ConstantPropagation {
             ssa_worklist: VecDeque::new(),
             cfg_worklist: VecDeque::new(),
             back_edges: HashSet::new(),
+            pointer_size: ptr_size,
         }
     }
 
@@ -471,30 +479,40 @@ impl ConstantPropagation {
 
             SsaOp::Copy { src, .. } => self.get_value(*src),
 
-            SsaOp::Add { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::add),
+            SsaOp::Add { left, right, .. } => {
+                self.evaluate_binary(*left, *right, |a, b| a.add(b, self.pointer_size))
+            }
 
-            SsaOp::Sub { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::sub),
+            SsaOp::Sub { left, right, .. } => {
+                self.evaluate_binary(*left, *right, |a, b| a.sub(b, self.pointer_size))
+            }
 
-            SsaOp::Mul { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::mul),
+            SsaOp::Mul { left, right, .. } => {
+                self.evaluate_binary(*left, *right, |a, b| a.mul(b, self.pointer_size))
+            }
 
-            SsaOp::Div { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::div),
+            SsaOp::Div { left, right, .. } => {
+                self.evaluate_binary(*left, *right, |a, b| a.div(b, self.pointer_size))
+            }
 
-            SsaOp::Rem { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::rem),
+            SsaOp::Rem { left, right, .. } => {
+                self.evaluate_binary(*left, *right, |a, b| a.rem(b, self.pointer_size))
+            }
 
             SsaOp::And { left, right, .. } => {
-                self.evaluate_binary(*left, *right, ConstValue::bitwise_and)
+                self.evaluate_binary(*left, *right, |a, b| a.bitwise_and(b, self.pointer_size))
             }
 
             SsaOp::Or { left, right, .. } => {
-                self.evaluate_binary(*left, *right, ConstValue::bitwise_or)
+                self.evaluate_binary(*left, *right, |a, b| a.bitwise_or(b, self.pointer_size))
             }
 
             SsaOp::Xor { left, right, .. } => {
-                self.evaluate_binary(*left, *right, ConstValue::bitwise_xor)
+                self.evaluate_binary(*left, *right, |a, b| a.bitwise_xor(b, self.pointer_size))
             }
 
             SsaOp::Shl { value, amount, .. } => {
-                self.evaluate_binary(*value, *amount, ConstValue::shl)
+                self.evaluate_binary(*value, *amount, |a, b| a.shl(b, self.pointer_size))
             }
 
             SsaOp::Shr {
@@ -504,7 +522,9 @@ impl ConstantPropagation {
                 ..
             } => {
                 let unsigned = *unsigned;
-                self.evaluate_binary(*value, *amount, |l, r| l.shr(r, unsigned))
+                self.evaluate_binary(*value, *amount, |l, r| {
+                    l.shr(r, unsigned, self.pointer_size)
+                })
             }
 
             SsaOp::Ceq { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::ceq),
@@ -516,7 +536,7 @@ impl ConstantPropagation {
             SsaOp::Neg { operand, .. } => match self.get_value(*operand) {
                 ScalarValue::Top => ScalarValue::Top,
                 ScalarValue::Constant(c) => c
-                    .negate()
+                    .negate(self.pointer_size)
                     .map_or(ScalarValue::Bottom, ScalarValue::Constant),
                 ScalarValue::Bottom => ScalarValue::Bottom,
             },
@@ -524,7 +544,7 @@ impl ConstantPropagation {
             SsaOp::Not { operand, .. } => match self.get_value(*operand) {
                 ScalarValue::Top => ScalarValue::Top,
                 ScalarValue::Constant(c) => c
-                    .bitwise_not()
+                    .bitwise_not(self.pointer_size)
                     .map_or(ScalarValue::Bottom, ScalarValue::Constant),
                 ScalarValue::Bottom => ScalarValue::Bottom,
             },
@@ -567,12 +587,6 @@ impl ConstantPropagation {
             self.values.insert(var, final_value);
             self.ssa_worklist.push_back(var);
         }
-    }
-}
-
-impl Default for ConstantPropagation {
-    fn default() -> Self {
-        Self::new()
     }
 }
 

@@ -15,16 +15,18 @@
 use std::sync::Arc;
 
 use crate::{
-    assembly::{FlowType, Immediate, InstructionCategory, Operand, StackBehavior},
+    assembly::{FlowType, Immediate, Instruction, InstructionCategory, Operand, StackBehavior},
     emulation::{
-        process::EmulationLimits, AddressSpace, CaptureContext, EmulationThread, SharedFakeObjects,
-        ThreadId,
+        engine::{interpreter::Interpreter, result::StepResult},
+        process::EmulationLimits,
+        AddressSpace, CaptureContext, EmValue, EmulationThread, SharedFakeObjects, ThreadId,
     },
-    metadata::{token::Token, typesystem::CilFlavor},
+    metadata::{
+        token::Token,
+        typesystem::{CilFlavor, PointerSize},
+    },
     test::emulation::create_test_thread,
 };
-
-use super::*;
 
 fn create_test_address_space() -> Arc<AddressSpace> {
     Arc::new(AddressSpace::new())
@@ -34,7 +36,7 @@ fn create_test_interpreter() -> (Interpreter, Arc<AddressSpace>) {
     let address_space = create_test_address_space();
     let limits = EmulationLimits::default();
     (
-        Interpreter::new(limits, Arc::clone(&address_space)),
+        Interpreter::new(limits, Arc::clone(&address_space), PointerSize::Bit64),
         address_space,
     )
 }
@@ -362,7 +364,7 @@ fn test_conv_i8() {
 fn test_execution_stats() {
     let limits = EmulationLimits::new().with_max_instructions(10);
     let address_space = create_test_address_space();
-    let mut interpreter = Interpreter::new(limits, address_space);
+    let mut interpreter = Interpreter::new(limits, address_space, PointerSize::Bit64);
     interpreter.start();
 
     // Manually increment the counter to simulate executing instructions
@@ -377,7 +379,7 @@ fn test_execution_stats() {
 fn test_instruction_limit() {
     let limits = EmulationLimits::new().with_max_instructions(5);
     let address_space = create_test_address_space();
-    let mut interpreter = Interpreter::new(limits, address_space);
+    let mut interpreter = Interpreter::new(limits, address_space, PointerSize::Bit64);
     interpreter.start();
 
     // Manually increment the counter to simulate executing instructions

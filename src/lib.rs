@@ -536,21 +536,21 @@ pub mod compiler;
 /// # #[cfg(feature = "emulation")]
 /// # fn main() {
 /// use dotscope::emulation::{EmValue, BinaryOp};
-/// use dotscope::metadata::typesystem::CilFlavor;
+/// use dotscope::metadata::typesystem::{CilFlavor, PointerSize};
 ///
 /// // CIL values follow ECMA-335 widening rules (I1/I2 → I32)
 /// let a = EmValue::I32(10);
 /// let b = EmValue::I32(3);
 ///
-/// let sum = a.clone().binary_op(b.clone(), BinaryOp::Add).unwrap();
+/// let sum = a.clone().binary_op(b.clone(), BinaryOp::Add, PointerSize::Bit64).unwrap();
 /// assert_eq!(sum, EmValue::I32(13));
 /// assert_eq!(sum.cil_flavor(), CilFlavor::I4);
 ///
 /// // Division, bitwise, and comparison operations
-/// let div = a.clone().binary_op(b.clone(), BinaryOp::Div).unwrap();
+/// let div = a.clone().binary_op(b.clone(), BinaryOp::Div, PointerSize::Bit64).unwrap();
 /// assert_eq!(div, EmValue::I32(3));
 ///
-/// let xor = a.clone().binary_op(b.clone(), BinaryOp::Xor).unwrap();
+/// let xor = a.clone().binary_op(b.clone(), BinaryOp::Xor, PointerSize::Bit64).unwrap();
 /// assert_eq!(xor, EmValue::I32(10 ^ 3));
 /// # }
 /// # #[cfg(not(feature = "emulation"))]

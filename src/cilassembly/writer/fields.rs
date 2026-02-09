@@ -37,6 +37,7 @@ use crate::{
         signatures::{parse_field_signature, TypeSignature},
         streams::TablesHeader,
         tables::{ClassLayoutRaw, FieldRaw, FieldRvaRaw},
+        typesystem::PointerSize,
     },
     prelude::TableId,
     CilAssemblyView, Error, Result,
@@ -55,11 +56,12 @@ fn collect_field_data(
     view: &CilAssemblyView,
     file: &File,
     changes: &AssemblyChanges,
+    ptr_size: PointerSize,
 ) -> Result<FieldDataEntries> {
     let mut entries = Vec::new();
 
     // Collect original FieldRVA data
-    collect_original_fieldrva_data(view, file, changes, &mut entries)?;
+    collect_original_fieldrva_data(view, file, changes, &mut entries, ptr_size)?;
 
     // Collect new field data from changes
     collect_changes_field_data(changes, &mut entries);
@@ -71,7 +73,11 @@ fn collect_field_data(
 ///
 /// Uses the signature parser and ClassLayout table to find explicit sizes for value types.
 /// Returns an error if the size cannot be determined.
-fn calculate_field_size(view: &CilAssemblyView, field_index: u32) -> Result<usize> {
+fn calculate_field_size(
+    view: &CilAssemblyView,
+    field_index: u32,
+    ptr_size: PointerSize,
+) -> Result<usize> {
     let tables = view.tables().ok_or_else(|| {
         Error::ModificationInvalid(format!(
             "Cannot access tables for field {} size calculation",
@@ -113,7 +119,7 @@ fn calculate_field_size(view: &CilAssemblyView, field_index: u32) -> Result<usiz
         ))
     })?;
 
-    calculate_type_size(&field_sig.base, tables, field_index)
+    calculate_type_size(&field_sig.base, tables, field_index, ptr_size)
 }
 
 /// Calculates the size of a type signature.
@@ -124,9 +130,10 @@ fn calculate_type_size(
     type_sig: &TypeSignature,
     tables: &TablesHeader,
     field_index: u32,
+    ptr_size: PointerSize,
 ) -> Result<usize> {
     // Try primitive types first
-    if let Some(size) = type_sig.byte_size() {
+    if let Some(size) = type_sig.byte_size(ptr_size) {
         return Ok(size);
     }
 
@@ -157,7 +164,7 @@ fn calculate_type_size(
         // Multi-dimensional arrays with known dimensions
         TypeSignature::Array(arr) => {
             // Need element size and all dimension sizes
-            let element_size = calculate_type_size(&arr.base, tables, field_index)?;
+            let element_size = calculate_type_size(&arr.base, tables, field_index, ptr_size)?;
 
             let mut total_elements: usize = 1;
             for dim in &arr.dimensions {
@@ -198,6 +205,7 @@ fn collect_original_fieldrva_data(
     file: &File,
     changes: &AssemblyChanges,
     entries: &mut FieldDataEntries,
+    ptr_size: PointerSize,
 ) -> Result<()> {
     // Get FieldRVA table
     let Some(fieldrva_table) = view
@@ -255,7 +263,7 @@ fn collect_original_fieldrva_data(
 
     // Process each entry
     for (rva, _rid, field_index) in entries_to_process {
-        let size = calculate_field_size(view, field_index)? as u32;
+        let size = calculate_field_size(view, field_index, ptr_size)? as u32;
 
         // Sanity check: reject unreasonable sizes (> 1MB)
         if size > 1024 * 1024 {
@@ -319,8 +327,9 @@ pub fn write_field_data(ctx: &mut WriteContext) -> Result<()> {
     let view = ctx.assembly.view();
     let file = view.file();
     let changes = ctx.changes;
+    let ptr_size = PointerSize::from_pe(file.pe().is_64bit);
 
-    let entries = collect_field_data(view, file, changes)?;
+    let entries = collect_field_data(view, file, changes, ptr_size)?;
 
     if entries.is_empty() {
         return Ok(());

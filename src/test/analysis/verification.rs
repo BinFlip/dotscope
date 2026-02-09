@@ -10,7 +10,7 @@ use crate::{
         CallGraph, ConstantPropagation, ControlFlowGraph, DataFlowSolver, LiveVariables, NodeId,
         ReachingDefinitions, SsaConverter, SsaFunction, TypeContext,
     },
-    metadata::method::Method,
+    metadata::{method::Method, typesystem::PointerSize},
     test::analysis::expectations::{
         CallGraphExpectation, CfgExpectation, DataFlowExpectation, SsaExpectation,
     },
@@ -415,7 +415,7 @@ pub fn verify_dataflow(
     let mut errors = Vec::new();
 
     // Run SCCP to check for constants and dead code
-    let mut sccp = ConstantPropagation::new();
+    let mut sccp = ConstantPropagation::new(PointerSize::Bit64);
     let sccp_result = sccp.analyze(ssa, cfg);
 
     // Check for constants

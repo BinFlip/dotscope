@@ -44,6 +44,8 @@
 
 use std::{ops::Range, path::PathBuf};
 
+use crate::metadata::typesystem::PointerSize;
+
 /// Comprehensive emulation configuration with fine-grained control.
 ///
 /// `EmulationConfig` is the top-level configuration container that controls
@@ -134,6 +136,13 @@ pub struct EmulationConfig {
     /// When true, unhandled exceptions propagate up the call stack.
     /// When false, they immediately terminate emulation.
     pub allow_unwind: bool,
+
+    /// Target pointer size for native int/uint types.
+    ///
+    /// Derived from the PE header (PE32 → `Bit32`, PE32+ → `Bit64`).
+    /// Auto-detected by [`super::ProcessBuilder::build()`] when an assembly is loaded;
+    /// defaults to `Bit64`.
+    pub pointer_size: PointerSize,
 
     /// Memory subsystem configuration.
     ///
@@ -573,6 +582,7 @@ impl Default for EmulationConfig {
             max_threads: 16,
             exception_handling: true,
             allow_unwind: true,
+            pointer_size: PointerSize::Bit64,
             memory: MemoryConfig::default(),
             stubs: StubConfig::default(),
             tracing: TracingConfig::default(),

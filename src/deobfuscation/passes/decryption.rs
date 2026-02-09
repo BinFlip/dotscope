@@ -83,7 +83,7 @@ use crate::{
         EmValue, EmulationError, EmulationOutcome, EmulationProcess, EmulationThread, Hook,
         ProcessBuilder, StepResult,
     },
-    metadata::token::Token,
+    metadata::{token::Token, typesystem::PointerSize},
     utils::graph::{
         algorithms::{compute_dominators, DominatorTree},
         GraphBase, NodeId, RootedGraph,
@@ -624,6 +624,7 @@ impl DecryptionPass {
         ssa: &SsaFunction,
         ctx: &CompilerContext,
         method_token: Token,
+        ptr_size: PointerSize,
     ) -> Option<Vec<ConstValue>> {
         let mut constants = Vec::with_capacity(args.len());
         // Cache to avoid recomputing the same variable's value
@@ -631,9 +632,15 @@ impl DecryptionPass {
         let mut visited = HashSet::new();
 
         for arg in args {
-            if let Some(val) =
-                Self::trace_to_constant(*arg, ssa, ctx, method_token, &mut visited, &mut cache)
-            {
+            if let Some(val) = Self::trace_to_constant(
+                *arg,
+                ssa,
+                ctx,
+                method_token,
+                &mut visited,
+                &mut cache,
+                ptr_size,
+            ) {
                 constants.push(val);
             } else {
                 return None; // Need all args to be constant
@@ -668,6 +675,7 @@ impl DecryptionPass {
         unknown_var: SsaVarId,
         known_const: &ConstValue,
         _known_is_left: bool,
+        ptr_size: PointerSize,
     ) -> Option<ConstValue> {
         // Only attempt path-aware evaluation if the unknown var is from a Call.
         // This avoids expensive evaluation for variables that won't resolve anyway.
@@ -680,12 +688,12 @@ impl DecryptionPass {
         }
 
         // Use SsaEvaluator to try resolving the unknown variable
-        let mut eval = SsaEvaluator::new(ssa);
+        let mut eval = SsaEvaluator::new(ssa, ptr_size);
 
         // Try to resolve with trace - use a smaller depth to avoid runaway
         let resolved = eval.resolve_with_trace(unknown_var, 15)?;
         match resolved.as_constant() {
-            Some(const_val) => known_const.bitwise_xor(const_val),
+            Some(const_val) => known_const.bitwise_xor(const_val, ptr_size),
             _ => None,
         }
     }
@@ -714,6 +722,7 @@ impl DecryptionPass {
         method_token: Token,
         visited: &mut HashSet<SsaVarId>,
         cache: &mut HashMap<SsaVarId, Option<ConstValue>>,
+        ptr_size: PointerSize,
     ) -> Option<ConstValue> {
         // Check cache first
         if let Some(cached) = cache.get(&var) {
@@ -739,20 +748,38 @@ impl DecryptionPass {
                 // Special handling for XOR - common in CFG-based constant encoding
                 // Pattern: actual_id = encoded_constant XOR state_value
                 SsaOp::Xor { left, right, .. } => {
-                    let left_const =
-                        Self::trace_to_constant(*left, ssa, ctx, method_token, visited, cache);
-                    let right_const =
-                        Self::trace_to_constant(*right, ssa, ctx, method_token, visited, cache);
+                    let left_const = Self::trace_to_constant(
+                        *left,
+                        ssa,
+                        ctx,
+                        method_token,
+                        visited,
+                        cache,
+                        ptr_size,
+                    );
+                    let right_const = Self::trace_to_constant(
+                        *right,
+                        ssa,
+                        ctx,
+                        method_token,
+                        visited,
+                        cache,
+                        ptr_size,
+                    );
 
                     match (left_const, right_const) {
                         // Both constants - compute XOR directly
-                        (Some(l), Some(r)) => l.bitwise_xor(&r),
+                        (Some(l), Some(r)) => l.bitwise_xor(&r, ptr_size),
 
                         // Left is constant, try path-aware evaluation for right
-                        (Some(l), None) => Self::try_path_aware_xor(ssa, *right, &l, true),
+                        (Some(l), None) => {
+                            Self::try_path_aware_xor(ssa, *right, &l, true, ptr_size)
+                        }
 
                         // Right is constant, try path-aware evaluation for left
-                        (None, Some(r)) => Self::try_path_aware_xor(ssa, *left, &r, false),
+                        (None, Some(r)) => {
+                            Self::try_path_aware_xor(ssa, *left, &r, false, ptr_size)
+                        }
 
                         // Neither is constant
                         (None, None) => None,
@@ -776,15 +803,21 @@ impl DecryptionPass {
             }
 
             // Create a ConstEvaluator and inject known values for PHI operands
-            let mut evaluator = ConstEvaluator::new(ssa);
+            let mut evaluator = ConstEvaluator::new(ssa, ptr_size);
             for operand in operands {
                 let op_var = operand.value();
                 // First check ctx.known_values, then try tracing recursively
                 if let Some(val) = ctx.with_known_value(method_token, op_var, |v| v.clone()) {
                     evaluator.set_known(op_var, val);
-                } else if let Some(val) =
-                    Self::trace_to_constant(op_var, ssa, ctx, method_token, visited, cache)
-                {
+                } else if let Some(val) = Self::trace_to_constant(
+                    op_var,
+                    ssa,
+                    ctx,
+                    method_token,
+                    visited,
+                    cache,
+                    ptr_size,
+                ) {
                     evaluator.set_known(op_var, val);
                 }
             }
@@ -844,6 +877,7 @@ impl DecryptionPass {
         ctx: &CompilerContext,
         assembly: &Arc<CilObject>,
         provider: &dyn StateMachineProvider,
+        ptr_size: PointerSize,
     ) -> Result<(bool, EventLog)> {
         let changes = EventLog::new();
 
@@ -908,6 +942,7 @@ impl DecryptionPass {
                 ssa,
                 ctx,
                 method_token,
+                ptr_size,
             );
 
             // Simulate the feeding update call itself
@@ -923,6 +958,7 @@ impl DecryptionPass {
                 method_token,
                 &mut visited,
                 &mut cache,
+                ptr_size,
             )
             .and_then(|v| match v {
                 ConstValue::I32(x) => Some(x as u8),
@@ -938,6 +974,7 @@ impl DecryptionPass {
                 method_token,
                 &mut visited,
                 &mut cache,
+                ptr_size,
             )
             .and_then(|v| match v {
                 ConstValue::I32(x) => Some(x as u32),
@@ -965,6 +1002,7 @@ impl DecryptionPass {
                 method_token,
                 &mut visited,
                 &mut cache,
+                ptr_size,
             )
             .and_then(|v| match v {
                 ConstValue::I32(x) => Some(x),
@@ -1076,6 +1114,7 @@ impl DecryptionPass {
         ssa: &SsaFunction,
         ctx: &CompilerContext,
         method_token: Token,
+        ptr_size: PointerSize,
     ) {
         let mut cache = HashMap::new();
         let mut visited = HashSet::new();
@@ -1091,6 +1130,7 @@ impl DecryptionPass {
                 method_token,
                 &mut visited,
                 &mut cache,
+                ptr_size,
             )
             .and_then(|v| match v {
                 ConstValue::I32(x) => Some(x as u8),
@@ -1106,6 +1146,7 @@ impl DecryptionPass {
                 method_token,
                 &mut visited,
                 &mut cache,
+                ptr_size,
             )
             .and_then(|v| match v {
                 ConstValue::I32(x) => Some(x as u32),
@@ -1220,12 +1261,20 @@ impl SsaPass for DecryptionPass {
             return Ok(false);
         }
 
+        let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
+
         // Check if this method uses a state machine (CFG mode) - requires sequential processing
         // Track changes separately so we can still process remaining non-state-machine calls
         let mut state_machine_changed = false;
         if let Some(provider) = self.get_statemachine_provider_for_method(method_token) {
-            let (changed, sm_changes) =
-                self.process_state_machine_mode(ssa, method_token, ctx, assembly, &*provider)?;
+            let (changed, sm_changes) = self.process_state_machine_mode(
+                ssa,
+                method_token,
+                ctx,
+                assembly,
+                &*provider,
+                ptr_size,
+            )?;
             if !sm_changes.is_empty() {
                 ctx.events.merge(sm_changes);
             }
@@ -1269,7 +1318,7 @@ impl SsaPass for DecryptionPass {
                 }
 
                 let arg_constants = if let Some(evaluated) =
-                    Self::get_arg_constants(args, ssa, ctx, method_token)
+                    Self::get_arg_constants(args, ssa, ctx, method_token, ptr_size)
                 {
                     evaluated
                 } else {
@@ -1372,7 +1421,7 @@ mod tests {
         deobfuscation::{
             context::AnalysisContext, passes::DecryptionPass, DeobfuscationEngine, EngineConfig,
         },
-        metadata::token::Token,
+        metadata::{token::Token, typesystem::PointerSize},
         test::helpers::test_assembly_arc,
     };
 
@@ -1585,7 +1634,8 @@ mod tests {
         ctx.add_known_value(method, var2, ConstValue::I32(100));
 
         let args = vec![var1, var2];
-        let result = DecryptionPass::get_arg_constants(&args, &ssa, &ctx, method);
+        let result =
+            DecryptionPass::get_arg_constants(&args, &ssa, &ctx, method, PointerSize::Bit64);
 
         assert!(result.is_some());
         let constants = result.unwrap();
@@ -1607,7 +1657,8 @@ mod tests {
         // var2 not set
 
         let args = vec![var1, var2];
-        let result = DecryptionPass::get_arg_constants(&args, &ssa, &ctx, method);
+        let result =
+            DecryptionPass::get_arg_constants(&args, &ssa, &ctx, method, PointerSize::Bit64);
 
         // Should return None because not all args are known
         assert!(result.is_none());
@@ -1620,7 +1671,8 @@ mod tests {
         let method = Token::new(0x06000001);
         let args: Vec<SsaVarId> = vec![];
 
-        let result = DecryptionPass::get_arg_constants(&args, &ssa, &ctx, method);
+        let result =
+            DecryptionPass::get_arg_constants(&args, &ssa, &ctx, method, PointerSize::Bit64);
         assert!(result.is_some());
         assert!(result.unwrap().is_empty());
     }

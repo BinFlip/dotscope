@@ -33,6 +33,7 @@ use crate::{
         SsaType, SsaVarId,
     },
     assembly::Immediate,
+    metadata::typesystem::PointerSize,
     Error,
 };
 
@@ -411,7 +412,7 @@ impl ConstValue {
 
     /// Attempts to negate this constant.
     #[must_use]
-    pub fn negate(&self) -> Option<Self> {
+    pub fn negate(&self, ptr_size: PointerSize) -> Option<Self> {
         match self {
             Self::I8(v) => Some(Self::I8(v.wrapping_neg())),
             Self::I16(v) => Some(Self::I16(v.wrapping_neg())),
@@ -428,11 +429,12 @@ impl ConstValue {
             Self::NativeUInt(v) => Some(Self::NativeUInt(v.wrapping_neg())),
             _ => None,
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to perform bitwise NOT on this constant.
     #[must_use]
-    pub fn bitwise_not(&self) -> Option<Self> {
+    pub fn bitwise_not(&self, ptr_size: PointerSize) -> Option<Self> {
         match self {
             Self::I8(v) => Some(Self::I8(!v)),
             Self::I16(v) => Some(Self::I16(!v)),
@@ -446,11 +448,12 @@ impl ConstValue {
             Self::NativeUInt(v) => Some(Self::NativeUInt(!v)),
             _ => None,
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to perform bitwise AND on two constants.
     #[must_use]
-    pub fn bitwise_and(&self, other: &Self) -> Option<Self> {
+    pub fn bitwise_and(&self, other: &Self, ptr_size: PointerSize) -> Option<Self> {
         match (self, other) {
             (Self::I8(a), Self::I8(b)) => Some(Self::I8(a & b)),
             (Self::I16(a), Self::I16(b)) => Some(Self::I16(a & b)),
@@ -471,11 +474,12 @@ impl ConstValue {
             }
             _ => None,
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to perform bitwise OR on two constants.
     #[must_use]
-    pub fn bitwise_or(&self, other: &Self) -> Option<Self> {
+    pub fn bitwise_or(&self, other: &Self, ptr_size: PointerSize) -> Option<Self> {
         match (self, other) {
             (Self::I8(a), Self::I8(b)) => Some(Self::I8(a | b)),
             (Self::I16(a), Self::I16(b)) => Some(Self::I16(a | b)),
@@ -495,11 +499,12 @@ impl ConstValue {
             }
             _ => None,
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to perform bitwise XOR on two constants.
     #[must_use]
-    pub fn bitwise_xor(&self, other: &Self) -> Option<Self> {
+    pub fn bitwise_xor(&self, other: &Self, ptr_size: PointerSize) -> Option<Self> {
         match (self, other) {
             (Self::I8(a), Self::I8(b)) => Some(Self::I8(a ^ b)),
             (Self::I16(a), Self::I16(b)) => Some(Self::I16(a ^ b)),
@@ -519,12 +524,13 @@ impl ConstValue {
             }
             _ => None,
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to shift left.
     #[must_use]
     #[allow(clippy::cast_sign_loss)] // Shift amounts are non-negative by convention
-    pub fn shl(&self, amount: &Self) -> Option<Self> {
+    pub fn shl(&self, amount: &Self, ptr_size: PointerSize) -> Option<Self> {
         let shift = amount.as_i32()? as u32;
         match self {
             Self::I8(v) => Some(Self::I8(v.wrapping_shl(shift))),
@@ -539,13 +545,14 @@ impl ConstValue {
             Self::NativeUInt(v) => Some(Self::NativeUInt(v.wrapping_shl(shift))),
             _ => None,
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to shift right (arithmetic for signed, logical for unsigned).
     #[must_use]
     #[allow(clippy::cast_sign_loss)] // Shift amounts and unsigned shifts use intentional casts
     #[allow(clippy::cast_possible_wrap)] // Wrapping is expected for logical shift operations
-    pub fn shr(&self, amount: &Self, unsigned: bool) -> Option<Self> {
+    pub fn shr(&self, amount: &Self, unsigned: bool, ptr_size: PointerSize) -> Option<Self> {
         let shift = amount.as_i32()? as u32;
         match self {
             Self::I8(v) => {
@@ -590,11 +597,12 @@ impl ConstValue {
             Self::NativeUInt(v) => Some(Self::NativeUInt(v.wrapping_shr(shift))),
             _ => None,
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to add two constants.
     #[must_use]
-    pub fn add(&self, other: &Self) -> Option<Self> {
+    pub fn add(&self, other: &Self, ptr_size: PointerSize) -> Option<Self> {
         match (self, other) {
             (Self::I8(a), Self::I8(b)) => Some(Self::I8(a.wrapping_add(*b))),
             (Self::I16(a), Self::I16(b)) => Some(Self::I16(a.wrapping_add(*b))),
@@ -619,11 +627,12 @@ impl ConstValue {
             }
             _ => None,
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to subtract two constants.
     #[must_use]
-    pub fn sub(&self, other: &Self) -> Option<Self> {
+    pub fn sub(&self, other: &Self, ptr_size: PointerSize) -> Option<Self> {
         match (self, other) {
             (Self::I8(a), Self::I8(b)) => Some(Self::I8(a.wrapping_sub(*b))),
             (Self::I16(a), Self::I16(b)) => Some(Self::I16(a.wrapping_sub(*b))),
@@ -645,11 +654,12 @@ impl ConstValue {
             (Self::U64(a), Self::U32(b)) => Some(Self::U64(a.wrapping_sub(u64::from(*b)))),
             _ => None,
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to multiply two constants.
     #[must_use]
-    pub fn mul(&self, other: &Self) -> Option<Self> {
+    pub fn mul(&self, other: &Self, ptr_size: PointerSize) -> Option<Self> {
         match (self, other) {
             (Self::I8(a), Self::I8(b)) => Some(Self::I8(a.wrapping_mul(*b))),
             (Self::I16(a), Self::I16(b)) => Some(Self::I16(a.wrapping_mul(*b))),
@@ -673,6 +683,7 @@ impl ConstValue {
             }
             _ => None,
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to add two constants with overflow checking.
@@ -680,7 +691,7 @@ impl ConstValue {
     /// Returns `None` if the addition would overflow.
     /// When `unsigned` is true, operands are treated as unsigned for overflow detection.
     #[must_use]
-    pub fn add_checked(&self, other: &Self, unsigned: bool) -> Option<Self> {
+    pub fn add_checked(&self, other: &Self, unsigned: bool, ptr_size: PointerSize) -> Option<Self> {
         if unsigned {
             // Unsigned overflow check
             match (self, other) {
@@ -710,6 +721,7 @@ impl ConstValue {
                 _ => None,
             }
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to subtract two constants with overflow checking.
@@ -717,7 +729,7 @@ impl ConstValue {
     /// Returns `None` if the subtraction would overflow.
     /// When `unsigned` is true, operands are treated as unsigned for overflow detection.
     #[must_use]
-    pub fn sub_checked(&self, other: &Self, unsigned: bool) -> Option<Self> {
+    pub fn sub_checked(&self, other: &Self, unsigned: bool, ptr_size: PointerSize) -> Option<Self> {
         if unsigned {
             // Unsigned overflow check
             match (self, other) {
@@ -747,6 +759,7 @@ impl ConstValue {
                 _ => None,
             }
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to multiply two constants with overflow checking.
@@ -754,7 +767,7 @@ impl ConstValue {
     /// Returns `None` if the multiplication would overflow.
     /// When `unsigned` is true, operands are treated as unsigned for overflow detection.
     #[must_use]
-    pub fn mul_checked(&self, other: &Self, unsigned: bool) -> Option<Self> {
+    pub fn mul_checked(&self, other: &Self, unsigned: bool, ptr_size: PointerSize) -> Option<Self> {
         if unsigned {
             // Unsigned overflow check
             match (self, other) {
@@ -784,11 +797,12 @@ impl ConstValue {
                 _ => None,
             }
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to divide two constants.
     #[must_use]
-    pub fn div(&self, other: &Self) -> Option<Self> {
+    pub fn div(&self, other: &Self, ptr_size: PointerSize) -> Option<Self> {
         match (self, other) {
             (Self::I8(a), Self::I8(b)) if *b != 0 => Some(Self::I8(a.wrapping_div(*b))),
             (Self::I16(a), Self::I16(b)) if *b != 0 => Some(Self::I16(a.wrapping_div(*b))),
@@ -806,11 +820,12 @@ impl ConstValue {
             (Self::F64(a), Self::F64(b)) => Some(Self::F64(a / b)),
             _ => None,
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to compute remainder (modulo) of two constants.
     #[must_use]
-    pub fn rem(&self, other: &Self) -> Option<Self> {
+    pub fn rem(&self, other: &Self, ptr_size: PointerSize) -> Option<Self> {
         match (self, other) {
             (Self::I8(a), Self::I8(b)) if *b != 0 => Some(Self::I8(a.wrapping_rem(*b))),
             (Self::I16(a), Self::I16(b)) if *b != 0 => Some(Self::I16(a.wrapping_rem(*b))),
@@ -828,6 +843,7 @@ impl ConstValue {
             (Self::F64(a), Self::F64(b)) => Some(Self::F64(a % b)),
             _ => None,
         }
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Attempts to compare two constants for equality.
@@ -990,13 +1006,19 @@ impl ConstValue {
     ///
     /// ```rust,no_run
     /// use dotscope::analysis::{ConstValue, SsaType};
+    /// use dotscope::metadata::typesystem::PointerSize;
     ///
     /// let value = ConstValue::I32(42);
-    /// let converted = value.convert_to(&SsaType::I64, false);
+    /// let converted = value.convert_to(&SsaType::I64, false, PointerSize::Bit64);
     /// assert_eq!(converted, Some(ConstValue::I64(42)));
     /// ```
     #[must_use]
-    pub fn convert_to(&self, target: &SsaType, unsigned_source: bool) -> Option<Self> {
+    pub fn convert_to(
+        &self,
+        target: &SsaType,
+        unsigned_source: bool,
+        ptr_size: PointerSize,
+    ) -> Option<Self> {
         // For unsigned source interpretation, get the raw bits as u64
         // For signed source, get as i64
         let (signed_val, unsigned_val) = if unsigned_source {
@@ -1046,6 +1068,7 @@ impl ConstValue {
             SsaType::Bool => Self::from_bool(signed_val != 0),
             _ => return None,
         })
+        .map(|v| v.mask_native(ptr_size))
     }
 
     /// Converts this constant to a different type with overflow checking.
@@ -1067,16 +1090,22 @@ impl ConstValue {
     ///
     /// ```rust,no_run
     /// use dotscope::analysis::{ConstValue, SsaType};
+    /// use dotscope::metadata::typesystem::PointerSize;
     ///
     /// let value = ConstValue::I32(1000);
     /// // 1000 doesn't fit in i8 (-128 to 127)
-    /// assert_eq!(value.convert_to_checked(&SsaType::I8, false), None);
+    /// assert_eq!(value.convert_to_checked(&SsaType::I8, false, PointerSize::Bit64), None);
     ///
     /// let small = ConstValue::I32(42);
-    /// assert_eq!(small.convert_to_checked(&SsaType::I8, false), Some(ConstValue::I8(42)));
+    /// assert_eq!(small.convert_to_checked(&SsaType::I8, false, PointerSize::Bit64), Some(ConstValue::I8(42)));
     /// ```
     #[must_use]
-    pub fn convert_to_checked(&self, target: &SsaType, unsigned_source: bool) -> Option<Self> {
+    pub fn convert_to_checked(
+        &self,
+        target: &SsaType,
+        unsigned_source: bool,
+        ptr_size: PointerSize,
+    ) -> Option<Self> {
         // Get both signed and unsigned interpretations
         let (signed_val, unsigned_val) = if unsigned_source {
             let u = self.as_u64()?;
@@ -1109,7 +1138,21 @@ impl ConstValue {
         }
 
         // Perform the conversion (same as convert_to)
-        self.convert_to(target, unsigned_source)
+        self.convert_to(target, unsigned_source, ptr_size)
+    }
+
+    /// Masks a `ConstValue` to the target pointer width.
+    ///
+    /// For `NativeInt`, sign-extends from 32-bit on `Bit32`.
+    /// For `NativeUInt`, zero-extends from 32-bit on `Bit32`.
+    /// All other variants are returned unchanged.
+    #[must_use]
+    pub fn mask_native(self, ptr_size: PointerSize) -> Self {
+        match self {
+            Self::NativeInt(v) => Self::NativeInt(ptr_size.mask_signed(v)),
+            Self::NativeUInt(v) => Self::NativeUInt(ptr_size.mask_unsigned(v)),
+            other => other,
+        }
     }
 }
 
@@ -1590,15 +1633,16 @@ impl fmt::Display for ComputedOp {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::metadata::typesystem::PointerSize;
 
     #[test]
     fn test_const_arithmetic() {
         let a = ConstValue::I32(10);
         let b = ConstValue::I32(3);
 
-        assert_eq!(a.add(&b), Some(ConstValue::I32(13)));
-        assert_eq!(a.sub(&b), Some(ConstValue::I32(7)));
-        assert_eq!(a.mul(&b), Some(ConstValue::I32(30)));
+        assert_eq!(a.add(&b, PointerSize::Bit64), Some(ConstValue::I32(13)));
+        assert_eq!(a.sub(&b, PointerSize::Bit64), Some(ConstValue::I32(7)));
+        assert_eq!(a.mul(&b, PointerSize::Bit64), Some(ConstValue::I32(30)));
     }
 
     #[test]
@@ -1741,21 +1785,21 @@ mod tests {
         // i32 -> i64 (sign extends)
         let v = ConstValue::I32(42);
         assert_eq!(
-            v.convert_to(&SsaType::I64, false),
+            v.convert_to(&SsaType::I64, false, PointerSize::Bit64),
             Some(ConstValue::I64(42))
         );
 
         // i32 -> i64 with negative
         let v = ConstValue::I32(-42);
         assert_eq!(
-            v.convert_to(&SsaType::I64, false),
+            v.convert_to(&SsaType::I64, false, PointerSize::Bit64),
             Some(ConstValue::I64(-42))
         );
 
         // u32 -> u64 (zero extends)
         let v = ConstValue::U32(42);
         assert_eq!(
-            v.convert_to(&SsaType::U64, false),
+            v.convert_to(&SsaType::U64, false, PointerSize::Bit64),
             Some(ConstValue::U64(42))
         );
     }
@@ -1764,17 +1808,23 @@ mod tests {
     fn test_convert_to_narrowing() {
         // i32 -> i8 (truncates)
         let v = ConstValue::I32(42);
-        assert_eq!(v.convert_to(&SsaType::I8, false), Some(ConstValue::I8(42)));
+        assert_eq!(
+            v.convert_to(&SsaType::I8, false, PointerSize::Bit64),
+            Some(ConstValue::I8(42))
+        );
 
         // i32 -> i8 truncation with overflow
         let v = ConstValue::I32(1000);
         // 1000 = 0x3E8, truncated to i8 = 0xE8 = -24 (signed)
-        assert_eq!(v.convert_to(&SsaType::I8, false), Some(ConstValue::I8(-24)));
+        assert_eq!(
+            v.convert_to(&SsaType::I8, false, PointerSize::Bit64),
+            Some(ConstValue::I8(-24))
+        );
 
         // i64 -> i32 (truncates)
         let v = ConstValue::I64(0x1_0000_0042);
         assert_eq!(
-            v.convert_to(&SsaType::I32, false),
+            v.convert_to(&SsaType::I32, false, PointerSize::Bit64),
             Some(ConstValue::I32(0x42))
         );
     }
@@ -1784,21 +1834,21 @@ mod tests {
         // i32 -> f32
         let v = ConstValue::I32(42);
         assert_eq!(
-            v.convert_to(&SsaType::F32, false),
+            v.convert_to(&SsaType::F32, false, PointerSize::Bit64),
             Some(ConstValue::F32(42.0))
         );
 
         // i32 -> f64
         let v = ConstValue::I32(42);
         assert_eq!(
-            v.convert_to(&SsaType::F64, false),
+            v.convert_to(&SsaType::F64, false, PointerSize::Bit64),
             Some(ConstValue::F64(42.0))
         );
 
         // Unsigned source to float
         let v = ConstValue::U32(42);
         assert_eq!(
-            v.convert_to(&SsaType::F32, true),
+            v.convert_to(&SsaType::F32, true, PointerSize::Bit64),
             Some(ConstValue::F32(42.0))
         );
     }
@@ -1807,11 +1857,17 @@ mod tests {
     fn test_convert_to_bool() {
         // Non-zero -> true
         let v = ConstValue::I32(42);
-        assert_eq!(v.convert_to(&SsaType::Bool, false), Some(ConstValue::True));
+        assert_eq!(
+            v.convert_to(&SsaType::Bool, false, PointerSize::Bit64),
+            Some(ConstValue::True)
+        );
 
         // Zero -> false
         let v = ConstValue::I32(0);
-        assert_eq!(v.convert_to(&SsaType::Bool, false), Some(ConstValue::False));
+        assert_eq!(
+            v.convert_to(&SsaType::Bool, false, PointerSize::Bit64),
+            Some(ConstValue::False)
+        );
     }
 
     #[test]
@@ -1819,20 +1875,20 @@ mod tests {
         // Value fits in target
         let v = ConstValue::I32(100);
         assert_eq!(
-            v.convert_to_checked(&SsaType::I8, false),
+            v.convert_to_checked(&SsaType::I8, false, PointerSize::Bit64),
             Some(ConstValue::I8(100))
         );
 
         // Value at boundary
         let v = ConstValue::I32(127);
         assert_eq!(
-            v.convert_to_checked(&SsaType::I8, false),
+            v.convert_to_checked(&SsaType::I8, false, PointerSize::Bit64),
             Some(ConstValue::I8(127))
         );
 
         let v = ConstValue::I32(-128);
         assert_eq!(
-            v.convert_to_checked(&SsaType::I8, false),
+            v.convert_to_checked(&SsaType::I8, false, PointerSize::Bit64),
             Some(ConstValue::I8(-128))
         );
     }
@@ -1841,13 +1897,25 @@ mod tests {
     fn test_convert_to_checked_overflow() {
         // Value overflows target
         let v = ConstValue::I32(1000);
-        assert_eq!(v.convert_to_checked(&SsaType::I8, false), None);
+        assert_eq!(
+            v.convert_to_checked(&SsaType::I8, false, PointerSize::Bit64),
+            None
+        );
 
         // Negative to unsigned
         let v = ConstValue::I32(-1);
-        assert_eq!(v.convert_to_checked(&SsaType::U8, false), None);
-        assert_eq!(v.convert_to_checked(&SsaType::U32, false), None);
-        assert_eq!(v.convert_to_checked(&SsaType::U64, false), None);
+        assert_eq!(
+            v.convert_to_checked(&SsaType::U8, false, PointerSize::Bit64),
+            None
+        );
+        assert_eq!(
+            v.convert_to_checked(&SsaType::U32, false, PointerSize::Bit64),
+            None
+        );
+        assert_eq!(
+            v.convert_to_checked(&SsaType::U64, false, PointerSize::Bit64),
+            None
+        );
     }
 
     #[test]
@@ -1855,7 +1923,7 @@ mod tests {
         // i32 -> char (u16)
         let v = ConstValue::I32(65); // 'A'
         assert_eq!(
-            v.convert_to(&SsaType::Char, false),
+            v.convert_to(&SsaType::Char, false, PointerSize::Bit64),
             Some(ConstValue::U16(65))
         );
     }
@@ -1865,14 +1933,14 @@ mod tests {
         // i32 -> NativeInt
         let v = ConstValue::I32(42);
         assert_eq!(
-            v.convert_to(&SsaType::NativeInt, false),
+            v.convert_to(&SsaType::NativeInt, false, PointerSize::Bit64),
             Some(ConstValue::NativeInt(42))
         );
 
         // i32 -> NativeUInt
         let v = ConstValue::I32(42);
         assert_eq!(
-            v.convert_to(&SsaType::NativeUInt, false),
+            v.convert_to(&SsaType::NativeUInt, false, PointerSize::Bit64),
             Some(ConstValue::NativeUInt(42))
         );
     }
@@ -1881,84 +1949,94 @@ mod tests {
     fn test_const_div() {
         let a = ConstValue::I32(100);
         let b = ConstValue::I32(7);
-        assert_eq!(a.div(&b), Some(ConstValue::I32(14)));
+        assert_eq!(a.div(&b, PointerSize::Bit64), Some(ConstValue::I32(14)));
 
         // Unsigned division (uses U32 type)
         let a = ConstValue::U32(100);
         let b = ConstValue::U32(7);
-        assert_eq!(a.div(&b), Some(ConstValue::U32(14)));
+        assert_eq!(a.div(&b, PointerSize::Bit64), Some(ConstValue::U32(14)));
 
         // i64 division
         let a = ConstValue::I64(1000);
         let b = ConstValue::I64(33);
-        assert_eq!(a.div(&b), Some(ConstValue::I64(30)));
+        assert_eq!(a.div(&b, PointerSize::Bit64), Some(ConstValue::I64(30)));
     }
 
     #[test]
     fn test_const_div_by_zero() {
         let a = ConstValue::I32(100);
         let zero = ConstValue::I32(0);
-        assert_eq!(a.div(&zero), None);
+        assert_eq!(a.div(&zero, PointerSize::Bit64), None);
 
         let a = ConstValue::U64(100);
         let zero = ConstValue::U64(0);
-        assert_eq!(a.div(&zero), None);
+        assert_eq!(a.div(&zero, PointerSize::Bit64), None);
     }
 
     #[test]
     fn test_const_div_negative() {
         let a = ConstValue::I32(-100);
         let b = ConstValue::I32(7);
-        assert_eq!(a.div(&b), Some(ConstValue::I32(-14))); // -100 / 7 = -14
+        assert_eq!(a.div(&b, PointerSize::Bit64), Some(ConstValue::I32(-14))); // -100 / 7 = -14
     }
 
     #[test]
     fn test_const_rem() {
         let a = ConstValue::I32(100);
         let b = ConstValue::I32(7);
-        assert_eq!(a.rem(&b), Some(ConstValue::I32(2))); // 100 % 7 = 2
+        assert_eq!(a.rem(&b, PointerSize::Bit64), Some(ConstValue::I32(2))); // 100 % 7 = 2
 
         // Unsigned remainder
         let a = ConstValue::U32(100);
         let b = ConstValue::U32(7);
-        assert_eq!(a.rem(&b), Some(ConstValue::U32(2)));
+        assert_eq!(a.rem(&b, PointerSize::Bit64), Some(ConstValue::U32(2)));
     }
 
     #[test]
     fn test_const_rem_by_zero() {
         let a = ConstValue::I32(100);
         let zero = ConstValue::I32(0);
-        assert_eq!(a.rem(&zero), None);
+        assert_eq!(a.rem(&zero, PointerSize::Bit64), None);
     }
 
     #[test]
     fn test_const_rem_negative() {
         let a = ConstValue::I32(-100);
         let b = ConstValue::I32(7);
-        assert_eq!(a.rem(&b), Some(ConstValue::I32(-2))); // -100 % 7 = -2
+        assert_eq!(a.rem(&b, PointerSize::Bit64), Some(ConstValue::I32(-2)));
+        // -100 % 7 = -2
     }
 
     #[test]
     fn test_const_shl() {
         let a = ConstValue::I32(1);
         let shift = ConstValue::I32(4);
-        assert_eq!(a.shl(&shift), Some(ConstValue::I32(16))); // 1 << 4 = 16
+        assert_eq!(a.shl(&shift, PointerSize::Bit64), Some(ConstValue::I32(16))); // 1 << 4 = 16
 
         // Larger shift
         let a = ConstValue::I32(1);
         let shift = ConstValue::I32(31);
-        assert_eq!(a.shl(&shift), Some(ConstValue::I32(i32::MIN))); // 1 << 31 = MIN_VALUE
+        assert_eq!(
+            a.shl(&shift, PointerSize::Bit64),
+            Some(ConstValue::I32(i32::MIN))
+        ); // 1 << 31 = MIN_VALUE
     }
 
     #[test]
     fn test_const_shr_signed() {
         let a = ConstValue::I32(-16);
         let shift = ConstValue::I32(2);
-        assert_eq!(a.shr(&shift, false), Some(ConstValue::I32(-4))); // Sign preserved
+        assert_eq!(
+            a.shr(&shift, false, PointerSize::Bit64),
+            Some(ConstValue::I32(-4))
+        ); // Sign preserved
 
         let b = ConstValue::I32(16);
         let shift = ConstValue::I32(2);
-        assert_eq!(b.shr(&shift, false), Some(ConstValue::I32(4)));
+        assert_eq!(
+            b.shr(&shift, false, PointerSize::Bit64),
+            Some(ConstValue::I32(4))
+        );
     }
 
     #[test]
@@ -1966,7 +2044,7 @@ mod tests {
         let a = ConstValue::I32(-1); // All 1s in two's complement
         let shift = ConstValue::I32(1);
         // Unsigned right shift fills with 0
-        let result = a.shr(&shift, true);
+        let result = a.shr(&shift, true, PointerSize::Bit64);
         assert!(result.is_some());
         // -1 >> 1 (unsigned) = 0x7FFFFFFF
         if let Some(ConstValue::I32(v)) = result {
@@ -1978,7 +2056,10 @@ mod tests {
     fn test_const_shr_i64() {
         let a = ConstValue::I64(256);
         let shift = ConstValue::I32(4);
-        assert_eq!(a.shr(&shift, false), Some(ConstValue::I64(16)));
+        assert_eq!(
+            a.shr(&shift, false, PointerSize::Bit64),
+            Some(ConstValue::I64(16))
+        );
     }
 
     #[test]
@@ -2008,13 +2089,13 @@ mod tests {
     fn test_const_float_arithmetic() {
         let a = ConstValue::F32(10.5);
         let b = ConstValue::F32(2.5);
-        assert_eq!(a.add(&b), Some(ConstValue::F32(13.0)));
-        assert_eq!(a.sub(&b), Some(ConstValue::F32(8.0)));
-        assert_eq!(a.mul(&b), Some(ConstValue::F32(26.25)));
+        assert_eq!(a.add(&b, PointerSize::Bit64), Some(ConstValue::F32(13.0)));
+        assert_eq!(a.sub(&b, PointerSize::Bit64), Some(ConstValue::F32(8.0)));
+        assert_eq!(a.mul(&b, PointerSize::Bit64), Some(ConstValue::F32(26.25)));
 
         let a = ConstValue::F64(100.0);
         let b = ConstValue::F64(4.0);
-        assert_eq!(a.div(&b), Some(ConstValue::F64(25.0)));
+        assert_eq!(a.div(&b, PointerSize::Bit64), Some(ConstValue::F64(25.0)));
     }
 
     #[test]
@@ -2031,7 +2112,7 @@ mod tests {
         let a = ConstValue::F64(1.0);
         let b = ConstValue::F64(0.0);
         // Float div by zero returns inf, not None
-        let result = a.div(&b);
+        let result = a.div(&b, PointerSize::Bit64);
         assert!(result.is_some());
         if let Some(ConstValue::F64(v)) = result {
             assert!(v.is_infinite());
@@ -2215,12 +2296,18 @@ mod tests {
         // I32 + I64 promotes to I64
         let i32_val = ConstValue::I32(10);
         let i64_val = ConstValue::I64(20);
-        assert_eq!(i32_val.add(&i64_val), Some(ConstValue::I64(30)));
+        assert_eq!(
+            i32_val.add(&i64_val, PointerSize::Bit64),
+            Some(ConstValue::I64(30))
+        );
 
         // U32 + U64 promotes to U64
         let u32_val = ConstValue::U32(100);
         let u64_val = ConstValue::U64(200);
-        assert_eq!(u32_val.add(&u64_val), Some(ConstValue::U64(300)));
+        assert_eq!(
+            u32_val.add(&u64_val, PointerSize::Bit64),
+            Some(ConstValue::U64(300))
+        );
     }
 
     #[test]
@@ -2228,12 +2315,12 @@ mod tests {
         // I32 + F32 returns None (incompatible)
         let i32_val = ConstValue::I32(10);
         let f32_val = ConstValue::F32(std::f32::consts::PI);
-        assert!(i32_val.add(&f32_val).is_none());
+        assert!(i32_val.add(&f32_val, PointerSize::Bit64).is_none());
 
         // U64 + I64 returns None (signed vs unsigned)
         let u64_val = ConstValue::U64(100);
         let i64_val = ConstValue::I64(200);
-        assert!(u64_val.add(&i64_val).is_none());
+        assert!(u64_val.add(&i64_val, PointerSize::Bit64).is_none());
     }
 
     #[test]

@@ -52,7 +52,7 @@ use std::{
 
 pub use base::{
     ArrayDimensions, CilFlavor, CilModifier, CilTypeRef, CilTypeRefList, CilTypeRefListIter,
-    CilTypeReference, ELEMENT_TYPE,
+    CilTypeReference, PointerSize, ELEMENT_TYPE,
 };
 pub use builder::TypeBuilder;
 pub use encoder::TypeSignatureEncoder;

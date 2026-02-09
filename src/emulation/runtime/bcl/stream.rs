@@ -287,7 +287,11 @@ fn memory_stream_ctor_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         thread
             .heap()
             .get_byte_array(*array_ref)
-            .or_else(|| thread.heap().get_array_as_bytes(*array_ref))
+            .or_else(|| {
+                thread
+                    .heap()
+                    .get_array_as_bytes(*array_ref, ctx.pointer_size)
+            })
             .unwrap_or_default()
     } else {
         Vec::new()
@@ -1063,8 +1067,10 @@ fn binary_reader_read_string_pre(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::runtime::hook::HookManager;
-    use crate::test::emulation::create_test_thread;
+    use crate::{
+        emulation::runtime::hook::HookManager, metadata::typesystem::PointerSize,
+        test::emulation::create_test_thread,
+    };
 
     #[test]
     fn test_register_hooks() {
@@ -1075,7 +1081,13 @@ mod tests {
 
     #[test]
     fn test_stream_close_hook() {
-        let ctx = HookContext::new(Token::new(0x0A000001), "System.IO", "Stream", "Close");
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.IO",
+            "Stream",
+            "Close",
+            PointerSize::Bit64,
+        );
 
         let mut thread = create_test_thread();
         let result = stream_close_pre(&ctx, &mut thread);
@@ -1088,7 +1100,13 @@ mod tests {
 
     #[test]
     fn test_stream_read_byte_eof_without_stream() {
-        let ctx = HookContext::new(Token::new(0x0A000001), "System.IO", "Stream", "ReadByte");
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.IO",
+            "Stream",
+            "ReadByte",
+            PointerSize::Bit64,
+        );
 
         let mut thread = create_test_thread();
         let result = stream_read_byte_pre(&ctx, &mut thread);
@@ -1108,8 +1126,14 @@ mod tests {
         let stream_ref = thread.heap_mut().alloc_stream(data).unwrap();
 
         let this = EmValue::ObjectRef(stream_ref);
-        let ctx = HookContext::new(Token::new(0x0A000001), "System.IO", "Stream", "ReadByte")
-            .with_this(Some(&this));
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.IO",
+            "Stream",
+            "ReadByte",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this));
 
         // Read first byte
         let result = stream_read_byte_pre(&ctx, &mut thread);
@@ -1149,8 +1173,14 @@ mod tests {
         let stream_ref = thread.heap_mut().alloc_stream(data).unwrap();
 
         let this = EmValue::ObjectRef(stream_ref);
-        let ctx = HookContext::new(Token::new(0x0A000001), "System.IO", "Stream", "get_Length")
-            .with_this(Some(&this));
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.IO",
+            "Stream",
+            "get_Length",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this));
 
         let result = stream_get_length_pre(&ctx, &mut thread);
         assert!(matches!(
@@ -1172,11 +1202,17 @@ mod tests {
             "System.IO",
             "Stream",
             "get_Position",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
-        let read_byte_ctx =
-            HookContext::new(Token::new(0x0A000002), "System.IO", "Stream", "ReadByte")
-                .with_this(Some(&this));
+        let read_byte_ctx = HookContext::new(
+            Token::new(0x0A000002),
+            "System.IO",
+            "Stream",
+            "ReadByte",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this));
 
         // Initial position is 0
         let result = stream_get_position_pre(&get_pos_ctx, &mut thread);
@@ -1209,6 +1245,7 @@ mod tests {
             "System.IO",
             "Stream",
             "set_Position",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this))
         .with_args(&args);
@@ -1222,6 +1259,7 @@ mod tests {
             "System.IO",
             "Stream",
             "get_Position",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
         let result = stream_get_position_pre(&get_pos_ctx, &mut thread);
@@ -1231,9 +1269,14 @@ mod tests {
         ));
 
         // Read byte at position 3 (value should be 4)
-        let read_byte_ctx =
-            HookContext::new(Token::new(0x0A000003), "System.IO", "Stream", "ReadByte")
-                .with_this(Some(&this));
+        let read_byte_ctx = HookContext::new(
+            Token::new(0x0A000003),
+            "System.IO",
+            "Stream",
+            "ReadByte",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this));
         let result = stream_read_byte_pre(&read_byte_ctx, &mut thread);
         assert!(matches!(
             result,
@@ -1254,6 +1297,7 @@ mod tests {
             "System.IO",
             "MemoryStream",
             "ToArray",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
 
@@ -1280,8 +1324,14 @@ mod tests {
 
         // Call constructor (factory pattern)
         let args = [EmValue::ObjectRef(array_ref)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System.IO", "MemoryStream", ".ctor")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.IO",
+            "MemoryStream",
+            ".ctor",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
 
         let result = memory_stream_ctor_pre(&ctx, &mut thread);
 
@@ -1297,6 +1347,7 @@ mod tests {
             "System.IO",
             "MemoryStream",
             "get_Length",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
 
@@ -1312,6 +1363,7 @@ mod tests {
             "System.IO",
             "MemoryStream",
             "ReadByte",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
         let result = stream_read_byte_pre(&read_ctx, &mut thread);
@@ -1332,10 +1384,15 @@ mod tests {
 
         // Seek to position 2 from beginning (origin = 0)
         let args = [EmValue::I64(2), EmValue::I32(0)];
-        let seek_ctx =
-            HookContext::new(Token::new(0x0A000001), "System.IO", "MemoryStream", "Seek")
-                .with_this(Some(&this))
-                .with_args(&args);
+        let seek_ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.IO",
+            "MemoryStream",
+            "Seek",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this))
+        .with_args(&args);
 
         let result = stream_seek_pre(&seek_ctx, &mut thread);
         assert!(matches!(
@@ -1349,6 +1406,7 @@ mod tests {
             "System.IO",
             "MemoryStream",
             "ReadByte",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
         let result = stream_read_byte_pre(&read_ctx, &mut thread);
@@ -1359,10 +1417,15 @@ mod tests {
 
         // Seek to end (origin = 2) with offset -1
         let args = [EmValue::I64(-1), EmValue::I32(2)];
-        let seek_ctx =
-            HookContext::new(Token::new(0x0A000003), "System.IO", "MemoryStream", "Seek")
-                .with_this(Some(&this))
-                .with_args(&args);
+        let seek_ctx = HookContext::new(
+            Token::new(0x0A000003),
+            "System.IO",
+            "MemoryStream",
+            "Seek",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this))
+        .with_args(&args);
 
         let result = stream_seek_pre(&seek_ctx, &mut thread);
         assert!(matches!(
@@ -1390,9 +1453,15 @@ mod tests {
         // Call constructor to store the stream reference
         let this = EmValue::ObjectRef(reader_ref);
         let args = [EmValue::ObjectRef(stream_ref)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System.IO", "BinaryReader", ".ctor")
-            .with_this(Some(&this))
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.IO",
+            "BinaryReader",
+            ".ctor",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this))
+        .with_args(&args);
 
         binary_reader_ctor_pre(&ctx, thread);
 
@@ -1410,6 +1479,7 @@ mod tests {
             "System.IO",
             "BinaryReader",
             "ReadByte",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
 
@@ -1447,6 +1517,7 @@ mod tests {
             "System.IO",
             "BinaryReader",
             "ReadBytes",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this))
         .with_args(&args);
@@ -1474,6 +1545,7 @@ mod tests {
             "System.IO",
             "BinaryReader",
             "ReadInt16",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
 
@@ -1496,6 +1568,7 @@ mod tests {
             "System.IO",
             "BinaryReader",
             "ReadInt32",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
 
@@ -1521,6 +1594,7 @@ mod tests {
             "System.IO",
             "BinaryReader",
             "ReadInt64",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
 
@@ -1543,6 +1617,7 @@ mod tests {
             "System.IO",
             "BinaryReader",
             "ReadString",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
 
@@ -1581,6 +1656,7 @@ mod tests {
             "System.IO",
             "BinaryReader",
             "ReadByte",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
         let result = binary_reader_read_byte_pre(&ctx, &mut thread);
@@ -1595,6 +1671,7 @@ mod tests {
             "System.IO",
             "BinaryReader",
             "ReadInt32",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
         let result = binary_reader_read_int32_pre(&ctx, &mut thread);
@@ -1609,6 +1686,7 @@ mod tests {
             "System.IO",
             "BinaryReader",
             "ReadString",
+            PointerSize::Bit64,
         )
         .with_this(Some(&this));
         let result = binary_reader_read_string_pre(&ctx, &mut thread);

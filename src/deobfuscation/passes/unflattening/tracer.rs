@@ -272,7 +272,7 @@ impl<'a> TreeTraceContext<'a> {
     fn new(ssa: &'a SsaFunction, config: &UnflattenConfig) -> Self {
         Self {
             ssa,
-            evaluator: SsaEvaluator::new(ssa),
+            evaluator: SsaEvaluator::new(ssa, config.pointer_size),
             dispatcher: None,
             state_tainted: HashSet::new(),
             next_node_id: 0,

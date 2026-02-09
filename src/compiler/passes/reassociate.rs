@@ -40,7 +40,7 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{
     analysis::{ConstValue, DefUseIndex, SsaFunction, SsaOp, SsaVarId},
     compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
-    metadata::token::Token,
+    metadata::{token::Token, typesystem::PointerSize},
     CilObject, Result,
 };
 
@@ -110,16 +110,21 @@ impl OpKind {
     /// For non-associative operations that still benefit from reassociation:
     /// - Sub: `(x - c1) - c2` → `x - (c1 + c2)` (combine with add)
     /// - Shl/Shr: `(x << c1) << c2` → `x << (c1 + c2)` (combine with add)
-    fn combine(&self, c1: &ConstValue, c2: &ConstValue) -> Option<ConstValue> {
+    fn combine(
+        &self,
+        c1: &ConstValue,
+        c2: &ConstValue,
+        ptr_size: PointerSize,
+    ) -> Option<ConstValue> {
         match self {
             // Associative: combine with same operation
-            OpKind::Add => c1.add(c2),
-            OpKind::Mul => c1.mul(c2),
-            OpKind::And => c1.bitwise_and(c2),
-            OpKind::Or => c1.bitwise_or(c2),
-            OpKind::Xor => c1.bitwise_xor(c2),
+            OpKind::Add => c1.add(c2, ptr_size),
+            OpKind::Mul => c1.mul(c2, ptr_size),
+            OpKind::And => c1.bitwise_and(c2, ptr_size),
+            OpKind::Or => c1.bitwise_or(c2, ptr_size),
+            OpKind::Xor => c1.bitwise_xor(c2, ptr_size),
             // Non-associative: combine with addition
-            OpKind::Sub | OpKind::Shl | OpKind::Shr { .. } => c1.add(c2),
+            OpKind::Sub | OpKind::Shl | OpKind::Shr { .. } => c1.add(c2, ptr_size),
         }
     }
 
@@ -329,13 +334,15 @@ impl ReassociationPass {
         candidates: Vec<ReassociationCandidate>,
         method_token: Token,
         changes: &mut EventLog,
+        ptr_size: PointerSize,
     ) {
         for candidate in candidates {
             // Combine the constants
-            let Some(combined) = candidate
-                .op_kind
-                .combine(&candidate.const1_value, &candidate.const2_value)
-            else {
+            let Some(combined) = candidate.op_kind.combine(
+                &candidate.const1_value,
+                &candidate.const2_value,
+                ptr_size,
+            ) else {
                 continue;
             };
 
@@ -401,8 +408,9 @@ impl SsaPass for ReassociationPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        assembly: &Arc<CilObject>,
     ) -> Result<bool> {
+        let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
         let mut changes = EventLog::new();
 
         // Gather information
@@ -412,7 +420,7 @@ impl SsaPass for ReassociationPass {
 
         // Find and apply reassociations
         let candidates = Self::find_candidates(ssa, &constants, &index, &uses);
-        Self::apply_reassociations(ssa, candidates, method_token, &mut changes);
+        Self::apply_reassociations(ssa, candidates, method_token, &mut changes, ptr_size);
 
         let changed = !changes.is_empty();
         if changed {
@@ -424,13 +432,15 @@ impl SsaPass for ReassociationPass {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{analysis::ConstValue, metadata::typesystem::PointerSize};
+
+    use super::OpKind;
 
     #[test]
     fn test_op_kind_combine_add() {
         let c1 = ConstValue::I32(5);
         let c2 = ConstValue::I32(3);
-        let result = OpKind::Add.combine(&c1, &c2);
+        let result = OpKind::Add.combine(&c1, &c2, PointerSize::Bit64);
         assert_eq!(result, Some(ConstValue::I32(8)));
     }
 
@@ -438,7 +448,7 @@ mod tests {
     fn test_op_kind_combine_xor() {
         let c1 = ConstValue::I32(0xF0);
         let c2 = ConstValue::I32(0x0F);
-        let result = OpKind::Xor.combine(&c1, &c2);
+        let result = OpKind::Xor.combine(&c1, &c2, PointerSize::Bit64);
         assert_eq!(result, Some(ConstValue::I32(0xFF)));
     }
 
@@ -446,7 +456,7 @@ mod tests {
     fn test_op_kind_combine_mul() {
         let c1 = ConstValue::I32(7);
         let c2 = ConstValue::I32(11);
-        let result = OpKind::Mul.combine(&c1, &c2);
+        let result = OpKind::Mul.combine(&c1, &c2, PointerSize::Bit64);
         assert_eq!(result, Some(ConstValue::I32(77)));
     }
 
@@ -454,7 +464,7 @@ mod tests {
     fn test_op_kind_combine_and() {
         let c1 = ConstValue::I32(0xFF);
         let c2 = ConstValue::I32(0x0F);
-        let result = OpKind::And.combine(&c1, &c2);
+        let result = OpKind::And.combine(&c1, &c2, PointerSize::Bit64);
         assert_eq!(result, Some(ConstValue::I32(0x0F)));
     }
 
@@ -462,7 +472,7 @@ mod tests {
     fn test_op_kind_combine_or() {
         let c1 = ConstValue::I32(0xF0);
         let c2 = ConstValue::I32(0x0F);
-        let result = OpKind::Or.combine(&c1, &c2);
+        let result = OpKind::Or.combine(&c1, &c2, PointerSize::Bit64);
         assert_eq!(result, Some(ConstValue::I32(0xFF)));
     }
 
@@ -471,7 +481,7 @@ mod tests {
         // (x - 5) - 3 → x - (5 + 3) → x - 8
         let c1 = ConstValue::I32(5);
         let c2 = ConstValue::I32(3);
-        let result = OpKind::Sub.combine(&c1, &c2);
+        let result = OpKind::Sub.combine(&c1, &c2, PointerSize::Bit64);
         assert_eq!(result, Some(ConstValue::I32(8)));
     }
 
@@ -480,7 +490,7 @@ mod tests {
         // (x << 2) << 3 → x << (2 + 3) → x << 5
         let c1 = ConstValue::I32(2);
         let c2 = ConstValue::I32(3);
-        let result = OpKind::Shl.combine(&c1, &c2);
+        let result = OpKind::Shl.combine(&c1, &c2, PointerSize::Bit64);
         assert_eq!(result, Some(ConstValue::I32(5)));
     }
 
@@ -489,7 +499,7 @@ mod tests {
         // (x >> 4) >> 2 → x >> (4 + 2) → x >> 6
         let c1 = ConstValue::I32(4);
         let c2 = ConstValue::I32(2);
-        let result = OpKind::Shr { unsigned: false }.combine(&c1, &c2);
+        let result = OpKind::Shr { unsigned: false }.combine(&c1, &c2, PointerSize::Bit64);
         assert_eq!(result, Some(ConstValue::I32(6)));
     }
 
@@ -498,7 +508,7 @@ mod tests {
         // (x >>> 4) >>> 2 → x >>> (4 + 2) → x >>> 6
         let c1 = ConstValue::I32(4);
         let c2 = ConstValue::I32(2);
-        let result = OpKind::Shr { unsigned: true }.combine(&c1, &c2);
+        let result = OpKind::Shr { unsigned: true }.combine(&c1, &c2, PointerSize::Bit64);
         assert_eq!(result, Some(ConstValue::I32(6)));
     }
 

@@ -534,9 +534,11 @@ fn uintptr_op_explicit_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread)
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::runtime::hook::HookManager;
-    use crate::metadata::token::Token;
-    use crate::test::emulation::create_test_thread;
+    use crate::{
+        emulation::runtime::hook::HookManager,
+        metadata::{token::Token, typesystem::PointerSize},
+        test::emulation::create_test_thread,
+    };
 
     #[test]
     fn test_register_hooks() {
@@ -552,6 +554,7 @@ mod tests {
             "System.Runtime.InteropServices",
             "Marshal",
             "GetHINSTANCE",
+            PointerSize::Bit64,
         );
 
         let mut thread = create_test_thread();
@@ -569,8 +572,14 @@ mod tests {
     #[test]
     fn test_intptr_op_explicit_hook() {
         let args = [EmValue::I32(42)];
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "IntPtr", "op_Explicit")
-            .with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "IntPtr",
+            "op_Explicit",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
 
         let mut thread = create_test_thread();
 
@@ -584,8 +593,14 @@ mod tests {
     #[test]
     fn test_intptr_add_hook() {
         let args = [EmValue::NativeInt(0x1000), EmValue::I32(0x100)];
-        let ctx =
-            HookContext::new(Token::new(0x0A000001), "System", "IntPtr", "Add").with_args(&args);
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "IntPtr",
+            "Add",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
 
         let mut thread = create_test_thread();
 
@@ -598,8 +613,14 @@ mod tests {
 
     #[test]
     fn test_intptr_to_int32_hook() {
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "IntPtr", "ToInt32")
-            .with_this(Some(&EmValue::NativeInt(42)));
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "IntPtr",
+            "ToInt32",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&EmValue::NativeInt(42)));
 
         let mut thread = create_test_thread();
 

@@ -10,7 +10,10 @@ use std::{
     fmt,
 };
 
-use crate::analysis::ssa::{symbolic::ops::SymbolicOp, ConstValue, SsaVarId};
+use crate::{
+    analysis::ssa::{symbolic::ops::SymbolicOp, ConstValue, SsaVarId},
+    metadata::typesystem::PointerSize,
+};
 
 /// A symbolic expression that can contain variables, constants, and operations.
 ///
@@ -293,25 +296,30 @@ impl SymbolicExpr {
     /// # Arguments
     ///
     /// * `bindings` - Map from SSA variable IDs to their concrete values.
+    /// * `ptr_size` - Target pointer size for native int/uint masking.
     ///
     /// # Returns
     ///
     /// `Some(ConstValue)` if evaluation succeeds, `None` if any variable is unbound,
     /// a named variable is encountered, or division by zero occurs.
     #[must_use]
-    pub fn evaluate(&self, bindings: &HashMap<SsaVarId, ConstValue>) -> Option<ConstValue> {
+    pub fn evaluate(
+        &self,
+        bindings: &HashMap<SsaVarId, ConstValue>,
+        ptr_size: PointerSize,
+    ) -> Option<ConstValue> {
         match self {
             Self::Constant(v) => Some(v.clone()),
             Self::Variable(var) => bindings.get(var).cloned(),
             Self::NamedVar(_) => None,
             Self::Unary { op, operand } => {
-                let v = operand.evaluate(bindings)?;
-                evaluate_unary_typed(*op, v)
+                let v = operand.evaluate(bindings, ptr_size)?;
+                evaluate_unary_typed(*op, v, ptr_size)
             }
             Self::Binary { op, left, right } => {
-                let l = left.evaluate(bindings)?;
-                let r = right.evaluate(bindings)?;
-                evaluate_binary_typed(*op, l, r)
+                let l = left.evaluate(bindings, ptr_size)?;
+                let r = right.evaluate(bindings, ptr_size)?;
+                evaluate_binary_typed(*op, l, r, ptr_size)
             }
         }
     }
@@ -324,25 +332,30 @@ impl SymbolicExpr {
     /// # Arguments
     ///
     /// * `bindings` - Map from variable names to their concrete values.
+    /// * `ptr_size` - Target pointer size for native int/uint masking.
     ///
     /// # Returns
     ///
     /// `Some(ConstValue)` if evaluation succeeds, `None` if any named variable is
     /// unbound, an SSA variable is encountered, or division by zero occurs.
     #[must_use]
-    pub fn evaluate_named(&self, bindings: &HashMap<&str, ConstValue>) -> Option<ConstValue> {
+    pub fn evaluate_named(
+        &self,
+        bindings: &HashMap<&str, ConstValue>,
+        ptr_size: PointerSize,
+    ) -> Option<ConstValue> {
         match self {
             Self::Constant(v) => Some(v.clone()),
             Self::Variable(_) => None,
             Self::NamedVar(name) => bindings.get(name.as_str()).cloned(),
             Self::Unary { op, operand } => {
-                let v = operand.evaluate_named(bindings)?;
-                evaluate_unary_typed(*op, v)
+                let v = operand.evaluate_named(bindings, ptr_size)?;
+                evaluate_unary_typed(*op, v, ptr_size)
             }
             Self::Binary { op, left, right } => {
-                let l = left.evaluate_named(bindings)?;
-                let r = right.evaluate_named(bindings)?;
-                evaluate_binary_typed(*op, l, r)
+                let l = left.evaluate_named(bindings, ptr_size)?;
+                let r = right.evaluate_named(bindings, ptr_size)?;
+                evaluate_binary_typed(*op, l, r, ptr_size)
             }
         }
     }
@@ -405,9 +418,9 @@ impl SymbolicExpr {
     /// assert_eq!(result.as_i64(), Some(100 ^ 0x12345678));
     /// ```
     #[must_use]
-    pub fn substitute_named(&self, name: &str, value: i64) -> Self {
+    pub fn substitute_named(&self, name: &str, value: i64, ptr_size: PointerSize) -> Self {
         self.substitute_named_expr(name, &Self::Constant(ConstValue::I64(value)))
-            .simplify()
+            .simplify(ptr_size)
     }
 
     /// Substitutes a named variable with a replacement expression.
@@ -457,15 +470,15 @@ impl SymbolicExpr {
     /// A simplified expression that is semantically equivalent to this one.
     #[must_use]
     #[allow(clippy::match_same_arms)] // Documents distinct algebraic identities: x*0=0 vs x&0=0
-    pub fn simplify(&self) -> Self {
+    pub fn simplify(&self, ptr_size: PointerSize) -> Self {
         match self {
             Self::Constant(_) | Self::Variable(_) | Self::NamedVar(_) => self.clone(),
             Self::Unary { op, operand } => {
-                let simplified = operand.simplify();
+                let simplified = operand.simplify(ptr_size);
 
                 // Constant folding using typed operations
                 if let Self::Constant(v) = &simplified {
-                    if let Some(result) = evaluate_unary_typed(*op, v.clone()) {
+                    if let Some(result) = evaluate_unary_typed(*op, v.clone(), ptr_size) {
                         return Self::Constant(result);
                     }
                 }
@@ -493,12 +506,13 @@ impl SymbolicExpr {
                 }
             }
             Self::Binary { op, left, right } => {
-                let left_simp = left.simplify();
-                let right_simp = right.simplify();
+                let left_simp = left.simplify(ptr_size);
+                let right_simp = right.simplify(ptr_size);
 
                 // Both constants - evaluate using typed operations
                 if let (Self::Constant(l), Self::Constant(r)) = (&left_simp, &right_simp) {
-                    if let Some(result) = evaluate_binary_typed(*op, l.clone(), r.clone()) {
+                    if let Some(result) = evaluate_binary_typed(*op, l.clone(), r.clone(), ptr_size)
+                    {
                         return Self::Constant(result);
                     }
                 }
@@ -718,10 +732,14 @@ impl From<i64> for SymbolicExpr {
 /// # Returns
 ///
 /// The result of the operation as a `ConstValue`, or `None` if the operation fails.
-pub fn evaluate_unary_typed(op: SymbolicOp, value: ConstValue) -> Option<ConstValue> {
+pub fn evaluate_unary_typed(
+    op: SymbolicOp,
+    value: ConstValue,
+    ptr_size: PointerSize,
+) -> Option<ConstValue> {
     match op {
-        SymbolicOp::Neg => value.negate(),
-        SymbolicOp::Not => value.bitwise_not(),
+        SymbolicOp::Neg => value.negate(ptr_size),
+        SymbolicOp::Not => value.bitwise_not(ptr_size),
         _ => None,
     }
 }
@@ -744,20 +762,21 @@ pub fn evaluate_binary_typed(
     op: SymbolicOp,
     left: ConstValue,
     right: ConstValue,
+    ptr_size: PointerSize,
 ) -> Option<ConstValue> {
     match op {
-        SymbolicOp::Add => left.add(&right),
-        SymbolicOp::Sub => left.sub(&right),
-        SymbolicOp::Mul => left.mul(&right),
+        SymbolicOp::Add => left.add(&right, ptr_size),
+        SymbolicOp::Sub => left.sub(&right, ptr_size),
+        SymbolicOp::Mul => left.mul(&right, ptr_size),
         // div/rem handle signedness based on ConstValue's underlying type
-        SymbolicOp::DivS | SymbolicOp::DivU => left.div(&right),
-        SymbolicOp::RemS | SymbolicOp::RemU => left.rem(&right),
-        SymbolicOp::And => left.bitwise_and(&right),
-        SymbolicOp::Or => left.bitwise_or(&right),
-        SymbolicOp::Xor => left.bitwise_xor(&right),
-        SymbolicOp::Shl => left.shl(&right),
-        SymbolicOp::ShrS => left.shr(&right, false),
-        SymbolicOp::ShrU => left.shr(&right, true),
+        SymbolicOp::DivS | SymbolicOp::DivU => left.div(&right, ptr_size),
+        SymbolicOp::RemS | SymbolicOp::RemU => left.rem(&right, ptr_size),
+        SymbolicOp::And => left.bitwise_and(&right, ptr_size),
+        SymbolicOp::Or => left.bitwise_or(&right, ptr_size),
+        SymbolicOp::Xor => left.bitwise_xor(&right, ptr_size),
+        SymbolicOp::Shl => left.shl(&right, ptr_size),
+        SymbolicOp::ShrS => left.shr(&right, false, ptr_size),
+        SymbolicOp::ShrU => left.shr(&right, true, ptr_size),
         SymbolicOp::Eq => left.ceq(&right),
         SymbolicOp::Ne => left.ceq(&right).map(|v| {
             // Negate the equality result
@@ -819,9 +838,12 @@ pub fn evaluate_binary_typed(
 mod tests {
     use std::collections::HashMap;
 
-    use crate::analysis::ssa::{
-        symbolic::{expr::SymbolicExpr, ops::SymbolicOp},
-        ConstValue, SsaVarId,
+    use crate::{
+        analysis::ssa::{
+            symbolic::{expr::SymbolicExpr, ops::SymbolicOp},
+            ConstValue, SsaVarId,
+        },
+        metadata::typesystem::PointerSize,
     };
 
     #[test]
@@ -829,7 +851,10 @@ mod tests {
         let expr = SymbolicExpr::constant_i32(42);
         assert!(expr.is_constant());
         assert_eq!(expr.as_constant(), Some(&ConstValue::I32(42)));
-        assert_eq!(expr.evaluate(&HashMap::new()), Some(ConstValue::I32(42)));
+        assert_eq!(
+            expr.evaluate(&HashMap::new(), PointerSize::Bit64),
+            Some(ConstValue::I32(42))
+        );
     }
 
     #[test]
@@ -840,10 +865,13 @@ mod tests {
         assert_eq!(expr.as_variable(), Some(var));
 
         let mut bindings = HashMap::new();
-        assert_eq!(expr.evaluate(&bindings), None);
+        assert_eq!(expr.evaluate(&bindings, PointerSize::Bit64), None);
 
         bindings.insert(var, ConstValue::I32(100));
-        assert_eq!(expr.evaluate(&bindings), Some(ConstValue::I32(100)));
+        assert_eq!(
+            expr.evaluate(&bindings, PointerSize::Bit64),
+            Some(ConstValue::I32(100))
+        );
     }
 
     #[test]
@@ -853,7 +881,7 @@ mod tests {
             SymbolicExpr::constant_i32(10),
             SymbolicExpr::constant_i32(20),
         );
-        let simplified = expr.simplify();
+        let simplified = expr.simplify(PointerSize::Bit64);
         assert_eq!(simplified, SymbolicExpr::constant(ConstValue::I32(30)));
     }
 
@@ -865,7 +893,7 @@ mod tests {
             SymbolicExpr::variable(var),
             SymbolicExpr::constant_i32(0),
         );
-        let simplified = expr.simplify();
+        let simplified = expr.simplify(PointerSize::Bit64);
         assert_eq!(simplified, SymbolicExpr::variable(var));
     }
 
@@ -896,7 +924,10 @@ mod tests {
             SymbolicExpr::variable(var),
             SymbolicExpr::variable(var),
         );
-        assert_eq!(expr.simplify(), SymbolicExpr::constant(ConstValue::I32(0)));
+        assert_eq!(
+            expr.simplify(PointerSize::Bit64),
+            SymbolicExpr::constant(ConstValue::I32(0))
+        );
     }
 
     #[test]
@@ -908,7 +939,10 @@ mod tests {
             SymbolicExpr::variable(var),
             SymbolicExpr::variable(var),
         );
-        assert_eq!(expr.simplify(), SymbolicExpr::constant(ConstValue::I32(0)));
+        assert_eq!(
+            expr.simplify(PointerSize::Bit64),
+            SymbolicExpr::constant(ConstValue::I32(0))
+        );
     }
 
     #[test]
@@ -920,7 +954,10 @@ mod tests {
             SymbolicExpr::variable(var),
             SymbolicExpr::variable(var),
         );
-        assert_eq!(expr.simplify(), SymbolicExpr::variable(var));
+        assert_eq!(
+            expr.simplify(PointerSize::Bit64),
+            SymbolicExpr::variable(var)
+        );
     }
 
     #[test]
@@ -932,7 +969,10 @@ mod tests {
             SymbolicExpr::variable(var),
             SymbolicExpr::variable(var),
         );
-        assert_eq!(expr.simplify(), SymbolicExpr::variable(var));
+        assert_eq!(
+            expr.simplify(PointerSize::Bit64),
+            SymbolicExpr::variable(var)
+        );
     }
 
     #[test]
@@ -943,7 +983,10 @@ mod tests {
             SymbolicOp::Neg,
             SymbolicExpr::unary(SymbolicOp::Neg, SymbolicExpr::variable(var)),
         );
-        assert_eq!(expr.simplify(), SymbolicExpr::variable(var));
+        assert_eq!(
+            expr.simplify(PointerSize::Bit64),
+            SymbolicExpr::variable(var)
+        );
     }
 
     #[test]
@@ -954,7 +997,10 @@ mod tests {
             SymbolicOp::Not,
             SymbolicExpr::unary(SymbolicOp::Not, SymbolicExpr::variable(var)),
         );
-        assert_eq!(expr.simplify(), SymbolicExpr::variable(var));
+        assert_eq!(
+            expr.simplify(PointerSize::Bit64),
+            SymbolicExpr::variable(var)
+        );
     }
 
     #[test]
@@ -971,7 +1017,10 @@ mod tests {
             ),
             SymbolicExpr::constant(const_val),
         );
-        assert_eq!(expr.simplify(), SymbolicExpr::variable(var));
+        assert_eq!(
+            expr.simplify(PointerSize::Bit64),
+            SymbolicExpr::variable(var)
+        );
     }
 
     #[test]
@@ -988,7 +1037,10 @@ mod tests {
                 SymbolicExpr::constant(const_val),
             ),
         );
-        assert_eq!(expr.simplify(), SymbolicExpr::variable(var));
+        assert_eq!(
+            expr.simplify(PointerSize::Bit64),
+            SymbolicExpr::variable(var)
+        );
     }
 
     #[test]
@@ -1000,7 +1052,10 @@ mod tests {
             SymbolicExpr::variable(var),
             SymbolicExpr::constant_i32(-1),
         );
-        assert_eq!(expr.simplify(), SymbolicExpr::variable(var));
+        assert_eq!(
+            expr.simplify(PointerSize::Bit64),
+            SymbolicExpr::variable(var)
+        );
     }
 
     #[test]
@@ -1013,7 +1068,7 @@ mod tests {
             SymbolicExpr::constant_i32(-1),
         );
         // Result should have all ones
-        let simplified = expr.simplify();
+        let simplified = expr.simplify(PointerSize::Bit64);
         if let SymbolicExpr::Constant(v) = simplified {
             assert!(v.is_all_ones());
         } else {
@@ -1030,7 +1085,7 @@ mod tests {
             SymbolicExpr::variable(var),
             SymbolicExpr::constant_i32(-1),
         );
-        let simplified = expr.simplify();
+        let simplified = expr.simplify(PointerSize::Bit64);
         // Should be ~x (NOT operation)
         assert!(matches!(
             simplified,
@@ -1065,7 +1120,7 @@ mod tests {
             SymbolicExpr::constant(xor_key),
         );
 
-        let simplified = expr.simplify();
+        let simplified = expr.simplify(PointerSize::Bit64);
 
         // Should simplify to: state * mul
         assert!(matches!(

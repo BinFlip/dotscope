@@ -89,7 +89,7 @@ use crate::{
         runtime::{Hook, RuntimeState},
         EmValue,
     },
-    metadata::{tables::FieldRvaRaw, token::Token},
+    metadata::{tables::FieldRvaRaw, token::Token, typesystem::PointerSize},
     CilObject, Result,
 };
 
@@ -126,6 +126,7 @@ fn populate_fieldrva_statics(assembly: &CilObject, address_space: &AddressSpace)
     let types = assembly.types();
     let file = assembly.file();
     let pe_data = file.data();
+    let ptr_size = PointerSize::from_pe(file.pe().is_64bit);
 
     for row in fieldrva_table.iter() {
         if row.rva == 0 {
@@ -136,7 +137,7 @@ fn populate_fieldrva_statics(assembly: &CilObject, address_space: &AddressSpace)
         let field_token = Token::new(row.field | 0x0400_0000);
 
         // Look up the field to get its byte size from TypeRegistry
-        let Some(field_type_size) = types.get_field_byte_size(&field_token) else {
+        let Some(field_type_size) = types.get_field_byte_size(&field_token, ptr_size) else {
             continue;
         };
 
@@ -444,6 +445,19 @@ impl ProcessBuilder {
     /// - [`for_full_emulation`](Self::for_full_emulation) - Preset for complete emulation
     pub fn config(mut self, config: EmulationConfig) -> Self {
         self.config = config;
+        self
+    }
+
+    /// Overrides the target pointer size for native int/uint types.
+    ///
+    /// By default, pointer size is auto-detected from the PE header during
+    /// [`build()`](Self::build). Use this method to override it manually.
+    ///
+    /// # Arguments
+    ///
+    /// * `ptr_size` - The [`PointerSize`] to use
+    pub fn pointer_size(mut self, ptr_size: PointerSize) -> Self {
+        self.config.pointer_size = ptr_size;
         self
     }
 
@@ -983,6 +997,15 @@ impl ProcessBuilder {
         if !self.register_defaults {
             config.stubs.bcl_stubs = false;
             config.stubs.pinvoke_stubs = false;
+        }
+
+        // Auto-detect pointer size from PE header
+        if let Some(ref assembly) = self.assembly {
+            config.pointer_size = if assembly.file().pe().is_64bit {
+                PointerSize::Bit64
+            } else {
+                PointerSize::Bit32
+            };
         }
 
         let config_arc = Arc::new(config);

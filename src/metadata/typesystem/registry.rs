@@ -121,7 +121,7 @@ use crate::{
         token::Token,
         typesystem::{
             CilFlavor, CilPrimitive, CilPrimitiveKind, CilType, CilTypeRc, CilTypeRef,
-            CilTypeReference, TypeSignatureHash,
+            CilTypeReference, PointerSize, TypeSignatureHash,
         },
     },
     Error::TypeNotFound,
@@ -1255,18 +1255,18 @@ impl TypeRegistry {
     /// # Example
     ///
     /// ```rust,no_run
-    /// use dotscope::metadata::typesystem::TypeRegistry;
+    /// use dotscope::metadata::typesystem::{TypeRegistry, PointerSize};
     /// use dotscope::metadata::token::Token;
     ///
     /// # fn example(registry: &TypeRegistry) {
     /// let field_token = Token::new(0x04000001);
-    /// if let Some(size) = registry.get_field_byte_size(&field_token) {
+    /// if let Some(size) = registry.get_field_byte_size(&field_token, PointerSize::Bit64) {
     ///     println!("Field size: {} bytes", size);
     /// }
     /// # }
     /// ```
     #[must_use]
-    pub fn get_field_byte_size(&self, field_token: &Token) -> Option<usize> {
+    pub fn get_field_byte_size(&self, field_token: &Token, ptr_size: PointerSize) -> Option<usize> {
         // Search through all types to find the field
         for entry in self.iter() {
             let type_ref = entry.value();
@@ -1277,7 +1277,7 @@ impl TypeRegistry {
                     let sig = &field.signature;
 
                     // First try to get size from primitive type
-                    if let Some(size) = sig.base.byte_size() {
+                    if let Some(size) = sig.base.byte_size(ptr_size) {
                         return Some(size);
                     }
 

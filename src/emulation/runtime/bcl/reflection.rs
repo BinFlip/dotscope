@@ -562,8 +562,10 @@ fn field_set_value_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) ->
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::emulation::runtime::hook::HookManager;
-    use crate::test::emulation::create_test_thread;
+    use crate::{
+        emulation::runtime::hook::HookManager, metadata::typesystem::PointerSize,
+        test::emulation::create_test_thread,
+    };
 
     #[test]
     fn test_register_hooks() {
@@ -574,7 +576,13 @@ mod tests {
 
     #[test]
     fn test_get_module_hook() {
-        let ctx = HookContext::new(Token::new(0x0A000001), "System", "Type", "get_Module");
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "Type",
+            "get_Module",
+            PointerSize::Bit64,
+        );
 
         let mut thread = create_test_thread();
         let result = type_get_module_pre(&ctx, &mut thread);
@@ -592,6 +600,7 @@ mod tests {
             "System",
             "Type",
             "GetTypeFromHandle",
+            PointerSize::Bit64,
         );
 
         let mut thread = create_test_thread();
@@ -610,6 +619,7 @@ mod tests {
             "System.Reflection",
             "MethodBase",
             "Invoke",
+            PointerSize::Bit64,
         );
 
         let mut thread = create_test_thread();
@@ -628,6 +638,7 @@ mod tests {
             "System.Reflection",
             "FieldInfo",
             "GetValue",
+            PointerSize::Bit64,
         );
 
         let mut thread = create_test_thread();

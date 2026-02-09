@@ -248,10 +248,6 @@ pub fn register(manager: &mut HookManager) {
     );
 }
 
-// =============================================================================
-// Basic Math Hooks
-// =============================================================================
-
 /// Hook for `System.Math.Abs` method.
 ///
 /// Returns the absolute value of a number.
@@ -510,10 +506,6 @@ fn system_math_divrem_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
     PreHookResult::Bypass(Some(quotient))
 }
 
-// =============================================================================
-// Rounding Hooks
-// =============================================================================
-
 /// Hook for `System.Math.Floor` method.
 ///
 /// Returns the largest integral value less than or equal to the specified number.
@@ -638,10 +630,6 @@ fn system_math_truncate_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread
     PreHookResult::Bypass(Some(result))
 }
 
-// =============================================================================
-// Power/Log Hooks
-// =============================================================================
-
 /// Hook for `System.Math.Pow` method.
 ///
 /// Returns a specified number raised to the specified power.
@@ -754,10 +742,6 @@ fn system_math_exp_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> 
     let value = to_f64(&ctx.args[0]);
     PreHookResult::Bypass(Some(EmValue::F64(value.exp())))
 }
-
-// =============================================================================
-// Trigonometry Hooks
-// =============================================================================
 
 /// Hook for `System.Math.Sin` method.
 ///
@@ -901,10 +885,6 @@ fn system_math_atan2_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -
 
     PreHookResult::Bypass(Some(EmValue::F64(y.atan2(x))))
 }
-
-// =============================================================================
-// BitOperations Hooks
-// =============================================================================
 
 /// Hook for `System.Numerics.BitOperations.PopCount` method.
 ///
@@ -1088,10 +1068,6 @@ fn system_numerics_bitoperations_rotateright_pre(
     PreHookResult::Bypass(Some(result))
 }
 
-// =============================================================================
-// Helpers
-// =============================================================================
-
 /// Helper to convert EmValue to f64.
 #[allow(clippy::cast_precision_loss)]
 fn to_f64(value: &EmValue) -> f64 {
@@ -1107,7 +1083,10 @@ fn to_f64(value: &EmValue) -> f64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{emulation::runtime::HookManager, test::emulation::create_test_thread};
+    use crate::{
+        emulation::runtime::HookManager, metadata::typesystem::PointerSize,
+        test::emulation::create_test_thread,
+    };
 
     #[test]
     fn test_register_hooks() {
@@ -1182,6 +1161,13 @@ mod tests {
     fn create_test_context(args: &[EmValue]) -> HookContext<'_> {
         use crate::metadata::token::Token;
 
-        HookContext::new(Token::new(0x06000001), "System", "Math", "Abs").with_args(args)
+        HookContext::new(
+            Token::new(0x06000001),
+            "System",
+            "Math",
+            "Abs",
+            PointerSize::Bit64,
+        )
+        .with_args(args)
     }
 }

@@ -1,8 +1,11 @@
 use std::sync::Arc;
 
 use super::*;
-use crate::analysis::{CallGraph, SsaFunctionBuilder, SsaType};
-use crate::test::helpers::test_assembly_arc;
+use crate::{
+    analysis::{CallGraph, SsaFunctionBuilder, SsaType},
+    metadata::typesystem::PointerSize,
+    test::helpers::test_assembly_arc,
+};
 
 /// Creates a test compiler context.
 fn test_context() -> CompilerContext {
@@ -27,7 +30,7 @@ fn test_pass_default() {
 fn test_conv_i32_to_i8() {
     let operand = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::I8, false),
+        operand.convert_to(&SsaType::I8, false, PointerSize::Bit64),
         Some(ConstValue::I8(42))
     );
 }
@@ -37,7 +40,7 @@ fn test_conv_i32_to_i8_truncate() {
     let operand = ConstValue::I32(1000);
     // 1000 truncated to i8 is -24 (1000 & 0xFF = 232, as signed = -24)
     assert_eq!(
-        operand.convert_to(&SsaType::I8, false),
+        operand.convert_to(&SsaType::I8, false, PointerSize::Bit64),
         Some(ConstValue::I8(-24))
     );
 }
@@ -46,7 +49,7 @@ fn test_conv_i32_to_i8_truncate() {
 fn test_conv_i32_to_i64() {
     let operand = ConstValue::I32(-42);
     assert_eq!(
-        operand.convert_to(&SsaType::I64, false),
+        operand.convert_to(&SsaType::I64, false, PointerSize::Bit64),
         Some(ConstValue::I64(-42))
     );
 }
@@ -55,7 +58,7 @@ fn test_conv_i32_to_i64() {
 fn test_conv_to_bool_nonzero() {
     let operand = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::Bool, false),
+        operand.convert_to(&SsaType::Bool, false, PointerSize::Bit64),
         Some(ConstValue::True)
     );
 }
@@ -64,7 +67,7 @@ fn test_conv_to_bool_nonzero() {
 fn test_conv_to_bool_zero() {
     let operand = ConstValue::I32(0);
     assert_eq!(
-        operand.convert_to(&SsaType::Bool, false),
+        operand.convert_to(&SsaType::Bool, false, PointerSize::Bit64),
         Some(ConstValue::False)
     );
 }
@@ -73,7 +76,7 @@ fn test_conv_to_bool_zero() {
 fn test_conv_to_f32() {
     let operand = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::F32, false),
+        operand.convert_to(&SsaType::F32, false, PointerSize::Bit64),
         Some(ConstValue::F32(42.0))
     );
 }
@@ -82,7 +85,7 @@ fn test_conv_to_f32() {
 fn test_conv_ovf_in_range() {
     let operand = ConstValue::I32(100);
     assert_eq!(
-        operand.convert_to_checked(&SsaType::I8, false),
+        operand.convert_to_checked(&SsaType::I8, false, PointerSize::Bit64),
         Some(ConstValue::I8(100))
     );
 }
@@ -90,14 +93,17 @@ fn test_conv_ovf_in_range() {
 #[test]
 fn test_conv_ovf_out_of_range() {
     let operand = ConstValue::I32(1000);
-    assert_eq!(operand.convert_to_checked(&SsaType::I8, false), None); // Would overflow
+    assert_eq!(
+        operand.convert_to_checked(&SsaType::I8, false, PointerSize::Bit64),
+        None
+    ); // Would overflow
 }
 
 #[test]
 fn test_conv_u8() {
     let operand = ConstValue::I32(200);
     assert_eq!(
-        operand.convert_to(&SsaType::U8, false),
+        operand.convert_to(&SsaType::U8, false, PointerSize::Bit64),
         Some(ConstValue::U8(200))
     );
 }
@@ -106,7 +112,7 @@ fn test_conv_u8() {
 fn test_conv_u16() {
     let operand = ConstValue::I32(50000);
     assert_eq!(
-        operand.convert_to(&SsaType::U16, false),
+        operand.convert_to(&SsaType::U16, false, PointerSize::Bit64),
         Some(ConstValue::U16(50000))
     );
 }
@@ -115,7 +121,7 @@ fn test_conv_u16() {
 fn test_conv_u32() {
     let operand = ConstValue::I64(3_000_000_000);
     assert_eq!(
-        operand.convert_to(&SsaType::U32, false),
+        operand.convert_to(&SsaType::U32, false, PointerSize::Bit64),
         Some(ConstValue::U32(3_000_000_000))
     );
 }
@@ -124,7 +130,7 @@ fn test_conv_u32() {
 fn test_conv_u64() {
     let operand = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::U64, false),
+        operand.convert_to(&SsaType::U64, false, PointerSize::Bit64),
         Some(ConstValue::U64(42))
     );
 }
@@ -133,7 +139,7 @@ fn test_conv_u64() {
 fn test_conv_f64() {
     let operand = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::F64, false),
+        operand.convert_to(&SsaType::F64, false, PointerSize::Bit64),
         Some(ConstValue::F64(42.0))
     );
 }
@@ -142,7 +148,7 @@ fn test_conv_f64() {
 fn test_conv_native_int() {
     let operand = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::NativeInt, false),
+        operand.convert_to(&SsaType::NativeInt, false, PointerSize::Bit64),
         Some(ConstValue::NativeInt(42))
     );
 }
@@ -151,7 +157,7 @@ fn test_conv_native_int() {
 fn test_conv_native_uint() {
     let operand = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::NativeUInt, false),
+        operand.convert_to(&SsaType::NativeUInt, false, PointerSize::Bit64),
         Some(ConstValue::NativeUInt(42))
     );
 }
@@ -160,7 +166,7 @@ fn test_conv_native_uint() {
 fn test_conv_char() {
     let operand = ConstValue::I32(65); // 'A'
     assert_eq!(
-        operand.convert_to(&SsaType::Char, false),
+        operand.convert_to(&SsaType::Char, false, PointerSize::Bit64),
         Some(ConstValue::U16(65))
     );
 }
@@ -332,7 +338,7 @@ fn test_add_ovf_no_overflow() {
         unsigned: false,
     };
 
-    let result = ConstantPropagationPass::check_overflow_op(&op, &constants);
+    let result = ConstantPropagationPass::check_overflow_op(&op, &constants, PointerSize::Bit64);
     assert!(result.is_some());
 }
 
@@ -353,7 +359,7 @@ fn test_mul_ovf_with_zero() {
     };
 
     // x * 0 = 0, even with overflow check
-    let result = ConstantPropagationPass::check_overflow_op(&op, &constants);
+    let result = ConstantPropagationPass::check_overflow_op(&op, &constants, PointerSize::Bit64);
     assert_eq!(result, Some((v2, ConstValue::I32(0))));
 }
 
