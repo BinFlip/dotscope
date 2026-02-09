@@ -212,7 +212,7 @@ fn detect_native_helpers(
         }
 
         // Add detection evidence
-        score.add(DetectionEvidence::BytecodePattern {
+        score.add(DetectionEvidence::MetadataPattern {
             name: format!(
                 "Native x86 helper methods ({} with signature int32(int32))",
                 count

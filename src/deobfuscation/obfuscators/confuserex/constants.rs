@@ -712,7 +712,7 @@ pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut Confu
 
     // Add detection evidence for decryptors
     let decryptor_confidence = (decryptors.len() * 20).min(30);
-    score.add(DetectionEvidence::BytecodePattern {
+    score.add(DetectionEvidence::MetadataPattern {
         name: format!(
             "Constant decryptor methods ({} with signature string(int32) or T(int32))",
             decryptors.len()

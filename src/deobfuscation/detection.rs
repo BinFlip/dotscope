@@ -265,6 +265,16 @@ pub enum DetectionEvidence {
         confidence: usize,
     },
 
+    /// Found patterns based on metadata inspection (signatures, flags, type names).
+    MetadataPattern {
+        /// Pattern name (e.g., "ConstantDecryptorSignature", "NativeX86Helper").
+        name: String,
+        /// Locations where pattern was found.
+        locations: boxcar::Vec<Token>,
+        /// Confidence contribution.
+        confidence: usize,
+    },
+
     /// Found resource with specific characteristics.
     Resource {
         /// Resource name or pattern.
@@ -368,6 +378,7 @@ impl DetectionEvidence {
             } => (*match_count * confidence_per_match).min(50), // Cap at 50
             Self::Attribute { confidence, .. }
             | Self::BytecodePattern { confidence, .. }
+            | Self::MetadataPattern { confidence, .. }
             | Self::Resource { confidence, .. }
             | Self::Version { confidence, .. }
             | Self::MetadataString { confidence, .. }
@@ -401,6 +412,11 @@ impl DetectionEvidence {
                 name, locations, ..
             } => {
                 format!("bytecode:{}x{}", name, locations.count())
+            }
+            Self::MetadataPattern {
+                name, locations, ..
+            } => {
+                format!("metadata:{}x{}", name, locations.count())
             }
             Self::Resource { name, .. } => format!("resource:{name}"),
             Self::Version {
