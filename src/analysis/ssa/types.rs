@@ -26,7 +26,7 @@ use crate::metadata::{
         CustomModifiers, SignatureArray, SignatureLocalVariable, SignatureMethod,
         SignatureParameter, SignaturePointer, SignatureSzArray, TypeSignature,
     },
-    tables::MemberRefSignature,
+    tables::{MemberRefSignature, StandAloneSigRaw, StandAloneSignature},
     token::Token,
     typesystem::{ArrayDimensions, CilFlavor},
 };
@@ -1138,6 +1138,39 @@ impl<'a> TypeContext<'a> {
                 })
                 .unwrap_or(SsaType::Unknown),
 
+            _ => SsaType::Unknown,
+        }
+    }
+
+    /// Returns the return type of a `calli` (indirect call) from its `StandAloneSig` token.
+    ///
+    /// Resolves the standalone method signature referenced by the token and extracts
+    /// the return type. Returns `SsaType::Unknown` on any resolution failure.
+    #[must_use]
+    pub fn call_indirect_return_type(&self, sig_token: Token) -> SsaType {
+        // StandAloneSig table is 0x11
+        if sig_token.table() != 0x11 {
+            return SsaType::Unknown;
+        }
+        let Some(tables) = self.assembly.tables() else {
+            return SsaType::Unknown;
+        };
+        let Some(table) = tables.table::<StandAloneSigRaw>() else {
+            return SsaType::Unknown;
+        };
+        let Some(raw) = table.get(sig_token.row()) else {
+            return SsaType::Unknown;
+        };
+        let Some(blob) = self.assembly.blob() else {
+            return SsaType::Unknown;
+        };
+        let Ok(owned) = raw.to_owned(blob) else {
+            return SsaType::Unknown;
+        };
+        match &owned.parsed_signature {
+            StandAloneSignature::Method(sig) => {
+                SsaType::from_type_signature(&sig.return_type.base, self.assembly)
+            }
             _ => SsaType::Unknown,
         }
     }

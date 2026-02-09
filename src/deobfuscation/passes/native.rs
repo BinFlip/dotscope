@@ -34,11 +34,11 @@ use rustc_hash::FxHashSet;
 
 use crate::{
     analysis::{decode_x86, detect_x86_prologue, X86Function, X86PrologueKind, X86ToSsaTranslator},
-    cilassembly::CilAssembly,
+    cilassembly::{CilAssembly, MethodBodyBuilder},
     compiler::SsaCodeGenerator,
     file::File,
     metadata::{
-        method::{encode_method_body_header, MethodImplCodeType},
+        method::MethodImplCodeType,
         tables::{MethodDefRaw, TableDataOwned, TableId},
         token::Token,
     },
@@ -279,23 +279,17 @@ impl NativeMethodConversionPass {
         let translator = X86ToSsaTranslator::new(&cfg);
         let ssa_function = translator.translate()?;
 
-        // Step 7: Generate CIL bytecode
+        // Step 7: Generate CIL bytecode and build method body
         let mut codegen = SsaCodeGenerator::new();
-        let (bytecode, max_stack, _num_locals) = codegen.generate(&ssa_function)?;
-
-        // Step 8: Create method body with header
-        // For now, we don't generate local variable signatures for converted methods
-        // since the x86 code typically doesn't need them (uses registers)
-        let header = encode_method_body_header(
-            bytecode.len() as u32,
-            max_stack,
-            0,     // no local var sig token
-            false, // no exception handlers
-            false, // no init_locals needed
-        )?;
-
-        let mut method_body = header;
-        method_body.extend_from_slice(&bytecode);
+        let result = codegen.compile(&ssa_function, assembly)?;
+        let (method_body, _) = MethodBodyBuilder::from_compilation(
+            result.bytecode,
+            result.max_stack,
+            result.locals,
+            result.exception_handlers,
+        )
+        .init_locals(false)
+        .build(assembly)?;
 
         // Step 9: Store the method body and get placeholder RVA
         let new_rva = assembly.store_method_body(method_body);

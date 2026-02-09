@@ -394,8 +394,93 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 }
             }
 
-            // Default for other operations
-            _ => SsaType::Unknown,
+            // Load argument/local — rare from inlining, type comes from context
+            SsaOp::LoadArg { arg_index, .. } => {
+                if let Some(ctx) = &self.type_context {
+                    ctx.arg_type(*arg_index)
+                } else {
+                    SsaType::Unknown
+                }
+            }
+            SsaOp::LoadLocal { local_index, .. } => {
+                if let Some(ctx) = &self.type_context {
+                    ctx.local_type(*local_index)
+                } else {
+                    SsaType::Unknown
+                }
+            }
+
+            // Load argument/local address — byref to the argument/local type
+            SsaOp::LoadArgAddr { arg_index, .. } => {
+                if let Some(ctx) = &self.type_context {
+                    SsaType::ByRef(Box::new(ctx.arg_type(*arg_index)))
+                } else {
+                    SsaType::Unknown
+                }
+            }
+            SsaOp::LoadLocalAddr { local_index, .. } => {
+                if let Some(ctx) = &self.type_context {
+                    SsaType::ByRef(Box::new(ctx.local_type(*local_index)))
+                } else {
+                    SsaType::Unknown
+                }
+            }
+
+            // Array length — always native int (ECMA-335 III.4.12)
+            SsaOp::ArrayLength { .. } => SsaType::NativeInt,
+
+            // Load object (value type copy) — type from value_type token
+            SsaOp::LoadObj { value_type, .. } => {
+                if let Some(ctx) = &self.type_context {
+                    SsaType::from_type_token(value_type.token(), ctx.assembly())
+                } else {
+                    SsaType::ValueType(*value_type)
+                }
+            }
+
+            // Ckfinite — operates on F64 stack type
+            SsaOp::Ckfinite { .. } => SsaType::F64,
+
+            // LocalAlloc — returns pointer (native int)
+            SsaOp::LocalAlloc { .. } => SsaType::NativeInt,
+
+            // CallIndirect — resolve return type from standalone signature
+            SsaOp::CallIndirect { signature, .. } => {
+                if let Some(ctx) = &self.type_context {
+                    ctx.call_indirect_return_type(signature.token())
+                } else {
+                    SsaType::Unknown
+                }
+            }
+
+            // Copy/Phi — types resolved via origin or during rename, not here
+            SsaOp::Copy { .. } | SsaOp::Phi { .. } => SsaType::Unknown,
+
+            // Non-value-producing operations — exhaustive list so new SsaOp
+            // variants cause a compiler error instead of silently returning Unknown
+            SsaOp::StoreField { .. }
+            | SsaOp::StoreStaticField { .. }
+            | SsaOp::StoreElement { .. }
+            | SsaOp::StoreIndirect { .. }
+            | SsaOp::StoreObj { .. }
+            | SsaOp::Jump { .. }
+            | SsaOp::Branch { .. }
+            | SsaOp::BranchCmp { .. }
+            | SsaOp::Switch { .. }
+            | SsaOp::Return { .. }
+            | SsaOp::Pop { .. }
+            | SsaOp::Throw { .. }
+            | SsaOp::Rethrow
+            | SsaOp::EndFinally
+            | SsaOp::EndFilter { .. }
+            | SsaOp::Leave { .. }
+            | SsaOp::InitBlk { .. }
+            | SsaOp::CopyBlk { .. }
+            | SsaOp::InitObj { .. }
+            | SsaOp::CopyObj { .. }
+            | SsaOp::Nop
+            | SsaOp::Break
+            | SsaOp::Constrained { .. } => SsaType::Unknown,
         }
     }
 

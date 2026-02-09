@@ -9,8 +9,8 @@ use std::{sync::Arc, time::Instant};
 use rayon::prelude::*;
 
 use crate::{
-    analysis::{CallGraph, SsaFunction, SsaOp, SsaType},
-    cilassembly::GeneratorConfig,
+    analysis::{CallGraph, SsaFunction, SsaOp},
+    cilassembly::{GeneratorConfig, MethodBodyBuilder},
     compiler::{
         AlgebraicSimplificationPass, BlockMergingPass, CallSiteInfo, ConstantPropagationPass,
         ControlFlowSimplificationPass, CopyPropagationPass, DeadCodeEliminationPass,
@@ -30,15 +30,8 @@ use crate::{
         result::DeobfuscationResult,
     },
     metadata::{
-        method::{
-            encode_exception_handlers, encode_method_body_header, ExceptionHandler,
-            ExceptionHandlerFlags, MethodAccessFlags, MethodModifiers,
-        },
-        signatures::{
-            encode_local_var_signature, CustomModifiers, SignatureLocalVariable,
-            SignatureLocalVariables,
-        },
-        tables::{MethodDefRaw, StandAloneSigBuilder, TableDataOwned, TableId, TypeAttributes},
+        method::{MethodAccessFlags, MethodModifiers},
+        tables::{MethodDefRaw, TableDataOwned, TableId, TypeAttributes},
         token::Token,
         validation::ValidationConfig,
     },
@@ -680,175 +673,21 @@ impl DeobfuscationEngine {
                 continue;
             };
 
-            // Generate CIL bytecode from SSA
-            let (bytecode, max_stack, num_locals) = codegen
-                .generate_with_assembly(&ssa, &mut cil_assembly)
-                .map_err(|e| {
-                    Error::Deobfuscation(format!(
-                        "Code generation failed for method {}: {}",
-                        method_token, e
-                    ))
-                })?;
+            // Generate CIL bytecode from SSA and build method body
+            let result = codegen.compile(&ssa, &mut cil_assembly).map_err(|e| {
+                Error::Deobfuscation(format!(
+                    "Code generation failed for method {}: {}",
+                    method_token, e
+                ))
+            })?;
 
-            // Generate local variable signature from compacted locals
-            // The codegen automatically compacts locals - only allocating indices
-            // for locals that are actually used. We build the signature from
-            // the codegen's local_types map to match.
-            let local_var_sig_token = if num_locals > 0 {
-                let local_types = codegen.local_types();
-                let original_mapping = codegen.original_local_mapping();
-
-                // Build signature using codegen's compacted types
-                // For each local index 0..num_locals, get its type from local_types
-                // or fall back to the original SSA type if available
-                let mut locals = Vec::with_capacity(num_locals as usize);
-                for idx in 0..num_locals {
-                    let local_type = if let Some(ssa_type) = local_types.get(&idx) {
-                        // Use codegen's recorded type
-                        ssa_type.to_type_signature()
-                    } else {
-                        // Fall back to original type via the mapping
-                        let orig_type = original_mapping
-                            .iter()
-                            .find(|(_, &new)| new == idx)
-                            .and_then(|(&orig, _)| {
-                                ssa.original_local_types()
-                                    .and_then(|types| types.get(orig as usize))
-                                    .map(|v| v.base.clone())
-                            });
-                        orig_type.unwrap_or_else(|| SsaType::I32.to_type_signature())
-                    };
-                    locals.push(SignatureLocalVariable {
-                        modifiers: CustomModifiers::default(),
-                        is_pinned: false,
-                        is_byref: false,
-                        base: local_type,
-                    });
-                }
-
-                let local_sig = SignatureLocalVariables { locals };
-
-                if local_sig.locals.is_empty() {
-                    0
-                } else {
-                    // Encode and add to assembly
-                    match encode_local_var_signature(&local_sig) {
-                        Ok(encoded) => {
-                            match StandAloneSigBuilder::new()
-                                .signature(&encoded)
-                                .build(&mut cil_assembly)
-                            {
-                                Ok(change_ref) => Token::from_parts(
-                                    TableId::StandAloneSig,
-                                    change_ref.placeholder(),
-                                )
-                                .value(),
-                                Err(_) => 0,
-                            }
-                        }
-                        Err(_) => 0,
-                    }
-                }
-            } else {
-                0
-            };
-
-            // Remap and encode exception handlers if present
-            let (exception_data, has_exceptions) = if ssa.has_exception_handlers() {
-                let block_offsets = codegen.block_offsets();
-                let bytecode_len = bytecode.len() as u32;
-
-                // Remap exception handlers using block offset mapping
-                let remapped_handlers: Vec<ExceptionHandler> = ssa
-                    .exception_handlers()
-                    .iter()
-                    .filter_map(|eh| {
-                        // Get new offsets from block mapping
-                        let try_offset = eh
-                            .try_start_block
-                            .and_then(|b| block_offsets.get(&b).copied())
-                            .unwrap_or(eh.try_offset);
-
-                        let handler_offset = eh
-                            .handler_start_block
-                            .and_then(|b| block_offsets.get(&b).copied())
-                            .unwrap_or(eh.handler_offset);
-
-                        // For try_end: use handler_offset as fallback since try ends where handler starts
-                        let try_end = eh
-                            .try_end_block
-                            .and_then(|b| block_offsets.get(&b).copied())
-                            .unwrap_or(handler_offset);
-
-                        // For handler_end: if no end block, handler extends to end of method
-                        let handler_end = eh
-                            .handler_end_block
-                            .and_then(|b| block_offsets.get(&b).copied())
-                            .unwrap_or(bytecode_len);
-
-                        let filter_offset = if eh.flags == ExceptionHandlerFlags::FILTER {
-                            eh.filter_start_block
-                                .and_then(|b| block_offsets.get(&b).copied())
-                                .unwrap_or(eh.class_token_or_filter)
-                        } else {
-                            eh.class_token_or_filter
-                        };
-
-                        // Validate offsets are within bytecode bounds
-                        if try_offset >= bytecode_len
-                            || handler_offset >= bytecode_len
-                            || try_end > bytecode_len
-                            || handler_end > bytecode_len
-                        {
-                            // Skip invalid handlers (may have been optimized away)
-                            return None;
-                        }
-
-                        Some(ExceptionHandler {
-                            flags: eh.flags,
-                            try_offset,
-                            try_length: try_end.saturating_sub(try_offset),
-                            handler_offset,
-                            handler_length: handler_end.saturating_sub(handler_offset),
-                            handler: None, // Type info is in class_token_or_filter
-                            filter_offset,
-                        })
-                    })
-                    .collect();
-
-                if remapped_handlers.is_empty() {
-                    (Vec::new(), false)
-                } else {
-                    match encode_exception_handlers(&remapped_handlers) {
-                        Ok(data) => (data, true),
-                        Err(_) => (Vec::new(), false),
-                    }
-                }
-            } else {
-                (Vec::new(), false)
-            };
-
-            // Create the method body header
-            let header = encode_method_body_header(
-                bytecode.len() as u32,
-                max_stack,
-                local_var_sig_token,
-                has_exceptions,
-                local_var_sig_token != 0, // init_locals if we have locals
-            )?;
-
-            // Combine header and bytecode into complete method body
-            let mut method_body = header;
-            method_body.extend_from_slice(&bytecode);
-
-            // Add exception handler data if present (must be 4-byte aligned)
-            if has_exceptions && !exception_data.is_empty() {
-                // Pad bytecode to 4-byte alignment
-                while method_body.len() % 4 != 0 {
-                    method_body.push(0);
-                }
-                method_body.extend_from_slice(&exception_data);
-            }
+            let (method_body, _local_sig_token) = MethodBodyBuilder::from_compilation(
+                result.bytecode,
+                result.max_stack,
+                result.locals,
+                result.exception_handlers,
+            )
+            .build(&mut cil_assembly)?;
 
             // Store the method body and get placeholder RVA
             let placeholder_rva = cil_assembly.store_method_body(method_body);

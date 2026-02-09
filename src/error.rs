@@ -388,6 +388,13 @@ pub enum Error {
     #[error("SSA error: {0}")]
     SsaError(String),
 
+    /// Code generation error.
+    ///
+    /// Errors that occur during SSA-to-CIL code generation, such as
+    /// missing type information for local variables or invalid instruction encoding.
+    #[error("Codegen error: {0}")]
+    CodegenFailed(String),
+
     /// Cannot modify replaced table.
     ///
     /// This error occurs when attempting to apply sparse modifications

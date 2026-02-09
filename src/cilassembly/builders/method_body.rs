@@ -281,6 +281,12 @@ pub struct MethodBodyBuilder {
 
     /// Exception handlers defined with labels (automatic offset calculation)
     labeled_exception_handlers: Vec<LabeledExceptionHandler>,
+
+    /// Pre-built bytecode (from `SsaCodeGenerator`). When set, no implementation closure needed.
+    prebuilt_bytecode: Option<Vec<u8>>,
+
+    /// Pre-built local variable signatures. When set, used instead of `locals`.
+    prebuilt_local_sig: Option<SignatureLocalVariables>,
 }
 
 impl MethodBodyBuilder {
@@ -302,6 +308,47 @@ impl MethodBodyBuilder {
             implementation: None,
             exception_handlers: Vec::new(),
             labeled_exception_handlers: Vec::new(),
+            prebuilt_bytecode: None,
+            prebuilt_local_sig: None,
+        }
+    }
+
+    /// Create a method body builder from pre-built compilation output.
+    ///
+    /// This constructor accepts pre-built bytecode, local variable signatures, and
+    /// exception handlers — typically produced by [`crate::compiler::SsaCodeGenerator::compile`].
+    /// No implementation closure is needed; the bytecode is used directly.
+    ///
+    /// The builder can still be customized with [`init_locals`](Self::init_locals) before
+    /// calling [`build`](Self::build).
+    ///
+    /// # Arguments
+    ///
+    /// * `bytecode` - Pre-built CIL bytecode
+    /// * `max_stack` - Maximum evaluation stack depth
+    /// * `locals` - Local variable signatures
+    /// * `exception_handlers` - Exception handlers with bytecode offsets
+    #[must_use]
+    pub fn from_compilation(
+        bytecode: Vec<u8>,
+        max_stack: u16,
+        locals: Vec<SignatureLocalVariable>,
+        exception_handlers: Vec<ExceptionHandler>,
+    ) -> Self {
+        let prebuilt_local_sig = if locals.is_empty() {
+            None
+        } else {
+            Some(SignatureLocalVariables { locals })
+        };
+        Self {
+            max_stack: Some(max_stack),
+            init_locals: true,
+            locals: Vec::new(),
+            implementation: None,
+            exception_handlers,
+            labeled_exception_handlers: Vec::new(),
+            prebuilt_bytecode: Some(bytecode),
+            prebuilt_local_sig,
         }
     }
 
@@ -738,36 +785,50 @@ impl MethodBodyBuilder {
             implementation,
             exception_handlers,
             labeled_exception_handlers,
+            prebuilt_bytecode,
+            prebuilt_local_sig,
         } = self;
 
-        // Must have an implementation
-        let implementation = implementation.ok_or_else(|| {
-            Error::ModificationInvalid("Method body implementation is required".to_string())
-        })?;
+        // Resolve bytecode and max_stack based on path (prebuilt vs assembler)
+        let (code_bytes, all_exception_handlers, max_stack) =
+            if let Some(bytecode) = prebuilt_bytecode {
+                // Prebuilt path: bytecode and exception handlers are already resolved
+                let max_stack = max_stack.unwrap_or(8);
+                (bytecode, exception_handlers, max_stack)
+            } else {
+                // Assembler path: run the implementation closure
+                let implementation = implementation.ok_or_else(|| {
+                    Error::ModificationInvalid("Method body implementation is required".to_string())
+                })?;
 
-        // Generate the CIL bytecode with automatic stack tracking
-        let mut assembler = InstructionAssembler::new();
-        implementation(&mut assembler)?;
+                let mut assembler = InstructionAssembler::new();
+                implementation(&mut assembler)?;
 
-        // Resolve labeled exception handlers to regular exception handlers
-        // This must be done after the implementation runs but before assembler.finish()
-        let mut all_exception_handlers = exception_handlers;
-        for labeled_handler in labeled_exception_handlers {
-            let resolved_handler = resolve_labeled_exception_handler(&assembler, &labeled_handler)?;
-            all_exception_handlers.push(resolved_handler);
-        }
+                // Resolve labeled exception handlers to regular exception handlers
+                let mut all_exception_handlers = exception_handlers;
+                for labeled_handler in labeled_exception_handlers {
+                    let resolved_handler =
+                        resolve_labeled_exception_handler(&assembler, &labeled_handler)?;
+                    all_exception_handlers.push(resolved_handler);
+                }
 
-        let (code_bytes, calculated_max_stack, _) = assembler.finish()?;
+                let (code_bytes, calculated_max_stack, _) = assembler.finish()?;
+                let max_stack = max_stack.unwrap_or(calculated_max_stack);
+                (code_bytes, all_exception_handlers, max_stack)
+            };
 
-        // Use calculated max stack from assembler if not explicitly set
-        // The assembler now provides accurate real-time stack tracking
-        let max_stack = max_stack.unwrap_or(calculated_max_stack);
-
-        // Generate local variable signature token if we have locals
-        let local_var_sig_token_value = if locals.is_empty() {
+        // Generate local variable signature token
+        let local_var_sig_token_value = if let Some(local_sig) = prebuilt_local_sig {
+            // Prebuilt path: encode the provided local signatures
+            let sig_bytes = encode_local_var_signature(&local_sig)?;
+            let local_sig_ref = StandAloneSigBuilder::new()
+                .signature(&sig_bytes)
+                .build(assembly)?;
+            local_sig_ref.placeholder_token().map_or(0, |t| t.value())
+        } else if locals.is_empty() {
             0u32
         } else {
-            // Create proper SignatureLocalVariable entries from the simple type pairs
+            // Assembler path: convert simple type pairs to signatures
             let signature_locals: Vec<SignatureLocalVariable> = locals
                 .iter()
                 .map(|(_, sig)| SignatureLocalVariable {
@@ -784,12 +845,10 @@ impl MethodBodyBuilder {
 
             let sig_bytes = encode_local_var_signature(&local_sig)?;
 
-            // Create the StandAloneSig table entry using the builder
             let local_sig_ref = StandAloneSigBuilder::new()
                 .signature(&sig_bytes)
                 .build(assembly)?;
 
-            // Get the placeholder token value for the method header
             local_sig_ref.placeholder_token().map_or(0, |t| t.value())
         };
 
