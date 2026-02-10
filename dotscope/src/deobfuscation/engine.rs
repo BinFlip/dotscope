@@ -30,7 +30,7 @@ use crate::{
         result::DeobfuscationResult,
     },
     metadata::{
-        tables::{MethodDefRaw, TableDataOwned, TableId, TypeAttributes},
+        tables::{MethodDefRaw, TableDataOwned, TableId},
         token::Token,
         validation::ValidationConfig,
     },
@@ -791,21 +791,11 @@ impl DeobfuscationEngine {
 
         for type_entry in types.iter() {
             let cil_type = type_entry.value();
-            let visibility = cil_type.flags & TypeAttributes::VISIBILITY_MASK;
-            let type_is_public =
-                visibility == TypeAttributes::PUBLIC || visibility == TypeAttributes::NESTED_PUBLIC;
+            let type_is_public = cil_type.is_public();
 
-            // Check each method in this type
-            for (_, method_ref) in cil_type.methods.iter() {
-                let Some(method_token) = method_ref.token() else {
-                    continue;
-                };
-
-                // Get method details from assembly
-                let Some(method_entry) = assembly.methods().get(&method_token) else {
-                    continue;
-                };
-                let method = method_entry.value();
+            // Check each method in this type using the query API
+            for method in cil_type.query_methods().iter() {
+                let method_token = method.token;
 
                 // Static constructors are always entry points (runtime calls them)
                 if method.is_cctor() {

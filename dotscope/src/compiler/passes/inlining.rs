@@ -362,13 +362,12 @@ impl<'a> InliningContext<'a> {
                 // Check if declared by a TypeDef (internal type)
                 if let CilTypeReference::TypeDef(type_ref) = &member_ref.declaredby {
                     if let Some(type_info) = type_ref.upgrade() {
-                        // Find the method by name in this type
-                        for (_, method_weak) in type_info.methods.iter() {
-                            if let Some(method) = method_weak.upgrade() {
-                                if method.name == member_ref.name {
-                                    return method.token;
-                                }
-                            }
+                        if let Some(method) = type_info
+                            .query_methods()
+                            .name(&member_ref.name)
+                            .find_first()
+                        {
+                            return method.token;
                         }
                     }
                 }

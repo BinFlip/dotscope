@@ -30,40 +30,32 @@ pub fn run(
 ) -> anyhow::Result<()> {
     let assembly = load_assembly(path)?;
 
-    let registry = assembly.types();
+    let mut query = assembly.query_types().defined();
 
-    let mut entries = Vec::new();
-
-    for entry in registry.iter() {
-        let cil_type = entry.value();
-
-        if cil_type.is_typeref() {
-            continue;
-        }
-
-        if public_only && !cil_type.is_public() {
-            continue;
-        }
-
-        if let Some(ns) = namespace {
-            if cil_type.namespace != ns {
-                continue;
-            }
-        }
-
-        let vis = if cil_type.is_public() {
-            "public"
-        } else {
-            "internal"
-        };
-
-        entries.push(TypeEntry {
-            token: cil_type.token.to_string(),
-            visibility: vis.to_string(),
-            kind: cil_type.flavor().to_string(),
-            name: cil_type.fullname(),
-        });
+    if public_only {
+        query = query.public();
     }
+
+    if let Some(ns) = namespace {
+        query = query.namespace(ns);
+    }
+
+    let entries: Vec<TypeEntry> = query
+        .iter()
+        .map(|cil_type| {
+            let vis = if cil_type.is_public() {
+                "public"
+            } else {
+                "internal"
+            };
+            TypeEntry {
+                token: cil_type.token.to_string(),
+                visibility: vis.to_string(),
+                kind: cil_type.flavor().to_string(),
+                name: cil_type.fullname(),
+            }
+        })
+        .collect();
 
     let count = entries.len();
     let output = TypesOutput {

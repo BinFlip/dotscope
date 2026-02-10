@@ -271,6 +271,12 @@ pub use crate::metadata::imports::ImportType;
 // primitives, and resolution mechanisms. This is the core of dotscope's type analysis
 // capabilities, providing unified access to all .NET type constructs.
 
+/// Composable query builders for filtering types and methods.
+///
+/// `TypeQuery` and `MethodQuery` provide a fluent API for searching and filtering
+/// types and methods in .NET assemblies without manual iteration boilerplate.
+pub use crate::metadata::query::{MethodQuery, TypeQuery};
+
 /// Core type system components.
 ///
 /// Includes type representations (`CilType`), primitive types (`CilPrimitive`),

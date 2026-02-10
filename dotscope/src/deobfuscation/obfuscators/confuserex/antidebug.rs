@@ -161,9 +161,7 @@ use crate::{
         detection::{DetectionEvidence, DetectionScore},
         obfuscators::confuserex::findings::ConfuserExFindings,
     },
-    metadata::{
-        method::MethodImplCodeType, tables::TableId, token::Token, typesystem::CilTypeReference,
-    },
+    metadata::{tables::TableId, token::Token, typesystem::CilTypeReference},
     CilObject, Result,
 };
 
@@ -278,8 +276,6 @@ pub fn add_antidebug_evidence(result: &AntiDebugDetectionResult, score: &Detecti
 
 /// Finds P/Invoke methods for anti-debug APIs.
 fn find_antidebug_pinvokes(assembly: &CilObject) -> Vec<Token> {
-    let mut pinvokes = Vec::new();
-
     let antidebug_apis = [
         "IsDebuggerPresent",
         "NtQueryInformationProcess",
@@ -288,15 +284,11 @@ fn find_antidebug_pinvokes(assembly: &CilObject) -> Vec<Token> {
         "CheckRemoteDebuggerPresent",
     ];
 
-    for entry in assembly.methods().iter() {
-        let method = entry.value();
-        if !method.impl_code_type.contains(MethodImplCodeType::NATIVE) {
-            continue;
-        }
-        if antidebug_apis.iter().any(|api| method.name == *api) {
-            pinvokes.push(method.token);
-        }
-    }
+    let pinvokes = assembly
+        .query_methods()
+        .native()
+        .filter(|m| antidebug_apis.iter().any(|api| m.name == *api))
+        .tokens();
 
     pinvokes
 }
@@ -305,13 +297,7 @@ fn find_antidebug_pinvokes(assembly: &CilObject) -> Vec<Token> {
 fn find_antidebug_methods(assembly: &CilObject) -> Vec<AntiDebugMethodInfo> {
     let mut found = Vec::new();
 
-    for entry in assembly.methods().iter() {
-        let method = entry.value();
-
-        let Some(_body) = method.body.get() else {
-            continue;
-        };
-
+    for method in assembly.query_methods().has_body().iter() {
         let Some(cfg) = method.cfg() else {
             continue;
         };

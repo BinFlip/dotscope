@@ -294,11 +294,9 @@ fn uses_decompression_types(assembly: &CilObject, method: &Method) -> bool {
                 let target = method_entry.value();
 
                 // Check if calling into a type with decompression-related name
-                if let Some(dt) = target.declaring_type.get() {
-                    if let Some(owner) = dt.upgrade() {
-                        if DECOMPRESSION_TYPES.iter().any(|t| owner.name.contains(t)) {
-                            return true;
-                        }
+                if let Some(owner) = target.declaring_type_rc() {
+                    if DECOMPRESSION_TYPES.iter().any(|t| owner.name.contains(t)) {
+                        return true;
                     }
                 }
             }
@@ -359,11 +357,9 @@ fn creates_thread_with_delegate(
                 if fn_token.is_table(TableId::MethodDef) {
                     if let Some(method_entry) = assembly.methods().get(fn_token) {
                         let target = method_entry.value();
-                        if let Some(dt) = target.declaring_type.get() {
-                            if let Some(owner) = dt.upgrade() {
-                                if request.is_deleted(owner.token) {
-                                    references_removed_type = true;
-                                }
+                        if let Some(owner) = target.declaring_type_rc() {
+                            if request.is_deleted(owner.token) {
+                                references_removed_type = true;
                             }
                         }
                     }
@@ -402,11 +398,9 @@ fn find_dead_helper_methods(assembly: &CilObject, request: &CleanupRequest) -> H
     let cctor_token = assembly.methods().iter().find_map(|entry| {
         let method = entry.value();
         if method.is_cctor() {
-            if let Some(dt) = method.declaring_type.get() {
-                if let Some(owner) = dt.upgrade() {
-                    if owner.name == "<Module>" {
-                        return Some(method.token);
-                    }
+            if let Some(owner) = method.declaring_type_rc() {
+                if owner.name == "<Module>" {
+                    return Some(method.token);
                 }
             }
         }
@@ -424,11 +418,9 @@ fn find_dead_helper_methods(assembly: &CilObject, request: &CleanupRequest) -> H
         }
 
         // Skip if method is in a type being removed (will be removed anyway)
-        if let Some(declaring_type) = method.declaring_type.get() {
-            if let Some(owner_type) = declaring_type.upgrade() {
-                if request.is_deleted(owner_type.token) {
-                    continue;
-                }
+        if let Some(owner_type) = method.declaring_type_rc() {
+            if request.is_deleted(owner_type.token) {
+                continue;
             }
         }
 

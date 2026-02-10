@@ -121,7 +121,7 @@ use crate::{
         streams::Blob,
         tables::{GenericParamList, MetadataTable, MethodSpecList, ParamList, StandAloneSigRaw},
         token::Token,
-        typesystem::{CilModifier, CilTypeRef, TypeRegistry, TypeResolver},
+        typesystem::{CilModifier, CilTypeRc, CilTypeRef, TypeRegistry, TypeResolver},
     },
     utils::VisitedMap,
     CilObject, Result,
@@ -997,10 +997,19 @@ impl Method {
         self.flags_access == MethodAccessFlags::PUBLIC
     }
 
+    /// Returns the declaring type as a strong reference, if available.
+    ///
+    /// This upgrades the internal weak reference to the declaring type,
+    /// returning `None` if the type has been dropped or was never set.
+    #[must_use]
+    pub fn declaring_type_rc(&self) -> Option<CilTypeRc> {
+        self.declaring_type.get().and_then(|r| r.upgrade())
+    }
+
     /// Returns the fully-qualified name of the declaring type, if available.
     #[must_use]
     pub fn declaring_type_fullname(&self) -> Option<String> {
-        self.declaring_type.get().and_then(|r| r.fullname())
+        self.declaring_type_rc().map(|t| t.fullname())
     }
 
     /// Returns the fully-qualified method name in `"DeclaringType::MethodName"` format.

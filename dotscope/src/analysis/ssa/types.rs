@@ -987,10 +987,8 @@ impl<'a> TypeContext<'a> {
                 // 'this' pointer - get type from declaring class
                 return self
                     .method
-                    .declaring_type
-                    .get()
-                    .and_then(|dt| dt.token())
-                    .map(|token| SsaType::Class(TypeRef::new(token)))
+                    .declaring_type_rc()
+                    .map(|dt| SsaType::Class(TypeRef::new(dt.token)))
                     .unwrap_or(SsaType::Object);
             }
             // Adjust for 'this' offset
@@ -1076,13 +1074,7 @@ impl<'a> TypeContext<'a> {
                 .assembly
                 .methods()
                 .get(&ctor_token)
-                .and_then(|entry| {
-                    entry
-                        .value()
-                        .declaring_type
-                        .get()
-                        .and_then(|cil_type| cil_type.token())
-                })
+                .and_then(|entry| entry.value().declaring_type_rc().map(|dt| dt.token))
                 .map(|type_token| SsaType::Class(TypeRef::new(type_token)))
                 .unwrap_or(SsaType::Object),
 

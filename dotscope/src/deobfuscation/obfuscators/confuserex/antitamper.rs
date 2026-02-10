@@ -196,7 +196,7 @@ use crate::{
     error::Error,
     metadata::{
         imports::ImportType,
-        method::{MethodBody, MethodImplCodeType},
+        method::MethodBody,
         signatures::{parse_field_signature, TypeSignature},
         tables::{ClassLayoutRaw, FieldRaw, FieldRvaRaw, MethodDefRaw, TableDataOwned, TableId},
         token::Token,
@@ -469,14 +469,7 @@ fn find_antitamper_pinvokes(assembly: &CilObject) -> Vec<Token> {
     // Build a map from MethodDef token to import name
     let import_map = build_pinvoke_import_map(assembly);
 
-    for entry in assembly.methods().iter() {
-        let method = entry.value();
-
-        // Check if it's a P/Invoke method
-        if !method.impl_code_type.contains(MethodImplCodeType::NATIVE) {
-            continue;
-        }
-
+    for method in assembly.query_methods().native().iter() {
         // Look up the actual import name (not the potentially obfuscated method name)
         let import_name = import_map.get(&method.token).map(String::as_str);
 
@@ -502,13 +495,7 @@ fn find_antitamper_methods(assembly: &CilObject) -> Vec<AntiTamperMethodInfo> {
     // Build import map once for all method analysis
     let import_map = build_pinvoke_import_map(assembly);
 
-    for entry in assembly.methods().iter() {
-        let method = entry.value();
-
-        let Some(_body) = method.body.get() else {
-            continue;
-        };
-
+    for method in assembly.query_methods().has_body().iter() {
         let Some(cfg) = method.cfg() else {
             continue;
         };

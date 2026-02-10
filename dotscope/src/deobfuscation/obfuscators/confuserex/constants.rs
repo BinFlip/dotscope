@@ -326,11 +326,8 @@ use crate::{
         StateSlotOperation, StateUpdateCall,
     },
     metadata::{
-        method::MethodModifiers,
-        signatures::TypeSignature,
-        tables::TableId,
-        token::Token,
-        typesystem::{CilFlavor, CilType},
+        method::MethodModifiers, signatures::TypeSignature, tables::TableId, token::Token,
+        typesystem::CilType,
     },
     prelude::FlowType,
     utils::graph::NodeId,
@@ -829,7 +826,7 @@ fn try_detect_cfgctx_from_type(
     cil_type: &CilType,
 ) -> Option<StateMachineSemantics> {
     // CFGCtx is a value type (struct) with uint fields
-    if *cil_type.flavor() != CilFlavor::ValueType {
+    if !cil_type.is_value_type() {
         return None;
     }
 
@@ -843,9 +840,7 @@ fn try_detect_cfgctx_from_type(
     let mut next_token: Option<Token> = None;
     let mut multiplier: Option<u32> = None;
 
-    for (_, method_ref) in cil_type.methods.iter() {
-        let method = method_ref.upgrade()?;
-
+    for method in cil_type.query_methods().iter() {
         if method.is_ctor() && ctor_token.is_none() {
             // Found constructor - extract multiplier using SSA dataflow analysis
             if let Some(ssa) = method.ssa(assembly) {
@@ -1154,9 +1149,7 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
 
         // Must be in <Module>
         let is_in_module = method
-            .declaring_type
-            .get()
-            .and_then(|dt| dt.upgrade())
+            .declaring_type_rc()
             .map(|t| t.name == "<Module>")
             .unwrap_or(false);
 
@@ -1186,11 +1179,7 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
     }
 
     // Fallback: look for methods in <Module> that match the pattern without .cctor hint
-    for (_, method_ref) in module_type.methods.iter() {
-        let Some(method) = method_ref.upgrade() else {
-            continue;
-        };
-
+    for method in module_type.query_methods().iter() {
         // Skip .cctor itself
         if method.is_cctor() {
             continue;

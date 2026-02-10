@@ -190,6 +190,8 @@ pub(crate) mod loader;
 pub mod marshalling;
 /// Implementation of the MethodHeader of CIL
 pub mod method;
+/// Composable query system for types and methods
+pub mod query;
 /// Implementation of the .NET resources
 pub mod resources;
 /// Implementation of the root metadata structure

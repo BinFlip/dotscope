@@ -522,16 +522,12 @@ impl EmulationContext {
     #[must_use]
     pub fn find_type_cctor(&self, type_token: Token) -> Option<Token> {
         let type_info = self.assembly.types().get(&type_token)?;
-
-        // Search through the type's methods for .cctor
-        for (_, method_ref) in type_info.methods.iter() {
-            if let Some(method) = method_ref.upgrade() {
-                if method.is_cctor() {
-                    return Some(method.token);
-                }
-            }
-        }
-        None
+        let result = type_info
+            .query_methods()
+            .static_constructors()
+            .find_first()
+            .map(|m| m.token);
+        result
     }
 
     /// Checks if a method is virtual.
@@ -601,15 +597,14 @@ impl EmulationContext {
         base_method: &Method,
     ) -> Option<Token> {
         // First check the type itself for a matching override
-        for (_, method_ref) in type_info.methods.iter() {
-            if let Some(method) = method_ref.upgrade() {
-                if method.name == method_name
-                    && method.is_virtual()
-                    && Self::signatures_match(&method.signature, &base_method.signature)
-                {
-                    return Some(method.token);
-                }
-            }
+        if let Some(method) = type_info
+            .query_methods()
+            .virtual_methods()
+            .name(method_name)
+            .filter(|m| Self::signatures_match(&m.signature, &base_method.signature))
+            .find_first()
+        {
+            return Some(method.token);
         }
 
         // Check base types (inheritance chain)
@@ -680,8 +675,7 @@ impl EmulationContext {
     /// rather than by reference.
     #[must_use]
     pub fn is_value_type(&self, type_token: Token) -> bool {
-        self.get_type(type_token)
-            .is_some_and(|t| t.flavor().is_value_type())
+        self.get_type(type_token).is_some_and(|t| t.is_value_type())
     }
 
     /// Checks if a type is a reference type.
@@ -696,8 +690,7 @@ impl EmulationContext {
     /// Checks if a type is an interface.
     #[must_use]
     pub fn is_interface(&self, type_token: Token) -> bool {
-        self.get_type(type_token)
-            .is_some_and(|t| t.flavor() == &CilFlavor::Interface)
+        self.get_type(type_token).is_some_and(|t| t.is_interface())
     }
 
     /// Finds a method by its declaring type name and method name.

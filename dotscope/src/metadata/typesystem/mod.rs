@@ -65,6 +65,7 @@ use crate::{
     metadata::{
         customattributes::CustomAttributeValueList,
         method::{MethodRc, MethodRefList},
+        query::MethodQuery,
         security::Security,
         tables::{
             EventList, FieldList, GenericParamList, MethodSpec, MethodSpecList, PropertyList,
@@ -884,6 +885,68 @@ impl CilType {
         vis == TypeAttributes::NOT_PUBLIC || vis == TypeAttributes::NESTED_ASSEMBLY
     }
 
+    /// Returns true if this type is an interface.
+    ///
+    /// Checks if the type's flavor is `CilFlavor::Interface`.
+    #[must_use]
+    pub fn is_interface(&self) -> bool {
+        matches!(self.flavor(), CilFlavor::Interface)
+    }
+
+    /// Returns true if this type is a class.
+    ///
+    /// Checks if the type's flavor is `CilFlavor::Class`.
+    #[must_use]
+    pub fn is_class(&self) -> bool {
+        matches!(self.flavor(), CilFlavor::Class)
+    }
+
+    /// Returns true if this type is a value type (struct, enum, or primitive value type).
+    #[must_use]
+    pub fn is_value_type(&self) -> bool {
+        self.flavor().is_value_type()
+    }
+
+    /// Returns true if this type is sealed (cannot be inherited from).
+    #[must_use]
+    pub fn is_sealed(&self) -> bool {
+        self.flags & TypeAttributes::SEALED != 0
+    }
+
+    /// Returns true if this type is abstract (cannot be instantiated directly).
+    #[must_use]
+    pub fn is_abstract(&self) -> bool {
+        self.flags & TypeAttributes::ABSTRACT != 0
+    }
+
+    /// Returns true if this type is an enum (inherits from `System.Enum`).
+    #[must_use]
+    pub fn is_enum(&self) -> bool {
+        self.base().map_or(false, |b| b.fullname() == "System.Enum")
+    }
+
+    /// Returns true if this type is a delegate (inherits from `System.Delegate` or `System.MulticastDelegate`).
+    #[must_use]
+    pub fn is_delegate(&self) -> bool {
+        self.base().map_or(false, |b| {
+            let name = b.fullname();
+            name == "System.MulticastDelegate" || name == "System.Delegate"
+        })
+    }
+
+    /// Returns a composable query over methods defined in this type.
+    ///
+    /// This handles the weak-ref upgrade boilerplate automatically,
+    /// replacing the common pattern:
+    /// ```rust,ignore
+    /// for (_, method_ref) in type_info.methods.iter() {
+    ///     if let Some(method) = method_ref.upgrade() { ... }
+    /// }
+    /// ```
+    pub fn query_methods(&self) -> MethodQuery<'_> {
+        MethodQuery::from_type(&self.methods)
+    }
+
     /// Returns true if this is a nested type with private or internal visibility.
     ///
     /// This includes:
@@ -1122,7 +1185,7 @@ impl CilType {
         }
 
         // Handle interface implementation
-        if target.flavor() == &CilFlavor::Interface && self.implements_interface(target) {
+        if target.is_interface() && self.implements_interface(target) {
             return true;
         }
 

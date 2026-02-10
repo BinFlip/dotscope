@@ -393,14 +393,12 @@ fn score_constants(
 fn global_search(assembly: &CilObject, protection: ProtectionType) -> Vec<ProtectionCandidate> {
     let mut candidates = Vec::new();
 
-    for entry in assembly.methods().iter() {
-        let method = entry.value();
-
-        // Skip .cctor and abstract methods
-        if method.is_cctor() || !method.has_body() {
-            continue;
-        }
-
+    for method in assembly
+        .query_methods()
+        .has_body()
+        .filter(|m| !m.is_cctor())
+        .iter()
+    {
         let mut candidate = ProtectionCandidate::new(method.token);
         score_candidate(assembly, &mut candidate, protection);
 

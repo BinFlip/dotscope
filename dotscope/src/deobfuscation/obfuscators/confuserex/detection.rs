@@ -240,11 +240,9 @@ fn detect_artifact_sections(
 
     // Find sections containing encrypted method bodies
     // These are methods where RVA is set but body couldn't be parsed
-    for entry in assembly.methods().iter() {
-        let method = entry.value();
+    for method in assembly.query_methods().without_body().iter() {
         if let Some(rva) = method.rva {
-            // Method has RVA but no body = encrypted/invalid
-            if rva > 0 && !method.has_body() {
+            if rva > 0 {
                 if let Some(section) = find_section_for_rva(sections, rva) {
                     // If it's not in .text, it's an artifact section
                     // (ConfuserEx sometimes puts encrypted bodies in custom sections)
@@ -833,11 +831,9 @@ fn is_field_only_accessed_by_infrastructure(
     let cctor_token = assembly.methods().iter().find_map(|entry| {
         let method = entry.value();
         if method.is_cctor() {
-            if let Some(dt) = method.declaring_type.get() {
-                if let Some(owner) = dt.upgrade() {
-                    if owner.name == "<Module>" {
-                        return Some(method.token);
-                    }
+            if let Some(owner) = method.declaring_type_rc() {
+                if owner.name == "<Module>" {
+                    return Some(method.token);
                 }
             }
         }

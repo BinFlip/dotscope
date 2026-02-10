@@ -332,19 +332,15 @@ impl ConfuserExObfuscator {
         let method = method_entry.value();
 
         // Get the declaring type
-        let type_ref = method.declaring_type.get()?;
-        let cil_type = type_ref.upgrade()?;
+        let cil_type = method.declaring_type_rc()?;
 
         // Find the .cctor in the type's methods
-        for (_, method_ref) in cil_type.methods.iter() {
-            if let Some(method_arc) = method_ref.upgrade() {
-                if method_arc.is_cctor() {
-                    return Some(method_arc.token);
-                }
-            }
-        }
-
-        None
+        let result = cil_type
+            .query_methods()
+            .static_constructors()
+            .find_first()
+            .map(|m| m.token);
+        result
     }
 
     /// Internal helper to run the deobfuscation pipeline.

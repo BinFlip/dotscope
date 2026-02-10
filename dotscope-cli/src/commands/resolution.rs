@@ -44,9 +44,7 @@ pub fn resolve_methods(assembly: &CilObject, filter: &str) -> anyhow::Result<Vec
 
         if let Some(ref type_filter) = type_filter_lower {
             let declaring_name = method
-                .declaring_type
-                .get()
-                .and_then(|r| r.upgrade())
+                .declaring_type_rc()
                 .map(|t| t.fullname().to_lowercase())
                 .unwrap_or_default();
             if !declaring_name.contains(type_filter) {
@@ -71,16 +69,11 @@ pub fn resolve_types(assembly: &CilObject, filter: &str) -> anyhow::Result<Vec<A
     }
 
     let filter_lower = filter.to_lowercase();
-    let mut results = Vec::new();
-    for entry in assembly.types().iter() {
-        let cil_type = entry.value();
-        if cil_type.is_typeref() {
-            continue;
-        }
-        if cil_type.fullname().to_lowercase().contains(&filter_lower) {
-            results.push(cil_type.clone());
-        }
-    }
+    let results = assembly
+        .query_types()
+        .defined()
+        .filter(move |t| t.fullname().to_lowercase().contains(&filter_lower))
+        .find_all();
 
     Ok(results)
 }

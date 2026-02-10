@@ -179,6 +179,7 @@ use crate::{
         imports::UnifiedImportContainer,
         loader::CilObjectData,
         method::MethodMap,
+        query::{MethodQuery, TypeQuery},
         resources::Resources,
         root::Root,
         streams::{Blob, Guid, Strings, TablesHeader, UserStrings},
@@ -1511,6 +1512,45 @@ impl CilObject {
     /// ```
     pub fn types(&self) -> Arc<TypeRegistry> {
         self.data.types.clone()
+    }
+
+    /// Returns a composable query over types in this assembly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
+    ///
+    /// // Find all public, defined types
+    /// let public_types = assembly.query_types()
+    ///     .defined()
+    ///     .public()
+    ///     .find_all();
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn query_types(&self) -> TypeQuery<'_> {
+        TypeQuery::new(&self.data.types)
+    }
+
+    /// Returns a composable query over all methods in this assembly.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    ///
+    /// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
+    ///
+    /// // Find all static constructors
+    /// let cctors = assembly.query_methods()
+    ///     .static_constructors()
+    ///     .find_all();
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn query_methods(&self) -> MethodQuery<'_> {
+        MethodQuery::from_assembly(&self.data.methods)
     }
 
     /// Builds and returns the call graph for this assembly.

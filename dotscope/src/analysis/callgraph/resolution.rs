@@ -13,7 +13,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    metadata::{tables::TypeAttributes, token::Token, typesystem::TypeRegistry},
+    metadata::{token::Token, typesystem::TypeRegistry},
     CilObject,
 };
 
@@ -96,20 +96,18 @@ impl CallResolver {
             let token = type_info.token;
 
             // Check if interface
-            if type_info.flags & TypeAttributes::INTERFACE != 0 {
+            if type_info.is_interface() {
                 self.interfaces.insert(token);
             }
 
             // Check if sealed
-            if type_info.flags & TypeAttributes::SEALED != 0 {
+            if type_info.is_sealed() {
                 self.sealed_types.insert(token);
             }
 
             // Map methods to their declaring type
-            for (_, method_ref) in type_info.methods.iter() {
-                if let Some(method) = method_ref.upgrade() {
-                    self.method_to_type.insert(method.token, token);
-                }
+            for method in type_info.query_methods().iter() {
+                self.method_to_type.insert(method.token, token);
             }
         }
 

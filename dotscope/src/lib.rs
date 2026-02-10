@@ -986,6 +986,27 @@ pub use metadata::cilobject::CilObject;
 /// ```
 pub use metadata::validation::{ValidationConfig, ValidationEngine};
 
+/// Composable query builders for filtering types and methods.
+///
+/// `TypeQuery` and `MethodQuery` provide a fluent API for searching and filtering
+/// types and methods in .NET assemblies without manual iteration boilerplate.
+///
+/// # Usage Examples
+///
+/// ```rust,no_run
+/// use dotscope::CilObject;
+///
+/// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
+///
+/// // Find all public defined types
+/// let types = assembly.query_types().defined().public().find_all();
+///
+/// // Find static constructors
+/// let cctors = assembly.query_methods().static_constructors().find_all();
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub use metadata::query::{MethodQuery, TypeQuery};
+
 /// Metadata streams and heaps for direct access to ECMA-335 data structures.
 ///
 /// These types provide low-level access to the metadata structures:

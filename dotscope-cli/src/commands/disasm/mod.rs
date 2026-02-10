@@ -64,10 +64,8 @@ pub fn run(
             if !fmt.opts.raw {
                 fmt.format_type_begin(&mut w, cil_type)?;
             }
-            for (_, method_ref) in cil_type.methods.iter() {
-                if let Some(method) = method_ref.upgrade() {
-                    fmt.format_method(&mut w, &method, entry_point_token, &assembly)?;
-                }
+            for method in cil_type.query_methods().iter() {
+                fmt.format_method(&mut w, &method, entry_point_token, &assembly)?;
             }
             if !fmt.opts.raw {
                 fmt.format_type_end(&mut w)?;
@@ -75,22 +73,17 @@ pub fn run(
         }
     } else {
         // --all: iterate all types, disassemble everything
-        for entry in assembly.types().iter() {
-            let cil_type = entry.value();
-            if cil_type.is_typeref() {
-                continue;
-            }
-            // Skip the <Module> pseudo-type if it has no methods
-            if cil_type.name == "<Module>" && cil_type.methods.count() == 0 {
-                continue;
-            }
+        let all_types = assembly
+            .query_types()
+            .defined()
+            .filter(|t| t.name != "<Module>" || !t.methods.is_empty())
+            .find_all();
+        for cil_type in &all_types {
             if !fmt.opts.raw {
                 fmt.format_type_begin(&mut w, cil_type)?;
             }
-            for (_, method_ref) in cil_type.methods.iter() {
-                if let Some(method) = method_ref.upgrade() {
-                    fmt.format_method(&mut w, &method, entry_point_token, &assembly)?;
-                }
+            for method in cil_type.query_methods().iter() {
+                fmt.format_method(&mut w, &method, entry_point_token, &assembly)?;
             }
             if !fmt.opts.raw {
                 fmt.format_type_end(&mut w)?;

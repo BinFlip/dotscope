@@ -577,22 +577,19 @@ impl EmulationProcess {
     /// ```
     pub fn find_method(&self, type_name: &str, method_name: &str) -> Option<Token> {
         let assembly = self.assembly.as_ref()?;
-        let type_registry = assembly.types();
 
-        // Search through all types
-        for ciltype in type_registry.all_types() {
-            let type_full_name = ciltype.fullname();
-            if type_full_name.ends_with(type_name)
-                || type_full_name == type_name
-                || type_full_name.split('.').next_back() == Some(type_name)
-            {
-                if let Some(method) = ciltype.find_method(method_name) {
-                    return Some(method.token);
-                }
-            }
-        }
-
-        None
+        assembly
+            .query_types()
+            .filter(move |t| {
+                let fqn = t.fullname();
+                fqn.ends_with(type_name)
+                    || fqn == type_name
+                    || fqn.split('.').next_back() == Some(type_name)
+            })
+            .methods()
+            .name(method_name)
+            .find_first()
+            .map(|m| m.token)
     }
 
     /// Finds the static constructor (.cctor) for a type.
