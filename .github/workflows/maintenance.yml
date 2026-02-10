@@ -98,16 +98,16 @@ jobs:
         # Lines of code
         echo "### Lines of Code" >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
-        cloc src/ --by-file --exclude-dir=target >> $GITHUB_STEP_SUMMARY
+        cloc dotscope/src/ dotscope-cli/src/ --by-file --exclude-dir=target >> $GITHUB_STEP_SUMMARY
         echo '```' >> $GITHUB_STEP_SUMMARY
         
         # File count
         echo "" >> $GITHUB_STEP_SUMMARY
         echo "### File Statistics" >> $GITHUB_STEP_SUMMARY
-        echo "- Rust source files: $(find src -name '*.rs' | wc -l)" >> $GITHUB_STEP_SUMMARY
-        echo "- Test files: $(find tests -name '*.rs' 2>/dev/null | wc -l || echo 0)" >> $GITHUB_STEP_SUMMARY
-        echo "- Example files: $(find examples -name '*.rs' 2>/dev/null | wc -l || echo 0)" >> $GITHUB_STEP_SUMMARY
-        echo "- Benchmark files: $(find benches -name '*.rs' 2>/dev/null | wc -l || echo 0)" >> $GITHUB_STEP_SUMMARY
+        echo "- Rust source files: $(find dotscope/src dotscope-cli/src -name '*.rs' | wc -l)" >> $GITHUB_STEP_SUMMARY
+        echo "- Test files: $(find dotscope/tests -name '*.rs' 2>/dev/null | wc -l || echo 0)" >> $GITHUB_STEP_SUMMARY
+        echo "- Example files: $(find dotscope/examples -name '*.rs' 2>/dev/null | wc -l || echo 0)" >> $GITHUB_STEP_SUMMARY
+        echo "- Benchmark files: $(find dotscope/benches -name '*.rs' 2>/dev/null | wc -l || echo 0)" >> $GITHUB_STEP_SUMMARY
         
         # Git statistics
         echo "" >> $GITHUB_STEP_SUMMARY

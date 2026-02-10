@@ -1,0 +1,155 @@
+use std::{collections::BTreeMap, path::Path};
+
+use serde::Serialize;
+
+use crate::{
+    app::GlobalOptions,
+    commands::common::load_assembly,
+    output::{print_output, Align, TabWriter},
+};
+
+#[derive(Debug, Serialize)]
+struct MethodEntry {
+    token: String,
+    access: String,
+    declaring_type: String,
+    name: String,
+}
+
+#[derive(Debug, Serialize)]
+struct MethodsOutput {
+    methods: Vec<MethodEntry>,
+    count: usize,
+}
+
+#[derive(Debug, Serialize)]
+struct TypeGroup {
+    declaring_type: String,
+    methods: Vec<MethodEntry>,
+}
+
+#[derive(Debug, Serialize)]
+struct GroupedMethodsOutput {
+    groups: Vec<TypeGroup>,
+    count: usize,
+}
+
+#[derive(Debug, Serialize)]
+#[serde(untagged)]
+enum MethodsOutputFormat {
+    Flat(MethodsOutput),
+    Grouped(GroupedMethodsOutput),
+}
+
+pub fn run(
+    path: &Path,
+    type_filter: Option<&str>,
+    signatures: bool,
+    group: bool,
+    opts: &GlobalOptions,
+) -> anyhow::Result<()> {
+    let assembly = load_assembly(path)?;
+
+    let methods = assembly.methods();
+
+    let mut entries = Vec::new();
+
+    for entry in methods.iter() {
+        let method = entry.value();
+
+        let declaring_fullname = method.declaring_type_fullname().unwrap_or_default();
+
+        if let Some(filter) = type_filter {
+            if !declaring_fullname
+                .to_lowercase()
+                .contains(&filter.to_lowercase())
+            {
+                continue;
+            }
+        }
+
+        let method_display = if signatures {
+            format!("{} {}", method.name, method.signature)
+        } else {
+            method.name.clone()
+        };
+
+        entries.push(MethodEntry {
+            token: method.token.to_string(),
+            access: method.flags_access.to_string(),
+            declaring_type: declaring_fullname,
+            name: method_display,
+        });
+    }
+
+    let count = entries.len();
+
+    if group {
+        let mut grouped: BTreeMap<String, Vec<MethodEntry>> = BTreeMap::new();
+        for entry in entries {
+            grouped
+                .entry(entry.declaring_type.clone())
+                .or_default()
+                .push(entry);
+        }
+
+        let groups: Vec<TypeGroup> = grouped
+            .into_iter()
+            .map(|(declaring_type, methods)| TypeGroup {
+                declaring_type,
+                methods,
+            })
+            .collect();
+
+        let output = MethodsOutputFormat::Grouped(GroupedMethodsOutput { groups, count });
+
+        print_output(&output, opts, |out| {
+            if let MethodsOutputFormat::Grouped(g) = out {
+                for group in &g.groups {
+                    println!(
+                        "\n{} ({} methods):",
+                        group.declaring_type,
+                        group.methods.len()
+                    );
+                    let mut tw = TabWriter::new(vec![
+                        ("Token", Align::Left),
+                        ("Access", Align::Left),
+                        ("Method", Align::Left),
+                    ])
+                    .indent("  ");
+                    for e in &group.methods {
+                        tw.row(vec![e.token.clone(), e.access.clone(), e.name.clone()]);
+                    }
+                    tw.print();
+                }
+                println!("\n{} method(s) listed.", g.count);
+            }
+        })
+    } else {
+        let output = MethodsOutputFormat::Flat(MethodsOutput {
+            methods: entries,
+            count,
+        });
+
+        print_output(&output, opts, |out| {
+            if let MethodsOutputFormat::Flat(flat) = out {
+                let mut tw = TabWriter::new(vec![
+                    ("Token", Align::Left),
+                    ("Access", Align::Left),
+                    ("Type", Align::Left),
+                    ("Method", Align::Left),
+                ]);
+                for e in &flat.methods {
+                    tw.row(vec![
+                        e.token.clone(),
+                        e.access.clone(),
+                        e.declaring_type.clone(),
+                        e.name.clone(),
+                    ]);
+                }
+                tw.print();
+                println!("\n{} method(s) listed.", flat.count);
+            }
+        })
+    }
+}

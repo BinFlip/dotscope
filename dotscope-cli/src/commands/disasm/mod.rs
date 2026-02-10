@@ -1,0 +1,103 @@
+mod formatter;
+
+use std::{
+    io::{self, BufWriter, Write},
+    path::Path,
+};
+
+use anyhow::{bail, Context};
+use dotscope::deobfuscation::{DeobfuscationEngine, EngineConfig};
+
+pub use crate::commands::disasm::formatter::DisasmOptions;
+use crate::commands::{
+    common::load_assembly,
+    disasm::formatter::CilFormatter,
+    resolution::{resolve_methods, resolve_types},
+};
+
+pub fn run(
+    path: &Path,
+    method_filter: Option<&str>,
+    type_filter: Option<&str>,
+    opts: DisasmOptions,
+    deobfuscate: bool,
+) -> anyhow::Result<()> {
+    let assembly = load_assembly(path)?;
+
+    let assembly = if deobfuscate {
+        let config = EngineConfig::default();
+        let mut engine = DeobfuscationEngine::new(config);
+        let (deobfuscated, result) = engine
+            .process_assembly(assembly)
+            .with_context(|| "deobfuscation failed")?;
+        eprintln!("{}", result.detailed_summary());
+        deobfuscated
+    } else {
+        assembly
+    };
+
+    let fmt = CilFormatter::new(opts);
+
+    let stdout = io::stdout();
+    let mut w = BufWriter::new(stdout.lock());
+
+    let entry_point_token = assembly.cor20header().entry_point_token;
+
+    if !fmt.opts.no_header && !fmt.opts.raw {
+        fmt.format_header(&mut w, &assembly)?;
+    }
+
+    if let Some(method_filter) = method_filter {
+        let methods = resolve_methods(&assembly, method_filter)?;
+        if methods.is_empty() {
+            bail!("no methods matching '{method_filter}' found");
+        }
+        for method in &methods {
+            fmt.format_method(&mut w, method, entry_point_token, &assembly)?;
+        }
+    } else if let Some(type_filter) = type_filter {
+        let types = resolve_types(&assembly, type_filter)?;
+        if types.is_empty() {
+            bail!("no types matching '{type_filter}' found");
+        }
+        for cil_type in &types {
+            if !fmt.opts.raw {
+                fmt.format_type_begin(&mut w, cil_type)?;
+            }
+            for (_, method_ref) in cil_type.methods.iter() {
+                if let Some(method) = method_ref.upgrade() {
+                    fmt.format_method(&mut w, &method, entry_point_token, &assembly)?;
+                }
+            }
+            if !fmt.opts.raw {
+                fmt.format_type_end(&mut w)?;
+            }
+        }
+    } else {
+        // --all: iterate all types, disassemble everything
+        for entry in assembly.types().iter() {
+            let cil_type = entry.value();
+            if cil_type.is_typeref() {
+                continue;
+            }
+            // Skip the <Module> pseudo-type if it has no methods
+            if cil_type.name == "<Module>" && cil_type.methods.count() == 0 {
+                continue;
+            }
+            if !fmt.opts.raw {
+                fmt.format_type_begin(&mut w, cil_type)?;
+            }
+            for (_, method_ref) in cil_type.methods.iter() {
+                if let Some(method) = method_ref.upgrade() {
+                    fmt.format_method(&mut w, &method, entry_point_token, &assembly)?;
+                }
+            }
+            if !fmt.opts.raw {
+                fmt.format_type_end(&mut w)?;
+            }
+        }
+    }
+
+    w.flush()?;
+    Ok(())
+}

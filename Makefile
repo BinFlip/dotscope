@@ -21,7 +21,7 @@ help:
 
 # Build the project
 build:
-	cargo build --all-features
+	cargo build --workspace --all-features
 
 # Build release version
 build-release:
@@ -29,7 +29,7 @@ build-release:
 
 # Run tests
 test:
-	cargo test --all-features --verbose
+	cargo test --workspace --all-features --verbose
 
 # Run tests with coverage
 test-coverage:
@@ -52,7 +52,7 @@ fmt-check:
 
 # Run clippy
 clippy:
-	cargo clippy --all-features --all-targets -- -D warnings
+	cargo clippy --workspace --all-features --all-targets -- -D warnings
 
 # Generate documentation
 doc:
@@ -94,7 +94,7 @@ check-all: fmt-check clippy test audit
 
 # Prepare for release
 release-check:
-	cargo publish --dry-run --all-features
+	cargo publish -p dotscope --dry-run --all-features
 	@echo "Release check completed successfully"
 
 # Quick development cycle

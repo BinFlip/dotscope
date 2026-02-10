@@ -1,0 +1,21 @@
+[package]
+name = "dotscope-cli"
+version = "0.6.0"
+authors = ["Johann Kempter <admin@binflip.rs>"]
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+description = "Command-line tool for .NET assembly analysis, inspection, and deobfuscation"
+
+[[bin]]
+name = "dotscope"
+path = "src/main.rs"
+
+[dependencies]
+dotscope = { path = "../dotscope", features = ["deobfuscation"] }
+clap = { version = "4", features = ["derive", "env", "wrap_help"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1.0.149"
+anyhow = "1.0.101"
+comfy-table = "7.2.2"

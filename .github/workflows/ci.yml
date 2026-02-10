@@ -96,7 +96,7 @@ jobs:
 
     - name: Run tests (macOS/Windows - skip expensive tests)
       if: runner.os != 'Linux'
-      run: cargo test --release --lib --features skip-expensive-tests --verbose
+      run: cargo test -p dotscope --release --lib --features skip-expensive-tests --verbose
 
     - name: Run doc tests (Linux only)
       if: runner.os == 'Linux'
@@ -123,10 +123,10 @@ jobs:
         key: minimal-features
 
     - name: Check compilation (no default features)
-      run: cargo check --no-default-features
+      run: cargo check -p dotscope --no-default-features
 
     - name: Run tests (no default features)
-      run: cargo test --no-default-features --release --verbose
+      run: cargo test -p dotscope --no-default-features --release --verbose
 
   # Fuzzing on pushes to master or PRs targeting master
   fuzzing:
