@@ -84,6 +84,24 @@ pub type MemberRefList = Arc<boxcar::Vec<MemberRefRc>>;
 /// without duplication, supporting concurrent access patterns in member resolution.
 pub type MemberRefRc = Arc<MemberRef>;
 
+/// Returns the name of the member reference for the given token, if it exists in the map.
+///
+/// This is a convenience function that performs a lookup in a [`MemberRefMap`] and extracts
+/// the member name without requiring callers to deal with the `Entry` guard returned
+/// by the underlying [`crossbeam_skiplist::SkipMap`].
+///
+/// # Arguments
+///
+/// * `map` - The member reference map to search in.
+/// * `token` - The metadata token (table 0x0A) identifying the member reference.
+///
+/// # Returns
+///
+/// The member name as a `String` if a reference with the given token exists, `None` otherwise.
+pub fn member_ref_name_by_token(map: &MemberRefMap, token: &Token) -> Option<String> {
+    map.get(token).map(|e| e.value().name.clone())
+}
+
 /// Member signature type union for `MemberRef` entries.
 ///
 /// This enum represents the two possible signature types for member references:

@@ -773,8 +773,7 @@ impl SyncState {
     pub fn monitor_is_owner(&self, obj: HeapRef, thread_id: ThreadId) -> bool {
         self.monitors
             .get(&obj)
-            .map(|s| s.is_owner(thread_id))
-            .unwrap_or(false)
+            .is_some_and(|s| s.is_owner(thread_id))
     }
 
     /// Creates a new event synchronization primitive.
@@ -1066,7 +1065,7 @@ impl SyncState {
         // Wake up waiters based on new count
         let mut woken = Vec::new();
         if let Some(queue) = self.semaphore_wait_queues.get_mut(&obj) {
-            for _ in 0..count.min(queue.len() as u32) {
+            for _ in 0..count.min(u32::try_from(queue.len()).unwrap_or(u32::MAX)) {
                 if let Some(thread_id) = queue.pop_front() {
                     woken.push(thread_id);
                 }

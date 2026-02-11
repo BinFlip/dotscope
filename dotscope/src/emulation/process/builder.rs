@@ -128,7 +128,7 @@ fn populate_fieldrva_statics(assembly: &CilObject, address_space: &AddressSpace)
     let pe_data = file.data();
     let ptr_size = PointerSize::from_pe(file.pe().is_64bit);
 
-    for row in fieldrva_table.iter() {
+    for row in fieldrva_table {
         if row.rva == 0 {
             continue;
         }
@@ -155,7 +155,7 @@ fn populate_fieldrva_statics(assembly: &CilObject, address_space: &AddressSpace)
 
         // Convert to EmValue based on size
         let value = match field_type_size {
-            1 => EmValue::I32(i32::from(data[0] as i8)),
+            1 => EmValue::I32(i32::from(data[0].cast_signed())),
             2 => {
                 let bytes = [data[0], data[1]];
                 EmValue::I32(i32::from(i16::from_le_bytes(bytes)))
@@ -368,6 +368,7 @@ impl ProcessBuilder {
     ///
     /// let builder = ProcessBuilder::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             assembly: None,
@@ -402,6 +403,7 @@ impl ProcessBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn assembly(mut self, assembly: CilObject) -> Self {
         self.assembly = Some(Arc::new(assembly));
         self
@@ -415,6 +417,7 @@ impl ProcessBuilder {
     /// # Arguments
     ///
     /// * `assembly` - Arc-wrapped [`CilObject`] to use as the primary assembly
+    #[must_use]
     pub fn assembly_arc(mut self, assembly: Arc<CilObject>) -> Self {
         self.assembly = Some(assembly);
         self
@@ -443,6 +446,7 @@ impl ProcessBuilder {
     /// - [`for_extraction`](Self::for_extraction) - Preset for assembly extraction
     /// - [`for_analysis`](Self::for_analysis) - Preset for static analysis
     /// - [`for_full_emulation`](Self::for_full_emulation) - Preset for complete emulation
+    #[must_use]
     pub fn config(mut self, config: EmulationConfig) -> Self {
         self.config = config;
         self
@@ -456,6 +460,7 @@ impl ProcessBuilder {
     /// # Arguments
     ///
     /// * `ptr_size` - The [`PointerSize`] to use
+    #[must_use]
     pub fn pointer_size(mut self, ptr_size: PointerSize) -> Self {
         self.config.pointer_size = ptr_size;
         self
@@ -477,6 +482,7 @@ impl ProcessBuilder {
     /// - [`capture_assemblies`](Self::capture_assemblies)
     /// - [`capture_strings`](Self::capture_strings)
     /// - [`capture_memory_region`](Self::capture_memory_region)
+    #[must_use]
     pub fn capture(mut self, config: CaptureConfig) -> Self {
         self.capture_config = config;
         self
@@ -490,6 +496,7 @@ impl ProcessBuilder {
     /// # Arguments
     ///
     /// * `name` - Display name for the process
+    #[must_use]
     pub fn name(mut self, name: impl Into<String>) -> Self {
         self.name = Some(name.into());
         self
@@ -517,6 +524,7 @@ impl ProcessBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn for_extraction(mut self) -> Self {
         self.config = EmulationConfig::extraction();
         self.capture_config.assemblies = true;
@@ -530,6 +538,7 @@ impl ProcessBuilder {
     /// - Symbolic tracking enabled
     /// - Threading disabled for determinism
     /// - Unknown methods return symbolic values
+    #[must_use]
     pub fn for_analysis(mut self) -> Self {
         self.config = EmulationConfig::analysis();
         self
@@ -542,6 +551,7 @@ impl ProcessBuilder {
     /// - 5 minute timeout
     /// - Strict mode (fail on missing stubs)
     /// - Full threading and exception handling
+    #[must_use]
     pub fn for_full_emulation(mut self) -> Self {
         self.config = EmulationConfig::full();
         self
@@ -554,6 +564,7 @@ impl ProcessBuilder {
     /// - Shallow call depth (10)
     /// - Only BCL stubs enabled
     /// - Threading and exceptions disabled
+    #[must_use]
     pub fn for_minimal(mut self) -> Self {
         self.config = EmulationConfig::minimal();
         self
@@ -580,6 +591,7 @@ impl ProcessBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn with_max_instructions(mut self, max: u64) -> Self {
         self.config.limits.max_instructions = max;
         self
@@ -592,6 +604,7 @@ impl ProcessBuilder {
     /// # Arguments
     ///
     /// * `max` - Maximum call depth
+    #[must_use]
     pub fn with_max_call_depth(mut self, max: usize) -> Self {
         self.config.limits.max_call_depth = max;
         self
@@ -604,6 +617,7 @@ impl ProcessBuilder {
     /// # Arguments
     ///
     /// * `max` - Maximum heap size in bytes
+    #[must_use]
     pub fn with_max_heap_bytes(mut self, max: usize) -> Self {
         self.config.limits.max_heap_bytes = max;
         self
@@ -616,6 +630,7 @@ impl ProcessBuilder {
     /// # Arguments
     ///
     /// * `ms` - Timeout in milliseconds (0 for no timeout)
+    #[must_use]
     pub fn with_timeout_ms(mut self, ms: u64) -> Self {
         self.config.limits.timeout_ms = ms;
         self
@@ -642,6 +657,7 @@ impl ProcessBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn with_tracing(mut self, tracing: TracingConfig) -> Self {
         self.config.tracing = tracing;
         self
@@ -673,6 +689,7 @@ impl ProcessBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn map_pe_image(mut self, pe_bytes: &[u8], name: impl Into<String>) -> Self {
         self.mappings.push(MappingOperation::PeImage {
             data: pe_bytes.to_vec(),
@@ -692,6 +709,7 @@ impl ProcessBuilder {
     /// * `pe_bytes` - Raw PE file bytes
     /// * `name` - Display name for the loaded image
     /// * `config` - Custom [`PeLoaderConfig`] settings
+    #[must_use]
     pub fn map_pe_image_with_config(
         mut self,
         pe_bytes: &[u8],
@@ -713,6 +731,7 @@ impl ProcessBuilder {
     /// # Arguments
     ///
     /// * `path` - Path to the PE file
+    #[must_use]
     pub fn map_pe_file(mut self, path: impl AsRef<Path>) -> Self {
         self.mappings.push(MappingOperation::PeFile {
             path: path.as_ref().to_path_buf(),
@@ -745,6 +764,7 @@ impl ProcessBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn map_data(mut self, address: u64, data: Vec<u8>, label: impl Into<String>) -> Self {
         self.mappings.push(MappingOperation::DataAt {
             address,
@@ -763,6 +783,7 @@ impl ProcessBuilder {
     /// * `data` - Raw bytes to map
     /// * `label` - Descriptive label for the region
     /// * `protection` - Memory protection flags
+    #[must_use]
     pub fn map_data_with_protection(
         mut self,
         address: u64,
@@ -787,6 +808,7 @@ impl ProcessBuilder {
     ///
     /// * `address` - Target virtual address
     /// * `path` - Path to the file to map
+    #[must_use]
     pub fn map_file(mut self, address: u64, path: impl AsRef<Path>) -> Self {
         self.mappings.push(MappingOperation::File {
             path: path.as_ref().to_path_buf(),
@@ -806,6 +828,7 @@ impl ProcessBuilder {
     /// * `address` - Target virtual address
     /// * `size` - Size of the region in bytes
     /// * `label` - Descriptive label for the region
+    #[must_use]
     pub fn map_zeroed(mut self, address: u64, size: usize, label: impl Into<String>) -> Self {
         self.mappings.push(MappingOperation::Zeroed {
             address,
@@ -844,6 +867,7 @@ impl ProcessBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn capture_assemblies(mut self) -> Self {
         self.capture_config.assemblies = true;
         self
@@ -853,6 +877,7 @@ impl ProcessBuilder {
     ///
     /// Captures strings that are created or decrypted during emulation,
     /// useful for extracting obfuscated string literals.
+    #[must_use]
     pub fn capture_strings(mut self) -> Self {
         self.capture_config.strings = true;
         self
@@ -862,6 +887,7 @@ impl ProcessBuilder {
     ///
     /// Records file reads, writes, and other I/O operations performed
     /// during emulation.
+    #[must_use]
     pub fn capture_file_operations(mut self) -> Self {
         self.capture_config.file_operations = true;
         self
@@ -871,6 +897,7 @@ impl ProcessBuilder {
     ///
     /// Records network connections, sends, and receives performed
     /// during emulation.
+    #[must_use]
     pub fn capture_network_operations(mut self) -> Self {
         self.capture_config.network_operations = true;
         self
@@ -885,6 +912,7 @@ impl ProcessBuilder {
     ///
     /// * `start` - Start address of the region (inclusive)
     /// * `end` - End address of the region (exclusive)
+    #[must_use]
     pub fn capture_memory_region(mut self, start: u64, end: u64) -> Self {
         self.capture_config.memory_regions.push(start..end);
         self
@@ -920,6 +948,7 @@ impl ProcessBuilder {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn hook(mut self, hook: Hook) -> Self {
         self.hooks.push(hook);
         self
@@ -935,6 +964,7 @@ impl ProcessBuilder {
     ///
     /// Disabling default stubs may cause emulation to fail if the
     /// target code calls any BCL methods.
+    #[must_use]
     pub fn no_default_stubs(mut self) -> Self {
         self.register_defaults = false;
         self
@@ -1024,8 +1054,7 @@ impl ProcessBuilder {
             let pe_bytes = assembly.file().data();
             let name = assembly
                 .assembly()
-                .map(|a| a.name.clone())
-                .unwrap_or_else(|| "primary".to_string());
+                .map_or_else(|| "primary".to_string(), |a| a.name.clone());
             if let Ok(image) = loader.load(pe_bytes, &address_space, name) {
                 loaded_images.push(image);
             }
@@ -1052,7 +1081,7 @@ impl ProcessBuilder {
                     protection,
                 } => {
                     let info =
-                        DataLoader::map_at(&address_space, address, data, label, protection)?;
+                        DataLoader::map_at(&address_space, address, &data, label, protection)?;
                     mapped_regions.push(info);
                 }
                 MappingOperation::Data {
@@ -1060,7 +1089,7 @@ impl ProcessBuilder {
                     label,
                     protection,
                 } => {
-                    let info = DataLoader::map(&address_space, data, label, protection)?;
+                    let info = DataLoader::map(&address_space, &data, label, protection)?;
                     mapped_regions.push(info);
                 }
                 MappingOperation::File {
@@ -1088,8 +1117,7 @@ impl ProcessBuilder {
             self.assembly
                 .as_ref()
                 .and_then(|a| a.assembly())
-                .map(|asm| asm.name.clone())
-                .unwrap_or_else(|| "emulation".to_string())
+                .map_or_else(|| "emulation".to_string(), |asm| asm.name.clone())
         });
 
         // Create trace writer if tracing is enabled
@@ -1099,8 +1127,8 @@ impl ProcessBuilder {
                 // File-based tracing - propagate errors to caller
                 let writer = TraceWriter::new_file(path, context).map_err(|e| {
                     crate::Error::TracingError(format!(
-                        "Failed to create trace file {:?}: {}",
-                        path, e
+                        "Failed to create trace file {}: {e}",
+                        path.display()
                     ))
                 })?;
                 Some(Arc::new(writer))

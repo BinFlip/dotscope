@@ -44,7 +44,7 @@ pub fn run(
     let entry_point_token = assembly.cor20header().entry_point_token;
 
     if !fmt.opts.no_header && !fmt.opts.raw {
-        fmt.format_header(&mut w, &assembly)?;
+        CilFormatter::format_header(&mut w, &assembly)?;
     }
 
     if let Some(method_filter) = method_filter {
@@ -62,13 +62,13 @@ pub fn run(
         }
         for cil_type in &types {
             if !fmt.opts.raw {
-                fmt.format_type_begin(&mut w, cil_type)?;
+                CilFormatter::format_type_begin(&mut w, cil_type)?;
             }
-            for method in cil_type.query_methods().iter() {
+            for method in &cil_type.query_methods() {
                 fmt.format_method(&mut w, &method, entry_point_token, &assembly)?;
             }
             if !fmt.opts.raw {
-                fmt.format_type_end(&mut w)?;
+                CilFormatter::format_type_end(&mut w)?;
             }
         }
     } else {
@@ -80,13 +80,13 @@ pub fn run(
             .find_all();
         for cil_type in &all_types {
             if !fmt.opts.raw {
-                fmt.format_type_begin(&mut w, cil_type)?;
+                CilFormatter::format_type_begin(&mut w, cil_type)?;
             }
-            for method in cil_type.query_methods().iter() {
+            for method in &cil_type.query_methods() {
                 fmt.format_method(&mut w, &method, entry_point_token, &assembly)?;
             }
             if !fmt.opts.raw {
-                fmt.format_type_end(&mut w)?;
+                CilFormatter::format_type_end(&mut w)?;
             }
         }
     }

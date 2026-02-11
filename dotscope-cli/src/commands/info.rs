@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::path::Path;
 
 use serde::Serialize;
@@ -44,7 +45,10 @@ pub struct AssemblyRefInfo {
 }
 
 fn format_public_key(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
+    bytes.iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    })
 }
 
 pub fn run(path: &Path, opts: &GlobalOptions) -> anyhow::Result<()> {
@@ -173,7 +177,7 @@ pub fn run(path: &Path, opts: &GlobalOptions) -> anyhow::Result<()> {
         if !info.references.is_empty() {
             println!("\nReferences:");
             let mut tw =
-                TabWriter::new(vec![("Name", Align::Left), ("Version", Align::Left)]).indent("  ");
+                TabWriter::new(&[("Name", Align::Left), ("Version", Align::Left)]).indent("  ");
             for r in &info.references {
                 tw.row(vec![r.name.clone(), r.version.clone()]);
             }

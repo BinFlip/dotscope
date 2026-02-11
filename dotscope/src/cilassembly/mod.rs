@@ -311,14 +311,14 @@ impl CilAssembly {
     /// request.add_type(protection_type_token);
     /// request.add_method(decryptor_method_token);
     ///
-    /// assembly.add_cleanup(request);
+    /// assembly.add_cleanup(&request);
     ///
     /// // Cleanup executes automatically during generation
     /// assembly.to_file("output.dll")?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    pub fn add_cleanup(&mut self, request: cleanup::CleanupRequest) {
-        self.pending_cleanup.merge(&request);
+    pub fn add_cleanup(&mut self, request: &cleanup::CleanupRequest) {
+        self.pending_cleanup.merge(request);
     }
 
     /// Returns a reference to the pending cleanup request.

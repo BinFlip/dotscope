@@ -109,6 +109,8 @@ impl Dispatcher {
     /// Returns the target block for a given state value.
     #[must_use]
     pub fn target_for_state(&self, state: i32) -> usize {
+        // Cast to usize for indexing - transform result is always non-negative after modulo/and operations
+        #[allow(clippy::cast_sign_loss)]
         let index = self.transform.apply(state) as usize;
         if index < self.cases.len() {
             self.cases[index]
@@ -174,20 +176,20 @@ impl StateTransform {
             Self::Identity => state,
             Self::Modulo(n) => {
                 // Use unsigned modulo for consistency with CIL rem.un
-                let u_state = state as u32;
-                (u_state % n) as i32
+                let u_state = state.cast_unsigned();
+                (u_state % n).cast_signed()
             }
             Self::XorModulo { xor_key, divisor } => {
                 // ConfuserEx pattern: (state ^ key) % N
                 let xored = state ^ xor_key;
-                let u_xored = xored as u32;
-                (u_xored % divisor) as i32
+                let u_xored = xored.cast_unsigned();
+                (u_xored % divisor).cast_signed()
             }
-            Self::And(mask) => state & (*mask as i32),
+            Self::And(mask) => state & (*mask).cast_signed(),
             Self::Shr(amount) => {
                 // Logical right shift (treat as unsigned)
-                let u_state = state as u32;
-                (u_state >> amount) as i32
+                let u_state = state.cast_unsigned();
+                (u_state >> amount).cast_signed()
             }
         }
     }
@@ -303,9 +305,8 @@ impl DispatcherInfo {
     #[must_use]
     pub fn block(&self) -> usize {
         match self {
-            Self::Switch { block, .. } => *block,
+            Self::Switch { block, .. } | Self::ComputedJump { block, .. } => *block,
             Self::IfElseChain { head_block, .. } => *head_block,
-            Self::ComputedJump { block, .. } => *block,
         }
     }
 
@@ -333,6 +334,8 @@ impl DispatcherInfo {
                 transform,
                 ..
             } => {
+                // Cast to usize for indexing - transform result is always non-negative after modulo/and operations
+                #[allow(clippy::cast_sign_loss)]
                 let index = transform.apply(case_value) as usize;
                 if index < cases.len() {
                     Some(cases[index])
@@ -353,6 +356,8 @@ impl DispatcherInfo {
                 *default
             }
             Self::ComputedJump { jump_table, .. } => {
+                // Cast to usize for indexing - case_value is validated to be non-negative by caller
+                #[allow(clippy::cast_sign_loss)]
                 let index = case_value as usize;
                 jump_table.get(index).copied()
             }
@@ -392,8 +397,7 @@ impl DispatcherInfo {
     pub fn transform(&self) -> StateTransform {
         match self {
             Self::Switch { transform, .. } => transform.clone(),
-            Self::IfElseChain { .. } => StateTransform::Identity,
-            Self::ComputedJump { .. } => StateTransform::Identity,
+            Self::IfElseChain { .. } | Self::ComputedJump { .. } => StateTransform::Identity,
         }
     }
 
@@ -497,18 +501,18 @@ fn analyze_switch_transform(ssa: &SsaFunction, switch_var: SsaVarId) -> StateTra
             if let Some(xor_key) = find_xor_key(ssa, *left) {
                 return StateTransform::XorModulo {
                     xor_key,
-                    divisor: divisor as u32,
+                    divisor: divisor.cast_unsigned(),
                 };
             }
 
-            StateTransform::Modulo(divisor as u32)
+            StateTransform::Modulo(divisor.cast_unsigned())
         }
 
         // Bitwise AND: state & mask
         SsaOp::And { right, .. } => {
             if let Some(SsaOp::Const { value, .. }) = ssa.get_definition(*right) {
                 if let Some(mask) = value.as_i32() {
-                    return StateTransform::And(mask as u32);
+                    return StateTransform::And(mask.cast_unsigned());
                 }
             }
             StateTransform::Identity
@@ -518,7 +522,7 @@ fn analyze_switch_transform(ssa: &SsaFunction, switch_var: SsaVarId) -> StateTra
         SsaOp::Shr { amount, .. } => {
             if let Some(SsaOp::Const { value, .. }) = ssa.get_definition(*amount) {
                 if let Some(shift) = value.as_i32() {
-                    return StateTransform::Shr(shift as u32);
+                    return StateTransform::Shr(shift.cast_unsigned());
                 }
             }
             StateTransform::Identity

@@ -64,7 +64,7 @@ pub fn run(
     };
 
     print_output(&output, opts, |out| {
-        let mut tw = TabWriter::new(vec![
+        let mut tw = TabWriter::new(&[
             ("Token", Align::Left),
             ("Vis", Align::Left),
             ("Kind", Align::Left),

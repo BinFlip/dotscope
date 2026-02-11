@@ -299,7 +299,9 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             | SsaOp::Shl { .. }
             | SsaOp::Shr { .. }
             | SsaOp::Neg { .. }
-            | SsaOp::Not { .. } => SsaType::I32,
+            | SsaOp::Not { .. }
+            // Sizeof produces int32
+            | SsaOp::SizeOf { .. } => SsaType::I32,
 
             // Box produces object reference
             SsaOp::Box { .. } => SsaType::Object,
@@ -319,9 +321,6 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 SsaType::Array(Box::new(elem_ssa_type), 1)
             }
 
-            // Sizeof produces int32
-            SsaOp::SizeOf { .. } => SsaType::I32,
-
             // Cast and type check produce the target type
             SsaOp::CastClass { target_type, .. } | SsaOp::IsInst { target_type, .. } => {
                 if let Some(ctx) = &self.type_context {
@@ -340,7 +339,9 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 };
                 SsaType::ByRef(Box::new(resolved))
             }
-            SsaOp::UnboxAny { value_type, .. } => {
+            SsaOp::UnboxAny { value_type, .. }
+            // Load object (value type copy) — type from value_type token
+            | SsaOp::LoadObj { value_type, .. } => {
                 if let Some(ctx) = &self.type_context {
                     SsaType::from_type_token(value_type.token(), ctx.assembly())
                 } else {
@@ -380,14 +381,17 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             // Indirect load - use the value_type from the op
             SsaOp::LoadIndirect { value_type, .. } => value_type.clone(),
 
-            // Function pointer loads
-            SsaOp::LoadFunctionPtr { .. } | SsaOp::LoadVirtFunctionPtr { .. } => SsaType::NativeInt,
+            // Function pointer loads / Array length / LocalAlloc — all native int
+            SsaOp::LoadFunctionPtr { .. }
+            | SsaOp::LoadVirtFunctionPtr { .. }
+            | SsaOp::ArrayLength { .. }
+            | SsaOp::LocalAlloc { .. } => SsaType::NativeInt,
 
             // Load token produces the appropriate RuntimeHandle type
             SsaOp::LoadToken { token, .. } => {
                 // Determine handle type based on token table
                 match token.token().table() {
-                    0x01 | 0x02 | 0x1B => SsaType::RuntimeTypeHandle, // TypeRef, TypeDef, TypeSpec
+                    // TypeRef, TypeDef, TypeSpec
                     0x06 | 0x0A | 0x2B => SsaType::RuntimeMethodHandle, // MethodDef, MemberRef, MethodSpec
                     0x04 => SsaType::RuntimeFieldHandle,                // Field
                     _ => SsaType::RuntimeTypeHandle,                    // Default to type handle
@@ -426,23 +430,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 }
             }
 
-            // Array length — always native int (ECMA-335 III.4.12)
-            SsaOp::ArrayLength { .. } => SsaType::NativeInt,
-
-            // Load object (value type copy) — type from value_type token
-            SsaOp::LoadObj { value_type, .. } => {
-                if let Some(ctx) = &self.type_context {
-                    SsaType::from_type_token(value_type.token(), ctx.assembly())
-                } else {
-                    SsaType::ValueType(*value_type)
-                }
-            }
-
             // Ckfinite — operates on F64 stack type
             SsaOp::Ckfinite { .. } => SsaType::F64,
-
-            // LocalAlloc — returns pointer (native int)
-            SsaOp::LocalAlloc { .. } => SsaType::NativeInt,
 
             // CallIndirect — resolve return type from standalone signature
             SsaOp::CallIndirect { signature, .. } => {
@@ -453,12 +442,12 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 }
             }
 
-            // Copy/Phi — types resolved via origin or during rename, not here
-            SsaOp::Copy { .. } | SsaOp::Phi { .. } => SsaType::Unknown,
-
+            // Copy/Phi — types resolved via origin or during rename, not here.
             // Non-value-producing operations — exhaustive list so new SsaOp
             // variants cause a compiler error instead of silently returning Unknown
-            SsaOp::StoreField { .. }
+            SsaOp::Copy { .. }
+            | SsaOp::Phi { .. }
+            | SsaOp::StoreField { .. }
             | SsaOp::StoreStaticField { .. }
             | SsaOp::StoreElement { .. }
             | SsaOp::StoreIndirect { .. }
@@ -526,6 +515,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         placeholder: SsaVarId,
         rename_map: &mut HashMap<SsaVarId, SsaVarId>,
     ) {
+        #[allow(clippy::cast_possible_truncation)]
         let origin = VariableOrigin::Stack(slot as u32);
 
         // Iterate over actual predecessors to find one with the needed slot
@@ -564,6 +554,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         // Rather than leaving the placeholder unmapped (which causes orphan uses that
         // break constant propagation), we create a proper variable entry so the SSA
         // remains well-formed. The value will be Unknown but at least traceable.
+        #[allow(clippy::cast_possible_truncation)]
         let origin = VariableOrigin::Stack(slot as u32);
         let new_var = SsaVariable::new(origin, 0, DefSite::entry());
         let new_var_id = new_var.id();
@@ -623,7 +614,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         };
 
         // Get assembly reference from type context for stack simulation
-        let assembly = type_context.map(|ctx| ctx.assembly());
+        let assembly = type_context.map(TypeContext::assembly);
 
         // Phase 1: Simulate stack and collect definitions
         builder.simulate_all_blocks(assembly)?;
@@ -743,13 +734,14 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         rpo: &[NodeId],
         assembly: Option<&CilObject>,
     ) -> Result<HashMap<usize, usize>> {
+        // Limit iterations to prevent infinite loops in malformed CIL.
+        const MAX_ITERATIONS: usize = 10;
+
         let mut exit_depths: HashMap<usize, usize> = HashMap::new();
 
         // Iterate until fixed-point to correctly handle back edges.
         // In the first iteration, back-edge predecessors won't be in exit_depths.
         // Subsequent iterations will see all predecessors and can compute correct depths.
-        // Limit iterations to prevent infinite loops in malformed CIL.
-        const MAX_ITERATIONS: usize = 10;
         for _iteration in 0..MAX_ITERATIONS {
             let mut changed = false;
 
@@ -784,9 +776,13 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                                         } else {
                                             usize::from(has_return)
                                         };
-                                        (pushes as i32 - pops as i32)
-                                            .clamp(i8::MIN as i32, i8::MAX as i32)
-                                            as i8
+                                        #[allow(
+                                            clippy::cast_possible_truncation,
+                                            clippy::cast_possible_wrap
+                                        )]
+                                        ((pushes as i32 - pops as i32)
+                                            .clamp(i32::from(i8::MIN), i32::from(i8::MAX))
+                                            as i8)
                                     },
                                 )
                             })
@@ -948,8 +944,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             let has_terminator = block
                 .instructions()
                 .last()
-                .map(|instr| instr.op().is_terminator())
-                .unwrap_or(false);
+                .is_some_and(|instr| instr.op().is_terminator());
 
             if !has_terminator && successors.len() == 1 {
                 let fallthrough_target = successors[0];
@@ -1111,6 +1106,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     usize::from(has_return)
                 };
 
+                #[allow(clippy::cast_possible_truncation)]
                 return simulator
                     .simulate_stack_effect(pops.min(255) as u8, pushes.min(255) as u8)
                     .ok_or_else(|| {
@@ -1148,7 +1144,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         match token.table() {
             // MethodDef (0x06) - method defined in this assembly
             0x06 => {
-                let method = assembly.methods().get(&token)?.value().clone();
+                let method = assembly.method(&token)?;
                 let param_count = method.signature.params.len();
                 let has_this = !method.is_static();
                 let has_return = !matches!(method.signature.return_type.base, TypeSignature::Void);
@@ -1157,7 +1153,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             // MemberRef (0x0A) - method or field in external assembly
             0x0A => {
-                let member_ref = assembly.refs_members().get(&token)?.value().clone();
+                let member_ref = assembly.member_ref(&token)?;
                 if let MemberRefSignature::Method(sig) = &member_ref.signature {
                     let has_return = !matches!(sig.return_type.base, TypeSignature::Void);
                     Some((sig.param_count as usize, sig.has_this, has_return))
@@ -1168,7 +1164,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             // MethodSpec (0x2B) - generic method instantiation
             0x2B => {
-                let method_spec = assembly.method_specs().get(&token)?.value().clone();
+                let method_spec = assembly.method_spec(&token)?;
                 // Get the underlying method token from the CilTypeReference
                 let underlying_token = match &method_spec.method {
                     CilTypeReference::MethodDef(method_ref) => {
@@ -1333,6 +1329,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             // Create PHI nodes for slots with actual data flow
             for slot in slots_with_data {
+                #[allow(clippy::cast_possible_truncation)]
                 let origin = VariableOrigin::Stack(slot as u32);
                 if let Some(block) = self.function.block_mut(block_idx) {
                     let phi = PhiNode::new(SsaVarId::new(), origin);
@@ -1637,6 +1634,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
         if let Some(ref entry) = entry_stack {
             for (slot, &placeholder) in entry.iter().enumerate() {
+                #[allow(clippy::cast_possible_truncation)]
                 let slot_u32 = slot as u32;
                 if !slots_with_phis.contains(&slot_u32) {
                     let origin = VariableOrigin::Stack(slot_u32);
@@ -1879,7 +1877,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             // Get instruction info
             let instr_info = self.function.block(block_idx).and_then(|b| {
                 b.instruction(instr_idx)
-                    .map(|instr| (instr.original().clone(), instr.uses().to_vec(), instr.def()))
+                    .map(|instr| (instr.original().clone(), instr.uses(), instr.def()))
             });
 
             if let Some((cil_instr, uses, old_def)) = instr_info {
@@ -2056,6 +2054,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     } else {
                         // For temps (no origin), create a new SSA variable without version tracking
                         // Use the simulation variable's index as the stack slot number
+                        #[allow(clippy::cast_possible_truncation)]
                         let slot = sim_var.index() as u32;
                         let var_type = self.infer_instruction_result_type(block_idx, instr_idx);
                         let temp_var = SsaVariable::new_typed(

@@ -689,9 +689,7 @@ impl CilTypeReference {
     #[must_use]
     pub fn token(&self) -> Option<Token> {
         match self {
-            Self::TypeRef(r) => r.token(),
-            Self::TypeDef(r) => r.token(),
-            Self::TypeSpec(r) => r.token(),
+            Self::TypeRef(r) | Self::TypeDef(r) | Self::TypeSpec(r) => r.token(),
             Self::Field(r) => Some(r.token),
             Self::Param(r) => Some(r.token),
             Self::Property(r) => Some(r.token),
@@ -1426,40 +1424,38 @@ impl CilFlavor {
                 | CilFlavor::Boolean
                 | CilFlavor::Char,
                 CilFlavor::I4,
-            ) => true,
-
-            // Reference types are all compatible (null, objects)
-            (
-                CilFlavor::Object | CilFlavor::String | CilFlavor::Class | CilFlavor::Interface,
+            )
+            // Reference types, managed pointers, and arrays are all compatible with Object
+            | (
+                CilFlavor::Object
+                | CilFlavor::String
+                | CilFlavor::Class
+                | CilFlavor::Interface
+                | CilFlavor::ByRef
+                | CilFlavor::Array { .. },
                 CilFlavor::Object,
-            ) => true,
-            (CilFlavor::Object, CilFlavor::String | CilFlavor::Class | CilFlavor::Interface) => {
-                true
-            }
-
-            // Managed pointer compatible with reference for analysis
-            (CilFlavor::ByRef, CilFlavor::Object) => true,
-            (CilFlavor::Object, CilFlavor::ByRef) => true,
-
-            // Arrays are objects - Object can be stored in array slots (untyped arrays)
-            // and arrays can be stored in Object slots (polymorphism)
-            (CilFlavor::Array { .. }, CilFlavor::Object) => true,
-            (CilFlavor::Object, CilFlavor::Array { .. }) => true,
-
+            )
+            // Object is compatible with reference types, managed pointers, and arrays
+            | (
+                CilFlavor::Object,
+                CilFlavor::String
+                | CilFlavor::Class
+                | CilFlavor::Interface
+                | CilFlavor::ByRef
+                | CilFlavor::Array { .. },
+            )
             // Unmanaged pointer compatible with native integers (IntPtr/UIntPtr)
             // This is common in low-level code and P/Invoke scenarios
-            (CilFlavor::Pointer, CilFlavor::I | CilFlavor::U) => true,
-            (CilFlavor::I | CilFlavor::U, CilFlavor::Pointer) => true,
-
+            | (CilFlavor::Pointer, CilFlavor::I | CilFlavor::U)
+            | (CilFlavor::I | CilFlavor::U, CilFlavor::Pointer)
             // Native integers are compatible with each other (sign doesn't matter for storage)
-            (CilFlavor::I, CilFlavor::U) => true,
-            (CilFlavor::U, CilFlavor::I) => true,
-
+            | (CilFlavor::I, CilFlavor::U)
+            | (CilFlavor::U, CilFlavor::I)
             // Generic type parameters are compatible with any type since we don't have
             // runtime type substitution. This allows storing values in locals typed as
             // generic method parameters (TM0, TM1, etc.)
-            (CilFlavor::GenericParameter { .. }, _) => true,
-            (_, CilFlavor::GenericParameter { .. }) => true,
+            | (CilFlavor::GenericParameter { .. }, _)
+            | (_, CilFlavor::GenericParameter { .. }) => true,
 
             _ => false,
         }
@@ -1543,11 +1539,8 @@ impl fmt::Display for CilFlavor {
 impl From<&TypeSignature> for CilFlavor {
     fn from(sig: &TypeSignature) -> Self {
         match sig {
-            // Fallback/unknown
-            TypeSignature::Unknown => CilFlavor::Unknown,
-
-            // Void
-            TypeSignature::Void => CilFlavor::Void,
+            // Void and sentinel (boundary between fixed and variable args in vararg calls)
+            TypeSignature::Void | TypeSignature::Sentinel => CilFlavor::Void,
 
             // Primitive types
             TypeSignature::Boolean => CilFlavor::Boolean,
@@ -1567,8 +1560,10 @@ impl From<&TypeSignature> for CilFlavor {
 
             // Reference types
             TypeSignature::String => CilFlavor::String,
-            TypeSignature::Object => CilFlavor::Object,
-            TypeSignature::Class(_) => CilFlavor::Class,
+            // Object and boxed value types are both treated as Object
+            TypeSignature::Object | TypeSignature::Boxed => CilFlavor::Object,
+            // Class references and System.Type in custom attributes
+            TypeSignature::Class(_) | TypeSignature::Type => CilFlavor::Class,
             TypeSignature::ValueType(_) => CilFlavor::ValueType,
 
             // Pointer and reference types
@@ -1639,26 +1634,13 @@ impl From<&TypeSignature> for CilFlavor {
                 CilFlavor::Unknown
             }
 
-            // Sentinel marks the boundary between fixed and variable args in vararg calls
-            TypeSignature::Sentinel => CilFlavor::Void,
-
-            // Internal CLI types - implementation details
-            TypeSignature::Internal => CilFlavor::Unknown,
-
-            // Modifier marker in signature encoding
-            TypeSignature::Modifier => CilFlavor::Unknown,
-
-            // System.Type in custom attributes
-            TypeSignature::Type => CilFlavor::Class,
-
-            // Boxed value type
-            TypeSignature::Boxed => CilFlavor::Object,
-
-            // Reserved for future use
-            TypeSignature::Reserved => CilFlavor::Unknown,
-
-            // Field signature marker
-            TypeSignature::Field => CilFlavor::Unknown,
+            // Fallback/unknown: Unknown, Internal CLI types, Modifier marker,
+            // Reserved for future use, and Field signature marker
+            TypeSignature::Unknown
+            | TypeSignature::Internal
+            | TypeSignature::Modifier
+            | TypeSignature::Reserved
+            | TypeSignature::Field => CilFlavor::Unknown,
         }
     }
 }
@@ -1716,7 +1698,11 @@ impl PointerSize {
     #[must_use]
     pub fn mask_signed(self, value: i64) -> i64 {
         match self {
-            Self::Bit32 => value as i32 as i64,
+            Self::Bit32 => {
+                #[allow(clippy::cast_possible_truncation)]
+                let truncated = value as i32;
+                i64::from(truncated)
+            }
             Self::Bit64 => value,
         }
     }
@@ -1725,7 +1711,11 @@ impl PointerSize {
     #[must_use]
     pub fn mask_unsigned(self, value: u64) -> u64 {
         match self {
-            Self::Bit32 => value as u32 as u64,
+            Self::Bit32 => {
+                #[allow(clippy::cast_possible_truncation)]
+                let truncated = value as u32;
+                u64::from(truncated)
+            }
             Self::Bit64 => value,
         }
     }

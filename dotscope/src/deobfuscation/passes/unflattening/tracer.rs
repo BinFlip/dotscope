@@ -17,7 +17,7 @@ use std::collections::{HashMap, HashSet};
 use crate::{
     analysis::{
         cff_taint_config, ConstValue, PhiTaintMode, SsaBlock, SsaEvaluator, SsaFunction,
-        SsaInstruction, SsaOp, SsaVarId, TaintAnalysis, TaintConfig,
+        SsaInstruction, SsaOp, SsaVarId, SsaVariable, TaintAnalysis, TaintConfig,
     },
     deobfuscation::passes::unflattening::{detection::CffDetector, UnflattenConfig},
 };
@@ -192,6 +192,7 @@ pub enum TraceTerminator {
 
 impl TraceTree {
     /// Creates a new trace tree with a root node.
+    #[must_use]
     pub fn new(root: TraceNode) -> Self {
         Self {
             root,
@@ -202,6 +203,7 @@ impl TraceTree {
     }
 
     /// Checks if a variable is state-tainted.
+    #[must_use]
     pub fn is_state_tainted(&self, var: SsaVarId) -> bool {
         self.state_tainted.contains(&var)
     }
@@ -294,7 +296,7 @@ impl<'a> TreeTraceContext<'a> {
         // Use generic taint analysis for state variable tracking
         if let Some(state_var) = dispatcher.state_var {
             // Get the state variable's origin to filter PHI chains
-            let state_origin = ssa.variable(state_var).map(|v| v.origin());
+            let state_origin = ssa.variable(state_var).map(SsaVariable::origin);
 
             // Create CFF-specific taint configuration
             let taint_config = cff_taint_config(ssa, dispatcher.block, state_origin);
@@ -308,7 +310,7 @@ impl<'a> TreeTraceContext<'a> {
             taint.propagate(ssa);
 
             // Transfer tainted variables to context
-            ctx.state_tainted = taint.tainted_variables().clone();
+            ctx.state_tainted.clone_from(taint.tainted_variables());
         }
 
         ctx.dispatcher = Some(dispatcher);
@@ -491,16 +493,13 @@ fn trace_from_block(ctx: &mut TreeTraceContext<'_>, block_idx: usize, depth: usi
     let mut current_block = block_idx;
 
     loop {
-        let block = match ctx.ssa.block(current_block) {
-            Some(b) => b,
-            None => {
-                node.set_terminator(TraceTerminator::Stopped {
-                    reason: StopReason::UnknownControlFlow {
-                        block: current_block,
-                    },
-                });
-                return node;
-            }
+        let Some(block) = ctx.ssa.block(current_block) else {
+            node.set_terminator(TraceTerminator::Stopped {
+                reason: StopReason::UnknownControlFlow {
+                    block: current_block,
+                },
+            });
+            return node;
         };
 
         // Set predecessor for phi evaluation
@@ -665,39 +664,38 @@ fn handle_terminator_tree(
 
             if is_dispatcher || ctx.is_tainted(*value) {
                 // State-driven switch (dispatcher) - evaluate and follow
-                match ctx
+                if let Some(idx) = ctx
                     .evaluator
                     .get_concrete(*value)
                     .and_then(ConstValue::as_u64)
                 {
-                    Some(idx) => {
-                        let target = if (idx as usize) < targets.len() {
-                            targets[idx as usize]
-                        } else {
-                            *default
-                        };
+                    #[allow(clippy::cast_possible_truncation)]
+                    let idx_usize = idx as usize;
+                    let target = if idx_usize < targets.len() {
+                        targets[idx_usize]
+                    } else {
+                        *default
+                    };
 
-                        // Record state transition
-                        let from_state = ctx.current_state().unwrap_or(0);
+                    // Record state transition
+                    let from_state = ctx.current_state().unwrap_or(0);
 
-                        // Continue tracing from target
-                        let continues = trace_from_block(ctx, target, depth + 1);
-                        let to_state = ctx.current_state().unwrap_or(0);
+                    // Continue tracing from target
+                    let continues = trace_from_block(ctx, target, depth + 1);
+                    let to_state = ctx.current_state().unwrap_or(0);
 
-                        node.set_terminator(TraceTerminator::StateTransition {
-                            from_state,
-                            to_state,
-                            target_block: target,
-                            continues: Box::new(continues),
-                        });
-                        TerminatorResult::Done
-                    }
-                    None => {
-                        node.set_terminator(TraceTerminator::Stopped {
-                            reason: StopReason::UnknownControlFlow { block: block_idx },
-                        });
-                        TerminatorResult::Done
-                    }
+                    node.set_terminator(TraceTerminator::StateTransition {
+                        from_state,
+                        to_state,
+                        target_block: target,
+                        continues: Box::new(continues),
+                    });
+                    TerminatorResult::Done
+                } else {
+                    node.set_terminator(TraceTerminator::Stopped {
+                        reason: StopReason::UnknownControlFlow { block: block_idx },
+                    });
+                    TerminatorResult::Done
                 }
             } else {
                 // USER SWITCH - fork for all cases
@@ -707,7 +705,10 @@ fn handle_terminator_tree(
                 for (i, &target) in targets.iter().enumerate() {
                     ctx.restore_evaluator(snapshot.clone());
                     let case_node = trace_from_block(ctx, target, depth + 1);
-                    cases.push((i as i64, Box::new(case_node)));
+                    // Safe: switch case index fits in i64
+                    #[allow(clippy::cast_possible_wrap)]
+                    let case_value = i as i64;
+                    cases.push((case_value, Box::new(case_node)));
                 }
 
                 ctx.restore_evaluator(snapshot);

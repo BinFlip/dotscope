@@ -44,6 +44,7 @@ use crate::{
         streams::TablesHeader,
         tables::{FieldRaw, FieldRvaRaw, TypeDefRaw, TypeRefRaw},
         token::Token,
+        typesystem::CilTypeRef,
     },
     prelude::{FlowType, TableId},
     CilObject,
@@ -143,7 +144,7 @@ fn detect_native_helpers(
     let mut native_helpers: FxHashMap<Token, NativeHelperInfo> = FxHashMap::default();
 
     // Scan decryptor methods for calls to native methods
-    for method_entry in assembly.methods().iter() {
+    for method_entry in assembly.methods() {
         let method = method_entry.value();
 
         // Only scan decryptor methods
@@ -163,10 +164,9 @@ fn detect_native_helpers(
             };
 
             // Check if the call target is a native method with int32(int32) signature
-            let Some(target_entry) = assembly.methods().get(call_target) else {
+            let Some(target_method) = assembly.method(call_target) else {
                 continue;
             };
-            let target_method = target_entry.value();
 
             // Check if it's a native method
             if !target_method
@@ -213,10 +213,7 @@ fn detect_native_helpers(
 
         // Add detection evidence
         score.add(DetectionEvidence::MetadataPattern {
-            name: format!(
-                "Native x86 helper methods ({} with signature int32(int32))",
-                count
-            ),
+            name: format!("Native x86 helper methods ({count} with signature int32(int32))"),
             locations,
             confidence: (count * 25).min(40),
         });
@@ -240,7 +237,7 @@ fn detect_artifact_sections(
 
     // Find sections containing encrypted method bodies
     // These are methods where RVA is set but body couldn't be parsed
-    for method in assembly.query_methods().without_body().iter() {
+    for method in &assembly.query_methods().without_body() {
         if let Some(rva) = method.rva {
             if rva > 0 {
                 if let Some(section) = find_section_for_rva(sections, rva) {
@@ -315,7 +312,7 @@ fn detect_constant_data_infrastructure(
 
     // Strategy 1: Find ldtoken + InitializeArray patterns in method bodies
     // This is the primary detection method based on ConfuserEx's code pattern
-    for method_entry in assembly.methods().iter() {
+    for method_entry in assembly.methods() {
         let method = method_entry.value();
 
         // Collect instructions to allow looking ahead
@@ -357,8 +354,7 @@ fn detect_constant_data_infrastructure(
                 && assembly
                     .refs_members()
                     .get(&call_token)
-                    .map(|r| r.value().name == "InitializeArray")
-                    .unwrap_or(false);
+                    .is_some_and(|r| r.value().name == "InitializeArray");
 
             if is_init_array {
                 // Found a constant data field!
@@ -383,7 +379,7 @@ fn detect_constant_data_infrastructure(
     if let Some(tables) = assembly.tables() {
         // Get FieldRVA table to find fields with initialization data
         if let Some(fieldrva_table) = tables.table::<FieldRvaRaw>() {
-            for fieldrva in fieldrva_table.iter() {
+            for fieldrva in fieldrva_table {
                 if fieldrva.rva == 0 {
                     continue;
                 }
@@ -407,11 +403,9 @@ fn detect_constant_data_infrastructure(
                 if let Some(backing_type) = find_field_backing_type(assembly, field_token) {
                     // Check if this backing type has a ClassLayout entry
                     // (indicating it's a fixed-size buffer type)
-                    let has_class_layout = assembly
-                        .types()
-                        .get(&backing_type)
-                        .map(|t| t.class_size.get().is_some() || t.packing_size.get().is_some())
-                        .unwrap_or(false);
+                    let has_class_layout = assembly.types().get(&backing_type).is_some_and(|t| {
+                        t.class_size.get().is_some() || t.packing_size.get().is_some()
+                    });
 
                     if has_class_layout {
                         data_field_tokens.insert(field_token);
@@ -635,7 +629,7 @@ fn detect_protection_infrastructure_types(
     if infra_count > 0 {
         score.add_evidence(DetectionEvidence::ProtectionInfrastructure {
             count: infra_count,
-            description: format!("Found {} types as protection infrastructure", infra_count),
+            description: format!("Found {infra_count} types as protection infrastructure"),
             confidence: 20,
         });
     }
@@ -751,8 +745,7 @@ fn detect_infrastructure_fields(
         score.add_evidence(DetectionEvidence::ProtectionInfrastructure {
             count: field_count,
             description: format!(
-                "Found {} fields in <Module> as protection infrastructure",
-                field_count
+                "Found {field_count} fields in <Module> as protection infrastructure"
             ),
             confidence: 15,
         });
@@ -872,9 +865,8 @@ fn is_field_only_accessed_by_infrastructure(
             let is_in_infra_type = method
                 .declaring_type
                 .get()
-                .and_then(|dt| dt.upgrade())
-                .map(|owner| infrastructure_type_tokens.contains(&owner.token))
-                .unwrap_or(false);
+                .and_then(CilTypeRef::upgrade)
+                .is_some_and(|owner| infrastructure_type_tokens.contains(&owner.token));
 
             if !is_infra_method && !is_in_infra_type {
                 accessed_by_non_infra = true;

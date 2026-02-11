@@ -555,7 +555,7 @@ impl EmulationController {
                             }
 
                             // Search for exception handler in current method
-                            if let Some(handler_match) = self.find_exception_handler(
+                            if let Some(handler_match) = Self::find_exception_handler(
                                 context,
                                 current_method,
                                 current_offset,
@@ -611,7 +611,7 @@ impl EmulationController {
                                 let caller_method = caller_frame.method();
                                 let caller_offset = caller_frame.return_offset();
 
-                                if let Some(handler_match) = self.find_exception_handler(
+                                if let Some(handler_match) = Self::find_exception_handler(
                                     context,
                                     caller_method,
                                     caller_offset,
@@ -658,8 +658,9 @@ impl EmulationController {
             {
                 // Convert index to usize
                 let idx = match index {
-                    EmValue::I32(i) => Some(i as usize),
-                    EmValue::NativeInt(i) => Some(i as usize),
+                    EmValue::I32(i) => Some(i.cast_unsigned() as usize),
+                    #[allow(clippy::cast_possible_truncation)]
+                    EmValue::NativeInt(i) => Some(i.cast_unsigned() as usize),
                     _ => None,
                 };
                 if let Some(idx) = idx {
@@ -668,7 +669,7 @@ impl EmulationController {
                         offset,
                         heap_ref: href.id(),
                         index: idx,
-                        value: format!("{:?}", value),
+                        value: format!("{value:?}"),
                     });
                 }
             }
@@ -755,7 +756,7 @@ impl EmulationController {
                     signature,
                     function_pointer,
                 } => {
-                    self.handle_calli(interpreter, thread, context, signature, function_pointer)?;
+                    self.handle_calli(interpreter, thread, context, signature, &function_pointer)?;
                 }
 
                 StepResult::NewObj {
@@ -769,18 +770,18 @@ impl EmulationController {
                     element_type,
                     length,
                 } => {
-                    self.handle_newarr(thread, context, element_type, length)?;
+                    Self::handle_newarr(thread, context, element_type, length)?;
                     interpreter.ip_mut().advance_current();
                 }
 
                 StepResult::LoadString { token } => {
-                    self.handle_ldstr(thread, context, token)?;
+                    Self::handle_ldstr(thread, context, token)?;
                     interpreter.ip_mut().advance_current();
                 }
 
                 StepResult::LoadStaticField { field } => {
                     // Check if we need to initialize the field's owner type first
-                    if self.maybe_run_type_cctor(interpreter, thread, context, field)? {
+                    if self.maybe_run_type_cctor(interpreter, thread, context, field) {
                         // .cctor was pushed - don't advance IP so ldsfld re-executes after .cctor returns
                         continue;
                     }
@@ -794,7 +795,7 @@ impl EmulationController {
                     // because maybe_run_type_cctor saves the caller's stack. If we push
                     // after, we'd be pushing onto the .cctor's stack instead.
                     thread.push(value.clone())?;
-                    if self.maybe_run_type_cctor(interpreter, thread, context, field)? {
+                    if self.maybe_run_type_cctor(interpreter, thread, context, field) {
                         // .cctor was pushed - the value is already on the saved caller stack
                         // stsfld will re-execute after .cctor returns and pop it again
                         continue;
@@ -819,7 +820,7 @@ impl EmulationController {
                             method: current_method,
                             offset: current_offset,
                             exception_type,
-                            description: format!("{:?}", exception),
+                            description: format!("{exception:?}"),
                         });
                     }
 
@@ -850,7 +851,7 @@ impl EmulationController {
                         }
                     }
                     // Try to find an exception handler in the current method
-                    if let Some(handler_match) = self.find_exception_handler(
+                    if let Some(handler_match) = Self::find_exception_handler(
                         context,
                         current_method,
                         current_offset,
@@ -920,7 +921,7 @@ impl EmulationController {
                             // Resolve exception type for the cloned exception
                             let exc_type = Self::resolve_exception_type(&exc_clone, thread);
 
-                            if let Some(handler_match) = self.find_exception_handler(
+                            if let Some(handler_match) = Self::find_exception_handler(
                                 context,
                                 caller_method,
                                 caller_offset,
@@ -970,7 +971,7 @@ impl EmulationController {
 
                     // Find and schedule any finally blocks between current offset and target
                     let current_offset = interpreter.ip().offset();
-                    self.schedule_finally_blocks(
+                    Self::schedule_finally_blocks(
                         context,
                         current_method,
                         current_offset,
@@ -1149,7 +1150,7 @@ impl EmulationController {
                         // by searching at the original exception offset and skipping
                         // handlers at or before the current one
                         if let Some(origin) = origin_offset {
-                            if let Some(handler_match) = self.find_exception_handler(
+                            if let Some(handler_match) = Self::find_exception_handler(
                                 context,
                                 current_method,
                                 origin,
@@ -1194,7 +1195,7 @@ impl EmulationController {
                         // Resolve exception type for caller search
                         let exc_type = Self::resolve_exception_type(&exception, thread);
 
-                        if let Some(handler_match) = self.find_exception_handler(
+                        if let Some(handler_match) = Self::find_exception_handler(
                             context,
                             caller_method,
                             caller_offset,
@@ -1301,22 +1302,22 @@ impl EmulationController {
                 }
 
                 StepResult::Box { type_token } => {
-                    self.handle_box(thread, type_token)?;
+                    Self::handle_box(thread, type_token)?;
                     interpreter.ip_mut().advance_current();
                 }
 
                 StepResult::Unbox { type_token } | StepResult::UnboxAny { type_token } => {
-                    self.handle_unbox(thread, Some(context), type_token)?;
+                    Self::handle_unbox(thread, Some(context), type_token)?;
                     interpreter.ip_mut().advance_current();
                 }
 
                 StepResult::CastClass { type_token } => {
-                    self.handle_castclass(thread, context, type_token)?;
+                    Self::handle_castclass(thread, context, type_token)?;
                     interpreter.ip_mut().advance_current();
                 }
 
                 StepResult::IsInst { type_token } => {
-                    self.handle_isinst(thread, context, type_token)?;
+                    Self::handle_isinst(thread, context, type_token)?;
                     interpreter.ip_mut().advance_current();
                 }
 
@@ -1350,7 +1351,7 @@ impl EmulationController {
                 }
 
                 StepResult::InitObj { type_token } => {
-                    self.handle_initobj(thread, Some(context), type_token)?;
+                    Self::handle_initobj(thread, Some(context), type_token)?;
                     interpreter.ip_mut().advance_current();
                 }
 
@@ -1368,12 +1369,12 @@ impl EmulationController {
                 }
 
                 StepResult::CopyBlock { dest, src, size } => {
-                    self.handle_cpblk(thread, &dest, &src, &size)?;
+                    Self::handle_cpblk(thread, &dest, &src, &size)?;
                     interpreter.ip_mut().advance_current();
                 }
 
                 StepResult::InitBlock { addr, value, size } => {
-                    self.handle_initblk(thread, &addr, &value, &size)?;
+                    Self::handle_initblk(thread, &addr, &value, &size)?;
                     interpreter.ip_mut().advance_current();
                 }
 
@@ -1573,7 +1574,7 @@ impl EmulationController {
         let resolved_method_token = if is_virtual && is_instance && !arg_values.is_empty() {
             // For virtual calls, resolve the actual method to call based on the
             // runtime type of the 'this' object (first argument for instance methods)
-            self.resolve_virtual_dispatch(context, thread, method_token, &arg_values[0])
+            Self::resolve_virtual_dispatch(context, thread, method_token, &arg_values[0])
         } else {
             method_token
         };
@@ -1616,7 +1617,7 @@ impl EmulationController {
                 // Check if method has a body with actual instructions
                 if method.has_body() && has_instructions {
                     // Get return info from current frame
-                    let return_method = thread.current_frame().map(|f| f.method());
+                    let return_method = thread.current_frame().map(ThreadCallFrame::method);
                     let return_offset = interpreter.ip().next_offset();
 
                     // Save caller's evaluation stack before entering new method
@@ -1713,8 +1714,8 @@ impl EmulationController {
                 if let Some(flavor) = return_flavor {
                     let default_value = match flavor {
                         CilFlavor::Void => None,
-                        CilFlavor::Boolean => Some(EmValue::I32(0)), // false
-                        CilFlavor::I1
+                        CilFlavor::Boolean
+                        | CilFlavor::I1
                         | CilFlavor::U1
                         | CilFlavor::I2
                         | CilFlavor::U2
@@ -1763,7 +1764,7 @@ impl EmulationController {
         thread: &mut EmulationThread,
         context: &EmulationContext,
         sig_token: Token,
-        function_pointer: EmValue,
+        function_pointer: &EmValue,
     ) -> Result<()> {
         // Get the call site signature from the StandAloneSig table
         let standalone_sig = context.get_standalone_signature(sig_token).ok_or(
@@ -1774,16 +1775,13 @@ impl EmulationController {
         )?;
 
         // Extract method signature - calli requires a method signature, not locals
-        let method_sig = match standalone_sig {
-            StandAloneSignature::Method(sig) => sig,
-            _ => {
-                return Err(EmulationError::TypeMismatch {
-                    operation: "calli",
-                    expected: "method signature",
-                    found: "non-method signature",
-                }
-                .into())
+        let StandAloneSignature::Method(method_sig) = standalone_sig else {
+            return Err(EmulationError::TypeMismatch {
+                operation: "calli",
+                expected: "method signature",
+                found: "non-method signature",
             }
+            .into());
         };
 
         // Calculate argument count from signature
@@ -1800,7 +1798,7 @@ impl EmulationController {
 
         // Extract the method token from the function pointer
         // Function pointers are stored as UnmanagedPtr containing the method token value
-        let method_token = match function_pointer {
+        let method_token = match *function_pointer {
             EmValue::UnmanagedPtr(ptr) =>
             {
                 #[allow(clippy::cast_possible_truncation)]
@@ -1865,7 +1863,6 @@ impl EmulationController {
     /// be resolved (type unknown, method not virtual, not overridden), returns
     /// the original declared method token.
     fn resolve_virtual_dispatch(
-        &self,
         context: &EmulationContext,
         thread: &EmulationThread,
         declared_method: Token,
@@ -2160,11 +2157,14 @@ impl EmulationController {
         // The constructor token is a MethodDef/MethodRef; we need the declaring type.
         // Use the type system to resolve the declaring type from the method's owning type.
         let declaring_type = context.get_declaring_type(constructor_token);
-        let type_token = declaring_type.as_ref().map(|t| t.token).unwrap_or_else(|| {
-            // External method reference without resolvable declaring type.
-            // Use the token's row index as type identifier for heap tracking.
-            Token::new(constructor_token.value() & 0x00FF_FFFF)
-        });
+        let type_token = declaring_type.as_ref().map_or_else(
+            || {
+                // External method reference without resolvable declaring type.
+                // Use the token's row index as type identifier for heap tracking.
+                Token::new(constructor_token.value() & 0x00FF_FFFF)
+            },
+            |t| t.token,
+        );
 
         // Get field types for proper initialization. Instance fields need default values.
         // Static fields (flags & 0x0010) are not part of object instances.
@@ -2223,7 +2223,7 @@ impl EmulationController {
             full_args.extend(arg_values);
 
             // Get return info from current frame
-            let return_method = thread.current_frame().map(|f| f.method());
+            let return_method = thread.current_frame().map(ThreadCallFrame::method);
             let return_offset = interpreter.ip().next_offset();
 
             // The caller expects the new object on the stack after newobj completes.
@@ -2412,7 +2412,6 @@ impl EmulationController {
     ///
     /// Returns an error if type resolution or heap allocation fails.
     fn handle_newarr(
-        &self,
         thread: &mut EmulationThread,
         context: &EmulationContext,
         element_type: Token,
@@ -2442,7 +2441,6 @@ impl EmulationController {
     ///
     /// Returns an error if the string is not found or heap allocation fails.
     fn handle_ldstr(
-        &self,
         thread: &mut EmulationThread,
         context: &EmulationContext,
         token: Token,
@@ -2524,32 +2522,28 @@ impl EmulationController {
     ///
     /// # Returns
     ///
-    /// * `Ok(true)` - A .cctor was pushed and needs to run first
-    /// * `Ok(false)` - Type is already initialized or has no .cctor
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if method setup fails.
+    /// * `true` - A .cctor was pushed and needs to run first
+    /// * `false` - Type is already initialized or has no .cctor
     fn maybe_run_type_cctor(
         &mut self,
         interpreter: &mut Interpreter,
         thread: &mut EmulationThread,
         context: &EmulationContext,
         field: Token,
-    ) -> Result<bool> {
+    ) -> bool {
         // Only process Field table tokens (0x04)
         if field.table() != 0x04 {
-            return Ok(false);
+            return false;
         }
 
         // Find the type that owns this field
         let Some(type_token) = context.get_declaring_type_token_of_field(field) else {
-            return Ok(false);
+            return false;
         };
 
         // Check if already initialized
         if self.address_space.statics().is_type_initialized(type_token) {
-            return Ok(false);
+            return false;
         }
 
         // Find the .cctor for this type
@@ -2558,19 +2552,16 @@ impl EmulationController {
             self.address_space
                 .statics()
                 .mark_type_initialized(type_token);
-            return Ok(false);
+            return false;
         };
 
         // Get method info for .cctor and check if it has a body
-        let method = match context.get_method(cctor_token) {
-            Ok(m) => m,
-            Err(_) => {
-                // Can't get method - mark as initialized and skip
-                self.address_space
-                    .statics()
-                    .mark_type_initialized(type_token);
-                return Ok(false);
-            }
+        let Ok(method) = context.get_method(cctor_token) else {
+            // Can't get method - mark as initialized and skip
+            self.address_space
+                .statics()
+                .mark_type_initialized(type_token);
+            return false;
         };
 
         // Check if .cctor has a body (it might be extern/P/Invoke)
@@ -2579,7 +2570,7 @@ impl EmulationController {
             self.address_space
                 .statics()
                 .mark_type_initialized(type_token);
-            return Ok(false);
+            return false;
         }
 
         // Mark type as initialized BEFORE running .cctor to prevent infinite recursion
@@ -2617,7 +2608,7 @@ impl EmulationController {
         interpreter.set_method(cctor_token);
         interpreter.set_offset(0);
 
-        Ok(true)
+        true
     }
 
     /// Handles `box` instruction - boxes a value type.
@@ -2633,7 +2624,7 @@ impl EmulationController {
     /// # Errors
     ///
     /// Returns an error if stack underflow or heap allocation fails.
-    fn handle_box(&self, thread: &mut EmulationThread, type_token: Token) -> Result<()> {
+    fn handle_box(thread: &mut EmulationThread, type_token: Token) -> Result<()> {
         let value = thread.pop()?;
 
         // Create a boxed object containing the value
@@ -2661,7 +2652,6 @@ impl EmulationController {
     /// - Null reference is unboxed
     /// - Type mismatch when context is provided
     fn handle_unbox(
-        &self,
         thread: &mut EmulationThread,
         context: Option<&EmulationContext>,
         type_token: Token,
@@ -2692,11 +2682,10 @@ impl EmulationController {
                     if let Some(ctx) = context {
                         if ctx.is_value_type(type_token) {
                             // Target is a value type but object is not a BoxedValue
-                            let from_type = thread
-                                .heap()
-                                .get_type_token(href)
-                                .map(|t| ctx.format_type_token(t))
-                                .unwrap_or_else(|_| "unknown object".to_string());
+                            let from_type = thread.heap().get_type_token(href).map_or_else(
+                                |_| "unknown object".to_string(),
+                                |t| ctx.format_type_token(t),
+                            );
                             let to_type = ctx.format_type_token(type_token);
                             return Err(EmulationError::InvalidCast { from_type, to_type }.into());
                         }
@@ -2738,7 +2727,6 @@ impl EmulationController {
     /// - Stack underflow occurs
     /// - Cast fails due to type incompatibility
     fn handle_castclass(
-        &self,
         thread: &mut EmulationThread,
         context: &EmulationContext,
         target_type: Token,
@@ -2797,7 +2785,6 @@ impl EmulationController {
     ///
     /// Returns an error if stack underflow or heap lookup fails.
     fn handle_isinst(
-        &self,
         thread: &mut EmulationThread,
         context: &EmulationContext,
         target_type: Token,
@@ -2880,7 +2867,6 @@ impl EmulationController {
     /// Returns an error if the method lookup fails.
     #[allow(clippy::too_many_arguments)] // Exception handling requires all these parameters
     fn find_exception_handler(
-        &self,
         context: &EmulationContext,
         method_token: Token,
         current_offset: u32,
@@ -2982,7 +2968,6 @@ impl EmulationController {
     ///
     /// Returns an error if method lookup fails.
     fn schedule_finally_blocks(
-        &self,
         context: &EmulationContext,
         method_token: Token,
         current_offset: u32,
@@ -3124,7 +3109,6 @@ impl EmulationController {
     /// - Null reference is passed
     /// - Address is not a valid managed pointer
     fn handle_initobj(
-        &self,
         thread: &mut EmulationThread,
         context: Option<&EmulationContext>,
         type_token: Token,
@@ -3134,7 +3118,7 @@ impl EmulationController {
         match addr {
             EmValue::ManagedPtr(ptr) => {
                 // Determine the appropriate default value based on the type
-                let default_value = self.get_initobj_default_value(context, type_token);
+                let default_value = Self::get_initobj_default_value(context, type_token);
 
                 // Write the default value to the pointer target
                 match &ptr.target {
@@ -3201,28 +3185,13 @@ impl EmulationController {
     /// without knowing the actual instantiation, we can't determine the correct
     /// default. This is safe because reference type default (null) will work for
     /// most deobfuscation scenarios where the actual value gets assigned later.
-    fn get_initobj_default_value(
-        &self,
-        context: Option<&EmulationContext>,
-        type_token: Token,
-    ) -> EmValue {
+    fn get_initobj_default_value(context: Option<&EmulationContext>, type_token: Token) -> EmValue {
         // Try to resolve TypeSpec tokens to get more precise default values
         if type_token.is_table(TableId::TypeSpec) {
             if let Some(ctx) = context {
                 if let Some(typespec_sig) = ctx.get_typespec_signature(type_token) {
                     // Check what kind of type this TypeSpec represents
                     return match &typespec_sig.base {
-                        // Generic type parameters - treat as reference types (safe default)
-                        TypeSignature::GenericParamType(_)
-                        | TypeSignature::GenericParamMethod(_) => EmValue::Null,
-
-                        // Reference types - default to null
-                        TypeSignature::String
-                        | TypeSignature::Object
-                        | TypeSignature::Class(_)
-                        | TypeSignature::SzArray(_)
-                        | TypeSignature::Array(_) => EmValue::Null,
-
                         // Primitive types - use appropriate defaults
                         TypeSignature::Boolean => EmValue::Bool(false),
                         TypeSignature::Char => EmValue::Char('\0'),
@@ -3239,7 +3208,16 @@ impl EmulationController {
 
                         // Pointer types
                         TypeSignature::Ptr(_) => EmValue::UnmanagedPtr(0),
-                        TypeSignature::ByRef(_) => EmValue::Null,
+
+                        // Generic type parameters, reference types, and by-ref - default to null
+                        TypeSignature::GenericParamType(_)
+                        | TypeSignature::GenericParamMethod(_)
+                        | TypeSignature::String
+                        | TypeSignature::Object
+                        | TypeSignature::Class(_)
+                        | TypeSignature::SzArray(_)
+                        | TypeSignature::Array(_)
+                        | TypeSignature::ByRef(_) => EmValue::Null,
 
                         // Generic instantiation - check if the base type is a value type
                         TypeSignature::GenericInst(base_type, _) => {
@@ -3253,13 +3231,7 @@ impl EmulationController {
                             }
                         }
 
-                        // Value types - use ValueType placeholder
-                        TypeSignature::ValueType(_) => EmValue::ValueType {
-                            type_token,
-                            fields: Vec::new(),
-                        },
-
-                        // Other types - default to ValueType for safety
+                        // Value types and other types - default to ValueType for safety
                         _ => EmValue::ValueType {
                             type_token,
                             fields: Vec::new(),
@@ -3347,7 +3319,7 @@ impl EmulationController {
             return Err(EmulationError::TypeMismatch {
                 operation: "cpobj",
                 expected: "value type",
-                found: format!("{:?}", value_flavor).leak(),
+                found: format!("{value_flavor:?}").leak(),
             }
             .into());
         }
@@ -3422,7 +3394,6 @@ impl EmulationController {
     /// - Size extraction fails
     /// - Memory copy operation fails
     fn handle_cpblk(
-        &self,
         thread: &mut EmulationThread,
         dest: &EmValue,
         src: &EmValue,
@@ -3466,7 +3437,6 @@ impl EmulationController {
     /// - Memory initialization fails
     #[allow(clippy::cast_sign_loss)] // Intentional byte truncation
     fn handle_initblk(
-        &self,
         thread: &mut EmulationThread,
         addr: &EmValue,
         value: &EmValue,
@@ -3635,7 +3605,6 @@ mod tests {
 
     #[test]
     fn test_handle_box() {
-        let controller = EmulationController::default();
         let type_token = Token::new(0x02000001);
         let mut thread = create_test_thread();
 
@@ -3643,7 +3612,7 @@ mod tests {
         thread.push(EmValue::I32(42)).unwrap();
 
         // Box it
-        controller.handle_box(&mut thread, type_token).unwrap();
+        EmulationController::handle_box(&mut thread, type_token).unwrap();
 
         // Should have a boxed reference on stack
         let result = thread.pop().unwrap();
@@ -3658,7 +3627,6 @@ mod tests {
 
     #[test]
     fn test_handle_unbox() {
-        let controller = EmulationController::default();
         let type_token = Token::new(0x02000001);
         let mut thread = create_test_thread();
 
@@ -3670,9 +3638,7 @@ mod tests {
         thread.push(EmValue::ObjectRef(boxed_ref)).unwrap();
 
         // Unbox it
-        controller
-            .handle_unbox(&mut thread, None, type_token)
-            .unwrap();
+        EmulationController::handle_unbox(&mut thread, None, type_token).unwrap();
 
         // Should have the unboxed value
         let result = thread.pop().unwrap();
@@ -3681,19 +3647,17 @@ mod tests {
 
     #[test]
     fn test_handle_unbox_null_fails() {
-        let controller = EmulationController::default();
         let type_token = Token::new(0x02000001);
         let mut thread = create_test_thread();
 
         thread.push(EmValue::Null).unwrap();
 
-        let result = controller.handle_unbox(&mut thread, None, type_token);
+        let result = EmulationController::handle_unbox(&mut thread, None, type_token);
         assert!(result.is_err());
     }
 
     #[test]
     fn test_handle_unbox_already_unboxed() {
-        let controller = EmulationController::default();
         let type_token = Token::new(0x02000001);
         let mut thread = create_test_thread();
 
@@ -3701,9 +3665,7 @@ mod tests {
         thread.push(EmValue::F64(std::f64::consts::PI)).unwrap();
 
         // Unbox should pass it through
-        controller
-            .handle_unbox(&mut thread, None, type_token)
-            .unwrap();
+        EmulationController::handle_unbox(&mut thread, None, type_token).unwrap();
 
         let result = thread.pop().unwrap();
         assert_eq!(result, EmValue::F64(std::f64::consts::PI));

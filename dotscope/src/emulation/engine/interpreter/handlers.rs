@@ -270,11 +270,10 @@ impl Interpreter {
             EmValue::NativeUInt(v) => v != 0,
             EmValue::Bool(v) => v,
             EmValue::ObjectRef(_) => true,
-            EmValue::Null => false,
             // Handle symbolic values - default to "false" (don't take branch)
             // This allows emulation to continue through unknown branches.
             // The result may be incorrect if the symbolic would have been true.
-            EmValue::Symbolic(_) => false,
+            EmValue::Null | EmValue::Symbolic(_) => false,
             _ => {
                 return Err(EmulationError::TypeMismatch {
                     operation: "brtrue",
@@ -313,12 +312,11 @@ impl Interpreter {
             EmValue::I64(v) | EmValue::NativeInt(v) => v == 0,
             EmValue::NativeUInt(v) => v == 0,
             EmValue::Bool(v) => !v,
-            EmValue::ObjectRef(_) => false,
             EmValue::Null => true,
             // Handle symbolic values - default to "false" (don't take branch)
             // This allows emulation to continue through unknown branches.
             // The result may be incorrect if the symbolic would have been false/null.
-            EmValue::Symbolic(_) => false,
+            EmValue::ObjectRef(_) | EmValue::Symbolic(_) => false,
             _ => {
                 return Err(EmulationError::TypeMismatch {
                     operation: "brfalse",
@@ -603,7 +601,7 @@ impl Interpreter {
                 }
                 HeapObject::Object { fields, .. } => {
                     // Try to find any integer-like value in the fields
-                    for (_, field_value) in fields.iter() {
+                    for field_value in fields.values() {
                         if let Some(int_val) = field_value.try_to_i64() {
                             return Some(int_val);
                         }
@@ -1441,7 +1439,8 @@ impl Interpreter {
                     (&CilFlavor::I4, 1) => {
                         let bytes = address_space.read(ptr_addr, 1)?;
                         let val = if signed {
-                            i32::from(bytes[0] as i8)
+                            // Intentional wrap-around for sign extension from u8 to i8
+                            i32::from(bytes[0].cast_signed())
                         } else {
                             i32::from(bytes[0])
                         };
@@ -1473,7 +1472,7 @@ impl Interpreter {
                         // Native int is pointer-sized: 4 bytes on PE32, 8 bytes on PE32+
                         let bytes = address_space.read(ptr_addr, read_size)?;
                         let val = if read_size == 4 {
-                            i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as i64
+                            i64::from(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
                         } else {
                             i64::from_le_bytes([
                                 bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
@@ -1499,7 +1498,7 @@ impl Interpreter {
                         // For object references, treat as pointer-sized value
                         let bytes = address_space.read(ptr_addr, read_size)?;
                         let val = if read_size == 4 {
-                            u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]) as u64
+                            u64::from(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
                         } else {
                             u64::from_le_bytes([
                                 bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
@@ -1609,7 +1608,12 @@ impl Interpreter {
                     // Small integer writes (1 or 2 bytes) from I32
                     (&CilFlavor::I4, 1) => {
                         let v = match &value {
-                            EmValue::I32(v) => *v as u8,
+                            EmValue::I32(v) => {
+                                // Intentional truncation: storing 32-bit value to 1 byte
+                                #[allow(clippy::cast_possible_truncation)]
+                                let byte = (*v).cast_unsigned() as u8;
+                                byte
+                            }
                             _ => {
                                 return Err(EmulationError::TypeMismatch {
                                     operation: "stind.i1",
@@ -1623,7 +1627,12 @@ impl Interpreter {
                     }
                     (&CilFlavor::I4, 2) => {
                         let v = match &value {
-                            EmValue::I32(v) => *v as u16,
+                            EmValue::I32(v) => {
+                                // Intentional truncation: storing 32-bit value to 2 bytes
+                                #[allow(clippy::cast_possible_truncation)]
+                                let short = (*v).cast_unsigned() as u16;
+                                short
+                            }
                             _ => {
                                 return Err(EmulationError::TypeMismatch {
                                     operation: "stind.i2",
@@ -1662,11 +1671,21 @@ impl Interpreter {
                     },
                     (&CilFlavor::I, _) => match &value {
                         EmValue::NativeInt(v) => match write_size {
-                            4 => (*v as i32).to_le_bytes().to_vec(),
+                            4 => {
+                                // Intentional truncation: storing 64-bit native int to 4 bytes
+                                #[allow(clippy::cast_possible_truncation)]
+                                let truncated = *v as i32;
+                                truncated.to_le_bytes().to_vec()
+                            }
                             _ => v.to_le_bytes().to_vec(),
                         },
                         EmValue::NativeUInt(v) => match write_size {
-                            4 => (*v as u32).to_le_bytes().to_vec(),
+                            4 => {
+                                // Intentional truncation: storing 64-bit native uint to 4 bytes
+                                #[allow(clippy::cast_possible_truncation)]
+                                let truncated = *v as u32;
+                                truncated.to_le_bytes().to_vec()
+                            }
                             _ => v.to_le_bytes().to_vec(),
                         },
                         _ => {
@@ -1700,14 +1719,23 @@ impl Interpreter {
                             .into());
                         }
                     },
-                    #[allow(clippy::match_same_arms)]
                     (&CilFlavor::Object, _) => match &value {
                         EmValue::UnmanagedPtr(v) | EmValue::NativeUInt(v) => match write_size {
-                            4 => (*v as u32).to_le_bytes().to_vec(),
+                            4 => {
+                                // Intentional truncation: storing 64-bit pointer to 4 bytes (32-bit architecture)
+                                #[allow(clippy::cast_possible_truncation)]
+                                let truncated = *v as u32;
+                                truncated.to_le_bytes().to_vec()
+                            }
                             _ => v.to_le_bytes().to_vec(),
                         },
                         EmValue::NativeInt(v) => match write_size {
-                            4 => (*v as i32).to_le_bytes().to_vec(),
+                            4 => {
+                                // Intentional truncation: storing 64-bit native int to 4 bytes (32-bit architecture)
+                                #[allow(clippy::cast_possible_truncation)]
+                                let truncated = *v as i32;
+                                truncated.to_le_bytes().to_vec()
+                            }
                             _ => v.to_le_bytes().to_vec(),
                         },
                         _ => {

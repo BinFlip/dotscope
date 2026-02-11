@@ -80,43 +80,36 @@ fn calculate_field_size(
 ) -> Result<usize> {
     let tables = view.tables().ok_or_else(|| {
         Error::ModificationInvalid(format!(
-            "Cannot access tables for field {} size calculation",
-            field_index
+            "Cannot access tables for field {field_index} size calculation"
         ))
     })?;
 
     // Get the Field row to find its signature
     let field_table = tables.table::<FieldRaw>().ok_or_else(|| {
         Error::ModificationInvalid(format!(
-            "Cannot access Field table for field {} size calculation",
-            field_index
+            "Cannot access Field table for field {field_index} size calculation"
         ))
     })?;
     let field_row = field_table
         .iter()
         .find(|r| r.rid == field_index)
         .ok_or_else(|| {
-            Error::ModificationInvalid(format!("Field {} not found in Field table", field_index))
+            Error::ModificationInvalid(format!("Field {field_index} not found in Field table"))
         })?;
 
     // Get and parse the field signature
     let blobs = view.blobs().ok_or_else(|| {
         Error::ModificationInvalid(format!(
-            "Cannot access blob heap for field {} size calculation",
-            field_index
+            "Cannot access blob heap for field {field_index} size calculation"
         ))
     })?;
     let sig_data = blobs.get(field_row.signature as usize).map_err(|_| {
         Error::ModificationInvalid(format!(
-            "Cannot read signature blob for field {}",
-            field_index
+            "Cannot read signature blob for field {field_index}"
         ))
     })?;
     let field_sig = parse_field_signature(sig_data).map_err(|e| {
-        Error::ModificationInvalid(format!(
-            "Cannot parse field {} signature: {}",
-            field_index, e
-        ))
+        Error::ModificationInvalid(format!("Cannot parse field {field_index} signature: {e}"))
     })?;
 
     calculate_type_size(&field_sig.base, tables, field_index, ptr_size)
@@ -148,7 +141,7 @@ fn calculate_type_size(
             // Only look up ClassLayout for TypeDef (not TypeRef or TypeSpec)
             if is_typedef {
                 if let Some(class_layout_table) = tables.table::<ClassLayoutRaw>() {
-                    for layout_row in class_layout_table.iter() {
+                    for layout_row in class_layout_table {
                         if layout_row.parent == row {
                             return Ok(layout_row.class_size as usize);
                         }
@@ -170,31 +163,28 @@ fn calculate_type_size(
             for dim in &arr.dimensions {
                 let dim_size = dim.size.ok_or_else(|| {
                     Error::ModificationInvalid(format!(
-                        "Field {} has array with unknown dimension size",
-                        field_index
+                        "Field {field_index} has array with unknown dimension size"
                     ))
                 })? as usize;
                 total_elements = total_elements.checked_mul(dim_size).ok_or_else(|| {
-                    Error::ModificationInvalid(format!("Field {} array size overflow", field_index))
+                    Error::ModificationInvalid(format!("Field {field_index} array size overflow"))
                 })?;
             }
 
             element_size.checked_mul(total_elements).ok_or_else(|| {
-                Error::ModificationInvalid(format!("Field {} array size overflow", field_index))
+                Error::ModificationInvalid(format!("Field {field_index} array size overflow"))
             })
         }
 
         // SzArray (single-dimensional) - size not in signature
         TypeSignature::SzArray(_) => Err(Error::ModificationInvalid(format!(
-            "Field {} is SzArray - size not determinable from type signature. \
-             Use FixedBufferAttribute or explicit ClassLayout for fixed-size arrays.",
-            field_index
+            "Field {field_index} is SzArray - size not determinable from type signature. \
+             Use FixedBufferAttribute or explicit ClassLayout for fixed-size arrays."
         ))),
 
         // Reference types, pointers - size depends on runtime
         _ => Err(Error::ModificationInvalid(format!(
-            "Field {} has type {:?} - cannot determine static size",
-            field_index, type_sig
+            "Field {field_index} has type {type_sig:?} - cannot determine static size"
         ))),
     }
 }
@@ -236,7 +226,7 @@ fn collect_original_fieldrva_data(
     // Collect all entries that haven't been modified or deleted, along with field index for size calc
     let mut entries_to_process: Vec<(u32, u32, u32)> = Vec::new(); // (rva, rid, field_index)
 
-    for row in fieldrva_table.iter() {
+    for row in fieldrva_table {
         if deleted_rids.contains(&row.rid)
             || deleted_field_rids.contains(&row.field)
             || modified_rids.contains(&row.rid)
@@ -263,27 +253,26 @@ fn collect_original_fieldrva_data(
 
     // Process each entry
     for (rva, _rid, field_index) in entries_to_process {
+        // PE field sizes are bounded by section sizes which fit in u32
+        #[allow(clippy::cast_possible_truncation)]
         let size = calculate_field_size(view, field_index, ptr_size)? as u32;
 
         // Sanity check: reject unreasonable sizes (> 1MB)
         if size > 1024 * 1024 {
             return Err(Error::ModificationInvalid(format!(
-                "Field {} has unreasonable size {} bytes",
-                field_index, size
+                "Field {field_index} has unreasonable size {size} bytes"
             )));
         }
 
         // Read original data
         let offset = file.rva_to_offset(rva as usize).map_err(|_| {
             Error::ModificationInvalid(format!(
-                "Cannot convert RVA 0x{:08x} to file offset for field {}",
-                rva, field_index
+                "Cannot convert RVA 0x{rva:08x} to file offset for field {field_index}"
             ))
         })?;
         let data = file.data_slice(offset, size as usize).map_err(|_| {
             Error::ModificationInvalid(format!(
-                "Cannot read {} bytes at offset 0x{:08x} for field {}",
-                size, offset, field_index
+                "Cannot read {size} bytes at offset 0x{offset:08x} for field {field_index}"
             ))
         })?;
 
@@ -303,7 +292,7 @@ fn collect_changes_field_data(changes: &AssemblyChanges, entries: &mut FieldData
     field_data_entries.sort_by_key(|(placeholder, _)| *placeholder);
 
     for (placeholder_rva, data) in field_data_entries {
-        entries.push((placeholder_rva, data.to_vec()));
+        entries.push((placeholder_rva, data.clone()));
     }
 }
 

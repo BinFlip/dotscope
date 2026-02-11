@@ -174,13 +174,12 @@ impl ConstValue {
             Self::U64(_) => SsaType::U64,
             Self::F32(_) => SsaType::F32,
             Self::F64(_) => SsaType::F64,
-            Self::NativeInt(_) => SsaType::NativeInt,
+            Self::NativeInt(_) | Self::Type(_) | Self::MethodHandle(_) | Self::FieldHandle(_) => {
+                SsaType::NativeInt
+            }
             Self::NativeUInt(_) => SsaType::NativeUInt,
             Self::True | Self::False => SsaType::Bool,
             Self::Null | Self::String(_) | Self::DecryptedString(_) => SsaType::Object,
-            Self::Type(_) => SsaType::NativeInt, // RuntimeTypeHandle
-            Self::MethodHandle(_) => SsaType::NativeInt, // RuntimeMethodHandle
-            Self::FieldHandle(_) => SsaType::NativeInt, // RuntimeFieldHandle
         }
     }
 
@@ -395,7 +394,6 @@ impl ConstValue {
         match self {
             Self::I8(_) => Self::I8(0),
             Self::I16(_) => Self::I16(0),
-            Self::I32(_) => Self::I32(0),
             Self::I64(_) => Self::I64(0),
             Self::U8(_) => Self::U8(0),
             Self::U16(_) => Self::U16(0),
@@ -405,7 +403,7 @@ impl ConstValue {
             Self::NativeUInt(_) => Self::NativeUInt(0),
             Self::F32(_) => Self::F32(0.0),
             Self::F64(_) => Self::F64(0.0),
-            // For non-numeric types, default to i32
+            // For non-numeric types (including I32), default to i32
             _ => Self::I32(0),
         }
     }
@@ -695,12 +693,14 @@ impl ConstValue {
         if unsigned {
             // Unsigned overflow check
             match (self, other) {
-                (Self::I32(a), Self::I32(b)) => (*a as u32)
-                    .checked_add(*b as u32)
-                    .map(|r| Self::I32(r as i32)),
-                (Self::I64(a), Self::I64(b)) => (*a as u64)
-                    .checked_add(*b as u64)
-                    .map(|r| Self::I64(r as i64)),
+                (Self::I32(a), Self::I32(b)) => (*a)
+                    .cast_unsigned()
+                    .checked_add((*b).cast_unsigned())
+                    .map(|r| Self::I32(r.cast_signed())),
+                (Self::I64(a), Self::I64(b)) => (*a)
+                    .cast_unsigned()
+                    .checked_add((*b).cast_unsigned())
+                    .map(|r| Self::I64(r.cast_signed())),
                 (Self::U8(a), Self::U8(b)) => a.checked_add(*b).map(Self::U8),
                 (Self::U16(a), Self::U16(b)) => a.checked_add(*b).map(Self::U16),
                 (Self::U32(a), Self::U32(b)) => a.checked_add(*b).map(Self::U32),
@@ -733,12 +733,14 @@ impl ConstValue {
         if unsigned {
             // Unsigned overflow check
             match (self, other) {
-                (Self::I32(a), Self::I32(b)) => (*a as u32)
-                    .checked_sub(*b as u32)
-                    .map(|r| Self::I32(r as i32)),
-                (Self::I64(a), Self::I64(b)) => (*a as u64)
-                    .checked_sub(*b as u64)
-                    .map(|r| Self::I64(r as i64)),
+                (Self::I32(a), Self::I32(b)) => (*a)
+                    .cast_unsigned()
+                    .checked_sub((*b).cast_unsigned())
+                    .map(|r| Self::I32(r.cast_signed())),
+                (Self::I64(a), Self::I64(b)) => (*a)
+                    .cast_unsigned()
+                    .checked_sub((*b).cast_unsigned())
+                    .map(|r| Self::I64(r.cast_signed())),
                 (Self::U8(a), Self::U8(b)) => a.checked_sub(*b).map(Self::U8),
                 (Self::U16(a), Self::U16(b)) => a.checked_sub(*b).map(Self::U16),
                 (Self::U32(a), Self::U32(b)) => a.checked_sub(*b).map(Self::U32),
@@ -771,12 +773,14 @@ impl ConstValue {
         if unsigned {
             // Unsigned overflow check
             match (self, other) {
-                (Self::I32(a), Self::I32(b)) => (*a as u32)
-                    .checked_mul(*b as u32)
-                    .map(|r| Self::I32(r as i32)),
-                (Self::I64(a), Self::I64(b)) => (*a as u64)
-                    .checked_mul(*b as u64)
-                    .map(|r| Self::I64(r as i64)),
+                (Self::I32(a), Self::I32(b)) => (*a)
+                    .cast_unsigned()
+                    .checked_mul((*b).cast_unsigned())
+                    .map(|r| Self::I32(r.cast_signed())),
+                (Self::I64(a), Self::I64(b)) => (*a)
+                    .cast_unsigned()
+                    .checked_mul((*b).cast_unsigned())
+                    .map(|r| Self::I64(r.cast_signed())),
                 (Self::U8(a), Self::U8(b)) => a.checked_mul(*b).map(Self::U8),
                 (Self::U16(a), Self::U16(b)) => a.checked_mul(*b).map(Self::U16),
                 (Self::U32(a), Self::U32(b)) => a.checked_mul(*b).map(Self::U32),

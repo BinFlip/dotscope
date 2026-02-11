@@ -114,8 +114,7 @@ impl BlockMergingPass {
                             .record(EventKind::BranchSimplified)
                             .at(method_token, block_idx)
                             .message(format!(
-                                "redirected through trampoline: {:?} -> {:?}",
-                                old_targets, new_targets
+                                "redirected through trampoline: {old_targets:?} -> {new_targets:?}"
                             ));
                         redirected += 1;
                     }
@@ -214,7 +213,7 @@ impl SsaPass for BlockMergingPass {
 
         let changed = !changes.is_empty();
         if changed {
-            ctx.events.merge(changes);
+            ctx.events.merge(&changes);
         }
         Ok(changed)
     }

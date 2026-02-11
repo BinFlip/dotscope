@@ -226,8 +226,7 @@ impl RidRemapper {
             let continuation = surviving_rids
                 .iter()
                 .find(|(orig, _)| *orig > old_rid)
-                .map(|(_, new)| *new)
-                .unwrap_or(final_new_rid); // If no surviving row after, point past end
+                .map_or(final_new_rid, |(_, new)| *new); // If no surviving row after, point past end
 
             remap.insert(old_rid, continuation);
         }
@@ -395,7 +394,7 @@ impl RidRemapper {
     /// Returns the total number of RID remappings across all tables.
     #[must_use]
     pub fn total_remappings(&self) -> usize {
-        self.remaps.values().map(|m| m.len()).sum()
+        self.remaps.values().map(HashMap::len).sum()
     }
 
     /// Builds a token remapping for IL instruction patching.

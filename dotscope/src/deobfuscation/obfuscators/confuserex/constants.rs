@@ -744,8 +744,7 @@ pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut Confu
             let cfg_confidence = (method_count * 15).min(25);
             score.add(DetectionEvidence::BytecodePattern {
                 name: format!(
-                    "CFG mode constant encryption ({} methods, multiplier=0x{:08X})",
-                    method_count, multiplier
+                    "CFG mode constant encryption ({method_count} methods, multiplier=0x{multiplier:08X})"
                 ),
                 locations: cfg_mode_methods.into_iter().collect(),
                 confidence: cfg_confidence,
@@ -840,7 +839,7 @@ fn try_detect_cfgctx_from_type(
     let mut next_token: Option<Token> = None;
     let mut multiplier: Option<u32> = None;
 
-    for method in cil_type.query_methods().iter() {
+    for method in &cil_type.query_methods() {
         if method.is_ctor() && ctor_token.is_none() {
             // Found constructor - extract multiplier using SSA dataflow analysis
             if let Some(ssa) = method.ssa(assembly) {
@@ -861,7 +860,7 @@ fn try_detect_cfgctx_from_type(
                     let mut has_ldfld = false;
 
                     for (_, block) in ssa.iter_blocks() {
-                        for instr in block.instructions().iter() {
+                        for instr in block.instructions() {
                             match instr.op() {
                                 SsaOp::Switch { .. } => has_switch = true,
                                 SsaOp::StoreField { .. } => has_stfld = true,
@@ -929,7 +928,7 @@ fn try_detect_cfgctx_from_type(
 /// using SSA dataflow to handle CFF and other obfuscations.
 fn extract_multiplier_from_ssa(ssa: &SsaFunction) -> Option<u32> {
     for (_, block) in ssa.iter_blocks() {
-        for instr in block.instructions().iter() {
+        for instr in block.instructions() {
             // Look for Mul operations
             let (left, right) = match instr.op() {
                 SsaOp::Mul { left, right, .. } | SsaOp::MulOvf { left, right, .. } => {
@@ -979,8 +978,7 @@ fn extract_slot_operations(
     next_method: Token,
     field_tokens: &[Token],
 ) -> Option<Vec<StateSlotOperation>> {
-    let method_entry = assembly.methods().get(&next_method)?;
-    let method = method_entry.value();
+    let method = assembly.method(&next_method)?;
 
     // Build SSA for the method - this gives us proper data flow analysis
     let ssa = method.ssa(assembly)?;
@@ -989,7 +987,7 @@ fn extract_slot_operations(
 
     // Find all StoreField operations and trace backward to find the arithmetic op
     for (_, block) in ssa.iter_blocks() {
-        for instr in block.instructions().iter() {
+        for instr in block.instructions() {
             // Look for StoreField (stfld) operations
             let (field_token, value_var) = match instr.op() {
                 SsaOp::StoreField { field, value, .. } => (field.token(), *value),
@@ -1064,7 +1062,7 @@ fn trace_to_arithmetic_op(ssa: &SsaFunction, start_var: SsaVarId) -> Option<Stat
             _ => {
                 // Look for PHI nodes that define this variable
                 for (_, block) in ssa.iter_blocks() {
-                    for phi in block.phi_nodes().iter() {
+                    for phi in block.phi_nodes() {
                         if phi.result() == var {
                             // Add first operand to worklist
                             // (all operands should have same operation in well-formed CFGCtx)
@@ -1111,8 +1109,7 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
 
     // Get .cctor to find what methods it calls first
     let cctor_token = assembly.types().module_cctor()?;
-    let cctor_entry = assembly.methods().get(&cctor_token)?;
-    let cctor = cctor_entry.value();
+    let cctor = assembly.method(&cctor_token)?;
 
     // Look at ALL call instructions in .cctor
     // ConfuserEx injects multiple calls: anti-tamper, constants, anti-debug, etc.
@@ -1131,10 +1128,9 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
 
     // Now check each candidate to see if it matches Initialize() pattern
     for candidate in init_candidates {
-        let Some(method_entry) = assembly.methods().get(&candidate) else {
+        let Some(method) = assembly.method(&candidate) else {
             continue;
         };
-        let method = method_entry.value();
 
         // Must be static
         if !method.is_static() {
@@ -1150,8 +1146,7 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
         // Must be in <Module>
         let is_in_module = method
             .declaring_type_rc()
-            .map(|t| t.name == "<Module>")
-            .unwrap_or(false);
+            .is_some_and(|t| t.name == "<Module>");
 
         if !is_in_module {
             continue;
@@ -1179,7 +1174,7 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
     }
 
     // Fallback: look for methods in <Module> that match the pattern without .cctor hint
-    for method in module_type.query_methods().iter() {
+    for method in &module_type.query_methods() {
         // Skip .cctor itself
         if method.is_cctor() {
             continue;
@@ -1199,15 +1194,13 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
             if instr.flow_type == FlowType::Call {
                 if let Operand::Token(call_target) = &instr.operand {
                     // Check if calling a method with "Decompress" in name
-                    if let Some(callee_entry) = assembly.methods().get(call_target) {
-                        let callee = callee_entry.value();
+                    if let Some(callee) = assembly.method(call_target) {
                         if callee.name.contains("Decompress") || callee.name.contains("LZMA") {
                             return Some(method.token);
                         }
                     }
                     // Check MemberRef too
-                    if let Some(memberref_entry) = assembly.refs_members().get(call_target) {
-                        let memberref = memberref_entry.value();
+                    if let Some(memberref) = assembly.member_ref(call_target) {
                         if memberref.name.contains("Decompress") || memberref.name.contains("LZMA")
                         {
                             return Some(method.token);
@@ -1291,8 +1284,7 @@ fn resolve_method_spec_to_def(assembly: &CilObject, token: Token) -> Option<Toke
         return None; // Not a MethodSpec
     }
 
-    let method_spec = assembly.method_specs().get(&token)?;
-    let method_spec = method_spec.value();
+    let method_spec = assembly.method_spec(&token)?;
     let method_token = method_spec.method.token()?;
 
     // Only return if it's a MethodDef (0x06), not a MemberRef
@@ -1336,7 +1328,7 @@ fn find_call_sites(assembly: &CilObject, decryptor_tokens: &[Token]) -> Vec<Dete
     let decryptor_set: HashSet<_> = decryptor_tokens.iter().copied().collect();
     let call_sites: boxcar::Vec<DetectedCallSite> = boxcar::Vec::new();
 
-    for method_entry in assembly.methods().iter() {
+    for method_entry in assembly.methods() {
         let method = method_entry.value();
 
         // Skip the decryptor methods themselves
@@ -1351,7 +1343,7 @@ fn find_call_sites(assembly: &CilObject, decryptor_tokens: &[Token]) -> Vec<Dete
 
         // Find call instructions to decryptors
         for (_, block) in ssa.iter_blocks() {
-            for instr in block.instructions().iter() {
+            for instr in block.instructions() {
                 // Look for Call/CallVirt to decryptors
                 let (call_target, args) = match instr.op() {
                     SsaOp::Call {
@@ -1886,7 +1878,7 @@ mod tests {
     /// Resolves MethodSpec tokens to their underlying MethodDef for comparison.
     fn count_decryptor_calls(assembly: &CilObject, decryptor_set: &HashSet<Token>) -> usize {
         let mut total = 0;
-        for method_entry in assembly.methods().iter() {
+        for method_entry in assembly.methods() {
             let method = method_entry.value();
             if decryptor_set.contains(&method.token) {
                 continue;

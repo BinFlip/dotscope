@@ -324,12 +324,12 @@ impl MemoryRegion {
     #[must_use]
     pub fn pe_image(
         base: u64,
-        data: Vec<u8>,
+        data: &[u8],
         sections: Vec<SectionInfo>,
         name: impl Into<String>,
     ) -> Self {
         let size = data.len();
-        let pages = Self::pages_from_data(&data);
+        let pages = Self::pages_from_data(data);
 
         Self {
             base,
@@ -353,12 +353,12 @@ impl MemoryRegion {
     #[must_use]
     pub fn mapped_data(
         base: u64,
-        data: Vec<u8>,
+        data: &[u8],
         label: impl Into<String>,
         protection: MemoryProtection,
     ) -> Self {
         let size = data.len();
-        let pages = Self::pages_from_data(&data);
+        let pages = Self::pages_from_data(data);
 
         Self {
             base,
@@ -429,6 +429,10 @@ impl MemoryRegion {
     ///
     /// For PE images, this returns `READ_EXECUTE` as a default, but use
     /// [`protection_at`](Self::protection_at) for accurate per-section protection.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn protection(&self) -> MemoryProtection {
         *self.protection.read().expect("protection lock poisoned")
@@ -437,6 +441,10 @@ impl MemoryRegion {
     /// Sets the protection flags for this region.
     ///
     /// This is used by `VirtualProtect` to change region protection.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn set_protection(&self, protection: MemoryProtection) {
         *self.protection.write().expect("protection lock poisoned") = protection;
     }
@@ -448,6 +456,8 @@ impl MemoryRegion {
     #[must_use]
     pub fn protection_at(&self, address: u64) -> MemoryProtection {
         if let Some(ref sections) = self.sections {
+            // Safe: offset within a memory region always fits in u32
+            #[allow(clippy::cast_possible_truncation)]
             let rva = (address - self.base) as u32;
             for section in sections.iter() {
                 if rva >= section.virtual_address
@@ -483,6 +493,8 @@ impl MemoryRegion {
             return None;
         }
 
+        // Safe: offset within a memory region always fits in usize
+        #[allow(clippy::cast_possible_truncation)]
         let offset = (address - self.base) as usize;
         let mut result = vec![0u8; len];
         let mut bytes_read = 0;
@@ -535,6 +547,8 @@ impl MemoryRegion {
             return false;
         }
 
+        // Safe: offset within a memory region always fits in usize
+        #[allow(clippy::cast_possible_truncation)]
         let offset = (address - self.base) as usize;
         let mut bytes_written = 0;
 
@@ -666,7 +680,7 @@ mod tests {
     fn test_memory_region_contains() {
         let region = MemoryRegion::mapped_data(
             0x1000,
-            vec![0u8; 0x100],
+            &vec![0u8; 0x100],
             "test",
             MemoryProtection::READ_WRITE,
         );
@@ -681,7 +695,7 @@ mod tests {
     fn test_memory_region_read_write() {
         let region = MemoryRegion::mapped_data(
             0x1000,
-            vec![0u8; 0x100],
+            &vec![0u8; 0x100],
             "test",
             MemoryProtection::READ_WRITE,
         );
@@ -699,7 +713,7 @@ mod tests {
         // Create a region spanning multiple pages
         let region = MemoryRegion::mapped_data(
             0x1000,
-            vec![0u8; PAGE_SIZE * 3],
+            &vec![0u8; PAGE_SIZE * 3],
             "test",
             MemoryProtection::READ_WRITE,
         );
@@ -718,7 +732,7 @@ mod tests {
     fn test_memory_region_fork() {
         let region = MemoryRegion::mapped_data(
             0x1000,
-            vec![42u8; 0x100],
+            &vec![42u8; 0x100],
             "test",
             MemoryProtection::READ_WRITE,
         );
@@ -744,7 +758,7 @@ mod tests {
     fn test_memory_region_fork_shares_unmodified() {
         let region = MemoryRegion::mapped_data(
             0x1000,
-            vec![0u8; PAGE_SIZE * 4],
+            &vec![0u8; PAGE_SIZE * 4],
             "test",
             MemoryProtection::READ_WRITE,
         );
@@ -803,7 +817,7 @@ mod tests {
             SectionInfo::new(".data".to_string(), 0x2000, 0x1000, 0, 0, 0xC000_0040),
         ];
 
-        let region = MemoryRegion::pe_image(0x10000, vec![0u8; 0x4000], sections, "test.exe");
+        let region = MemoryRegion::pe_image(0x10000, &vec![0u8; 0x4000], sections, "test.exe");
 
         // .text section should be READ | EXECUTE
         let text_prot = region.protection_at(0x11000);

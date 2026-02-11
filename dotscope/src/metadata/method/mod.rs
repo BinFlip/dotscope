@@ -136,6 +136,24 @@ pub type MethodRefList = Arc<boxcar::Vec<MethodRef>>;
 /// A reference-counted pointer to a `Method`.
 pub type MethodRc = Arc<Method>;
 
+/// Returns the name of the method definition for the given token, if it exists in the map.
+///
+/// This is a convenience function that performs a lookup in a [`MethodMap`] and extracts
+/// the method name without requiring callers to deal with the `Entry` guard returned
+/// by the underlying [`crossbeam_skiplist::SkipMap`].
+///
+/// # Arguments
+///
+/// * `map` - The method map to search in.
+/// * `token` - The metadata token (table 0x06) identifying the method.
+///
+/// # Returns
+///
+/// The method name as a `String` if a method with the given token exists, `None` otherwise.
+pub fn method_name_by_token(map: &MethodMap, token: &Token) -> Option<String> {
+    map.get(token).map(|e| e.value().name.clone())
+}
+
 /// A smart reference to a Method that automatically handles weak references
 /// to prevent circular reference memory leaks while providing a clean API.
 ///
@@ -1003,7 +1021,7 @@ impl Method {
     /// returning `None` if the type has been dropped or was never set.
     #[must_use]
     pub fn declaring_type_rc(&self) -> Option<CilTypeRc> {
-        self.declaring_type.get().and_then(|r| r.upgrade())
+        self.declaring_type.get().and_then(CilTypeRef::upgrade)
     }
 
     /// Returns the fully-qualified name of the declaring type, if available.
@@ -1417,7 +1435,7 @@ impl Method {
             if !body.exception_handlers.is_empty() {
                 // Exception handler offsets are relative to method body start.
                 // Block offsets are absolute file offsets. Get base offset from first block.
-                let base_offset = blocks.first().map(|b| b.offset).unwrap_or(0);
+                let base_offset = blocks.first().map_or(0, |b| b.offset);
 
                 let ssa_handlers: Vec<SsaExceptionHandler> = body
                     .exception_handlers
@@ -1459,7 +1477,7 @@ impl Method {
                         // Get the class token for catch handlers
                         let class_token_or_filter = if eh.flags == ExceptionHandlerFlags::EXCEPTION
                         {
-                            eh.handler.as_ref().map(|t| t.token.value()).unwrap_or(0)
+                            eh.handler.as_ref().map_or(0, |t| t.token.value())
                         } else if eh.flags == ExceptionHandlerFlags::FILTER {
                             eh.filter_offset
                         } else {

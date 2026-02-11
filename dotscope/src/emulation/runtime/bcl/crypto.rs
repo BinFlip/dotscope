@@ -292,16 +292,16 @@ fn register_aes_hooks(manager: &mut HookManager) {
     );
 }
 
-fn register_des_hooks(_manager: &mut HookManager) {
+fn register_des_hooks(manager: &mut HookManager) {
     #[cfg(feature = "legacy-crypto")]
-    _manager.register(
+    manager.register(
         Hook::new("System.Security.Cryptography.DES.Create")
             .match_name("System.Security.Cryptography", "DES", "Create")
             .pre(des_create_pre),
     );
 
     #[cfg(feature = "legacy-crypto")]
-    _manager.register(
+    manager.register(
         Hook::new("System.Security.Cryptography.TripleDES.Create")
             .match_name("System.Security.Cryptography", "TripleDES", "Create")
             .pre(triple_des_create_pre),
@@ -979,6 +979,8 @@ fn crypto_stream_ctor_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         _ => return PreHookResult::Bypass(None),
     };
 
+    // Intentional cast for CryptoStreamMode enum (0=Read, 1=Write)
+    #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
     let mode = match ctx.args.get(2) {
         Some(EmValue::I32(m)) => *m as u8,
         _ => 0,
@@ -1023,6 +1025,8 @@ fn crypto_stream_read_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
     }
 
+    // Intentional cast: array indices are always non-negative in .NET
+    #[allow(clippy::cast_sign_loss)]
     let (buffer_ref, offset, count) = match (ctx.args.first(), ctx.args.get(1), ctx.args.get(2)) {
         (Some(EmValue::ObjectRef(b)), Some(EmValue::I32(o)), Some(EmValue::I32(c))) => {
             (*b, *o as usize, *c as usize)
@@ -1119,6 +1123,8 @@ fn crypto_stream_write_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
         return PreHookResult::Bypass(None);
     }
 
+    // Intentional cast: array indices are always non-negative in .NET
+    #[allow(clippy::cast_sign_loss)]
     let (buffer_ref, offset, count) = match (ctx.args.first(), ctx.args.get(1), ctx.args.get(2)) {
         (Some(EmValue::ObjectRef(b)), Some(EmValue::I32(o)), Some(EmValue::I32(c))) => {
             (*b, *o as usize, *c as usize)
@@ -1280,8 +1286,7 @@ fn password_derive_bytes_ctor_pre(
         .heap()
         .replace_with_key_derivation(heap_ref, password, salt, iterations, "SHA1")
     {
-        Ok(()) => PreHookResult::Bypass(None),
-        Err(_) => PreHookResult::Bypass(None),
+        Ok(()) | Err(_) => PreHookResult::Bypass(None),
     }
 }
 
@@ -1310,14 +1315,13 @@ fn password_derive_bytes_get_bytes_pre(
         .flatten()
         .unwrap_or(16);
 
-    let heap_ref = match ctx.this {
-        Some(EmValue::ObjectRef(hr)) => *hr,
-        _ => {
-            let zeros = vec![0u8; size];
-            match thread.heap().alloc_byte_array(&zeros) {
-                Ok(handle) => return PreHookResult::Bypass(Some(EmValue::ObjectRef(handle))),
-                Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
-            }
+    let heap_ref = if let Some(EmValue::ObjectRef(hr)) = ctx.this {
+        *hr
+    } else {
+        let zeros = vec![0u8; size];
+        match thread.heap().alloc_byte_array(&zeros) {
+            Ok(handle) => return PreHookResult::Bypass(Some(EmValue::ObjectRef(handle))),
+            Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
         }
     };
 
@@ -1383,6 +1387,8 @@ fn rfc2898_derive_bytes_ctor_pre(
         _ => Vec::new(),
     };
 
+    // Intentional cast: iteration count is always positive in crypto operations
+    #[allow(clippy::cast_sign_loss)]
     let iterations: u32 = match ctx.args.get(2) {
         Some(val) => i32::try_from(val).unwrap_or(1000) as u32,
         None => 1000,
@@ -1397,8 +1403,7 @@ fn rfc2898_derive_bytes_ctor_pre(
         iterations,
         hash_algorithm,
     ) {
-        Ok(()) => PreHookResult::Bypass(None),
-        Err(_) => PreHookResult::Bypass(None),
+        Ok(()) | Err(_) => PreHookResult::Bypass(None),
     }
 }
 
@@ -1426,14 +1431,13 @@ fn rfc2898_derive_bytes_get_bytes_pre(
         .flatten()
         .unwrap_or(16);
 
-    let heap_ref = match ctx.this {
-        Some(EmValue::ObjectRef(hr)) => *hr,
-        _ => {
-            let zeros = vec![0u8; size];
-            match thread.heap().alloc_byte_array(&zeros) {
-                Ok(handle) => return PreHookResult::Bypass(Some(EmValue::ObjectRef(handle))),
-                Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
-            }
+    let heap_ref = if let Some(EmValue::ObjectRef(hr)) = ctx.this {
+        *hr
+    } else {
+        let zeros = vec![0u8; size];
+        match thread.heap().alloc_byte_array(&zeros) {
+            Ok(handle) => return PreHookResult::Bypass(Some(EmValue::ObjectRef(handle))),
+            Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
         }
     };
 

@@ -247,6 +247,7 @@ impl StackUnwinder {
     /// # Returns
     ///
     /// A new `StackUnwinder` ready to begin unwinding.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -257,6 +258,7 @@ impl StackUnwinder {
     ///
     /// `true` if the unwinder is actively processing an exception,
     /// `false` if it is idle.
+    #[must_use]
     pub fn is_unwinding(&self) -> bool {
         !matches!(self.state, UnwindState::Idle)
     }
@@ -588,6 +590,7 @@ impl StackUnwinder {
     /// # Returns
     ///
     /// A slice of instruction locations representing the call stack.
+    #[must_use]
     pub fn stack_trace(&self) -> &[InstructionLocation] {
         &self.stack_trace
     }
@@ -666,6 +669,7 @@ impl UnwindSequenceBuilder {
     /// # Returns
     ///
     /// A new `UnwindSequenceBuilder` with no handlers.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -700,6 +704,7 @@ impl UnwindSequenceBuilder {
     /// # Returns
     ///
     /// A vector of handlers in execution order.
+    #[must_use]
     pub fn build(self) -> Vec<HandlerMatch> {
         self.handlers
     }
@@ -709,6 +714,7 @@ impl UnwindSequenceBuilder {
     /// # Returns
     ///
     /// `true` if no handlers have been added.
+    #[must_use]
     pub fn is_empty(&self) -> bool {
         self.handlers.is_empty()
     }
@@ -718,6 +724,7 @@ impl UnwindSequenceBuilder {
     /// # Returns
     ///
     /// The count of handlers added to the builder.
+    #[must_use]
     pub fn len(&self) -> usize {
         self.handlers.len()
     }

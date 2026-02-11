@@ -1025,10 +1025,8 @@ impl EmValue {
             (EmValue::NativeInt(a), EmValue::UnmanagedPtr(b)) => {
                 Ok(EmValue::UnmanagedPtr((*a as u64).wrapping_add(*b)))
             }
-            (EmValue::UnmanagedPtr(a), EmValue::NativeUInt(b)) => {
-                Ok(EmValue::UnmanagedPtr(a.wrapping_add(*b)))
-            }
-            (EmValue::NativeUInt(a), EmValue::UnmanagedPtr(b)) => {
+            (EmValue::UnmanagedPtr(a), EmValue::NativeUInt(b))
+            | (EmValue::NativeUInt(a), EmValue::UnmanagedPtr(b)) => {
                 Ok(EmValue::UnmanagedPtr(a.wrapping_add(*b)))
             }
             (a, b) => Err(EmulationError::InvalidOperationTypes {
@@ -1509,10 +1507,11 @@ impl EmValue {
     fn cmp_eq(&self, other: &Self) -> Result<bool> {
         match (self, other) {
             (EmValue::I32(a), EmValue::I32(b)) => Ok(a == b),
-            (EmValue::I64(a), EmValue::I64(b)) | (EmValue::NativeInt(a), EmValue::NativeInt(b)) => {
-                Ok(a == b)
-            }
-            (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => Ok(a == b),
+            (EmValue::I64(a) | EmValue::NativeInt(a), EmValue::I64(b))
+            | (EmValue::NativeInt(a), EmValue::NativeInt(b))
+            | (EmValue::I64(b), EmValue::NativeInt(a)) => Ok(a == b),
+            (EmValue::NativeUInt(a), EmValue::NativeUInt(b))
+            | (EmValue::UnmanagedPtr(a), EmValue::UnmanagedPtr(b)) => Ok(a == b),
             (EmValue::F32(a), EmValue::F32(b)) => Ok(a == b),
             (EmValue::F64(a), EmValue::F64(b)) => Ok(a == b),
             (EmValue::ObjectRef(a), EmValue::ObjectRef(b)) => Ok(a == b),
@@ -1532,14 +1531,9 @@ impl EmValue {
             (EmValue::Bool(a), EmValue::Char(b)) | (EmValue::Char(b), EmValue::Bool(a)) => {
                 Ok(i32::from(*a) == (*b as u32) as i32)
             }
-            // Native int comparisons with I64
-            (EmValue::NativeInt(a), EmValue::I64(b)) | (EmValue::I64(b), EmValue::NativeInt(a)) => {
-                Ok(a == b)
-            }
             // Pointer comparisons
             (EmValue::NativeInt(a), EmValue::UnmanagedPtr(b))
             | (EmValue::UnmanagedPtr(b), EmValue::NativeInt(a)) => Ok(*a as u64 == *b),
-            (EmValue::UnmanagedPtr(a), EmValue::UnmanagedPtr(b)) => Ok(a == b),
             (a, b) => Err(EmulationError::InvalidOperationTypes {
                 operation: "ceq".to_string(),
                 operand_types: format!("{}, {}", a.cil_flavor(), b.cil_flavor()),

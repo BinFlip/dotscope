@@ -1120,8 +1120,10 @@ impl SsaFunction {
             // If it's a phi node defined as instruction, use its dest
             SsaOp::Phi { dest, .. } => Some(*dest),
 
-            // Remainder operation (e.g., state % N): trace left operand
-            SsaOp::Rem { left, .. } => self.trace_to_phi_impl(*left, target_block, depth + 1),
+            // Remainder (state % N) or bitwise AND (state & mask): trace left operand
+            SsaOp::Rem { left, .. } | SsaOp::And { left, .. } => {
+                self.trace_to_phi_impl(*left, target_block, depth + 1)
+            }
 
             // XOR operation (e.g., state ^ key): try both operands
             SsaOp::Xor { left, right, .. } => {
@@ -1132,9 +1134,6 @@ impl SsaFunction {
                 // Then try right (XOR is commutative)
                 self.trace_to_phi_impl(*right, target_block, depth + 1)
             }
-
-            // Bitwise AND (e.g., state & mask): trace left operand
-            SsaOp::And { left, .. } => self.trace_to_phi_impl(*left, target_block, depth + 1),
 
             // Arithmetic operations (ConfuserEx uses mul/add/sub for state transformation)
             // e.g., new_state = (state * 529374418) ^ key
@@ -1157,10 +1156,7 @@ impl SsaFunction {
             // Copy: trace through to source
             SsaOp::Copy { src, .. } => self.trace_to_phi_impl(*src, target_block, depth + 1),
 
-            // Constants are not state PHIs
-            SsaOp::Const { .. } => None,
-
-            // For other operations, the variable itself cannot be traced to a PHI
+            // For other operations (including constants), the variable cannot be traced to a PHI
             _ => None,
         }
     }
@@ -1249,12 +1245,7 @@ impl SsaFunction {
     /// # Returns
     ///
     /// `true` if there is a path from `from` to `to`, `false` otherwise.
-    fn block_reaches(
-        &self,
-        from: usize,
-        to: usize,
-        successor_map: &HashMap<usize, Vec<usize>>,
-    ) -> bool {
+    fn block_reaches(from: usize, to: usize, successor_map: &HashMap<usize, Vec<usize>>) -> bool {
         if from == to {
             return true;
         }
@@ -2121,7 +2112,7 @@ impl SsaFunction {
                 if !orphaned_values.is_empty() {
                     // Get the predecessors that are currently accounted for in the PHI
                     let accounted_preds: HashSet<usize> =
-                        phi.operands().iter().map(|op| op.predecessor()).collect();
+                        phi.operands().iter().map(PhiOperand::predecessor).collect();
 
                     // Find predecessors that are NOT accounted for
                     let unaccounted_preds: Vec<usize> = kept_phi_block_preds
@@ -2184,13 +2175,9 @@ impl SsaFunction {
         let has_useful_code = self.blocks.iter().any(|block| {
             block.instructions().iter().any(|instr| {
                 match instr.op() {
-                    // Jumps don't count as useful - they're just control flow
-                    SsaOp::Jump { .. } => false,
-                    // Nops don't count
-                    SsaOp::Nop => false,
-                    // Returns and Throws are valid terminators - method is OK
-                    SsaOp::Return { .. } | SsaOp::Throw { .. } | SsaOp::Rethrow => true,
-                    // Any other instruction is useful code
+                    // Jumps and Nops don't count as useful - they're just control flow
+                    SsaOp::Jump { .. } | SsaOp::Nop => false,
+                    // Any other instruction (including returns, throws) is useful code
                     _ => true,
                 }
             })
@@ -2438,6 +2425,7 @@ impl SsaFunction {
 
         // If no optimization needed (all locals used or no locals), return identity mapping
         if used_locals.len() == self.num_locals || self.num_locals == 0 {
+            #[allow(clippy::cast_possible_truncation)]
             return (0..self.num_locals as u16).map(Some).collect();
         }
 
@@ -2447,7 +2435,9 @@ impl SsaFunction {
         sorted_used.sort_unstable();
 
         for (new_idx, &old_idx) in sorted_used.iter().enumerate() {
-            remap[old_idx as usize] = Some(new_idx as u16);
+            #[allow(clippy::cast_possible_truncation)]
+            let new_idx_u16 = new_idx as u16;
+            remap[old_idx as usize] = Some(new_idx_u16);
         }
 
         let new_num_locals = sorted_used.len();
@@ -2555,8 +2545,10 @@ impl SsaFunction {
             // For any additional locals (temporaries allocated by codegen),
             // first check temporary_types map, then try SSA inference
             for idx in original_types.len()..local_count {
+                #[allow(clippy::cast_possible_truncation)]
+                let idx_u16 = idx as u16;
                 let local_type = temp_types
-                    .get(&(idx as u16))
+                    .get(&idx_u16)
                     .cloned()
                     .unwrap_or_else(|| self.infer_local_type(idx));
                 locals.push(SignatureLocalVariable {
@@ -2904,7 +2896,7 @@ impl SsaFunction {
 
         // Clone instructions with remapped variables
         for instr in block.instructions() {
-            let new_instr = self.clone_instruction_with_remap(instr, var_remap);
+            let new_instr = Self::clone_instruction_with_remap(instr, var_remap);
             new_block.add_instruction(new_instr);
         }
 
@@ -2926,7 +2918,6 @@ impl SsaFunction {
     ///
     /// A new `SsaInstruction` with remapped variables.
     fn clone_instruction_with_remap(
-        &self,
         instr: &SsaInstruction,
         var_remap: &HashMap<SsaVarId, SsaVarId>,
     ) -> SsaInstruction {
@@ -3152,6 +3143,7 @@ impl SsaFunction {
         // even if they're orphans. We must do this before processing instructions,
         // otherwise instruction defs would get unique orphan origins before we can
         // propagate the PHI's origin to them.
+        #[allow(clippy::cast_possible_truncation)]
         let mut next_stack_idx = self.num_locals as u32;
 
         // First pass: propagate PHI origins to ALL operands
@@ -3274,7 +3266,7 @@ impl SsaFunction {
                         .children(NodeId::new(i))
                         .into_iter()
                         .filter(|n| n.index() < self.blocks.len() && reachable.contains(&n.index()))
-                        .map(|n| n.index())
+                        .map(NodeId::index)
                         .collect(),
                 );
             }
@@ -3287,12 +3279,16 @@ impl SsaFunction {
 
         // Arguments and locals version 0 are defined at entry (block 0)
         for i in 0..self.num_args {
-            defs.entry(VariableOrigin::Argument(i as u16))
+            #[allow(clippy::cast_possible_truncation)]
+            let i_u16 = i as u16;
+            defs.entry(VariableOrigin::Argument(i_u16))
                 .or_default()
                 .insert(0);
         }
         for i in 0..self.num_locals {
-            defs.entry(VariableOrigin::Local(i as u16))
+            #[allow(clippy::cast_possible_truncation)]
+            let i_u16 = i as u16;
+            defs.entry(VariableOrigin::Local(i_u16))
                 .or_default()
                 .insert(0);
         }
@@ -3474,7 +3470,7 @@ impl SsaFunction {
                     def_blocks.contains(pred)
                         || def_blocks.iter().any(|&def_block| {
                             // Simple reachability check: def_block reaches pred
-                            self.block_reaches(def_block, *pred, &successor_map)
+                            Self::block_reaches(def_block, *pred, &successor_map)
                         })
                 });
 
@@ -3695,7 +3691,8 @@ impl SsaFunction {
         // use their original IDs, which are not in self.variables. These Pops should
         // be removed to avoid emitting invalid ldloc instructions in codegen.
         {
-            let defined_vars: HashSet<SsaVarId> = self.variables.iter().map(|v| v.id()).collect();
+            let defined_vars: HashSet<SsaVarId> =
+                self.variables.iter().map(SsaVariable::id).collect();
             for block in &mut self.blocks {
                 block.instructions_mut().retain(|instr| {
                     if let SsaOp::Pop { value } = instr.op() {
@@ -4018,7 +4015,7 @@ impl SsaFunction {
             let block_idx = block.id();
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
                 let mut seen = std::collections::HashSet::new();
-                for &old_use in instr.uses().iter() {
+                for &old_use in &instr.uses() {
                     if seen.insert(old_use) {
                         let new_use = resolve(old_use);
                         if new_use != old_use {
@@ -4057,7 +4054,7 @@ impl SsaFunction {
     /// cyclic dependencies (which indicates invalid SSA).
     pub fn sort_all_blocks_topologically(&mut self) -> bool {
         let mut all_sorted = true;
-        for block in self.blocks.iter_mut() {
+        for block in &mut self.blocks {
             if !block.sort_instructions_topologically() {
                 all_sorted = false;
             }
@@ -4079,9 +4076,10 @@ impl SsaFunction {
     /// 3. **Phi nodes at block start** - Phi nodes should only appear at the
     ///    beginning of blocks, not mixed with regular instructions.
     ///
-    /// # Returns
+    /// # Errors
     ///
-    /// `Ok(())` if the SSA is valid, or `Err` with a description of the problem.
+    /// Returns `Err` with a description of the problem if any SSA invariant is violated,
+    /// such as cyclic dependencies, duplicate definitions, or misplaced terminators.
     ///
     /// # Example
     ///
@@ -4096,7 +4094,7 @@ impl SsaFunction {
     pub fn validate(&self) -> Result<(), String> {
         // Check each block independently
         for (block_idx, block) in self.blocks.iter().enumerate() {
-            self.validate_block(block_idx, block)?;
+            Self::validate_block(block_idx, block)?;
         }
 
         // Check single-definition property
@@ -4106,7 +4104,7 @@ impl SsaFunction {
     }
 
     /// Validates a single block for internal consistency.
-    fn validate_block(&self, block_idx: usize, block: &SsaBlock) -> Result<(), String> {
+    fn validate_block(block_idx: usize, block: &SsaBlock) -> Result<(), String> {
         // Track which variables are defined within this block
         let mut defined_in_block: HashSet<SsaVarId> = HashSet::new();
 
@@ -4140,9 +4138,8 @@ impl SsaFunction {
                         // 1. A cyclic dependency (def_idx > instr_idx but uses this result)
                         // 2. Self-reference (def_idx == instr_idx, instruction uses its own result)
                         return Err(format!(
-                            "Block {}: Instruction {} ({:?}) uses {:?} which is defined \
-                                at instruction {} - invalid order (possible cycle)",
-                            block_idx, instr_idx, op, used_var, def_idx
+                            "Block {block_idx}: Instruction {instr_idx} ({op:?}) uses {used_var:?} which is defined \
+                                at instruction {def_idx} - invalid order (possible cycle)"
                         ));
                     }
                 }
@@ -4181,9 +4178,8 @@ impl SsaFunction {
                 let var = phi.result();
                 if let Some((prev_block, prev_kind)) = definitions.get(&var) {
                     return Err(format!(
-                        "Variable {:?} defined multiple times: first as {} in block {}, \
-                         then as phi in block {}",
-                        var, prev_kind, prev_block, block_idx
+                        "Variable {var:?} defined multiple times: first as {prev_kind} in block {prev_block}, \
+                         then as phi in block {block_idx}"
                     ));
                 }
                 definitions.insert(var, (block_idx, "phi"));
@@ -4195,9 +4191,8 @@ impl SsaFunction {
                 if let Some(dest) = op.dest() {
                     if let Some((prev_block, prev_kind)) = definitions.get(&dest) {
                         return Err(format!(
-                            "Variable {:?} defined multiple times: first as {} in block {}, \
-                                then as {:?} in block {}",
-                            dest, prev_kind, prev_block, op, block_idx
+                            "Variable {dest:?} defined multiple times: first as {prev_kind} in block {prev_block}, \
+                                then as {op:?} in block {block_idx}"
                         ));
                     }
                     definitions.insert(dest, (block_idx, "instruction"));

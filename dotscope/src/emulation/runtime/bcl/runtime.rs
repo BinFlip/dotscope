@@ -166,10 +166,10 @@ fn runtime_helpers_initialize_array_pre(
     };
 
     // Get the field token from the RuntimeFieldHandle
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let field_token = match &ctx.args[1] {
-        EmValue::NativeInt(v) => *v as u32,
-        EmValue::I32(v) => *v as u32,
-        EmValue::I64(v) => *v as u32,
+        EmValue::I32(v) => (*v).cast_unsigned(),
+        EmValue::NativeInt(v) | EmValue::I64(v) => *v as u32,
         _ => return PreHookResult::Bypass(None),
     };
 
@@ -189,7 +189,7 @@ fn runtime_helpers_initialize_array_pre(
 
     // Find the RVA for this field token
     let mut rva: Option<u32> = None;
-    for row in fieldrva_table.iter() {
+    for row in fieldrva_table {
         // Convert field index to full token (table 0x04 = Field)
         let row_token = row.field | 0x0400_0000;
         if row_token == field_token && row.rva > 0 {
@@ -359,7 +359,7 @@ fn runtime_helpers_equals_pre(
         _ => false,
     };
 
-    PreHookResult::Bypass(Some(EmValue::I32(if equal { 1 } else { 0 })))
+    PreHookResult::Bypass(Some(EmValue::I32(i32::from(equal))))
 }
 
 /// Hook for `System.Runtime.CompilerServices.RuntimeHelpers.GetObjectValue` method.

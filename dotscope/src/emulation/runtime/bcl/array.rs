@@ -186,14 +186,14 @@ fn array_get_length_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
     };
 
-    let obj = match thread.heap().get(*href) {
-        Ok(o) => o,
-        Err(_) => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    let Ok(obj) = thread.heap().get(*href) else {
+        return PreHookResult::Bypass(Some(EmValue::I32(0)));
     };
 
     let len = match &obj {
-        HeapObject::Array { elements, .. } => elements.len(),
-        HeapObject::MultiArray { elements, .. } => elements.len(),
+        HeapObject::Array { elements, .. } | HeapObject::MultiArray { elements, .. } => {
+            elements.len()
+        }
         _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
     };
 
@@ -218,14 +218,14 @@ fn array_get_long_length_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread
         return PreHookResult::Bypass(Some(EmValue::I64(0)));
     };
 
-    let obj = match thread.heap().get(*href) {
-        Ok(o) => o,
-        Err(_) => return PreHookResult::Bypass(Some(EmValue::I64(0))),
+    let Ok(obj) = thread.heap().get(*href) else {
+        return PreHookResult::Bypass(Some(EmValue::I64(0)));
     };
 
     let len = match &obj {
-        HeapObject::Array { elements, .. } => elements.len(),
-        HeapObject::MultiArray { elements, .. } => elements.len(),
+        HeapObject::Array { elements, .. } | HeapObject::MultiArray { elements, .. } => {
+            elements.len()
+        }
         _ => return PreHookResult::Bypass(Some(EmValue::I64(0))),
     };
 
@@ -251,9 +251,8 @@ fn array_get_rank_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pr
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
     };
 
-    let obj = match thread.heap().get(*href) {
-        Ok(o) => o,
-        Err(_) => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    let Ok(obj) = thread.heap().get(*href) else {
+        return PreHookResult::Bypass(Some(EmValue::I32(0)));
     };
 
     let rank: i32 = match obj {
@@ -362,9 +361,8 @@ fn array_get_dimension_length_pre(
         .and_then(Result::ok)
         .unwrap_or(0);
 
-    let obj = match thread.heap().get(*href) {
-        Ok(o) => o,
-        Err(_) => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    let Ok(obj) = thread.heap().get(*href) else {
+        return PreHookResult::Bypass(Some(EmValue::I32(0)));
     };
 
     let length = match obj {
@@ -406,9 +404,8 @@ fn array_clone_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHo
         return PreHookResult::Bypass(Some(EmValue::Null));
     };
 
-    let obj = match thread.heap().get(*href) {
-        Ok(o) => o,
-        Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
+    let Ok(obj) = thread.heap().get(*href) else {
+        return PreHookResult::Bypass(Some(EmValue::Null));
     };
 
     match obj {
@@ -427,12 +424,11 @@ fn array_clone_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHo
             dimensions,
             elements,
         } => {
-            let new_ref = match thread
+            let Ok(new_ref) = thread
                 .heap_mut()
                 .alloc_multi_array(element_type, dimensions)
-            {
-                Ok(r) => r,
-                Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
+            else {
+                return PreHookResult::Bypass(Some(EmValue::Null));
             };
             let _ = thread.heap_mut().with_object_mut(new_ref, |obj| {
                 if let HeapObject::MultiArray {
@@ -502,9 +498,8 @@ fn array_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHoo
     };
 
     let src_elements: Vec<EmValue> = {
-        let src_obj = match thread.heap().get(src_ref) {
-            Ok(o) => o,
-            Err(_) => return PreHookResult::Bypass(None),
+        let Ok(src_obj) = thread.heap().get(src_ref) else {
+            return PreHookResult::Bypass(None);
         };
         match src_obj {
             HeapObject::Array { elements, .. } => {
@@ -648,9 +643,8 @@ fn array_index_of_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pr
 
     let search_value = &ctx.args[1];
 
-    let obj = match thread.heap().get(array_ref) {
-        Ok(o) => o,
-        Err(_) => return PreHookResult::Bypass(Some(EmValue::I32(-1))),
+    let Ok(obj) = thread.heap().get(array_ref) else {
+        return PreHookResult::Bypass(Some(EmValue::I32(-1)));
     };
 
     let index = match obj {
@@ -713,9 +707,8 @@ fn buffer_block_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
 
     // Extract source array bytes
     let (src_bytes, _src_elem_size): (Vec<u8>, usize) = {
-        let src_obj = match thread.heap().get(src_ref) {
-            Ok(o) => o,
-            Err(_) => return PreHookResult::Bypass(None),
+        let Ok(src_obj) = thread.heap().get(src_ref) else {
+            return PreHookResult::Bypass(None);
         };
         match src_obj {
             HeapObject::Array {
@@ -806,9 +799,8 @@ fn buffer_byte_length_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
     };
 
-    let obj = match thread.heap().get(array_ref) {
-        Ok(o) => o,
-        Err(_) => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    let Ok(obj) = thread.heap().get(array_ref) else {
+        return PreHookResult::Bypass(Some(EmValue::I32(0)));
     };
 
     let length = match obj {
@@ -821,7 +813,6 @@ fn buffer_byte_length_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
                 CilFlavor::I8 | CilFlavor::U8 | CilFlavor::R8 => 8,
                 CilFlavor::I2 | CilFlavor::U2 | CilFlavor::Char => 2,
                 CilFlavor::I1 | CilFlavor::U1 | CilFlavor::Boolean => 1,
-                CilFlavor::I | CilFlavor::U => std::mem::size_of::<usize>(),
                 _ => std::mem::size_of::<usize>(),
             };
             elements.len() * element_size

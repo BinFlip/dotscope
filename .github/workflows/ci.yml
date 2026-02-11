@@ -154,17 +154,17 @@ jobs:
         
     - name: Build fuzz target
       run: cargo +nightly fuzz build --release cilobject
-      working-directory: fuzz
+      working-directory: dotscope/fuzz
 
     - name: Run quick fuzz test
       run: timeout 60 cargo +nightly fuzz run cilobject --release -- -max_total_time=50 || true
-      working-directory: fuzz
-        
+      working-directory: dotscope/fuzz
+
     - name: Check for crashes
       run: |
-        if [ -d "fuzz/artifacts/cilobject" ] && [ "$(ls -A fuzz/artifacts/cilobject)" ]; then
+        if [ -d "dotscope/fuzz/artifacts/cilobject" ] && [ "$(ls -A dotscope/fuzz/artifacts/cilobject)" ]; then
           echo "Fuzzing found crashes!"
-          ls -la fuzz/artifacts/cilobject/
+          ls -la dotscope/fuzz/artifacts/cilobject/
           exit 1
         fi
 

@@ -1210,7 +1210,6 @@ impl LocalVariable {
             CilFlavor::R8 => TypeSignature::R8,
             CilFlavor::I => TypeSignature::I,
             CilFlavor::U => TypeSignature::U,
-            CilFlavor::Object => TypeSignature::Object,
             CilFlavor::String => TypeSignature::String,
 
             // Reference types (classes, interfaces, generic instances)
@@ -1235,7 +1234,8 @@ impl LocalVariable {
 
             // Complex types - use Object as fallback since we can't fully reconstruct
             // these without additional context (array bounds, pointed-to types, etc.)
-            CilFlavor::Array { .. }
+            CilFlavor::Object
+            | CilFlavor::Array { .. }
             | CilFlavor::Pointer
             | CilFlavor::ByRef
             | CilFlavor::Pinned

@@ -47,8 +47,7 @@ struct TableDetailOutput {
 fn resolve_string(strings: Option<&Strings<'_>>, offset: u32) -> String {
     strings
         .and_then(|s| s.get(offset as usize).ok())
-        .map(|s| s.to_string())
-        .unwrap_or_else(|| "?".to_string())
+        .map_or_else(|| "?".to_string(), ToString::to_string)
 }
 
 fn format_coded_index(ci: &CodedIndex) -> String {
@@ -59,9 +58,10 @@ fn format_blob_ref(blob: Option<&Blob<'_>>, offset: u32) -> String {
     if offset == 0 {
         return "blob[0]".to_string();
     }
-    blob.and_then(|b| b.get(offset as usize).ok())
-        .map(|b| format!("blob[{} bytes]", b.len()))
-        .unwrap_or_else(|| format!("blob@{offset}"))
+    blob.and_then(|b| b.get(offset as usize).ok()).map_or_else(
+        || format!("blob@{offset}"),
+        |b| format!("blob[{} bytes]", b.len()),
+    )
 }
 
 fn format_guid_ref(guids: Option<&Guid<'_>>, index: u32) -> String {
@@ -70,8 +70,7 @@ fn format_guid_ref(guids: Option<&Guid<'_>>, index: u32) -> String {
     }
     guids
         .and_then(|g| g.get(index as usize).ok())
-        .map(|guid| guid.to_string())
-        .unwrap_or_else(|| "?".to_string())
+        .map_or_else(|| "?".to_string(), |guid| guid.to_string())
 }
 
 fn format_version(major: u32, minor: u32, build: u32, rev: u32) -> String {
@@ -115,7 +114,7 @@ pub fn run(path: &Path, table_filter: Option<&str>, opts: &GlobalOptions) -> any
                 .iter()
                 .map(|c| (c.as_str(), Align::Left))
                 .collect();
-            let mut tw = TabWriter::new(cols);
+            let mut tw = TabWriter::new(&cols);
             for row in &d.rows {
                 tw.row(row.clone());
             }
@@ -133,7 +132,7 @@ pub fn run(path: &Path, table_filter: Option<&str>, opts: &GlobalOptions) -> any
         let output = TablesOutput { tables: entries };
 
         print_output(&output, opts, |out| {
-            let mut tw = TabWriter::new(vec![("Table", Align::Left), ("Rows", Align::Right)]);
+            let mut tw = TabWriter::new(&[("Table", Align::Left), ("Rows", Align::Right)]);
             for entry in &out.tables {
                 tw.row(vec![entry.table.clone(), entry.rows.to_string()]);
             }
@@ -217,10 +216,10 @@ macro_rules! table_formatter {
             let columns: Vec<String> = ["RID", "Token"]
                 .iter()
                 .chain($cols.iter())
-                .map(|s| s.to_string())
+                .map(ToString::to_string)
                 .collect();
             let mut rows = Vec::new();
-            for row in table.iter() {
+            for row in table {
                 let mut vals = vec![row.rid.to_string(), row.token.to_string()];
                 let extra: Vec<String> = ($row_fn)(&row);
                 vals.extend(extra);
@@ -244,9 +243,9 @@ macro_rules! table_formatter_with {
                 .table::<$raw_type>()
                 .with_context(|| format!("{} table not found", $display_name))?;
             let columns: Vec<String> =
-                ["RID", "Token"].iter().chain($cols.iter()).map(|s| s.to_string()).collect();
+                ["RID", "Token"].iter().chain($cols.iter()).map(ToString::to_string).collect();
             let mut rows = Vec::new();
-            for row in table.iter() {
+            for row in table {
                 let mut vals = vec![row.rid.to_string(), row.token.to_string()];
                 let extra: Vec<String> = ($row_fn)(&row, $($param),+);
                 vals.extend(extra);
@@ -282,10 +281,10 @@ fn format_module(
         "EncBaseId",
     ]
     .iter()
-    .map(|s| s.to_string())
+    .map(ToString::to_string)
     .collect();
     let mut rows = Vec::new();
-    for row in table.iter() {
+    for row in table {
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -602,10 +601,10 @@ fn format_enclog(tables: &TablesHeader<'_>) -> anyhow::Result<TableDetailOutput>
         .with_context(|| "EncLog table not found")?;
     let columns = ["RID", "Token", "TokenValue", "FuncCode"]
         .iter()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .collect();
     let mut rows = Vec::new();
-    for row in table.iter() {
+    for row in table {
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -627,10 +626,10 @@ fn format_encmap(tables: &TablesHeader<'_>) -> anyhow::Result<TableDetailOutput>
         .with_context(|| "EncMap table not found")?;
     let columns = ["RID", "Token", "OriginalToken"]
         .iter()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .collect();
     let mut rows = Vec::new();
-    for row in table.iter() {
+    for row in table {
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -666,10 +665,10 @@ fn format_assembly(
         "Culture",
     ]
     .iter()
-    .map(|s| s.to_string())
+    .map(ToString::to_string)
     .collect();
     let mut rows = Vec::new();
-    for row in table.iter() {
+    for row in table {
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -733,10 +732,10 @@ fn format_assemblyref(
         "HashValue",
     ]
     .iter()
-    .map(|s| s.to_string())
+    .map(ToString::to_string)
     .collect();
     let mut rows = Vec::new();
-    for row in table.iter() {
+    for row in table {
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -883,10 +882,10 @@ fn format_methoddebuginformation(
         .with_context(|| "MethodDebugInformation table not found")?;
     let columns = ["RID", "Token", "Document", "SequencePoints"]
         .iter()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .collect();
     let mut rows = Vec::new();
-    for row in table.iter() {
+    for row in table {
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -917,10 +916,10 @@ fn format_localscope(tables: &TablesHeader<'_>) -> anyhow::Result<TableDetailOut
         "Length",
     ]
     .iter()
-    .map(|s| s.to_string())
+    .map(ToString::to_string)
     .collect();
     let mut rows = Vec::new();
-    for row in table.iter() {
+    for row in table {
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -949,10 +948,10 @@ fn format_localvariable(
         .with_context(|| "LocalVariable table not found")?;
     let columns = ["RID", "Token", "Attributes", "Index", "Name"]
         .iter()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .collect();
     let mut rows = Vec::new();
-    for row in table.iter() {
+    for row in table {
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -979,10 +978,10 @@ fn format_localconstant(
         .with_context(|| "LocalConstant table not found")?;
     let columns = ["RID", "Token", "Name", "Signature"]
         .iter()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .collect();
     let mut rows = Vec::new();
-    for row in table.iter() {
+    for row in table {
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -1007,10 +1006,10 @@ fn format_importscope(
         .with_context(|| "ImportScope table not found")?;
     let columns = ["RID", "Token", "Parent", "Imports"]
         .iter()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .collect();
     let mut rows = Vec::new();
-    for row in table.iter() {
+    for row in table {
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),
@@ -1032,10 +1031,10 @@ fn format_statemachinemethod(tables: &TablesHeader<'_>) -> anyhow::Result<TableD
         .with_context(|| "StateMachineMethod table not found")?;
     let columns = ["RID", "Token", "MoveNextMethod", "KickOffMethod"]
         .iter()
-        .map(|s| s.to_string())
+        .map(ToString::to_string)
         .collect();
     let mut rows = Vec::new();
-    for row in table.iter() {
+    for row in table {
         rows.push(vec![
             row.rid.to_string(),
             row.token.to_string(),

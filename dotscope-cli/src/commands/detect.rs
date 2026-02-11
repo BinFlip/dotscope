@@ -1,13 +1,12 @@
 use std::path::Path;
 
-use anyhow::bail;
 use dotscope::deobfuscation::{DetectionEvidence, ObfuscatorDetector};
 use serde::Serialize;
 
 use crate::{
     app::GlobalOptions,
     commands::common::{
-        collect_assemblies, extract_detection_summary, file_display_name, load_assembly,
+        extract_detection_summary, file_display_name, load_assembly, process_directory,
     },
     output::print_output,
 };
@@ -53,27 +52,7 @@ fn run_single(path: &Path, opts: &GlobalOptions) -> anyhow::Result<()> {
 }
 
 fn run_recursive(dir: &Path, opts: &GlobalOptions) -> anyhow::Result<()> {
-    if !dir.is_dir() {
-        bail!(
-            "'{}' is not a directory (use without --recursive for single files)",
-            dir.display()
-        );
-    }
-
-    let files = collect_assemblies(dir)?;
-    if files.is_empty() {
-        bail!("no .exe or .dll files found in '{}'", dir.display());
-    }
-
-    let mut results = Vec::new();
-    for file in &files {
-        match detect_file(file) {
-            Ok(info) => results.push(info),
-            Err(e) => {
-                eprintln!("warning: {}: {e:#}", file.display());
-            }
-        }
-    }
+    let (results, _fail_count) = process_directory(dir, detect_file)?;
 
     let detected_count = results.iter().filter(|r| r.detected).count();
     let batch = BatchDetectionInfo {

@@ -42,8 +42,7 @@ pub fn run(path: &Path, opts: &GlobalOptions) -> anyhow::Result<()> {
             let source = match &import.source_id {
                 ImportSourceId::AssemblyRef(token) => refs
                     .get(token)
-                    .map(|e| e.value().name.clone())
-                    .unwrap_or_else(|| "(unknown)".to_string()),
+                    .map_or_else(|| "(unknown)".to_string(), |e| e.value().name.clone()),
                 ImportSourceId::Module(_) => "(self)".to_string(),
                 ImportSourceId::ModuleRef(_) => "(module)".to_string(),
                 ImportSourceId::File(_) => "(file)".to_string(),
@@ -76,7 +75,7 @@ pub fn run(path: &Path, opts: &GlobalOptions) -> anyhow::Result<()> {
         let cil_count = out.cil.len();
         if cil_count > 0 {
             println!("CIL imports ({cil_count} entries):");
-            let mut tw = TabWriter::new(vec![
+            let mut tw = TabWriter::new(&[
                 ("Token", Align::Left),
                 ("Assembly", Align::Left),
                 ("Name", Align::Left),

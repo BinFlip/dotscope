@@ -104,7 +104,7 @@ pub fn is_confuserex_lzma(data: &[u8]) -> bool {
     // Additional check: compressed data should be smaller than uncompressed
     // (otherwise why compress it?)
     let compressed_data_len = data.len() - 9; // minus header
-    if compressed_data_len as i32 > uncompressed_size {
+    if compressed_data_len > uncompressed_size.cast_unsigned() as usize {
         // Compressed larger than uncompressed - suspicious
         return false;
     }
@@ -148,7 +148,7 @@ pub fn decompress_confuserex_lzma(data: &[u8]) -> DecompressResult<Vec<u8>> {
     let size_u64 = if uncompressed_size < 0 {
         u64::MAX // Unknown size
     } else {
-        uncompressed_size as u64
+        u64::from(uncompressed_size.cast_unsigned())
     };
     lzma_stream.extend_from_slice(&size_u64.to_le_bytes());
     lzma_stream.extend_from_slice(compressed);

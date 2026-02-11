@@ -229,7 +229,7 @@ impl DeobfuscationEngine {
 
         // Build result by merging all events
         let events = byte_level_events;
-        events.merge(ssa_events);
+        events.merge(&ssa_events);
         let result =
             DeobfuscationResult::new(detection, events).with_timing(start.elapsed(), iterations);
 
@@ -384,7 +384,7 @@ impl DeobfuscationEngine {
         })?;
 
         // Generate code from SSA back to CIL
-        let (assembly, _methods_regenerated) = self.generate_code(assembly, &ctx)?;
+        let (assembly, _methods_regenerated) = Self::generate_code(assembly, &ctx)?;
 
         // Unified cleanup: combine obfuscator cleanup request with dead methods
         // All cleanup happens in one pass to avoid RID staleness issues.
@@ -524,7 +524,7 @@ impl DeobfuscationEngine {
 
         // Merge events
         let events = byte_events;
-        events.merge(ctx.events.take());
+        events.merge(&ctx.events.take());
         let result =
             DeobfuscationResult::new(detection, events).with_timing(start.elapsed(), iterations);
 
@@ -644,11 +644,7 @@ impl DeobfuscationEngine {
     /// # Errors
     ///
     /// Returns an error if code generation or assembly writing fails.
-    fn generate_code(
-        &self,
-        assembly: CilObject,
-        ctx: &AnalysisContext,
-    ) -> Result<(CilObject, usize)> {
+    fn generate_code(assembly: CilObject, ctx: &AnalysisContext) -> Result<(CilObject, usize)> {
         // Skip if no methods were processed
         if ctx.processed_methods.is_empty() {
             return Ok((assembly, 0));
@@ -675,8 +671,7 @@ impl DeobfuscationEngine {
             // Generate CIL bytecode from SSA and build method body
             let result = codegen.compile(&ssa, &mut cil_assembly).map_err(|e| {
                 Error::Deobfuscation(format!(
-                    "Code generation failed for method {}: {}",
-                    method_token, e
+                    "Code generation failed for method {method_token}: {e}"
                 ))
             })?;
 
@@ -693,6 +688,8 @@ impl DeobfuscationEngine {
 
             // Update the MethodDef row's RVA
             let rid = method_token.row();
+            // closure needed — method reference with turbofish breaks type inference
+            #[allow(clippy::redundant_closure_for_method_calls)]
             let existing_row = cil_assembly
                 .view()
                 .tables()
@@ -794,7 +791,7 @@ impl DeobfuscationEngine {
             let type_is_public = cil_type.is_public();
 
             // Check each method in this type using the query API
-            for method in cil_type.query_methods().iter() {
+            for method in &cil_type.query_methods() {
                 let method_token = method.token;
 
                 // Static constructors are always entry points (runtime calls them)
@@ -854,10 +851,9 @@ impl DeobfuscationEngine {
         // Build SSA in parallel
         method_tokens.par_iter().for_each(|&method_token| {
             // Get method from assembly (safe since methods is thread-safe)
-            let Some(entry) = assembly.methods().get(&method_token) else {
+            let Some(method) = assembly.method(&method_token) else {
                 return;
             };
-            let method = entry.value();
 
             if let Some(ssa) = method.ssa(assembly) {
                 ctx.set_ssa(method_token, ssa);
@@ -1014,7 +1010,7 @@ impl DeobfuscationEngine {
     /// Propagates constants from call sites to callee parameters.
     fn propagate_call_site_constants(ctx: &AnalysisContext) {
         // Iterate directly over the DashMap entries
-        for entry in ctx.call_sites.iter() {
+        for entry in &ctx.call_sites {
             let callee_token = *entry.key();
             let call_site_count = entry.value().count();
 

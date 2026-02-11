@@ -79,7 +79,7 @@ pub fn execute_cleanup(
     }
 
     // Phase 1: Expand type deletions to include all members
-    let (type_methods, type_fields) = expand_type_members(assembly, request)?;
+    let (type_methods, type_fields) = expand_type_members(assembly, request);
 
     // Combine explicit deletions with expanded members (using BTreeSet for sorted order)
     let mut all_methods: BTreeSet<Token> = request.methods().copied().collect();
@@ -150,13 +150,13 @@ pub fn execute_cleanup(
     // Phase 3: Remove orphaned metadata (if enabled)
     if request.remove_orphans() {
         let ctx = OrphanContext::new(&removed_types, &removed_methods, &removed_fields);
-        let orphan_stats = remove_all_orphans(assembly, &ctx)?;
+        let orphan_stats = remove_all_orphans(assembly, &ctx);
         stats.merge(&orphan_stats);
     }
 
     // Phase 4: Remove empty types (if enabled)
     if request.remove_empty_types() {
-        let empty_removed = remove_empty_types(assembly)?;
+        let empty_removed = remove_empty_types(assembly);
         stats.types_removed += empty_removed;
     }
 
@@ -164,9 +164,9 @@ pub fn execute_cleanup(
     // Currently only compacts #Blob and #GUID heaps. #Strings heap compaction
     // is disabled due to the substring reference problem - see compaction.rs docs.
     let compaction_stats = mark_unreferenced_heap_entries(assembly)?;
-    stats.blobs_compacted = compaction_stats.blobs_removed;
-    stats.guids_compacted = compaction_stats.guids_removed;
-    stats.strings_compacted = compaction_stats.strings_removed;
+    stats.blobs_compacted = compaction_stats.blobs;
+    stats.guids_compacted = compaction_stats.guids;
+    stats.strings_compacted = compaction_stats.strings;
 
     // Track excluded sections count
     stats.sections_excluded = request.excluded_sections().len();
@@ -190,17 +190,17 @@ pub fn execute_cleanup(
 fn expand_type_members(
     assembly: &CilAssembly,
     request: &CleanupRequest,
-) -> Result<(HashSet<Token>, HashSet<Token>)> {
+) -> (HashSet<Token>, HashSet<Token>) {
     let mut methods = HashSet::new();
     let mut fields = HashSet::new();
 
     let view = assembly.view();
     let Some(tables) = view.tables() else {
-        return Ok((methods, fields));
+        return (methods, fields);
     };
 
     let Some(typedef_table) = tables.table::<TypeDefRaw>() else {
-        return Ok((methods, fields));
+        return (methods, fields);
     };
 
     let methoddef_table = tables.table::<MethodDefRaw>();
@@ -248,7 +248,7 @@ fn expand_type_members(
         }
     }
 
-    Ok((methods, fields))
+    (methods, fields)
 }
 
 /// Removes types that have no remaining methods or fields.
@@ -263,16 +263,16 @@ fn expand_type_members(
 /// # Returns
 ///
 /// The number of empty types removed.
-fn remove_empty_types(assembly: &mut CilAssembly) -> Result<usize> {
+fn remove_empty_types(assembly: &mut CilAssembly) -> usize {
     // Collect empty type RIDs
     let empty_types: Vec<u32> = {
         let view = assembly.view();
         let Some(tables) = view.tables() else {
-            return Ok(0);
+            return 0;
         };
 
         let Some(typedef_table) = tables.table::<TypeDefRaw>() else {
-            return Ok(0);
+            return 0;
         };
 
         let methoddef_count = tables.table::<MethodDefRaw>().map_or(0, |t| t.row_count);
@@ -331,7 +331,7 @@ fn remove_empty_types(assembly: &mut CilAssembly) -> Result<usize> {
         }
     }
 
-    Ok(removed)
+    removed
 }
 
 #[cfg(test)]

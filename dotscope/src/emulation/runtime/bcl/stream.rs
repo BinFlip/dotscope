@@ -337,6 +337,8 @@ fn stream_read_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHo
     };
 
     // Parse arguments: buffer, offset, count
+    // Safe: values validated as non-negative
+    #[allow(clippy::cast_sign_loss)]
     let (buffer_ref, offset, count) = match (ctx.args.first(), ctx.args.get(1), ctx.args.get(2)) {
         (Some(EmValue::ObjectRef(b)), Some(EmValue::I32(o)), Some(EmValue::I32(c))) => {
             (*b, *o as usize, *c as usize)
@@ -430,6 +432,8 @@ fn stream_write_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreH
     };
 
     // Parse arguments: buffer, offset, count
+    // Safe: values validated as non-negative
+    #[allow(clippy::cast_sign_loss)]
     let (buffer_ref, offset, count) = match (ctx.args.first(), ctx.args.get(1), ctx.args.get(2)) {
         (Some(EmValue::ObjectRef(b)), Some(EmValue::I32(o)), Some(EmValue::I32(c))) => {
             (*b, *o as usize, *c as usize)
@@ -566,6 +570,8 @@ fn stream_set_position_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
     };
 
     // Get the new position
+    // Safe: values validated as non-negative
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let new_pos = match ctx.args.first() {
         Some(EmValue::I64(v)) => *v as usize,
         Some(EmValue::I32(v)) => *v as usize,
@@ -620,18 +626,22 @@ fn stream_seek_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHo
     // SeekOrigin: 0=Begin, 1=Current, 2=End
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     let new_pos = match origin {
-        0 => offset.max(0) as usize, // Begin
         1 => {
             // Current
+            // Safe: stream positions fit in i64
+            #[allow(clippy::cast_possible_wrap)]
             let pos = current_pos as i64 + offset;
             pos.max(0) as usize
         }
         2 => {
             // End
+            // Safe: stream positions fit in i64
+            #[allow(clippy::cast_possible_wrap)]
             let pos = length as i64 + offset;
             pos.max(0) as usize
         }
-        _ => offset.max(0) as usize, // Default to Begin
+        // Begin (0) and default
+        _ => offset.max(0) as usize,
     };
 
     // Clamp to valid range
@@ -779,6 +789,8 @@ fn binary_reader_read_bytes_pre(
     ctx: &HookContext<'_>,
     thread: &mut EmulationThread,
 ) -> PreHookResult {
+    // Safe: value validated as non-negative
+    #[allow(clippy::cast_sign_loss)]
     let count = match ctx.args.first() {
         Some(EmValue::I32(v)) => *v as usize,
         _ => 0,

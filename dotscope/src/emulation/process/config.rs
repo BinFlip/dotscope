@@ -776,6 +776,7 @@ impl EmulationConfig {
     /// # Ok(())
     /// # }
     /// ```
+    #[must_use]
     pub fn extraction() -> Self {
         Self {
             limits: EmulationLimits {
@@ -815,6 +816,7 @@ impl EmulationConfig {
     /// let config = EmulationConfig::analysis();
     /// // Use for constant propagation, dead code detection, etc.
     /// ```
+    #[must_use]
     pub fn analysis() -> Self {
         Self {
             limits: EmulationLimits {
@@ -851,6 +853,7 @@ impl EmulationConfig {
     ///
     /// This mode will fail if any called method lacks a stub. Only use when
     /// you have comprehensive stub coverage.
+    #[must_use]
     pub fn full() -> Self {
         Self {
             limits: EmulationLimits {
@@ -896,6 +899,7 @@ impl EmulationConfig {
     /// let config = EmulationConfig::minimal();
     /// // Use for simple constant evaluation
     /// ```
+    #[must_use]
     pub fn minimal() -> Self {
         Self {
             limits: EmulationLimits {
@@ -937,6 +941,7 @@ impl EmulationLimits {
     ///     .with_max_instructions(5_000_000)
     ///     .with_timeout_ms(30_000);
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -950,6 +955,7 @@ impl EmulationLimits {
     /// # Returns
     ///
     /// Returns `self` for method chaining.
+    #[must_use]
     pub fn with_max_instructions(mut self, max: u64) -> Self {
         self.max_instructions = max;
         self
@@ -964,6 +970,7 @@ impl EmulationLimits {
     /// # Returns
     ///
     /// Returns `self` for method chaining.
+    #[must_use]
     pub fn with_max_call_depth(mut self, max: usize) -> Self {
         self.max_call_depth = max;
         self
@@ -978,6 +985,7 @@ impl EmulationLimits {
     /// # Returns
     ///
     /// Returns `self` for method chaining.
+    #[must_use]
     pub fn with_max_heap_objects(mut self, max: usize) -> Self {
         self.max_heap_objects = max;
         self
@@ -992,6 +1000,7 @@ impl EmulationLimits {
     /// # Returns
     ///
     /// Returns `self` for method chaining.
+    #[must_use]
     pub fn with_max_heap_bytes(mut self, max: usize) -> Self {
         self.max_heap_bytes = max;
         self
@@ -1006,6 +1015,7 @@ impl EmulationLimits {
     /// # Returns
     ///
     /// Returns `self` for method chaining.
+    #[must_use]
     pub fn with_timeout_ms(mut self, ms: u64) -> Self {
         self.timeout_ms = ms;
         self

@@ -187,8 +187,7 @@ fn check_invalid_metadata(
     if marker_count > 0 {
         score.add(DetectionEvidence::StructuralPattern {
             description: format!(
-                "ConfuserEx marker (0x7fff7fff) found {} times in metadata",
-                marker_count
+                "ConfuserEx marker (0x7fff7fff) found {marker_count} times in metadata"
             ),
             confidence: (marker_count * 15).min(40),
         });
@@ -197,7 +196,7 @@ fn check_invalid_metadata(
     // Add evidence for generic out-of-bounds (lower confidence, could be other obfuscators)
     if oob_count > 0 {
         score.add(DetectionEvidence::StructuralPattern {
-            description: format!("Out-of-bounds metadata indices ({} entries)", oob_count),
+            description: format!("Out-of-bounds metadata indices ({oob_count} entries)"),
             confidence: (oob_count * 5).min(20),
         });
     }
@@ -270,7 +269,7 @@ fn check_suppress_ildasm(
                 findings.suppress_ildasm_token = Some(attr.token);
 
                 score.add(DetectionEvidence::Attribute {
-                    name: format!("{}.{}", namespace, name),
+                    name: format!("{namespace}.{name}"),
                     confidence: 25, // Common protection, not ConfuserEx-specific
                 });
                 return;
@@ -461,6 +460,8 @@ fn clean_module_table(asm: &mut CilAssembly) -> Result<usize> {
 
     let mut removed = 0;
     for rid in 1..=row_count {
+        // Note: closure needed here — method reference with turbofish breaks downstream type inference
+        #[allow(clippy::redundant_closure_for_method_calls)]
         let is_invalid = asm
             .view()
             .tables()
@@ -486,6 +487,8 @@ fn clean_assembly_table(asm: &mut CilAssembly) -> Result<usize> {
 
     let mut removed = 0;
     for rid in 1..=row_count {
+        // Note: closure needed here — method reference with turbofish breaks downstream type inference
+        #[allow(clippy::redundant_closure_for_method_calls)]
         let is_invalid = asm
             .view()
             .tables()
@@ -510,6 +513,8 @@ fn clean_declsecurity_table(asm: &mut CilAssembly) -> Result<usize> {
 
     let mut removed = 0;
     for rid in 1..=row_count {
+        // Note: closure needed here — method reference with turbofish breaks downstream type inference
+        #[allow(clippy::redundant_closure_for_method_calls)]
         let is_invalid = asm
             .view()
             .tables()
@@ -609,7 +614,7 @@ pub fn remove_confuser_attributes(
 /// # Errors
 ///
 /// Returns an error if the assembly cannot be modified or reloaded.
-pub fn remove_suppress_ildasm(assembly: CilObject, token: Token) -> Result<CilObject> {
+pub fn remove_suppress_ildasm(assembly: &CilObject, token: Token) -> Result<CilObject> {
     // Verify the token is a CustomAttribute (table ID 0x0C)
     if !token.is_table(TableId::CustomAttribute) {
         return Err(Error::InvalidToken {
@@ -1124,7 +1129,7 @@ mod tests {
         );
 
         // Remove the attribute
-        let fixed = remove_suppress_ildasm(assembly, token)?;
+        let fixed = remove_suppress_ildasm(&assembly, token)?;
 
         // Capture AFTER state
         let final_count = fixed
@@ -1169,7 +1174,7 @@ mod tests {
 
         // Create a token that's not a CustomAttribute (e.g., MethodDef table 0x06)
         let invalid_token = Token::new(0x06000001);
-        let result = remove_suppress_ildasm(assembly, invalid_token);
+        let result = remove_suppress_ildasm(&assembly, invalid_token);
 
         assert!(
             result.is_err(),
@@ -1205,7 +1210,7 @@ mod tests {
 
         // Create a CustomAttribute token with an absurdly high row number
         let nonexistent_token = Token::new(0x0c00ffff); // CustomAttribute table, row 65535
-        let result = remove_suppress_ildasm(assembly, nonexistent_token);
+        let result = remove_suppress_ildasm(&assembly, nonexistent_token);
 
         assert!(result.is_err(), "Should fail with nonexistent row");
     }

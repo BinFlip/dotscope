@@ -111,25 +111,23 @@ impl OpKind {
     /// - Sub: `(x - c1) - c2` → `x - (c1 + c2)` (combine with add)
     /// - Shl/Shr: `(x << c1) << c2` → `x << (c1 + c2)` (combine with add)
     fn combine(
-        &self,
+        self,
         c1: &ConstValue,
         c2: &ConstValue,
         ptr_size: PointerSize,
     ) -> Option<ConstValue> {
         match self {
             // Associative: combine with same operation
-            OpKind::Add => c1.add(c2, ptr_size),
+            OpKind::Add | OpKind::Sub | OpKind::Shl | OpKind::Shr { .. } => c1.add(c2, ptr_size),
             OpKind::Mul => c1.mul(c2, ptr_size),
             OpKind::And => c1.bitwise_and(c2, ptr_size),
             OpKind::Or => c1.bitwise_or(c2, ptr_size),
             OpKind::Xor => c1.bitwise_xor(c2, ptr_size),
-            // Non-associative: combine with addition
-            OpKind::Sub | OpKind::Shl | OpKind::Shr { .. } => c1.add(c2, ptr_size),
         }
     }
 
     /// Returns a description of the operation.
-    fn name(&self) -> &'static str {
+    fn name(self) -> &'static str {
         match self {
             OpKind::Add => "add",
             OpKind::Sub => "sub",
@@ -144,7 +142,7 @@ impl OpKind {
     }
 
     /// Returns the name of the combining operation for logging.
-    fn combine_name(&self) -> &'static str {
+    fn combine_name(self) -> &'static str {
         match self {
             // Associative: combine with same operation
             OpKind::Add | OpKind::Mul | OpKind::And | OpKind::Or | OpKind::Xor => self.name(),
@@ -156,7 +154,7 @@ impl OpKind {
     /// Returns true if this operation is commutative.
     ///
     /// For non-commutative operations, the constant must be on the right side.
-    const fn is_commutative(&self) -> bool {
+    const fn is_commutative(self) -> bool {
         match self {
             OpKind::Add | OpKind::Mul | OpKind::And | OpKind::Or | OpKind::Xor => true,
             OpKind::Sub | OpKind::Shl | OpKind::Shr { .. } => false,
@@ -424,7 +422,7 @@ impl SsaPass for ReassociationPass {
 
         let changed = !changes.is_empty();
         if changed {
-            ctx.events.merge(changes);
+            ctx.events.merge(&changes);
         }
         Ok(changed)
     }

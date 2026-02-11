@@ -303,6 +303,8 @@ impl<'a> InliningContext<'a> {
     /// - `Some(None)` - Void no-op: call can be replaced with Nop.
     /// - `Some(Some(ConstValue))` - Constant return: call can be replaced with constant.
     /// - `None` - Not a no-op method.
+    // Intentional: None=not noop, Some(None)=void noop, Some(Some(v))=constant noop
+    #[allow(clippy::option_option)]
     fn detect_noop_method(&self, callee_token: Token) -> Option<Option<ConstValue>> {
         if !self.is_valid_target(callee_token) {
             return None;
@@ -481,7 +483,7 @@ impl<'a> InliningContext<'a> {
                 // Get the callee SSA
                 let Some(callee_ssa) = self
                     .analysis_ctx
-                    .with_ssa(candidate.callee_token, |ssa| ssa.clone())
+                    .with_ssa(candidate.callee_token, Clone::clone)
                 else {
                     return false;
                 };
@@ -502,7 +504,7 @@ impl<'a> InliningContext<'a> {
                 candidate.block_idx,
                 candidate.instr_idx,
                 &call_op,
-                target_method,
+                *target_method,
                 arg_mapping,
                 *is_virtual,
                 candidate.callee_token,
@@ -576,7 +578,7 @@ impl<'a> InliningContext<'a> {
                         self.changes
                             .record(EventKind::MethodInlined)
                             .at(self.caller_token, call_instr_idx)
-                            .message(format!("inlined constant {:?}", callee_token));
+                            .message(format!("inlined constant {callee_token:?}"));
                         return true;
                     }
                 } else {
@@ -587,7 +589,7 @@ impl<'a> InliningContext<'a> {
                         self.changes
                             .record(EventKind::MethodInlined)
                             .at(self.caller_token, call_instr_idx)
-                            .message(format!("eliminated pure call {:?}", callee_token));
+                            .message(format!("eliminated pure call {callee_token:?}"));
                         return true;
                     }
                 }
@@ -604,7 +606,7 @@ impl<'a> InliningContext<'a> {
                             self.changes
                                 .record(EventKind::MethodInlined)
                                 .at(self.caller_token, call_instr_idx)
-                                .message(format!("inlined passthrough {:?}", callee_token));
+                                .message(format!("inlined passthrough {callee_token:?}"));
                             return true;
                         }
                     }
@@ -617,7 +619,7 @@ impl<'a> InliningContext<'a> {
                     self.changes
                         .record(EventKind::MethodInlined)
                         .at(self.caller_token, call_instr_idx)
-                        .message(format!("eliminated void call {:?}", callee_token));
+                        .message(format!("eliminated void call {callee_token:?}"));
                     return true;
                 }
             }
@@ -682,6 +684,8 @@ impl<'a> InliningContext<'a> {
 
         // Map callee parameters to call arguments
         for (param_idx, &arg_var) in args.iter().enumerate() {
+            // Safe: .NET methods have at most 65535 parameters
+            #[allow(clippy::cast_possible_truncation)]
             if let Some(param_var) = callee_ssa
                 .variables_from_argument(param_idx as u16)
                 .find(|v| v.version() == 0)
@@ -744,7 +748,7 @@ impl<'a> InliningContext<'a> {
         self.changes
             .record(EventKind::MethodInlined)
             .at(self.caller_token, call_instr_idx)
-            .message(format!("fully inlined {:?}", callee_token));
+            .message(format!("fully inlined {callee_token:?}"));
         true
     }
 
@@ -772,7 +776,7 @@ impl<'a> InliningContext<'a> {
         call_block_idx: usize,
         call_instr_idx: usize,
         call_op: &SsaOp,
-        target_method: &MethodRef,
+        target_method: MethodRef,
         arg_mapping: &[usize],
         is_virtual: bool,
         proxy_token: Token,
@@ -798,13 +802,13 @@ impl<'a> InliningContext<'a> {
         let new_op = if is_virtual {
             SsaOp::CallVirt {
                 dest,
-                method: *target_method,
+                method: target_method,
                 args: remapped_args,
             }
         } else {
             SsaOp::Call {
                 dest,
-                method: *target_method,
+                method: target_method,
                 args: remapped_args,
             }
         };
@@ -999,6 +1003,8 @@ impl<'a> InliningContext<'a> {
             return remapped;
         }
 
+        // Safe: SSA variable count fits in u32
+        #[allow(clippy::cast_possible_truncation)]
         let new_id = if let Some(callee_var) = callee_ssa.variable(var) {
             let new_var = SsaVariable::new_typed(
                 VariableOrigin::Stack(caller_ssa.variable_count() as u32),
@@ -1210,7 +1216,7 @@ impl SsaPass for InliningPass {
         // Merge changes back to the analysis context
         let changed = inline_ctx.has_changes();
         if changed {
-            ctx.events.merge(inline_ctx.into_changes());
+            ctx.events.merge(&inline_ctx.into_changes());
         }
         Ok(changed)
     }
@@ -1613,7 +1619,7 @@ mod tests {
             0,
             0,
             &call_op,
-            &target_method,
+            target_method,
             &arg_mapping,
             is_virtual,
             proxy_token,

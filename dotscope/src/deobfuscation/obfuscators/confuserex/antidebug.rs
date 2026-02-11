@@ -297,7 +297,7 @@ fn find_antidebug_pinvokes(assembly: &CilObject) -> Vec<Token> {
 fn find_antidebug_methods(assembly: &CilObject) -> Vec<AntiDebugMethodInfo> {
     let mut found = Vec::new();
 
-    for method in assembly.query_methods().has_body().iter() {
+    for method in &assembly.query_methods().has_body() {
         let Some(cfg) = method.cfg() else {
             continue;
         };
@@ -319,7 +319,7 @@ fn find_antidebug_methods(assembly: &CilObject) -> Vec<AntiDebugMethodInfo> {
             for instr in &block.instructions {
                 if instr.opcode == OPCODE_CALL || instr.opcode == OPCODE_CALLVIRT {
                     if let Operand::Token(token) = &instr.operand {
-                        if let Some(name) = resolve_method_name(assembly, *token) {
+                        if let Some(name) = assembly.resolve_method_name(*token) {
                             match name.as_str() {
                                 "get_IsAttached" => calls_is_attached = true,
                                 "IsLogging" => calls_is_logging = true,
@@ -332,9 +332,9 @@ fn find_antidebug_methods(assembly: &CilObject) -> Vec<AntiDebugMethodInfo> {
                                     // Check if it's Thread constructor
                                     if token.is_table(TableId::MemberRef) {
                                         // MemberRef
-                                        if let Some(member) = assembly.refs_members().get(token) {
+                                        if let Some(member) = assembly.member_ref(token) {
                                             if let CilTypeReference::TypeRef(type_ref) =
-                                                &member.value().declaredby
+                                                &member.declaredby
                                             {
                                                 if let Some(name) = type_ref.name() {
                                                     if name.contains("Thread") {
@@ -387,15 +387,6 @@ fn find_antidebug_methods(assembly: &CilObject) -> Vec<AntiDebugMethodInfo> {
     found
 }
 
-/// Resolves a call target token to a method name.
-fn resolve_method_name(assembly: &CilObject, token: Token) -> Option<String> {
-    match token.table() {
-        0x06 => Some(assembly.methods().get(&token)?.value().name.clone()),
-        0x0A => Some(assembly.refs_members().get(&token)?.value().name.clone()),
-        _ => None,
-    }
-}
-
 /// Determines the most likely anti-debug mode.
 fn determine_mode(result: &AntiDebugDetectionResult) -> Option<AntiDebugMode> {
     if result.methods.is_empty() {
@@ -444,9 +435,7 @@ fn get_type_name_from_token(assembly: &CilObject, token: Token) -> Option<String
     }
 
     // Try MemberRef lookup (for method/field references)
-    if let Some(member_ref_entry) = assembly.refs_members().get(&token) {
-        let member_ref = member_ref_entry.value();
-
+    if let Some(member_ref) = assembly.member_ref(&token) {
         // Extract the declaring type from the MemberRef
         if let Some(type_name) = member_ref.declaredby.fullname() {
             return Some(format!("{}::{}", type_name, member_ref.name));
@@ -512,35 +501,34 @@ impl ConfuserExAntiDebugPass {
     }
 
     /// Checks if a method call is a debugger check.
-    fn is_debugger_check(&self, method_name: &str) -> bool {
+    fn is_debugger_check(method_name: &str) -> bool {
         method_name.contains("Debugger")
             && (method_name.contains("IsAttached") || method_name.contains("IsLogging"))
     }
 
     /// Checks if a method call is Environment.FailFast.
-    fn is_fail_fast(&self, method_name: &str) -> bool {
+    fn is_fail_fast(method_name: &str) -> bool {
         method_name.contains("Environment") && method_name.contains("FailFast")
     }
 
     /// Checks if a method call is Environment.GetEnvironmentVariable.
-    fn is_env_var_check(&self, method_name: &str) -> bool {
+    fn is_env_var_check(method_name: &str) -> bool {
         method_name.contains("Environment") && method_name.contains("GetEnvironmentVariable")
     }
 
     /// Checks if a method call is Type.GetMethod (reflection pattern used in anti-debug).
-    fn is_reflection_get_method(&self, method_name: &str) -> bool {
+    fn is_reflection_get_method(method_name: &str) -> bool {
         method_name.contains("Type") && method_name.contains("GetMethod")
     }
 
     /// Checks if a method call is MethodBase.Invoke (reflection pattern used in anti-debug).
-    fn is_reflection_invoke(&self, method_name: &str) -> bool {
+    fn is_reflection_invoke(method_name: &str) -> bool {
         (method_name.contains("MethodBase") || method_name.contains("MethodInfo"))
             && method_name.contains("Invoke")
     }
 
     /// Neutralizes anti-debug operations in a single SSA function.
     fn neutralize_antidebug(
-        &self,
         ssa: &mut SsaFunction,
         method_token: Token,
         assembly: &CilObject,
@@ -553,12 +541,12 @@ impl ConfuserExAntiDebugPass {
                     SsaOp::Call { dest, method, .. } | SsaOp::CallVirt { dest, method, .. } => {
                         // Resolve method token to full name for pattern matching
                         let method_name = get_type_name_from_token(assembly, method.token())
-                            .unwrap_or_else(|| format!("{}", method));
+                            .unwrap_or_else(|| format!("{method}"));
                         let dest = *dest;
                         let method_ref = *method;
 
                         // Replace debugger checks with constant false
-                        if self.is_debugger_check(&method_name) {
+                        if Self::is_debugger_check(&method_name) {
                             if let Some(dest_var) = dest {
                                 // Replace with: dest = const false
                                 instr.set_op(SsaOp::Const {
@@ -569,13 +557,12 @@ impl ConfuserExAntiDebugPass {
                                     .record(EventKind::InstructionRemoved)
                                     .method(method_token)
                                     .message(format!(
-                                        "Neutralized debugger check: {} -> false",
-                                        method_ref
+                                        "Neutralized debugger check: {method_ref} -> false"
                                     ));
                             }
                         }
                         // Replace FailFast with no-op (load null)
-                        else if self.is_fail_fast(&method_name) {
+                        else if Self::is_fail_fast(&method_name) {
                             // For FailFast, we need to replace it with something harmless.
                             // Use a dummy variable if no dest, otherwise use the existing dest.
                             let dummy_dest = dest.unwrap_or_else(SsaVarId::new);
@@ -586,11 +573,11 @@ impl ConfuserExAntiDebugPass {
                             changeset
                                 .record(EventKind::InstructionRemoved)
                                 .method(method_token)
-                                .message(format!("Neutralized FailFast call: {}", method_ref));
+                                .message(format!("Neutralized FailFast call: {method_ref}"));
                         }
                         // Replace Environment.GetEnvironmentVariable with null
                         // This neutralizes COR_ENABLE_PROFILING checks
-                        else if self.is_env_var_check(&method_name) {
+                        else if Self::is_env_var_check(&method_name) {
                             if let Some(dest_var) = dest {
                                 instr.set_op(SsaOp::Const {
                                     dest: dest_var,
@@ -600,13 +587,12 @@ impl ConfuserExAntiDebugPass {
                                     .record(EventKind::InstructionRemoved)
                                     .method(method_token)
                                     .message(format!(
-                                        "Neutralized environment variable check: {} -> null",
-                                        method_ref
+                                        "Neutralized environment variable check: {method_ref} -> null"
                                     ));
                             }
                         }
                         // Replace reflection GetMethod with null to break reflection-based checks
-                        else if self.is_reflection_get_method(&method_name) {
+                        else if Self::is_reflection_get_method(&method_name) {
                             if let Some(dest_var) = dest {
                                 instr.set_op(SsaOp::Const {
                                     dest: dest_var,
@@ -616,13 +602,12 @@ impl ConfuserExAntiDebugPass {
                                     .record(EventKind::InstructionRemoved)
                                     .method(method_token)
                                     .message(format!(
-                                        "Neutralized reflection GetMethod: {} -> null",
-                                        method_ref
+                                        "Neutralized reflection GetMethod: {method_ref} -> null"
                                     ));
                             }
                         }
                         // Replace reflection Invoke with null to break reflection-based execution
-                        else if self.is_reflection_invoke(&method_name) {
+                        else if Self::is_reflection_invoke(&method_name) {
                             let dummy_dest = dest.unwrap_or_else(SsaVarId::new);
                             instr.set_op(SsaOp::Const {
                                 dest: dummy_dest,
@@ -631,7 +616,7 @@ impl ConfuserExAntiDebugPass {
                             changeset
                                 .record(EventKind::InstructionRemoved)
                                 .method(method_token)
-                                .message(format!("Neutralized reflection Invoke: {}", method_ref));
+                                .message(format!("Neutralized reflection Invoke: {method_ref}"));
                         }
                     }
                     _ => {}
@@ -687,11 +672,11 @@ impl SsaPass for ConfuserExAntiDebugPass {
         }
 
         let mut changes = EventLog::new();
-        self.neutralize_antidebug(ssa, method_token, assembly, &mut changes);
+        Self::neutralize_antidebug(ssa, method_token, assembly, &mut changes);
 
         let changed = !changes.is_empty();
         if changed {
-            ctx.events.merge(changes);
+            ctx.events.merge(&changes);
         }
         Ok(changed)
     }
@@ -710,19 +695,25 @@ mod tests {
 
     #[test]
     fn test_is_debugger_check() {
-        let pass = ConfuserExAntiDebugPass::new();
-
-        assert!(pass.is_debugger_check("System.Diagnostics.Debugger::get_IsAttached"));
-        assert!(pass.is_debugger_check("System.Diagnostics.Debugger::IsLogging"));
-        assert!(!pass.is_debugger_check("System.Console::WriteLine"));
+        assert!(ConfuserExAntiDebugPass::is_debugger_check(
+            "System.Diagnostics.Debugger::get_IsAttached"
+        ));
+        assert!(ConfuserExAntiDebugPass::is_debugger_check(
+            "System.Diagnostics.Debugger::IsLogging"
+        ));
+        assert!(!ConfuserExAntiDebugPass::is_debugger_check(
+            "System.Console::WriteLine"
+        ));
     }
 
     #[test]
     fn test_is_fail_fast() {
-        let pass = ConfuserExAntiDebugPass::new();
-
-        assert!(pass.is_fail_fast("System.Environment::FailFast"));
-        assert!(!pass.is_fail_fast("System.Environment::Exit"));
+        assert!(ConfuserExAntiDebugPass::is_fail_fast(
+            "System.Environment::FailFast"
+        ));
+        assert!(!ConfuserExAntiDebugPass::is_fail_fast(
+            "System.Environment::Exit"
+        ));
     }
 
     #[test]

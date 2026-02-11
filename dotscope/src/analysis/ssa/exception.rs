@@ -77,8 +77,7 @@ impl SsaExceptionHandler {
             handler
                 .handler
                 .as_ref()
-                .map(|t| t.token.value())
-                .unwrap_or(handler.filter_offset)
+                .map_or(handler.filter_offset, |t| t.token.value())
         } else {
             handler.filter_offset
         };

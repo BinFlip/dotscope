@@ -608,7 +608,7 @@ impl EmulationError {
     /// Returns a description suitable for tracing/logging.
     #[must_use]
     pub fn description(&self) -> String {
-        format!("{}", self)
+        format!("{self}")
     }
 }
 

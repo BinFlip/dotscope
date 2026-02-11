@@ -88,6 +88,7 @@ impl ExceptionInfo {
     /// # Returns
     ///
     /// A new `ExceptionInfo` with the stack trace initialized to the throw location.
+    #[must_use]
     pub fn new(
         exception_ref: HeapRef,
         type_token: Token,
@@ -263,6 +264,7 @@ impl ThreadExceptionState {
     /// # Returns
     ///
     /// A new `ThreadExceptionState` in the initial (no exception) state.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -272,6 +274,7 @@ impl ThreadExceptionState {
     /// # Returns
     ///
     /// `true` if an exception is currently active.
+    #[must_use]
     pub fn has_exception(&self) -> bool {
         self.current_exception.is_some()
     }
@@ -281,6 +284,7 @@ impl ThreadExceptionState {
     /// # Returns
     ///
     /// A reference to the [`ExceptionInfo`] if an exception is active, or `None`.
+    #[must_use]
     pub fn exception(&self) -> Option<&ExceptionInfo> {
         self.current_exception.as_ref()
     }
@@ -358,6 +362,7 @@ impl ThreadExceptionState {
     /// # Returns
     ///
     /// `true` if currently handling an exception (from throw until catch or propagation).
+    #[must_use]
     pub fn is_handling(&self) -> bool {
         self.handling_exception
     }
@@ -395,6 +400,7 @@ impl ThreadExceptionState {
     /// # Returns
     ///
     /// `true` if there are finally blocks waiting to be executed.
+    #[must_use]
     pub fn has_pending_finally(&self) -> bool {
         !self.pending_finally.is_empty()
     }
@@ -404,6 +410,7 @@ impl ThreadExceptionState {
     /// # Returns
     ///
     /// The count of finally blocks in the queue.
+    #[must_use]
     pub fn pending_finally_count(&self) -> usize {
         self.pending_finally.len()
     }
@@ -474,6 +481,7 @@ impl ThreadExceptionState {
     /// # Returns
     ///
     /// The target IL offset for a pending `leave` instruction, or `None`.
+    #[must_use]
     pub fn leave_target(&self) -> Option<u32> {
         self.leave_target
     }
@@ -504,6 +512,7 @@ impl ThreadExceptionState {
     /// # Returns
     ///
     /// `true` if currently evaluating a filter clause.
+    #[must_use]
     pub fn in_filter(&self) -> bool {
         self.in_filter
     }
@@ -558,6 +567,7 @@ impl ThreadExceptionState {
     /// - `Some(true)` - Filter accepted, enter the handler
     /// - `Some(false)` - Filter rejected, continue searching
     /// - `None` - Filter not yet evaluated
+    #[must_use]
     pub fn filter_result(&self) -> Option<bool> {
         self.filter_result
     }
@@ -582,6 +592,7 @@ impl ThreadExceptionState {
     /// # Returns
     ///
     /// The origin offset if set, or `None`.
+    #[must_use]
     pub fn exception_origin_offset(&self) -> Option<u32> {
         self.exception_origin_offset
     }
@@ -594,6 +605,7 @@ impl ThreadExceptionState {
     /// # Returns
     ///
     /// The handler offset if set, or `None`.
+    #[must_use]
     pub fn current_handler_offset(&self) -> Option<u32> {
         self.current_handler_offset
     }

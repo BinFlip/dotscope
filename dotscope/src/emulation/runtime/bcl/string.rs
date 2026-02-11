@@ -851,9 +851,8 @@ fn string_join_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHo
         _ => return PreHookResult::Bypass(Some(EmValue::Null)),
     };
 
-    let obj = match thread.heap().get(array_ref) {
-        Ok(o) => o,
-        Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
+    let Ok(obj) = thread.heap().get(array_ref) else {
+        return PreHookResult::Bypass(Some(EmValue::Null));
     };
 
     let parts: Vec<String> = match obj {
@@ -914,8 +913,7 @@ fn string_format_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pre
             EmValue::ObjectRef(href) => thread
                 .heap()
                 .get_string(*href)
-                .map(|s| s.to_string())
-                .unwrap_or_else(|_| "[object]".to_string()),
+                .map_or_else(|_| "[object]".to_string(), |s| s.to_string()),
             EmValue::Null => String::new(),
             EmValue::I32(v) => v.to_string(),
             EmValue::I64(v) => v.to_string(),

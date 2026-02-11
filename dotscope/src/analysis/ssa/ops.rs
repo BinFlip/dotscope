@@ -1282,7 +1282,8 @@ impl SsaOp {
             | Self::IsInst { object, .. }
             | Self::Box { value: object, .. }
             | Self::Unbox { object, .. }
-            | Self::UnboxAny { object, .. } => {
+            | Self::UnboxAny { object, .. }
+            | Self::LoadVirtFunctionPtr { object, .. } => {
                 replace(object);
             }
             Self::StoreField { object, value, .. } => {
@@ -1386,11 +1387,6 @@ impl SsaOp {
                 replace(dest_addr);
                 replace(value);
                 replace(size);
-            }
-
-            // LoadVirtFunctionPtr has a use (the object instance)
-            Self::LoadVirtFunctionPtr { object, .. } => {
-                replace(object);
             }
 
             // Operations without variable uses
@@ -1628,8 +1624,8 @@ impl SsaOp {
             Self::NewObj { ctor, .. } => Some(ctor.token()),
             Self::LoadField { field, .. }
             | Self::StoreField { field, .. }
-            | Self::LoadFieldAddr { field, .. } => Some(field.token()),
-            Self::LoadStaticField { field, .. }
+            | Self::LoadFieldAddr { field, .. }
+            | Self::LoadStaticField { field, .. }
             | Self::StoreStaticField { field, .. }
             | Self::LoadStaticFieldAddr { field, .. } => Some(field.token()),
             Self::Box { value_type, .. }
@@ -2447,10 +2443,7 @@ impl SsaOp {
     #[must_use]
     pub fn stack_effect(&self) -> (u32, u32) {
         match self {
-            // Load/const operations - push 1
-            Self::Const { .. } => (0, 1),
-
-            // Binary arithmetic - pop 2, push 1
+            // Binary arithmetic, comparisons, and array access - pop 2, push 1
             Self::Add { .. }
             | Self::Sub { .. }
             | Self::Mul { .. }
@@ -2463,15 +2456,12 @@ impl SsaOp {
             | Self::Or { .. }
             | Self::Xor { .. }
             | Self::Shl { .. }
-            | Self::Shr { .. } => (2, 1),
-
-            // Unary operations - pop 1, push 1
-            Self::Neg { .. } | Self::Not { .. } | Self::Conv { .. } | Self::Ckfinite { .. } => {
-                (1, 1)
-            }
-
-            // Comparisons - pop 2, push 1
-            Self::Ceq { .. } | Self::Clt { .. } | Self::Cgt { .. } => (2, 1),
+            | Self::Shr { .. }
+            | Self::Ceq { .. }
+            | Self::Clt { .. }
+            | Self::Cgt { .. }
+            | Self::LoadElement { .. }
+            | Self::LoadElementAddr { .. } => (2, 1),
 
             // Control flow
             Self::Return { value } => {
@@ -2481,92 +2471,90 @@ impl SsaOp {
                     (0, 0) // void return
                 }
             }
-            Self::Jump { .. } => (0, 0),
-            Self::Branch { .. } => (1, 0),    // pop condition
-            Self::BranchCmp { .. } => (2, 0), // pop two operands
-            Self::Switch { .. } => (1, 0),    // pop switch value
-            Self::Throw { .. } => (1, 0),     // pop exception
-            Self::Rethrow => (0, 0),
-            Self::Leave { .. } => (0, 0),
-            Self::EndFinally => (0, 0),
-            Self::EndFilter { .. } => (1, 0),
+            // No stack effect (0, 0)
+            Self::Jump { .. }
+            | Self::Rethrow
+            | Self::Leave { .. }
+            | Self::EndFinally
+            | Self::Copy { .. }
+            | Self::Nop
+            | Self::Break
+            | Self::Constrained { .. }
+            | Self::Phi { .. } => (0, 0),
 
-            // Stack manipulation
-            Self::Pop { .. } => (1, 0),
-            Self::Copy { .. } => (0, 0), // SSA-only, no stack effect
+            // Pop 1, push 0 (1, 0)
+            Self::Branch { .. }
+            | Self::Switch { .. }
+            | Self::Throw { .. }
+            | Self::EndFilter { .. }
+            | Self::Pop { .. }
+            | Self::StoreStaticField { .. }
+            | Self::InitObj { .. } => (1, 0),
 
-            // Field operations
-            Self::LoadField { .. } => (1, 1), // pop obj, push value
-            Self::StoreField { .. } => (2, 0), // pop obj, pop value
-            Self::LoadStaticField { .. } => (0, 1), // push value
-            Self::StoreStaticField { .. } => (1, 0), // pop value
-            Self::LoadFieldAddr { .. } => (1, 1), // pop obj, push addr
-            Self::LoadStaticFieldAddr { .. } => (0, 1), // push addr
+            // Pop 2, push 0 (2, 0)
+            Self::BranchCmp { .. }
+            | Self::StoreField { .. }
+            | Self::StoreIndirect { .. }
+            | Self::StoreObj { .. }
+            | Self::CopyObj { .. } => (2, 0),
 
-            // Array operations
-            Self::LoadElement { .. } => (2, 1), // pop array, pop index, push element
-            Self::StoreElement { .. } => (3, 0), // pop array, pop index, pop value
-            Self::LoadElementAddr { .. } => (2, 1), // pop array, pop index, push addr
-            Self::ArrayLength { .. } => (1, 1), // pop array, push length
-            Self::NewArr { .. } => (1, 1),      // pop size, push array
+            // Pop 3, push 0 (3, 0)
+            Self::StoreElement { .. } | Self::InitBlk { .. } | Self::CopyBlk { .. } => (3, 0),
 
-            // Indirect access
-            Self::LoadIndirect { .. } => (1, 1), // pop addr, push value
-            Self::StoreIndirect { .. } => (2, 0), // pop addr, pop value
-            Self::LoadObj { .. } => (1, 1),      // pop addr, push value
-            Self::StoreObj { .. } => (2, 0),     // pop addr, pop value
+            // Pop 0, push 1 (0, 1)
+            Self::LoadStaticField { .. }
+            | Self::LoadStaticFieldAddr { .. }
+            | Self::SizeOf { .. }
+            | Self::LoadToken { .. }
+            | Self::LoadArg { .. }
+            | Self::LoadLocal { .. }
+            | Self::LoadArgAddr { .. }
+            | Self::LoadLocalAddr { .. }
+            | Self::LoadFunctionPtr { .. }
+            | Self::Const { .. } => (0, 1),
 
-            // Type operations
-            Self::Box { .. } => (1, 1),
-            Self::Unbox { .. } => (1, 1),
-            Self::UnboxAny { .. } => (1, 1),
-            Self::CastClass { .. } | Self::IsInst { .. } => (1, 1),
-            Self::SizeOf { .. } => (0, 1),
-            Self::LoadToken { .. } => (0, 1),
-
-            // Value and address loading
-            Self::LoadArg { .. } => (0, 1),
-            Self::LoadLocal { .. } => (0, 1),
-            Self::LoadArgAddr { .. } => (0, 1),
-            Self::LoadLocalAddr { .. } => (0, 1),
-            Self::LoadFunctionPtr { .. } => (0, 1),
-            Self::LoadVirtFunctionPtr { .. } => (1, 1), // pop obj, push fptr
-
-            // Memory operations
-            Self::LocalAlloc { .. } => (1, 1), // pop size, push addr
-            Self::InitObj { .. } => (1, 0),    // pop addr
-            Self::InitBlk { .. } => (3, 0),    // pop dest, pop value, pop size
-            Self::CopyBlk { .. } => (3, 0),    // pop dest, pop src, pop size
-            Self::CopyObj { .. } => (2, 0),    // pop dest, pop src
+            // Pop 1, push 1 (1, 1)
+            Self::Neg { .. }
+            | Self::Not { .. }
+            | Self::Conv { .. }
+            | Self::Ckfinite { .. }
+            | Self::LoadField { .. }
+            | Self::LoadFieldAddr { .. }
+            | Self::ArrayLength { .. }
+            | Self::NewArr { .. }
+            | Self::LoadIndirect { .. }
+            | Self::LoadObj { .. }
+            | Self::Box { .. }
+            | Self::Unbox { .. }
+            | Self::UnboxAny { .. }
+            | Self::CastClass { .. }
+            | Self::IsInst { .. }
+            | Self::LoadVirtFunctionPtr { .. }
+            | Self::LocalAlloc { .. } => (1, 1),
 
             // Call operations - stack effect depends on args and return type
-            Self::Call { dest, args, .. } => {
+            Self::Call { dest, args, .. } | Self::CallVirt { dest, args, .. } => {
+                // args.len() will never exceed u32 for CIL methods
+                #[allow(clippy::cast_possible_truncation)]
                 let pops = args.len() as u32;
-                let pushes = if dest.is_some() { 1 } else { 0 };
-                (pops, pushes)
-            }
-            Self::CallVirt { dest, args, .. } => {
-                let pops = args.len() as u32;
-                let pushes = if dest.is_some() { 1 } else { 0 };
+                let pushes = u32::from(dest.is_some());
                 (pops, pushes)
             }
             Self::CallIndirect { dest, args, .. } => {
                 // Indirect call pops args + function pointer
+                // args.len() will never exceed u32 for CIL methods
+                #[allow(clippy::cast_possible_truncation)]
                 let pops = args.len() as u32 + 1;
-                let pushes = if dest.is_some() { 1 } else { 0 };
+                let pushes = u32::from(dest.is_some());
                 (pops, pushes)
             }
             Self::NewObj { args, .. } => {
                 // newobj pops constructor args, always pushes new instance
+                // args.len() will never exceed u32 for CIL methods
+                #[allow(clippy::cast_possible_truncation)]
                 let pops = args.len() as u32;
                 (pops, 1)
             }
-
-            // Miscellaneous
-            Self::Nop => (0, 0),
-            Self::Break => (0, 0),
-            Self::Constrained { .. } => (0, 0),
-            Self::Phi { .. } => (0, 0), // SSA-only, no direct stack effect
         }
     }
 }

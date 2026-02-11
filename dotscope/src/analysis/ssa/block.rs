@@ -227,7 +227,7 @@ impl SsaBlock {
     /// This is a convenience method combining `terminator()` and `op()`.
     #[must_use]
     pub fn terminator_op(&self) -> Option<&SsaOp> {
-        self.instructions.last().map(|i| i.op())
+        self.instructions.last().map(SsaInstruction::op)
     }
 
     /// Returns the successor block indices for this block.
@@ -487,7 +487,7 @@ impl SsaBlock {
     /// This includes phi operands and instruction uses.
     pub fn used_variables(&self) -> impl Iterator<Item = SsaVarId> + '_ {
         let phi_uses = self.phi_nodes.iter().flat_map(PhiNode::used_variables);
-        let instr_uses = self.instructions.iter().flat_map(|i| i.uses());
+        let instr_uses = self.instructions.iter().flat_map(SsaInstruction::uses);
         phi_uses.chain(instr_uses)
     }
 
@@ -556,7 +556,7 @@ impl SsaBlock {
         }
 
         // Also include phi node definitions as "available from the start"
-        let phi_defs: HashSet<SsaVarId> = self.phi_nodes.iter().map(|p| p.result()).collect();
+        let phi_defs: HashSet<SsaVarId> = self.phi_nodes.iter().map(PhiNode::result).collect();
 
         // Build dependency graph for non-terminator instructions only
         // Map from original index to position in non_terminator_indices
@@ -579,7 +579,7 @@ impl SsaBlock {
             let instr = &self.instructions[idx];
 
             // Add data dependencies (def-use chains)
-            for used in instr.uses().iter() {
+            for used in &instr.uses() {
                 // Skip if defined by phi (always available)
                 if phi_defs.contains(used) {
                     continue;
@@ -610,7 +610,7 @@ impl SsaBlock {
         }
 
         // Kahn's algorithm: process instructions with no unsatisfied dependencies
-        let mut in_degree: Vec<usize> = deps.iter().map(|d| d.len()).collect();
+        let mut in_degree: Vec<usize> = deps.iter().map(HashSet::len).collect();
         let mut ready: VecDeque<usize> = VecDeque::new();
 
         // Find instructions with no dependencies (in_degree == 0)

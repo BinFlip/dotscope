@@ -248,7 +248,7 @@ impl ConstantPropagationPass {
                         changes
                             .record(EventKind::ConstantFolded)
                             .at(method_token, instr_idx)
-                            .message(format!("{} → {} (algebraic)", old_op_str, value));
+                            .message(format!("{old_op_str} → {value} (algebraic)"));
                     }
                     AlgebraicResult::Copy { dest, src } => {
                         // If src is a known constant, propagate it
@@ -261,14 +261,14 @@ impl ConstantPropagationPass {
                             changes
                                 .record(EventKind::ConstantFolded)
                                 .at(method_token, instr_idx)
-                                .message(format!("{} → {} (identity)", old_op_str, value));
+                                .message(format!("{old_op_str} → {value} (identity)"));
                         } else {
                             // Replace with copy - copy propagation will handle this
                             instr.set_op(SsaOp::Copy { dest, src });
                             changes
                                 .record(EventKind::ConstantFolded)
                                 .at(method_token, instr_idx)
-                                .message(format!("{} → copy {} (identity)", old_op_str, src));
+                                .message(format!("{old_op_str} → copy {src} (identity)"));
                         }
                     }
                 }
@@ -352,7 +352,7 @@ impl ConstantPropagationPass {
                 changes
                     .record(EventKind::ConstantFolded)
                     .at(method_token, instr_idx)
-                    .message(format!("{} → {} (conv)", old_op_str, value));
+                    .message(format!("{old_op_str} → {value} (conv)"));
             }
         }
     }
@@ -532,8 +532,7 @@ impl ConstantPropagationPass {
                             .record(EventKind::ConstantFolded)
                             .at(method_token, instr_idx)
                             .message(format!(
-                                "{} → conv.{} {} ({})",
-                                old_op_str, target, new_operand, reason
+                                "{old_op_str} → conv.{target} {new_operand} ({reason})"
                             ));
                     }
                 }
@@ -553,7 +552,7 @@ impl ConstantPropagationPass {
                         changes
                             .record(EventKind::ConstantFolded)
                             .at(method_token, instr_idx)
-                            .message(format!("{} → copy {} ({})", old_op_str, src, reason));
+                            .message(format!("{old_op_str} → copy {src} ({reason})"));
                     }
                 }
             }
@@ -703,7 +702,7 @@ impl ConstantPropagationPass {
                 changes
                     .record(EventKind::ConstantFolded)
                     .at(method_token, instr_idx)
-                    .message(format!("{} → {} (ovf)", old_op_str, value));
+                    .message(format!("{old_op_str} → {value} (ovf)"));
             }
         }
     }
@@ -847,7 +846,7 @@ impl ConstantPropagationPass {
                             changes
                                 .record(EventKind::ConstantFolded)
                                 .at(method_token, instr_idx)
-                                .message(format!("{} → {}", old_op_str, value));
+                                .message(format!("{old_op_str} → {value}"));
                         }
                     }
                 }
@@ -939,7 +938,7 @@ impl ConstantPropagationPass {
                 changes
                     .record(EventKind::ConstantFolded)
                     .at(method_token, instr_idx)
-                    .message(format!("{} → copy {} ({})", old_op_str, src, pattern));
+                    .message(format!("{old_op_str} → copy {src} ({pattern})"));
             }
         }
     }
@@ -1121,7 +1120,7 @@ impl SsaPass for ConstantPropagationPass {
 
         let changed = !changes.is_empty();
         if changed {
-            ctx.events.merge(changes);
+            ctx.events.merge(&changes);
         }
         Ok(changed)
     }

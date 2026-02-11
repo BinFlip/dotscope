@@ -246,7 +246,7 @@ impl ValidationResult {
                         if let Some(diag) = diagnostics {
                             diag.warning(
                                 DiagnosticCategory::Validation,
-                                format!("Validation failed in {}: {}", name, error),
+                                format!("Validation failed in {name}: {error}"),
                             );
                         }
                         outcomes.push(ValidationOutcome::success(name.to_string()));

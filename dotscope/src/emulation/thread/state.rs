@@ -246,6 +246,7 @@ impl ThreadCallFrame {
     /// * `local_types` - Types of local variables declared in the method
     /// * `args` - Arguments passed to the method (value and type pairs)
     /// * `expects_return` - Whether the caller expects a return value
+    #[must_use]
     pub fn new(
         method: Token,
         return_method: Option<Token>,
@@ -523,7 +524,7 @@ impl fmt::Debug for EmulationThread {
             .field("instructions_executed", &self.instructions_executed)
             .field("return_value", &self.return_value)
             .field("pending_reflection_invoke", &self.pending_reflection_invoke)
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

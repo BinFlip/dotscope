@@ -20,7 +20,10 @@ use serde::Serialize;
 
 use crate::{
     app::GlobalOptions,
-    commands::{common::load_assembly, resolution::parse_token_filter},
+    commands::{
+        common::{load_assembly, name_contains_ignore_case},
+        resolution::parse_token_filter,
+    },
     output::print_output,
 };
 
@@ -57,7 +60,7 @@ pub fn run(path: &Path, owner_filter: Option<&str>, opts: &GlobalOptions) -> any
 
     let mut entries: Vec<AttrEntry> = Vec::new();
 
-    for row in ca_table.iter() {
+    for row in ca_table {
         let (owner_kind, owner_name) = resolve_owner(&assembly, &row.parent, strings);
         let attr_type = resolve_constructor_type(&assembly, &row.constructor, strings);
 
@@ -69,7 +72,7 @@ pub fn run(path: &Path, owner_filter: Option<&str>, opts: &GlobalOptions) -> any
                 }
             } else {
                 let haystack = format!("{owner_kind} {owner_name}");
-                if !haystack.to_lowercase().contains(&filter.to_lowercase()) {
+                if !name_contains_ignore_case(&haystack, filter) {
                     continue;
                 }
             }
@@ -127,18 +130,16 @@ fn resolve_owner(
             ("type".to_string(), name)
         }
         TableId::MethodDef => {
-            let name = assembly
-                .methods()
-                .get(&parent.token)
-                .map(|entry| entry.value().fullname())
-                .unwrap_or_else(|| parent.token.to_string());
+            let name = assembly.methods().get(&parent.token).map_or_else(
+                || parent.token.to_string(),
+                |entry| entry.value().fullname(),
+            );
             ("method".to_string(), name)
         }
         TableId::Assembly => {
             let name = assembly
                 .assembly()
-                .map(|a| a.name.clone())
-                .unwrap_or_else(|| parent.token.to_string());
+                .map_or_else(|| parent.token.to_string(), |a| a.name.clone());
             ("assembly".to_string(), name)
         }
         TableId::Field => {
@@ -204,7 +205,7 @@ fn resolve_string_from_raw_table(
     match kind {
         "field" => {
             if let Some(table) = tables.table::<FieldRaw>() {
-                for row in table.iter() {
+                for row in table {
                     if row.rid == ci.row {
                         if let Ok(s) = strings.get(row.name as usize) {
                             return s.to_string();
@@ -215,7 +216,7 @@ fn resolve_string_from_raw_table(
         }
         "param" => {
             if let Some(table) = tables.table::<ParamRaw>() {
-                for row in table.iter() {
+                for row in table {
                     if row.rid == ci.row {
                         if let Ok(s) = strings.get(row.name as usize) {
                             return s.to_string();
@@ -226,7 +227,7 @@ fn resolve_string_from_raw_table(
         }
         "property" => {
             if let Some(table) = tables.table::<PropertyRaw>() {
-                for row in table.iter() {
+                for row in table {
                     if row.rid == ci.row {
                         if let Ok(s) = strings.get(row.name as usize) {
                             return s.to_string();
@@ -237,7 +238,7 @@ fn resolve_string_from_raw_table(
         }
         "event" => {
             if let Some(table) = tables.table::<EventRaw>() {
-                for row in table.iter() {
+                for row in table {
                     if row.rid == ci.row {
                         if let Ok(s) = strings.get(row.name as usize) {
                             return s.to_string();
@@ -260,8 +261,7 @@ fn resolve_constructor_type(
     match constructor.tag {
         TableId::MemberRef => {
             // Look up in resolved member refs
-            if let Some(entry) = assembly.refs_members().get(&constructor.token) {
-                let mr = entry.value();
+            if let Some(mr) = assembly.member_ref(&constructor.token) {
                 return mr
                     .declaredby
                     .fullname()
@@ -273,8 +273,7 @@ fn resolve_constructor_type(
         }
         TableId::MethodDef => {
             // Look up the method and get its declaring type
-            if let Some(entry) = assembly.methods().get(&constructor.token) {
-                let method = entry.value();
+            if let Some(method) = assembly.method(&constructor.token) {
                 if let Some(name) = method.declaring_type_fullname() {
                     return name;
                 }
@@ -303,13 +302,13 @@ fn resolve_memberref_class_name(
         return ci.token.to_string();
     };
 
-    for row in mr_table.iter() {
+    for row in mr_table {
         if row.rid == ci.row {
             // The class field is a MemberRefParent coded index
             if row.class.tag == TableId::TypeRef {
                 // Resolve the TypeRef
                 if let Some(tr_table) = tables.table::<TypeRefRaw>() {
-                    for tr in tr_table.iter() {
+                    for tr in tr_table {
                         if tr.rid == row.class.row {
                             let ns = strings.get(tr.type_namespace as usize).unwrap_or("?");
                             let name = strings.get(tr.type_name as usize).unwrap_or("?");

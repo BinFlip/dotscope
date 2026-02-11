@@ -536,7 +536,7 @@ impl<'a> SemanticAnalyzer<'a> {
         semantics.execution_order = self.compute_loop_execution_order(loop_info, &semantics);
 
         // Compute confidence
-        semantics.confidence = self.compute_loop_confidence(&semantics);
+        semantics.confidence = Self::compute_loop_confidence(&semantics);
 
         semantics
     }
@@ -638,7 +638,7 @@ impl<'a> SemanticAnalyzer<'a> {
     }
 
     /// Computes confidence score for loop semantics.
-    fn compute_loop_confidence(&self, semantics: &LoopSemantics) -> f64 {
+    fn compute_loop_confidence(semantics: &LoopSemantics) -> f64 {
         let mut score = 0.0;
 
         // Has condition: +0.3
@@ -710,7 +710,7 @@ impl<'a> SemanticAnalyzer<'a> {
         semantics.execution_order = semantics.ordered_blocks();
 
         // Compute confidence
-        semantics.confidence = self.compute_loop_confidence(&semantics);
+        semantics.confidence = Self::compute_loop_confidence(&semantics);
 
         semantics
     }

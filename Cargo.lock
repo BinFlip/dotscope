@@ -636,6 +636,7 @@ dependencies = [
  "dotscope",
  "serde",
  "serde_json",
+ "widestring",
 ]
 
 [[package]]

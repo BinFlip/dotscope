@@ -1292,7 +1292,7 @@ pub fn decode_instruction(parser: &mut Parser, rva: u64) -> Result<Instruction> 
                     // Sign-extend i32 offset to i64 for proper signed arithmetic
                     let offset = i64::from(target);
                     #[allow(clippy::cast_sign_loss)]
-                    let abs_target = (next_instruction_rva as i64).wrapping_add(offset) as u64;
+                    let abs_target = next_instruction_rva.cast_signed().wrapping_add(offset) as u64;
                     instruction.branch_targets.push(abs_target);
                 }
             }

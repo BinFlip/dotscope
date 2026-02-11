@@ -75,7 +75,7 @@ pub fn run(path: &Path, opts: &GlobalOptions) -> anyhow::Result<()> {
         if cil_count > 0 {
             println!("CIL exported types ({cil_count} entries):");
             let mut tw =
-                TabWriter::new(vec![("Token", Align::Left), ("Name", Align::Left)]).indent("  ");
+                TabWriter::new(&[("Token", Align::Left), ("Name", Align::Left)]).indent("  ");
             for entry in &out.cil {
                 tw.row(vec![entry.token.clone(), entry.name.clone()]);
             }
@@ -85,7 +85,7 @@ pub fn run(path: &Path, opts: &GlobalOptions) -> anyhow::Result<()> {
         if !out.native.is_empty() {
             println!("\nNative exports ({} entries):", out.native.len());
             let mut tw =
-                TabWriter::new(vec![("Ordinal", Align::Left), ("Name", Align::Left)]).indent("  ");
+                TabWriter::new(&[("Ordinal", Align::Left), ("Name", Align::Left)]).indent("  ");
             for entry in &out.native {
                 tw.row(vec![entry.ordinal.to_string(), entry.name.clone()]);
             }

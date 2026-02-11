@@ -474,11 +474,11 @@ impl EmValue {
     /// assert_eq!(EmValue::I32(42).as_native_int(), None);
     /// ```
     #[must_use]
-    #[allow(clippy::cast_possible_wrap)] // Intentional: native uint bit pattern reinterprets as signed
     pub fn as_native_int(&self) -> Option<i64> {
         match self {
             EmValue::NativeInt(v) => Some(*v),
-            EmValue::NativeUInt(v) => Some(*v as i64),
+            // Intentional: native uint bit pattern reinterprets as signed
+            EmValue::NativeUInt(v) => Some((*v).cast_signed()),
             _ => None,
         }
     }
@@ -535,9 +535,6 @@ impl EmValue {
     #[must_use]
     pub fn default_for_flavor(flavor: &CilFlavor) -> Self {
         match flavor {
-            // Void
-            CilFlavor::Void => EmValue::Void,
-
             // Boolean preserves its type
             CilFlavor::Boolean => EmValue::Bool(false),
 
@@ -564,31 +561,30 @@ impl EmValue {
             CilFlavor::U => EmValue::NativeUInt(0),
 
             // Reference types - all default to null
+            // Managed pointer defaults to null
             CilFlavor::Object
             | CilFlavor::String
             | CilFlavor::Class
             | CilFlavor::Interface
             | CilFlavor::Array { .. }
-            | CilFlavor::GenericInstance => EmValue::Null,
+            | CilFlavor::GenericInstance
+            | CilFlavor::ByRef => EmValue::Null,
 
             // Pointers
             CilFlavor::Pointer | CilFlavor::FnPtr { .. } => EmValue::UnmanagedPtr(0),
-            CilFlavor::ByRef => EmValue::Null, // Managed pointer defaults to null
 
+            // Void
             // Value types need more info for proper initialization
-            CilFlavor::ValueType => EmValue::Void,
-
             // Generic parameters - need runtime resolution
-            CilFlavor::GenericParameter { .. } => EmValue::Void,
-
             // Pinned is a modifier, shouldn't appear as a standalone type
-            CilFlavor::Pinned => EmValue::Void,
-
             // TypedReference is a special struct containing pointer and type info
-            CilFlavor::TypedRef { .. } => EmValue::Void,
-
             // Unknown types
-            CilFlavor::Unknown => EmValue::Void,
+            CilFlavor::Void
+            | CilFlavor::ValueType
+            | CilFlavor::GenericParameter { .. }
+            | CilFlavor::Pinned
+            | CilFlavor::TypedRef { .. }
+            | CilFlavor::Unknown => EmValue::Void,
         }
     }
 
@@ -612,8 +608,8 @@ impl EmValue {
             EmValue::ObjectRef(_) | EmValue::Null => CilFlavor::Object,
             EmValue::ManagedPtr(_) => CilFlavor::ByRef,
             EmValue::UnmanagedPtr(_) => CilFlavor::Pointer,
-            EmValue::ValueType { .. } => CilFlavor::ValueType,
-            EmValue::TypedRef { .. } => CilFlavor::ValueType, // TypedRef is a value type
+            // TypedRef is a value type
+            EmValue::ValueType { .. } | EmValue::TypedRef { .. } => CilFlavor::ValueType,
             EmValue::Symbolic(s) => s.cil_flavor.clone(),
         }
     }
@@ -1214,12 +1210,12 @@ impl EmValue {
     /// meaningfully converted to an integer (objects, null, void, etc.).
     /// Unlike [`Self::as_i64`], this accepts all integer-like types including I32.
     #[must_use]
-    #[allow(clippy::cast_sign_loss)]
     pub fn try_to_i64(&self) -> Option<i64> {
         match self {
             EmValue::I32(n) => Some(i64::from(*n)),
             EmValue::I64(n) | EmValue::NativeInt(n) => Some(*n),
-            EmValue::NativeUInt(n) => Some(*n as i64),
+            // Intentional: native uint bit pattern reinterprets as signed
+            EmValue::NativeUInt(n) => Some((*n).cast_signed()),
             EmValue::Bool(b) => Some(i64::from(*b)),
             EmValue::Char(c) => Some(i64::from(*c as u32)),
             _ => None,
@@ -1338,7 +1334,10 @@ impl EmValue {
                         expected: "non-negative size",
                     });
                 }
-                Ok(*n as usize)
+                // Intentional: converting validated non-negative i32 to usize
+                #[allow(clippy::cast_sign_loss)]
+                let result = *n as usize;
+                Ok(result)
             }
             EmValue::I64(n) => {
                 if *n < 0 {
@@ -1347,7 +1346,10 @@ impl EmValue {
                         expected: "non-negative size",
                     });
                 }
-                Ok(*n as usize)
+                // Intentional: converting validated non-negative i64 to usize (may truncate on 32-bit)
+                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                let result = *n as usize;
+                Ok(result)
             }
             EmValue::NativeInt(n) => {
                 if *n < 0 {
@@ -1356,8 +1358,13 @@ impl EmValue {
                         expected: "non-negative size",
                     });
                 }
-                Ok(*n as usize)
+                // Intentional: converting validated non-negative i64 to usize (may truncate on 32-bit)
+                #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
+                let result = *n as usize;
+                Ok(result)
             }
+            // Intentional: u64 to usize (may truncate on 32-bit platforms)
+            #[allow(clippy::cast_possible_truncation)]
             EmValue::NativeUInt(n) => Ok(*n as usize),
             _ => Err(EmulationError::TypeMismatch {
                 operation: "size extraction",
@@ -1378,10 +1385,11 @@ impl EmValue {
     pub fn as_pointer_address(&self) -> Result<u64, EmulationError> {
         match self {
             EmValue::UnmanagedPtr(addr) => Ok(*addr),
-            EmValue::NativeInt(n) => Ok(*n as u64),
+            // Intentional: reinterpret signed native int and i64 as unsigned address
+            EmValue::NativeInt(n) | EmValue::I64(n) => Ok((*n).cast_unsigned()),
             EmValue::NativeUInt(n) => Ok(*n),
-            EmValue::I32(n) => Ok(*n as u64),
-            EmValue::I64(n) => Ok(*n as u64),
+            // Intentional: reinterpret signed i32 as unsigned address (with sign extension)
+            EmValue::I32(n) => Ok(u64::from((*n).cast_unsigned())),
             EmValue::ManagedPtr(_) => Err(EmulationError::TypeMismatch {
                 operation: "unmanaged memory access",
                 expected: "unmanaged pointer",
@@ -1507,9 +1515,9 @@ impl EmValue {
                         .try_into()
                         .unwrap_or([0, 0, 0, 0]);
                     if matches!(flavor, CilFlavor::I) {
-                        EmValue::NativeInt(i32::from_le_bytes(arr) as i64)
+                        EmValue::NativeInt(i64::from(i32::from_le_bytes(arr)))
                     } else {
-                        EmValue::NativeUInt(u32::from_le_bytes(arr) as u64)
+                        EmValue::NativeUInt(u64::from(u32::from_le_bytes(arr)))
                     }
                 }
                 PointerSize::Bit64 => {

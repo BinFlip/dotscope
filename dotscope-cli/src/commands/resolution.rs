@@ -6,6 +6,8 @@ use dotscope::{
     CilObject,
 };
 
+use crate::commands::common::name_contains_ignore_case;
+
 /// Parse a filter string as either a hex token or a name pattern.
 pub fn parse_token_filter(filter: &str) -> Option<Token> {
     let hex = filter
@@ -18,8 +20,8 @@ pub fn parse_token_filter(filter: &str) -> Option<Token> {
 pub fn resolve_methods(assembly: &CilObject, filter: &str) -> anyhow::Result<Vec<Arc<Method>>> {
     // Try token first
     if let Some(token) = parse_token_filter(filter) {
-        if let Some(entry) = assembly.methods().get(&token) {
-            return Ok(vec![entry.value().clone()]);
+        if let Some(method) = assembly.method(&token) {
+            return Ok(vec![method]);
         }
         bail!("no method with token {filter} found");
     }
@@ -31,23 +33,20 @@ pub fn resolve_methods(assembly: &CilObject, filter: &str) -> anyhow::Result<Vec
         (None, filter)
     };
 
-    let filter_lower = method_part.to_lowercase();
-    let type_filter_lower = type_part.map(|t| t.to_lowercase());
-
     let mut results = Vec::new();
-    for entry in assembly.methods().iter() {
+    for entry in assembly.methods() {
         let method = entry.value();
 
-        if !method.name.to_lowercase().contains(&filter_lower) {
+        if !name_contains_ignore_case(&method.name, method_part) {
             continue;
         }
 
-        if let Some(ref type_filter) = type_filter_lower {
+        if let Some(type_filter) = type_part {
             let declaring_name = method
                 .declaring_type_rc()
-                .map(|t| t.fullname().to_lowercase())
+                .map(|t| t.fullname())
                 .unwrap_or_default();
-            if !declaring_name.contains(type_filter) {
+            if !name_contains_ignore_case(&declaring_name, type_filter) {
                 continue;
             }
         }
@@ -68,11 +67,10 @@ pub fn resolve_types(assembly: &CilObject, filter: &str) -> anyhow::Result<Vec<A
         bail!("no type with token {filter} found");
     }
 
-    let filter_lower = filter.to_lowercase();
     let results = assembly
         .query_types()
         .defined()
-        .filter(move |t| t.fullname().to_lowercase().contains(&filter_lower))
+        .filter(move |t| name_contains_ignore_case(&t.fullname(), filter))
         .find_all();
 
     Ok(results)

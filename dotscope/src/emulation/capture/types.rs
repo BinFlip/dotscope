@@ -92,6 +92,7 @@ impl CaptureSource {
     /// # Returns
     ///
     /// A new `CaptureSource` with the specified values.
+    #[must_use]
     pub fn new(method: Token, thread_id: ThreadId, offset: u32, instruction_count: u64) -> Self {
         Self {
             method,

@@ -3591,7 +3591,7 @@ impl TypeSignature {
             Self::SzArray(arr) => arr.base.contains_type_tokens(),
             Self::Array(arr) => arr.base.contains_type_tokens(),
             Self::GenericInst(base, args) => {
-                base.contains_type_tokens() || args.iter().any(|a| a.contains_type_tokens())
+                base.contains_type_tokens() || args.iter().any(TypeSignature::contains_type_tokens)
             }
             Self::FnPtr(sig) => {
                 sig.return_type.base.contains_type_tokens()

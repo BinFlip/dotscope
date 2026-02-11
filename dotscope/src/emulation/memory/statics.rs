@@ -99,6 +99,10 @@ impl StaticFieldStorage {
     /// # Returns
     ///
     /// `Some(EmValue)` if the field exists, `None` otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn get(&self, field_token: Token) -> Option<EmValue> {
         let fields = self.fields.read().expect("fields lock poisoned");
@@ -113,6 +117,10 @@ impl StaticFieldStorage {
     ///
     /// * `field_token` - The metadata token of the field
     /// * `value` - The value to store
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn set(&self, field_token: Token, value: EmValue) {
         let mut fields = self.fields.write().expect("fields lock poisoned");
         fields.insert(field_token, value);
@@ -123,6 +131,10 @@ impl StaticFieldStorage {
     /// # Arguments
     ///
     /// * `field_token` - The metadata token of the field
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn contains(&self, field_token: Token) -> bool {
         let fields = self.fields.read().expect("fields lock poisoned");
@@ -138,6 +150,10 @@ impl StaticFieldStorage {
     /// # Returns
     ///
     /// The removed value, or `None` if the field didn't exist.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn remove(&self, field_token: Token) -> Option<EmValue> {
         let mut fields = self.fields.write().expect("fields lock poisoned");
         fields.remove(&field_token)
@@ -151,6 +167,10 @@ impl StaticFieldStorage {
     /// # Arguments
     ///
     /// * `type_token` - The type's metadata token
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn is_type_initialized(&self, type_token: Token) -> bool {
         let initialized = self
@@ -167,6 +187,10 @@ impl StaticFieldStorage {
     /// # Arguments
     ///
     /// * `type_token` - The type's metadata token
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn mark_type_initialized(&self, type_token: Token) {
         let mut initialized = self
             .initialized_types
@@ -179,6 +203,10 @@ impl StaticFieldStorage {
     ///
     /// This resets the storage to its initial empty state, useful for
     /// testing or resetting the emulator.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn clear(&self) {
         let mut fields = self.fields.write().expect("fields lock poisoned");
         let mut initialized = self
@@ -190,6 +218,10 @@ impl StaticFieldStorage {
     }
 
     /// Returns the number of static fields stored.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn len(&self) -> usize {
         let fields = self.fields.read().expect("fields lock poisoned");
@@ -197,6 +229,10 @@ impl StaticFieldStorage {
     }
 
     /// Returns `true` if no static fields are stored.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         let fields = self.fields.read().expect("fields lock poisoned");
@@ -206,6 +242,10 @@ impl StaticFieldStorage {
     /// Returns all stored field tokens.
     ///
     /// Useful for debugging and diagnostics.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn field_tokens(&self) -> Vec<Token> {
         let fields = self.fields.read().expect("fields lock poisoned");
@@ -215,6 +255,10 @@ impl StaticFieldStorage {
     /// Returns all type tokens that have been marked as initialized.
     ///
     /// Useful for debugging and diagnostics.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn initialized_types(&self) -> Vec<Token> {
         let initialized = self
@@ -234,6 +278,10 @@ impl StaticFieldStorage {
     ///
     /// This is an O(1) operation due to `imbl`'s structural sharing.
     /// The actual data is only copied when either storage modifies an entry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn fork(&self) -> Self {
         let fields = self.fields.read().expect("fields lock poisoned");

@@ -162,8 +162,8 @@ pub fn find_candidates(
         .iter()
         .filter_map(|&token| {
             // Skip .cctor itself if it somehow appears
-            let method = assembly.methods().get(&token)?;
-            if method.value().is_cctor() {
+            let method = assembly.method(&token)?;
+            if method.is_cctor() {
                 return None;
             }
             let mut candidate = ProtectionCandidate::new(token);
@@ -203,10 +203,9 @@ pub fn find_candidates(
 fn extract_direct_callees(assembly: &CilObject, method_token: Token) -> Vec<Token> {
     let mut callees = Vec::new();
 
-    let Some(method_entry) = assembly.methods().get(&method_token) else {
+    let Some(method) = assembly.method(&method_token) else {
         return callees;
     };
-    let method = method_entry.value();
 
     let Some(cfg) = method.cfg() else {
         return callees;
@@ -239,10 +238,9 @@ fn score_candidate(
     candidate: &mut ProtectionCandidate,
     protection: ProtectionType,
 ) {
-    let Some(method_entry) = assembly.methods().get(&candidate.token) else {
+    let Some(method) = assembly.method(&candidate.token) else {
         return;
     };
-    let method = method_entry.value();
 
     let Some(cfg) = method.cfg() else {
         return;
@@ -262,14 +260,14 @@ fn score_candidate(
             match instr.opcode {
                 OPCODE_CALL | OPCODE_CALLVIRT => {
                     if let Operand::Token(token) = &instr.operand {
-                        if let Some(name) = resolve_call_name(assembly, *token) {
+                        if let Some(name) = assembly.resolve_method_name(*token) {
                             call_targets.push(name);
                         }
                     }
                 }
                 OPCODE_NEWOBJ => {
                     if let Operand::Token(token) = &instr.operand {
-                        if let Some(name) = resolve_call_name(assembly, *token) {
+                        if let Some(name) = assembly.resolve_method_name(*token) {
                             if name.contains("EventHandler") || name.contains("ResolveEventHandler")
                             {
                                 has_delegate_creation = true;
@@ -393,11 +391,10 @@ fn score_constants(
 fn global_search(assembly: &CilObject, protection: ProtectionType) -> Vec<ProtectionCandidate> {
     let mut candidates = Vec::new();
 
-    for method in assembly
+    for method in &assembly
         .query_methods()
         .has_body()
         .filter(|m| !m.is_cctor())
-        .iter()
     {
         let mut candidate = ProtectionCandidate::new(method.token);
         score_candidate(assembly, &mut candidate, protection);
@@ -409,23 +406,6 @@ fn global_search(assembly: &CilObject, protection: ProtectionType) -> Vec<Protec
     }
 
     candidates
-}
-
-/// Resolves a call target token to a method name.
-fn resolve_call_name(assembly: &CilObject, token: Token) -> Option<String> {
-    match token.table() {
-        // MethodDef
-        0x06 => Some(assembly.methods().get(&token)?.value().name.clone()),
-        // MemberRef
-        0x0A => Some(assembly.refs_members().get(&token)?.value().name.clone()),
-        // MethodSpec (generic instantiation)
-        0x2B => {
-            // Try to get the underlying method
-            // For now, just return None - could be enhanced later
-            None
-        }
-        _ => None,
-    }
 }
 
 #[cfg(test)]

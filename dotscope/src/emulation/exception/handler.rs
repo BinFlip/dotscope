@@ -228,12 +228,12 @@ impl ExceptionHandler {
         }
 
         // No catch found - return cleanup handlers if any
-        if !cleanup_handlers.is_empty() {
+        if cleanup_handlers.is_empty() {
+            MethodHandlerResult::NotFound
+        } else {
             MethodHandlerResult::ExecuteCleanup {
                 handlers: cleanup_handlers,
             }
-        } else {
-            MethodHandlerResult::NotFound
         }
     }
 
@@ -271,6 +271,7 @@ impl ExceptionHandler {
     /// }
     /// ```
     /// This method returns the finally handler so `Cleanup()` runs before returning.
+    #[must_use]
     pub fn find_finally_for_leave(
         &self,
         clauses: &[ExceptionClause],
@@ -318,6 +319,7 @@ impl ExceptionHandler {
     /// # Returns
     ///
     /// `true` if the offset is within any handler block, `false` otherwise.
+    #[must_use]
     pub fn is_in_handler(&self, clauses: &[ExceptionClause], offset: u32) -> bool {
         clauses.iter().any(|c| c.is_in_handler(offset))
     }
@@ -337,6 +339,7 @@ impl ExceptionHandler {
     ///
     /// The exception clause containing the handler, or `None` if the offset
     /// is not within any handler block.
+    #[must_use]
     pub fn get_handler_clause<'a>(
         &self,
         clauses: &'a [ExceptionClause],
@@ -365,10 +368,11 @@ impl ExceptionHandler {
     ///   at 0x06000002+0x0010
     ///   at 0x06000003+0x0005
     /// ```
+    #[must_use]
     pub fn build_stack_trace(locations: &[InstructionLocation]) -> String {
         locations
             .iter()
-            .map(|loc| format!("  at {}", loc))
+            .map(|loc| format!("  at {loc}"))
             .collect::<Vec<_>>()
             .join("\n")
     }
@@ -453,6 +457,7 @@ impl HandlerSearchState {
     /// # Returns
     ///
     /// A new `HandlerSearchState` ready to accept stack frames for searching.
+    #[must_use]
     pub fn new(exception_type: Token, throw_location: InstructionLocation) -> Self {
         Self {
             exception_type,
@@ -491,6 +496,7 @@ impl HandlerSearchState {
     /// # Returns
     ///
     /// `true` if the search is complete, `false` if more frames need to be searched.
+    #[must_use]
     pub fn is_complete(&self) -> bool {
         self.handler_found.is_some()
             || (!self.frames.is_empty() && self.current_frame >= self.frames.len())
@@ -504,6 +510,7 @@ impl HandlerSearchState {
     /// # Returns
     ///
     /// `true` if there are cleanup handlers waiting to be executed.
+    #[must_use]
     pub fn has_pending_cleanup(&self) -> bool {
         !self.pending_cleanup.is_empty()
     }
@@ -527,7 +534,13 @@ impl HandlerSearchState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        emulation::exception::{
+            ExceptionClause, ExceptionHandler, HandlerMatch, HandlerSearchState,
+            InstructionLocation, MethodHandlerResult,
+        },
+        metadata::token::Token,
+    };
 
     fn create_test_clauses() -> Vec<ExceptionClause> {
         vec![

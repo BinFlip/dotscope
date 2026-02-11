@@ -30,6 +30,12 @@ use crate::metadata::{
     typesystem::{CilType, CilTypeRc, TypeRegistry},
 };
 
+/// A boxed filter predicate over [`CilType`] references.
+type TypeFilter<'a> = Box<dyn Fn(&CilType) -> bool + 'a>;
+
+/// A boxed filter predicate over [`Method`] references.
+type MethodFilter<'a> = Box<dyn Fn(&Method) -> bool + 'a>;
+
 /// A composable query builder for filtering types in an assembly.
 ///
 /// `TypeQuery` holds a reference to the [`TypeRegistry`] and accumulates filter predicates.
@@ -37,7 +43,7 @@ use crate::metadata::{
 /// Terminal methods like [`TypeQuery::find_all`] execute the query and return results.
 pub struct TypeQuery<'a> {
     registry: &'a TypeRegistry,
-    filters: Vec<Box<dyn Fn(&CilType) -> bool + 'a>>,
+    filters: Vec<TypeFilter<'a>>,
 }
 
 impl<'a> TypeQuery<'a> {
@@ -59,63 +65,63 @@ impl<'a> TypeQuery<'a> {
     /// Filters to class types.
     #[must_use]
     pub fn classes(mut self) -> Self {
-        self.filters.push(Box::new(|t| t.is_class()));
+        self.filters.push(Box::new(CilType::is_class));
         self
     }
 
     /// Filters to interface types.
     #[must_use]
     pub fn interfaces(mut self) -> Self {
-        self.filters.push(Box::new(|t| t.is_interface()));
+        self.filters.push(Box::new(CilType::is_interface));
         self
     }
 
     /// Filters to value types (structs, enums, primitives).
     #[must_use]
     pub fn value_types(mut self) -> Self {
-        self.filters.push(Box::new(|t| t.is_value_type()));
+        self.filters.push(Box::new(CilType::is_value_type));
         self
     }
 
     /// Filters to enum types.
     #[must_use]
     pub fn enums(mut self) -> Self {
-        self.filters.push(Box::new(|t| t.is_enum()));
+        self.filters.push(Box::new(CilType::is_enum));
         self
     }
 
     /// Filters to delegate types.
     #[must_use]
     pub fn delegates(mut self) -> Self {
-        self.filters.push(Box::new(|t| t.is_delegate()));
+        self.filters.push(Box::new(CilType::is_delegate));
         self
     }
 
     /// Filters to publicly visible types.
     #[must_use]
     pub fn public(mut self) -> Self {
-        self.filters.push(Box::new(|t| t.is_public()));
+        self.filters.push(Box::new(CilType::is_public));
         self
     }
 
     /// Filters to internal (assembly-only) types.
     #[must_use]
     pub fn internal(mut self) -> Self {
-        self.filters.push(Box::new(|t| t.is_internal()));
+        self.filters.push(Box::new(CilType::is_internal));
         self
     }
 
     /// Filters to sealed types.
     #[must_use]
     pub fn sealed(mut self) -> Self {
-        self.filters.push(Box::new(|t| t.is_sealed()));
+        self.filters.push(Box::new(CilType::is_sealed));
         self
     }
 
     /// Filters to abstract types.
     #[must_use]
     pub fn abstract_types(mut self) -> Self {
-        self.filters.push(Box::new(|t| t.is_abstract()));
+        self.filters.push(Box::new(CilType::is_abstract));
         self
     }
 
@@ -209,26 +215,31 @@ impl<'a> TypeQuery<'a> {
     }
 
     /// Returns all matching types.
+    #[must_use]
     pub fn find_all(&self) -> Vec<CilTypeRc> {
         self.iter().collect()
     }
 
     /// Returns the first matching type, short-circuiting iteration.
+    #[must_use]
     pub fn find_first(&self) -> Option<CilTypeRc> {
         self.iter().next()
     }
 
     /// Returns the count of matching types.
+    #[must_use]
     pub fn count(&self) -> usize {
         self.iter().count()
     }
 
     /// Returns `true` if any type matches (short-circuits).
+    #[must_use]
     pub fn exists(&self) -> bool {
         self.iter().next().is_some()
     }
 
     /// Returns just the tokens of matching types.
+    #[must_use]
     pub fn tokens(&self) -> Vec<Token> {
         self.iter().map(|t| t.token).collect()
     }
@@ -246,6 +257,7 @@ impl<'a> TypeQuery<'a> {
     }
 
     /// Collects methods from all matched types and pivots to a [`MethodQuery`].
+    #[must_use]
     pub fn methods(self) -> MethodQuery<'a> {
         let methods: Vec<MethodRc> = self
             .iter()
@@ -275,7 +287,7 @@ enum MethodQuerySource<'a> {
 /// Each fluent method consumes and returns `Self`, allowing chained calls.
 pub struct MethodQuery<'a> {
     source: MethodQuerySource<'a>,
-    filters: Vec<Box<dyn Fn(&Method) -> bool + 'a>>,
+    filters: Vec<MethodFilter<'a>>,
 }
 
 impl<'a> MethodQuery<'a> {
@@ -312,14 +324,14 @@ impl<'a> MethodQuery<'a> {
     /// Filters to public methods.
     #[must_use]
     pub fn public(mut self) -> Self {
-        self.filters.push(Box::new(|m| m.is_public()));
+        self.filters.push(Box::new(Method::is_public));
         self
     }
 
     /// Filters to static methods.
     #[must_use]
     pub fn static_methods(mut self) -> Self {
-        self.filters.push(Box::new(|m| m.is_static()));
+        self.filters.push(Box::new(Method::is_static));
         self
     }
 
@@ -333,28 +345,28 @@ impl<'a> MethodQuery<'a> {
     /// Filters to virtual methods.
     #[must_use]
     pub fn virtual_methods(mut self) -> Self {
-        self.filters.push(Box::new(|m| m.is_virtual()));
+        self.filters.push(Box::new(Method::is_virtual));
         self
     }
 
     /// Filters to abstract methods.
     #[must_use]
     pub fn abstract_methods(mut self) -> Self {
-        self.filters.push(Box::new(|m| m.is_abstract()));
+        self.filters.push(Box::new(Method::is_abstract));
         self
     }
 
     /// Filters to instance constructors (`.ctor`).
     #[must_use]
     pub fn constructors(mut self) -> Self {
-        self.filters.push(Box::new(|m| m.is_ctor()));
+        self.filters.push(Box::new(Method::is_ctor));
         self
     }
 
     /// Filters to static constructors (`.cctor`).
     #[must_use]
     pub fn static_constructors(mut self) -> Self {
-        self.filters.push(Box::new(|m| m.is_cctor()));
+        self.filters.push(Box::new(Method::is_cctor));
         self
     }
 
@@ -376,7 +388,7 @@ impl<'a> MethodQuery<'a> {
     /// Filters to methods that have a parsed body.
     #[must_use]
     pub fn has_body(mut self) -> Self {
-        self.filters.push(Box::new(|m| m.has_body()));
+        self.filters.push(Box::new(Method::has_body));
         self
     }
 
@@ -390,21 +402,21 @@ impl<'a> MethodQuery<'a> {
     /// Filters to methods with native code implementation.
     #[must_use]
     pub fn native(mut self) -> Self {
-        self.filters.push(Box::new(|m| m.is_code_native()));
+        self.filters.push(Box::new(Method::is_code_native));
         self
     }
 
     /// Filters to methods with IL code implementation.
     #[must_use]
     pub fn il(mut self) -> Self {
-        self.filters.push(Box::new(|m| m.is_code_il()));
+        self.filters.push(Box::new(Method::is_code_il));
         self
     }
 
     /// Filters to P/Invoke methods.
     #[must_use]
     pub fn pinvoke(mut self) -> Self {
-        self.filters.push(Box::new(|m| m.is_pinvoke()));
+        self.filters.push(Box::new(Method::is_pinvoke));
         self
     }
 
@@ -428,8 +440,7 @@ impl<'a> MethodQuery<'a> {
     #[must_use]
     pub fn declaring_type(mut self, type_name: &'a str) -> Self {
         self.filters.push(Box::new(move |m| {
-            m.declaring_type_fullname()
-                .map_or(false, |n| n == type_name)
+            m.declaring_type_fullname().is_some_and(|n| n == type_name)
         }));
         self
     }
@@ -437,7 +448,7 @@ impl<'a> MethodQuery<'a> {
     /// Filters to event handler methods.
     #[must_use]
     pub fn event_handlers(mut self) -> Self {
-        self.filters.push(Box::new(|m| m.is_event_handler()));
+        self.filters.push(Box::new(Method::is_event_handler));
         self
     }
 
@@ -449,31 +460,37 @@ impl<'a> MethodQuery<'a> {
     }
 
     /// Returns all matching methods.
+    #[must_use]
     pub fn find_all(&self) -> Vec<MethodRc> {
         self.iter().collect()
     }
 
     /// Returns the first matching method, short-circuiting iteration.
+    #[must_use]
     pub fn find_first(&self) -> Option<MethodRc> {
         self.iter().next()
     }
 
     /// Returns the count of matching methods.
+    #[must_use]
     pub fn count(&self) -> usize {
         self.iter().count()
     }
 
     /// Returns `true` if any method matches (short-circuits).
+    #[must_use]
     pub fn exists(&self) -> bool {
         self.iter().next().is_some()
     }
 
     /// Returns just the tokens of matching methods.
+    #[must_use]
     pub fn tokens(&self) -> Vec<Token> {
         self.iter().map(|m| m.token).collect()
     }
 
     /// Returns a lazy iterator over matching methods.
+    #[must_use]
     pub fn iter(&self) -> Box<dyn Iterator<Item = MethodRc> + '_> {
         let base: Box<dyn Iterator<Item = MethodRc> + '_> = match &self.source {
             MethodQuerySource::Assembly(map) => {
@@ -483,6 +500,15 @@ impl<'a> MethodQuery<'a> {
         };
 
         Box::new(base.filter(move |m| self.filters.iter().all(|f| f(m))))
+    }
+}
+
+impl<'b> IntoIterator for &'b MethodQuery<'_> {
+    type Item = MethodRc;
+    type IntoIter = Box<dyn Iterator<Item = MethodRc> + 'b>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 

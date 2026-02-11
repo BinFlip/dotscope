@@ -31,7 +31,7 @@ use crate::{
         obfuscators::confuserex::{findings::ConfuserExFindings, ConfuserExObfuscator},
     },
     metadata::{method::Method, signatures::TypeSignature, tables::TableId, token::Token},
-    prelude::FlowType,
+    prelude::{CilTypeRef, FlowType},
     CilObject,
 };
 
@@ -65,21 +65,21 @@ fn build_cleanup_request(
     // 2. Collect protection methods
     if ctx.config.cleanup.remove_protection_methods {
         // Anti-tamper methods
-        for (_, token) in findings.anti_tamper_methods.iter() {
+        for (_, token) in &findings.anti_tamper_methods {
             if !is_entry_point(assembly, *token, aggressive) {
                 request.add_method(*token);
             }
         }
 
         // Anti-debug methods
-        for (_, token) in findings.anti_debug_methods.iter() {
+        for (_, token) in &findings.anti_debug_methods {
             if !is_entry_point(assembly, *token, aggressive) {
                 request.add_method(*token);
             }
         }
 
         // Resource handler methods
-        for (_, token) in findings.resource_handler_methods.iter() {
+        for (_, token) in &findings.resource_handler_methods {
             if !is_entry_point(assembly, *token, aggressive) {
                 request.add_method(*token);
             }
@@ -88,7 +88,7 @@ fn build_cleanup_request(
         // Decryptor methods from detection - only remove if fully decrypted
         // (all call sites transformed). Check against decryptor context rather than
         // is_dead() since call graph may not reflect post-decryption state.
-        for (_, token) in findings.decryptor_methods.iter() {
+        for (_, token) in &findings.decryptor_methods {
             let fully_decrypted = ctx.decryptors.is_fully_decrypted(*token);
             if fully_decrypted && !is_entry_point(assembly, *token, aggressive) {
                 request.add_method(*token);
@@ -96,7 +96,7 @@ fn build_cleanup_request(
         }
 
         // Native x86 helper methods (converted to CIL, but still infrastructure)
-        for (_, native_helper) in findings.native_helpers.iter() {
+        for (_, native_helper) in &findings.native_helpers {
             if !is_entry_point(assembly, native_helper.token, aggressive) {
                 request.add_method(native_helper.token);
             }
@@ -104,24 +104,24 @@ fn build_cleanup_request(
     }
 
     // 3. Collect obfuscator infrastructure types
-    for (_, type_token) in findings.obfuscator_type_tokens.iter() {
+    for (_, type_token) in &findings.obfuscator_type_tokens {
         request.add_type(*type_token);
     }
 
     // 4. Collect constant data backing types (ConfuserEx encrypted data)
-    for (_, type_token) in findings.constant_data_types.iter() {
+    for (_, type_token) in &findings.constant_data_types {
         request.add_type(*type_token);
     }
 
     // 5. Collect constant data fields for FieldRVA cleanup
-    for (_, field_token) in findings.constant_data_fields.iter() {
+    for (_, field_token) in &findings.constant_data_fields {
         request.add_field(*field_token);
     }
 
     // 5b. Collect infrastructure fields (byte[], Assembly fields in <Module>)
     // These are static fields only used by protection infrastructure
     if ctx.config.cleanup.remove_protection_methods {
-        for (_, field_token) in findings.infrastructure_fields.iter() {
+        for (_, field_token) in &findings.infrastructure_fields {
             request.add_field(*field_token);
         }
     }
@@ -129,7 +129,7 @@ fn build_cleanup_request(
     // 6. Collect protection infrastructure types (types nested in <Module> that are internal)
     // These are support types (LZMA decoder, delegates, etc.) no longer needed after deobfuscation
     if ctx.config.cleanup.remove_protection_methods {
-        for (_, type_token) in findings.protection_infrastructure_types.iter() {
+        for (_, type_token) in &findings.protection_infrastructure_types {
             request.add_type(*type_token);
         }
     }
@@ -200,7 +200,7 @@ pub fn build_request(
 
     // Add excluded sections from findings
     if cleanup_config.remove_artifact_sections {
-        for (_, section_name) in findings.artifact_sections.iter() {
+        for (_, section_name) in &findings.artifact_sections {
             request.exclude_section(section_name.clone());
         }
     }
@@ -268,9 +268,7 @@ fn uses_decompression_types(assembly: &CilObject, method: &Method) -> bool {
 
         // Check MemberRef targets
         if token.is_table(TableId::MemberRef) {
-            if let Some(member_ref) = assembly.refs_members().get(token) {
-                let member = member_ref.value();
-
+            if let Some(member) = assembly.member_ref(token) {
                 // Check the declaring type name
                 let type_name = member.declaredby.name().unwrap_or_default();
                 if DECOMPRESSION_TYPES.iter().any(|t| type_name.contains(t)) {
@@ -290,9 +288,7 @@ fn uses_decompression_types(assembly: &CilObject, method: &Method) -> bool {
 
         // Check MethodDef targets (calls to local methods)
         if token.is_table(TableId::MethodDef) {
-            if let Some(method_entry) = assembly.methods().get(token) {
-                let target = method_entry.value();
-
+            if let Some(target) = assembly.method(token) {
                 // Check if calling into a type with decompression-related name
                 if let Some(owner) = target.declaring_type_rc() {
                     if DECOMPRESSION_TYPES.iter().any(|t| owner.name.contains(t)) {
@@ -338,8 +334,7 @@ fn creates_thread_with_delegate(
 
         // Check MemberRef for Thread and delegate constructors
         if token.is_table(TableId::MemberRef) {
-            if let Some(member_ref) = assembly.refs_members().get(token) {
-                let member = member_ref.value();
+            if let Some(member) = assembly.member_ref(token) {
                 let type_name = member.declaredby.name().unwrap_or_default();
 
                 if type_name == "Thread" && member.name == ".ctor" {
@@ -355,8 +350,7 @@ fn creates_thread_with_delegate(
         if instr.mnemonic == "ldftn" {
             if let Operand::Token(fn_token) = &instr.operand {
                 if fn_token.is_table(TableId::MethodDef) {
-                    if let Some(method_entry) = assembly.methods().get(fn_token) {
-                        let target = method_entry.value();
+                    if let Some(target) = assembly.method(fn_token) {
                         if let Some(owner) = target.declaring_type_rc() {
                             if request.is_deleted(owner.token) {
                                 references_removed_type = true;
@@ -472,9 +466,8 @@ fn find_dead_helper_methods(assembly: &CilObject, request: &CleanupRequest) -> H
             let is_in_module = method
                 .declaring_type
                 .get()
-                .and_then(|dt| dt.upgrade())
-                .map(|owner| owner.name == "<Module>")
-                .unwrap_or(false);
+                .and_then(CilTypeRef::upgrade)
+                .is_some_and(|owner| owner.name == "<Module>");
 
             let is_void_no_params = method.signature.return_type.base == TypeSignature::Void
                 && method.signature.params.is_empty();
@@ -510,14 +503,12 @@ fn find_dead_helper_methods(assembly: &CilObject, request: &CleanupRequest) -> H
             let is_in_module = method
                 .declaring_type
                 .get()
-                .and_then(|dt| dt.upgrade())
-                .map(|owner| owner.name == "<Module>")
-                .unwrap_or(false);
+                .and_then(CilTypeRef::upgrade)
+                .is_some_and(|owner| owner.name == "<Module>");
 
             // Strong signal: method is in <Module>, uses streams, and only infrastructure calls it
             if is_in_module && uses_decompression_types(assembly, method) {
                 dead_helpers.insert(method_token);
-                continue;
             }
         }
     }
@@ -535,9 +526,8 @@ fn find_dead_helper_methods(assembly: &CilObject, request: &CleanupRequest) -> H
         let is_in_module = method
             .declaring_type
             .get()
-            .and_then(|dt| dt.upgrade())
-            .map(|owner| owner.name == "<Module>")
-            .unwrap_or(false);
+            .and_then(CilTypeRef::upgrade)
+            .is_some_and(|owner| owner.name == "<Module>");
 
         if !is_in_module {
             continue;

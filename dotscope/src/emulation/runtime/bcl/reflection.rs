@@ -488,7 +488,7 @@ fn module_get_assembly_pre(_ctx: &HookContext<'_>, thread: &mut EmulationThread)
 fn module_resolve_method_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
     // Extract the metadata token from the first argument (int32)
     #[allow(clippy::cast_sign_loss)]
-    let method_token = if let Some(token_value) = ctx.args.first().and_then(|v| v.as_i32()) {
+    let method_token = if let Some(token_value) = ctx.args.first().and_then(EmValue::as_i32) {
         // The argument is the raw metadata token value (e.g., 0x06000001 for MethodDef)
         Token::new(token_value as u32)
     } else {

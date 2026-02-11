@@ -565,7 +565,7 @@ impl<'a> WriteContext<'a> {
             // Safety: padding is always < alignment, and alignment is typically 4, 8, or 512
             // so this will never exceed usize range
             let padding_usize = usize::try_from(padding).map_err(|_| {
-                Error::LayoutFailed(format!("Padding {} exceeds usize range", padding))
+                Error::LayoutFailed(format!("Padding {padding} exceeds usize range"))
             })?;
             let zeros = vec![0u8; padding_usize];
             self.write(&zeros)?;

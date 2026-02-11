@@ -1019,6 +1019,11 @@ impl CilAssemblyView {
     /// They contain types and code but are designed to be linked into a multi-file assembly.
     /// For these modules, this method returns `Ok(None)` instead of an error.
     ///
+    /// # Errors
+    ///
+    /// Returns an error if the metadata tables or strings heap are missing, or if the assembly
+    /// has a public key reference but the blob heap is unavailable.
+    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -1125,6 +1130,7 @@ impl CilAssemblyView {
     ///
     /// * `true` - This is a netmodule (no Assembly table)
     /// * `false` - This is a full assembly with its own identity
+    #[must_use]
     pub fn is_netmodule(&self) -> bool {
         let Some(tables) = self.tables() else {
             return false;
@@ -1149,6 +1155,11 @@ impl CilAssemblyView {
     ///
     /// * `Ok(AssemblyIdentity)` - Either from Assembly table or synthesized from module name
     /// * `Err(_)` - If neither Assembly nor Module table can provide identity
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if neither the Assembly nor Module table are available for identity
+    /// extraction, or if the underlying `identity()` call fails.
     ///
     /// # Examples
     ///

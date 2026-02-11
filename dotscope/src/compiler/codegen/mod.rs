@@ -47,7 +47,8 @@ use coalescing::LocalCoalescer;
 
 use crate::{
     analysis::{
-        CmpKind, ConstValue, SsaBlock, SsaFunction, SsaOp, SsaType, SsaVarId, VariableOrigin,
+        CmpKind, ConstValue, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId,
+        SsaVariable, VariableOrigin,
     },
     assembly::{Immediate, InstructionEncoder, Operand},
     cilassembly::CilAssembly,
@@ -101,7 +102,7 @@ impl TempPool {
     /// Try to allocate a slot from the pool for the given type.
     /// Returns `Some(slot)` if a free slot is available, `None` otherwise.
     fn try_allocate(&mut self, ty: &SsaType) -> Option<u16> {
-        self.free_by_type.get_mut(ty).and_then(|slots| slots.pop())
+        self.free_by_type.get_mut(ty).and_then(Vec::pop)
     }
 
     /// Release a slot back to the pool for the given type.
@@ -300,6 +301,7 @@ impl SsaCodeGenerator {
         let locals = self.build_local_signatures(ssa, num_locals)?;
 
         // Remap exception handlers using block offset mapping
+        #[allow(clippy::cast_possible_truncation)]
         let exception_handlers = self.remap_exception_handlers(ssa, bytecode.len() as u32);
 
         Ok(CompilationResult {
@@ -522,7 +524,7 @@ impl SsaCodeGenerator {
             .blocks()
             .iter()
             .filter(|b| !b.instructions().is_empty() || branch_targets.contains(&b.id()))
-            .map(|b| b.id())
+            .map(SsaBlock::id)
             .collect();
 
         // Compute optimal block layout to minimize unnecessary branches.
@@ -658,6 +660,47 @@ impl SsaCodeGenerator {
     /// 3. When a block has no unvisited successor, pick the next unvisited block
     /// 4. Continue until all blocks are placed
     fn compute_block_layout(ssa: &SsaFunction, blocks_to_include: &HashSet<usize>) -> Vec<usize> {
+        // Get the preferred successor for a block (the one we'd like to fall through to)
+        fn preferred_successor(
+            ssa: &SsaFunction,
+            block_id: usize,
+            leave_targets: &HashSet<usize>,
+        ) -> Option<usize> {
+            let block = ssa.block(block_id)?;
+            // Look at the terminator instruction
+            for instr in block.instructions().iter().rev() {
+                match instr.op() {
+                    // For Leave/Return/Throw/Rethrow/EndFinally/EndFilter, no successors
+                    SsaOp::Leave { .. }
+                    | SsaOp::Return { .. }
+                    | SsaOp::Throw { .. }
+                    | SsaOp::Rethrow
+                    | SsaOp::EndFinally
+                    | SsaOp::EndFilter { .. } => {
+                        return None;
+                    }
+                    // For unconditional jump, the target is the preferred successor
+                    // unless it's a leave target (merge point)
+                    SsaOp::Jump { target } => {
+                        if !leave_targets.contains(target) {
+                            return Some(*target);
+                        }
+                        return None;
+                    }
+                    // For branches, prefer the false branch (often the fall-through case)
+                    SsaOp::Branch { false_target, .. } | SsaOp::BranchCmp { false_target, .. } => {
+                        return Some(*false_target);
+                    }
+                    // For switch, prefer the default case
+                    SsaOp::Switch { default, .. } => {
+                        return Some(*default);
+                    }
+                    _ => {}
+                }
+            }
+            None
+        }
+
         if blocks_to_include.is_empty() {
             return Vec::new();
         }
@@ -684,51 +727,6 @@ impl SsaCodeGenerator {
 
         let mut layout = Vec::with_capacity(blocks_to_include.len());
         let mut visited = HashSet::with_capacity(blocks_to_include.len());
-
-        // Get the preferred successor for a block (the one we'd like to fall through to)
-        fn preferred_successor(
-            ssa: &SsaFunction,
-            block_id: usize,
-            leave_targets: &HashSet<usize>,
-        ) -> Option<usize> {
-            let block = ssa.block(block_id)?;
-            // Look at the terminator instruction
-            for instr in block.instructions().iter().rev() {
-                match instr.op() {
-                    // For Leave, DON'T follow the target - it's a merge point that
-                    // should come after all handlers have been placed
-                    SsaOp::Leave { .. } => {
-                        return None;
-                    }
-                    // For unconditional jump, the target is the preferred successor
-                    // unless it's a leave target (merge point)
-                    SsaOp::Jump { target } => {
-                        if !leave_targets.contains(target) {
-                            return Some(*target);
-                        }
-                        return None;
-                    }
-                    // For branches, prefer the false branch (often the fall-through case)
-                    SsaOp::Branch { false_target, .. } | SsaOp::BranchCmp { false_target, .. } => {
-                        return Some(*false_target);
-                    }
-                    // For switch, prefer the default case
-                    SsaOp::Switch { default, .. } => {
-                        return Some(*default);
-                    }
-                    // Return/throw have no successors
-                    SsaOp::Return { .. }
-                    | SsaOp::Throw { .. }
-                    | SsaOp::Rethrow
-                    | SsaOp::EndFinally
-                    | SsaOp::EndFilter { .. } => {
-                        return None;
-                    }
-                    _ => continue,
-                }
-            }
-            None
-        }
 
         // Start with block 0 if it's in the set, otherwise pick the first available
         let start = if blocks_to_include.contains(&0) {
@@ -806,7 +804,7 @@ impl SsaCodeGenerator {
     fn allocate_storage(&mut self, ssa: &SsaFunction) -> Result<()> {
         // First, compute global use counts and identify single-use constants.
         // This avoids storing constants to locals only to load them back.
-        self.global_use_counts = self.compute_variable_use_counts(ssa);
+        self.global_use_counts = Self::compute_variable_use_counts(ssa);
         self.identify_deferred_constants(ssa, &self.global_use_counts.clone());
 
         // Identify stack locals - variables that can live entirely on the eval stack.
@@ -843,8 +841,12 @@ impl SsaCodeGenerator {
         }
 
         // Set next_local to count of compacted Local-origin variables
-        self.next_local = allocation.original_to_compacted.len() as u16;
-        self.original_to_compacted = allocation.original_to_compacted.clone();
+        #[allow(clippy::cast_possible_truncation)]
+        {
+            self.next_local = allocation.original_to_compacted.len() as u16;
+        }
+        self.original_to_compacted
+            .clone_from(&allocation.original_to_compacted);
 
         // Phase 2: Pre-allocate ALL phi results to locals.
         // This ensures consistent stack behavior - phi results are always in locals,
@@ -881,7 +883,7 @@ impl SsaCodeGenerator {
                 // Try phi result type first, then infer from operands.
                 let phi_type = ssa
                     .variable(phi_result)
-                    .map(|v| v.var_type())
+                    .map(SsaVariable::var_type)
                     .filter(|t| !t.is_unknown())
                     .cloned();
 
@@ -890,7 +892,7 @@ impl SsaCodeGenerator {
                     visited.insert(phi_result); // prevent self-referential phi loops
                     for operand in phi.operands() {
                         if let Ok(ty) =
-                            self.infer_variable_type_inner(ssa, operand.value(), &mut visited)
+                            Self::infer_variable_type_inner(ssa, operand.value(), &mut visited)
                         {
                             return Some(ty);
                         }
@@ -977,11 +979,11 @@ impl SsaCodeGenerator {
 
             // Record the type — try declared type first, then infer from definition
             let var_type = var.var_type();
-            if !var_type.is_unknown() {
-                self.local_types.insert(local_idx, var_type.clone());
-            } else {
-                let inferred = self.infer_variable_type(ssa, var_id)?;
+            if var_type.is_unknown() {
+                let inferred = Self::infer_variable_type(ssa, var_id)?;
                 self.local_types.insert(local_idx, inferred);
+            } else {
+                self.local_types.insert(local_idx, var_type.clone());
             }
         }
 
@@ -993,7 +995,7 @@ impl SsaCodeGenerator {
     /// This ONLY counts uses in instructions, not phi operands.
     /// Phi operand liveness is determined separately when emitting phi copies,
     /// based on whether the phi result itself is used.
-    fn compute_variable_use_counts(&self, ssa: &SsaFunction) -> HashMap<SsaVarId, usize> {
+    fn compute_variable_use_counts(ssa: &SsaFunction) -> HashMap<SsaVarId, usize> {
         let mut use_counts: HashMap<SsaVarId, usize> = HashMap::new();
 
         for block in ssa.blocks() {
@@ -1024,7 +1026,7 @@ impl SsaCodeGenerator {
                     // Only defer if used exactly once and not used in phi nodes
                     // (phi operands need to be available at block boundaries)
                     let uses = use_counts.get(dest).copied().unwrap_or(0);
-                    if uses == 1 && !self.is_phi_operand(ssa, *dest) {
+                    if uses == 1 && !Self::is_phi_operand(ssa, *dest) {
                         self.deferred_constants.insert(*dest, value.clone());
                     }
                 }
@@ -1072,7 +1074,7 @@ impl SsaCodeGenerator {
         }
 
         // Condition 2: Not used as a phi operand (phi copies happen at block boundaries)
-        if self.is_phi_operand(ssa, var) {
+        if Self::is_phi_operand(ssa, var) {
             return false;
         }
 
@@ -1131,7 +1133,7 @@ impl SsaCodeGenerator {
     }
 
     /// Checks if a variable is used as a phi operand anywhere.
-    fn is_phi_operand(&self, ssa: &SsaFunction, var: SsaVarId) -> bool {
+    fn is_phi_operand(ssa: &SsaFunction, var: SsaVarId) -> bool {
         for block in ssa.blocks() {
             for phi in block.phi_nodes() {
                 for operand in phi.operands() {
@@ -1149,7 +1151,7 @@ impl SsaCodeGenerator {
     /// This is important for determining whether a value can be left on the stack
     /// (only valid if used within the same block) or must be stored to a local
     /// (required if used in a different block, since stack doesn't persist).
-    fn is_used_outside_block(&self, ssa: &SsaFunction, var: SsaVarId, def_block: usize) -> bool {
+    fn is_used_outside_block(ssa: &SsaFunction, var: SsaVarId, def_block: usize) -> bool {
         for block in ssa.blocks() {
             if block.id() == def_block {
                 continue; // Skip the defining block
@@ -1268,7 +1270,7 @@ impl SsaCodeGenerator {
         // Determine the type for this local:
         // 1. Try the variable's type from SSA
         // 2. Try to infer from the definition operation
-        let var_type = self.infer_variable_type(ssa, var)?;
+        let var_type = Self::infer_variable_type(ssa, var)?;
 
         // Allocate a new local slot
         let local = self.next_local;
@@ -1293,16 +1295,15 @@ impl SsaCodeGenerator {
     ///
     /// Returns an error if the type cannot be determined from either the SSA
     /// variable metadata or the defining operation.
-    fn infer_variable_type(&self, ssa: &SsaFunction, var: SsaVarId) -> Result<SsaType> {
+    fn infer_variable_type(ssa: &SsaFunction, var: SsaVarId) -> Result<SsaType> {
         let mut visited = HashSet::new();
-        self.infer_variable_type_inner(ssa, var, &mut visited)
+        Self::infer_variable_type_inner(ssa, var, &mut visited)
     }
 
     /// Recursive helper for type inference with cycle detection.
     ///
     /// Traces through Copy chains and phi operand chains to find a known type.
     fn infer_variable_type_inner(
-        &self,
         ssa: &SsaFunction,
         var: SsaVarId,
         visited: &mut HashSet<SsaVarId>,
@@ -1328,7 +1329,7 @@ impl SsaCodeGenerator {
             // For Copy, trace to source variable
             if let SsaOp::Copy { src, .. } = def_op {
                 let src = *src;
-                return self.infer_variable_type_inner(ssa, src, visited);
+                return Self::infer_variable_type_inner(ssa, src, visited);
             }
             return Err(Error::CodegenFailed(format!(
                 "cannot determine type for variable {var:?}: defining op has no \
@@ -1339,7 +1340,7 @@ impl SsaCodeGenerator {
         // 3. Check if defined by a phi — trace operands
         if let Some((_block, phi)) = ssa.find_phi_defining(var) {
             for operand in phi.operands() {
-                if let Ok(ty) = self.infer_variable_type_inner(ssa, operand.value(), visited) {
+                if let Ok(ty) = Self::infer_variable_type_inner(ssa, operand.value(), visited) {
                     return Ok(ty);
                 }
             }
@@ -1374,17 +1375,20 @@ impl SsaCodeGenerator {
                 ConstValue::String(_) | ConstValue::DecryptedString(_) => SsaType::String,
                 ConstValue::Null => SsaType::Null,
                 ConstValue::True | ConstValue::False => SsaType::Bool,
-                ConstValue::Type(_) => SsaType::Object, // RuntimeTypeHandle
-                ConstValue::MethodHandle(_) => SsaType::Object, // RuntimeMethodHandle
-                ConstValue::FieldHandle(_) => SsaType::Object, // RuntimeFieldHandle
+                // RuntimeTypeHandle / RuntimeMethodHandle / RuntimeFieldHandle
+                ConstValue::Type(_) | ConstValue::MethodHandle(_) | ConstValue::FieldHandle(_) => {
+                    SsaType::Object
+                }
             }),
             // Type conversions have explicit target type
             SsaOp::Conv { target, .. } => Some(target.clone()),
-            // Comparisons produce int32 (bool on stack)
-            SsaOp::Ceq { .. } | SsaOp::Clt { .. } | SsaOp::Cgt { .. } => Some(SsaType::I32),
-            // Most arithmetic/bitwise ops - assume int32 for simplicity
-            // (actual type depends on operand types, but int32 is safe default)
-            SsaOp::Add { .. }
+            // Comparisons, arithmetic/bitwise ops, overflow-checked arithmetic,
+            // SizeOf, UnboxAny, field loads, LoadObj, calls, LoadArg/LoadLocal
+            // all produce int32 (or default to it when metadata is unavailable)
+            SsaOp::Ceq { .. }
+            | SsaOp::Clt { .. }
+            | SsaOp::Cgt { .. }
+            | SsaOp::Add { .. }
             | SsaOp::Sub { .. }
             | SsaOp::Mul { .. }
             | SsaOp::Div { .. }
@@ -1395,21 +1399,30 @@ impl SsaCodeGenerator {
             | SsaOp::Shl { .. }
             | SsaOp::Shr { .. }
             | SsaOp::Neg { .. }
-            | SsaOp::Not { .. } => Some(SsaType::I32),
-            // Overflow-checked arithmetic (same result type as regular)
-            SsaOp::AddOvf { .. } | SsaOp::SubOvf { .. } | SsaOp::MulOvf { .. } => {
-                Some(SsaType::I32)
-            }
-            // Box produces object reference
-            SsaOp::Box { .. } => Some(SsaType::Object),
-            // SizeOf produces int32
-            SsaOp::SizeOf { .. } => Some(SsaType::I32),
-            // Array length is native int (ECMA-335 III.4.12)
-            SsaOp::ArrayLength { .. } => Some(SsaType::NativeInt),
+            | SsaOp::Not { .. }
+            | SsaOp::AddOvf { .. }
+            | SsaOp::SubOvf { .. }
+            | SsaOp::MulOvf { .. }
+            | SsaOp::SizeOf { .. }
+            | SsaOp::UnboxAny { .. }
+            | SsaOp::LoadField { .. }
+            | SsaOp::LoadStaticField { .. }
+            | SsaOp::LoadObj { .. }
+            | SsaOp::Call { dest: Some(_), .. }
+            | SsaOp::CallVirt { dest: Some(_), .. }
+            | SsaOp::CallIndirect { dest: Some(_), .. }
+            | SsaOp::LoadArg { .. }
+            | SsaOp::LoadLocal { .. } => Some(SsaType::I32),
+            // Box, NewObj, NewArr, CastClass/IsInst produce object references
+            SsaOp::Box { .. }
+            | SsaOp::NewObj { .. }
+            | SsaOp::NewArr { .. }
+            | SsaOp::CastClass { .. }
+            | SsaOp::IsInst { .. } => Some(SsaType::Object),
+            // Array length and LocalAlloc return native int
+            SsaOp::ArrayLength { .. } | SsaOp::LocalAlloc { .. } => Some(SsaType::NativeInt),
             // Ckfinite operates on F64 stack type
             SsaOp::Ckfinite { .. } => Some(SsaType::F64),
-            // LocalAlloc returns pointer (native int)
-            SsaOp::LocalAlloc { .. } => Some(SsaType::NativeInt),
             // Function pointer loads produce native int
             SsaOp::LoadFunctionPtr { .. } | SsaOp::LoadVirtFunctionPtr { .. } => {
                 Some(SsaType::NativeInt)
@@ -1420,41 +1433,19 @@ impl SsaCodeGenerator {
             SsaOp::LoadIndirect { value_type, .. } => Some(value_type.clone()),
             // Load token — determine handle type from token table
             SsaOp::LoadToken { token, .. } => Some(match token.token().table() {
-                0x01 | 0x02 | 0x1B => SsaType::RuntimeTypeHandle,
                 0x06 | 0x0A | 0x2B => SsaType::RuntimeMethodHandle,
                 0x04 => SsaType::RuntimeFieldHandle,
                 _ => SsaType::RuntimeTypeHandle,
             }),
-            // NewObj always produces an object reference
-            SsaOp::NewObj { .. } => Some(SsaType::Object),
-            // NewArr produces an array (element type needs metadata, default to Object array)
-            SsaOp::NewArr { .. } => Some(SsaType::Object),
-            // CastClass/IsInst produce the target type (needs metadata, default to Object)
-            SsaOp::CastClass { .. } | SsaOp::IsInst { .. } => Some(SsaType::Object),
-            // Unbox produces ByRef to value type (default to ByRef(I32))
-            SsaOp::Unbox { .. } => Some(SsaType::ByRef(Box::new(SsaType::I32))),
-            // UnboxAny extracts value type (default to I32)
-            SsaOp::UnboxAny { .. } => Some(SsaType::I32),
-            // Field loads (need metadata, default to I32)
-            SsaOp::LoadField { .. } | SsaOp::LoadStaticField { .. } => Some(SsaType::I32),
-            // Field address loads (need metadata, default to ByRef(I32))
-            SsaOp::LoadFieldAddr { .. } | SsaOp::LoadStaticFieldAddr { .. } => {
+            // Unbox and LoadElementAddr produce ByRef to value type (default to ByRef(I32))
+            SsaOp::Unbox { .. } | SsaOp::LoadElementAddr { .. } => {
                 Some(SsaType::ByRef(Box::new(SsaType::I32)))
             }
-            // Load element address
-            SsaOp::LoadElementAddr { .. } => Some(SsaType::ByRef(Box::new(SsaType::I32))),
-            // LoadObj copies a value type (default to I32)
-            SsaOp::LoadObj { .. } => Some(SsaType::I32),
-            // Call/CallVirt/CallIndirect (need metadata, default to I32)
-            SsaOp::Call { dest: Some(_), .. }
-            | SsaOp::CallVirt { dest: Some(_), .. }
-            | SsaOp::CallIndirect { dest: Some(_), .. } => Some(SsaType::I32),
-            // LoadArg/LoadLocal (need metadata, default to I32)
-            SsaOp::LoadArg { .. } | SsaOp::LoadLocal { .. } => Some(SsaType::I32),
-            // LoadArgAddr/LoadLocalAddr (need metadata, default to ByRef(I32))
-            SsaOp::LoadArgAddr { .. } | SsaOp::LoadLocalAddr { .. } => {
-                Some(SsaType::ByRef(Box::new(SsaType::I32)))
-            }
+            // Field/arg/local address loads (need metadata, default to ByRef(I32))
+            SsaOp::LoadFieldAddr { .. }
+            | SsaOp::LoadStaticFieldAddr { .. }
+            | SsaOp::LoadArgAddr { .. }
+            | SsaOp::LoadLocalAddr { .. } => Some(SsaType::ByRef(Box::new(SsaType::I32))),
             // Operations that don't produce values or have complex types
             _ => None,
         }
@@ -1515,9 +1506,8 @@ impl SsaCodeGenerator {
         };
 
         Err(Error::Deobfuscation(format!(
-            "No storage found for variable {:?} ({}) - this indicates a bug in SSA construction. \
-             Variables must have proper Argument/Local origins or be traceable through the SSA graph.",
-            var, var_info
+            "No storage found for variable {var:?} ({var_info}) - this indicates a bug in SSA construction. \
+             Variables must have proper Argument/Local origins or be traceable through the SSA graph."
         )))
     }
 
@@ -1729,7 +1719,7 @@ impl SsaCodeGenerator {
         let ops: Vec<&SsaOp> = block
             .instructions()
             .iter()
-            .map(|i| i.op())
+            .map(SsaInstruction::op)
             .filter(|op| {
                 match op {
                     SsaOp::Copy { dest, src } => {
@@ -1786,7 +1776,7 @@ impl SsaCodeGenerator {
             //
             // First, collect all variables defined in this block
             let mut defined_in_block: HashSet<SsaVarId> = HashSet::new();
-            for op in ops.iter() {
+            for op in &ops {
                 if let Some(dest) = op.dest() {
                     defined_in_block.insert(dest);
                 }
@@ -2088,7 +2078,7 @@ impl SsaCodeGenerator {
                             // If so, it must be stored because stack values don't
                             // persist across block boundaries.
                             let used_outside_block =
-                                self.is_used_outside_block(ctx.ssa, dest, ctx.current_block_idx);
+                                Self::is_used_outside_block(ctx.ssa, dest, ctx.current_block_idx);
 
                             if uses > 1 || used_outside_block {
                                 // Multi-use or cross-block use: store to local immediately.
@@ -2154,6 +2144,12 @@ impl SsaCodeGenerator {
         generated: &mut HashSet<usize>,
         use_counts: &HashMap<SsaVarId, usize>,
     ) -> Result<()> {
+        struct CopyInfo {
+            src_var: SsaVarId,
+            dest_var: SsaVarId,
+            dest_storage: VarStorage,
+        }
+
         // Phase 1: Generate all dependencies of all Copy roots.
         // This ensures operations like Add are completed before any Copy stores.
         for &copy_idx in copy_roots {
@@ -2162,11 +2158,6 @@ impl SsaCodeGenerator {
 
         // Phase 2: Collect all copy operations and their storage info.
         // For each Copy root, we need its source value and destination storage.
-        struct CopyInfo {
-            src_var: SsaVarId,
-            dest_var: SsaVarId,
-            dest_storage: VarStorage,
-        }
         let mut copies: Vec<CopyInfo> = Vec::new();
 
         for &copy_idx in copy_roots {
@@ -2203,26 +2194,7 @@ impl SsaCodeGenerator {
                 .any(|copy_b| !std::ptr::eq(copy_a, copy_b) && src_storage == copy_b.dest_storage)
         });
 
-        if !has_interference {
-            // Simple case: no interference, emit load-store pairs directly
-            for copy_info in &copies {
-                self.load_var(encoder, ctx.ssa, copy_info.src_var)?;
-                match copy_info.dest_storage {
-                    VarStorage::Local(idx) => {
-                        self.used_locals.insert(idx);
-                        emitter::emit_stloc(encoder, idx)?;
-                    }
-                    VarStorage::Arg(idx) => emitter::emit_starg(encoder, idx)?,
-                    VarStorage::Stack => {
-                        return Err(Error::Deobfuscation(format!(
-                            "emit_copy_roots_parallel: copy destination {:?} has Stack storage - this indicates a bug in storage allocation",
-                            copy_info.dest_var
-                        )));
-                    }
-                }
-                self.last_load = None;
-            }
-        } else {
+        if has_interference {
             // Interference detected: use parallel copy semantics.
             // Load all sources first, storing to temporaries.
             // Use the temp pool for slot reuse.
@@ -2231,7 +2203,7 @@ impl SsaCodeGenerator {
                 self.load_var(encoder, ctx.ssa, copy_info.src_var)?;
 
                 // Determine the type for this temporary
-                let var_type = self.infer_variable_type(ctx.ssa, copy_info.src_var)?;
+                let var_type = Self::infer_variable_type(ctx.ssa, copy_info.src_var)?;
 
                 // Allocate from pool or fresh
                 let temp_idx = self.allocate_temp_local(&var_type);
@@ -2259,8 +2231,7 @@ impl SsaCodeGenerator {
                     VarStorage::Arg(idx) => emitter::emit_starg(encoder, idx)?,
                     VarStorage::Stack => {
                         return Err(Error::Deobfuscation(format!(
-                            "emit_copy_roots_parallel: copy destination {:?} has Stack storage - this indicates a bug in storage allocation",
-                            dest_var
+                            "emit_copy_roots_parallel: copy destination {dest_var:?} has Stack storage - this indicates a bug in storage allocation"
                         )));
                     }
                 }
@@ -2268,6 +2239,25 @@ impl SsaCodeGenerator {
 
                 // Release temp back to pool for reuse
                 self.release_temp_local(temp_idx, &var_type);
+            }
+        } else {
+            // Simple case: no interference, emit load-store pairs directly
+            for copy_info in &copies {
+                self.load_var(encoder, ctx.ssa, copy_info.src_var)?;
+                match copy_info.dest_storage {
+                    VarStorage::Local(idx) => {
+                        self.used_locals.insert(idx);
+                        emitter::emit_stloc(encoder, idx)?;
+                    }
+                    VarStorage::Arg(idx) => emitter::emit_starg(encoder, idx)?,
+                    VarStorage::Stack => {
+                        return Err(Error::Deobfuscation(format!(
+                            "emit_copy_roots_parallel: copy destination {:?} has Stack storage - this indicates a bug in storage allocation",
+                            copy_info.dest_var
+                        )));
+                    }
+                }
+                self.last_load = None;
             }
         }
 
@@ -2349,7 +2339,7 @@ impl SsaCodeGenerator {
                     if let Some(dest) = ctx.ops[dep_idx].dest() {
                         let uses = use_counts.get(&dest).copied().unwrap_or(0);
                         let used_outside_block =
-                            self.is_used_outside_block(ctx.ssa, dest, ctx.current_block_idx);
+                            Self::is_used_outside_block(ctx.ssa, dest, ctx.current_block_idx);
 
                         if uses > 1 || used_outside_block {
                             self.store_var(encoder, ctx.ssa, dest)?;
@@ -3336,7 +3326,7 @@ impl SsaCodeGenerator {
                 if *v <= 127 {
                     encoder.emit_instruction(
                         "ldc.i4.s",
-                        Some(Operand::Immediate(Immediate::Int8(*v as i8))),
+                        Some(Operand::Immediate(Immediate::Int8((*v).cast_signed()))),
                     )?;
                 } else {
                     // Value > 127 would be sign-extended incorrectly by ldc.i4.s
@@ -3512,8 +3502,7 @@ impl SsaCodeGenerator {
                 VarStorage::Stack => {
                     // This should not happen with force_allocate_storage
                     return Err(Error::Deobfuscation(format!(
-                        "load_var: buried variable {:?} still has Stack storage after force allocation - this indicates a bug",
-                        buried_var
+                        "load_var: buried variable {buried_var:?} still has Stack storage after force allocation - this indicates a bug"
                     )));
                 }
             }
@@ -3626,8 +3615,7 @@ impl SsaCodeGenerator {
                 VarStorage::Stack => {
                     // Should never happen with force_allocate_storage
                     return Err(Error::Deobfuscation(format!(
-                        "spill_stack: variable {:?} still has Stack storage after force allocation - this indicates a bug",
-                        var
+                        "spill_stack: variable {var:?} still has Stack storage after force allocation - this indicates a bug"
                     )));
                 }
             }
@@ -3926,7 +3914,7 @@ impl SsaCodeGenerator {
         }
 
         // Emit the switch instruction
-        let label_refs: Vec<&str> = switch_labels.iter().map(|s| s.as_str()).collect();
+        let label_refs: Vec<&str> = switch_labels.iter().map(String::as_str).collect();
         encoder.emit_switch(&label_refs)?;
 
         // Emit jump to default (or intermediate for default)
@@ -4114,8 +4102,7 @@ impl SsaCodeGenerator {
                     VarStorage::Arg(idx) => emitter::emit_starg(encoder, *idx)?,
                     VarStorage::Stack => {
                         return Err(Error::Deobfuscation(format!(
-                            "emit_phi_stores_for_successor: phi result has Stack storage (operand={:?}) - this indicates a bug in phi pre-allocation",
-                            operand_var
+                            "emit_phi_stores_for_successor: phi result has Stack storage (operand={operand_var:?}) - this indicates a bug in phi pre-allocation"
                         )));
                     }
                 }
@@ -4196,8 +4183,7 @@ impl SsaCodeGenerator {
                 VarStorage::Arg(idx) => emitter::emit_starg(encoder, *idx)?,
                 VarStorage::Stack => {
                     return Err(Error::Deobfuscation(format!(
-                        "emit_phi_stores_for_successor: phi result has Stack storage (operand={:?}) - this indicates a bug in phi pre-allocation",
-                        operand_var
+                        "emit_phi_stores_for_successor: phi result has Stack storage (operand={operand_var:?}) - this indicates a bug in phi pre-allocation"
                     )));
                 }
             }
@@ -4216,7 +4202,7 @@ impl SsaCodeGenerator {
                 self.load_var(encoder, ssa, *operand_var)?;
 
                 // Determine the type for this temporary
-                let var_type = self.infer_variable_type(ssa, *operand_var)?;
+                let var_type = Self::infer_variable_type(ssa, *operand_var)?;
 
                 // Allocate from pool or fresh
                 let temp_idx = self.allocate_temp_local(&var_type);

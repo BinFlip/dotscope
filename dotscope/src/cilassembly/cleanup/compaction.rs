@@ -58,11 +58,11 @@ use crate::{
 #[derive(Debug, Default)]
 pub struct CompactionStats {
     /// Number of unreferenced string entries marked for removal.
-    pub strings_removed: usize,
+    pub strings: usize,
     /// Number of unreferenced blob entries marked for removal.
-    pub blobs_removed: usize,
+    pub blobs: usize,
     /// Number of unreferenced GUID entries marked for removal.
-    pub guids_removed: usize,
+    pub guids: usize,
 }
 
 impl CompactionStats {
@@ -71,7 +71,7 @@ impl CompactionStats {
     /// Checks all heap types (strings, blobs, GUIDs) for removals.
     #[must_use]
     pub fn has_removals(&self) -> bool {
-        self.strings_removed > 0 || self.blobs_removed > 0 || self.guids_removed > 0
+        self.strings > 0 || self.blobs > 0 || self.guids > 0
     }
 
     /// Returns the total number of entries marked for removal.
@@ -79,7 +79,7 @@ impl CompactionStats {
     /// This is the sum of removed strings, blobs, and GUIDs.
     #[must_use]
     pub fn total_removed(&self) -> usize {
-        self.strings_removed + self.blobs_removed + self.guids_removed
+        self.strings + self.blobs + self.guids
     }
 }
 
@@ -104,7 +104,7 @@ pub fn mark_unreferenced_heap_entries(assembly: &mut CilAssembly) -> Result<Comp
     let mut stats = CompactionStats::default();
 
     // Collect all referenced heap offsets/indices from tables
-    let (ref_strings, ref_blobs, ref_guids) = collect_referenced_heap_entries(assembly)?;
+    let (ref_strings, ref_blobs, ref_guids) = collect_referenced_heap_entries(assembly);
 
     // Store referenced string offsets for use during streaming (substring remapping)
     assembly
@@ -127,6 +127,8 @@ pub fn mark_unreferenced_heap_entries(assembly: &mut CilAssembly) -> Result<Comp
             strings
                 .iter()
                 .filter_map(|(offset, content)| {
+                    // Safe: .NET heap offsets always fit in u32
+                    #[allow(clippy::cast_possible_truncation)]
                     let offset_u32 = offset as u32;
                     // Skip offset 0 (null terminator) - always referenced implicitly
                     if offset_u32 == 0 {
@@ -134,6 +136,8 @@ pub fn mark_unreferenced_heap_entries(assembly: &mut CilAssembly) -> Result<Comp
                     }
 
                     // Calculate the byte range of this string entry
+                    // Safe: .NET heap offsets always fit in u32
+                    #[allow(clippy::cast_possible_truncation)]
                     let str_end = offset_u32 + content.len() as u32 + 1; // +1 for null terminator
 
                     // Check if ANY referenced offset falls within this string's range
@@ -141,10 +145,10 @@ pub fn mark_unreferenced_heap_entries(assembly: &mut CilAssembly) -> Result<Comp
                         .iter()
                         .any(|&ref_off| ref_off >= offset_u32 && ref_off < str_end);
 
-                    if !has_reference {
-                        Some(offset_u32)
-                    } else {
+                    if has_reference {
                         None
+                    } else {
+                        Some(offset_u32)
                     }
                 })
                 .collect()
@@ -157,6 +161,8 @@ pub fn mark_unreferenced_heap_entries(assembly: &mut CilAssembly) -> Result<Comp
             blobs
                 .iter()
                 .filter_map(|(offset, _)| {
+                    // Safe: .NET heap offsets always fit in u32
+                    #[allow(clippy::cast_possible_truncation)]
                     let offset_u32 = offset as u32;
                     // Skip offset 0 (null blob) - always referenced implicitly
                     if offset_u32 > 0 && !ref_blobs.contains(&offset_u32) {
@@ -175,6 +181,8 @@ pub fn mark_unreferenced_heap_entries(assembly: &mut CilAssembly) -> Result<Comp
             guids
                 .iter()
                 .filter_map(|(index, _)| {
+                    // Safe: .NET heap offsets always fit in u32
+                    #[allow(clippy::cast_possible_truncation)]
                     let index_u32 = index as u32;
                     // GUID indices are 1-based, index 0 means "no GUID"
                     if index_u32 > 0 && !ref_guids.contains(&index_u32) {
@@ -193,17 +201,17 @@ pub fn mark_unreferenced_heap_entries(assembly: &mut CilAssembly) -> Result<Comp
 
     for offset in unreferenced_strings {
         assembly.string_remove(offset)?;
-        stats.strings_removed += 1;
+        stats.strings += 1;
     }
 
     for offset in unreferenced_blobs {
         assembly.blob_remove(offset)?;
-        stats.blobs_removed += 1;
+        stats.blobs += 1;
     }
 
     for index in unreferenced_guids {
         assembly.guid_remove(index)?;
-        stats.guids_removed += 1;
+        stats.guids += 1;
     }
 
     Ok(stats)
@@ -221,7 +229,7 @@ pub fn mark_unreferenced_heap_entries(assembly: &mut CilAssembly) -> Result<Comp
 /// Returns sets of referenced offsets/indices for each heap type.
 fn collect_referenced_heap_entries(
     assembly: &CilAssembly,
-) -> Result<(HashSet<u32>, HashSet<u32>, HashSet<u32>)> {
+) -> (HashSet<u32>, HashSet<u32>, HashSet<u32>) {
     let mut ref_strings: HashSet<u32> = HashSet::new();
     let mut ref_blobs: HashSet<u32> = HashSet::new();
     let mut ref_guids: HashSet<u32> = HashSet::new();
@@ -232,7 +240,7 @@ fn collect_referenced_heap_entries(
 
     let view = assembly.view();
     let Some(tables) = view.tables() else {
-        return Ok((ref_strings, ref_blobs, ref_guids));
+        return (ref_strings, ref_blobs, ref_guids);
     };
 
     let table_info = &tables.info;
@@ -386,7 +394,7 @@ fn collect_referenced_heap_entries(
         }
     }
 
-    Ok((ref_strings, ref_blobs, ref_guids))
+    (ref_strings, ref_blobs, ref_guids)
 }
 
 /// Scans a vector of TableDataOwned rows for heap references.
@@ -408,6 +416,8 @@ fn scan_table_data_owned_rows(
             continue;
         }
 
+        // Safe: .NET heap offsets always fit in u32
+        #[allow(clippy::cast_possible_truncation)]
         let rid = (idx + 1) as u32;
         let mut offset = 0;
         if row_data
@@ -475,9 +485,9 @@ mod tests {
     #[test]
     fn test_compaction_stats_with_removals() {
         let stats = CompactionStats {
-            strings_removed: 5,
-            blobs_removed: 3,
-            guids_removed: 1,
+            strings: 5,
+            blobs: 3,
+            guids: 1,
         };
         assert!(stats.has_removals());
         assert_eq!(stats.total_removed(), 9);

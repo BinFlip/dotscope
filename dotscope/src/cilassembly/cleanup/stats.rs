@@ -207,7 +207,7 @@ impl fmt::Display for CleanupStats {
 
         let orphans = self.orphans_removed();
         if orphans > 0 {
-            parts.push(format!("{} orphaned entries", orphans));
+            parts.push(format!("{orphans} orphaned entries"));
         }
 
         if self.sections_excluded > 0 {
@@ -216,7 +216,7 @@ impl fmt::Display for CleanupStats {
 
         let heap_compacted = self.heap_entries_compacted();
         if heap_compacted > 0 {
-            parts.push(format!("{} heap entries compacted", heap_compacted));
+            parts.push(format!("{heap_compacted} heap entries compacted"));
         }
 
         write!(f, "Removed: {}", parts.join(", "))

@@ -179,7 +179,7 @@ pub fn decode_all_permissive(
 ///     println!("Warning: {} unresolved targets", result.unresolved_targets.len());
 /// }
 ///
-/// let cfg = X86Function::new(result.instructions, 32, 0x1000);
+/// let cfg = X86Function::new(&result.instructions, 32, 0x1000);
 /// ```
 #[derive(Debug)]
 pub struct TraversalDecodeResult {
@@ -271,6 +271,7 @@ pub fn decode_function_traversal(
             continue;
         }
 
+        #[allow(clippy::cast_possible_truncation)]
         let offset_in_bytes = (addr - base_address) as usize;
         let remaining_bytes = &bytes[offset_in_bytes..];
 
@@ -424,6 +425,7 @@ pub fn decode_single(
         )));
     }
 
+    #[allow(clippy::cast_possible_truncation)]
     let offset_in_bytes = offset as usize;
     if offset_in_bytes >= bytes.len() {
         return Err(Error::X86Error(format!(
@@ -678,11 +680,11 @@ fn convert_call(instr: &Instruction) -> Result<X86Instruction> {
 
 fn get_branch_target(instr: &Instruction) -> Result<u64> {
     match instr.op0_kind() {
-        OpKind::NearBranch16 => Ok(instr.near_branch16() as u64),
-        OpKind::NearBranch32 => Ok(instr.near_branch32() as u64),
+        OpKind::NearBranch16 => Ok(u64::from(instr.near_branch16())),
+        OpKind::NearBranch32 => Ok(u64::from(instr.near_branch32())),
         OpKind::NearBranch64 => Ok(instr.near_branch64()),
-        OpKind::FarBranch16 => Ok(instr.far_branch16() as u64),
-        OpKind::FarBranch32 => Ok(instr.far_branch32() as u64),
+        OpKind::FarBranch16 => Ok(u64::from(instr.far_branch16())),
+        OpKind::FarBranch32 => Ok(u64::from(instr.far_branch32())),
         _ => {
             // Indirect jump - we can't handle this statically
             Err(Error::SsaError(format!(
@@ -712,8 +714,7 @@ fn mnemonic_to_condition(mnemonic: Mnemonic) -> Result<X86Condition> {
         Mnemonic::Jp => Ok(X86Condition::P),
         Mnemonic::Jnp => Ok(X86Condition::Np),
         _ => Err(Error::SsaError(format!(
-            "Unknown condition mnemonic: {:?}",
-            mnemonic
+            "Unknown condition mnemonic: {mnemonic:?}"
         ))),
     }
 }
@@ -730,16 +731,22 @@ fn convert_operand(instr: &Instruction, index: u32) -> Result<X86Operand> {
                 2 => instr.op2_register(),
                 3 => instr.op3_register(),
                 4 => instr.op4_register(),
-                _ => return Err(Error::SsaError(format!("Invalid operand index {}", index))),
+                _ => return Err(Error::SsaError(format!("Invalid operand index {index}"))),
             };
             Ok(X86Operand::Register(convert_register(reg)?))
         }
-        OpKind::Immediate8 => Ok(X86Operand::Immediate(instr.immediate8() as i8 as i64)),
-        OpKind::Immediate16 => Ok(X86Operand::Immediate(instr.immediate16() as i16 as i64)),
-        OpKind::Immediate32 => Ok(X86Operand::Immediate(instr.immediate32() as i32 as i64)),
-        OpKind::Immediate64 => Ok(X86Operand::Immediate(instr.immediate64() as i64)),
-        OpKind::Immediate8to16 => Ok(X86Operand::Immediate(instr.immediate8to16() as i64)),
-        OpKind::Immediate8to32 => Ok(X86Operand::Immediate(instr.immediate8to32() as i64)),
+        OpKind::Immediate8 => Ok(X86Operand::Immediate(i64::from(
+            instr.immediate8().cast_signed(),
+        ))),
+        OpKind::Immediate16 => Ok(X86Operand::Immediate(i64::from(
+            instr.immediate16().cast_signed(),
+        ))),
+        OpKind::Immediate32 => Ok(X86Operand::Immediate(i64::from(
+            instr.immediate32().cast_signed(),
+        ))),
+        OpKind::Immediate64 => Ok(X86Operand::Immediate(instr.immediate64().cast_signed())),
+        OpKind::Immediate8to16 => Ok(X86Operand::Immediate(i64::from(instr.immediate8to16()))),
+        OpKind::Immediate8to32 => Ok(X86Operand::Immediate(i64::from(instr.immediate8to32()))),
         OpKind::Immediate8to64 => Ok(X86Operand::Immediate(instr.immediate8to64())),
         OpKind::Immediate32to64 => Ok(X86Operand::Immediate(instr.immediate32to64())),
         OpKind::Memory => {
@@ -747,28 +754,29 @@ fn convert_operand(instr: &Instruction, index: u32) -> Result<X86Operand> {
             Ok(X86Operand::Memory(mem))
         }
         _ => Err(Error::SsaError(format!(
-            "Unsupported operand kind: {:?}",
-            op_kind
+            "Unsupported operand kind: {op_kind:?}"
         ))),
     }
 }
 
 /// Convert a memory operand at the given index.
 fn convert_memory_operand(instr: &Instruction, _index: u32) -> Result<X86Memory> {
-    let base = if instr.memory_base() != Register::None {
+    let base = if instr.memory_base() == Register::None {
+        None
+    } else {
         Some(convert_register(instr.memory_base())?)
-    } else {
-        None
     };
 
-    let index = if instr.memory_index() != Register::None {
+    let index = if instr.memory_index() == Register::None {
+        None
+    } else {
         Some(convert_register(instr.memory_index())?)
-    } else {
-        None
     };
 
+    #[allow(clippy::cast_possible_truncation)]
     let scale = instr.memory_index_scale() as u8;
-    let displacement = instr.memory_displacement64() as i64;
+    let displacement = instr.memory_displacement64().cast_signed();
+    #[allow(clippy::cast_possible_truncation)]
     let size = instr.memory_size().size() as u8;
 
     Ok(X86Memory {
@@ -831,7 +839,7 @@ fn convert_register(reg: Register) -> Result<X86Register> {
         Register::SI => Ok(X86Register::Si),
         Register::DI => Ok(X86Register::Di),
 
-        _ => Err(Error::SsaError(format!("Unsupported register: {:?}", reg))),
+        _ => Err(Error::SsaError(format!("Unsupported register: {reg:?}"))),
     }
 }
 
@@ -916,15 +924,8 @@ const PATTERNS_X64: [&[u8]; 22] = [
 ///
 /// A [`PrologueInfo`] describing the detected prologue, or [`PrologueKind::None`]
 /// if no known pattern was found.
+#[must_use]
 pub fn detect_prologue(bytes: &[u8], bitness: u32) -> PrologueInfo {
-    if bytes.is_empty() {
-        return PrologueInfo {
-            kind: PrologueKind::None,
-            size: 0,
-            arg_count: 0,
-        };
-    }
-
     // DynCipher prologue (20 bytes) - ConfuserEx specific
     // 89 e0           mov eax, esp
     // 53              push ebx
@@ -941,6 +942,14 @@ pub fn detect_prologue(bytes: &[u8], bitness: u32) -> PrologueInfo {
         0x89, 0xe0, 0x53, 0x57, 0x56, 0x29, 0xe0, 0x83, 0xf8, 0x18, 0x74, 0x07, 0x8b, 0x44, 0x24,
         0x10, 0x50, 0xeb, 0x01, 0x51,
     ];
+
+    if bytes.is_empty() {
+        return PrologueInfo {
+            kind: PrologueKind::None,
+            size: 0,
+            arg_count: 0,
+        };
+    }
 
     if bytes.len() >= 20 && bytes[..20] == DYNCIPHER_PROLOGUE {
         return PrologueInfo {
@@ -1020,6 +1029,7 @@ pub fn detect_prologue(bytes: &[u8], bitness: u32) -> PrologueInfo {
 /// 5b              pop ebx
 /// c3              ret
 /// ```
+#[must_use]
 pub fn detect_epilogue(instructions: &[DecodedInstruction]) -> Option<EpilogueInfo> {
     // Need at least 4 instructions for the epilogue
     if instructions.len() < 4 {

@@ -59,9 +59,8 @@ pub fn run(path: &Path, method_filter: &str, format: &str, show_loops: bool) -> 
 
             let mut blocks = Vec::new();
             for node_id in cfg.reverse_postorder() {
-                let block = match cfg.block(node_id) {
-                    Some(b) => b,
-                    None => continue,
+                let Some(block) = cfg.block(node_id) else {
+                    continue;
                 };
 
                 let successors: Vec<CfgSuccessorOutput> = cfg
@@ -139,7 +138,7 @@ pub fn run(path: &Path, method_filter: &str, format: &str, show_loops: bool) -> 
             println!();
 
             // Per-block table
-            let mut tw = TabWriter::new(vec![
+            let mut tw = TabWriter::new(&[
                 ("Block", Align::Left),
                 ("Instructions", Align::Right),
                 ("Successors", Align::Left),
@@ -147,9 +146,8 @@ pub fn run(path: &Path, method_filter: &str, format: &str, show_loops: bool) -> 
             ]);
 
             for node_id in cfg.reverse_postorder() {
-                let block = match cfg.block(node_id) {
-                    Some(b) => b,
-                    None => continue,
+                let Some(block) = cfg.block(node_id) else {
+                    continue;
                 };
 
                 let block_label = format!("B{}", node_id.index());

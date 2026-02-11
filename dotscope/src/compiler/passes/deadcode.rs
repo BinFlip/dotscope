@@ -30,7 +30,7 @@ use std::{
 };
 
 use crate::{
-    analysis::{PhiAnalyzer, SsaCfg, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
+    analysis::{PhiAnalyzer, PhiNode, SsaCfg, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
     compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     utils::graph::{algorithms, NodeId},
@@ -988,7 +988,7 @@ impl DeadCodeEliminationPass {
             .filter_map(|&(block_idx, phi_idx)| {
                 ssa.block(block_idx)
                     .and_then(|b| b.phi_nodes().get(phi_idx))
-                    .map(|phi| phi.result())
+                    .map(PhiNode::result)
             })
             .collect();
 
@@ -1043,7 +1043,7 @@ impl SsaPass for DeadCodeEliminationPass {
 
         let changed = !changes.is_empty();
         if changed {
-            ctx.events.merge(changes);
+            ctx.events.merge(&changes);
         }
         Ok(changed)
     }
@@ -1121,7 +1121,7 @@ impl SsaPass for DeadMethodEliminationPass {
         // Build a live call graph from actual SSA calls (not the static call graph).
         // This accounts for inlining and other transformations that may have removed calls.
         let mut ssa_callees: HashMap<Token, HashSet<Token>> = HashMap::new();
-        for entry in ctx.ssa_functions.iter() {
+        for entry in &ctx.ssa_functions {
             let caller_token = *entry.key();
             let ssa = entry.value();
             let mut callees = HashSet::new();
@@ -1178,7 +1178,7 @@ impl SsaPass for DeadMethodEliminationPass {
 
         let changed = !changes.is_empty();
         if changed {
-            ctx.events.merge(changes);
+            ctx.events.merge(&changes);
         }
         Ok(changed)
     }

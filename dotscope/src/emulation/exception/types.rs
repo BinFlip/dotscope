@@ -150,6 +150,7 @@ impl ExceptionClause {
     /// # Returns
     ///
     /// The starting IL offset of the protected region.
+    #[must_use]
     pub fn try_offset(&self) -> u32 {
         match self {
             Self::Catch { try_offset, .. }
@@ -164,6 +165,7 @@ impl ExceptionClause {
     /// # Returns
     ///
     /// The length of the protected region.
+    #[must_use]
     pub fn try_length(&self) -> u32 {
         match self {
             Self::Catch { try_length, .. }
@@ -180,6 +182,7 @@ impl ExceptionClause {
     /// # Returns
     ///
     /// The ending IL offset of the protected region.
+    #[must_use]
     pub fn try_end(&self) -> u32 {
         self.try_offset() + self.try_length()
     }
@@ -189,6 +192,7 @@ impl ExceptionClause {
     /// # Returns
     ///
     /// The starting IL offset of the handler code.
+    #[must_use]
     pub fn handler_offset(&self) -> u32 {
         match self {
             Self::Catch { handler_offset, .. }
@@ -203,6 +207,7 @@ impl ExceptionClause {
     /// # Returns
     ///
     /// The length of the handler code.
+    #[must_use]
     pub fn handler_length(&self) -> u32 {
         match self {
             Self::Catch { handler_length, .. }
@@ -219,6 +224,7 @@ impl ExceptionClause {
     /// # Returns
     ///
     /// The ending IL offset of the handler code.
+    #[must_use]
     pub fn handler_end(&self) -> u32 {
         self.handler_offset() + self.handler_length()
     }
@@ -235,6 +241,7 @@ impl ExceptionClause {
     /// # Returns
     ///
     /// `true` if the offset is within the protected region.
+    #[must_use]
     pub fn is_in_try(&self, offset: u32) -> bool {
         offset >= self.try_offset() && offset < self.try_end()
     }
@@ -251,6 +258,7 @@ impl ExceptionClause {
     /// # Returns
     ///
     /// `true` if the offset is within the handler code.
+    #[must_use]
     pub fn is_in_handler(&self, offset: u32) -> bool {
         offset >= self.handler_offset() && offset < self.handler_end()
     }
@@ -260,6 +268,7 @@ impl ExceptionClause {
     /// # Returns
     ///
     /// `true` if this is a [`Catch`](ExceptionClause::Catch) variant.
+    #[must_use]
     pub fn is_catch(&self) -> bool {
         matches!(self, Self::Catch { .. })
     }
@@ -269,6 +278,7 @@ impl ExceptionClause {
     /// # Returns
     ///
     /// `true` if this is a [`Filter`](ExceptionClause::Filter) variant.
+    #[must_use]
     pub fn is_filter(&self) -> bool {
         matches!(self, Self::Filter { .. })
     }
@@ -278,6 +288,7 @@ impl ExceptionClause {
     /// # Returns
     ///
     /// `true` if this is a [`Finally`](ExceptionClause::Finally) variant.
+    #[must_use]
     pub fn is_finally(&self) -> bool {
         matches!(self, Self::Finally { .. })
     }
@@ -287,6 +298,7 @@ impl ExceptionClause {
     /// # Returns
     ///
     /// `true` if this is a [`Fault`](ExceptionClause::Fault) variant.
+    #[must_use]
     pub fn is_fault(&self) -> bool {
         matches!(self, Self::Fault { .. })
     }
@@ -297,6 +309,7 @@ impl ExceptionClause {
     ///
     /// - `Some(token)` if this is a [`Catch`](ExceptionClause::Catch) clause
     /// - `None` for other clause types
+    #[must_use]
     pub fn catch_type(&self) -> Option<Token> {
         match self {
             Self::Catch { catch_type, .. } => Some(*catch_type),
@@ -310,6 +323,7 @@ impl ExceptionClause {
     ///
     /// - `Some(offset)` if this is a [`Filter`](ExceptionClause::Filter) clause
     /// - `None` for other clause types
+    #[must_use]
     pub fn filter_offset(&self) -> Option<u32> {
         match self {
             Self::Filter { filter_offset, .. } => Some(*filter_offset),
@@ -354,6 +368,7 @@ impl InstructionLocation {
     /// # Returns
     ///
     /// A new `InstructionLocation` pointing to the specified position.
+    #[must_use]
     pub fn new(method: Token, offset: u32) -> Self {
         Self { method, offset }
     }
@@ -491,8 +506,7 @@ impl ExceptionClause {
             let catch_type = handler
                 .handler
                 .as_ref()
-                .map(|t| t.token)
-                .unwrap_or_else(|| Token::new(0));
+                .map_or_else(|| Token::new(0), |t| t.token);
             ExceptionClause::Catch {
                 try_offset: handler.try_offset,
                 try_length: handler.try_length,

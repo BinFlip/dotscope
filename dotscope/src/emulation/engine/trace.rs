@@ -28,6 +28,7 @@
 //! Each line is a complete JSON object representing one trace event.
 
 use std::{
+    fmt::Write as FmtWrite,
     fs::{File, OpenOptions},
     io::{BufWriter, Write},
     mem,
@@ -279,7 +280,7 @@ impl TraceEvent {
                     .map(|c| format!(r#","caller":"0x{:08X}""#, c.value()))
                     .unwrap_or_default();
                 let caller_offset_str = caller_offset
-                    .map(|o| format!(r#","caller_offset":"0x{:04X}""#, o))
+                    .map(|o| format!(r#","caller_offset":"0x{o:04X}""#))
                     .unwrap_or_default();
                 format!(
                     r#"{{{}"type":"call","target":"0x{:08X}","is_virtual":{},"arg_count":{},"call_depth":{}{}{}}}"#,
@@ -486,7 +487,7 @@ fn escape_json(s: &str) -> String {
             '\r' => result.push_str("\\r"),
             '\t' => result.push_str("\\t"),
             c if c.is_control() => {
-                result.push_str(&format!("\\u{:04X}", c as u32));
+                let _ = write!(result, "\\u{:04X}", c as u32);
             }
             c => result.push(c),
         }
@@ -569,7 +570,7 @@ impl TraceWriter {
         if let Some(ref file) = self.file {
             if let Ok(mut writer) = file.lock() {
                 let json = event.to_json_with_context(self.context_prefix.as_deref());
-                let _ = writeln!(writer, "{}", json);
+                let _ = writeln!(writer, "{json}");
             }
         } else if let Some(ref buffer) = self.buffer {
             if let Ok(mut buf) = buffer.lock() {
@@ -613,7 +614,7 @@ impl std::fmt::Debug for TraceWriter {
             .field("is_file_based", &self.file.is_some())
             .field("max_entries", &self.max_entries)
             .field("event_count", &self.event_count())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

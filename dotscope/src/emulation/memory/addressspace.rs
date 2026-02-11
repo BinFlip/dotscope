@@ -25,7 +25,7 @@
 //! let string_ref = space.alloc_string("Hello, World!").unwrap();
 //!
 //! // Map raw data at a specific address
-//! space.map_data(0x1000, vec![0xDE, 0xAD, 0xBE, 0xEF], "test_data").unwrap();
+//! space.map_data(0x1000, &[0xDE, 0xAD, 0xBE, 0xEF], "test_data").unwrap();
 //!
 //! // Read back the data
 //! let data = space.read(0x1000, 4).unwrap();
@@ -97,6 +97,7 @@ impl SharedHeap {
     ///
     /// let heap = SharedHeap::new(1024 * 1024); // 1MB heap
     /// ```
+    #[must_use]
     pub fn new(max_size: usize) -> Self {
         Self {
             inner: Arc::new(ManagedHeap::new(max_size)),
@@ -219,7 +220,7 @@ impl std::ops::Deref for SharedHeap {
 /// let str_ref = space.alloc_string("Hello").unwrap();
 ///
 /// // Map raw memory
-/// space.map_data(0x1000, vec![1, 2, 3, 4], "data").unwrap();
+/// space.map_data(0x1000, &[1, 2, 3, 4], "data").unwrap();
 ///
 /// // Access static fields
 /// let field_token = Token::new(0x04000001);
@@ -507,9 +508,8 @@ impl AddressSpace {
     /// * `address` - The address to check
     #[must_use]
     pub fn is_valid(&self, address: u64) -> bool {
-        let regions = match self.regions.read() {
-            Ok(r) => r,
-            Err(_) => return false,
+        let Ok(regions) = self.regions.read() else {
+            return false;
         };
         regions.iter().any(|r| r.contains(address))
     }
@@ -771,7 +771,7 @@ impl AddressSpace {
     /// Returns an error if the mapping fails.
     pub fn map_pe_image(
         &self,
-        data: Vec<u8>,
+        data: &[u8],
         preferred_base: u64,
         sections: Vec<SectionInfo>,
         name: impl Into<String>,
@@ -792,7 +792,7 @@ impl AddressSpace {
     /// # Errors
     ///
     /// Returns an error if the mapping fails.
-    pub fn map_data(&self, address: u64, data: Vec<u8>, label: impl Into<String>) -> Result<()> {
+    pub fn map_data(&self, address: u64, data: &[u8], label: impl Into<String>) -> Result<()> {
         let region = MemoryRegion::mapped_data(address, data, label, MemoryProtection::READ_WRITE);
         self.map_at(address, region)
     }
@@ -955,7 +955,7 @@ impl AddressSpace {
     ///
     /// // Create template with mapped data
     /// let template = AddressSpace::new();
-    /// template.map_data(0x10000, vec![1, 2, 3, 4], "data").unwrap();
+    /// template.map_data(0x10000, &[1, 2, 3, 4], "data").unwrap();
     ///
     /// // Spawn a fresh instance - shares regions, fresh heap/statics
     /// let fresh = template.spawn_fresh();
@@ -1023,7 +1023,7 @@ impl AddressSpace {
     ///
     /// // Set up template with data
     /// let template = AddressSpace::new();
-    /// template.map_data(0x1000, vec![1, 2, 3, 4], "data").unwrap();
+    /// template.map_data(0x1000, &[1, 2, 3, 4], "data").unwrap();
     /// template.set_static(Token::new(0x04000001), EmValue::I32(42));
     ///
     /// // Fork creates independent copy with shared backing
@@ -1092,7 +1092,7 @@ mod tests {
         let space = AddressSpace::new();
         let data = vec![0xDE, 0xAD, 0xBE, 0xEF];
 
-        space.map_data(0x1000, data.clone(), "test").unwrap();
+        space.map_data(0x1000, &data, "test").unwrap();
 
         let read = space.read(0x1000, 4).unwrap();
         assert_eq!(read, data);
@@ -1101,7 +1101,7 @@ mod tests {
     #[test]
     fn test_write_data() {
         let space = AddressSpace::new();
-        space.map_data(0x1000, vec![0u8; 16], "test").unwrap();
+        space.map_data(0x1000, &[0u8; 16], "test").unwrap();
 
         space.write(0x1000, &[0xCA, 0xFE]).unwrap();
 
@@ -1181,7 +1181,7 @@ mod tests {
     #[test]
     fn test_fork_memory_isolation() {
         let space = AddressSpace::new();
-        space.map_data(0x1000, vec![1, 2, 3, 4], "test").unwrap();
+        space.map_data(0x1000, &[1, 2, 3, 4], "test").unwrap();
 
         // Fork
         let forked = space.fork();
@@ -1242,7 +1242,7 @@ mod tests {
     #[test]
     fn test_fork_protection_isolation() {
         let space = AddressSpace::new();
-        space.map_data(0x1000, vec![0u8; 0x2000], "test").unwrap();
+        space.map_data(0x1000, &vec![0u8; 0x2000], "test").unwrap();
 
         // Set protection
         space.set_protection(0x1000, 0x1000, MemoryProtection::READ_EXECUTE);

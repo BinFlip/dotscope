@@ -32,26 +32,31 @@ pub struct X86BasicBlock {
 
 impl X86BasicBlock {
     /// Returns the terminator instruction, if any.
+    #[must_use]
     pub fn terminator(&self) -> Option<&X86Instruction> {
         self.instructions.last().map(|i| &i.instruction)
     }
 
     /// Returns true if this block ends with a return instruction.
+    #[must_use]
     pub fn is_exit(&self) -> bool {
         matches!(self.terminator(), Some(X86Instruction::Ret))
     }
 
     /// Returns true if this block ends with an unconditional jump.
+    #[must_use]
     pub fn is_unconditional_jump(&self) -> bool {
         matches!(self.terminator(), Some(X86Instruction::Jmp { .. }))
     }
 
     /// Returns true if this block ends with a conditional jump.
+    #[must_use]
     pub fn is_conditional_jump(&self) -> bool {
         matches!(self.terminator(), Some(X86Instruction::Jcc { .. }))
     }
 
     /// Returns true if this block has any unsupported instructions.
+    #[must_use]
     pub fn has_unsupported(&self) -> bool {
         self.instructions
             .iter()
@@ -89,7 +94,8 @@ impl X86Function {
     ///
     /// The resulting CFG uses a directed graph internally and provides
     /// lazy-computed analysis (dominators, etc.).
-    pub fn new(instructions: Vec<DecodedInstruction>, bitness: u32, base_address: u64) -> Self {
+    #[must_use]
+    pub fn new(instructions: &[DecodedInstruction], bitness: u32, base_address: u64) -> Self {
         if instructions.is_empty() {
             let graph: DirectedGraph<'static, X86BasicBlock, X86EdgeKind> = DirectedGraph::new();
             return Self {
@@ -153,9 +159,8 @@ impl X86Function {
 
         for (block_idx, &leader_offset) in leader_list.iter().enumerate() {
             // Find start instruction index
-            let start_instr_idx = match offset_to_index.get(&leader_offset) {
-                Some(&idx) => idx,
-                None => continue, // Leader offset not in our instruction list
+            let Some(&start_instr_idx) = offset_to_index.get(&leader_offset) else {
+                continue; // Leader offset not in our instruction list
             };
 
             // Find end of this block (exclusive)
@@ -315,21 +320,6 @@ impl X86Function {
     /// A CFG is reducible if every back edge goes to a loop header that dominates
     /// the source of the back edge.
     pub fn is_reducible(&self) -> bool {
-        if self.block_count() == 0 {
-            return true;
-        }
-
-        let doms = self.dominators();
-
-        // A CFG is reducible if for every back edge (n -> h),
-        // h dominates n. A back edge is one where h dominates n.
-        // By definition, this is always true for back edges, so we check
-        // for edges that form cycles but aren't proper back edges.
-
-        // Use DFS to find back edges
-        let mut visited = vec![false; self.block_count()];
-        let mut in_stack = vec![false; self.block_count()];
-
         fn dfs_check(
             node: NodeId,
             func: &X86Function,
@@ -357,6 +347,21 @@ impl X86Function {
             in_stack[idx] = false;
             true
         }
+
+        if self.block_count() == 0 {
+            return true;
+        }
+
+        let doms = self.dominators();
+
+        // A CFG is reducible if for every back edge (n -> h),
+        // h dominates n. A back edge is one where h dominates n.
+        // By definition, this is always true for back edges, so we check
+        // for edges that form cycles but aren't proper back edges.
+
+        // Use DFS to find back edges
+        let mut visited = vec![false; self.block_count()];
+        let mut in_stack = vec![false; self.block_count()];
 
         dfs_check(self.entry, self, doms, &mut visited, &mut in_stack)
     }
@@ -476,7 +481,7 @@ mod tests {
             0xc3, // ret
         ];
         let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
-        let cfg = X86Function::new(instructions, 32, 0x1000);
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         assert_eq!(cfg.block_count(), 1);
         assert_eq!(cfg.entry(), NodeId::new(0));
@@ -498,7 +503,7 @@ mod tests {
             0xc3, // ret
         ];
         let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
-        let cfg = X86Function::new(instructions, 32, 0x1000);
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         // Should have 3 blocks:
         // Block 0: cmp, je
@@ -527,7 +532,7 @@ mod tests {
             0xc3, // ret
         ];
         let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
-        let cfg = X86Function::new(instructions, 32, 0x1000);
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         // Should have blocks
         assert!(cfg.block_count() >= 2);
@@ -551,7 +556,7 @@ mod tests {
             0xc3, // ret
         ];
         let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
-        let cfg = X86Function::new(instructions, 32, 0x1000);
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         // Should have a loop (back edge)
         assert!(cfg.has_loops());
@@ -562,7 +567,7 @@ mod tests {
 
     #[test]
     fn test_empty_input() {
-        let cfg = X86Function::new(vec![], 32, 0);
+        let cfg = X86Function::new(&[], 32, 0);
         assert_eq!(cfg.block_count(), 0);
     }
 
@@ -575,7 +580,7 @@ mod tests {
             0xc3, // ret
         ];
         let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
-        let cfg = X86Function::new(instructions, 32, 0x1000);
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         let doms = cfg.dominators();
         assert_eq!(doms.entry(), NodeId::new(0));
@@ -591,7 +596,7 @@ mod tests {
             0xc3, // ret
         ];
         let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
-        let cfg = X86Function::new(instructions, 32, 0x1000);
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         // Check that we have conditional edges
         let mut found_cond_true = false;

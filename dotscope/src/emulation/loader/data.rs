@@ -128,7 +128,7 @@ impl DataLoader {
     ///
     /// * `address_space` - The address space to map into
     /// * `address` - The virtual address where the data should be mapped
-    /// * `data` - The raw bytes to map (ownership is transferred)
+    /// * `data` - The raw bytes to map
     /// * `label` - A descriptive name for the region (accepts any type implementing `Into<String>`)
     /// * `protection` - Memory protection flags to apply
     ///
@@ -149,7 +149,7 @@ impl DataLoader {
     /// let info = DataLoader::map_at(
     ///     &address_space,
     ///     0x10000,
-    ///     vec![0xCC; 100],  // INT 3 breakpoints
+    ///     &[0xCC; 100],  // INT 3 breakpoints
     ///     "breakpoint_area",
     ///     MemoryProtection::READ | MemoryProtection::EXECUTE,
     /// )?;
@@ -158,7 +158,7 @@ impl DataLoader {
     pub fn map_at(
         address_space: &AddressSpace,
         address: u64,
-        data: Vec<u8>,
+        data: &[u8],
         label: impl Into<String>,
         protection: MemoryProtection,
     ) -> Result<MappedRegionInfo> {
@@ -186,7 +186,7 @@ impl DataLoader {
     /// # Arguments
     ///
     /// * `address_space` - The address space to map into
-    /// * `data` - The raw bytes to map (ownership is transferred)
+    /// * `data` - The raw bytes to map
     /// * `label` - A descriptive name for the region
     /// * `protection` - Memory protection flags to apply
     ///
@@ -206,7 +206,7 @@ impl DataLoader {
     /// ```ignore
     /// let info = DataLoader::map(
     ///     &address_space,
-    ///     vec![0u8; 0x1000],
+    ///     &vec![0u8; 0x1000],
     ///     "dynamic_buffer",
     ///     MemoryProtection::READ | MemoryProtection::WRITE,
     /// )?;
@@ -214,7 +214,7 @@ impl DataLoader {
     /// ```
     pub fn map(
         address_space: &AddressSpace,
-        data: Vec<u8>,
+        data: &[u8],
         label: impl Into<String>,
         protection: MemoryProtection,
     ) -> Result<MappedRegionInfo> {
@@ -256,7 +256,7 @@ impl DataLoader {
     pub fn map_readonly(
         address_space: &AddressSpace,
         address: u64,
-        data: Vec<u8>,
+        data: &[u8],
         label: impl Into<String>,
     ) -> Result<MappedRegionInfo> {
         Self::map_at(address_space, address, data, label, MemoryProtection::READ)
@@ -285,7 +285,7 @@ impl DataLoader {
     pub fn map_readwrite(
         address_space: &AddressSpace,
         address: u64,
-        data: Vec<u8>,
+        data: &[u8],
         label: impl Into<String>,
     ) -> Result<MappedRegionInfo> {
         Self::map_at(
@@ -325,7 +325,7 @@ impl DataLoader {
     pub fn map_executable(
         address_space: &AddressSpace,
         address: u64,
-        data: Vec<u8>,
+        data: &[u8],
         label: impl Into<String>,
     ) -> Result<MappedRegionInfo> {
         Self::map_at(
@@ -379,7 +379,7 @@ impl DataLoader {
         protection: MemoryProtection,
     ) -> Result<MappedRegionInfo> {
         let data = std::fs::read(path)
-            .map_err(|e| crate::Error::Other(format!("Failed to read file: {}", e)))?;
+            .map_err(|e| crate::Error::Other(format!("Failed to read file: {e}")))?;
 
         let label = path
             .file_name()
@@ -387,7 +387,7 @@ impl DataLoader {
             .unwrap_or("mapped_file")
             .to_string();
 
-        Self::map_at(address_space, address, data, label, protection)
+        Self::map_at(address_space, address, &data, label, protection)
     }
 
     /// Maps a zero-initialized memory region at a specific address.
@@ -432,7 +432,7 @@ impl DataLoader {
         protection: MemoryProtection,
     ) -> Result<MappedRegionInfo> {
         let data = vec![0u8; size];
-        Self::map_at(address_space, address, data, label, protection)
+        Self::map_at(address_space, address, &data, label, protection)
     }
 }
 
@@ -458,7 +458,7 @@ mod tests {
         let info = DataLoader::map_at(
             &address_space,
             0x10000,
-            data.clone(),
+            &data,
             "test_data",
             MemoryProtection::READ | MemoryProtection::WRITE,
         )
@@ -478,8 +478,7 @@ mod tests {
         let address_space = create_test_address_space();
         let data = vec![0xDE, 0xAD, 0xBE, 0xEF];
 
-        let info =
-            DataLoader::map_readonly(&address_space, 0x20000, data.clone(), "readonly").unwrap();
+        let info = DataLoader::map_readonly(&address_space, 0x20000, &data, "readonly").unwrap();
 
         assert_eq!(info.protection, MemoryProtection::READ);
 

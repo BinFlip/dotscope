@@ -362,7 +362,7 @@ impl LoopInfo {
 
                 // Try to determine update kind by analyzing the defining instruction
                 let (update_kind, stride) =
-                    self.analyze_update_instruction(ssa, update_op.value(), phi.result());
+                    Self::analyze_update_instruction(ssa, update_op.value(), phi.result());
 
                 induction_vars.push(InductionVar {
                     phi_result: phi.result(),
@@ -383,7 +383,6 @@ impl LoopInfo {
     ///
     /// Looks for patterns like `v = phi_result + const` or `v = phi_result - const`.
     fn analyze_update_instruction(
-        &self,
         ssa: &SsaFunction,
         update_var: SsaVarId,
         phi_result: SsaVarId,
@@ -416,21 +415,21 @@ impl LoopInfo {
                 // Check if one operand is the phi result
                 if *left == phi_result || *right == phi_result {
                     let other = if *left == phi_result { *right } else { *left };
-                    let stride = self.try_get_constant(ssa, other);
+                    let stride = Self::try_get_constant(ssa, other);
                     return (InductionUpdateKind::Add, stride);
                 }
             }
             SsaOp::Sub { left, right, .. } => {
                 // For subtraction, left should be phi_result
                 if *left == phi_result {
-                    let stride = self.try_get_constant(ssa, *right);
+                    let stride = Self::try_get_constant(ssa, *right);
                     return (InductionUpdateKind::Sub, stride);
                 }
             }
             SsaOp::Mul { left, right, .. } => {
                 if *left == phi_result || *right == phi_result {
                     let other = if *left == phi_result { *right } else { *left };
-                    let stride = self.try_get_constant(ssa, other);
+                    let stride = Self::try_get_constant(ssa, other);
                     return (InductionUpdateKind::Mul, stride);
                 }
             }
@@ -441,7 +440,7 @@ impl LoopInfo {
     }
 
     /// Attempts to get a constant value from a variable.
-    fn try_get_constant(&self, ssa: &SsaFunction, var: SsaVarId) -> Option<i64> {
+    fn try_get_constant(ssa: &SsaFunction, var: SsaVarId) -> Option<i64> {
         let variable = ssa.variable(var)?;
         let def_site = variable.def_site();
 
@@ -581,7 +580,7 @@ impl LoopForest {
 /// # Algorithm
 ///
 /// The detection algorithm:
-/// 1. Finds back edges using dominance (n → h where h dominates n)
+/// 1. Finds back edges using dominance (n -> h where h dominates n)
 /// 2. For each back edge, computes the natural loop body
 /// 3. Computes preheaders, exits, and loop types
 /// 4. Establishes nesting relationships

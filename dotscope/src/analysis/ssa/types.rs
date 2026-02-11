@@ -658,6 +658,8 @@ impl SsaType {
                 thiscall: false,
                 fastcall: false,
                 param_count_generic: 0,
+                // Safe: .NET methods have at most ~65535 parameters
+                #[allow(clippy::cast_possible_truncation)]
                 param_count: sig.params.len() as u32,
                 return_type: SignatureParameter {
                     modifiers: CustomModifiers::default(),
@@ -988,8 +990,7 @@ impl<'a> TypeContext<'a> {
                 return self
                     .method
                     .declaring_type_rc()
-                    .map(|dt| SsaType::Class(TypeRef::new(dt.token)))
-                    .unwrap_or(SsaType::Object);
+                    .map_or(SsaType::Object, |dt| SsaType::Class(TypeRef::new(dt.token)));
             }
             // Adjust for 'this' offset
             if let Some(param) = self.method.signature.params.get(idx - 1) {
@@ -1008,8 +1009,9 @@ impl<'a> TypeContext<'a> {
         self.method
             .get_local_type_signatures()
             .and_then(|types| types.into_iter().nth(idx as usize))
-            .map(|sig| SsaType::from_type_signature(&sig.base, self.assembly))
-            .unwrap_or(SsaType::Unknown)
+            .map_or(SsaType::Unknown, |sig| {
+                SsaType::from_type_signature(&sig.base, self.assembly)
+            })
     }
 
     /// Returns the return type of a called method.
@@ -1025,11 +1027,10 @@ impl<'a> TypeContext<'a> {
                 .assembly
                 .methods()
                 .get(&token)
-                .map(|entry| {
+                .map_or(SsaType::Unknown, |entry| {
                     let method = entry.value();
                     SsaType::from_type_signature(&method.signature.return_type.base, self.assembly)
-                })
-                .unwrap_or(SsaType::Unknown),
+                }),
 
             // MemberRef - look up and get signature
             0x0A => self
@@ -1054,8 +1055,9 @@ impl<'a> TypeContext<'a> {
                 .method_specs()
                 .get(&token)
                 .and_then(|entry| entry.value().method.token())
-                .map(|method_token| self.call_return_type(method_token))
-                .unwrap_or(SsaType::Unknown),
+                .map_or(SsaType::Unknown, |method_token| {
+                    self.call_return_type(method_token)
+                }),
 
             _ => SsaType::Unknown,
         }
@@ -1075,8 +1077,9 @@ impl<'a> TypeContext<'a> {
                 .methods()
                 .get(&ctor_token)
                 .and_then(|entry| entry.value().declaring_type_rc().map(|dt| dt.token))
-                .map(|type_token| SsaType::Class(TypeRef::new(type_token)))
-                .unwrap_or(SsaType::Object),
+                .map_or(SsaType::Object, |type_token| {
+                    SsaType::Class(TypeRef::new(type_token))
+                }),
 
             // MemberRef - get declaring type from member ref
             0x0A => self
@@ -1084,8 +1087,9 @@ impl<'a> TypeContext<'a> {
                 .refs_members()
                 .get(&ctor_token)
                 .and_then(|entry| entry.value().declaredby.token())
-                .map(|class_token| SsaType::from_type_token(class_token, self.assembly))
-                .unwrap_or(SsaType::Object),
+                .map_or(SsaType::Object, |class_token| {
+                    SsaType::from_type_token(class_token, self.assembly)
+                }),
 
             // MethodSpec - resolve to underlying constructor
             0x2B => self
@@ -1093,8 +1097,9 @@ impl<'a> TypeContext<'a> {
                 .method_specs()
                 .get(&ctor_token)
                 .and_then(|entry| entry.value().method.token())
-                .map(|method_token| self.newobj_type(method_token))
-                .unwrap_or(SsaType::Object),
+                .map_or(SsaType::Object, |method_token| {
+                    self.newobj_type(method_token)
+                }),
 
             _ => SsaType::Object,
         }
@@ -1113,8 +1118,9 @@ impl<'a> TypeContext<'a> {
                 .assembly
                 .types()
                 .get_field_signature(&field_token)
-                .map(|sig| SsaType::from_type_signature(&sig, self.assembly))
-                .unwrap_or(SsaType::Unknown),
+                .map_or(SsaType::Unknown, |sig| {
+                    SsaType::from_type_signature(&sig, self.assembly)
+                }),
 
             // MemberRef table (0x0A) - external field reference
             0x0A => self
@@ -1179,7 +1185,7 @@ impl<'a> TypeContext<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::analysis::ssa::types::{SsaType, TypeClass};
 
     #[test]
     fn test_primitive_types() {

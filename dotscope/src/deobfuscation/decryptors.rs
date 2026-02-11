@@ -230,6 +230,7 @@ impl DecryptorContext {
     /// # Returns
     ///
     /// `true` if the token was registered and is now removed.
+    #[must_use]
     pub fn unregister(&self, token: Token) -> bool {
         self.registered.remove(&token).is_some()
     }
@@ -309,6 +310,7 @@ impl DecryptorContext {
     }
 
     /// Returns all registered decryptor tokens.
+    #[must_use]
     pub fn all_decryptors(&self) -> Vec<Token> {
         self.registered.iter().map(|r| *r).collect()
     }
@@ -468,8 +470,8 @@ impl DecryptorContext {
     /// `true` if a permanent failure was recorded for this call site.
     #[must_use]
     pub fn has_permanent_failure(&self, caller: Token, location: usize) -> bool {
-        for entry in self.failed.iter() {
-            for (_, failure) in entry.value().iter() {
+        for entry in &self.failed {
+            for (_, failure) in entry.value() {
                 if failure.caller == caller
                     && failure.location == location
                     && failure.reason.is_permanent()
@@ -496,8 +498,8 @@ impl DecryptorContext {
     /// `true` if a successful decryption was recorded for this call site.
     #[must_use]
     pub fn is_already_decrypted(&self, caller: Token, location: usize) -> bool {
-        for entry in self.decrypted.iter() {
-            for (_, call) in entry.value().iter() {
+        for entry in &self.decrypted {
+            for (_, call) in entry.value() {
                 if call.caller == caller && call.location == location {
                     return true;
                 }

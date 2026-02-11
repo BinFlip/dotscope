@@ -314,12 +314,12 @@ impl SymbolicExpr {
             Self::NamedVar(_) => None,
             Self::Unary { op, operand } => {
                 let v = operand.evaluate(bindings, ptr_size)?;
-                evaluate_unary_typed(*op, v, ptr_size)
+                evaluate_unary_typed(*op, &v, ptr_size)
             }
             Self::Binary { op, left, right } => {
                 let l = left.evaluate(bindings, ptr_size)?;
                 let r = right.evaluate(bindings, ptr_size)?;
-                evaluate_binary_typed(*op, l, r, ptr_size)
+                evaluate_binary_typed(*op, &l, &r, ptr_size)
             }
         }
     }
@@ -350,12 +350,12 @@ impl SymbolicExpr {
             Self::NamedVar(name) => bindings.get(name.as_str()).cloned(),
             Self::Unary { op, operand } => {
                 let v = operand.evaluate_named(bindings, ptr_size)?;
-                evaluate_unary_typed(*op, v, ptr_size)
+                evaluate_unary_typed(*op, &v, ptr_size)
             }
             Self::Binary { op, left, right } => {
                 let l = left.evaluate_named(bindings, ptr_size)?;
                 let r = right.evaluate_named(bindings, ptr_size)?;
-                evaluate_binary_typed(*op, l, r, ptr_size)
+                evaluate_binary_typed(*op, &l, &r, ptr_size)
             }
         }
     }
@@ -478,7 +478,7 @@ impl SymbolicExpr {
 
                 // Constant folding using typed operations
                 if let Self::Constant(v) = &simplified {
-                    if let Some(result) = evaluate_unary_typed(*op, v.clone(), ptr_size) {
+                    if let Some(result) = evaluate_unary_typed(*op, v, ptr_size) {
                         return Self::Constant(result);
                     }
                 }
@@ -511,8 +511,7 @@ impl SymbolicExpr {
 
                 // Both constants - evaluate using typed operations
                 if let (Self::Constant(l), Self::Constant(r)) = (&left_simp, &right_simp) {
-                    if let Some(result) = evaluate_binary_typed(*op, l.clone(), r.clone(), ptr_size)
-                    {
+                    if let Some(result) = evaluate_binary_typed(*op, l, r, ptr_size) {
                         return Self::Constant(result);
                     }
                 }
@@ -734,7 +733,7 @@ impl From<i64> for SymbolicExpr {
 /// The result of the operation as a `ConstValue`, or `None` if the operation fails.
 pub fn evaluate_unary_typed(
     op: SymbolicOp,
-    value: ConstValue,
+    value: &ConstValue,
     ptr_size: PointerSize,
 ) -> Option<ConstValue> {
     match op {
@@ -760,25 +759,25 @@ pub fn evaluate_unary_typed(
 /// fails (e.g., division by zero, type mismatch).
 pub fn evaluate_binary_typed(
     op: SymbolicOp,
-    left: ConstValue,
-    right: ConstValue,
+    left: &ConstValue,
+    right: &ConstValue,
     ptr_size: PointerSize,
 ) -> Option<ConstValue> {
     match op {
-        SymbolicOp::Add => left.add(&right, ptr_size),
-        SymbolicOp::Sub => left.sub(&right, ptr_size),
-        SymbolicOp::Mul => left.mul(&right, ptr_size),
+        SymbolicOp::Add => left.add(right, ptr_size),
+        SymbolicOp::Sub => left.sub(right, ptr_size),
+        SymbolicOp::Mul => left.mul(right, ptr_size),
         // div/rem handle signedness based on ConstValue's underlying type
-        SymbolicOp::DivS | SymbolicOp::DivU => left.div(&right, ptr_size),
-        SymbolicOp::RemS | SymbolicOp::RemU => left.rem(&right, ptr_size),
-        SymbolicOp::And => left.bitwise_and(&right, ptr_size),
-        SymbolicOp::Or => left.bitwise_or(&right, ptr_size),
-        SymbolicOp::Xor => left.bitwise_xor(&right, ptr_size),
-        SymbolicOp::Shl => left.shl(&right, ptr_size),
-        SymbolicOp::ShrS => left.shr(&right, false, ptr_size),
-        SymbolicOp::ShrU => left.shr(&right, true, ptr_size),
-        SymbolicOp::Eq => left.ceq(&right),
-        SymbolicOp::Ne => left.ceq(&right).map(|v| {
+        SymbolicOp::DivS | SymbolicOp::DivU => left.div(right, ptr_size),
+        SymbolicOp::RemS | SymbolicOp::RemU => left.rem(right, ptr_size),
+        SymbolicOp::And => left.bitwise_and(right, ptr_size),
+        SymbolicOp::Or => left.bitwise_or(right, ptr_size),
+        SymbolicOp::Xor => left.bitwise_xor(right, ptr_size),
+        SymbolicOp::Shl => left.shl(right, ptr_size),
+        SymbolicOp::ShrS => left.shr(right, false, ptr_size),
+        SymbolicOp::ShrU => left.shr(right, true, ptr_size),
+        SymbolicOp::Eq => left.ceq(right),
+        SymbolicOp::Ne => left.ceq(right).map(|v| {
             // Negate the equality result
             if v.is_zero() {
                 ConstValue::I32(1)
@@ -786,13 +785,13 @@ pub fn evaluate_binary_typed(
                 ConstValue::I32(0)
             }
         }),
-        SymbolicOp::LtS => left.clt(&right),
-        SymbolicOp::LtU => left.clt_un(&right),
-        SymbolicOp::GtS => left.cgt(&right),
-        SymbolicOp::GtU => left.cgt_un(&right),
+        SymbolicOp::LtS => left.clt(right),
+        SymbolicOp::LtU => left.clt_un(right),
+        SymbolicOp::GtS => left.cgt(right),
+        SymbolicOp::GtU => left.cgt_un(right),
         SymbolicOp::LeS => {
             // x <= y is !(x > y)
-            left.cgt(&right).map(|v| {
+            left.cgt(right).map(|v| {
                 if v.is_zero() {
                     ConstValue::I32(1)
                 } else {
@@ -802,7 +801,7 @@ pub fn evaluate_binary_typed(
         }
         SymbolicOp::LeU => {
             // x <=u y is !(x >u y)
-            left.cgt_un(&right).map(|v| {
+            left.cgt_un(right).map(|v| {
                 if v.is_zero() {
                     ConstValue::I32(1)
                 } else {
@@ -812,7 +811,7 @@ pub fn evaluate_binary_typed(
         }
         SymbolicOp::GeS => {
             // x >= y is !(x < y)
-            left.clt(&right).map(|v| {
+            left.clt(right).map(|v| {
                 if v.is_zero() {
                     ConstValue::I32(1)
                 } else {
@@ -822,7 +821,7 @@ pub fn evaluate_binary_typed(
         }
         SymbolicOp::GeU => {
             // x >=u y is !(x <u y)
-            left.clt_un(&right).map(|v| {
+            left.clt_un(right).map(|v| {
                 if v.is_zero() {
                     ConstValue::I32(1)
                 } else {

@@ -32,7 +32,7 @@ impl CilFormatter {
     }
 
     /// Write assembly and module header directives.
-    pub fn format_header(&self, w: &mut dyn Write, assembly: &CilObject) -> io::Result<()> {
+    pub fn format_header(w: &mut dyn Write, assembly: &CilObject) -> io::Result<()> {
         if let Some(asm) = assembly.assembly() {
             writeln!(w, ".assembly '{}' {{", asm.name)?;
             writeln!(
@@ -50,7 +50,7 @@ impl CilFormatter {
     }
 
     /// Write opening `.class` directive for a type.
-    pub fn format_type_begin(&self, w: &mut dyn Write, cil_type: &CilType) -> io::Result<()> {
+    pub fn format_type_begin(w: &mut dyn Write, cil_type: &CilType) -> io::Result<()> {
         let vis = if cil_type.is_public() {
             "public"
         } else {
@@ -81,7 +81,7 @@ impl CilFormatter {
     }
 
     /// Write closing brace for a type.
-    pub fn format_type_end(&self, w: &mut dyn Write) -> io::Result<()> {
+    pub fn format_type_end(w: &mut dyn Write) -> io::Result<()> {
         writeln!(w, "}} // end of class")?;
         writeln!(w)?;
         Ok(())
@@ -99,7 +99,7 @@ impl CilFormatter {
             return self.format_method_body_raw(w, method, assembly);
         }
 
-        self.format_method_header(w, method)?;
+        Self::format_method_header(w, method)?;
         writeln!(w, "  {{")?;
 
         if method.token.value() == entry_point_token {
@@ -114,7 +114,7 @@ impl CilFormatter {
     }
 
     /// Write the `.method` directive line with all modifiers.
-    fn format_method_header(&self, w: &mut dyn Write, method: &Method) -> io::Result<()> {
+    fn format_method_header(w: &mut dyn Write, method: &Method) -> io::Result<()> {
         write!(w, "  .method {}", method.flags_access)?;
 
         if method
@@ -196,11 +196,11 @@ impl CilFormatter {
         let header_size = if let Some(body) = method.body.get() {
             writeln!(w, "    .maxstack {}", body.max_stack)?;
 
-            self.format_locals(w, method)?;
+            Self::format_locals(w, method)?;
 
             // Exception handler comments before instructions
             if !body.exception_handlers.is_empty() {
-                self.format_exception_handlers(w, &body.exception_handlers)?;
+                Self::format_exception_handlers(w, &body.exception_handlers)?;
             }
 
             body.size_header as u64
@@ -208,7 +208,7 @@ impl CilFormatter {
             0
         };
 
-        let code_start_rva = method.rva.unwrap_or(0) as u64 + header_size;
+        let code_start_rva = u64::from(method.rva.unwrap_or(0)) + header_size;
 
         for instruction in method.instructions() {
             self.format_instruction(w, instruction, code_start_rva, assembly)?;
@@ -225,7 +225,7 @@ impl CilFormatter {
         assembly: &CilObject,
     ) -> io::Result<()> {
         let header_size = method.body.get().map_or(0, |b| b.size_header as u64);
-        let code_start_rva = method.rva.unwrap_or(0) as u64 + header_size;
+        let code_start_rva = u64::from(method.rva.unwrap_or(0)) + header_size;
         for instruction in method.instructions() {
             self.format_instruction(w, instruction, code_start_rva, assembly)?;
         }
@@ -233,7 +233,7 @@ impl CilFormatter {
     }
 
     /// Write a `.locals` directive.
-    fn format_locals(&self, w: &mut dyn Write, method: &Method) -> io::Result<()> {
+    fn format_locals(w: &mut dyn Write, method: &Method) -> io::Result<()> {
         if method.local_vars.is_empty() {
             return Ok(());
         }
@@ -248,10 +248,9 @@ impl CilFormatter {
 
         let count = method.local_vars.count();
         for (i, local) in method.local_vars.iter() {
-            let type_name = local
-                .base
-                .upgrade()
-                .map(|t| {
+            let type_name = local.base.upgrade().map_or_else(
+                || "???".to_string(),
+                |t| {
                     let flavor = t.flavor();
                     let s = flavor.as_str();
                     // For non-primitive types, use fullname
@@ -259,8 +258,8 @@ impl CilFormatter {
                         "class" | "valuetype" | "interface" | "generic" => t.fullname(),
                         _ => s.to_string(),
                     }
-                })
-                .unwrap_or_else(|| "???".to_string());
+                },
+            );
 
             let pinned = if local.is_pinned { " pinned" } else { "" };
             let byref = if local.is_byref { "&" } else { "" };
@@ -284,7 +283,7 @@ impl CilFormatter {
         let offset = instruction.rva.saturating_sub(code_start_rva);
 
         if self.opts.bytes {
-            self.format_instruction_bytes(w, instruction)?;
+            Self::format_instruction_bytes(w, instruction)?;
         }
 
         if self.opts.offsets {
@@ -331,7 +330,7 @@ impl CilFormatter {
                 format!("IL_{offset:04x}")
             }
             Operand::Token(tok) => {
-                let resolved = resolve_token(assembly, tok);
+                let resolved = resolve_token(assembly, *tok);
                 match resolved {
                     Some(name) if self.opts.tokens => {
                         format!("{name} /* 0x{:08X} */", tok.value())
@@ -377,11 +376,7 @@ impl CilFormatter {
     }
 
     /// Format hex bytes of an instruction (for --bytes flag).
-    fn format_instruction_bytes(
-        &self,
-        w: &mut dyn Write,
-        instruction: &Instruction,
-    ) -> io::Result<()> {
+    fn format_instruction_bytes(w: &mut dyn Write, instruction: &Instruction) -> io::Result<()> {
         // Reconstruct bytes from instruction metadata
         let mut bytes = Vec::new();
 
@@ -407,6 +402,8 @@ impl CilFormatter {
             },
             Operand::Target(_) => {
                 // Target operand size depends on instruction (short vs long branch)
+                // CIL instruction sizes are small (max ~10 bytes), truncation is safe
+                #[allow(clippy::cast_possible_truncation)]
                 let operand_size =
                     instruction.size as usize - if instruction.prefix != 0 { 2 } else { 1 };
                 // We don't have original bytes, just show placeholder
@@ -415,21 +412,20 @@ impl CilFormatter {
             Operand::Token(tok) => {
                 bytes.extend_from_slice(&tok.value().to_le_bytes());
             }
-            Operand::Local(idx) => {
+            Operand::Local(idx) | Operand::Argument(idx) => {
                 if instruction.size <= 2 {
-                    bytes.push(*idx as u8);
-                } else {
-                    bytes.extend_from_slice(&idx.to_le_bytes());
-                }
-            }
-            Operand::Argument(idx) => {
-                if instruction.size <= 2 {
-                    bytes.push(*idx as u8);
+                    // CIL short-form instructions use 1 byte for local/argument indices
+                    #[allow(clippy::cast_possible_truncation)]
+                    {
+                        bytes.push(*idx as u8);
+                    }
                 } else {
                     bytes.extend_from_slice(&idx.to_le_bytes());
                 }
             }
             Operand::Switch(offsets) => {
+                // CIL switch instruction: count is encoded as u32
+                #[allow(clippy::cast_possible_truncation)]
                 let count = offsets.len() as u32;
                 bytes.extend_from_slice(&count.to_le_bytes());
                 for offset in offsets {
@@ -454,7 +450,6 @@ impl CilFormatter {
 
     /// Write exception handler region comments.
     fn format_exception_handlers(
-        &self,
         w: &mut dyn Write,
         handlers: &[ExceptionHandler],
     ) -> io::Result<()> {
@@ -464,7 +459,7 @@ impl CilFormatter {
 
             match handler.flags {
                 ExceptionHandlerFlags::EXCEPTION => {
-                    let type_name = exception_type_name(&handler.handler);
+                    let type_name = exception_type_name(handler.handler.as_ref());
                     writeln!(
                         w,
                         "    // .try IL_{:04x} to IL_{:04x} catch {type_name} handler IL_{:04x} to IL_{:04x}",
@@ -506,27 +501,23 @@ impl CilFormatter {
 }
 
 /// Get a display name for an exception handler's caught type.
-fn exception_type_name(handler: &Option<CilTypeRc>) -> String {
-    handler
-        .as_ref()
-        .map(|t| t.fullname())
-        .unwrap_or_else(|| "[?]".to_string())
+fn exception_type_name(handler: Option<&CilTypeRc>) -> String {
+    handler.map_or_else(|| "[?]".to_string(), |t| t.fullname())
 }
 
 /// Resolve a metadata token to a human-readable name.
-fn resolve_token(assembly: &CilObject, token: &Token) -> Option<String> {
+fn resolve_token(assembly: &CilObject, token: Token) -> Option<String> {
     match token.table() {
         0x06 => {
             // MethodDef
             assembly
                 .methods()
-                .get(token)
+                .get(&token)
                 .map(|entry| entry.value().fullname())
         }
         0x0A => {
             // MemberRef
-            assembly.refs_members().get(token).map(|entry| {
-                let mref = entry.value();
+            assembly.member_ref(&token).map(|mref| {
                 let class = mref.declaredby.fullname().unwrap_or_default();
                 if class.is_empty() {
                     mref.name.clone()
@@ -537,7 +528,7 @@ fn resolve_token(assembly: &CilObject, token: &Token) -> Option<String> {
         }
         0x01 | 0x02 => {
             // TypeRef or TypeDef
-            assembly.types().get(token).map(|t| t.fullname())
+            assembly.types().get(&token).map(|t| t.fullname())
         }
         0x70 => {
             // UserString

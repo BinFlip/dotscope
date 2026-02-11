@@ -190,6 +190,7 @@ impl SsaInstruction {
     /// Returns all SSA variables referenced by this instruction.
     ///
     /// This includes both uses and the def (if present).
+    #[must_use]
     pub fn all_variables(&self) -> Vec<SsaVarId> {
         let mut vars = self.op.uses();
         if let Some(def) = self.op.dest() {

@@ -685,6 +685,10 @@ impl EmulationProcess {
     ///
     /// Returns an `EmulationOutcome::Stopped` if the condition triggered,
     /// or the normal outcome if execution completed.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if no assembly is loaded or if an unrecoverable emulation error occurs.
     pub fn emulate_until<F>(
         &self,
         method: Token,
@@ -722,6 +726,10 @@ impl EmulationProcess {
     /// # Arguments
     ///
     /// * `behavior` - How to handle unknown method calls
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the runtime state lock cannot be acquired.
     ///
     /// # See Also
     ///
@@ -927,7 +935,7 @@ impl std::fmt::Debug for EmulationProcess {
             .field("loaded_images", &self.loaded_images.len())
             .field("mapped_regions", &self.mapped_regions.len())
             .field("instruction_count", &self.instruction_count())
-            .finish()
+            .finish_non_exhaustive()
     }
 }
 

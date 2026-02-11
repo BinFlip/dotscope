@@ -1,15 +1,15 @@
-//! ConfuserEx-specific emulation hooks.
+//! `ConfuserEx`-specific emulation hooks.
 //!
-//! This module provides hooks for intercepting and handling ConfuserEx-specific
+//! This module provides hooks for intercepting and handling `ConfuserEx`-specific
 //! method patterns during emulation, such as inline LZMA decompression.
 //!
 //! # LZMA Decompression Hook
 //!
-//! ConfuserEx embeds an inline LZMA decompressor that doesn't use the BCL.
+//! `ConfuserEx` embeds an inline LZMA decompressor that doesn't use the BCL.
 //! The [`create_lzma_hook`] function creates a hook that:
 //!
 //! 1. Matches internal methods with signature `byte[] -> byte[]`
-//! 2. Checks if the input data has a ConfuserEx LZMA header
+//! 2. Checks if the input data has a `ConfuserEx` LZMA header
 //! 3. Decompresses natively instead of emulating the complex LZMA algorithm
 //!
 //! This dramatically speeds up resource decryption by avoiding thousands of
@@ -22,7 +22,7 @@
 //! [`create_anti_tamper_stub_hook`] function creates a hook that stubs out
 //! these methods to prevent them from corrupting state.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, hash::BuildHasher, sync::Arc};
 
 use crate::{
     emulation::{EmValue, EmulationThread, Hook, HookContext, HookPriority, PreHookResult},
@@ -30,12 +30,12 @@ use crate::{
     utils::{decompress_confuserex_lzma, is_confuserex_lzma},
 };
 
-/// Creates a hook for native ConfuserEx LZMA decompression.
+/// Creates a hook for native `ConfuserEx` LZMA decompression.
 ///
 /// This hook intercepts internal methods that match the LZMA decompressor pattern:
-/// - Internal method (MethodDef, not external BCL)
+/// - Internal method (`MethodDef`, not external BCL)
 /// - Signature: `byte[] MethodName(byte[])` or `static byte[] MethodName(byte[])`
-/// - Input data starts with ConfuserEx LZMA header (0x5D followed by dictionary size)
+/// - Input data starts with `ConfuserEx` LZMA header (0x5D followed by dictionary size)
 ///
 /// When matched, the hook decompresses the data natively using the `lzma-rs` crate
 /// instead of emulating the complex LZMA algorithm instruction-by-instruction.
@@ -79,7 +79,7 @@ pub fn create_lzma_hook() -> Hook {
 /// # Arguments
 ///
 /// * `tokens` - Set of protection method tokens to stub out (typically from
-///   `ConfuserExFindings` - anti_tamper, anti_debug, resource handlers)
+///   `ConfuserExFindings` - `anti_tamper`, `anti_debug`, resource handlers)
 ///
 /// # Returns
 ///
@@ -104,7 +104,9 @@ pub fn create_lzma_hook() -> Hook {
 ///     .build()?;
 /// ```
 #[must_use]
-pub fn create_anti_tamper_stub_hook(tokens: HashSet<Token>) -> Hook {
+pub fn create_anti_tamper_stub_hook<S: BuildHasher + Send + Sync + 'static>(
+    tokens: HashSet<Token, S>,
+) -> Hook {
     let tokens = Arc::new(tokens);
 
     Hook::new("confuserex-protection-stub")
@@ -122,33 +124,38 @@ pub fn create_anti_tamper_stub_hook(tokens: HashSet<Token>) -> Hook {
             // Return an appropriate default value based on the method's return type.
             // This prevents stack underflow when the caller expects a return value.
             let return_value = match ctx.return_type {
-                None => None, // Void method
-                Some(CilFlavor::Void) => None,
-                Some(CilFlavor::Boolean) => Some(EmValue::I32(0)), // false
-                Some(CilFlavor::I1 | CilFlavor::U1) => Some(EmValue::I32(0)),
-                Some(CilFlavor::I2 | CilFlavor::U2 | CilFlavor::Char) => Some(EmValue::I32(0)),
-                Some(CilFlavor::I4 | CilFlavor::U4) => Some(EmValue::I32(0)),
+                None | Some(CilFlavor::Void) => None, // Void method
+                Some(
+                    CilFlavor::Boolean // false
+                    | CilFlavor::I1 | CilFlavor::U1
+                    | CilFlavor::I2 | CilFlavor::U2 | CilFlavor::Char
+                    | CilFlavor::I4 | CilFlavor::U4
+                    | CilFlavor::TypedRef { .. }
+                    | CilFlavor::Unknown, // Fallback
+                ) => Some(EmValue::I32(0)),
                 Some(CilFlavor::I8 | CilFlavor::U8) => Some(EmValue::I64(0)),
                 Some(CilFlavor::R4) => Some(EmValue::F32(0.0)),
                 Some(CilFlavor::R8) => Some(EmValue::F64(0.0)),
-                Some(CilFlavor::I | CilFlavor::U) => Some(EmValue::NativeInt(0)),
-                Some(CilFlavor::String) => Some(EmValue::Null),
-                Some(CilFlavor::Object) => Some(EmValue::Null),
-                Some(CilFlavor::Class) => Some(EmValue::Null),
-                Some(CilFlavor::Interface) => Some(EmValue::Null),
-                Some(CilFlavor::Array { .. }) => Some(EmValue::Null),
+                Some(
+                    CilFlavor::I | CilFlavor::U
+                    | CilFlavor::Pointer | CilFlavor::ByRef
+                    | CilFlavor::FnPtr { .. }
+                    | CilFlavor::Pinned,
+                ) => Some(EmValue::NativeInt(0)),
+                Some(
+                    CilFlavor::String
+                    | CilFlavor::Object
+                    | CilFlavor::Class
+                    | CilFlavor::Interface
+                    | CilFlavor::Array { .. }
+                    | CilFlavor::GenericInstance
+                    | CilFlavor::GenericParameter { .. },
+                ) => Some(EmValue::Null),
                 Some(CilFlavor::ValueType) => {
                     // For value types, return a zeroed struct would be ideal,
                     // but EmValue::I32(0) works for small value types
                     Some(EmValue::I32(0))
                 }
-                Some(CilFlavor::Pointer | CilFlavor::ByRef) => Some(EmValue::NativeInt(0)),
-                Some(CilFlavor::FnPtr { .. }) => Some(EmValue::NativeInt(0)),
-                Some(CilFlavor::GenericInstance) => Some(EmValue::Null),
-                Some(CilFlavor::GenericParameter { .. }) => Some(EmValue::Null),
-                Some(CilFlavor::Pinned) => Some(EmValue::NativeInt(0)),
-                Some(CilFlavor::TypedRef { .. }) => Some(EmValue::I32(0)),
-                Some(CilFlavor::Unknown) => Some(EmValue::I32(0)), // Fallback
             };
             PreHookResult::Bypass(return_value)
         })
@@ -158,7 +165,7 @@ pub fn create_anti_tamper_stub_hook(tokens: HashSet<Token>) -> Hook {
 ///
 /// A candidate must:
 /// 1. Have signature `byte[] -> byte[]` (single byte array param, returns byte array)
-/// 2. Have input data that looks like ConfuserEx LZMA format
+/// 2. Have input data that looks like `ConfuserEx` LZMA format
 ///
 /// Also supports streaming decompress methods that take byte[] but may not return byte[].
 fn is_lzma_decompressor_candidate(ctx: &HookContext<'_>, thread: &EmulationThread) -> bool {
@@ -197,7 +204,7 @@ fn is_lzma_decompressor_candidate(ctx: &HookContext<'_>, thread: &EmulationThrea
     is_lzma_input(ctx, thread)
 }
 
-/// Checks if any of the method's arguments contains ConfuserEx LZMA data.
+/// Checks if any of the method's arguments contains `ConfuserEx` LZMA data.
 fn is_lzma_input(ctx: &HookContext<'_>, thread: &EmulationThread) -> bool {
     // Check all arguments for byte[] containing LZMA data
     for (idx, arg) in ctx.args.iter().enumerate() {
@@ -269,14 +276,11 @@ fn lzma_decompression_handler(
     };
 
     // Decompress using native LZMA
-    let decompressed = match decompress_confuserex_lzma(&byte_data) {
-        Ok(data) => data,
-        Err(_) => {
-            // Decompression failed - data looked like LZMA header but wasn't valid.
-            // Return null rather than letting emulation proceed, which could cause
-            // stack underflow or other issues when the hook matched but didn't handle.
-            return PreHookResult::Bypass(Some(EmValue::Null));
-        }
+    let Ok(decompressed) = decompress_confuserex_lzma(&byte_data) else {
+        // Decompression failed - data looked like LZMA header but wasn't valid.
+        // Return null rather than letting emulation proceed, which could cause
+        // stack underflow or other issues when the hook matched but didn't handle.
+        return PreHookResult::Bypass(Some(EmValue::Null));
     };
 
     // Allocate result as byte[] on the heap
@@ -299,7 +303,9 @@ fn lzma_decompression_handler(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        deobfuscation::obfuscators::confuserex::hooks::create_lzma_hook, emulation::HookPriority,
+    };
 
     #[test]
     fn test_create_lzma_hook() {

@@ -631,7 +631,7 @@ impl InstructionEncoder {
         self.emit_operand(operand, metadata.op_type)?;
 
         // Use the caller-provided stack effect instead of metadata
-        let pushes = if has_result { 1 } else { 0 };
+        let pushes = u8::from(has_result);
         self.update_stack_depth(num_args, pushes)
             .map_err(|e| malformed_error!("Stack error at call '{}': {}", mnemonic, e))?;
 
@@ -644,6 +644,10 @@ impl InstructionEncoder {
     /// - `ldarg.0` through `ldarg.3` for indices 0-3 (1 byte)
     /// - `ldarg.s` for indices 4-255 (2 bytes)
     /// - `ldarg` for indices 256+ (4 bytes)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     ///
     /// # Examples
     ///
@@ -686,6 +690,10 @@ impl InstructionEncoder {
     /// - `ldloc.0` through `ldloc.3` for indices 0-3 (1 byte)
     /// - `ldloc.s` for indices 4-255 (2 bytes)
     /// - `ldloc` for indices 256+ (4 bytes)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn emit_ldloc(&mut self, index: u16) -> Result<()> {
         match index {
             0 => self.emit_instruction("ldloc.0", None),
@@ -716,6 +724,10 @@ impl InstructionEncoder {
     /// Automatically selects the most compact form:
     /// - `starg.s` for indices 0-255 (2 bytes)
     /// - `starg` for indices 256+ (4 bytes)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn emit_starg(&mut self, index: u16) -> Result<()> {
         if index <= 255 {
             #[allow(clippy::cast_possible_truncation)]
@@ -738,6 +750,10 @@ impl InstructionEncoder {
     /// - `stloc.0` through `stloc.3` for indices 0-3 (1 byte)
     /// - `stloc.s` for indices 4-255 (2 bytes)
     /// - `stloc` for indices 256+ (4 bytes)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn emit_stloc(&mut self, index: u16) -> Result<()> {
         match index {
             0 => self.emit_instruction("stloc.0", None),
@@ -769,6 +785,10 @@ impl InstructionEncoder {
     /// - `ldc.i4.m1` through `ldc.i4.8` for values -1 to 8 (1 byte)
     /// - `ldc.i4.s` for values -128 to 127 (2 bytes)
     /// - `ldc.i4` for all other values (5 bytes)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     ///
     /// # Examples
     ///
@@ -810,6 +830,10 @@ impl InstructionEncoder {
     /// Automatically selects the most compact form:
     /// - `ldarga.s` for indices 0-255 (2 bytes)
     /// - `ldarga` for indices 256+ (4 bytes)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn emit_ldarga(&mut self, index: u16) -> Result<()> {
         if index <= 255 {
             #[allow(clippy::cast_possible_truncation)]
@@ -831,6 +855,10 @@ impl InstructionEncoder {
     /// Automatically selects the most compact form:
     /// - `ldloca.s` for indices 0-255 (2 bytes)
     /// - `ldloca` for indices 256+ (4 bytes)
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if instruction encoding fails.
     pub fn emit_ldloca(&mut self, index: u16) -> Result<()> {
         if index <= 255 {
             #[allow(clippy::cast_possible_truncation)]
@@ -929,7 +957,10 @@ impl InstructionEncoder {
     /// The current bytecode length in bytes.
     #[must_use]
     pub fn current_position(&self) -> u32 {
-        self.bytecode.len() as u32
+        // CIL method bodies are limited to u32 size by the format
+        #[allow(clippy::cast_possible_truncation)]
+        let position = self.bytecode.len() as u32;
+        position
     }
 
     /// Ensures the method ends with a proper method-terminating instruction.
@@ -1198,7 +1229,14 @@ impl InstructionEncoder {
                     break;
                 }
             }
-            (pos as i32 + adj).max(0) as usize
+            // CIL method bodies are limited by format; positions are validated elsewhere
+            #[allow(
+                clippy::cast_possible_truncation,
+                clippy::cast_possible_wrap,
+                clippy::cast_sign_loss
+            )]
+            let adjusted = (pos as i32 + adj).max(0) as usize;
+            adjusted
         };
 
         // Rebuild bytecode
@@ -1249,8 +1287,11 @@ impl InstructionEncoder {
         }
 
         // Update labels
-        for (_, pos) in self.labels.iter_mut() {
-            *pos = adjust_position(*pos as usize) as u32;
+        for pos in self.labels.values_mut() {
+            // CIL method bodies are limited to u32 size by the format
+            #[allow(clippy::cast_possible_truncation)]
+            let adjusted_pos = adjust_position(*pos as usize) as u32;
+            *pos = adjusted_pos;
         }
 
         // Update fixups
@@ -1271,7 +1312,7 @@ impl InstructionEncoder {
         }
 
         // Update switch fixups
-        for switch_fixup in self.switch_fixups.iter_mut() {
+        for switch_fixup in &mut self.switch_fixups {
             switch_fixup.fixup_position = adjust_position(switch_fixup.fixup_position);
             switch_fixup.instruction_end_position =
                 adjust_position(switch_fixup.instruction_end_position);
@@ -1609,7 +1650,7 @@ impl InstructionEncoder {
     pub fn set_stack_depth(&mut self, depth: i16) {
         self.current_stack_depth = depth;
         if depth >= 0 {
-            self.max_stack_depth = self.max_stack_depth.max(depth as u16);
+            self.max_stack_depth = self.max_stack_depth.max(depth.cast_unsigned());
         }
     }
 }

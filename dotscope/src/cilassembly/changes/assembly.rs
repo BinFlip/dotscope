@@ -546,10 +546,12 @@ impl AssemblyChanges {
     /// This offset points to the length prefix, not the data itself.
     pub fn store_resource_data(&mut self, data: &[u8]) -> u32 {
         // Record the current offset before adding the new resource
-        let offset = self.resource_data.len() as u32;
+        #[allow(clippy::cast_possible_truncation)]
+        let offset = self.resource_data.len() as u32; // Safe: .NET PE resource data is always < 4GB
 
         // Write 4-byte little-endian length prefix
-        let len = data.len() as u32;
+        #[allow(clippy::cast_possible_truncation)]
+        let len = data.len() as u32; // Safe: .NET PE resource data is always < 4GB
         self.resource_data.extend_from_slice(&len.to_le_bytes());
 
         // Write the actual resource data

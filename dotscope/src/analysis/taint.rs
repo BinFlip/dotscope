@@ -614,8 +614,8 @@ pub fn find_blocks_jumping_to(ssa: &SsaFunction, target: usize) -> HashSet<usize
                     true_target,
                     false_target,
                     ..
-                } => *true_target == target || *false_target == target,
-                SsaOp::BranchCmp {
+                }
+                | SsaOp::BranchCmp {
                     true_target,
                     false_target,
                     ..

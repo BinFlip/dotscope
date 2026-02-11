@@ -87,7 +87,7 @@ pub struct HeapIter<'a> {
     keys: std::vec::IntoIter<u64>,
 }
 
-impl<'a> Iterator for HeapIter<'a> {
+impl Iterator for HeapIter<'_> {
     type Item = (HeapRef, HeapObject);
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -105,7 +105,7 @@ impl<'a> Iterator for HeapIter<'a> {
     }
 }
 
-impl<'a> ExactSizeIterator for HeapIter<'a> {}
+impl ExactSizeIterator for HeapIter<'_> {}
 
 /// Text encoding type for `System.Text.Encoding` stubs.
 ///
@@ -376,7 +376,7 @@ impl fmt::Display for HeapObject {
                 dimensions,
                 ..
             } => {
-                write!(f, "{:?}[", element_type)?;
+                write!(f, "{element_type:?}[")?;
                 for (i, dim) in dimensions.iter().enumerate() {
                     if i > 0 {
                         write!(f, ",")?;
@@ -449,8 +449,7 @@ impl fmt::Display for HeapObject {
                 let buffered = write_buffer.len();
                 write!(
                     f,
-                    "crypto_stream(mode={}, cached={}, buffered={})",
-                    mode_str, cached, buffered
+                    "crypto_stream(mode={mode_str}, cached={cached}, buffered={buffered})"
                 )
             }
         }
@@ -595,6 +594,10 @@ impl ManagedHeap {
     ///
     /// This is an O(1) operation due to `imbl::HashMap`'s structural sharing.
     /// The actual data is only copied when either heap modifies an entry.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     ///
     /// # Example
     ///
@@ -768,6 +771,10 @@ impl ManagedHeap {
     /// and other Arc-backed data, cloning is cheap (just incrementing a
     /// reference count).
     ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    ///
     /// # Errors
     ///
     /// Returns [`EmulationError::InvalidHeapReference`] if the reference is invalid.
@@ -785,6 +792,10 @@ impl ManagedHeap {
     ///
     /// This method provides controlled mutable access while maintaining
     /// interior mutability semantics.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     ///
     /// # Errors
     ///
@@ -809,6 +820,10 @@ impl ManagedHeap {
     /// Returns an `Arc<str>` for efficient, borrow-free access. This allows
     /// holding onto the string while performing other heap operations.
     ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    ///
     /// # Errors
     ///
     /// Returns error if the reference is invalid or doesn't point to a string.
@@ -829,6 +844,10 @@ impl ManagedHeap {
     }
 
     /// Gets an array element (cloned).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     ///
     /// # Errors
     ///
@@ -860,6 +879,10 @@ impl ManagedHeap {
     }
 
     /// Sets an array element.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     ///
     /// # Errors
     ///
@@ -893,6 +916,10 @@ impl ManagedHeap {
 
     /// Gets the length of an array.
     ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    ///
     /// # Errors
     ///
     /// Returns error if the reference is invalid or not an array.
@@ -915,14 +942,20 @@ impl ManagedHeap {
 
     /// Gets the element type of an array.
     ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    ///
     /// # Errors
     ///
     /// Returns error if the reference is invalid or not an array.
     pub fn get_array_element_type(&self, heap_ref: HeapRef) -> Result<CilFlavor> {
         let state = self.state.read().expect("heap lock poisoned");
         match state.objects.get(&heap_ref.id()) {
-            Some(HeapObject::Array { element_type, .. }) => Ok(element_type.clone()),
-            Some(HeapObject::MultiArray { element_type, .. }) => Ok(element_type.clone()),
+            Some(
+                HeapObject::Array { element_type, .. }
+                | HeapObject::MultiArray { element_type, .. },
+            ) => Ok(element_type.clone()),
             Some(other) => Err(EmulationError::HeapTypeMismatch {
                 expected: "array",
                 found: other.kind(),
@@ -936,6 +969,10 @@ impl ManagedHeap {
     }
 
     /// Gets an object field value (cloned).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     ///
     /// # Errors
     ///
@@ -961,6 +998,10 @@ impl ManagedHeap {
 
     /// Sets an object field value.
     ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    ///
     /// # Errors
     ///
     /// Returns error if the reference is invalid or not an object.
@@ -984,6 +1025,10 @@ impl ManagedHeap {
     }
 
     /// Gets the type token of an object.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     ///
     /// # Errors
     ///
@@ -1023,6 +1068,10 @@ impl ManagedHeap {
 
     /// Unboxes a value from the heap (cloned).
     ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    ///
     /// # Errors
     ///
     /// Returns error if the reference is invalid or not a boxed value.
@@ -1052,6 +1101,10 @@ impl ManagedHeap {
     }
 
     /// Returns `true` if the reference exists on the heap.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn contains(&self, heap_ref: HeapRef) -> bool {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1071,6 +1124,10 @@ impl ManagedHeap {
     }
 
     /// Returns the number of allocated objects.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn object_count(&self) -> usize {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1080,6 +1137,10 @@ impl ManagedHeap {
     /// Clears all objects from the heap.
     ///
     /// Note: This doesn't simulate GC, it just empties the heap.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn clear(&self) {
         let mut state = self.state.write().expect("heap lock poisoned");
         state.objects.clear();
@@ -1089,6 +1150,10 @@ impl ManagedHeap {
     /// Returns all heap objects as a vector of (HeapRef, HeapObject) pairs.
     ///
     /// This clones all objects, which may be expensive for large heaps.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn to_vec(&self) -> Vec<(HeapRef, HeapObject)> {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1104,6 +1169,10 @@ impl ManagedHeap {
     /// Only collects object keys upfront (cheap u64 copies), then clones
     /// each object lazily as you iterate. More efficient than `to_vec()`
     /// if you don't need all objects or want to stop iteration early.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn iter(&self) -> HeapIter<'_> {
         let keys: Vec<u64> = {
             let state = self.state.read().expect("heap lock poisoned");
@@ -1120,6 +1189,10 @@ impl ManagedHeap {
     /// Note: This is an approximation based on imbl's internal structure.
     /// After fork, unmodified entries are shared, so this helps understand
     /// memory usage.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn object_count_estimate(&self) -> usize {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1141,6 +1214,10 @@ impl ManagedHeap {
     /// Returns `None` if the reference is invalid, not a byte array, or contains
     /// any non-I32 elements (including Symbolic values). This fail-fast behavior
     /// ensures callers don't silently receive partial/corrupted data.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn get_byte_array(&self, heap_ref: HeapRef) -> Option<Vec<u8>> {
@@ -1148,7 +1225,7 @@ impl ManagedHeap {
         match state.objects.get(&heap_ref.id())? {
             HeapObject::Array { elements, .. } => {
                 let mut bytes = Vec::with_capacity(elements.len());
-                for e in elements.iter() {
+                for e in elements {
                     match e {
                         EmValue::I32(n) => bytes.push(*n as u8),
                         _ => return None, // Fail if any element is not I32
@@ -1168,7 +1245,12 @@ impl ManagedHeap {
     ///
     /// Returns `None` if the reference is invalid, not an array, or contains
     /// non-numeric types.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
+    #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
     pub fn get_array_as_bytes(&self, heap_ref: HeapRef, ptr_size: PointerSize) -> Option<Vec<u8>> {
         let state = self.state.read().expect("heap lock poisoned");
         match state.objects.get(&heap_ref.id())? {
@@ -1179,10 +1261,9 @@ impl ManagedHeap {
                 let element_size = element_type.element_size(ptr_size)?;
                 let mut bytes = Vec::with_capacity(elements.len() * element_size);
 
-                for e in elements.iter() {
+                for e in elements {
                     match e {
                         EmValue::I32(n) => match element_size {
-                            1 => bytes.push(*n as u8),
                             2 => bytes.extend_from_slice(&(*n as i16).to_le_bytes()),
                             4 => bytes.extend_from_slice(&n.to_le_bytes()),
                             _ => bytes.push(*n as u8),
@@ -1221,6 +1302,10 @@ impl ManagedHeap {
     }
 
     /// Gets the encoding type from an encoding object.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn get_encoding_type(&self, heap_ref: HeapRef) -> Option<EncodingType> {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1246,6 +1331,10 @@ impl ManagedHeap {
     /// Gets the algorithm type from a crypto algorithm object.
     ///
     /// Returns an `Arc<str>` for efficient, borrow-free access.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn get_crypto_algorithm_type(&self, heap_ref: HeapRef) -> Option<Arc<str>> {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1272,6 +1361,10 @@ impl ManagedHeap {
 
     /// Sets the key for a symmetric algorithm.
     ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    ///
     /// # Errors
     ///
     /// Returns an error if the heap reference is invalid or not a symmetric algorithm.
@@ -1291,6 +1384,10 @@ impl ManagedHeap {
     }
 
     /// Sets the IV for a symmetric algorithm.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     ///
     /// # Errors
     ///
@@ -1315,6 +1412,10 @@ impl ManagedHeap {
     /// # Returns
     ///
     /// A tuple of (algorithm_type, key, iv) if valid, or `None` otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn get_symmetric_algorithm_info(
         &self,
@@ -1364,6 +1465,10 @@ impl ManagedHeap {
     /// # Returns
     ///
     /// A tuple of (algorithm, key, iv, is_encryptor) if valid, or `None` otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn get_crypto_transform_info(&self, heap_ref: HeapRef) -> Option<CryptoTransformInfo> {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1407,6 +1512,10 @@ impl ManagedHeap {
     /// # Returns
     ///
     /// The method token if the reference points to a `ReflectionMethod`, or `None` otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn get_reflection_method_token(&self, heap_ref: HeapRef) -> Option<Token> {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1428,6 +1537,10 @@ impl ManagedHeap {
     /// * `salt` - The salt bytes.
     /// * `iterations` - The iteration count.
     /// * `hash_algorithm` - The hash algorithm name (e.g., "SHA1", "SHA256").
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     ///
     /// # Errors
     ///
@@ -1504,6 +1617,10 @@ impl ManagedHeap {
     ///
     /// A tuple of (password, salt, iterations, hash_algorithm) if the reference
     /// points to a `KeyDerivation`, or `None` otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn get_key_derivation_params(&self, heap_ref: HeapRef) -> Option<KeyDerivationInfo> {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1553,6 +1670,10 @@ impl ManagedHeap {
     ///
     /// A tuple of (data clone, position) if the reference points to a `Stream`,
     /// or `None` otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn get_stream_data(&self, heap_ref: HeapRef) -> Option<(Vec<u8>, usize)> {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1573,6 +1694,10 @@ impl ManagedHeap {
     ///
     /// `true` if the stream was updated, `false` if the reference doesn't point
     /// to a stream object.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn set_stream_position(&self, heap_ref: HeapRef, new_position: usize) -> bool {
         let mut state = self.state.write().expect("heap lock poisoned");
         if let Some(HeapObject::Stream { position, .. }) = state.objects.get_mut(&heap_ref.id()) {
@@ -1597,6 +1722,10 @@ impl ManagedHeap {
     /// # Returns
     ///
     /// The number of bytes written, or 0 if the reference is not a stream.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn write_to_stream(&self, heap_ref: HeapRef, bytes: &[u8]) -> usize {
         let mut state = self.state.write().expect("heap lock poisoned");
         if let Some(HeapObject::Stream { data, position }) = state.objects.get_mut(&heap_ref.id()) {
@@ -1637,6 +1766,10 @@ impl ManagedHeap {
     /// # Returns
     ///
     /// `true` if the object was replaced, `false` if the reference is invalid.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn replace_with_stream(&self, heap_ref: HeapRef, data: Vec<u8>) -> bool {
         let mut state = self.state.write().expect("heap lock poisoned");
         if let Some(old_obj) = state.objects.get(&heap_ref.id()) {
@@ -1699,6 +1832,10 @@ impl ManagedHeap {
     /// # Returns
     ///
     /// A tuple of (underlying_stream, transform, mode) if valid, or `None` otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn get_crypto_stream_info(&self, heap_ref: HeapRef) -> Option<(HeapRef, HeapRef, u8)> {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1725,6 +1862,10 @@ impl ManagedHeap {
     /// # Returns
     ///
     /// `true` if the object was replaced, `false` if the reference is invalid.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn replace_with_crypto_stream(
         &self,
         heap_ref: HeapRef,
@@ -1765,6 +1906,10 @@ impl ManagedHeap {
     /// # Returns
     ///
     /// `Some((data, position))` if transformed data is cached, `None` otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn get_crypto_stream_transformed(&self, heap_ref: HeapRef) -> Option<(Vec<u8>, usize)> {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1785,6 +1930,10 @@ impl ManagedHeap {
     /// # Returns
     ///
     /// `true` if successful, `false` if the reference is invalid or not a CryptoStream.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn set_crypto_stream_transformed(&self, heap_ref: HeapRef, data: Vec<u8>) -> bool {
         let mut state = self.state.write().expect("heap lock poisoned");
         let new_size = data.len();
@@ -1832,6 +1981,10 @@ impl ManagedHeap {
     ///
     /// The bytes read (may be fewer than `count` if EOF reached), or `None`
     /// if the stream has no transformed data yet.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn read_crypto_stream(&self, heap_ref: HeapRef, count: usize) -> Option<Vec<u8>> {
         let mut state = self.state.write().expect("heap lock poisoned");
         if let Some(HeapObject::CryptoStream {
@@ -1855,6 +2008,10 @@ impl ManagedHeap {
     /// # Returns
     ///
     /// `true` if successful, `false` if the reference is invalid or not a CryptoStream.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn crypto_stream_append_write(&self, heap_ref: HeapRef, data: &[u8]) -> bool {
         let mut state = self.state.write().expect("heap lock poisoned");
         let data_len = data.len();
@@ -1877,6 +2034,10 @@ impl ManagedHeap {
     /// # Returns
     ///
     /// A copy of the write buffer, or `None` if not a CryptoStream.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     #[must_use]
     pub fn get_crypto_stream_write_buffer(&self, heap_ref: HeapRef) -> Option<Vec<u8>> {
         let state = self.state.read().expect("heap lock poisoned");
@@ -1891,6 +2052,10 @@ impl ManagedHeap {
     /// # Returns
     ///
     /// `true` if successful, `false` if the reference is invalid or not a CryptoStream.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
     pub fn clear_crypto_stream_write_buffer(&self, heap_ref: HeapRef) -> bool {
         let mut state = self.state.write().expect("heap lock poisoned");
 
@@ -1910,6 +2075,15 @@ impl ManagedHeap {
         // Update size atomically
         self.current_size.fetch_sub(buffer_len, Ordering::Relaxed);
         true
+    }
+}
+
+impl<'a> IntoIterator for &'a ManagedHeap {
+    type Item = (HeapRef, HeapObject);
+    type IntoIter = HeapIter<'a>;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
     }
 }
 

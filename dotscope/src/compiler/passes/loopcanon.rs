@@ -304,8 +304,7 @@ impl LoopCanonicalizationPass {
             .record(EventKind::ControlFlowRestructured)
             .at(method_token, preheader_idx)
             .message(format!(
-                "Inserted preheader B{} for loop at B{}",
-                preheader_idx, header_idx
+                "Inserted preheader B{preheader_idx} for loop at B{header_idx}"
             ));
     }
 
@@ -496,7 +495,7 @@ impl SsaPass for LoopCanonicalizationPass {
         if modified > 0 {
             // Canonicalize the function to clean up and renumber blocks
             ssa.canonicalize();
-            ctx.events.merge(changes);
+            ctx.events.merge(&changes);
             return Ok(true);
         }
 

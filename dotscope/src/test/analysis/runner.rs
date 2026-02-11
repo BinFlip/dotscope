@@ -304,8 +304,8 @@ impl AnalysisTestRunner {
         };
 
         // Get the method
-        let method = match assembly.methods().get(&token) {
-            Some(entry) => entry.value().clone(),
+        let method = match assembly.method(&token) {
+            Some(method) => method,
             None => {
                 return AnalysisTestResult::run_failed(
                     test_case.name,

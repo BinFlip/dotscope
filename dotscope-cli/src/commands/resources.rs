@@ -6,7 +6,7 @@ use serde::Serialize;
 
 use crate::{
     app::GlobalOptions,
-    commands::common::load_assembly,
+    commands::common::{load_assembly, name_contains_ignore_case},
     output::{print_output, Align, TabWriter},
 };
 
@@ -55,12 +55,12 @@ fn list_resources(
 
     let mut entries = Vec::new();
 
-    for entry in resources.iter() {
+    for entry in resources {
         let name = entry.key();
         let resource = entry.value();
 
         if let Some(filter) = name_filter {
-            if !name.to_lowercase().contains(&filter.to_lowercase()) {
+            if !name_contains_ignore_case(name, filter) {
                 continue;
             }
         }
@@ -85,7 +85,7 @@ fn list_resources(
     };
 
     print_output(&output, opts, |out| {
-        let mut tw = TabWriter::new(vec![
+        let mut tw = TabWriter::new(&[
             ("Name", Align::Left),
             ("Size", Align::Right),
             ("Source", Align::Left),
@@ -114,7 +114,7 @@ fn extract_resources(
     let mut extracted = 0usize;
     let mut skipped = 0usize;
 
-    for entry in resources.iter() {
+    for entry in resources {
         let name = entry.key();
         let resource = entry.value();
 
@@ -130,26 +130,23 @@ fn extract_resources(
             continue;
         }
 
-        match resources.get_data(resource) {
-            Some(data) => {
-                // Sanitize filename: replace path separators to avoid directory traversal
-                let safe_name = name.replace(['/', '\\'], "_");
-                let dest = out.join(&safe_name);
+        if let Some(data) = resources.get_data(resource) {
+            // Sanitize filename: replace path separators to avoid directory traversal
+            let safe_name = name.replace(['/', '\\'], "_");
+            let dest = out.join(&safe_name);
 
-                std::fs::write(&dest, data)
-                    .with_context(|| format!("failed to write resource to {}", dest.display()))?;
+            std::fs::write(&dest, data)
+                .with_context(|| format!("failed to write resource to {}", dest.display()))?;
 
-                println!(
-                    "  extracted: {name} ({} bytes) -> {}",
-                    data.len(),
-                    dest.display()
-                );
-                extracted += 1;
-            }
-            None => {
-                println!("  skip (no data): {name}");
-                skipped += 1;
-            }
+            println!(
+                "  extracted: {name} ({} bytes) -> {}",
+                data.len(),
+                dest.display()
+            );
+            extracted += 1;
+        } else {
+            println!("  skip (no data): {name}");
+            skipped += 1;
         }
     }
 

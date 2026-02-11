@@ -629,7 +629,9 @@ impl TableId {
                 TableId::MethodDef,
             ],
             TableId::MethodDef => &[TableId::Param],
-            TableId::InterfaceImpl => &[TableId::TypeDef, TableId::TypeRef, TableId::TypeSpec],
+            TableId::InterfaceImpl | TableId::Event => {
+                &[TableId::TypeDef, TableId::TypeRef, TableId::TypeSpec]
+            }
             TableId::MemberRef => &[
                 TableId::TypeDef,
                 TableId::TypeRef,
@@ -665,18 +667,15 @@ impl TableId {
             ],
             TableId::FieldMarshal => &[TableId::Field, TableId::Param],
             TableId::DeclSecurity => &[TableId::TypeDef, TableId::MethodDef, TableId::Assembly],
-            TableId::ClassLayout => &[TableId::TypeDef],
-            TableId::FieldLayout => &[TableId::Field],
+            TableId::ClassLayout | TableId::NestedClass => &[TableId::TypeDef],
+            TableId::FieldLayout | TableId::FieldRVA => &[TableId::Field],
             TableId::EventMap => &[TableId::TypeDef, TableId::Event],
-            TableId::Event => &[TableId::TypeDef, TableId::TypeRef, TableId::TypeSpec],
             TableId::PropertyMap => &[TableId::TypeDef, TableId::Property],
             TableId::MethodSemantics => &[TableId::MethodDef, TableId::Event, TableId::Property],
             TableId::MethodImpl => &[TableId::TypeDef, TableId::MethodDef, TableId::MemberRef],
             TableId::ImplMap => &[TableId::Field, TableId::MethodDef, TableId::ModuleRef],
-            TableId::FieldRVA => &[TableId::Field],
             TableId::ExportedType => &[TableId::File, TableId::AssemblyRef, TableId::ExportedType],
             TableId::ManifestResource => &[TableId::File, TableId::AssemblyRef],
-            TableId::NestedClass => &[TableId::TypeDef],
             TableId::GenericParam => &[TableId::TypeDef, TableId::MethodDef],
             TableId::MethodSpec => &[TableId::MethodDef, TableId::MemberRef],
             TableId::GenericParamConstraint => &[

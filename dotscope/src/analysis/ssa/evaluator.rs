@@ -1242,24 +1242,21 @@ impl<'a> SsaEvaluator<'a> {
                 ..
             } => {
                 let value = self.values.get(operand).cloned();
-                match value {
-                    Some(expr) => {
-                        if let Some(v) = expr.as_i64() {
-                            // Apply proper truncation/extension and store with correct type
-                            let converted = self.apply_conversion(v, target, *unsigned);
-                            let result = SymbolicExpr::constant(converted);
-                            self.values.insert(*dest, result.clone());
-                            Some(result)
-                        } else {
-                            // Symbolic/Unknown pass through (conversions don't change symbolic structure)
-                            self.values.insert(*dest, expr.clone());
-                            Some(expr)
-                        }
+                if let Some(expr) = value {
+                    if let Some(v) = expr.as_i64() {
+                        // Apply proper truncation/extension and store with correct type
+                        let converted = self.apply_conversion(v, target, *unsigned);
+                        let result = SymbolicExpr::constant(converted);
+                        self.values.insert(*dest, result.clone());
+                        Some(result)
+                    } else {
+                        // Symbolic/Unknown pass through (conversions don't change symbolic structure)
+                        self.values.insert(*dest, expr.clone());
+                        Some(expr)
                     }
-                    None => {
-                        self.values.remove(dest);
-                        None
-                    }
+                } else {
+                    self.values.remove(dest);
+                    None
                 }
             }
 
@@ -1460,19 +1457,20 @@ impl<'a> SsaEvaluator<'a> {
             SsaType::NativeInt => match self.pointer_size {
                 PointerSize::Bit32 => {
                     if unsigned {
-                        ConstValue::NativeInt((value as u32) as i32 as i64)
+                        ConstValue::NativeInt(i64::from((value as u32) as i32))
                     } else {
-                        ConstValue::NativeInt(value as i32 as i64)
+                        ConstValue::NativeInt(i64::from(value as i32))
                     }
                 }
                 PointerSize::Bit64 => ConstValue::NativeInt(value),
             },
             SsaType::NativeUInt => match self.pointer_size {
-                PointerSize::Bit32 => ConstValue::NativeUInt(value as u32 as u64),
+                PointerSize::Bit32 => ConstValue::NativeUInt(u64::from(value as u32)),
                 PointerSize::Bit64 => ConstValue::NativeUInt(value as u64),
             },
-            SsaType::I64 => ConstValue::I64(value),
             SsaType::U64 => ConstValue::U64(value as u64),
+            // Safe: precision loss is acceptable for integer-to-float conversion
+            #[allow(clippy::cast_precision_loss)]
             SsaType::F32 => {
                 let float_val = if unsigned {
                     (value as u64) as f32
@@ -1481,6 +1479,8 @@ impl<'a> SsaEvaluator<'a> {
                 };
                 ConstValue::F32(float_val)
             }
+            // Safe: precision loss is acceptable for integer-to-float conversion
+            #[allow(clippy::cast_precision_loss)]
             SsaType::F64 => {
                 let float_val = if unsigned {
                     (value as u64) as f64
@@ -1632,7 +1632,7 @@ impl<'a> SsaEvaluator<'a> {
 
                 match (left_val, right_val) {
                     (Some(l), Some(r)) => {
-                        let result = self.evaluate_comparison(l, r, *cmp, *unsigned);
+                        let result = Self::evaluate_comparison(l, r, *cmp, *unsigned);
                         if result {
                             ControlFlow::Continue(*true_target)
                         } else {
@@ -1650,6 +1650,7 @@ impl<'a> SsaEvaluator<'a> {
                 default,
             } => match self.get_concrete(*value).and_then(ConstValue::as_u64) {
                 Some(v) => {
+                    #[allow(clippy::cast_possible_truncation)]
                     let idx = v as usize;
                     if idx < targets.len() {
                         ControlFlow::Continue(targets[idx])
@@ -1677,7 +1678,6 @@ impl<'a> SsaEvaluator<'a> {
     /// Uses the typed comparison methods on `ConstValue` which properly
     /// handle signedness based on the operand types.
     fn evaluate_comparison(
-        &self,
         left: &ConstValue,
         right: &ConstValue,
         cmp: CmpKind,

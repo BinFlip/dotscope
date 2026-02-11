@@ -263,8 +263,7 @@ impl Output {
         let len = self.size();
         if end > len {
             return Err(Error::MmapFailed(format!(
-                "Range end {} exceeds buffer size {}",
-                end, len
+                "Range end {end} exceeds buffer size {len}"
             )));
         }
 
@@ -292,8 +291,7 @@ impl Output {
         let len = self.size();
         if end > len {
             return Err(Error::MmapFailed(format!(
-                "Write would exceed buffer size: start={}, size={}, end={}, buffer_size={}",
-                start, size, end, len
+                "Write would exceed buffer size: start={start}, size={size}, end={end}, buffer_size={len}"
             )));
         }
         self.get_mut_range(start, end)
@@ -396,15 +394,13 @@ impl Output {
         // Validate bounds
         if source_end > len {
             return Err(Error::MmapFailed(format!(
-                "Source range would exceed buffer size: {}..{} (buffer size: {})",
-                source_start, source_end, len
+                "Source range would exceed buffer size: {source_start}..{source_end} (buffer size: {len})"
             )));
         }
 
         if target_end > len {
             return Err(Error::MmapFailed(format!(
-                "Target range would exceed buffer size: {}..{} (buffer size: {})",
-                target_start, target_end, len
+                "Target range would exceed buffer size: {target_start}..{target_end} (buffer size: {len})"
             )));
         }
 
@@ -456,8 +452,7 @@ impl Output {
 
         if index >= len {
             return Err(Error::MmapFailed(format!(
-                "Byte write would exceed buffer size: offset={}, buffer_size={}",
-                offset, len
+                "Byte write would exceed buffer size: offset={offset}, buffer_size={len}"
             )));
         }
 

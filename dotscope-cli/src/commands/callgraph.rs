@@ -48,8 +48,7 @@ pub fn run(
 
     let assembly_name = assembly
         .assembly()
-        .map(|a| a.name.clone())
-        .unwrap_or_else(|| "unknown".to_string());
+        .map_or_else(|| "unknown".to_string(), |a| a.name.clone());
 
     match format {
         "json" => {
@@ -146,7 +145,7 @@ pub fn run(
                     None
                 };
 
-            let mut tw = TabWriter::new(vec![("Method", Align::Left), ("Callees", Align::Left)]);
+            let mut tw = TabWriter::new(&[("Method", Align::Left), ("Callees", Align::Left)]);
 
             for node in cg.nodes() {
                 if let Some(ref allowed) = show_tokens {
@@ -214,9 +213,10 @@ fn bfs_reachable(cg: &CallGraph, root: Token, max_depth: usize) -> HashSet<Token
 
 /// Short label for a call-graph node.
 fn node_label(cg: &CallGraph, token: Token) -> String {
-    cg.node(token)
-        .map(|n| n.full_name.clone())
-        .unwrap_or_else(|| format!("0x{:08X}", token.value()))
+    cg.node(token).map_or_else(
+        || format!("0x{:08X}", token.value()),
+        |n| n.full_name.clone(),
+    )
 }
 
 /// Emit a DOT graph limited to the given token set.

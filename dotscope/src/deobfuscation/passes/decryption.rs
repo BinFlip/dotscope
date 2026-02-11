@@ -478,19 +478,16 @@ impl DecryptionPass {
                     StepResult::Return { .. } => {
                         // Method is returning - the return value is on the stack
                         // (the StepResult::Return { value } field is always None for ret instructions)
-                        match thread.stack().peek() {
-                            Ok(em_value) => {
-                                let const_value = Self::emvalue_to_constvalue(em_value, thread);
-                                if const_value.is_some() {
-                                    if let Ok(mut guard) = captured_clone.lock() {
-                                        *guard = const_value;
-                                    }
-                                    return true; // Stop - we have a valid return value
+                        if let Ok(em_value) = thread.stack().peek() {
+                            let const_value = Self::emvalue_to_constvalue(em_value, thread);
+                            if const_value.is_some() {
+                                if let Ok(mut guard) = captured_clone.lock() {
+                                    *guard = const_value;
                                 }
+                                return true; // Stop - we have a valid return value
                             }
-                            Err(_) => {
-                                // Stack is empty - this is a void return, continue
-                            }
+                        } else {
+                            // Stack is empty - this is a void return, continue
                         }
                         false
                     }
@@ -663,7 +660,7 @@ impl DecryptionPass {
         assembly: &Arc<CilObject>,
         provider: &dyn StateMachineProvider,
         ptr_size: PointerSize,
-    ) -> Result<(bool, EventLog)> {
+    ) -> (bool, EventLog) {
         let changes = EventLog::new();
 
         // Clone semantics into Arc for StateMachineState
@@ -672,11 +669,11 @@ impl DecryptionPass {
         // Find all state update calls using the provider
         let state_updates = provider.find_state_updates(ssa);
         if state_updates.is_empty() {
-            return Ok((false, changes));
+            return (false, changes);
         }
 
         // Build CFG info for path-sensitive analysis
-        let cfg_info = self.build_cfg_info(ssa);
+        let cfg_info = Self::build_cfg_info(ssa);
 
         // Find decryptor call sites using the provider's pattern matching
         let decryptor_tokens = self.decryptors.registered_tokens();
@@ -684,7 +681,7 @@ impl DecryptionPass {
             provider.find_decryptor_call_sites(ssa, &state_updates, &decryptor_tokens, assembly);
 
         if call_sites.is_empty() {
-            return Ok((false, changes));
+            return (false, changes);
         }
 
         // Find ALL state machine seeds in the method using the provider
@@ -724,7 +721,7 @@ impl DecryptionPass {
             resolver.load_known_values(ctx, method_token);
 
             // Simulate the relevant state updates in order
-            self.simulate_state_updates(
+            Self::simulate_state_updates(
                 &mut state,
                 &relevant_updates,
                 &state_updates,
@@ -734,23 +731,17 @@ impl DecryptionPass {
             // Simulate the feeding update call itself
             let feeding_update = &state_updates[call_site.feeding_update_idx];
 
-            #[allow(clippy::cast_sign_loss)]
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let flag = resolver
                 .resolve(feeding_update.flag_var)
-                .and_then(|v| match v {
-                    ConstValue::I32(x) => Some(x as u8),
-                    ConstValue::I64(x) => Some(x as u8),
-                    _ => None,
-                });
+                .and_then(|v| v.as_i64())
+                .map(|x| x as u8);
 
-            #[allow(clippy::cast_sign_loss)]
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let increment = resolver
                 .resolve(feeding_update.increment_var)
-                .and_then(|v| match v {
-                    ConstValue::I32(x) => Some(x as u32),
-                    ConstValue::I64(x) => Some(x as u32),
-                    _ => None,
-                });
+                .and_then(|v| v.as_i64())
+                .map(|x| x as u32);
 
             let (Some(flag), Some(increment)) = (flag, increment) else {
                 failures.push((
@@ -764,14 +755,9 @@ impl DecryptionPass {
             let state_value = state.next_u32(flag, increment);
 
             // Get the encoded constant
-            #[allow(clippy::cast_possible_truncation)]
             let encoded = resolver
                 .resolve(call_site.encoded_var)
-                .and_then(|v| match v {
-                    ConstValue::I32(x) => Some(x),
-                    ConstValue::I64(x) => Some(x as i32),
-                    _ => None,
-                });
+                .and_then(|v| v.as_i32());
 
             let Some(encoded) = encoded else {
                 failures.push((
@@ -841,16 +827,16 @@ impl DecryptionPass {
         }
 
         // Replace state update calls with Const operations
-        self.cleanup_state_updates(ssa, &state_updates, method_token, &changes, &mut changed);
+        Self::cleanup_state_updates(ssa, &state_updates, method_token, &changes, &mut changed);
 
         // Remove state machine initialization calls (constructor)
-        self.cleanup_state_initialization(ssa, &all_seeds, method_token, &changes, &mut changed);
+        Self::cleanup_state_initialization(ssa, &all_seeds, method_token, &changes, &mut changed);
 
-        Ok((changed, changes))
+        (changed, changes)
     }
 
     /// Builds CFG analysis info for a method.
-    fn build_cfg_info(&self, ssa: &SsaFunction) -> CfgInfoOwned {
+    fn build_cfg_info(ssa: &SsaFunction) -> CfgInfoOwned {
         let cfg = SsaCfg::from_ssa(ssa);
         let node_count = cfg.node_count();
         let entry = cfg.entry();
@@ -870,7 +856,6 @@ impl DecryptionPass {
 
     /// Simulates state updates in order, advancing the state machine.
     fn simulate_state_updates(
-        &self,
         state: &mut StateMachineState,
         relevant_updates: &[usize],
         all_updates: &[StateUpdateCall],
@@ -879,21 +864,17 @@ impl DecryptionPass {
         for &idx in relevant_updates {
             let update = &all_updates[idx];
 
-            #[allow(clippy::cast_sign_loss)]
-            let flag = resolver.resolve(update.flag_var).and_then(|v| match v {
-                ConstValue::I32(x) => Some(x as u8),
-                ConstValue::I64(x) => Some(x as u8),
-                _ => None,
-            });
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+            let flag = resolver
+                .resolve(update.flag_var)
+                .and_then(|v| v.as_i64())
+                .map(|x| x as u8);
 
-            #[allow(clippy::cast_sign_loss)]
+            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let inc = resolver
                 .resolve(update.increment_var)
-                .and_then(|v| match v {
-                    ConstValue::I32(x) => Some(x as u32),
-                    ConstValue::I64(x) => Some(x as u32),
-                    _ => None,
-                });
+                .and_then(|v| v.as_i64())
+                .map(|x| x as u32);
 
             if let (Some(flag), Some(inc)) = (flag, inc) {
                 let _ = state.next_u32(flag, inc);
@@ -905,7 +886,6 @@ impl DecryptionPass {
     ///
     /// This is needed because Call ops aren't "pure" so DCE won't remove them.
     fn cleanup_state_updates(
-        &self,
         ssa: &mut SsaFunction,
         state_updates: &[StateUpdateCall],
         method_token: Token,
@@ -937,7 +917,6 @@ impl DecryptionPass {
     /// After decryption, the CFGCtx constructor calls are dead code but DCE
     /// won't remove them since Call ops aren't pure. Replace them with Nop.
     fn cleanup_state_initialization(
-        &self,
         ssa: &mut SsaFunction,
         seeds: &[(usize, usize, u32)],
         method_token: Token,
@@ -1015,9 +994,9 @@ impl SsaPass for DecryptionPass {
                 assembly,
                 &*provider,
                 ptr_size,
-            )?;
+            );
             if !sm_changes.is_empty() {
-                ctx.events.merge(sm_changes);
+                ctx.events.merge(&sm_changes);
             }
             state_machine_changed = changed;
             // Fall through to try normal mode for any remaining calls that might
@@ -1061,13 +1040,10 @@ impl SsaPass for DecryptionPass {
                     continue;
                 }
 
-                let arg_constants =
-                    if let Some(evaluated) = Self::get_arg_constants(args, &mut resolver) {
-                        evaluated
-                    } else {
-                        failures.push((decryptor, location, FailureReason::NonConstantArgs));
-                        continue;
-                    };
+                let Some(arg_constants) = Self::get_arg_constants(args, &mut resolver) else {
+                    failures.push((decryptor, location, FailureReason::NonConstantArgs));
+                    continue;
+                };
 
                 candidates.push((
                     block_idx,
@@ -1089,18 +1065,17 @@ impl SsaPass for DecryptionPass {
             .filter_map(|(block_idx, instr_idx, dest, decryptor, location, args)| {
                 let (result, failure) = self.try_decrypt_at_call(decryptor, &args, ctx, assembly);
 
-                match result {
-                    Some(value) => Some((block_idx, instr_idx, dest, decryptor, location, value)),
-                    None => {
-                        if let Ok(mut guard) = parallel_failures.lock() {
-                            guard.push((
-                                decryptor,
-                                location,
-                                failure.unwrap_or(FailureReason::InvalidReturnValue),
-                            ));
-                        }
-                        None
+                if let Some(value) = result {
+                    Some((block_idx, instr_idx, dest, decryptor, location, value))
+                } else {
+                    if let Ok(mut guard) = parallel_failures.lock() {
+                        guard.push((
+                            decryptor,
+                            location,
+                            failure.unwrap_or(FailureReason::InvalidReturnValue),
+                        ));
                     }
+                    None
                 }
             })
             .collect();
@@ -1148,7 +1123,7 @@ impl SsaPass for DecryptionPass {
         // Determine if actual transformations were made (either CFG mode or normal mode)
         let normal_mode_changed = changes.iter().any(|e| !e.kind.is_diagnostic());
         if !changes.is_empty() {
-            ctx.events.merge(changes);
+            ctx.events.merge(&changes);
         }
         Ok(state_machine_changed || normal_mode_changed)
     }

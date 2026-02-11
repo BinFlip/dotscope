@@ -99,14 +99,16 @@
 //!
 //! [`CaptureContext`]: crate::emulation::capture::CaptureContext
 
-use crate::emulation::{
-    capture::CaptureSource,
-    memory::EncodingType,
-    runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
-    thread::EmulationThread,
-    EmValue,
+use crate::{
+    emulation::{
+        capture::CaptureSource,
+        memory::EncodingType,
+        runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
+        thread::EmulationThread,
+        EmValue,
+    },
+    metadata::token::Token,
 };
-use crate::metadata::token::Token;
 
 /// Registers all `System.Text.Encoding` method hooks with the given hook manager.
 ///
@@ -299,10 +301,14 @@ fn encoding_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
         if let Some(all_bytes) = thread.heap().get_byte_array(*handle) {
             // Check for GetString(byte[], int offset, int count) overload
             let bytes = if ctx.args.len() >= 3 {
+                // Safe: value validated as non-negative
+                #[allow(clippy::cast_sign_loss)]
                 let offset = match &ctx.args[1] {
                     EmValue::I32(o) => *o as usize,
                     _ => 0,
                 };
+                // Safe: value validated as non-negative
+                #[allow(clippy::cast_sign_loss)]
                 let count = match &ctx.args[2] {
                     EmValue::I32(c) => *c as usize,
                     _ => all_bytes.len(),
@@ -597,10 +603,14 @@ fn utf8_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
     if let EmValue::ObjectRef(handle) = &ctx.args[0] {
         if let Some(all_bytes) = thread.heap().get_byte_array(*handle) {
             let bytes = if ctx.args.len() >= 3 {
+                // Safe: value validated as non-negative
+                #[allow(clippy::cast_sign_loss)]
                 let offset = match &ctx.args[1] {
                     EmValue::I32(o) => *o as usize,
                     _ => 0,
                 };
+                // Safe: value validated as non-negative
+                #[allow(clippy::cast_sign_loss)]
                 let count = match &ctx.args[2] {
                     EmValue::I32(c) => *c as usize,
                     _ => all_bytes.len(),
@@ -703,10 +713,14 @@ fn ascii_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
     if let EmValue::ObjectRef(handle) = &ctx.args[0] {
         if let Some(all_bytes) = thread.heap().get_byte_array(*handle) {
             let bytes = if ctx.args.len() >= 3 {
+                // Safe: value validated as non-negative
+                #[allow(clippy::cast_sign_loss)]
                 let offset = match &ctx.args[1] {
                     EmValue::I32(o) => *o as usize,
                     _ => 0,
                 };
+                // Safe: value validated as non-negative
+                #[allow(clippy::cast_sign_loss)]
                 let count = match &ctx.args[2] {
                     EmValue::I32(c) => *c as usize,
                     _ => all_bytes.len(),
@@ -808,10 +822,14 @@ fn unicode_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
     if let EmValue::ObjectRef(handle) = &ctx.args[0] {
         if let Some(all_bytes) = thread.heap().get_byte_array(*handle) {
             let bytes = if ctx.args.len() >= 3 {
+                // Safe: value validated as non-negative
+                #[allow(clippy::cast_sign_loss)]
                 let offset = match &ctx.args[1] {
                     EmValue::I32(o) => *o as usize,
                     _ => 0,
                 };
+                // Safe: value validated as non-negative
+                #[allow(clippy::cast_sign_loss)]
                 let count = match &ctx.args[2] {
                     EmValue::I32(c) => *c as usize,
                     _ => all_bytes.len(),
@@ -859,9 +877,19 @@ fn unicode_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
-        emulation::runtime::hook::HookManager, metadata::typesystem::PointerSize,
+        emulation::{
+            runtime::{
+                bcl::text::{
+                    ascii_get_bytes_pre, encoding_get_encoding_pre, register,
+                    unicode_get_bytes_pre, unicode_get_string_pre, utf8_get_bytes_pre,
+                    utf8_get_string_pre,
+                },
+                hook::{HookContext, HookManager, PreHookResult},
+            },
+            EmValue,
+        },
+        metadata::{token::Token, typesystem::PointerSize},
         test::emulation::create_test_thread,
     };
 

@@ -228,6 +228,7 @@ impl CaptureContext {
     /// assert!(ctx.config().assemblies);
     /// assert!(ctx.config().strings);
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self::with_config(CaptureConfig {
             assemblies: true,
@@ -261,6 +262,7 @@ impl CaptureContext {
     /// };
     /// let ctx = CaptureContext::with_config(config);
     /// ```
+    #[must_use]
     pub fn with_config(config: CaptureConfig) -> Self {
         Self {
             config,
@@ -284,6 +286,7 @@ impl CaptureContext {
     /// # Returns
     ///
     /// A new `CaptureContext` that only captures assemblies.
+    #[must_use]
     pub fn assemblies_only() -> Self {
         Self::with_config(CaptureConfig {
             assemblies: true,
@@ -300,6 +303,7 @@ impl CaptureContext {
     /// # Returns
     ///
     /// A new `CaptureContext` that only captures strings.
+    #[must_use]
     pub fn strings_only() -> Self {
         Self::with_config(CaptureConfig {
             strings: true,
@@ -744,6 +748,8 @@ impl CaptureContext {
             .iter()
             .filter_map(|range| {
                 let base = range.start;
+                // Safe: capture memory ranges fit in usize
+                #[allow(clippy::cast_possible_truncation)]
                 let size = (range.end - range.start) as usize;
                 address_space
                     .read(base, size)
@@ -804,6 +810,8 @@ impl CaptureContext {
             .iter()
             .filter_map(|range| {
                 let base = range.start;
+                // Safe: capture memory ranges fit in usize
+                #[allow(clippy::cast_possible_truncation)]
                 let size = (range.end - range.start) as usize;
                 address_space
                     .read(base, size)

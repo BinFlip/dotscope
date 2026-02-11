@@ -148,7 +148,7 @@ impl SsaPass for LicmPass {
                 let instrs = preheader_block.instructions();
                 if instrs.is_empty() {
                     0
-                } else if instrs.last().is_some_and(|i| i.is_terminator()) {
+                } else if instrs.last().is_some_and(SsaInstruction::is_terminator) {
                     instrs.len().saturating_sub(1)
                 } else {
                     instrs.len()

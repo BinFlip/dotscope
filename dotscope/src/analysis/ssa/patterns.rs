@@ -320,7 +320,7 @@ impl<'a> PatternDetector<'a> {
         let state_value = self.compute_state_value(block_idx, dispatcher);
 
         // Try to determine which case this leads to
-        let target_case = self.compute_target_case(&state_value, dispatcher);
+        let target_case = self.compute_target_case(state_value.as_ref(), dispatcher);
 
         Some(SourceBlock {
             block: block_idx,
@@ -374,12 +374,12 @@ impl<'a> PatternDetector<'a> {
     /// Computes which case a state value leads to.
     fn compute_target_case(
         &self,
-        state_value: &Option<SymbolicExpr>,
+        state_value: Option<&SymbolicExpr>,
         dispatcher: &DispatcherPattern,
     ) -> Option<usize> {
         // If we have a concrete state value and a dispatch expression,
         // we can compute the target case
-        let concrete_state = state_value.as_ref().and_then(SymbolicExpr::as_constant)?;
+        let concrete_state = state_value.and_then(SymbolicExpr::as_constant)?;
         let dispatch_expr = dispatcher.dispatch_expr.as_ref()?;
 
         // Build bindings for evaluation

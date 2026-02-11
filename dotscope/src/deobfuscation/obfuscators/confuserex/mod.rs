@@ -237,7 +237,6 @@ impl ConfuserExObfuscator {
     /// This method scans the MethodSpec table to find these instantiations and maps them
     /// to the base MethodDef so the decryption pass can identify them.
     fn register_methodspec_mappings(
-        &self,
         ctx: &AnalysisContext,
         assembly: &CilObject,
         findings: &ConfuserExFindings,
@@ -259,7 +258,7 @@ impl ConfuserExObfuscator {
         };
 
         // For each MethodSpec, check if its method is a registered decryptor
-        for methodspec in methodspec_table.iter() {
+        for methodspec in methodspec_table {
             let method_token = methodspec.method.token;
 
             // Check if this MethodSpec references a known decryptor
@@ -270,7 +269,7 @@ impl ConfuserExObfuscator {
             } else if method_token.is_table(TableId::MemberRef) {
                 // MemberRef might reference a decryptor - resolve it
                 // For now, we check MemberRef's class to see if it matches a decryptor's declaring type
-                self.resolve_memberref_to_decryptor(assembly, method_token, &decryptor_set)
+                Self::resolve_memberref_to_decryptor(assembly, method_token, &decryptor_set)
             } else {
                 None
             };
@@ -287,21 +286,17 @@ impl ConfuserExObfuscator {
     /// MemberRef tokens can reference methods in other assemblies or generic method
     /// instantiations. This method checks if a MemberRef points to a known decryptor.
     fn resolve_memberref_to_decryptor(
-        &self,
         assembly: &CilObject,
         memberref_token: Token,
         decryptor_set: &HashSet<Token>,
     ) -> Option<Token> {
         // Get the MemberRef entry
-        let memberrefs = assembly.refs_members();
-        let memberref_entry = memberrefs.get(&memberref_token)?;
-        let memberref = memberref_entry.value();
+        let memberref = assembly.member_ref(&memberref_token)?;
 
         // For ConfuserEx, decryptors are typically in <Module> or an obfuscated type
         // Find a decryptor with matching name
-        for decryptor_token in decryptor_set.iter() {
-            if let Some(method_entry) = assembly.methods().get(decryptor_token) {
-                let method = method_entry.value();
+        for decryptor_token in decryptor_set {
+            if let Some(method) = assembly.method(decryptor_token) {
                 // Check if names match (MemberRef name should match decryptor name)
                 if method.name == memberref.name {
                     return Some(*decryptor_token);
@@ -326,10 +321,9 @@ impl ConfuserExObfuscator {
     /// # Returns
     ///
     /// The .cctor method token if found, `None` otherwise.
-    fn find_type_cctor(&self, assembly: &CilObject, method_token: Token) -> Option<Token> {
+    fn find_type_cctor(assembly: &CilObject, method_token: Token) -> Option<Token> {
         // Get the method entry
-        let method_entry = assembly.methods().get(&method_token)?;
-        let method = method_entry.value();
+        let method = assembly.method(&method_token)?;
 
         // Get the declaring type
         let cil_type = method.declaring_type_rc()?;
@@ -423,7 +417,7 @@ impl ConfuserExObfuscator {
         // Pass 4: Remove SuppressIldasmAttribute
         // This attribute prevents IL disassemblers from working and often has malformed blob data
         if let Some(token) = findings.suppress_ildasm_token {
-            current = metadata::remove_suppress_ildasm(current, token)?;
+            current = metadata::remove_suppress_ildasm(&current, token)?;
             events.info(format!(
                 "Removed SuppressIldasmAttribute (0x{:08x})",
                 token.value()
@@ -441,7 +435,7 @@ impl ConfuserExObfuscator {
             if !tokens.is_empty() {
                 let count = tokens.len();
                 current = metadata::remove_confuser_attributes(current, tokens)?;
-                events.info(format!("Removed {} ConfuserEx marker attributes", count));
+                events.info(format!("Removed {count} ConfuserEx marker attributes"));
             }
         }
 
@@ -449,7 +443,7 @@ impl ConfuserExObfuscator {
         // ConfuserEx's x86Predicate protection creates native methods for key computation.
         // These must be converted to CIL before emulation can run string decryption.
         if findings.needs_native_conversion() {
-            current = self.convert_native_helpers(current, &findings, events)?;
+            current = Self::convert_native_helpers(&current, &findings, events)?;
         }
 
         // The SSA-level passes (string decryption, control flow, etc.)
@@ -464,8 +458,7 @@ impl ConfuserExObfuscator {
     /// key transformation for string/constant decryption. These methods must be
     /// converted to CIL before emulation can proceed.
     fn convert_native_helpers(
-        &self,
-        assembly: CilObject,
+        assembly: &CilObject,
         findings: &ConfuserExFindings,
         events: &mut EventLog,
     ) -> Result<CilObject> {
@@ -480,7 +473,7 @@ impl ConfuserExObfuscator {
 
         // Set up the conversion pass with all detected native helpers
         let mut converter = NativeMethodConversionPass::new();
-        for (_, helper) in findings.native_helpers.iter() {
+        for (_, helper) in &findings.native_helpers {
             converter.register_target(helper.token);
         }
 
@@ -570,7 +563,7 @@ impl Obfuscator for ConfuserExObfuscator {
     fn set_config(&self, config: &EngineConfig) {
         // Store tracing configuration for use during anti-tamper emulation
         if let Ok(mut tracing) = self.tracing.write() {
-            *tracing = config.tracing.clone();
+            tracing.clone_from(&config.tracing);
         }
     }
 
@@ -604,18 +597,17 @@ impl Obfuscator for ConfuserExObfuscator {
             }
 
             // Register decryptor methods
-            for (_, token) in findings.decryptor_methods.iter() {
+            for (_, token) in &findings.decryptor_methods {
                 ctx.decryptors.register(*token);
             }
 
             // Also register MethodSpec mappings for generic decryptors
             // ConfuserEx generic decryptors (T Get<T>(int32)) are called via MethodSpec
             // tokens that instantiate the generic with specific types
-            self.register_methodspec_mappings(ctx, assembly, &findings);
+            Self::register_methodspec_mappings(ctx, assembly, &findings);
 
             ctx.events.info(format!(
-                "Registered {} ConfuserEx decryptor method(s)",
-                decryptor_count
+                "Registered {decryptor_count} ConfuserEx decryptor method(s)"
             ));
 
             // Register the LZMA hook for decryption emulation
@@ -650,8 +642,7 @@ impl Obfuscator for ConfuserExObfuscator {
                     move || hooks::create_anti_tamper_stub_hook(tokens.clone())
                 });
                 ctx.events.info(format!(
-                    "Registered stub hooks for {} anti-tamper method(s) to prevent re-execution during warmup",
-                    count
+                    "Registered stub hooks for {count} anti-tamper method(s) to prevent re-execution during warmup"
                 ));
             }
         }
@@ -662,8 +653,7 @@ impl Obfuscator for ConfuserExObfuscator {
             ctx.register_statemachine_provider(Arc::clone(provider));
 
             ctx.events.info(format!(
-                "CFG mode detected: {} methods require order-dependent decryption",
-                method_count
+                "CFG mode detected: {method_count} methods require order-dependent decryption"
             ));
         }
     }

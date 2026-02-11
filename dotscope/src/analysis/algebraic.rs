@@ -22,7 +22,7 @@
 //! }
 //! ```
 
-use std::collections::HashMap;
+use std::{collections::HashMap, hash::BuildHasher};
 
 use crate::analysis::{ConstValue, SsaOp, SsaVarId};
 
@@ -56,7 +56,10 @@ impl SimplifyResult {
 /// This function checks for common algebraic identities that allow
 /// an operation to be replaced with a simpler form (constant or copy).
 #[must_use]
-pub fn simplify_op(op: &SsaOp, constants: &HashMap<SsaVarId, ConstValue>) -> SimplifyResult {
+pub fn simplify_op<S: BuildHasher>(
+    op: &SsaOp,
+    constants: &HashMap<SsaVarId, ConstValue, S>,
+) -> SimplifyResult {
     match op {
         // XOR: x ^ x = 0, x ^ 0 = x
         SsaOp::Xor { left, right, .. } => {

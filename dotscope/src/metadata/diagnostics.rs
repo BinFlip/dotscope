@@ -266,15 +266,15 @@ impl fmt::Display for Diagnostic {
         write!(f, "[{}] {}: {}", self.severity, self.category, self.message)?;
 
         if let Some(offset) = self.offset {
-            write!(f, " (offset: 0x{:08x})", offset)?;
+            write!(f, " (offset: 0x{offset:08x})")?;
         }
 
         if let Some(token) = self.token {
-            write!(f, " (token: 0x{:08x})", token)?;
+            write!(f, " (token: 0x{token:08x})")?;
         }
 
         if let Some((table_id, row)) = self.table_row {
-            write!(f, " (table: 0x{:02x}, row: {})", table_id, row)?;
+            write!(f, " (table: 0x{table_id:02x}, row: {row})")?;
         }
 
         Ok(())
@@ -458,24 +458,22 @@ impl Diagnostics {
     pub fn summary(&self) -> String {
         let mut output = String::new();
 
-        let error_count = self.error_count();
-        let warning_count = self.warning_count();
-        let info_count = self.info_count();
-
         let _ = writeln!(
             output,
             "Diagnostics: {} error(s), {} warning(s), {} info(s)",
-            error_count, warning_count, info_count
+            self.error_count(),
+            self.warning_count(),
+            self.info_count()
         );
 
-        if error_count > 0 {
+        if self.error_count() > 0 {
             output.push_str("\nErrors:\n");
             for diag in self.errors() {
                 let _ = writeln!(output, "  {diag}");
             }
         }
 
-        if warning_count > 0 {
+        if self.warning_count() > 0 {
             output.push_str("\nWarnings:\n");
             for diag in self.warnings() {
                 let _ = writeln!(output, "  {diag}");

@@ -48,7 +48,7 @@
 //! let instructions = decode_x86(bytes, 32, 0x1000)?;
 //!
 //! // Build CFG from decoded instructions
-//! let cfg = X86Function::new(instructions, 32, 0x1000);
+//! let cfg = X86Function::new(&instructions, 32, 0x1000);
 //! println!("Blocks: {}", cfg.block_count());
 //! println!("Has loops: {}", cfg.has_loops());
 //! println!("Is reducible: {}", cfg.is_reducible());
@@ -71,7 +71,7 @@
 //! println!("Has indirect jumps: {}", result.has_indirect_control_flow);
 //!
 //! // Build CFG
-//! let cfg = X86Function::new(result.instructions, 32, 0x1000);
+//! let cfg = X86Function::new(&result.instructions, 32, 0x1000);
 //! ```
 //!
 //! # Supported Instructions
@@ -119,7 +119,7 @@
 //!
 //! // Decode and build CFG
 //! let instructions = decode_x86(bytes, 32, 0x1000)?;
-//! let cfg = X86Function::new(instructions, 32, 0x1000);
+//! let cfg = X86Function::new(&instructions, 32, 0x1000);
 //!
 //! // Translate to SSA
 //! let translator = X86ToSsaTranslator::new(&cfg);
@@ -176,7 +176,7 @@ mod tests {
         let instructions = decode_all(&bytes, 32, 0).unwrap();
         assert_eq!(instructions.len(), 3);
 
-        let cfg = X86Function::new(instructions, 32, 0);
+        let cfg = X86Function::new(&instructions, 32, 0);
         assert_eq!(cfg.block_count(), 1);
         assert!(!cfg.has_loops());
         assert!(cfg.is_reducible());
@@ -195,7 +195,7 @@ mod tests {
         ];
 
         let instructions = decode_all(&bytes, 32, 0).unwrap();
-        let cfg = X86Function::new(instructions, 32, 0);
+        let cfg = X86Function::new(&instructions, 32, 0);
 
         // Should have multiple blocks
         assert!(cfg.block_count() >= 2);
@@ -217,7 +217,7 @@ mod tests {
         ];
 
         let instructions = decode_all(&bytes, 32, 0).unwrap();
-        let cfg = X86Function::new(instructions, 32, 0);
+        let cfg = X86Function::new(&instructions, 32, 0);
 
         assert!(cfg.has_loops());
         assert!(cfg.is_reducible()); // Simple while loop is reducible

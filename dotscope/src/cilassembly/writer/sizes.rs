@@ -45,8 +45,7 @@ pub fn calculate_table_stream_expansion(assembly: &CilAssembly) -> Result<u64> {
                         .count();
                     let insert_count = u32::try_from(insert_count_raw).map_err(|_| {
                         Error::LayoutFailed(format!(
-                            "Table {:?} insert count {} exceeds u32::MAX",
-                            table_id, insert_count_raw
+                            "Table {table_id:?} insert count {insert_count_raw} exceeds u32::MAX"
                         ))
                     })?;
                     let new_count = original_count + insert_count;

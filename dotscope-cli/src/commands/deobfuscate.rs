@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 
-use anyhow::{bail, Context};
+use anyhow::Context;
 use dotscope::deobfuscation::{
     CleanupConfig, DeobfuscationEngine, DeobfuscationResult, EngineConfig,
 };
@@ -8,7 +8,7 @@ use serde::Serialize;
 
 use crate::{
     app::GlobalOptions,
-    commands::common::{collect_assemblies, extract_detection_summary, file_display_name},
+    commands::common::{extract_detection_summary, file_display_name, process_directory},
 };
 
 #[derive(Debug, Serialize)]
@@ -69,7 +69,7 @@ fn run_single(path: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
         .process_file(path)
         .with_context(|| format!("deobfuscation failed: {}", path.display()))?;
 
-    let output_path = resolve_output_path(path, opts.output, opts.suffix)?;
+    let output_path = resolve_output_path(path, opts.output, opts.suffix);
 
     std::fs::write(&output_path, deobfuscated.file().data())
         .with_context(|| format!("failed to write output: {}", output_path.display()))?;
@@ -103,7 +103,9 @@ fn run_single(path: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
         }
 
         eprintln!("  Iterations:  {}", report.iterations);
-        eprintln!("  Time:        {:.1}s", report.time_ms as f64 / 1000.0);
+        #[allow(clippy::cast_precision_loss)]
+        let time_secs = report.time_ms as f64 / 1000.0;
+        eprintln!("  Time:        {time_secs:.1}s");
 
         if !report.warnings.is_empty() {
             eprintln!("  Warnings:    {}", report.warnings.len());
@@ -117,64 +119,42 @@ fn run_single(path: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
 }
 
 fn run_recursive(dir: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
-    if !dir.is_dir() {
-        bail!(
-            "'{}' is not a directory (use without --recursive for single files)",
-            dir.display()
-        );
-    }
-
-    let files = collect_assemblies(dir)?;
-    if files.is_empty() {
-        bail!("no .exe or .dll files found in '{}'", dir.display());
-    }
-
     let config = build_config(opts);
 
-    let mut reports = Vec::new();
-    let mut success_count = 0usize;
-    let mut fail_count = 0usize;
-
-    for file in &files {
+    let (reports, fail_count) = process_directory(dir, |file| {
         let mut engine = DeobfuscationEngine::new(config.clone());
+        let (deobfuscated, result) = engine
+            .process_file(file)
+            .with_context(|| format!("deobfuscation failed: {}", file.display()))?;
 
-        match engine.process_file(file) {
-            Ok((deobfuscated, result)) => {
-                let out_path = if let Some(out_dir) = opts.output {
-                    // Place output in the given directory, preserving filename with suffix
-                    std::fs::create_dir_all(out_dir).with_context(|| {
-                        format!("failed to create output directory: {}", out_dir.display())
-                    })?;
-                    let name = suffixed_filename(file, opts.suffix);
-                    out_dir.join(name)
-                } else {
-                    let name = suffixed_filename(file, opts.suffix);
-                    file.parent().unwrap_or(Path::new(".")).join(name)
-                };
+        let out_path = if let Some(out_dir) = opts.output {
+            std::fs::create_dir_all(out_dir).with_context(|| {
+                format!("failed to create output directory: {}", out_dir.display())
+            })?;
+            let name = suffixed_filename(file, opts.suffix);
+            out_dir.join(name)
+        } else {
+            let name = suffixed_filename(file, opts.suffix);
+            file.parent().unwrap_or(Path::new(".")).join(name)
+        };
 
-                if let Err(e) = std::fs::write(&out_path, deobfuscated.file().data()) {
-                    eprintln!("warning: failed to write {}: {e:#}", out_path.display());
-                    fail_count += 1;
-                    continue;
-                }
+        std::fs::write(&out_path, deobfuscated.file().data())
+            .with_context(|| format!("failed to write output: {}", out_path.display()))?;
 
-                let report = build_report(file, &out_path, &result);
+        let report = build_report(file, &out_path, &result);
 
-                if !opts.global.json {
-                    let fname = file_display_name(file);
-                    let obf = report.obfuscator.as_deref().unwrap_or("none");
-                    eprintln!("{fname}: {obf}, {:.1}s", report.time_ms as f64 / 1000.0);
-                }
-
-                reports.push(report);
-                success_count += 1;
-            }
-            Err(e) => {
-                eprintln!("warning: {}: {e:#}", file.display());
-                fail_count += 1;
-            }
+        if !opts.global.json {
+            let fname = file_display_name(file);
+            let obf = report.obfuscator.as_deref().unwrap_or("none");
+            #[allow(clippy::cast_precision_loss)]
+            let time_secs = report.time_ms as f64 / 1000.0;
+            eprintln!("{fname}: {obf}, {time_secs:.1}s");
         }
-    }
+
+        Ok(report)
+    })?;
+
+    let success_count = reports.len();
 
     if let Some(report_file) = opts.report {
         let json = serde_json::to_string_pretty(&reports)?;
@@ -190,7 +170,7 @@ fn run_recursive(dir: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
         eprintln!();
         eprintln!(
             "Processed {} files: {} succeeded, {} failed",
-            files.len(),
+            success_count + fail_count,
             success_count,
             fail_count
         );
@@ -225,23 +205,19 @@ fn build_config(opts: &DeobfuscateOptions) -> EngineConfig {
     config
 }
 
-fn resolve_output_path(
-    input: &Path,
-    output: Option<&Path>,
-    suffix: &str,
-) -> anyhow::Result<PathBuf> {
+fn resolve_output_path(input: &Path, output: Option<&Path>, suffix: &str) -> PathBuf {
     if let Some(out) = output {
         // If output is a directory, place the suffixed file inside it
         if out.is_dir() {
             let name = suffixed_filename(input, suffix);
-            return Ok(out.join(name));
+            return out.join(name);
         }
-        return Ok(out.to_path_buf());
+        return out.to_path_buf();
     }
 
     let name = suffixed_filename(input, suffix);
     let parent = input.parent().unwrap_or(Path::new("."));
-    Ok(parent.join(name))
+    parent.join(name)
 }
 
 fn suffixed_filename(input: &Path, suffix: &str) -> String {

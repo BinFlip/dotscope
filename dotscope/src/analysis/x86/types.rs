@@ -125,6 +125,7 @@ pub enum X86Register {
 impl X86Register {
     /// Returns the size of this register in bytes.
     #[inline]
+    #[must_use]
     pub fn size(&self) -> u8 {
         match self {
             // 8-bit
@@ -177,6 +178,7 @@ impl X86Register {
     /// Returns the base register (the full-size register this is part of).
     /// E.g., AL/AX/EAX all map to RAX in 64-bit mode, or EAX in 32-bit mode.
     #[inline]
+    #[must_use]
     pub fn base_index(&self) -> u8 {
         match self {
             X86Register::Al
@@ -216,12 +218,14 @@ impl X86Register {
 
     /// Returns true if this is the stack pointer register.
     #[inline]
+    #[must_use]
     pub fn is_stack_pointer(&self) -> bool {
         matches!(self, X86Register::Sp | X86Register::Esp | X86Register::Rsp)
     }
 
     /// Returns true if this is the base pointer register.
     #[inline]
+    #[must_use]
     pub fn is_base_pointer(&self) -> bool {
         matches!(self, X86Register::Bp | X86Register::Ebp | X86Register::Rbp)
     }
@@ -268,6 +272,7 @@ pub struct X86Memory {
 
 impl X86Memory {
     /// Creates a simple [base + disp] memory operand.
+    #[must_use]
     pub fn base_disp(base: X86Register, displacement: i64, size: u8) -> Self {
         Self {
             base: Some(base),
@@ -279,6 +284,7 @@ impl X86Memory {
     }
 
     /// Creates a [base + index*scale + disp] memory operand.
+    #[must_use]
     pub fn base_index_scale_disp(
         base: X86Register,
         index: X86Register,
@@ -296,6 +302,7 @@ impl X86Memory {
     }
 
     /// Creates a `[disp]` memory operand (absolute address).
+    #[must_use]
     pub fn absolute(displacement: i64, size: u8) -> Self {
         Self {
             base: None,
@@ -341,6 +348,7 @@ pub enum X86Operand {
 
 impl X86Operand {
     /// Returns the size of this operand in bytes, if known.
+    #[must_use]
     pub fn size(&self) -> Option<u8> {
         match self {
             X86Operand::Register(reg) => Some(reg.size()),
@@ -350,21 +358,25 @@ impl X86Operand {
     }
 
     /// Returns true if this is a register operand.
+    #[must_use]
     pub fn is_register(&self) -> bool {
         matches!(self, X86Operand::Register(_))
     }
 
     /// Returns true if this is an immediate operand.
+    #[must_use]
     pub fn is_immediate(&self) -> bool {
         matches!(self, X86Operand::Immediate(_))
     }
 
     /// Returns true if this is a memory operand.
+    #[must_use]
     pub fn is_memory(&self) -> bool {
         matches!(self, X86Operand::Memory(_))
     }
 
     /// Returns the register if this is a register operand.
+    #[must_use]
     pub fn as_register(&self) -> Option<X86Register> {
         match self {
             X86Operand::Register(r) => Some(*r),
@@ -373,6 +385,7 @@ impl X86Operand {
     }
 
     /// Returns the immediate value if this is an immediate operand.
+    #[must_use]
     pub fn as_immediate(&self) -> Option<i64> {
         match self {
             X86Operand::Immediate(v) => Some(*v),
@@ -381,6 +394,7 @@ impl X86Operand {
     }
 
     /// Returns a reference to the memory operand if this is a memory operand.
+    #[must_use]
     pub fn as_memory(&self) -> Option<&X86Memory> {
         match self {
             X86Operand::Memory(m) => Some(m),
@@ -454,6 +468,7 @@ pub enum X86Condition {
 
 impl X86Condition {
     /// Returns the negation of this condition.
+    #[must_use]
     pub fn negate(&self) -> Self {
         match self {
             X86Condition::E => X86Condition::Ne,
@@ -705,6 +720,7 @@ pub enum X86Instruction {
 
 impl X86Instruction {
     /// Returns true if this instruction transfers control flow.
+    #[must_use]
     pub fn is_control_flow(&self) -> bool {
         matches!(
             self,
@@ -716,6 +732,7 @@ impl X86Instruction {
     }
 
     /// Returns true if this is a terminator instruction (ends a basic block).
+    #[must_use]
     pub fn is_terminator(&self) -> bool {
         matches!(
             self,
@@ -727,26 +744,30 @@ impl X86Instruction {
     }
 
     /// Returns true if this is an unconditional jump.
+    #[must_use]
     pub fn is_unconditional_jump(&self) -> bool {
         matches!(self, X86Instruction::Jmp { .. })
     }
 
     /// Returns true if this is a conditional jump.
+    #[must_use]
     pub fn is_conditional_jump(&self) -> bool {
         matches!(self, X86Instruction::Jcc { .. })
     }
 
     /// Returns the jump targets if this is a jump instruction.
+    #[must_use]
     pub fn jump_targets(&self) -> Vec<u64> {
         match self {
-            X86Instruction::Jmp { target } => vec![*target],
-            X86Instruction::Jcc { target, .. } => vec![*target],
-            X86Instruction::Call { target } => vec![*target],
+            X86Instruction::Jmp { target }
+            | X86Instruction::Jcc { target, .. }
+            | X86Instruction::Call { target } => vec![*target],
             _ => vec![],
         }
     }
 
     /// Returns true if this instruction writes to memory.
+    #[must_use]
     pub fn writes_memory(&self) -> bool {
         match self {
             X86Instruction::Mov { dst, .. }
@@ -770,6 +791,7 @@ impl X86Instruction {
     }
 
     /// Returns true if this instruction reads from memory.
+    #[must_use]
     pub fn reads_memory(&self) -> bool {
         match self {
             X86Instruction::Mov { src, .. }
@@ -786,13 +808,13 @@ impl X86Instruction {
             | X86Instruction::Shr { count: src, .. }
             | X86Instruction::Sar { count: src, .. }
             | X86Instruction::Rol { count: src, .. }
-            | X86Instruction::Ror { count: src, .. } => src.is_memory(),
+            | X86Instruction::Ror { count: src, .. }
+            | X86Instruction::Mul { src } => src.is_memory(),
             X86Instruction::Imul { src, src2, .. } => {
-                src.is_memory() || src2.as_ref().is_some_and(|s| s.is_memory())
+                src.is_memory() || src2.as_ref().is_some_and(X86Operand::is_memory)
             }
-            X86Instruction::Mul { src } => src.is_memory(),
             X86Instruction::Pop { .. } => true, // Reads from stack
-            X86Instruction::Lea { .. } => false, // LEA doesn't actually read memory
+            // LEA doesn't actually read memory
             _ => false,
         }
     }
@@ -826,6 +848,7 @@ impl DecodedInstruction {
     /// This is equivalent to `offset + length` and represents where the
     /// next sequential instruction would begin.
     #[inline]
+    #[must_use]
     pub fn end_offset(&self) -> u64 {
         self.offset + self.length as u64
     }

@@ -25,6 +25,38 @@ pub enum Align {
     Right,
 }
 
+/// Format binary data as a hex dump with 16-byte rows and an ASCII side panel.
+pub fn format_hex_dump(data: &[u8]) -> String {
+    let mut lines = Vec::new();
+    for (i, chunk) in data.chunks(16).enumerate() {
+        let row_offset = i * 16;
+        let hex: String = chunk
+            .iter()
+            .enumerate()
+            .map(|(j, b)| {
+                if j == 8 {
+                    format!(" {b:02x}")
+                } else {
+                    format!("{b:02x}")
+                }
+            })
+            .collect::<Vec<_>>()
+            .join(" ");
+        let ascii: String = chunk
+            .iter()
+            .map(|&b| {
+                if (0x20..=0x7e).contains(&b) {
+                    b as char
+                } else {
+                    '.'
+                }
+            })
+            .collect();
+        lines.push(format!("{row_offset:04x}: {hex:<49} |{ascii}|"));
+    }
+    lines.join("\n")
+}
+
 /// Tabular writer backed by `comfy-table` for clean, dynamically-aligned CLI output.
 ///
 /// Columns are sized to the widest entry. No borders or separators — just
@@ -38,7 +70,7 @@ impl TabWriter {
     /// Create a new `TabWriter` with the given column definitions.
     ///
     /// Each column is a `(header, alignment)` pair.
-    pub fn new(columns: Vec<(&str, Align)>) -> Self {
+    pub fn new(columns: &[(&str, Align)]) -> Self {
         let mut table = Table::new();
         table
             .load_preset(presets::NOTHING)
@@ -58,8 +90,8 @@ impl TabWriter {
             };
             if let Some(col) = table.column_mut(i) {
                 col.set_cell_alignment(cell_align);
-                let pad_left = if i == 0 { 0 } else { 1 };
-                let pad_right = if i == last { 0 } else { 1 };
+                let pad_left = u16::from(i != 0);
+                let pad_right = u16::from(i != last);
                 col.set_padding((pad_left, pad_right));
             }
         }

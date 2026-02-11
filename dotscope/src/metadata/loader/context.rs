@@ -581,7 +581,7 @@ impl LoaderContext<'_> {
                 let msg = context_msg();
                 if self.lenient {
                     self.diagnostics
-                        .warning(category, format!("Failed to load {}: {}", msg, e));
+                        .warning(category, format!("Failed to load {msg}: {e}"));
                     Ok(None)
                 } else {
                     Err(malformed_error!("Failed to load {}: {}", msg, e))
@@ -617,7 +617,7 @@ impl LoaderContext<'_> {
                 let msg = context_msg();
                 if self.lenient {
                     self.diagnostics
-                        .warning(category, format!("Failed to process {}: {}", msg, e));
+                        .warning(category, format!("Failed to process {msg}: {e}"));
                     Ok(())
                 } else {
                     Err(malformed_error!("Failed to process {}: {}", msg, e))

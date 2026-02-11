@@ -53,9 +53,15 @@ use crate::{
 /// This is the main entry point for cleanup after deobfuscation. It:
 /// 1. Starts with the obfuscator's cleanup request (if any)
 /// 2. Merges in dead methods from analysis
-/// 3. Executes cleanup via the CilAssembly infrastructure
+/// 3. Executes cleanup via the `CilAssembly` infrastructure
 /// 4. Handles renaming and section exclusion
 /// 5. Regenerates the assembly
+///
+/// # Errors
+///
+/// Returns an error if the assembly cannot be parsed from its raw bytes,
+/// if string heap updates fail during renaming, or if regeneration of
+/// the cleaned assembly fails.
 pub fn execute_cleanup(
     assembly: CilObject,
     obfuscator_request: Option<CleanupRequest>,
@@ -95,15 +101,14 @@ pub fn execute_cleanup(
 
     if types_count > 0 || methods_count > 0 || fields_count > 0 {
         ctx.events.record(EventKind::Info).message(format!(
-            "Cleanup: {} types, {} methods, {} fields",
-            types_count, methods_count, fields_count
+            "Cleanup: {types_count} types, {methods_count} methods, {fields_count} fields"
         ));
     }
 
     for section_name in request.excluded_sections() {
         ctx.events
             .record(EventKind::ArtifactRemoved)
-            .message(format!("Removing artifact section: {}", section_name));
+            .message(format!("Removing artifact section: {section_name}"));
     }
 
     // Create CilAssembly and add cleanup request
@@ -117,17 +122,16 @@ pub fn execute_cleanup(
     let excluded_sections: HashSet<String> = request.excluded_sections().clone();
 
     // Add cleanup request (the actual cleanup is executed during generation)
-    cil_assembly.add_cleanup(request);
+    cil_assembly.add_cleanup(&request);
 
     // Handle renaming
     if rename_obfuscated {
-        let count = rename_obfuscated_names(&mut cil_assembly)?;
+        let count = rename_obfuscated_names(&mut cil_assembly);
         if count > 0 {
             ctx.events
                 .record(EventKind::ArtifactRemoved)
                 .message(format!(
-                    "Renamed {} obfuscated names to simple identifiers",
-                    count
+                    "Renamed {count} obfuscated names to simple identifiers"
                 ));
         }
     }
@@ -233,11 +237,11 @@ fn is_obfuscated_name(name: &str) -> bool {
 
     for c in name.chars() {
         match c {
-            '\u{200B}'..='\u{200F}' => return true,
-            '\u{202A}'..='\u{202E}' => return true,
-            '\u{2060}'..='\u{206F}' => return true,
-            '\u{FEFF}' => return true,
-            '\u{E000}'..='\u{F8FF}' => return true,
+            '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{E000}'..='\u{F8FF}' => return true,
             c if !c.is_ascii() => {
                 if !c.is_alphabetic() {
                     return true;
@@ -278,9 +282,9 @@ fn is_special_name(name: &str) -> bool {
 /// Generator for simple sequential names.
 #[derive(Debug, Default)]
 struct SimpleNameGenerator {
-    type_counter: usize,
-    method_counter: usize,
-    field_counter: usize,
+    types: usize,
+    methods: usize,
+    fields: usize,
 }
 
 impl SimpleNameGenerator {
@@ -290,20 +294,20 @@ impl SimpleNameGenerator {
     }
 
     pub fn next_type_name(&mut self) -> String {
-        let name = Self::index_to_name(self.type_counter);
-        self.type_counter += 1;
+        let name = Self::index_to_name(self.types);
+        self.types += 1;
         name
     }
 
     pub fn next_method_name(&mut self) -> String {
-        let name = Self::index_to_name_lower(self.method_counter);
-        self.method_counter += 1;
+        let name = Self::index_to_name_lower(self.methods);
+        self.methods += 1;
         name
     }
 
     pub fn next_field_name(&mut self) -> String {
-        let name = format!("f_{}", Self::index_to_name_lower(self.field_counter));
-        self.field_counter += 1;
+        let name = format!("f_{}", Self::index_to_name_lower(self.fields));
+        self.fields += 1;
         name
     }
 
@@ -312,6 +316,8 @@ impl SimpleNameGenerator {
         let mut result = String::new();
         loop {
             let remainder = index % 26;
+            // Safe: remainder is always 0..25 from modulo 26
+            #[allow(clippy::cast_possible_truncation)]
             result.insert(0, (b'A' + remainder as u8) as char);
             if index < 26 {
                 break;
@@ -326,6 +332,8 @@ impl SimpleNameGenerator {
         let mut result = String::new();
         loop {
             let remainder = index % 26;
+            // Safe: remainder is always 0..25 from modulo 26
+            #[allow(clippy::cast_possible_truncation)]
             result.insert(0, (b'a' + remainder as u8) as char);
             if index < 26 {
                 break;
@@ -337,17 +345,17 @@ impl SimpleNameGenerator {
 }
 
 /// Renames obfuscated type, method, and field names to simple identifiers.
-fn rename_obfuscated_names(cil_assembly: &mut CilAssembly) -> Result<usize> {
+fn rename_obfuscated_names(cil_assembly: &mut CilAssembly) -> usize {
     let mut renamed_count = 0;
     let mut name_generator = SimpleNameGenerator::new();
 
     let view = cil_assembly.view();
     let Some(tables) = view.tables() else {
-        return Ok(0);
+        return 0;
     };
 
     let Some(strings) = view.strings() else {
-        return Ok(0);
+        return 0;
     };
 
     let mut names_to_rename: Vec<(u32, String)> = Vec::new();
@@ -423,14 +431,16 @@ fn rename_obfuscated_names(cil_assembly: &mut CilAssembly) -> Result<usize> {
         }
     }
 
-    Ok(renamed_count)
+    renamed_count
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::{cilassembly::CleanupRequest, metadata::token::Token};
-
-    use super::{is_obfuscated_name, is_special_name, SimpleNameGenerator};
+    use crate::{
+        cilassembly::CleanupRequest,
+        deobfuscation::cleanup::{is_obfuscated_name, is_special_name, SimpleNameGenerator},
+        metadata::token::Token,
+    };
 
     #[test]
     fn test_cleanup_request_builder() {

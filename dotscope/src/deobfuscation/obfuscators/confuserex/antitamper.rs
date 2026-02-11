@@ -431,7 +431,7 @@ fn build_pinvoke_import_map(assembly: &CilObject) -> HashMap<Token, String> {
     let mut map = HashMap::new();
 
     // Iterate over all P/Invoke imports in the imports container
-    for import_entry in assembly.imports().cil().iter() {
+    for import_entry in assembly.imports().cil() {
         let import = import_entry.value();
 
         // Only process method imports (P/Invoke)
@@ -469,7 +469,7 @@ fn find_antitamper_pinvokes(assembly: &CilObject) -> Vec<Token> {
     // Build a map from MethodDef token to import name
     let import_map = build_pinvoke_import_map(assembly);
 
-    for method in assembly.query_methods().native().iter() {
+    for method in &assembly.query_methods().native() {
         // Look up the actual import name (not the potentially obfuscated method name)
         let import_name = import_map.get(&method.token).map(String::as_str);
 
@@ -495,7 +495,7 @@ fn find_antitamper_methods(assembly: &CilObject) -> Vec<AntiTamperMethodInfo> {
     // Build import map once for all method analysis
     let import_map = build_pinvoke_import_map(assembly);
 
-    for method in assembly.query_methods().has_body().iter() {
+    for method in &assembly.query_methods().has_body() {
         let Some(cfg) = method.cfg() else {
             continue;
         };
@@ -524,7 +524,7 @@ fn find_antitamper_methods(assembly: &CilObject) -> Vec<AntiTamperMethodInfo> {
                                 "get_Module" => calls_get_module = true,
                                 "CheckRemoteDebuggerPresent" => calls_check_debugger = true,
                                 "LoadLibrary" | "LoadLibraryA" | "LoadLibraryW" => {
-                                    calls_loadlibrary = true
+                                    calls_loadlibrary = true;
                                 }
                                 "GetProcAddress" => calls_getprocaddress = true,
                                 "FailFast" => calls_failfast = true,
@@ -580,26 +580,19 @@ fn find_antitamper_methods(assembly: &CilObject) -> Vec<AntiTamperMethodInfo> {
 ///
 /// For MethodDef tokens that are P/Invoke methods, returns the actual import name
 /// from the ImplMap table (not the potentially obfuscated method name).
-/// For MemberRef tokens (external calls), returns the member reference name.
+/// For other tokens, delegates to `CilObject::resolve_method_name()`.
 fn resolve_call_target(
     assembly: &CilObject,
     token: Token,
     import_map: &HashMap<Token, String>,
 ) -> Option<String> {
-    match token.table() {
-        // MethodDef - check if it's a P/Invoke with a real import name
-        0x06 => {
-            // First, check if this is a P/Invoke method with a known import name
-            if let Some(import_name) = import_map.get(&token) {
-                return Some(import_name.clone());
-            }
-            // Otherwise, return the method name (could be obfuscated for non-P/Invoke)
-            Some(assembly.methods().get(&token)?.value().name.clone())
+    // For MethodDef, check P/Invoke import map first
+    if token.table() == 0x06 {
+        if let Some(import_name) = import_map.get(&token) {
+            return Some(import_name.clone());
         }
-        // MemberRef - external method reference, use the name directly
-        0x0A => Some(assembly.refs_members().get(&token)?.value().name.clone()),
-        _ => None,
     }
+    assembly.resolve_method_name(token)
 }
 
 /// Determines the most likely anti-tamper mode based on detection results.
@@ -803,19 +796,16 @@ fn extract_decrypted_field_data(assembly: &CilObject, virtual_image: &[u8]) -> E
         };
     };
 
-    for row in fieldrva_table.iter() {
+    for row in fieldrva_table {
         let rva = row.rva;
         if rva == 0 {
             continue;
         }
 
         // Get field size from ClassLayout table
-        let field_size = match get_field_data_size(assembly, row.field) {
-            Some(size) => size,
-            None => {
-                failed_count += 1;
-                continue;
-            }
+        let Some(field_size) = get_field_data_size(assembly, row.field) else {
+            failed_count += 1;
+            continue;
         };
 
         // Extract data from virtual image at the RVA
@@ -861,7 +851,7 @@ fn get_field_data_size(assembly: &CilObject, field_rid: u32) -> Option<usize> {
             let type_rid = token.row();
 
             let class_layout_table = tables.table::<ClassLayoutRaw>()?;
-            for layout in class_layout_table.iter() {
+            for layout in class_layout_table {
                 if layout.parent == type_rid {
                     return Some(layout.class_size as usize);
                 }
@@ -922,7 +912,7 @@ pub fn decrypt_bodies(
     let assembly_arc = Arc::new(assembly);
 
     // Step 1: Emulate anti-tamper to get decrypted virtual image
-    let emulation_result = emulate_antitamper(Arc::clone(&assembly_arc), tracing)?;
+    let emulation_result = emulate_antitamper(&assembly_arc, tracing)?;
 
     // Log emulation completion
     events.info(format!(
@@ -980,6 +970,8 @@ pub fn decrypt_bodies(
 
         // Get the existing MethodDef row
         let rid = method_token.row();
+        #[allow(clippy::redundant_closure_for_method_calls)]
+        // Note: closure needed here — method reference with turbofish breaks downstream type inference
         let existing_row = cil_assembly
             .view()
             .tables()
@@ -1027,6 +1019,8 @@ pub fn decrypt_bodies(
         let placeholder_rva = cil_assembly.store_field_data(data);
 
         // Get the existing FieldRVA row
+        #[allow(clippy::redundant_closure_for_method_calls)]
+        // Note: closure needed here — method reference with turbofish breaks downstream type inference
         let existing_row = cil_assembly
             .view()
             .tables()
@@ -1052,10 +1046,9 @@ pub fn decrypt_bodies(
     }
 
     // Log anti-tamper removal summary
-    events.record(EventKind::AntiTamperRemoved).message(format!(
-        "Anti-tamper protection removed: {} method bodies, {} field data entries decrypted",
-        encrypted_count, field_count
-    ));
+    events.record(EventKind::AntiTamperRemoved).message(
+        format!("Anti-tamper protection removed: {encrypted_count} method bodies, {field_count} field data entries decrypted")
+    );
 
     // Step 6: Write the modified assembly and reload
     // Use skip_original_method_bodies because we've decrypted and stored ALL method bodies
@@ -1091,24 +1084,24 @@ pub fn decrypt_bodies(
 /// - Emulation fails
 /// - Memory extraction fails
 fn emulate_antitamper(
-    assembly: Arc<CilObject>,
+    assembly: &Arc<CilObject>,
     tracing: Option<TracingConfig>,
 ) -> Result<EmulationResult> {
     // Use scored candidate detection to find the best anti-tamper initialization method
-    let candidates = find_candidates(&assembly, ProtectionType::AntiTamper);
+    let candidates = find_candidates(assembly, ProtectionType::AntiTamper);
     let decryptor_method = candidates.best().map(|c| c.token).ok_or_else(|| {
         Error::Deobfuscation("No anti-tamper initialization method found".to_string())
     })?;
 
     // Find encrypted methods before decryption
-    let encrypted_methods = find_encrypted_methods(&assembly);
+    let encrypted_methods = find_encrypted_methods(assembly);
 
     // Build the emulation process using ProcessBuilder.
     // ProcessBuilder automatically maps the assembly's PE image when .assembly_arc() is used.
     // All required stubs (GetHINSTANCE, VirtualProtect, VirtualAlloc, reflection, IntPtr, etc.)
     // are automatically registered by the emulation runtime.
     let mut builder = ProcessBuilder::new()
-        .assembly_arc(Arc::clone(&assembly))
+        .assembly_arc(Arc::clone(assembly))
         .name("anti-tamper-emulation")
         .with_max_instructions(10_000_000)
         .with_max_call_depth(200)
@@ -1127,6 +1120,7 @@ fn emulate_antitamper(
         .primary_image()
         .ok_or_else(|| Error::Deobfuscation("Failed to get loaded PE image info".to_string()))?;
     let pe_base = loaded_image.base_address;
+    #[allow(clippy::cast_possible_truncation)]
     let virtual_size = loaded_image.size_of_image as usize;
 
     let outcome = process.execute_method(decryptor_method, vec![])?;
@@ -1135,26 +1129,22 @@ fn emulate_antitamper(
         | EmulationOutcome::Breakpoint { instructions, .. } => instructions,
         EmulationOutcome::LimitReached { limit, .. } => {
             return Err(Error::Deobfuscation(format!(
-                "Anti-tamper emulation exceeded limit: {:?}",
-                limit
+                "Anti-tamper emulation exceeded limit: {limit:?}"
             )));
         }
         EmulationOutcome::Stopped { reason, .. } => {
             return Err(Error::Deobfuscation(format!(
-                "Anti-tamper emulation stopped: {}",
-                reason
+                "Anti-tamper emulation stopped: {reason}"
             )));
         }
         EmulationOutcome::UnhandledException { exception, .. } => {
             return Err(Error::Deobfuscation(format!(
-                "Anti-tamper emulation threw exception: {:?}",
-                exception
+                "Anti-tamper emulation threw exception: {exception:?}"
             )));
         }
         EmulationOutcome::RequiresSymbolic { reason, .. } => {
             return Err(Error::Deobfuscation(format!(
-                "Anti-tamper emulation requires symbolic execution: {}",
-                reason
+                "Anti-tamper emulation requires symbolic execution: {reason}"
             )));
         }
     };
@@ -1267,14 +1257,13 @@ mod tests {
 
         // Verify decrypted methods have valid IL bodies
         for token in &encrypted_before {
-            let method_entry = decrypted.methods().get(token);
+            let method = decrypted.method(token);
             assert!(
-                method_entry.is_some(),
+                method.is_some(),
                 "Method 0x{:08X} should exist",
                 token.value()
             );
-            let entry = method_entry.unwrap();
-            let method = entry.value();
+            let method = method.unwrap();
             let body = method.body.get();
             assert!(
                 body.is_some(),
@@ -1336,14 +1325,13 @@ mod tests {
 
         // Verify decrypted methods have valid IL bodies
         for token in &encrypted_before {
-            let method_entry = decrypted.methods().get(token);
+            let method = decrypted.method(token);
             assert!(
-                method_entry.is_some(),
+                method.is_some(),
                 "Method 0x{:08X} should exist",
                 token.value()
             );
-            let entry = method_entry.unwrap();
-            let method = entry.value();
+            let method = method.unwrap();
             let body = method.body.get();
             assert!(
                 body.is_some(),

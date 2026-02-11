@@ -196,11 +196,11 @@ pub fn fixup_section_table(ctx: &mut WriteContext) -> Result<()> {
             continue;
         }
         // Get section data or use original values for sections without write info
-        let (data_offset, rva, data_size) =
-            match (section.data_offset, section.rva, section.data_size) {
-                (Some(off), Some(rva), Some(size)) => (off, rva, size),
-                _ => continue, // Skip sections without data
-            };
+        let (Some(data_offset), Some(rva), Some(data_size)) =
+            (section.data_offset, section.rva, section.data_size)
+        else {
+            continue; // Skip sections without data
+        };
 
         // SizeOfRawData must be a multiple of FileAlignment per PE spec.
         // This is required for all sections including the last one.
@@ -631,6 +631,7 @@ pub fn fixup_coff_characteristics(ctx: &mut WriteContext) -> Result<()> {
 
         // Read the current value from the output
         let current_bytes = ctx.output.as_slice();
+        #[allow(clippy::cast_possible_truncation)]
         let chars_offset_usize = chars_offset as usize;
         if chars_offset_usize + 2 <= current_bytes.len() {
             let current = u16::from_le_bytes([

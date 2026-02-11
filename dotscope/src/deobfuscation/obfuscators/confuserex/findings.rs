@@ -313,16 +313,16 @@ impl ConfuserExFindings {
     #[must_use]
     pub fn all_protection_method_tokens(&self) -> HashSet<Token> {
         let mut tokens = HashSet::new();
-        for (_, token) in self.decryptor_methods.iter() {
+        for (_, token) in &self.decryptor_methods {
             tokens.insert(*token);
         }
-        for (_, token) in self.anti_tamper_methods.iter() {
+        for (_, token) in &self.anti_tamper_methods {
             tokens.insert(*token);
         }
-        for (_, token) in self.anti_debug_methods.iter() {
+        for (_, token) in &self.anti_debug_methods {
             tokens.insert(*token);
         }
-        for (_, token) in self.resource_handler_methods.iter() {
+        for (_, token) in &self.resource_handler_methods {
             tokens.insert(*token);
         }
         tokens
@@ -334,10 +334,10 @@ impl ConfuserExFindings {
     #[must_use]
     pub fn all_removable_field_tokens(&self) -> HashSet<Token> {
         let mut tokens = HashSet::new();
-        for (_, token) in self.constant_data_fields.iter() {
+        for (_, token) in &self.constant_data_fields {
             tokens.insert(*token);
         }
-        for (_, token) in self.infrastructure_fields.iter() {
+        for (_, token) in &self.infrastructure_fields {
             tokens.insert(*token);
         }
         tokens
@@ -349,13 +349,13 @@ impl ConfuserExFindings {
     #[must_use]
     pub fn all_removable_type_tokens(&self) -> HashSet<Token> {
         let mut tokens = HashSet::new();
-        for (_, token) in self.obfuscator_type_tokens.iter() {
+        for (_, token) in &self.obfuscator_type_tokens {
             tokens.insert(*token);
         }
-        for (_, token) in self.constant_data_types.iter() {
+        for (_, token) in &self.constant_data_types {
             tokens.insert(*token);
         }
-        for (_, token) in self.protection_infrastructure_types.iter() {
+        for (_, token) in &self.protection_infrastructure_types {
             tokens.insert(*token);
         }
         tokens

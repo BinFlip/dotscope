@@ -201,7 +201,7 @@ pub trait StateMachineProvider: Send + Sync + std::fmt::Debug {
         method: Token,
     ) -> Option<ConstValue> {
         // Check known_values from constant propagation
-        if let Some(val) = ctx.with_known_value(method, var, |v| v.clone()) {
+        if let Some(val) = ctx.with_known_value(method, var, Clone::clone) {
             return Some(val);
         }
 
@@ -218,7 +218,8 @@ pub trait StateMachineProvider: Send + Sync + std::fmt::Debug {
     /// Default implementation: XOR (most common pattern).
     /// Override for obfuscators using different key computation.
     fn compute_key(&self, state_value: u64, encoded: i32) -> i32 {
-        #[allow(clippy::cast_possible_wrap)]
+        // Safe: state values are 32-bit in .NET obfuscators
+        #[allow(clippy::cast_possible_truncation)]
         let state_i32 = state_value as i32;
         state_i32 ^ encoded
     }
@@ -491,11 +492,11 @@ impl StateSlotOperation {
             SsaOpKind::Or => left | right,
             SsaOpKind::Shl => left << (right & 63),
             SsaOpKind::Shr => left >> (right & 63),
-            SsaOpKind::ShrA => ((left as i64) >> (right & 63)) as u64,
+            SsaOpKind::ShrA => (left.cast_signed() >> (right & 63)).cast_unsigned(),
             SsaOpKind::Rol => left.rotate_left((right & 63) as u32),
             SsaOpKind::Ror => left.rotate_right((right & 63) as u32),
             SsaOpKind::Not => !left,
-            SsaOpKind::Neg => (-(left as i64)) as u64,
+            SsaOpKind::Neg => (-left.cast_signed()).cast_unsigned(),
         }
     }
 
@@ -512,11 +513,11 @@ impl StateSlotOperation {
             SsaOpKind::Or => left | right,
             SsaOpKind::Shl => left << (right & 31),
             SsaOpKind::Shr => left >> (right & 31),
-            SsaOpKind::ShrA => ((left as i32) >> (right & 31)) as u32,
+            SsaOpKind::ShrA => (left.cast_signed() >> (right & 31)).cast_unsigned(),
             SsaOpKind::Rol => left.rotate_left(right & 31),
             SsaOpKind::Ror => left.rotate_right(right & 31),
             SsaOpKind::Not => !left,
-            SsaOpKind::Neg => (-(left as i32)) as u32,
+            SsaOpKind::Neg => (-left.cast_signed()).cast_unsigned(),
         }
     }
 }
@@ -831,7 +832,7 @@ impl StateMachineState {
     #[must_use]
     pub fn get_u32(&self, slot: usize) -> u32 {
         #[allow(clippy::cast_possible_truncation)]
-        self.slots.get(slot).map(|&v| v as u32).unwrap_or(0)
+        self.slots.get(slot).map_or(0, |&v| v as u32)
     }
 
     /// Sets the value of a specific state slot.

@@ -916,7 +916,7 @@ impl TypeRegistry {
     /// * `None` - If the module type doesn't exist (malformed assembly)
     #[must_use]
     pub fn module_type(&self) -> Option<CilTypeRc> {
-        self.get(&Token::new(0x02000001))
+        self.get(&Token::new(0x0200_0001))
     }
 
     /// Returns the token of the module static constructor (.cctor) if it exists.
@@ -1266,7 +1266,7 @@ impl TypeRegistry {
     #[must_use]
     pub fn get_field_byte_size(&self, field_token: &Token, ptr_size: PointerSize) -> Option<usize> {
         // Search through all types to find the field
-        for entry in self.iter() {
+        for entry in self {
             let type_ref = entry.value();
             // Check if this type owns the field
             for (_, field) in type_ref.fields.iter() {
@@ -1327,7 +1327,7 @@ impl TypeRegistry {
     #[must_use]
     pub fn get_field_signature(&self, field_token: &Token) -> Option<TypeSignature> {
         // Search through all types to find the field
-        for entry in self.iter() {
+        for entry in self {
             let type_ref = entry.value();
             // Check if this type owns the field
             for (_, field) in type_ref.fields.iter() {

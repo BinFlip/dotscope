@@ -384,9 +384,8 @@ pub fn apply_crypto_transform(
             } else {
                 tdes_decrypt(key, iv, data)
             };
-        } else {
-            return None;
         }
+        return None;
     }
 
     #[cfg(feature = "legacy-crypto")]
@@ -398,9 +397,8 @@ pub fn apply_crypto_transform(
             } else {
                 des_decrypt(key, iv, data)
             };
-        } else {
-            return None;
         }
+        return None;
     }
 
     // DES/3DES not available without legacy-crypto

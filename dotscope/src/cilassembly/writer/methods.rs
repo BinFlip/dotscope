@@ -146,20 +146,20 @@ pub fn remap_il_tokens(
                     .and_then(|c| c.lookup_by_placeholder(row))
                     .and_then(|cr| cr.token())
                     .map(|t| t.value())
-            } else if table_id == USERSTRING_TABLE_ID as u32 {
+            } else if table_id == u32::from(USERSTRING_TABLE_ID) {
                 // Check for UserString tokens (table ID 0x70 for UserString heap)
                 let offset = token_value & 0x00FF_FFFF;
                 userstring_map.get(&offset).map(|&new_offset| {
-                    ((USERSTRING_TABLE_ID as u32) << 24) | (new_offset & 0x00FF_FFFF)
+                    (u32::from(USERSTRING_TABLE_ID) << 24) | (new_offset & 0x00FF_FFFF)
                 })
-            } else if table_id == USERSTRING_PLACEHOLDER_ID as u32 {
+            } else if table_id == u32::from(USERSTRING_PLACEHOLDER_ID) {
                 // Check for UserString placeholder (0xF0 = 0x70 | 0x80 high bit)
                 if let Some(changes) = changes {
                     let offset_part = token_value & 0x00FF_FFFF;
                     let heap_placeholder = 0x8000_0000 | offset_part;
                     if let Some(change_ref) = changes.lookup_by_placeholder(heap_placeholder) {
                         change_ref.offset().map(|actual_offset| {
-                            ((USERSTRING_TABLE_ID as u32) << 24) | (actual_offset & 0x00FF_FFFF)
+                            (u32::from(USERSTRING_TABLE_ID) << 24) | (actual_offset & 0x00FF_FFFF)
                         })
                     } else {
                         None
@@ -175,6 +175,8 @@ pub fn remap_il_tokens(
             if let Some(new_value) = new_token_value {
                 // Calculate the byte offset of the token operand
                 // Token operand is the last 4 bytes of the instruction
+                // Safe: CIL method body offsets fit in usize
+                #[allow(clippy::cast_possible_truncation)]
                 let token_offset = instr.offset as usize + instr.size as usize - 4;
                 if token_offset + 4 <= il_bytes.len() {
                     il_bytes[token_offset..token_offset + 4]
@@ -227,7 +229,8 @@ pub fn remap_method_body_tokens(
         let row = new_local_var_sig_token & 0x00FF_FFFF;
 
         // Check for placeholder
-        if table_id == TableId::StandAloneSig.token_type() as u32 && ChangeRef::is_placeholder(row)
+        if table_id == u32::from(TableId::StandAloneSig.token_type())
+            && ChangeRef::is_placeholder(row)
         {
             if let Some(changes) = changes {
                 if let Some(change_ref) = changes.lookup_by_placeholder(row) {

@@ -790,8 +790,7 @@ fn test_sample_comprehensive(
 
                     // Debug: Dump method 0x06000007 bytecode if it exists
                     let debug_token = dotscope::metadata::token::Token::new(0x06000007);
-                    if let Some(method_entry) = output.methods().get(&debug_token) {
-                        let method = method_entry.value();
+                    if let Some(method) = output.method(&debug_token) {
                         let instrs: Vec<_> = method.instructions().collect();
                         eprintln!("\n=== DEBUG: Method 0x06000007 ({}) ===", method.name);
                         eprintln!("RVA: {:?}", method.rva);
@@ -1709,8 +1708,7 @@ fn resolve_field_name(assembly: &CilObject, token: Token) -> Option<String> {
         }
         0x0A => {
             // MemberRef - could be a field reference
-            if let Some(member_ref) = assembly.refs_members().get(&token) {
-                let member_ref = member_ref.value();
+            if let Some(member_ref) = assembly.member_ref(&token) {
                 let type_name = get_declaring_type_name(&member_ref.declaredby);
                 Some(format!("{}::{}", type_name, member_ref.name))
             } else {
@@ -1766,8 +1764,7 @@ fn resolve_type_from_ctor(assembly: &CilObject, ctor_token: Token) -> Option<Str
         }
         0x0A => {
             // MemberRef
-            if let Some(member_ref) = assembly.refs_members().get(&ctor_token) {
-                let member_ref = member_ref.value();
+            if let Some(member_ref) = assembly.member_ref(&ctor_token) {
                 Some(get_declaring_type_name(&member_ref.declaredby))
             } else {
                 None
@@ -1817,8 +1814,7 @@ fn resolve_method_name(assembly: &CilObject, token: Token) -> Option<String> {
 
     match table_id {
         0x06 => {
-            let method = assembly.methods().get(&token)?;
-            let method = method.value();
+            let method = assembly.method(&token)?;
 
             for entry in assembly.types().iter() {
                 let cil_type = entry.value();
@@ -1841,8 +1837,7 @@ fn resolve_method_name(assembly: &CilObject, token: Token) -> Option<String> {
             Some(method.name.clone())
         }
         0x0A => {
-            if let Some(member_ref) = assembly.refs_members().get(&token) {
-                let member_ref = member_ref.value();
+            if let Some(member_ref) = assembly.member_ref(&token) {
                 let type_name = get_declaring_type_name(&member_ref.declaredby);
                 return Some(format!("{}::{}", type_name, member_ref.name));
             }

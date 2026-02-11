@@ -1,3 +1,4 @@
+use std::fmt::Write;
 use std::path::Path;
 
 use anyhow::{bail, Context};
@@ -7,7 +8,7 @@ use serde::Serialize;
 use crate::{
     app::GlobalOptions,
     commands::common::load_assembly,
-    output::{print_output, Align, TabWriter},
+    output::{format_hex_dump, print_output, Align, TabWriter},
 };
 
 #[derive(Debug, Serialize)]
@@ -21,26 +22,16 @@ struct HeapsSummaryOutput {
     heaps: Vec<HeapSummary>,
 }
 
+/// A generic heap entry with an offset/index key and a string value.
 #[derive(Debug, Serialize)]
-struct StringEntry {
+struct HeapEntry {
     offset: String,
     value: String,
 }
 
 #[derive(Debug, Serialize)]
-struct StringsOutput {
-    entries: Vec<StringEntry>,
-}
-
-#[derive(Debug, Serialize)]
-struct UserStringEntry {
-    offset: String,
-    value: String,
-}
-
-#[derive(Debug, Serialize)]
-struct UserStringsOutput {
-    entries: Vec<UserStringEntry>,
+struct HeapEntries {
+    entries: Vec<HeapEntry>,
 }
 
 #[derive(Debug, Serialize)]
@@ -133,27 +124,56 @@ fn parse_offset(s: &str) -> anyhow::Result<usize> {
     }
 }
 
+/// Dump a string-like heap (entries are offset+value pairs) as a two-column table.
+fn dump_string_heap(
+    assembly: &CilObject,
+    opts: &GlobalOptions,
+    heap_name: &str,
+    get_entries: impl FnOnce(&CilObject) -> anyhow::Result<Vec<HeapEntry>>,
+) -> anyhow::Result<()> {
+    let entries = get_entries(assembly).with_context(|| format!("assembly has no {heap_name}"))?;
+    let output = HeapEntries { entries };
+    print_output(&output, opts, |out| {
+        let mut tw = TabWriter::new(&[("Offset", Align::Left), ("Value", Align::Left)]);
+        for e in &out.entries {
+            tw.row(vec![e.offset.clone(), e.value.clone()]);
+        }
+        tw.print();
+    })
+}
+
+/// Look up a single value in a string-like heap and display it.
+fn lookup_string_heap(
+    assembly: &CilObject,
+    offset_str: &str,
+    opts: &GlobalOptions,
+    get_value: impl FnOnce(&CilObject, usize) -> anyhow::Result<String>,
+) -> anyhow::Result<()> {
+    let offset = parse_offset(offset_str)?;
+    let value = get_value(assembly, offset)?;
+    let output = StringDetail {
+        offset: format!("0x{offset:06x}"),
+        value,
+    };
+    print_output(&output, opts, |out| {
+        println!("Offset: {}", out.offset);
+        println!("Value:  {}", out.value);
+    })
+}
+
 fn lookup_string(
     assembly: &CilObject,
     offset_str: &str,
     opts: &GlobalOptions,
 ) -> anyhow::Result<()> {
-    let offset = parse_offset(offset_str)?;
-    let strings = assembly
-        .strings()
-        .with_context(|| "assembly has no #Strings heap")?;
-    let value = strings
-        .get(offset)
-        .with_context(|| format!("no string at offset 0x{offset:x}"))?;
-
-    let output = StringDetail {
-        offset: format!("0x{offset:06x}"),
-        value: value.to_string(),
-    };
-
-    print_output(&output, opts, |out| {
-        println!("Offset: {}", out.offset);
-        println!("Value:  {}", out.value);
+    lookup_string_heap(assembly, offset_str, opts, |asm, off| {
+        let strings = asm
+            .strings()
+            .with_context(|| "assembly has no #Strings heap")?;
+        strings
+            .get(off)
+            .map(ToString::to_string)
+            .with_context(|| format!("no string at offset 0x{off:x}"))
     })
 }
 
@@ -162,22 +182,13 @@ fn lookup_userstring(
     offset_str: &str,
     opts: &GlobalOptions,
 ) -> anyhow::Result<()> {
-    let offset = parse_offset(offset_str)?;
-    let us = assembly
-        .userstrings()
-        .with_context(|| "assembly has no #US heap")?;
-    let value = us
-        .get(offset)
-        .with_context(|| format!("no user string at offset 0x{offset:x}"))?;
-
-    let output = StringDetail {
-        offset: format!("0x{offset:06x}"),
-        value: value.to_string_lossy(),
-    };
-
-    print_output(&output, opts, |out| {
-        println!("Offset: {}", out.offset);
-        println!("Value:  {}", out.value);
+    lookup_string_heap(assembly, offset_str, opts, |asm, off| {
+        let us = asm
+            .userstrings()
+            .with_context(|| "assembly has no #US heap")?;
+        us.get(off)
+            .map(widestring::U16Str::to_string_lossy)
+            .with_context(|| format!("no user string at offset 0x{off:x}"))
     })
 }
 
@@ -210,11 +221,10 @@ fn lookup_blob(assembly: &CilObject, offset_str: &str, opts: &GlobalOptions) -> 
         .get(offset)
         .with_context(|| format!("no blob at offset 0x{offset:x}"))?;
 
-    let hex_full: String = data
-        .iter()
-        .map(|b| format!("{b:02x}"))
-        .collect::<Vec<_>>()
-        .join("");
+    let hex_full: String = data.iter().fold(String::new(), |mut s, b| {
+        let _ = write!(s, "{b:02x}");
+        s
+    });
 
     let output = BlobDetail {
         offset: format!("0x{offset:06x}"),
@@ -230,45 +240,15 @@ fn lookup_blob(assembly: &CilObject, offset_str: &str, opts: &GlobalOptions) -> 
             return;
         }
         println!();
-        // 16-byte hex dump rows
-        for (i, chunk) in data.chunks(16).enumerate() {
-            let row_offset = i * 16;
-            let hex: String = chunk
-                .iter()
-                .enumerate()
-                .map(|(j, b)| {
-                    if j == 8 {
-                        format!(" {b:02x}")
-                    } else {
-                        format!("{b:02x}")
-                    }
-                })
-                .collect::<Vec<_>>()
-                .join(" ");
-            let ascii: String = chunk
-                .iter()
-                .map(|&b| {
-                    if (0x20..=0x7e).contains(&b) {
-                        b as char
-                    } else {
-                        '.'
-                    }
-                })
-                .collect();
-            // Pad hex to fixed width (16 bytes = 48 chars + 1 gap char)
-            println!("{row_offset:04x}: {hex:<49} |{ascii}|");
-        }
+        println!("{}", format_hex_dump(data));
     })
 }
 
 fn print_summary(assembly: &CilObject, opts: &GlobalOptions) -> anyhow::Result<()> {
-    let strings_count = assembly.strings().map(|s| s.iter().count()).unwrap_or(0);
-    let us_count = assembly
-        .userstrings()
-        .map(|s| s.iter().count())
-        .unwrap_or(0);
-    let guid_count = assembly.guids().map(|g| g.iter().count()).unwrap_or(0);
-    let blob_count = assembly.blob().map(|b| b.iter().count()).unwrap_or(0);
+    let strings_count = assembly.strings().map_or(0, |s| s.iter().count());
+    let us_count = assembly.userstrings().map_or(0, |s| s.iter().count());
+    let guid_count = assembly.guids().map_or(0, |g| g.iter().count());
+    let blob_count = assembly.blob().map_or(0, |b| b.iter().count());
 
     let output = HeapsSummaryOutput {
         heaps: vec![
@@ -292,7 +272,7 @@ fn print_summary(assembly: &CilObject, opts: &GlobalOptions) -> anyhow::Result<(
     };
 
     print_output(&output, opts, |out| {
-        let mut tw = TabWriter::new(vec![("Heap", Align::Left), ("Entries", Align::Right)]);
+        let mut tw = TabWriter::new(&[("Heap", Align::Left), ("Entries", Align::Right)]);
         for h in &out.heaps {
             tw.row(vec![h.name.clone(), h.entries.to_string()]);
         }
@@ -301,50 +281,32 @@ fn print_summary(assembly: &CilObject, opts: &GlobalOptions) -> anyhow::Result<(
 }
 
 fn dump_strings(assembly: &CilObject, opts: &GlobalOptions) -> anyhow::Result<()> {
-    let strings = assembly
-        .strings()
-        .with_context(|| "assembly has no #Strings heap")?;
-
-    let entries: Vec<StringEntry> = strings
-        .iter()
-        .map(|(offset, value)| StringEntry {
-            offset: format!("0x{offset:06x}"),
-            value: value.to_string(),
-        })
-        .collect();
-
-    let output = StringsOutput { entries };
-
-    print_output(&output, opts, |out| {
-        let mut tw = TabWriter::new(vec![("Offset", Align::Left), ("Value", Align::Left)]);
-        for e in &out.entries {
-            tw.row(vec![e.offset.clone(), e.value.clone()]);
-        }
-        tw.print();
+    dump_string_heap(assembly, opts, "#Strings", |asm| {
+        let strings = asm
+            .strings()
+            .with_context(|| "assembly has no #Strings heap")?;
+        Ok(strings
+            .iter()
+            .map(|(offset, value)| HeapEntry {
+                offset: format!("0x{offset:06x}"),
+                value: value.to_string(),
+            })
+            .collect())
     })
 }
 
 fn dump_userstrings(assembly: &CilObject, opts: &GlobalOptions) -> anyhow::Result<()> {
-    let userstrings = assembly
-        .userstrings()
-        .with_context(|| "assembly has no #US heap")?;
-
-    let entries: Vec<UserStringEntry> = userstrings
-        .iter()
-        .map(|(offset, value)| UserStringEntry {
-            offset: format!("0x{offset:06x}"),
-            value: value.to_string_lossy(),
-        })
-        .collect();
-
-    let output = UserStringsOutput { entries };
-
-    print_output(&output, opts, |out| {
-        let mut tw = TabWriter::new(vec![("Offset", Align::Left), ("Value", Align::Left)]);
-        for e in &out.entries {
-            tw.row(vec![e.offset.clone(), e.value.clone()]);
-        }
-        tw.print();
+    dump_string_heap(assembly, opts, "#US", |asm| {
+        let userstrings = asm
+            .userstrings()
+            .with_context(|| "assembly has no #US heap")?;
+        Ok(userstrings
+            .iter()
+            .map(|(offset, value)| HeapEntry {
+                offset: format!("0x{offset:06x}"),
+                value: value.to_string_lossy(),
+            })
+            .collect())
     })
 }
 
@@ -364,7 +326,7 @@ fn dump_guids(assembly: &CilObject, opts: &GlobalOptions) -> anyhow::Result<()> 
     let output = GuidsOutput { entries };
 
     print_output(&output, opts, |out| {
-        let mut tw = TabWriter::new(vec![("Index", Align::Left), ("GUID", Align::Left)]);
+        let mut tw = TabWriter::new(&[("Index", Align::Left), ("GUID", Align::Left)]);
         for e in &out.entries {
             tw.row(vec![e.index.to_string(), e.guid.clone()]);
         }
@@ -398,7 +360,7 @@ fn dump_blob(assembly: &CilObject, opts: &GlobalOptions) -> anyhow::Result<()> {
     let output = BlobOutput { entries };
 
     print_output(&output, opts, |out| {
-        let mut tw = TabWriter::new(vec![
+        let mut tw = TabWriter::new(&[
             ("Offset", Align::Left),
             ("Size", Align::Right),
             ("Preview", Align::Left),

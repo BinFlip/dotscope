@@ -126,27 +126,33 @@ impl MemoryLocation {
     #[must_use]
     pub fn may_alias(&self, other: &Self) -> bool {
         match (self, other) {
-            // Unknown aliases everything
-            (Self::Unknown, _) | (_, Self::Unknown) => true,
+            // Unknown aliases everything; Indirect may alias any concrete location
+            (Self::Unknown, _)
+            | (_, Self::Unknown)
+            | (
+                Self::Indirect(_),
+                Self::InstanceField(..) | Self::ArrayElement(..) | Self::StaticField(_),
+            )
+            | (
+                Self::InstanceField(..) | Self::ArrayElement(..) | Self::StaticField(_),
+                Self::Indirect(_),
+            ) => true,
 
             // Static fields alias iff same field
             (Self::StaticField(f1), Self::StaticField(f2)) => f1 == f2,
 
-            // Static fields don't alias instance fields or arrays
-            (Self::StaticField(_), Self::InstanceField(..))
-            | (Self::InstanceField(..), Self::StaticField(_))
-            | (Self::StaticField(_), Self::ArrayElement(..))
-            | (Self::ArrayElement(..), Self::StaticField(_)) => false,
+            // Static fields don't alias instance fields or arrays;
+            // Instance fields don't alias array elements (different memory types)
+            (Self::StaticField(_), Self::InstanceField(..) | Self::ArrayElement(..))
+            | (Self::InstanceField(..) | Self::ArrayElement(..), Self::StaticField(_))
+            | (Self::InstanceField(..), Self::ArrayElement(..))
+            | (Self::ArrayElement(..), Self::InstanceField(..)) => false,
 
             // Instance fields alias if same object AND same field
             // Conservative: different objects assumed to not alias
             (Self::InstanceField(obj1, f1), Self::InstanceField(obj2, f2)) => {
                 obj1 == obj2 && f1 == f2
             }
-
-            // Instance field doesn't alias array element (different memory types)
-            (Self::InstanceField(..), Self::ArrayElement(..))
-            | (Self::ArrayElement(..), Self::InstanceField(..)) => false,
 
             // Array elements alias if same array AND indices may overlap
             (Self::ArrayElement(arr1, idx1), Self::ArrayElement(arr2, idx2)) => {
@@ -155,18 +161,6 @@ impl MemoryLocation {
 
             // Indirect access may alias anything with same pointer
             (Self::Indirect(p1), Self::Indirect(p2)) => p1 == p2,
-
-            // Indirect may alias instance fields if pointer could be field address
-            (Self::Indirect(_), Self::InstanceField(..))
-            | (Self::InstanceField(..), Self::Indirect(_)) => true,
-
-            // Indirect may alias array elements if pointer could be element address
-            (Self::Indirect(_), Self::ArrayElement(..))
-            | (Self::ArrayElement(..), Self::Indirect(_)) => true,
-
-            // Indirect may alias static fields if pointer could be static field address
-            (Self::Indirect(_), Self::StaticField(_))
-            | (Self::StaticField(_), Self::Indirect(_)) => true,
         }
     }
 
@@ -215,12 +209,10 @@ impl ArrayIndex {
     #[must_use]
     pub fn may_overlap(&self, other: &Self) -> bool {
         match (self, other) {
-            // Unknown overlaps everything
-            (Self::Unknown, _) | (_, Self::Unknown) => true,
+            // Unknown overlaps everything; Variable indices may overlap (conservative)
+            (Self::Unknown | Self::Variable(_), _) | (_, Self::Unknown | Self::Variable(_)) => true,
             // Constants overlap iff equal
             (Self::Constant(i1), Self::Constant(i2)) => i1 == i2,
-            // Variable indices may overlap (conservative)
-            (Self::Variable(_), _) | (_, Self::Variable(_)) => true,
         }
     }
 
@@ -470,10 +462,7 @@ impl MemorySsa {
     /// Returns the memory phi nodes at a block.
     #[must_use]
     pub fn memory_phis(&self, block: usize) -> &[MemoryPhi] {
-        self.memory_phis
-            .get(&block)
-            .map(Vec::as_slice)
-            .unwrap_or(&[])
+        self.memory_phis.get(&block).map_or(&[], Vec::as_slice)
     }
 
     /// Returns all memory operations.
@@ -526,7 +515,8 @@ impl MemorySsa {
     /// Phase 1: Identify all memory operations in the SSA function.
     fn identify_memory_operations(&mut self, ssa: &SsaFunction) {
         for (block_idx, instr_idx, instr) in ssa.iter_instructions() {
-            if let Some(mem_op) = self.classify_memory_operation(instr.op(), block_idx, instr_idx) {
+            if let Some(mem_op) = Self::classify_memory_operation(instr.op(), block_idx, instr_idx)
+            {
                 self.locations.insert(mem_op.location().clone());
                 self.operations.push(mem_op);
             }
@@ -534,12 +524,7 @@ impl MemorySsa {
     }
 
     /// Classifies an SSA operation as a memory operation, if applicable.
-    fn classify_memory_operation(
-        &self,
-        op: &SsaOp,
-        block: usize,
-        instr: usize,
-    ) -> Option<MemoryOp> {
+    fn classify_memory_operation(op: &SsaOp, block: usize, instr: usize) -> Option<MemoryOp> {
         match op {
             SsaOp::LoadField {
                 dest,
@@ -588,7 +573,7 @@ impl MemorySsa {
             SsaOp::LoadElement {
                 dest, array, index, ..
             } => {
-                let idx = self.resolve_array_index(*index);
+                let idx = Self::resolve_array_index(*index);
                 let location = MemoryLocation::ArrayElement(*array, idx);
                 Some(MemoryOp::Load {
                     location,
@@ -603,7 +588,7 @@ impl MemorySsa {
                 value,
                 ..
             } => {
-                let idx = self.resolve_array_index(*index);
+                let idx = Self::resolve_array_index(*index);
                 let location = MemoryLocation::ArrayElement(*array, idx);
                 Some(MemoryOp::Store {
                     location,
@@ -635,7 +620,7 @@ impl MemorySsa {
     }
 
     /// Resolves an array index to an `ArrayIndex` abstraction.
-    fn resolve_array_index(&self, index_var: SsaVarId) -> ArrayIndex {
+    fn resolve_array_index(index_var: SsaVarId) -> ArrayIndex {
         // For now, treat all variable indices as unknown
         // Could be improved with constant propagation
         ArrayIndex::Variable(index_var)
@@ -783,7 +768,8 @@ impl MemorySsa {
 
         for (instr_idx, instr) in block.instructions().iter().enumerate() {
             // Handle stores - create new version
-            if let Some(mem_op) = self.classify_memory_operation(instr.op(), block_idx, instr_idx) {
+            if let Some(mem_op) = Self::classify_memory_operation(instr.op(), block_idx, instr_idx)
+            {
                 if mem_op.is_store() {
                     let location = mem_op.location().clone();
                     let new_version = self.allocate_version(&location);

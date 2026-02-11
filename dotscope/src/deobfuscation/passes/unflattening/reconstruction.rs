@@ -300,17 +300,15 @@ fn extract_redirects_from_node(
             plan.add_to_execution_order(*block);
         }
 
-        TraceTerminator::LoopBack { .. } => {
+        TraceTerminator::LoopBack { .. } | TraceTerminator::Stopped { .. } => {
             // LoopBack means we tried to visit target_block again with the same state.
             // The blocks_visited here is typically just [target_block] since we returned
             // immediately upon detecting the loop.
             //
             // The actual back-edge redirect was already handled by the parent
             // StateTransition node. We don't need to add another redirect here.
-        }
-
-        TraceTerminator::Stopped { .. } => {
-            // Trace stopped - nothing more to extract
+            //
+            // Stopped means the trace was halted. Nothing more to extract in either case.
         }
     }
 }

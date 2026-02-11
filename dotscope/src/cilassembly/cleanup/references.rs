@@ -40,7 +40,7 @@ use crate::{
             parse_property_signature, parse_type_spec_signature, CustomModifier,
             SignatureLocalVariable, SignatureParameter, TypeSignature,
         },
-        streams::Blob,
+        streams::{Blob, TablesHeader},
         tables::{
             CustomAttributeRaw, FieldRaw, GenericParamConstraintRaw, InterfaceImplRaw,
             MemberRefRaw, MethodDefRaw, MethodSpecRaw, PropertyRaw, StandAloneSigRaw,
@@ -48,7 +48,6 @@ use crate::{
         },
         token::Token,
     },
-    Result,
 };
 
 /// Placeholder RVA threshold - RVAs at or above this value are placeholder RVAs
@@ -183,7 +182,7 @@ fn collect_referenced_standalonesig_rids(assembly: &CilAssembly) -> HashSet<u32>
     let file = view.file();
     let original_data = file.data();
 
-    for methoddef in methoddef_table.iter() {
+    for methoddef in methoddef_table {
         let effective_rva = get_effective_method_rva(assembly, methoddef.rid, methoddef.rva);
 
         if effective_rva == 0 {
@@ -233,22 +232,22 @@ fn collect_referenced_standalonesig_rids(assembly: &CilAssembly) -> HashSet<u32>
 ///
 /// Returns a set of all referenced tokens (TypeRef, TypeDef, MemberRef, MethodDef,
 /// MethodSpec, TypeSpec, Field, etc.)
-pub fn scan_method_body_tokens(assembly: &CilAssembly) -> Result<HashSet<Token>> {
+pub fn scan_method_body_tokens(assembly: &CilAssembly) -> HashSet<Token> {
     let mut referenced = HashSet::new();
 
     let view = assembly.view();
     let Some(tables) = view.tables() else {
-        return Ok(referenced);
+        return referenced;
     };
 
     let Some(methoddef_table) = tables.table::<MethodDefRaw>() else {
-        return Ok(referenced);
+        return referenced;
     };
 
     let file = view.file();
     let original_data = file.data();
 
-    for methoddef in methoddef_table.iter() {
+    for methoddef in methoddef_table {
         // Get the effective RVA (may be updated with placeholder if regenerated)
         let effective_rva = get_effective_method_rva(assembly, methoddef.rid, methoddef.rva);
 
@@ -281,7 +280,7 @@ pub fn scan_method_body_tokens(assembly: &CilAssembly) -> Result<HashSet<Token>>
         }
     }
 
-    Ok(referenced)
+    referenced
 }
 
 /// Scans metadata tables to collect TypeRef RIDs that are referenced.
@@ -292,17 +291,17 @@ pub fn scan_method_body_tokens(assembly: &CilAssembly) -> Result<HashSet<Token>>
 /// - MemberRef.class (when pointing to TypeRef)
 /// - GenericParamConstraint.constraint
 /// - CustomAttribute.constructor (indirectly via MemberRef)
-pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u32>> {
+pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32> {
     let mut referenced_rids = HashSet::new();
 
     let view = assembly.view();
     let Some(tables) = view.tables() else {
-        return Ok(referenced_rids);
+        return referenced_rids;
     };
 
     // TypeDef.extends - base class references
     if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
-        for typedef in typedef_table.iter() {
+        for typedef in typedef_table {
             if typedef.extends.token.is_table(TableId::TypeRef) {
                 referenced_rids.insert(typedef.extends.token.row());
             }
@@ -311,7 +310,7 @@ pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u32>
 
     // InterfaceImpl.interface
     if let Some(interfaceimpl_table) = tables.table::<InterfaceImplRaw>() {
-        for impl_ in interfaceimpl_table.iter() {
+        for impl_ in interfaceimpl_table {
             if impl_.interface.token.is_table(TableId::TypeRef) {
                 referenced_rids.insert(impl_.interface.token.row());
             }
@@ -320,7 +319,7 @@ pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u32>
 
     // MemberRef.class - declaring type of member references (skip deleted rows)
     if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
-        for memberref in memberref_table.iter() {
+        for memberref in memberref_table {
             // Skip MemberRefs that have been deleted in earlier cleanup phases
             if is_row_deleted(assembly, TableId::MemberRef, memberref.rid) {
                 continue;
@@ -333,7 +332,7 @@ pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u32>
 
     // GenericParamConstraint - type constraints
     if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
-        for constraint in constraint_table.iter() {
+        for constraint in constraint_table {
             if constraint.constraint.token.is_table(TableId::TypeRef) {
                 referenced_rids.insert(constraint.constraint.token.row());
             }
@@ -343,7 +342,7 @@ pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u32>
     // CustomAttribute.constructor - when it's a MemberRef on a TypeRef
     if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
         if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
-            for attr in attr_table.iter() {
+            for attr in attr_table {
                 if attr.constructor.token.is_table(TableId::MemberRef) {
                     let memberref_rid = attr.constructor.token.row();
                     // Skip if the MemberRef has been deleted
@@ -360,7 +359,7 @@ pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u32>
         }
     }
 
-    Ok(referenced_rids)
+    referenced_rids
 }
 
 /// Scans metadata tables to collect MemberRef RIDs that are referenced.
@@ -368,17 +367,17 @@ pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u32>
 /// Collects references from:
 /// - CustomAttribute.constructor
 /// - MethodSpec.method
-pub fn scan_memberref_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u32>> {
+pub fn scan_memberref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32> {
     let mut referenced_rids = HashSet::new();
 
     let view = assembly.view();
     let Some(tables) = view.tables() else {
-        return Ok(referenced_rids);
+        return referenced_rids;
     };
 
     // CustomAttribute.constructor
     if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
-        for attr in attr_table.iter() {
+        for attr in attr_table {
             if attr.constructor.token.is_table(TableId::MemberRef) {
                 referenced_rids.insert(attr.constructor.token.row());
             }
@@ -387,14 +386,14 @@ pub fn scan_memberref_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u3
 
     // MethodSpec.method
     if let Some(methodspec_table) = tables.table::<MethodSpecRaw>() {
-        for spec in methodspec_table.iter() {
+        for spec in methodspec_table {
             if spec.method.token.is_table(TableId::MemberRef) {
                 referenced_rids.insert(spec.method.token.row());
             }
         }
     }
 
-    Ok(referenced_rids)
+    referenced_rids
 }
 
 /// Scans metadata tables to collect TypeSpec RIDs that are referenced.
@@ -404,17 +403,17 @@ pub fn scan_memberref_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u3
 /// - InterfaceImpl.interface
 /// - GenericParamConstraint.constraint
 /// - TypeDef.extends
-pub fn scan_typespec_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u32>> {
+pub fn scan_typespec_metadata_refs(assembly: &CilAssembly) -> HashSet<u32> {
     let mut referenced_rids = HashSet::new();
 
     let view = assembly.view();
     let Some(tables) = view.tables() else {
-        return Ok(referenced_rids);
+        return referenced_rids;
     };
 
     // MemberRef.class
     if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
-        for memberref in memberref_table.iter() {
+        for memberref in memberref_table {
             if memberref.class.token.is_table(TableId::TypeSpec) {
                 referenced_rids.insert(memberref.class.token.row());
             }
@@ -423,7 +422,7 @@ pub fn scan_typespec_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u32
 
     // InterfaceImpl.interface
     if let Some(interfaceimpl_table) = tables.table::<InterfaceImplRaw>() {
-        for impl_ in interfaceimpl_table.iter() {
+        for impl_ in interfaceimpl_table {
             if impl_.interface.token.is_table(TableId::TypeSpec) {
                 referenced_rids.insert(impl_.interface.token.row());
             }
@@ -432,7 +431,7 @@ pub fn scan_typespec_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u32
 
     // GenericParamConstraint.constraint
     if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
-        for constraint in constraint_table.iter() {
+        for constraint in constraint_table {
             if constraint.constraint.token.is_table(TableId::TypeSpec) {
                 referenced_rids.insert(constraint.constraint.token.row());
             }
@@ -441,14 +440,14 @@ pub fn scan_typespec_metadata_refs(assembly: &CilAssembly) -> Result<HashSet<u32
 
     // TypeDef.extends
     if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
-        for typedef in typedef_table.iter() {
+        for typedef in typedef_table {
             if typedef.extends.token.is_table(TableId::TypeSpec) {
                 referenced_rids.insert(typedef.extends.token.row());
             }
         }
     }
 
-    Ok(referenced_rids)
+    referenced_rids
 }
 
 /// Extracts TypeRef RIDs from a TypeSignature recursively.
@@ -575,35 +574,35 @@ fn collect_typerefs_from_local(local: &SignatureLocalVariable, referenced: &mut 
 ///
 /// Note: MethodSpec.instantiation contains only type arguments, which are
 /// handled separately through the TypeSpec signature parser.
-pub fn scan_signature_typeref_refs(assembly: &CilAssembly) -> Result<HashSet<u32>> {
+pub fn scan_signature_typeref_refs(assembly: &CilAssembly) -> HashSet<u32> {
     let mut referenced_rids = HashSet::new();
 
     let view = assembly.view();
     let Some(tables) = view.tables() else {
-        return Ok(referenced_rids);
+        return referenced_rids;
     };
 
     let Some(blob_heap) = view.blobs() else {
-        return Ok(referenced_rids);
+        return referenced_rids;
     };
 
     // MethodDef signatures
     if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
-        for methoddef in methoddef_table.iter() {
+        for methoddef in methoddef_table {
             scan_method_signature_blob(blob_heap, methoddef.signature, &mut referenced_rids);
         }
     }
 
     // Field signatures
     if let Some(field_table) = tables.table::<FieldRaw>() {
-        for field in field_table.iter() {
+        for field in field_table {
             scan_field_signature_blob(blob_heap, field.signature, &mut referenced_rids);
         }
     }
 
     // MemberRef signatures - skip deleted rows
     if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
-        for memberref in memberref_table.iter() {
+        for memberref in memberref_table {
             // Skip MemberRefs that have been deleted in earlier cleanup phases
             if is_row_deleted(assembly, TableId::MemberRef, memberref.rid) {
                 continue;
@@ -620,7 +619,7 @@ pub fn scan_signature_typeref_refs(assembly: &CilAssembly) -> Result<HashSet<u32
     // by method bodies. Regenerated methods may not use their original signatures.
     let referenced_sigs = collect_referenced_standalonesig_rids(assembly);
     if let Some(standalonesig_table) = tables.table::<StandAloneSigRaw>() {
-        for sig in standalonesig_table.iter() {
+        for sig in standalonesig_table {
             // Only scan StandAloneSigs that are referenced by current method bodies
             if referenced_sigs.contains(&sig.rid) {
                 scan_local_var_signature_blob(blob_heap, sig.signature, &mut referenced_rids);
@@ -630,19 +629,19 @@ pub fn scan_signature_typeref_refs(assembly: &CilAssembly) -> Result<HashSet<u32
 
     // TypeSpec signatures
     if let Some(typespec_table) = tables.table::<TypeSpecRaw>() {
-        for typespec in typespec_table.iter() {
+        for typespec in typespec_table {
             scan_typespec_signature_blob(blob_heap, typespec.signature, &mut referenced_rids);
         }
     }
 
     // Property signatures
     if let Some(property_table) = tables.table::<PropertyRaw>() {
-        for property in property_table.iter() {
+        for property in property_table {
             scan_property_signature_blob(blob_heap, property.signature, &mut referenced_rids);
         }
     }
 
-    Ok(referenced_rids)
+    referenced_rids
 }
 
 /// Scans a method signature blob for TypeRef references.
@@ -754,12 +753,12 @@ fn scan_property_signature_blob(
 ///
 /// Scans method bodies, metadata tables, and signature blobs to find referenced
 /// TypeRefs, then removes any TypeRef that is not in the referenced set.
-pub fn remove_unreferenced_typerefs(assembly: &mut CilAssembly) -> Result<usize> {
+pub fn remove_unreferenced_typerefs(assembly: &mut CilAssembly) -> usize {
     // Collect all referenced TypeRef RIDs
     let mut referenced_rids = HashSet::new();
 
     // From method bodies (IL token operands)
-    let body_tokens = scan_method_body_tokens(assembly)?;
+    let body_tokens = scan_method_body_tokens(assembly);
     for token in &body_tokens {
         if token.is_table(TableId::TypeRef) {
             referenced_rids.insert(token.row());
@@ -767,25 +766,25 @@ pub fn remove_unreferenced_typerefs(assembly: &mut CilAssembly) -> Result<usize>
     }
 
     // From metadata tables (extends, interfaces, constraints, etc.)
-    let metadata_refs = scan_typeref_metadata_refs(assembly)?;
+    let metadata_refs = scan_typeref_metadata_refs(assembly);
     referenced_rids.extend(metadata_refs);
 
     // From signature blobs (method sigs, field sigs, local var sigs, etc.)
-    let signature_refs = scan_signature_typeref_refs(assembly)?;
+    let signature_refs = scan_signature_typeref_refs(assembly);
     referenced_rids.extend(signature_refs);
 
     // Also include TypeRefs referenced indirectly through MemberRefs used in code
     let memberref_body_rids: HashSet<u32> = body_tokens
         .iter()
         .filter(|t| t.is_table(TableId::MemberRef))
-        .map(|t| t.row())
+        .map(Token::row)
         .collect();
 
     {
         let view = assembly.view();
         if let Some(tables) = view.tables() {
             if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
-                for memberref in memberref_table.iter() {
+                for memberref in memberref_table {
                     if memberref_body_rids.contains(&memberref.rid)
                         && memberref.class.token.is_table(TableId::TypeRef)
                     {
@@ -800,7 +799,7 @@ pub fn remove_unreferenced_typerefs(assembly: &mut CilAssembly) -> Result<usize>
     let typeref_count = {
         let view = assembly.view();
         view.tables()
-            .and_then(|t| t.table::<TypeRefRaw>())
+            .and_then(TablesHeader::table::<TypeRefRaw>)
             .map_or(0, |t| t.row_count)
     };
 
@@ -814,19 +813,19 @@ pub fn remove_unreferenced_typerefs(assembly: &mut CilAssembly) -> Result<usize>
         }
     }
 
-    Ok(removed)
+    removed
 }
 
 /// Removes MemberRef entries that are not referenced by any code or metadata.
 ///
 /// Scans method bodies and metadata tables to find referenced MemberRefs,
 /// then removes any MemberRef that is not in the referenced set.
-pub fn remove_unreferenced_memberrefs(assembly: &mut CilAssembly) -> Result<usize> {
+pub fn remove_unreferenced_memberrefs(assembly: &mut CilAssembly) -> usize {
     // Collect all referenced MemberRef RIDs
     let mut referenced_rids = HashSet::new();
 
     // From method bodies
-    let body_tokens = scan_method_body_tokens(assembly)?;
+    let body_tokens = scan_method_body_tokens(assembly);
     for token in &body_tokens {
         if token.is_table(TableId::MemberRef) {
             referenced_rids.insert(token.row());
@@ -834,21 +833,21 @@ pub fn remove_unreferenced_memberrefs(assembly: &mut CilAssembly) -> Result<usiz
     }
 
     // From metadata tables
-    let metadata_refs = scan_memberref_metadata_refs(assembly)?;
+    let metadata_refs = scan_memberref_metadata_refs(assembly);
     referenced_rids.extend(metadata_refs);
 
     // Also include MemberRefs referenced through MethodSpecs in method bodies
     let methodspec_body_rids: HashSet<u32> = body_tokens
         .iter()
         .filter(|t| t.is_table(TableId::MethodSpec))
-        .map(|t| t.row())
+        .map(Token::row)
         .collect();
 
     {
         let view = assembly.view();
         if let Some(tables) = view.tables() {
             if let Some(methodspec_table) = tables.table::<MethodSpecRaw>() {
-                for spec in methodspec_table.iter() {
+                for spec in methodspec_table {
                     if methodspec_body_rids.contains(&spec.rid)
                         && spec.method.token.is_table(TableId::MemberRef)
                     {
@@ -863,7 +862,7 @@ pub fn remove_unreferenced_memberrefs(assembly: &mut CilAssembly) -> Result<usiz
     let memberref_count = {
         let view = assembly.view();
         view.tables()
-            .and_then(|t| t.table::<MemberRefRaw>())
+            .and_then(TablesHeader::table::<MemberRefRaw>)
             .map_or(0, |t| t.row_count)
     };
 
@@ -877,19 +876,19 @@ pub fn remove_unreferenced_memberrefs(assembly: &mut CilAssembly) -> Result<usiz
         }
     }
 
-    Ok(removed)
+    removed
 }
 
 /// Removes TypeSpec entries that are not referenced by any code or metadata.
 ///
 /// Scans method bodies and metadata tables to find referenced TypeSpecs,
 /// then removes any TypeSpec that is not in the referenced set.
-pub fn remove_unreferenced_typespecs(assembly: &mut CilAssembly) -> Result<usize> {
+pub fn remove_unreferenced_typespecs(assembly: &mut CilAssembly) -> usize {
     // Collect all referenced TypeSpec RIDs
     let mut referenced_rids = HashSet::new();
 
     // From method bodies
-    let body_tokens = scan_method_body_tokens(assembly)?;
+    let body_tokens = scan_method_body_tokens(assembly);
     for token in &body_tokens {
         if token.is_table(TableId::TypeSpec) {
             referenced_rids.insert(token.row());
@@ -897,14 +896,14 @@ pub fn remove_unreferenced_typespecs(assembly: &mut CilAssembly) -> Result<usize
     }
 
     // From metadata tables
-    let metadata_refs = scan_typespec_metadata_refs(assembly)?;
+    let metadata_refs = scan_typespec_metadata_refs(assembly);
     referenced_rids.extend(metadata_refs);
 
     // Get total TypeSpec count
     let typespec_count = {
         let view = assembly.view();
         view.tables()
-            .and_then(|t| t.table::<TypeSpecRaw>())
+            .and_then(TablesHeader::table::<TypeSpecRaw>)
             .map_or(0, |t| t.row_count)
     };
 
@@ -918,7 +917,7 @@ pub fn remove_unreferenced_typespecs(assembly: &mut CilAssembly) -> Result<usize
         }
     }
 
-    Ok(removed)
+    removed
 }
 
 #[cfg(test)]

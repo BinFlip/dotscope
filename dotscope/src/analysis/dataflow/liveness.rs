@@ -103,7 +103,7 @@ impl LiveVariables {
             // Process instructions in forward order
             for instr in block.instructions() {
                 // Uses first (before def, since this is the "USE before DEF" set)
-                for &use_var in instr.uses().iter() {
+                for &use_var in &instr.uses() {
                     if let Some(var_idx) = ssa.var_index(use_var) {
                         if !defs.contains(var_idx) {
                             uses.insert(var_idx);

@@ -56,7 +56,7 @@
 //!
 //! For detailed specifications, see [ECMA-335 6th Edition](https://www.ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf).
 
-use crate::metadata::token::Token;
+use crate::metadata::{token::Token, typesystem::CilTypeReference};
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
 
@@ -89,3 +89,32 @@ pub type MethodSpecList = Arc<boxcar::Vec<MethodSpecRc>>;
 /// Enables efficient sharing of method specification data across multiple contexts
 /// while maintaining memory safety through automatic reference counting.
 pub type MethodSpecRc = Arc<MethodSpec>;
+
+/// Returns the name of the underlying method for the given `MethodSpec` token, if it exists.
+///
+/// A `MethodSpec` represents a generic method instantiation and wraps either a `MethodDef`
+/// or a `MemberRef`. This function resolves through the indirection to return the actual
+/// method name:
+///
+/// - For [`CilTypeReference::MethodDef`] variants, upgrades the weak reference and
+///   returns the method definition name.
+/// - For [`CilTypeReference::MemberRef`] variants, returns the member reference name.
+/// - For other variants, returns `None`.
+///
+/// # Arguments
+///
+/// * `map` - The method spec map to search in.
+/// * `token` - The metadata token (table 0x2B) identifying the method specification.
+///
+/// # Returns
+///
+/// The underlying method name as a `String` if the spec exists and its inner method
+/// reference can be resolved, `None` otherwise.
+pub fn method_spec_name_by_token(map: &MethodSpecMap, token: &Token) -> Option<String> {
+    let spec = map.get(token)?;
+    match &spec.value().method {
+        CilTypeReference::MethodDef(method_ref) => method_ref.name(),
+        CilTypeReference::MemberRef(member_ref) => Some(member_ref.name.clone()),
+        _ => None,
+    }
+}

@@ -94,8 +94,8 @@ pub struct Hook {
     name: String,
     priority: HookPriority,
     matchers: Vec<Box<dyn HookMatcher>>,
-    pre_hook: Option<PreHookFn>,
-    post_hook: Option<PostHookFn>,
+    pre_fn: Option<PreHookFn>,
+    post_fn: Option<PostHookFn>,
 }
 
 impl Hook {
@@ -121,8 +121,8 @@ impl Hook {
             name: name.into(),
             priority: HookPriority::NORMAL,
             matchers: Vec::new(),
-            pre_hook: None,
-            post_hook: None,
+            pre_fn: None,
+            post_fn: None,
         }
     }
 
@@ -356,7 +356,7 @@ impl Hook {
     where
         F: Fn(&HookContext<'_>, &mut EmulationThread) -> PreHookResult + Send + Sync + 'static,
     {
-        self.pre_hook = Some(Arc::new(handler));
+        self.pre_fn = Some(Arc::new(handler));
         self
     }
 
@@ -378,13 +378,14 @@ impl Hook {
             + Sync
             + 'static,
     {
-        self.post_hook = Some(Arc::new(handler));
+        self.post_fn = Some(Arc::new(handler));
         self
     }
 
     /// Checks if all matchers match the given context.
     ///
     /// Returns `false` if the hook has no matchers (safety default).
+    #[must_use]
     pub fn matches(&self, context: &HookContext<'_>, thread: &EmulationThread) -> bool {
         if self.matchers.is_empty() {
             return false;
@@ -402,7 +403,7 @@ impl Hook {
         context: &HookContext<'_>,
         thread: &mut EmulationThread,
     ) -> Option<PreHookResult> {
-        self.pre_hook.as_ref().map(|hook| hook(context, thread))
+        self.pre_fn.as_ref().map(|hook| hook(context, thread))
     }
 
     /// Executes the post-hook if present.
@@ -416,7 +417,7 @@ impl Hook {
         thread: &mut EmulationThread,
         result: Option<&EmValue>,
     ) -> Option<PostHookResult> {
-        self.post_hook
+        self.post_fn
             .as_ref()
             .map(|hook| hook(context, thread, result))
     }
@@ -424,13 +425,13 @@ impl Hook {
     /// Returns true if this hook has a pre-hook handler.
     #[must_use]
     pub fn has_pre_hook(&self) -> bool {
-        self.pre_hook.is_some()
+        self.pre_fn.is_some()
     }
 
     /// Returns true if this hook has a post-hook handler.
     #[must_use]
     pub fn has_post_hook(&self) -> bool {
-        self.post_hook.is_some()
+        self.post_fn.is_some()
     }
 }
 
@@ -440,8 +441,8 @@ impl std::fmt::Debug for Hook {
             .field("name", &self.name)
             .field("priority", &self.priority)
             .field("matcher_count", &self.matchers.len())
-            .field("has_pre_hook", &self.pre_hook.is_some())
-            .field("has_post_hook", &self.post_hook.is_some())
+            .field("has_pre_hook", &self.pre_fn.is_some())
+            .field("has_post_hook", &self.post_fn.is_some())
             .finish()
     }
 }

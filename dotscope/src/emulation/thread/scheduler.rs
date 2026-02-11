@@ -212,6 +212,7 @@ impl ThreadScheduler {
     /// let scheduler = ThreadScheduler::new(1000);
     /// assert_eq!(scheduler.quantum(), 1000);
     /// ```
+    #[must_use]
     pub fn new(quantum: usize) -> Self {
         Self {
             threads: HashMap::new(),
@@ -229,6 +230,7 @@ impl ThreadScheduler {
     ///
     /// This is a convenience constructor for typical use cases where the
     /// default quantum provides good balance between responsiveness and overhead.
+    #[must_use]
     pub fn with_default_quantum() -> Self {
         Self::new(1000)
     }
@@ -513,9 +515,9 @@ impl ThreadScheduler {
     ///
     /// * `reason` - The reason the thread is blocking (monitor, event, sleep, etc.)
     ///
-    /// # Returns
+    /// # Errors
     ///
-    /// Returns `Ok(())` on success. Currently always succeeds.
+    /// Currently always succeeds and returns `Ok(())`.
     pub fn block_current(&mut self, reason: WaitReason) -> Result<()> {
         if let Some(id) = self.current {
             if let Some(thread) = self.threads.get_mut(&id) {
@@ -546,7 +548,7 @@ impl ThreadScheduler {
     /// // Wake threads waiting on a specific monitor
     /// scheduler.wake(WakeCondition::Monitor(obj_ref));
     /// ```
-    pub fn wake(&mut self, condition: WakeCondition) {
+    pub fn wake(&mut self, condition: &WakeCondition) {
         let threads_to_wake: Vec<ThreadId> = self
             .threads
             .iter()
@@ -811,10 +813,10 @@ impl WakeCondition {
     #[must_use]
     pub fn matches(&self, reason: &WaitReason) -> bool {
         match (self, reason) {
-            (WakeCondition::Monitor(wake_href), WaitReason::Monitor(wait_href)) => {
-                wake_href == wait_href
-            }
-            (WakeCondition::Event(wake_href), WaitReason::Event(wait_href)) => {
+            (WakeCondition::Monitor(wake_href), WaitReason::Monitor(wait_href))
+            | (WakeCondition::Event(wake_href), WaitReason::Event(wait_href))
+            | (WakeCondition::Mutex(wake_href), WaitReason::Mutex(wait_href))
+            | (WakeCondition::Semaphore(wake_href), WaitReason::Semaphore(wait_href)) => {
                 wake_href == wait_href
             }
             (WakeCondition::Thread(tid), WaitReason::Thread(waiting_for)) => tid == waiting_for,
@@ -824,12 +826,6 @@ impl WakeCondition {
                 },
                 WaitReason::Sleep { until_instruction },
             ) => *current_instruction >= *until_instruction,
-            (WakeCondition::Mutex(wake_href), WaitReason::Mutex(wait_href)) => {
-                wake_href == wait_href
-            }
-            (WakeCondition::Semaphore(wake_href), WaitReason::Semaphore(wait_href)) => {
-                wake_href == wait_href
-            }
             (WakeCondition::All, _) => true,
             _ => false,
         }
@@ -1028,7 +1024,7 @@ mod tests {
         assert!(!scheduler.has_ready_threads());
 
         // Wake sleeping threads
-        scheduler.wake(WakeCondition::SleepElapsed {
+        scheduler.wake(&WakeCondition::SleepElapsed {
             current_instruction: 100,
         });
 

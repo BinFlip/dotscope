@@ -380,7 +380,7 @@ impl Z3Solver {
         solver.assert(z3_expr1.eq(&z3_expr2).not());
 
         match solver.check() {
-            z3::SatResult::Sat => None, // Expression can produce different values
+            z3::SatResult::Sat | z3::SatResult::Unknown => None, // Expression can produce different values, or can't determine
             z3::SatResult::Unsat => {
                 // Expression is constant - find the value
                 // Evaluate with any input (e.g., 0)
@@ -405,7 +405,6 @@ impl Z3Solver {
                     None
                 }
             }
-            z3::SatResult::Unknown => None, // Can't determine
         }
     }
 

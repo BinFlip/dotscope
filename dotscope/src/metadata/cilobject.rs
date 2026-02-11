@@ -178,15 +178,17 @@ use crate::{
         identity::AssemblyIdentity,
         imports::UnifiedImportContainer,
         loader::CilObjectData,
-        method::MethodMap,
+        method::{method_name_by_token, MethodMap, MethodRc},
         query::{MethodQuery, TypeQuery},
         resources::Resources,
         root::Root,
         streams::{Blob, Guid, Strings, TablesHeader, UserStrings},
         tables::{
-            AssemblyOsRc, AssemblyProcessorRc, AssemblyRc, AssemblyRefMap, DeclSecurityMap,
-            MemberRefMap, MethodSpecMap, ModuleRc, ModuleRefMap,
+            member_ref_name_by_token, method_spec_name_by_token, AssemblyOsRc, AssemblyProcessorRc,
+            AssemblyRc, AssemblyRefMap, DeclSecurityMap, MemberRefMap, MemberRefRc, MethodSpecMap,
+            MethodSpecRc, ModuleRc, ModuleRefMap,
         },
+        token::Token,
         typesystem::TypeRegistry,
         validation::{ValidationConfig, ValidationEngine},
     },
@@ -1446,6 +1448,160 @@ impl CilObject {
     /// ```
     pub fn method_specs(&self) -> &MethodSpecMap {
         &self.data.method_specs
+    }
+
+    /// Returns the method definition for the given token, if it exists.
+    ///
+    /// This is a convenience accessor that looks up a method by its metadata token
+    /// and returns a cloned reference-counted pointer to the [`Method`] object. It
+    /// eliminates the need to call [`methods()`](Self::methods), unwrap the `Entry`
+    /// guard, and clone the value manually.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The metadata token (table 0x06) identifying the method definition.
+    ///
+    /// # Returns
+    ///
+    /// A reference-counted [`Method`] if a method with the given token exists, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
+    /// let token = Token::new(0x06000001);
+    ///
+    /// if let Some(method) = assembly.method(&token) {
+    ///     println!("Method: {} (static: {})", method.name, method.is_static());
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn method(&self, token: &Token) -> Option<MethodRc> {
+        self.data.methods.get(token).map(|e| e.value().clone())
+    }
+
+    /// Returns the member reference for the given token, if it exists.
+    ///
+    /// This is a convenience accessor that looks up a member reference (external method
+    /// or field reference) by its metadata token and returns a cloned reference-counted
+    /// pointer to the [`MemberRef`](crate::metadata::tables::MemberRef) object.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The metadata token (table 0x0A) identifying the member reference.
+    ///
+    /// # Returns
+    ///
+    /// A reference-counted [`MemberRef`](crate::metadata::tables::MemberRef) if a member
+    /// reference with the given token exists, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
+    /// let token = Token::new(0x0A000001);
+    ///
+    /// if let Some(member_ref) = assembly.member_ref(&token) {
+    ///     println!("Member: {} (declared by: {:?})", member_ref.name, member_ref.declaredby.token());
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn member_ref(&self, token: &Token) -> Option<MemberRefRc> {
+        self.data.refs_member.get(token).map(|e| e.value().clone())
+    }
+
+    /// Returns the method specification for the given token, if it exists.
+    ///
+    /// A method specification represents a generic method instantiation with concrete
+    /// type arguments. This is a convenience accessor that looks up a `MethodSpec` by
+    /// its metadata token and returns a cloned reference-counted pointer.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - The metadata token (table 0x2B) identifying the method specification.
+    ///
+    /// # Returns
+    ///
+    /// A reference-counted [`MethodSpec`](crate::metadata::tables::MethodSpec) if a method
+    /// specification with the given token exists, `None` otherwise.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
+    /// let token = Token::new(0x2B000001);
+    ///
+    /// if let Some(spec) = assembly.method_spec(&token) {
+    ///     println!("MethodSpec: {:?} with {} generic args",
+    ///              spec.method.token(), spec.generic_args.count());
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn method_spec(&self, token: &Token) -> Option<MethodSpecRc> {
+        self.data.method_specs.get(token).map(|e| e.value().clone())
+    }
+
+    /// Resolves a method-like token to its simple method name.
+    ///
+    /// This method handles the three token types that can refer to a method:
+    ///
+    /// - **MethodDef** (table 0x06): Returns the method definition name.
+    /// - **MemberRef** (table 0x0A): Returns the member reference name.
+    /// - **MethodSpec** (table 0x2B): Follows the generic instantiation to the
+    ///   underlying method and returns its name.
+    ///
+    /// This is useful for pattern matching on call targets where only the method
+    /// name is needed (e.g., checking if a call targets `"get_IsAttached"` or
+    /// `"Decompress"`), regardless of whether the call uses a direct definition,
+    /// an external reference, or a generic instantiation.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - A metadata token from a call-like instruction operand.
+    ///
+    /// # Returns
+    ///
+    /// The method name as a `String` if the token refers to a known method, `None`
+    /// if the token table is not one of the three supported types or if the entry
+    /// does not exist.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
+    ///
+    /// // Resolve a MethodDef token
+    /// let token = Token::new(0x06000001);
+    /// if let Some(name) = assembly.resolve_method_name(token) {
+    ///     println!("Method name: {name}");
+    /// }
+    ///
+    /// // Resolve a MemberRef token
+    /// let token = Token::new(0x0A000001);
+    /// if let Some(name) = assembly.resolve_method_name(token) {
+    ///     println!("Member ref name: {name}");
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn resolve_method_name(&self, token: Token) -> Option<String> {
+        match token.table() {
+            0x06 => method_name_by_token(&self.data.methods, &token),
+            0x0A => member_ref_name_by_token(&self.data.refs_member, &token),
+            0x2B => method_spec_name_by_token(&self.data.method_specs, &token),
+            _ => None,
+        }
     }
 
     /// Returns the resources container with all embedded and linked resources.

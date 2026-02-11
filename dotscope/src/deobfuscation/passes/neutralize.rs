@@ -48,6 +48,12 @@ use crate::{
     CilObject, Result,
 };
 
+/// Action to perform on a tainted instruction.
+enum InstrAction {
+    Nop,
+    Jump(usize),
+}
+
 /// Pass that neutralizes protection code by removing instructions that
 /// reference removed tokens.
 ///
@@ -207,7 +213,6 @@ impl<'a> NeutralizationPass<'a> {
                 let true_reaches = can_reach_exit.contains(&true_target);
                 let false_reaches = can_reach_exit.contains(&false_target);
                 match (true_reaches, false_reaches) {
-                    (true, false) => true_target,
                     (false, true) => false_target,
                     _ => true_target, // Both or neither - prefer true (often forward path)
                 }
@@ -274,11 +279,6 @@ impl<'a> NeutralizationPass<'a> {
 
         // 2. Handle tainted instructions (including terminators)
         // First pass: collect what operations to apply (to avoid borrow conflicts)
-        enum InstrAction {
-            Nop,
-            Jump(usize),
-        }
-
         let mut actions: Vec<(usize, usize, InstrAction)> = Vec::new();
 
         for &(block_idx, instr_idx) in taint.tainted_instructions() {
@@ -290,18 +290,8 @@ impl<'a> NeutralizationPass<'a> {
                                 true_target,
                                 false_target,
                                 ..
-                            } => {
-                                let target = Self::choose_branch_target(
-                                    ssa,
-                                    *true_target,
-                                    *false_target,
-                                    &tainted_instrs,
-                                    &tainted_phis_set,
-                                    &can_reach_exit,
-                                );
-                                Some(InstrAction::Jump(target))
                             }
-                            SsaOp::BranchCmp {
+                            | SsaOp::BranchCmp {
                                 true_target,
                                 false_target,
                                 ..
@@ -370,8 +360,7 @@ impl SsaPass for NeutralizationPass<'_> {
                 .record(EventKind::InstructionRemoved)
                 .method(method_token)
                 .message(format!(
-                    "Neutralized {} instructions referencing removed tokens",
-                    neutralized
+                    "Neutralized {neutralized} instructions referencing removed tokens"
                 ));
         }
 

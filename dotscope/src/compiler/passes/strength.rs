@@ -38,7 +38,7 @@
 use std::{collections::HashSet, sync::Arc};
 
 use crate::{
-    analysis::{ConstValue, DefUseIndex, SsaFunction, SsaOp, SsaVarId},
+    analysis::{ConstValue, DefUseIndex, SsaFunction, SsaOp, SsaVarId, ValueRange},
     compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     utils::is_power_of_two,
@@ -124,7 +124,7 @@ impl<'a> ReductionChecker<'a> {
                 value: value_var,
                 amount: const_var,
             },
-            description: format!("mul x, {} → shl x, {}", value, exponent),
+            description: format!("mul x, {value} → shl x, {exponent}"),
         })
     }
 
@@ -153,9 +153,9 @@ impl<'a> ReductionChecker<'a> {
         }
 
         let desc = if unsigned {
-            format!("div.un x, {} → shr.un x, {}", value, exponent)
+            format!("div.un x, {value} → shr.un x, {exponent}")
         } else {
-            format!("div x, {} → shr x, {} (x >= 0)", value, exponent)
+            format!("div x, {value} → shr x, {exponent} (x >= 0)")
         };
 
         Some(ReductionCandidate {
@@ -201,9 +201,9 @@ impl<'a> ReductionChecker<'a> {
         }
 
         let desc = if unsigned {
-            format!("rem.un x, {} → and x, {}", value, mask)
+            format!("rem.un x, {value} → and x, {mask}")
         } else {
-            format!("rem x, {} → and x, {} (x >= 0)", value, mask)
+            format!("rem x, {value} → and x, {mask} (x >= 0)")
         };
 
         Some(ReductionCandidate {
@@ -348,7 +348,7 @@ impl StrengthReductionPass {
 
     /// Checks if a variable is provably non-negative via range analysis.
     fn is_provably_non_negative(var: SsaVarId, ctx: &CompilerContext, method_token: Token) -> bool {
-        ctx.with_known_range(method_token, var, |r| r.is_always_non_negative())
+        ctx.with_known_range(method_token, var, ValueRange::is_always_non_negative)
             .unwrap_or(false)
     }
 
@@ -409,7 +409,7 @@ impl SsaPass for StrengthReductionPass {
 
         let changed = !changes.is_empty();
         if changed {
-            ctx.events.merge(changes);
+            ctx.events.merge(&changes);
         }
         Ok(changed)
     }

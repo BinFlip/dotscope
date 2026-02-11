@@ -136,8 +136,7 @@ impl JumpThreadingPass {
                     .record(EventKind::ControlFlowRestructured)
                     .at(method_token, pred_block)
                     .message(format!(
-                        "jump threaded: B{} now jumps to B{} (was B{})",
-                        pred_block, new_target, target
+                        "jump threaded: B{pred_block} now jumps to B{new_target} (was B{target})"
                     ));
                 true
             }
@@ -158,8 +157,7 @@ impl JumpThreadingPass {
                     .record(EventKind::BranchSimplified)
                     .at(method_token, pred_block)
                     .message(format!(
-                        "branch threaded: B{} condition on {:?} resolved to B{} (eliminated B{})",
-                        pred_block, condition, new_target, old_target
+                        "branch threaded: B{pred_block} condition on {condition:?} resolved to B{new_target} (eliminated B{old_target})"
                     ));
                 true
             }
@@ -169,8 +167,7 @@ impl JumpThreadingPass {
                     .record(EventKind::ControlFlowRestructured)
                     .at(method_token, pred_block)
                     .message(format!(
-                        "leave threaded: B{} now leaves to B{} (was B{})",
-                        pred_block, new_target, target
+                        "leave threaded: B{pred_block} now leaves to B{new_target} (was B{target})"
                     ));
                 true
             }
@@ -220,8 +217,7 @@ impl JumpThreadingPass {
                     // (i.e., the predecessor doesn't already go directly to target)
                     let pred_target = ssa.block(*pred_idx).and_then(|b| {
                         b.terminator_op().and_then(|op| match op {
-                            SsaOp::Jump { target } => Some(*target),
-                            SsaOp::Leave { target } => Some(*target),
+                            SsaOp::Jump { target } | SsaOp::Leave { target } => Some(*target),
                             _ => None,
                         })
                     });
@@ -273,7 +269,7 @@ impl SsaPass for JumpThreadingPass {
         let changed = Self::run_threading(ssa, method_token, &mut changes, ptr_size);
 
         if changed {
-            ctx.events.merge(changes);
+            ctx.events.merge(&changes);
         }
 
         Ok(changed)

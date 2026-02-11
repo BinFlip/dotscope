@@ -28,7 +28,7 @@ use crate::{
     },
     metadata::streams::{Blob, Guid, Strings, UserStrings},
     utils::{compressed_uint_size, hash_blob, hash_string, to_u32, write_compressed_uint},
-    Result,
+    Error, Result,
 };
 
 /// Result of streaming a heap to output.
@@ -169,10 +169,7 @@ fn process_strings_heap(
     if let Ok(strings) = Strings::from(source_data) {
         for (old_offset, original_str) in strings.iter() {
             let old_offset_u32 = u32::try_from(old_offset).map_err(|_| {
-                crate::Error::LayoutFailed(format!(
-                    "String offset {} exceeds u32 range",
-                    old_offset
-                ))
+                Error::LayoutFailed(format!("String offset {old_offset} exceeds u32 range"))
             })?;
 
             if changes.is_removed(old_offset_u32) {
@@ -192,7 +189,7 @@ fn process_strings_heap(
             }
 
             let new_offset = u32::try_from(pos).map_err(|_| {
-                crate::Error::LayoutFailed(format!("Heap position {} exceeds u32 range", pos))
+                Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range"))
             })?;
             let str_bytes = final_str.as_bytes();
             let entry_size = str_bytes.len() as u64 + 1; // +1 for null terminator
@@ -247,13 +244,14 @@ fn process_strings_heap(
 
         // Skip positions that are remapping keys to avoid collision with old offsets
         // that would be incorrectly remapped when heap patching is applied
+        // PE and metadata heap sizes are limited to 4GB, so this cast is safe
+        #[allow(clippy::cast_possible_truncation)]
         while result.remapping.contains_key(&(pos as u32)) {
             pos += 1;
         }
 
-        let new_offset = u32::try_from(pos).map_err(|_| {
-            crate::Error::LayoutFailed(format!("Heap position {} exceeds u32 range", pos))
-        })?;
+        let new_offset = u32::try_from(pos)
+            .map_err(|_| Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range")))?;
         let str_bytes = final_str.as_bytes();
         let entry_size = str_bytes.len() as u64 + 1;
 
@@ -364,7 +362,7 @@ fn process_blob_heap(
     if let Ok(blobs) = Blob::from(source_data) {
         for (old_offset, original_blob) in blobs.iter() {
             let old_offset_u32 = u32::try_from(old_offset).map_err(|_| {
-                crate::Error::LayoutFailed(format!("Blob offset {} exceeds u32 range", old_offset))
+                Error::LayoutFailed(format!("Blob offset {old_offset} exceeds u32 range"))
             })?;
 
             if changes.is_removed(old_offset_u32) {
@@ -399,10 +397,7 @@ fn process_blob_heap(
                 if existing_offset == 0 && old_offset_u32 != 0 && final_blob.is_empty() {
                     // Write the empty blob at its original position to preserve semantics
                     let new_offset = u32::try_from(pos).map_err(|_| {
-                        crate::Error::LayoutFailed(format!(
-                            "Heap position {} exceeds u32 range",
-                            pos
-                        ))
+                        Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range"))
                     })?;
 
                     if let Some(out) = output.as_mut() {
@@ -426,14 +421,14 @@ fn process_blob_heap(
             }
 
             let new_offset = u32::try_from(pos).map_err(|_| {
-                crate::Error::LayoutFailed(format!("Heap position {} exceeds u32 range", pos))
+                Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range"))
             })?;
             let len_size = compressed_uint_size(final_blob.len());
             let entry_size = len_size + final_blob.len() as u64;
 
             if let Some(out) = output.as_mut() {
                 let blob_len_u32 = u32::try_from(final_blob.len()).map_err(|_| {
-                    crate::Error::LayoutFailed(format!(
+                    Error::LayoutFailed(format!(
                         "Blob length {} exceeds u32 range",
                         final_blob.len()
                     ))
@@ -490,19 +485,20 @@ fn process_blob_heap(
 
         // Skip positions that are remapping keys to avoid collision with old offsets
         // that would be incorrectly remapped when heap patching is applied
+        // PE and metadata heap sizes are limited to 4GB, so this cast is safe
+        #[allow(clippy::cast_possible_truncation)]
         while result.remapping.contains_key(&(pos as u32)) {
             pos += 1;
         }
 
-        let new_offset = u32::try_from(pos).map_err(|_| {
-            crate::Error::LayoutFailed(format!("Heap position {} exceeds u32 range", pos))
-        })?;
+        let new_offset = u32::try_from(pos)
+            .map_err(|_| Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range")))?;
         let len_size = compressed_uint_size(final_blob.len());
         let entry_size = len_size + final_blob.len() as u64;
 
         if let Some(out) = output.as_mut() {
             let blob_len_u32 = u32::try_from(final_blob.len()).map_err(|_| {
-                crate::Error::LayoutFailed(format!(
+                Error::LayoutFailed(format!(
                     "Blob length {} exceeds u32 range",
                     final_blob.len()
                 ))
@@ -608,7 +604,7 @@ fn process_guid_heap(
     if let Ok(guids) = Guid::from(source_data) {
         for (old_index, guid) in guids.iter() {
             let old_index_u32 = u32::try_from(old_index).map_err(|_| {
-                crate::Error::LayoutFailed(format!("GUID index {} exceeds u32 range", old_index))
+                Error::LayoutFailed(format!("GUID index {old_index} exceeds u32 range"))
             })?;
 
             // For GUIDs, changes use byte offset = (index - 1) * 16
@@ -677,10 +673,6 @@ fn process_guid_heap(
     result.bytes_written = pos;
     Ok(result)
 }
-
-// =============================================================================
-// UserString Heap
-// =============================================================================
 
 /// Streams the #US (user strings) heap to output with deduplication and modifications.
 ///
@@ -775,10 +767,7 @@ fn process_userstring_heap(
     if let Ok(userstrings) = UserStrings::from(source_data) {
         for (old_offset, original_str) in userstrings.iter() {
             let old_offset_u32 = u32::try_from(old_offset).map_err(|_| {
-                crate::Error::LayoutFailed(format!(
-                    "UserString offset {} exceeds u32 range",
-                    old_offset
-                ))
+                Error::LayoutFailed(format!("UserString offset {old_offset} exceeds u32 range"))
             })?;
 
             if changes.is_removed(old_offset_u32) {
@@ -801,7 +790,7 @@ fn process_userstring_heap(
             }
 
             let new_offset = u32::try_from(pos).map_err(|_| {
-                crate::Error::LayoutFailed(format!("Heap position {} exceeds u32 range", pos))
+                Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range"))
             })?;
             let entry_size = userstring_entry_size(final_str);
 
@@ -836,9 +825,8 @@ fn process_userstring_heap(
             continue;
         }
 
-        let new_offset = u32::try_from(pos).map_err(|_| {
-            crate::Error::LayoutFailed(format!("Heap position {} exceeds u32 range", pos))
-        })?;
+        let new_offset = u32::try_from(pos)
+            .map_err(|_| Error::LayoutFailed(format!("Heap position {pos} exceeds u32 range")))?;
         let entry_size = userstring_entry_size(final_str);
 
         if let Some(out) = output.as_mut() {
@@ -870,7 +858,7 @@ fn write_userstring_entry(output: &mut Output, pos: u64, s: &str) -> Result<()> 
 
     // Write compressed length
     let total_len_u32 = u32::try_from(total_len).map_err(|_| {
-        crate::Error::LayoutFailed(format!("UserString length {} exceeds u32 range", total_len))
+        Error::LayoutFailed(format!("UserString length {total_len} exceeds u32 range"))
     })?;
     let mut len_bytes = Vec::with_capacity(4);
     write_compressed_uint(total_len_u32, &mut len_bytes);

@@ -434,7 +434,7 @@ impl<'a> PeGenerator<'a> {
 
         // Write import/export data (if present)
         if self.needs_native_imports() {
-            self.write_import_data(&mut ctx)?;
+            Self::write_import_data(&mut ctx)?;
         }
         self.write_export_data(&mut ctx)?;
 
@@ -524,7 +524,7 @@ impl<'a> PeGenerator<'a> {
 
         // Conservative estimate: assume average 64 bytes per FieldRVA entry
         // (typical for small arrays, struct data, etc.)
-        (fieldrva_table as u64) * 64
+        u64::from(fieldrva_table) * 64
     }
 
     /// Estimates additional heap space needed for modifications.
@@ -1025,7 +1025,7 @@ impl<'a> PeGenerator<'a> {
                     // identical IL bodies - we only need to write each unique body once.
                     let mut written_rvas: HashSet<u32> = HashSet::new();
 
-                    for row in method_table.iter() {
+                    for row in method_table {
                         if deleted_method_rids.contains(&row.rid) {
                             continue;
                         }
@@ -1057,8 +1057,7 @@ impl<'a> PeGenerator<'a> {
                         // Parse method body to get its size
                         let method_body = MethodBody::from(available_data).map_err(|e| {
                             Error::ModificationInvalid(format!(
-                                "Cannot parse method body at RVA 0x{:08x}: {}",
-                                original_rva, e
+                                "Cannot parse method body at RVA 0x{original_rva:08x}: {e}"
                             ))
                         })?;
                         let body_size = method_body.size();
@@ -1112,7 +1111,7 @@ impl<'a> PeGenerator<'a> {
 
             // Remap tokens in the method body in place.
             // This handles both placeholder resolution and token remapping for row deletions.
-            let mut resolved_body = body_bytes.to_vec();
+            let mut resolved_body = body_bytes.clone();
             remap_method_body_tokens(
                 &mut resolved_body,
                 &ctx.token_remapping,
@@ -1290,8 +1289,7 @@ impl<'a> PeGenerator<'a> {
         let version_padded_len = (root.version.len() + 3) & !3;
         let version_len_u32 = u32::try_from(version_padded_len).map_err(|_| {
             Error::LayoutFailed(format!(
-                "Version length {} exceeds u32 range",
-                version_padded_len
+                "Version length {version_padded_len} exceeds u32 range"
             ))
         })?;
         let modified_root = Root {
@@ -1355,7 +1353,9 @@ impl<'a> PeGenerator<'a> {
                 let mut new_count = self.calculate_table_row_count(table_id, table_mod)?;
                 // Subtract deduplicated StandAloneSig entries
                 if table_id == TableId::StandAloneSig {
-                    new_count = new_count.saturating_sub(ctx.standalonesig_skip.len() as u32);
+                    #[allow(clippy::cast_possible_truncation)]
+                    let skip_len = ctx.standalonesig_skip.len() as u32;
+                    new_count = new_count.saturating_sub(skip_len);
                 }
                 new_row_counts.insert(table_id, new_count);
                 if new_count > 0 {
@@ -1367,7 +1367,9 @@ impl<'a> PeGenerator<'a> {
                 // Unmodified table - keep original count (minus dedup for StandAloneSig)
                 let mut count = original_count;
                 if table_id == TableId::StandAloneSig {
-                    count = count.saturating_sub(ctx.standalonesig_skip.len() as u32);
+                    #[allow(clippy::cast_possible_truncation)]
+                    let skip_len = ctx.standalonesig_skip.len() as u32;
+                    count = count.saturating_sub(skip_len);
                 }
                 new_row_counts.insert(table_id, count);
             }
@@ -1714,7 +1716,9 @@ impl<'a> PeGenerator<'a> {
                 let mut new_count = self.calculate_table_row_count(table_id, table_mod)?;
                 // Subtract deduplicated StandAloneSig entries
                 if table_id == TableId::StandAloneSig {
-                    new_count = new_count.saturating_sub(ctx.standalonesig_skip.len() as u32);
+                    #[allow(clippy::cast_possible_truncation)]
+                    let skip_len = ctx.standalonesig_skip.len() as u32;
+                    new_count = new_count.saturating_sub(skip_len);
                 }
                 new_row_counts.insert(table_id, new_count);
                 if new_count > 0 {
@@ -1727,7 +1731,9 @@ impl<'a> PeGenerator<'a> {
                 // Unmodified table - keep original count (minus dedup for StandAloneSig)
                 let mut count = original_count;
                 if table_id == TableId::StandAloneSig {
-                    count = count.saturating_sub(ctx.standalonesig_skip.len() as u32);
+                    #[allow(clippy::cast_possible_truncation)]
+                    let skip_len = ctx.standalonesig_skip.len() as u32;
+                    count = count.saturating_sub(skip_len);
                 }
                 new_row_counts.insert(table_id, count);
             }
@@ -1830,14 +1836,12 @@ impl<'a> PeGenerator<'a> {
                     .count();
                 let added = u32::try_from(added_count).map_err(|_| {
                     Error::LayoutFailed(format!(
-                        "Table {:?} added count {} exceeds u32::MAX",
-                        table_id, added_count
+                        "Table {table_id:?} added count {added_count} exceeds u32::MAX"
                     ))
                 })?;
                 let deleted = u32::try_from(deleted_count).map_err(|_| {
                     Error::LayoutFailed(format!(
-                        "Table {:?} deleted count {} exceeds u32::MAX",
-                        table_id, deleted_count
+                        "Table {table_id:?} deleted count {deleted_count} exceeds u32::MAX"
                     ))
                 })?;
                 Ok(original_count + added - deleted)
@@ -2096,7 +2100,7 @@ impl<'a> PeGenerator<'a> {
         } else if rva < 0xF000_0000 {
             // Original RVA not in map - apply delta as fallback
             // (used when method bodies region was copied as a whole)
-            ((rva as i32) + original_rva_delta) as u32
+            (rva.cast_signed() + original_rva_delta).cast_unsigned()
         } else {
             // Unmapped placeholder - keep as is (shouldn't happen in valid code)
             rva
@@ -2143,7 +2147,7 @@ impl<'a> PeGenerator<'a> {
         // Maps duplicate RID -> canonical RID
         let mut dup_to_canonical: HashMap<u32, u32> = HashMap::new();
 
-        for sig in sig_table.iter() {
+        for sig in sig_table {
             if deleted_rids.contains(&sig.rid) {
                 continue;
             }
@@ -2163,7 +2167,7 @@ impl<'a> PeGenerator<'a> {
         let mut output_rid = 0u32;
         let mut rid_to_output: HashMap<u32, u32> = HashMap::new();
 
-        for sig in sig_table.iter() {
+        for sig in sig_table {
             if deleted_rids.contains(&sig.rid) || ctx.standalonesig_skip.contains(&sig.rid) {
                 continue;
             }
@@ -2172,7 +2176,7 @@ impl<'a> PeGenerator<'a> {
         }
 
         // Phase 3: Build token remapping
-        for sig in sig_table.iter() {
+        for sig in sig_table {
             if deleted_rids.contains(&sig.rid) {
                 continue;
             }
@@ -2212,15 +2216,12 @@ impl<'a> PeGenerator<'a> {
     /// # Errors
     ///
     /// Returns an error if import table generation or writing fails.
-    fn write_import_data(&self, ctx: &mut WriteContext) -> Result<()> {
+    fn write_import_data(ctx: &mut WriteContext) -> Result<()> {
         // Take pending imports built during write_iat()
-        let imports = match ctx.pending_imports.take() {
-            Some(imports) => imports,
-            None => {
-                // No imports were built - this shouldn't happen for .NET assemblies
-                // but handle gracefully
-                return Ok(());
-            }
+        let Some(imports) = ctx.pending_imports.take() else {
+            // No imports were built - this shouldn't happen for .NET assemblies
+            // but handle gracefully
+            return Ok(());
         };
 
         if imports.is_empty() {
@@ -2263,7 +2264,7 @@ impl<'a> PeGenerator<'a> {
         ctx.write(&import_table_bytes)?;
 
         // Write native entry point stub after import table
-        self.write_native_entry_stub(ctx)?;
+        Self::write_native_entry_stub(ctx)?;
 
         Ok(())
     }
@@ -2289,7 +2290,7 @@ impl<'a> PeGenerator<'a> {
     /// # Errors
     ///
     /// Returns an error if writing fails.
-    fn write_native_entry_stub(&self, ctx: &mut WriteContext) -> Result<()> {
+    fn write_native_entry_stub(ctx: &mut WriteContext) -> Result<()> {
         // Align to 4 bytes for entry point
         ctx.align_to_4_with_padding()?;
 
@@ -2466,14 +2467,12 @@ impl<'a> PeGenerator<'a> {
         }
 
         // Resources are embedded in .text — read from original file
-        let offset = match file.rva_to_offset(res_rva as usize) {
-            Ok(off) => off,
-            Err(_) => return Ok(()), // Can't resolve, skip
+        let Ok(offset) = file.rva_to_offset(res_rva as usize) else {
+            return Ok(()); // Can't resolve, skip
         };
 
-        let data = match file.data().get(offset..offset + res_size as usize) {
-            Some(d) => d,
-            None => return Ok(()), // Out of bounds, skip
+        let Some(data) = file.data().get(offset..offset + res_size as usize) else {
+            return Ok(()); // Out of bounds, skip
         };
 
         // Write at aligned position in new .text
@@ -2517,14 +2516,12 @@ impl<'a> PeGenerator<'a> {
             .sections()
             .iter()
             .find(|s| s.name.starts_with(".text"))
-            .map(|s| s.virtual_address)
-            .unwrap_or(0);
+            .map_or(0, |s| s.virtual_address);
         let original_text_size = file
             .sections()
             .iter()
             .find(|s| s.name.starts_with(".text"))
-            .map(|s| s.virtual_size)
-            .unwrap_or(0);
+            .map_or(0, |s| s.virtual_size);
         let original_text_end = original_text_rva.saturating_add(original_text_size);
 
         // Iterate through sections in order
@@ -2545,19 +2542,15 @@ impl<'a> PeGenerator<'a> {
             // Find original section data
             let original_section = file.sections().iter().find(|s| s.name == section_name);
 
-            let original_section = match original_section {
-                Some(s) => s,
-                None => continue, // Section not found in original, skip
+            let Some(original_section) = original_section else {
+                continue; // Section not found in original, skip
             };
 
             // Calculate new RVA for this section
             let section_rva =
                 u32::try_from(align_to(current_end_rva, u64::from(ctx.section_alignment)))
                     .map_err(|_| {
-                        Error::LayoutFailed(format!(
-                            "Section {} RVA exceeds u32 range",
-                            section_name
-                        ))
+                        Error::LayoutFailed(format!("Section {section_name} RVA exceeds u32 range"))
                     })?;
 
             // Handle each section type
@@ -2619,12 +2612,11 @@ impl<'a> PeGenerator<'a> {
         let view = self.assembly.view();
         let file = view.file();
 
-        let data = match file.data().get(
+        let Some(data) = file.data().get(
             section.pointer_to_raw_data as usize
                 ..(section.pointer_to_raw_data + section.size_of_raw_data) as usize,
-        ) {
-            Some(d) => d,
-            None => return Ok(0),
+        ) else {
+            return Ok(0);
         };
 
         // Relocate if RVA changed
@@ -2704,12 +2696,11 @@ impl<'a> PeGenerator<'a> {
             return Ok(0);
         }
 
-        let data = match file.data().get(
+        let Some(data) = file.data().get(
             section.pointer_to_raw_data as usize
                 ..(section.pointer_to_raw_data + section.size_of_raw_data) as usize,
-        ) {
-            Some(d) => d,
-            None => return Ok(0),
+        ) else {
+            return Ok(0);
         };
 
         ctx.write(data)?;

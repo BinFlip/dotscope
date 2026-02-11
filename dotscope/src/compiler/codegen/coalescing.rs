@@ -343,8 +343,9 @@ impl LocalCoalescer {
         // global allocation order that varies with parallel processing.
         let var_sort_key = |var_id: SsaVarId| -> (VariableOrigin, u32) {
             ssa.variable(var_id)
-                .map(|v| (v.origin(), v.version()))
-                .unwrap_or((VariableOrigin::Stack(u32::MAX), u32::MAX))
+                .map_or((VariableOrigin::Stack(u32::MAX), u32::MAX), |v| {
+                    (v.origin(), v.version())
+                })
         };
 
         // Sort intervals by start position, with (origin, version) as tiebreaker for determinism.
@@ -375,8 +376,7 @@ impl LocalCoalescer {
                 if let Some(slot) = var_to_local.get(&var_id) {
                     let type_class = var_types
                         .get(&var_id)
-                        .map(|ty| ty.storage_class())
-                        .unwrap_or(TypeClass::Int32);
+                        .map_or(TypeClass::Int32, SsaType::storage_class);
                     active.push(Reverse((interval.end, *slot, type_class)));
                 }
                 continue;
@@ -398,13 +398,10 @@ impl LocalCoalescer {
             // Get this variable's type class
             let type_class = var_types
                 .get(&var_id)
-                .map(|ty| ty.storage_class())
-                .unwrap_or(TypeClass::Int32);
+                .map_or(TypeClass::Int32, SsaType::storage_class);
 
             // Try to reuse a free slot with compatible type
-            let slot = free_slots
-                .get_mut(&type_class)
-                .and_then(|slots| slots.pop());
+            let slot = free_slots.get_mut(&type_class).and_then(Vec::pop);
 
             let slot = slot.unwrap_or_else(|| {
                 let s = next_local;
@@ -466,7 +463,7 @@ impl LocalCoalescer {
             // Process instructions
             for instr in block.instructions() {
                 // Uses extend the interval
-                for &use_var in instr.uses().iter() {
+                for &use_var in &instr.uses() {
                     intervals
                         .entry(use_var)
                         .or_insert_with(|| LiveInterval::new(instr_idx))
@@ -522,7 +519,7 @@ impl LocalCoalescer {
             }
 
             // Uses make variables live
-            for &use_var in instr.uses().iter() {
+            for &use_var in &instr.uses() {
                 live.insert(use_var);
             }
         }
@@ -645,8 +642,9 @@ impl LocalCoalescer {
         // global allocation order that varies with parallel processing.
         let var_sort_key = |var_id: SsaVarId| -> (VariableOrigin, u32) {
             ssa.variable(var_id)
-                .map(|v| (v.origin(), v.version()))
-                .unwrap_or((VariableOrigin::Stack(u32::MAX), u32::MAX))
+                .map_or((VariableOrigin::Stack(u32::MAX), u32::MAX), |v| {
+                    (v.origin(), v.version())
+                })
         };
 
         // Sort coalescable variables by degree (most constrained first)
@@ -675,6 +673,8 @@ impl LocalCoalescer {
 
             // Find first available slot that is type-compatible
             // Skip reserved slots (those belonging to Local-origin variables)
+            // Safe: will always find a slot since u16 range exceeds possible variable count
+            #[allow(clippy::maybe_infinite_iter)]
             let slot = (0u16..)
                 .find(|&s| {
                     // Skip reserved slots - they belong to Local-origin variables

@@ -138,6 +138,7 @@ impl PeLoaderConfig {
     /// # Returns
     ///
     /// A new `PeLoaderConfig` with all default settings applied.
+    #[must_use]
     pub fn new() -> Self {
         Self::default()
     }
@@ -163,6 +164,7 @@ impl PeLoaderConfig {
     /// let config = PeLoaderConfig::new().with_base_address(0x10000000);
     /// assert_eq!(config.base_address, Some(0x10000000));
     /// ```
+    #[must_use]
     pub fn with_base_address(mut self, base: u64) -> Self {
         self.base_address = Some(base);
         self
@@ -181,6 +183,7 @@ impl PeLoaderConfig {
     /// # Security Note
     ///
     /// Disabling permissions removes a layer of memory safety. Use with caution.
+    #[must_use]
     pub fn without_permissions(mut self) -> Self {
         self.apply_permissions = false;
         self
@@ -201,6 +204,7 @@ impl PeLoaderConfig {
     /// Disabling relocations while loading at a non-preferred base address
     /// will result in incorrect absolute addresses throughout the image.
     /// Code execution will likely fail or produce incorrect results.
+    #[must_use]
     pub fn without_relocations(mut self) -> Self {
         self.apply_relocations = false;
         self
@@ -313,6 +317,7 @@ impl LoadedImage {
     ///     println!("Start execution at: 0x{:X}", entry);
     /// }
     /// ```
+    #[must_use]
     pub fn entry_point_va(&self) -> Option<u64> {
         self.entry_point.map(|rva| self.base_address + rva)
     }
@@ -337,8 +342,9 @@ impl LoadedImage {
     /// let import_table_va = image.rva_to_va(import_table_rva);
     /// let data = address_space.read(import_table_va, size)?;
     /// ```
+    #[must_use]
     pub fn rva_to_va(&self, rva: u32) -> u64 {
-        self.base_address + rva as u64
+        self.base_address + u64::from(rva)
     }
 
     /// Checks whether an RVA falls within the bounds of this image.
@@ -353,8 +359,9 @@ impl LoadedImage {
     /// # Returns
     ///
     /// `true` if the RVA is within the image bounds, `false` otherwise.
+    #[must_use]
     pub fn contains_rva(&self, rva: u32) -> bool {
-        (rva as u64) < self.size_of_image
+        u64::from(rva) < self.size_of_image
     }
 
     /// Finds the section that contains a given RVA.
@@ -382,6 +389,7 @@ impl LoadedImage {
     ///     }
     /// }
     /// ```
+    #[must_use]
     pub fn section_for_rva(&self, rva: u32) -> Option<&LoadedSection> {
         self.sections.iter().find(|s| {
             rva >= s.virtual_address && rva < s.virtual_address + s.virtual_size.max(s.raw_size)
@@ -406,6 +414,7 @@ impl LoadedImage {
     ///     println!("CLR header at RVA: 0x{:X}", image.clr_header_rva.unwrap());
     /// }
     /// ```
+    #[must_use]
     pub fn is_dotnet(&self) -> bool {
         self.clr_header_rva.is_some()
     }
@@ -558,6 +567,7 @@ impl PeLoader {
     /// ```ignore
     /// let loader = PeLoader::new();
     /// ```
+    #[must_use]
     pub fn new() -> Self {
         Self {
             config: PeLoaderConfig::default(),
@@ -585,6 +595,7 @@ impl PeLoader {
     ///     .without_permissions();
     /// let loader = PeLoader::with_config(config);
     /// ```
+    #[must_use]
     pub fn with_config(config: PeLoaderConfig) -> Self {
         Self { config }
     }
@@ -639,14 +650,13 @@ impl PeLoader {
         let size_of_image = pe
             .header
             .optional_header
-            .map(|oh| oh.windows_fields.size_of_image as u64)
-            .unwrap_or(0);
+            .map_or(0, |oh| u64::from(oh.windows_fields.size_of_image));
 
         // Get entry point
         let entry_point = pe
             .header
             .optional_header
-            .map(|oh| oh.standard_fields.address_of_entry_point as u64);
+            .map(|oh| u64::from(oh.standard_fields.address_of_entry_point));
 
         // Check if 64-bit
         let is_64_bit = pe.is_64;
@@ -673,14 +683,14 @@ impl PeLoader {
 
         // Create the full image data buffer
         // ToDo: Switch this and the emulator to use mmap for having a disk-backed file if it is very large
+        #[allow(clippy::cast_possible_truncation)]
         let mut image_data = vec![0u8; size_of_image as usize];
 
         // Copy headers
         let headers_size = pe
             .header
             .optional_header
-            .map(|oh| oh.windows_fields.size_of_headers as usize)
-            .unwrap_or(0x200);
+            .map_or(0x200, |oh| oh.windows_fields.size_of_headers as usize);
         if headers_size <= pe_bytes.len() && headers_size <= image_data.len() {
             image_data[..headers_size].copy_from_slice(&pe_bytes[..headers_size]);
         }
@@ -744,6 +754,7 @@ impl PeLoader {
                 is_uninitialized_data,
             });
 
+            #[allow(clippy::cast_possible_truncation)]
             section_infos.push(SectionInfo {
                 name: section_name,
                 virtual_address,
@@ -756,13 +767,13 @@ impl PeLoader {
         }
 
         // Apply relocations if loading at a non-preferred base
-        let delta = base_address as i64 - preferred_base as i64;
+        let delta = base_address.cast_signed() - preferred_base.cast_signed();
         if delta != 0 && self.config.apply_relocations {
-            self.apply_relocations(&pe, &mut image_data, delta, is_64_bit)?;
+            Self::apply_relocations(&pe, &mut image_data, delta, is_64_bit)?;
         }
 
         // Create the memory region
-        let region = MemoryRegion::pe_image(base_address, image_data, section_infos, name.clone());
+        let region = MemoryRegion::pe_image(base_address, &image_data, section_infos, name.clone());
 
         // Map into address space
         address_space.map_at(base_address, region)?;
@@ -824,7 +835,7 @@ impl PeLoader {
         address_space: &AddressSpace,
     ) -> Result<LoadedImage> {
         let pe_bytes = std::fs::read(path)
-            .map_err(|e| Error::Other(format!("Failed to read PE file: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to read PE file: {e}")))?;
 
         let name = path
             .file_name()
@@ -859,7 +870,6 @@ impl PeLoader {
     /// Returns an error if relocations are required but the relocation directory
     /// is missing or malformed.
     fn apply_relocations(
-        &self,
         pe: &goblin::pe::PE,
         image_data: &mut [u8],
         delta: i64,
@@ -943,9 +953,6 @@ impl PeLoader {
                 let target_offset = page_rva + reloc_offset;
 
                 match reloc_type {
-                    reloc_type::IMAGE_REL_BASED_ABSOLUTE => {
-                        // No-op, used for padding
-                    }
                     reloc_type::IMAGE_REL_BASED_HIGHLOW => {
                         // 32-bit fixup
                         if target_offset + 4 <= image_data.len() {
@@ -955,7 +962,8 @@ impl PeLoader {
                                 image_data[target_offset + 2],
                                 image_data[target_offset + 3],
                             ]);
-                            let new_value = (value as i64 + delta) as u32;
+                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                            let new_value = (i64::from(value) + delta) as u32;
                             image_data[target_offset..target_offset + 4]
                                 .copy_from_slice(&new_value.to_le_bytes());
                         }
@@ -973,13 +981,13 @@ impl PeLoader {
                                 image_data[target_offset + 6],
                                 image_data[target_offset + 7],
                             ]);
-                            let new_value = (value as i64 + delta) as u64;
+                            let new_value = (value.cast_signed() + delta).cast_unsigned();
                             image_data[target_offset..target_offset + 8]
                                 .copy_from_slice(&new_value.to_le_bytes());
                         }
                     }
                     _ => {
-                        // Unknown or unsupported relocation type - skip
+                        // ABSOLUTE (padding) or unknown/unsupported relocation type - skip
                     }
                 }
             }

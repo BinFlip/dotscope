@@ -957,7 +957,7 @@ impl EmulationContext {
     /// for this method.
     #[must_use]
     pub fn find_import_by_method(&self, method_token: Token) -> Option<Arc<Import>> {
-        for import_entry in self.assembly.imports().cil().iter() {
+        for import_entry in self.assembly.imports().cil() {
             let import = import_entry.value();
             if let ImportType::Method(import_method) = &import.import {
                 if import_method.token == method_token {
@@ -1137,8 +1137,7 @@ impl EmulationContext {
                 let catch_type = handler
                     .handler
                     .as_ref()
-                    .map(|t| t.token)
-                    .unwrap_or_else(|| Token::new(handler.filter_offset));
+                    .map_or_else(|| Token::new(handler.filter_offset), |t| t.token);
 
                 ExceptionClause::Catch {
                     try_offset: handler.try_offset,

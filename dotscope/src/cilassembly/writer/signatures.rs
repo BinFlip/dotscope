@@ -266,8 +266,9 @@ fn remap_type_signature(
         TypeSignature::SzArray(arr) => remap_szarray(arr, typedef_remap, typeref_remap),
         TypeSignature::Array(arr) => remap_array(arr, typedef_remap, typeref_remap),
         TypeSignature::Ptr(ptr) => remap_pointer(ptr, typedef_remap, typeref_remap),
-        TypeSignature::ByRef(inner) => remap_type_signature(inner, typedef_remap, typeref_remap),
-        TypeSignature::Pinned(inner) => remap_type_signature(inner, typedef_remap, typeref_remap),
+        TypeSignature::ByRef(inner) | TypeSignature::Pinned(inner) => {
+            remap_type_signature(inner, typedef_remap, typeref_remap)
+        }
 
         // Generic instantiation - base type + type arguments
         TypeSignature::GenericInst(base, args) => {
@@ -388,12 +389,12 @@ fn remap_token(
 
     if table == TYPEDEF_TABLE {
         if let Some(&new_rid) = typedef_remap.get(&rid) {
-            *token = Token::new((TYPEDEF_TABLE as u32) << 24 | new_rid);
+            *token = Token::new(u32::from(TYPEDEF_TABLE) << 24 | new_rid);
             return true;
         }
     } else if table == TYPEREF_TABLE {
         if let Some(&new_rid) = typeref_remap.get(&rid) {
-            *token = Token::new((TYPEREF_TABLE as u32) << 24 | new_rid);
+            *token = Token::new(u32::from(TYPEREF_TABLE) << 24 | new_rid);
             return true;
         }
     }

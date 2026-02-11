@@ -605,9 +605,8 @@ impl CilType {
                 "IntPtr" => return CilFlavor::I,
                 "UIntPtr" => return CilFlavor::U,
                 // Decimal is a special value type (not a primitive flavor)
-                "Decimal" => return CilFlavor::ValueType,
                 // Special value types (base types themselves)
-                "ValueType" | "Enum" => return CilFlavor::ValueType,
+                "Decimal" | "ValueType" | "Enum" => return CilFlavor::ValueType,
                 // Well-known reference types
                 "Object" => return CilFlavor::Object,
                 "String" => return CilFlavor::String,
@@ -922,13 +921,13 @@ impl CilType {
     /// Returns true if this type is an enum (inherits from `System.Enum`).
     #[must_use]
     pub fn is_enum(&self) -> bool {
-        self.base().map_or(false, |b| b.fullname() == "System.Enum")
+        self.base().is_some_and(|b| b.fullname() == "System.Enum")
     }
 
     /// Returns true if this type is a delegate (inherits from `System.Delegate` or `System.MulticastDelegate`).
     #[must_use]
     pub fn is_delegate(&self) -> bool {
-        self.base().map_or(false, |b| {
+        self.base().is_some_and(|b| {
             let name = b.fullname();
             name == "System.MulticastDelegate" || name == "System.Delegate"
         })
@@ -969,7 +968,7 @@ impl CilType {
     pub fn has_public_methods(&self) -> bool {
         self.methods
             .iter()
-            .any(|(_, method_ref)| method_ref.upgrade().map(|m| m.is_public()).unwrap_or(false))
+            .any(|(_, method_ref)| method_ref.upgrade().is_some_and(|m| m.is_public()))
     }
 
     /// Returns true if any field in this type has public access.

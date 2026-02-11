@@ -223,12 +223,14 @@ impl NativeMethodConversionPass {
     ) -> Result<()> {
         // Step 1: Get the method's RVA and verify it's a native method
         let rid = token.row();
+        // Note: closure needed here — method reference with turbofish breaks downstream type inference
+        #[allow(clippy::redundant_closure_for_method_calls)]
         let method_row = assembly
             .view()
             .tables()
             .and_then(|t| t.table::<MethodDefRaw>())
             .and_then(|table| table.get(rid))
-            .ok_or_else(|| Error::X86Error(format!("MethodDef row {} not found for token", rid)))?;
+            .ok_or_else(|| Error::X86Error(format!("MethodDef row {rid} not found for token")))?;
 
         // Verify this is actually a native method
         let impl_code_type = MethodImplCodeType::from_impl_flags(method_row.impl_flags);
@@ -273,7 +275,7 @@ impl NativeMethodConversionPass {
         }
 
         // Step 5: Build CFG
-        let cfg = X86Function::new(instructions, bitness, base_offset);
+        let cfg = X86Function::new(&instructions, bitness, base_offset);
 
         // Step 6: Translate to SSA
         let translator = X86ToSsaTranslator::new(&cfg);

@@ -143,10 +143,7 @@ impl ControlFlowSimplificationPass {
                         changes
                             .record(EventKind::ControlFlowRestructured)
                             .at(method_token, block_idx)
-                            .message(format!(
-                                "jump threaded: {:?} -> {:?}",
-                                old_targets, new_targets
-                            ));
+                            .message(format!("jump threaded: {old_targets:?} -> {new_targets:?}"));
                         threaded_count += 1;
                     }
                 }
@@ -186,8 +183,7 @@ impl ControlFlowSimplificationPass {
                         .record(EventKind::BranchSimplified)
                         .at(method_token, block_idx)
                         .message(format!(
-                            "branch to same target simplified: B{} branch -> jump B{}",
-                            block_idx, target
+                            "branch to same target simplified: B{block_idx} branch -> jump B{target}"
                         ));
                     simplified_count += 1;
                 }
@@ -230,8 +226,7 @@ impl ControlFlowSimplificationPass {
                         .record(EventKind::InstructionRemoved)
                         .at(method_token, block_idx)
                         .message(format!(
-                            "removed {} dead instructions after terminator in B{}",
-                            to_remove, block_idx
+                            "removed {to_remove} dead instructions after terminator in B{block_idx}"
                         ));
                 }
             }
@@ -309,7 +304,7 @@ impl SsaPass for ControlFlowSimplificationPass {
 
         let changed = !changes.is_empty();
         if changed {
-            ctx.events.merge(changes);
+            ctx.events.merge(&changes);
         }
         Ok(changed)
     }

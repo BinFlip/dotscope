@@ -4,7 +4,7 @@ use serde::Serialize;
 
 use crate::{
     app::GlobalOptions,
-    commands::common::load_assembly,
+    commands::common::{load_assembly, name_contains_ignore_case},
     output::{print_output, Align, TabWriter},
 };
 
@@ -54,16 +54,13 @@ pub fn run(
 
     let mut entries = Vec::new();
 
-    for entry in methods.iter() {
+    for entry in methods {
         let method = entry.value();
 
         let declaring_fullname = method.declaring_type_fullname().unwrap_or_default();
 
         if let Some(filter) = type_filter {
-            if !declaring_fullname
-                .to_lowercase()
-                .contains(&filter.to_lowercase())
-            {
+            if !name_contains_ignore_case(&declaring_fullname, filter) {
                 continue;
             }
         }
@@ -111,7 +108,7 @@ pub fn run(
                         group.declaring_type,
                         group.methods.len()
                     );
-                    let mut tw = TabWriter::new(vec![
+                    let mut tw = TabWriter::new(&[
                         ("Token", Align::Left),
                         ("Access", Align::Left),
                         ("Method", Align::Left),
@@ -133,7 +130,7 @@ pub fn run(
 
         print_output(&output, opts, |out| {
             if let MethodsOutputFormat::Flat(flat) = out {
-                let mut tw = TabWriter::new(vec![
+                let mut tw = TabWriter::new(&[
                     ("Token", Align::Left),
                     ("Access", Align::Left),
                     ("Type", Align::Left),

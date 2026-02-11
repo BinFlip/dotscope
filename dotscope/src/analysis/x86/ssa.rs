@@ -32,7 +32,7 @@
 //! // Decode x86 code
 //! let bytes = &[0x58, 0x83, 0xc0, 0x05, 0xc3]; // pop eax; add eax, 5; ret
 //! let instructions = decode_x86(bytes, 32, 0)?;
-//! let cfg = X86Function::new(instructions, 32, 0);
+//! let cfg = X86Function::new(&instructions, 32, 0);
 //!
 //! // Translate to SSA
 //! let translator = X86ToSsaTranslator::new(&cfg);
@@ -549,7 +549,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     self.get_operand_value(s2, reg_state, &mut result, block_idx)?
                 } else {
                     // Two-operand form: dst = dst * src
-                    self.get_register_value(*dst, reg_state)?
+                    Self::get_register_value(*dst, reg_state)?
                 };
                 let res_var = self.create_variable(
                     VariableOrigin::Stack(0),
@@ -568,7 +568,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             X86Instruction::Mul { src } => {
                 // MUL: EDX:EAX = EAX * src (unsigned)
                 // For simplicity, we only track EAX result
-                let eax = self.get_register_value(X86Register::Eax, reg_state)?;
+                let eax = Self::get_register_value(X86Register::Eax, reg_state)?;
                 let src_var = self.get_operand_value(src, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
                     VariableOrigin::Stack(0),
@@ -861,7 +861,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             X86Instruction::Cdq => {
                 // Sign-extend EAX into EDX:EAX
                 // In SSA, we just track that EDX becomes a function of EAX
-                let eax = self.get_register_value(X86Register::Eax, reg_state)?;
+                let eax = Self::get_register_value(X86Register::Eax, reg_state)?;
                 // EDX gets sign bits of EAX (all 0s or all 1s)
                 // For simplicity, create a new variable
                 let edx_var = self.create_variable(
@@ -905,14 +905,14 @@ impl<'a> X86ToSsaTranslator<'a> {
         block_idx: usize,
     ) -> Result<SsaVarId> {
         match operand {
-            X86Operand::Register(reg) => self.get_register_value(*reg, reg_state),
+            X86Operand::Register(reg) => Self::get_register_value(*reg, reg_state),
             X86Operand::Immediate(val) => Ok(self.get_constant(*val, instrs, block_idx)),
             X86Operand::Memory(mem) => self.load_from_memory(mem, reg_state, instrs, block_idx),
         }
     }
 
     /// Gets the SSA variable for a register.
-    fn get_register_value(&self, reg: X86Register, reg_state: &RegisterState) -> Result<SsaVarId> {
+    fn get_register_value(reg: X86Register, reg_state: &RegisterState) -> Result<SsaVarId> {
         reg_state
             .get(reg)
             .ok_or_else(|| Error::X86Error(format!("Register {reg:?} not defined")))
@@ -959,7 +959,6 @@ impl<'a> X86ToSsaTranslator<'a> {
         let value_type = match mem.size {
             1 => SsaType::I8,
             2 => SsaType::I16,
-            4 => SsaType::I32,
             8 => SsaType::I64,
             _ => SsaType::I32,
         };
@@ -987,7 +986,6 @@ impl<'a> X86ToSsaTranslator<'a> {
         let value_type = match mem.size {
             1 => SsaType::I8,
             2 => SsaType::I16,
-            4 => SsaType::I32,
             8 => SsaType::I64,
             _ => SsaType::I32,
         };
@@ -1011,18 +1009,20 @@ impl<'a> X86ToSsaTranslator<'a> {
     ) -> Result<SsaVarId> {
         // Start with base or 0
         let mut addr = if let Some(base) = mem.base {
-            self.get_register_value(base, reg_state)?
+            Self::get_register_value(base, reg_state)?
         } else {
             self.get_zero_constant(instrs, block_idx)
         };
 
         // Add index * scale
         if let Some(index) = mem.index {
-            let index_val = self.get_register_value(index, reg_state)?;
+            let index_val = Self::get_register_value(index, reg_state)?;
 
             // Multiply by scale if not 1
-            let scaled = if mem.scale != 1 {
-                let scale_const = self.get_constant(mem.scale as i64, instrs, block_idx);
+            let scaled = if mem.scale == 1 {
+                index_val
+            } else {
+                let scale_const = self.get_constant(i64::from(mem.scale), instrs, block_idx);
                 let scaled_var = self.create_variable(
                     VariableOrigin::Stack(0),
                     DefSite::instruction(block_idx, instrs.len()),
@@ -1034,8 +1034,6 @@ impl<'a> X86ToSsaTranslator<'a> {
                     right: scale_const,
                 }));
                 scaled_var
-            } else {
-                index_val
             };
 
             // Add to address
@@ -1087,7 +1085,10 @@ impl<'a> X86ToSsaTranslator<'a> {
         let const_value = if self.func.bitness == 64 {
             ConstValue::I64(value)
         } else {
-            ConstValue::I32(value as i32)
+            // Safe: x86 32-bit constant intentionally truncated to i32
+            #[allow(clippy::cast_possible_truncation)]
+            let truncated = value as i32;
+            ConstValue::I32(truncated)
         };
 
         instrs.push(SsaInstruction::synthetic(SsaOp::Const {
@@ -1245,7 +1246,7 @@ mod tests {
         // pop eax; add eax, 5; ret
         let bytes = [0x58, 0x83, 0xc0, 0x05, 0xc3];
         let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
-        let cfg = X86Function::new(instructions, 32, 0x1000);
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         let translator = X86ToSsaTranslator::new(&cfg);
         let ssa = translator.translate().unwrap();
@@ -1267,7 +1268,7 @@ mod tests {
         // mov eax, 0x12345678; ret
         let bytes = [0xb8, 0x78, 0x56, 0x34, 0x12, 0xc3];
         let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
-        let cfg = X86Function::new(instructions, 32, 0x1000);
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         let translator = X86ToSsaTranslator::new(&cfg);
         let ssa = translator.translate().unwrap();
@@ -1286,7 +1287,7 @@ mod tests {
             0xc3, // ret
         ];
         let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
-        let cfg = X86Function::new(instructions, 32, 0x1000);
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         let translator = X86ToSsaTranslator::new(&cfg);
         let ssa = translator.translate().unwrap();
@@ -1315,7 +1316,7 @@ mod tests {
             0xc3, // ret
         ];
         let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
-        let cfg = X86Function::new(instructions, 32, 0x1000);
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         let translator = X86ToSsaTranslator::new(&cfg);
         let ssa = translator.translate().unwrap();
@@ -1347,7 +1348,7 @@ mod tests {
 
     #[test]
     fn test_empty_function() {
-        let cfg = X86Function::new(vec![], 32, 0);
+        let cfg = X86Function::new(&[], 32, 0);
         let translator = X86ToSsaTranslator::new(&cfg);
         let result = translator.translate();
         assert!(result.is_err());

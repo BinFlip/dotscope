@@ -106,7 +106,7 @@ impl CallResolver {
             }
 
             // Map methods to their declaring type
-            for method in type_info.query_methods().iter() {
+            for method in &type_info.query_methods() {
                 self.method_to_type.insert(method.token, token);
             }
         }

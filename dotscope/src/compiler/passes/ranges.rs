@@ -168,7 +168,7 @@ impl SsaPass for ValueRangePropagationPass {
 
         let changed = !changes.is_empty();
         if changed {
-            ctx.events.merge(changes);
+            ctx.events.merge(&changes);
         }
         Ok(changed)
     }

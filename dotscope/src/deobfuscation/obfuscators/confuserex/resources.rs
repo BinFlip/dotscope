@@ -197,7 +197,7 @@ impl ResourceDecryptionResult {
 /// - Delegate creation for event handlers
 /// - Decompression calls (LZMA, Inflate, etc.)
 pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut ConfuserExFindings) {
-    for method_entry in assembly.methods().iter() {
+    for method_entry in assembly.methods() {
         let method = method_entry.value();
 
         let mut has_assembly_resolve = false;
@@ -280,14 +280,12 @@ fn get_call_target_name(assembly: &CilObject, token: Token) -> Option<String> {
     match table_id {
         // MethodDef
         0x06 => {
-            let method = assembly.methods().get(&token)?;
-            let method = method.value();
+            let method = assembly.method(&token)?;
             Some(method.name.clone())
         }
         // MemberRef
         0x0A => {
-            if let Some(member_ref) = assembly.refs_members().get(&token) {
-                let member_ref = member_ref.value();
+            if let Some(member_ref) = assembly.member_ref(&token) {
                 let type_name = member_ref
                     .declaredby
                     .fullname()
@@ -321,7 +319,7 @@ fn get_call_target_name(assembly: &CilObject, token: Token) -> Option<String> {
 /// # Returns
 ///
 /// A vector of extracted resources, or an empty vector if resources can't be extracted.
-fn extract_resources_from_assembly(data: &[u8]) -> Result<Vec<ExtractedResource>> {
+fn extract_resources_from_assembly(data: &[u8]) -> Vec<ExtractedResource> {
     // Try loading as a full CilObject (for assemblies with Assembly table)
     match CilObject::from_mem_with_validation(data.to_vec(), ValidationConfig::disabled()) {
         Ok(hidden_assembly) => {
@@ -329,7 +327,7 @@ fn extract_resources_from_assembly(data: &[u8]) -> Result<Vec<ExtractedResource>
             let resources = hidden_assembly.resources();
             let mut extracted = Vec::new();
 
-            for entry in resources.iter() {
+            for entry in resources {
                 let manifest = entry.value();
 
                 // Only extract embedded resources (source == None means embedded)
@@ -347,13 +345,13 @@ fn extract_resources_from_assembly(data: &[u8]) -> Result<Vec<ExtractedResource>
                 }
             }
 
-            Ok(extracted)
+            extracted
         }
         Err(_) => {
             // Failed to load as CilObject (likely a netmodule without Assembly table)
             // For now, return empty - netmodules need special handling
             // TODO: Implement direct parsing of ManifestResource table for netmodules
-            Ok(Vec::new())
+            Vec::new()
         }
     }
 }
@@ -407,8 +405,7 @@ pub fn decrypt_resources(
         // Try each candidate until we successfully extract assemblies
         let mut final_result = None;
         for candidate in candidates.iter() {
-            match try_emulate_resource_decryptor(Arc::clone(&assembly_arc), candidate.token, events)
-            {
+            match try_emulate_resource_decryptor(&assembly_arc, candidate.token, events) {
                 Ok(result) if result.has_assemblies() || result.has_resources() => {
                     // Log extraction details
                     events.info(format!(
@@ -447,14 +444,13 @@ pub fn decrypt_resources(
                     final_result = Some(result);
                     break;
                 }
-                Ok(_) => continue,
+                Ok(_) => {}
                 Err(e) => {
                     events.warn(format!(
                         "Resource emulation failed for 0x{:08x}: {}",
                         candidate.token.value(),
                         e
                     ));
-                    continue;
                 }
             }
         }
@@ -491,8 +487,7 @@ pub fn decrypt_resources(
     for rid in rids_to_remove {
         if let Err(e) = cil_assembly.table_row_remove(TableId::ManifestResource, rid) {
             events.warn(format!(
-                "Failed to remove existing ManifestResource row {}: {}",
-                rid, e
+                "Failed to remove existing ManifestResource row {rid}: {e}"
             ));
         }
     }
@@ -553,7 +548,7 @@ fn find_manifest_resources_by_name(
 
 /// Attempts to emulate a single resource decryptor candidate.
 fn try_emulate_resource_decryptor(
-    assembly: Arc<CilObject>,
+    assembly: &Arc<CilObject>,
     method_token: Token,
     _events: &mut EventLog,
 ) -> Result<ResourceDecryptionResult> {
@@ -561,7 +556,7 @@ fn try_emulate_resource_decryptor(
     // registration needed - the default BCL hooks handle MemoryStream operations.
     // We add the LZMA hook to handle ConfuserEx's inline LZMA decompressor natively.
     let process = ProcessBuilder::new()
-        .assembly_arc(Arc::clone(&assembly))
+        .assembly_arc(Arc::clone(assembly))
         .with_max_instructions(2_000_000)
         .with_max_call_depth(100)
         .capture_assemblies() // Enable assembly capture for embedded assembly extraction
@@ -574,26 +569,22 @@ fn try_emulate_resource_decryptor(
         | EmulationOutcome::Breakpoint { instructions, .. } => instructions,
         EmulationOutcome::LimitReached { limit, .. } => {
             return Err(Error::Deobfuscation(format!(
-                "Resource emulation exceeded limit: {:?}",
-                limit
+                "Resource emulation exceeded limit: {limit:?}"
             )));
         }
         EmulationOutcome::Stopped { reason, .. } => {
             return Err(Error::Deobfuscation(format!(
-                "Resource emulation stopped: {}",
-                reason
+                "Resource emulation stopped: {reason}"
             )));
         }
         EmulationOutcome::UnhandledException { exception, .. } => {
             return Err(Error::Deobfuscation(format!(
-                "Resource emulation threw exception: {:?}",
-                exception
+                "Resource emulation threw exception: {exception:?}"
             )));
         }
         EmulationOutcome::RequiresSymbolic { reason, .. } => {
             return Err(Error::Deobfuscation(format!(
-                "Resource emulation requires symbolic execution: {}",
-                reason
+                "Resource emulation requires symbolic execution: {reason}"
             )));
         }
     };
@@ -610,9 +601,8 @@ fn try_emulate_resource_decryptor(
     let mut resources = Vec::new();
     for asm in &assemblies {
         if asm.is_valid_pe {
-            if let Ok(extracted) = extract_resources_from_assembly(&asm.data) {
-                resources.extend(extracted);
-            }
+            let extracted = extract_resources_from_assembly(&asm.data);
+            resources.extend(extracted);
         }
     }
 

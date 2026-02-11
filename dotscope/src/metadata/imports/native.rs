@@ -874,6 +874,9 @@ impl NativeImports {
     ///
     /// # Returns
     /// IAT bytes to write at the start of .text section.
+    ///
+    /// # Errors
+    /// Returns an error if writing IAT entries exceeds the allocated buffer bounds.
     pub fn build_iat_bytes(&self, is_pe32_plus: bool, import_table_rva: u32) -> Result<Vec<u8>> {
         if self.is_empty() {
             return Ok(Vec::new());
@@ -898,6 +901,8 @@ impl NativeImports {
         let ilt_size = total_ilt_entries * entry_size;
 
         // Strings start after descriptors and ILT
+        // Safe: PE import table sizes always fit in u32
+        #[allow(clippy::cast_possible_truncation)]
         let strings_start_rva = import_table_rva + (descriptor_size + ilt_size) as u32;
 
         // Calculate hint/name RVAs for each function
@@ -905,7 +910,9 @@ impl NativeImports {
 
         // First pass: calculate DLL name RVAs (they come first in strings)
         let mut dll_name_end_rva = current_string_rva;
+        #[allow(clippy::cast_possible_truncation)]
         for desc in &descriptors_sorted {
+            // Safe: PE import table sizes always fit in u32
             dll_name_end_rva += (desc.dll_name.len() + 1) as u32; // +1 for null terminator
         }
 
@@ -941,8 +948,10 @@ impl NativeImports {
                 }
 
                 // Advance string RVA for named imports
+                #[allow(clippy::cast_possible_truncation)]
                 if let Some(function_name) = function.name.as_ref() {
                     current_string_rva += 2; // hint (2 bytes)
+                                             // Safe: PE import table sizes always fit in u32
                     current_string_rva += (function_name.len() + 1) as u32;
                     // name + null
                 }
@@ -972,6 +981,10 @@ impl NativeImports {
     ///
     /// # Returns
     /// Import table bytes (descriptors + ILT + strings) to write after metadata.
+    ///
+    /// # Errors
+    /// Returns an error if writing import descriptors, ILT entries, or string data
+    /// exceeds the allocated buffer bounds.
     pub fn build_import_table(
         &self,
         is_pe32_plus: bool,
@@ -1016,7 +1029,11 @@ impl NativeImports {
         let mut offset = 0;
 
         // Calculate RVAs
+        // Safe: PE import table sizes always fit in u32
+        #[allow(clippy::cast_possible_truncation)]
         let ilt_start_rva = table_rva + descriptor_table_size as u32;
+        // Safe: PE import table sizes always fit in u32
+        #[allow(clippy::cast_possible_truncation)]
         let strings_start_rva = ilt_start_rva + ilt_size as u32;
 
         // Build ILT offset map and string RVAs
@@ -1026,8 +1043,10 @@ impl NativeImports {
         // Pre-calculate DLL name RVAs
         let mut dll_name_rvas = Vec::with_capacity(descriptors_sorted.len());
         let mut current_dll_name_rva = strings_start_rva;
+        #[allow(clippy::cast_possible_truncation)]
         for desc in &descriptors_sorted {
             dll_name_rvas.push(current_dll_name_rva);
+            // Safe: PE import table sizes always fit in u32
             current_dll_name_rva += (desc.dll_name.len() + 1) as u32;
         }
 
@@ -1035,12 +1054,14 @@ impl NativeImports {
         let mut current_func_name_rva = current_dll_name_rva;
         let mut func_name_rvas: Vec<Vec<u64>> = Vec::with_capacity(descriptors_sorted.len());
 
+        #[allow(clippy::cast_possible_truncation)]
         for desc in &descriptors_sorted {
             let mut rvas = Vec::with_capacity(desc.functions.len());
             for func in &desc.functions {
                 if let Some(function_name) = func.name.as_ref() {
                     rvas.push(u64::from(current_func_name_rva));
                     current_func_name_rva += 2; // hint
+                                                // Safe: PE import table sizes always fit in u32
                     current_func_name_rva += (function_name.len() + 1) as u32;
                 // name + null
                 } else {
@@ -1051,6 +1072,7 @@ impl NativeImports {
         }
 
         // Write import descriptors
+        #[allow(clippy::cast_possible_truncation)]
         for (i, desc) in descriptors_sorted.iter().enumerate() {
             let desc_ilt_rva = ilt_rva;
             let desc_iat_rva = iat_rva + iat_offset;
@@ -1067,6 +1089,7 @@ impl NativeImports {
             write_le_at::<u32>(&mut data, &mut offset, desc_iat_rva)?;
 
             // Update offsets for next descriptor
+            // Safe: PE import table sizes always fit in u32
             let entries_for_dll = desc.functions.len() + 1; // +1 for null terminator
             ilt_rva += (entries_for_dll * entry_size) as u32;
             iat_offset += (entries_for_dll * entry_size) as u32;

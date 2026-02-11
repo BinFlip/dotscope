@@ -477,13 +477,13 @@ impl<'a> CffDetector<'a> {
         let entry_block = self.find_entry_block(block_idx);
 
         // Find all entry points (including multiple entries if present)
-        let entry_points = self.find_entry_points(block_idx, &case_blocks, &state_var);
+        let entry_points = self.find_entry_points(block_idx, &case_blocks, state_var.as_ref());
 
         // Compute confidence score (includes dominance analysis)
         let confidence = self.compute_confidence(
             block_idx,
             &dispatcher,
-            &state_var,
+            state_var.as_ref(),
             &case_blocks,
             &exit_blocks,
         );
@@ -549,7 +549,7 @@ impl<'a> CffDetector<'a> {
         &self,
         dispatcher_block: usize,
         case_blocks: &HashSet<usize>,
-        state_var: &Option<StateVariable>,
+        state_var: Option<&StateVariable>,
     ) -> Vec<EntryPoint> {
         let mut entries = Vec::new();
         let preds = self.ssa.block_predecessors(dispatcher_block);
@@ -585,7 +585,7 @@ impl<'a> CffDetector<'a> {
             }
 
             // Track state variable if known
-            if let Some(ref sv) = state_var {
+            if let Some(sv) = state_var {
                 if let Some(ssa_var) = sv.var.as_ssa_var() {
                     entry.state_var = Some(ssa_var);
                 }
@@ -601,7 +601,7 @@ impl<'a> CffDetector<'a> {
     fn extract_initial_state(
         &self,
         block_idx: usize,
-        state_var: &Option<StateVariable>,
+        state_var: Option<&StateVariable>,
     ) -> Option<i64> {
         let block = self.ssa.block(block_idx)?;
 
@@ -609,7 +609,7 @@ impl<'a> CffDetector<'a> {
         for instr in block.instructions() {
             if let SsaOp::Const { dest, value } = instr.op() {
                 // Check if this constant is assigned to the state variable
-                if let Some(ref sv) = state_var {
+                if let Some(sv) = state_var {
                     if let Some(ssa_var) = sv.var.as_ssa_var() {
                         if *dest == ssa_var {
                             return value.as_i64();
@@ -620,7 +620,7 @@ impl<'a> CffDetector<'a> {
 
             // Also check for copy of a constant
             if let SsaOp::Copy { dest, src } = instr.op() {
-                if let Some(ref sv) = state_var {
+                if let Some(sv) = state_var {
                     if let Some(ssa_var) = sv.var.as_ssa_var() {
                         if *dest == ssa_var {
                             // Try to get the constant value of src
@@ -711,7 +711,7 @@ impl<'a> CffDetector<'a> {
         &mut self,
         dispatcher_block: usize,
         dispatcher: &DispatcherInfo,
-        state_var: &Option<StateVariable>,
+        state_var: Option<&StateVariable>,
         case_blocks: &HashSet<usize>,
         exit_blocks: &HashSet<usize>,
     ) -> f64 {
@@ -730,7 +730,7 @@ impl<'a> CffDetector<'a> {
         }
 
         // Signal 2: Has state variable with phi node
-        if let Some(ref sv) = state_var {
+        if let Some(sv) = state_var {
             if sv.dispatcher_var.is_some() {
                 score += 0.15;
             }
@@ -751,6 +751,8 @@ impl<'a> CffDetector<'a> {
             .iter()
             .filter(|&&b| self.ssa.block_successors(b).contains(&dispatcher_block))
             .count();
+        // Safe: counts are small integers, precision loss is negligible for scoring
+        #[allow(clippy::cast_precision_loss)]
         let back_edge_ratio = back_edge_count as f64 / case_count.max(1) as f64;
         score += back_edge_ratio * 0.10;
 
@@ -811,7 +813,10 @@ impl<'a> CffDetector<'a> {
             })
             .count();
 
-        dominated_count as f64 / case_blocks.len() as f64
+        // Safe: counts are small integers, precision loss is negligible for scoring
+        #[allow(clippy::cast_precision_loss)]
+        let ratio = dominated_count as f64 / case_blocks.len() as f64;
+        ratio
     }
 }
 

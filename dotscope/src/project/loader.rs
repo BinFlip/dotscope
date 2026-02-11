@@ -387,15 +387,12 @@ impl ProjectLoader {
             .collect();
 
         for handle in handles {
-            let (identity, load_result) = match handle.join() {
-                Ok(val) => val,
-                Err(_) => {
-                    result.record_failure(
-                        "unknown".to_string(),
-                        "assembly loading thread panicked".to_string(),
-                    );
-                    continue;
-                }
+            let Ok((identity, load_result)) = handle.join() else {
+                result.record_failure(
+                    "unknown".to_string(),
+                    "assembly loading thread panicked".to_string(),
+                );
+                continue;
             };
             match load_result {
                 Ok(cil_object) => {

@@ -293,11 +293,6 @@ impl<'a> EventBuilder<'a> {
         self.pass = Some(pass_name.into());
         self
     }
-
-    /// Commits the event to the log. Called automatically on drop.
-    fn commit(self) {
-        // Drop will handle it
-    }
 }
 
 impl Drop for EventBuilder<'_> {
@@ -343,7 +338,7 @@ impl Default for EventLog {
 impl Clone for EventLog {
     fn clone(&self) -> Self {
         let new_log = Self::new();
-        for (_, event) in self.events.iter() {
+        for (_, event) in &self.events {
             new_log.events.push(event.clone());
         }
         new_log
@@ -403,14 +398,14 @@ impl EventLog {
 
     /// Merges another event log into this one by reference.
     pub fn merge_ref(&self, other: &EventLog) {
-        for (_, event) in other.events.iter() {
+        for (_, event) in &other.events {
             self.events.push(event.clone());
         }
     }
 
     /// Merges another event log into this one by value.
-    pub fn merge(&self, other: EventLog) {
-        for (_, event) in other.events.iter() {
+    pub fn merge(&self, other: &EventLog) {
+        for (_, event) in &other.events {
             self.events.push(event.clone());
         }
     }
@@ -502,7 +497,7 @@ impl EventLog {
     #[must_use]
     pub fn count_by_kind(&self) -> HashMap<EventKind, usize> {
         let mut counts = HashMap::new();
-        for (_, event) in self.events.iter() {
+        for (_, event) in &self.events {
             *counts.entry(event.kind).or_insert(0) += 1;
         }
         counts
