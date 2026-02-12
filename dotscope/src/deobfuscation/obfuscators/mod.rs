@@ -31,14 +31,17 @@ mod registry;
 
 pub use confuserex::{
     create_anti_tamper_stub_hook, create_lzma_hook, detect_confuserex, find_encrypted_methods,
-    ConfuserExFindings, ConfuserExObfuscator,
+    ConfuserExObfuscator,
 };
 pub use registry::{ObfuscatorInfo, ObfuscatorRegistry};
 
 use crate::{
     cilassembly::CleanupRequest,
     compiler::{EventLog, SsaPass},
-    deobfuscation::{config::EngineConfig, context::AnalysisContext, detection::DetectionScore},
+    deobfuscation::{
+        config::EngineConfig, context::AnalysisContext, detection::DetectionScore,
+        findings::DeobfuscationFindings,
+    },
     CilObject, Result,
 };
 
@@ -101,7 +104,7 @@ pub trait Obfuscator: Send + Sync {
     /// # Returns
     ///
     /// A [`DetectionScore`] indicating confidence level and evidence.
-    fn detect(&self, assembly: &CilObject) -> DetectionScore;
+    fn detect(&self, assembly: &CilObject, findings: &mut DeobfuscationFindings) -> DetectionScore;
 
     /// Return passes specific to this obfuscator.
     ///
@@ -115,7 +118,7 @@ pub trait Obfuscator: Send + Sync {
     /// # Returns
     ///
     /// A vector of SSA passes to run for this obfuscator. Default is empty.
-    fn passes(&self) -> Vec<Box<dyn SsaPass>> {
+    fn passes(&self, _findings: &DeobfuscationFindings) -> Vec<Box<dyn SsaPass>> {
         Vec::new()
     }
 
@@ -181,7 +184,12 @@ pub trait Obfuscator: Send + Sync {
     ///     Ok(current)
     /// }
     /// ```
-    fn deobfuscate(&self, assembly: CilObject, _events: &mut EventLog) -> Result<CilObject> {
+    fn deobfuscate(
+        &self,
+        assembly: CilObject,
+        _events: &mut EventLog,
+        _findings: &mut DeobfuscationFindings,
+    ) -> Result<CilObject> {
         // Default: pass through unchanged (no deobfuscation support)
         Ok(assembly)
     }
@@ -211,7 +219,12 @@ pub trait Obfuscator: Send + Sync {
     ///     }
     /// }
     /// ```
-    fn initialize_context(&self, _ctx: &AnalysisContext, _assembly: &CilObject) {
+    fn initialize_context(
+        &self,
+        _ctx: &AnalysisContext,
+        _assembly: &CilObject,
+        _findings: &DeobfuscationFindings,
+    ) {
         // Default: no initialization needed
     }
 
@@ -254,6 +267,7 @@ pub trait Obfuscator: Send + Sync {
         &self,
         _assembly: &CilObject,
         _ctx: &AnalysisContext,
+        _findings: &DeobfuscationFindings,
     ) -> Result<Option<CleanupRequest>> {
         Ok(None)
     }

@@ -5,8 +5,8 @@
 
 use crate::{
     analysis::x86::types::{
-        DecodedInstruction, EpilogueInfo, PrologueInfo, PrologueKind, X86Condition, X86Instruction,
-        X86Memory, X86Operand, X86Register,
+        X86Condition, X86DecodedInstruction, X86EpilogueInfo, X86Instruction, X86Memory,
+        X86Operand, X86PrologueInfo, X86PrologueKind, X86Register,
     },
     Error, Result,
 };
@@ -37,13 +37,11 @@ use std::collections::VecDeque;
 /// - An invalid instruction is encountered
 /// - An unsupported instruction is encountered
 ///
-/// For permissive decoding that doesn't fail on unsupported instructions,
-/// use [`decode_all_permissive`].
-pub fn decode_all(
+pub fn x86_decode_all(
     bytes: &[u8],
     bitness: u32,
     base_address: u64,
-) -> Result<Vec<DecodedInstruction>> {
+) -> Result<Vec<X86DecodedInstruction>> {
     if bytes.is_empty() {
         return Err(Error::X86Error("Empty input".to_string()));
     }
@@ -69,82 +67,7 @@ pub fn decode_all(
 
         let converted = convert_instruction(&instr, base_address)?;
         let is_ret = matches!(converted, X86Instruction::Ret);
-        instructions.push(DecodedInstruction {
-            offset,
-            length,
-            instruction: converted,
-        });
-
-        // Stop at RET instruction (end of function)
-        if is_ret {
-            break;
-        }
-    }
-
-    Ok(instructions)
-}
-
-/// Decode x86/x64 bytes, stopping at RET but not failing on unsupported instructions.
-///
-/// Unsupported instructions are converted to [`X86Instruction::Unsupported`] rather than
-/// causing an error. This allows for graceful degradation when encountering unknown patterns.
-///
-/// # Arguments
-///
-/// * `bytes` - The x86/x64 machine code bytes
-/// * `bitness` - 32 for x86, 64 for x64
-/// * `base_address` - The base address (RVA) of the code for computing jump targets
-///
-/// # Returns
-///
-/// A vector of decoded instructions. Unsupported instructions are included as
-/// [`X86Instruction::Unsupported`] rather than causing an error.
-///
-/// # Errors
-///
-/// Returns [`Error::X86Error`] if:
-/// - `bytes` is empty
-/// - `bitness` is not 32 or 64
-/// - An invalid (undecodable) instruction is encountered
-pub fn decode_all_permissive(
-    bytes: &[u8],
-    bitness: u32,
-    base_address: u64,
-) -> Result<Vec<DecodedInstruction>> {
-    if bytes.is_empty() {
-        return Err(Error::X86Error("Empty input".to_string()));
-    }
-    if bitness != 32 && bitness != 64 {
-        return Err(Error::X86Error(format!(
-            "Invalid bitness {bitness}, must be 32 or 64"
-        )));
-    }
-
-    let mut decoder = Decoder::with_ip(bitness, bytes, base_address, DecoderOptions::NONE);
-    let mut instructions = Vec::new();
-
-    for instr in &mut decoder {
-        let offset = instr.ip() - base_address;
-        let length = instr.len();
-
-        // Check for invalid instruction
-        if instr.is_invalid() {
-            return Err(Error::X86Error(format!(
-                "Invalid instruction at offset 0x{offset:x}"
-            )));
-        }
-
-        let converted = match convert_instruction(&instr, base_address) {
-            Ok(i) => i,
-            Err(_) => X86Instruction::Unsupported {
-                offset,
-                mnemonic: format!("{:?}", instr.mnemonic()),
-            },
-        };
-
-        let is_ret = matches!(converted, X86Instruction::Ret);
-
-        instructions.push(DecodedInstruction {
+        instructions.push(X86DecodedInstruction {
             offset,
             length,
             instruction: converted,
@@ -161,7 +84,7 @@ pub fn decode_all_permissive(
 
 /// Result of traversal-based decoding.
 ///
-/// This struct is returned by [`decode_function_traversal`] and contains
+/// This struct is returned by [`x86_decode_function_traversal`] and contains
 /// all instructions discovered by following control flow from the entry point.
 ///
 /// # Completeness
@@ -173,7 +96,7 @@ pub fn decode_all_permissive(
 /// # Example
 ///
 /// ```rust,ignore
-/// let result = decode_function_traversal(bytes, 32, 0x1000, 0)?;
+/// let result = x86_decode_function_traversal(bytes, 32, 0x1000, 0)?;
 ///
 /// if result.has_indirect_control_flow {
 ///     println!("Warning: {} unresolved targets", result.unresolved_targets.len());
@@ -182,9 +105,9 @@ pub fn decode_all_permissive(
 /// let cfg = X86Function::new(&result.instructions, 32, 0x1000);
 /// ```
 #[derive(Debug)]
-pub struct TraversalDecodeResult {
+pub struct X86TraversalDecodeResult {
     /// All decoded instructions, sorted by ascending offset.
-    pub instructions: Vec<DecodedInstruction>,
+    pub instructions: Vec<X86DecodedInstruction>,
     /// Addresses that could not be statically resolved.
     ///
     /// These include:
@@ -220,7 +143,7 @@ pub struct TraversalDecodeResult {
 ///
 /// # Returns
 ///
-/// A [`TraversalDecodeResult`] containing:
+/// A [`X86TraversalDecodeResult`] containing:
 /// - All decoded instructions sorted by offset
 /// - Addresses that could not be resolved (external calls, indirect jumps)
 /// - Whether indirect control flow was encountered
@@ -233,12 +156,12 @@ pub struct TraversalDecodeResult {
 ///
 /// Note: Invalid instructions at unreachable addresses are silently skipped,
 /// and unsupported instructions are recorded as [`X86Instruction::Unsupported`].
-pub fn decode_function_traversal(
+pub fn x86_decode_traversal(
     bytes: &[u8],
     bitness: u32,
     base_address: u64,
     entry_offset: u64,
-) -> Result<TraversalDecodeResult> {
+) -> Result<X86TraversalDecodeResult> {
     if bytes.is_empty() {
         return Err(Error::X86Error("Empty input".to_string()));
     }
@@ -256,7 +179,7 @@ pub fn decode_function_traversal(
     // Offsets we've already decoded or queued
     let mut visited: FxHashSet<u64> = FxHashSet::default();
     // Decoded instructions by offset
-    let mut instructions: Vec<DecodedInstruction> = Vec::new();
+    let mut instructions: Vec<X86DecodedInstruction> = Vec::new();
     // Targets we couldn't resolve
     let mut unresolved_targets: Vec<u64> = Vec::new();
     let mut has_indirect = false;
@@ -369,7 +292,7 @@ pub fn decode_function_traversal(
                 }
             }
 
-            instructions.push(DecodedInstruction {
+            instructions.push(X86DecodedInstruction {
                 offset,
                 length,
                 instruction: converted,
@@ -380,11 +303,56 @@ pub fn decode_function_traversal(
     // Sort instructions by offset for consistent ordering
     instructions.sort_by_key(|i| i.offset);
 
-    Ok(TraversalDecodeResult {
+    Ok(X86TraversalDecodeResult {
         instructions,
         unresolved_targets,
         has_indirect_control_flow: has_indirect,
     })
+}
+
+/// Determines the byte size of a native x86/x64 function body.
+///
+/// Uses traversal-based decoding ([`x86_decode_function_traversal`]) to follow
+/// control-flow edges from the entry point, making it robust against
+/// anti-disassembly tricks (junk bytes, embedded data, overlapping
+/// instructions) because only code reachable through actual control flow is
+/// considered.
+///
+/// # Arguments
+///
+/// * `bytes` - Raw machine code bytes starting at the function entry
+/// * `is_64bit` - `true` for x64, `false` for x86
+///
+/// # Returns
+///
+/// The byte extent of the function: `max(offset + length)` across all
+/// reachable instructions. Returns `0` if decoding fails or `bytes` is
+/// empty.
+///
+/// # Examples
+///
+/// ```rust,ignore
+/// use dotscope::analysis::x86_native_body_size;
+///
+/// let code = &[0x55, 0x8B, 0xEC, 0x33, 0xC0, 0x5D, 0xC3]; // push ebp; mov ebp,esp; xor eax,eax; pop ebp; ret
+/// assert!(x86_native_body_size(code, false) > 0);
+/// ```
+#[must_use]
+pub fn x86_native_body_size(bytes: &[u8], is_64bit: bool) -> usize {
+    if bytes.is_empty() {
+        return 0;
+    }
+
+    let bitness = if is_64bit { 64 } else { 32 };
+    match x86_decode_traversal(bytes, bitness, 0, 0) {
+        Ok(result) => result
+            .instructions
+            .iter()
+            .map(|instr| instr.offset as usize + instr.length)
+            .max()
+            .unwrap_or(0),
+        Err(_) => 0,
+    }
 }
 
 /// Decode a single instruction at the given offset.
@@ -410,12 +378,12 @@ pub fn decode_function_traversal(
 /// - `bitness` is not 32 or 64
 /// - `offset` is beyond the end of `bytes`
 /// - The instruction at `offset` is invalid
-pub fn decode_single(
+pub fn x86_decode_single(
     bytes: &[u8],
     bitness: u32,
     base_address: u64,
     offset: u64,
-) -> Result<DecodedInstruction> {
+) -> Result<X86DecodedInstruction> {
     if bytes.is_empty() {
         return Err(Error::X86Error("Empty input".to_string()));
     }
@@ -450,7 +418,7 @@ pub fn decode_single(
 
         let converted = convert_instruction(&instr, base_address)?;
 
-        Ok(DecodedInstruction {
+        Ok(X86DecodedInstruction {
             offset,
             length: instr.len(),
             instruction: converted,
@@ -479,8 +447,16 @@ fn convert_instruction(instr: &Instruction, base_address: u64) -> Result<X86Inst
         // Arithmetic
         Mnemonic::Add => convert_binary_op(instr, |dst, src| X86Instruction::Add { dst, src }),
         Mnemonic::Sub => convert_binary_op(instr, |dst, src| X86Instruction::Sub { dst, src }),
+        Mnemonic::Adc => convert_binary_op(instr, |dst, src| X86Instruction::Adc { dst, src }),
+        Mnemonic::Sbb => convert_binary_op(instr, |dst, src| X86Instruction::Sbb { dst, src }),
         Mnemonic::Imul => convert_imul(instr),
         Mnemonic::Mul => convert_mul(instr),
+        Mnemonic::Div => Ok(X86Instruction::Div {
+            src: convert_operand(instr, 0)?,
+        }),
+        Mnemonic::Idiv => Ok(X86Instruction::Idiv {
+            src: convert_operand(instr, 0)?,
+        }),
         Mnemonic::Neg => convert_unary_op(instr, |dst| X86Instruction::Neg { dst }),
         Mnemonic::Inc => convert_unary_op(instr, |dst| X86Instruction::Inc { dst }),
         Mnemonic::Dec => convert_unary_op(instr, |dst| X86Instruction::Dec { dst }),
@@ -499,6 +475,69 @@ fn convert_instruction(instr: &Instruction, base_address: u64) -> Result<X86Inst
         Mnemonic::Sar => convert_shift(instr, |dst, count| X86Instruction::Sar { dst, count }),
         Mnemonic::Rol => convert_shift(instr, |dst, count| X86Instruction::Rol { dst, count }),
         Mnemonic::Ror => convert_shift(instr, |dst, count| X86Instruction::Ror { dst, count }),
+
+        // Byte swap / bit operations
+        Mnemonic::Bswap => Ok(X86Instruction::Bswap {
+            dst: convert_register(instr.op0_register())?,
+        }),
+        Mnemonic::Bsf => Ok(X86Instruction::Bsf {
+            dst: convert_register(instr.op0_register())?,
+            src: convert_operand(instr, 1)?,
+        }),
+        Mnemonic::Bsr => Ok(X86Instruction::Bsr {
+            dst: convert_register(instr.op0_register())?,
+            src: convert_operand(instr, 1)?,
+        }),
+        Mnemonic::Bt => Ok(X86Instruction::Bt {
+            src: convert_operand(instr, 0)?,
+            bit: convert_operand(instr, 1)?,
+        }),
+        Mnemonic::Bts | Mnemonic::Btr | Mnemonic::Btc => {
+            // BTS/BTR/BTC modify the bit but we approximate as BT (test only)
+            Ok(X86Instruction::Bt {
+                src: convert_operand(instr, 0)?,
+                bit: convert_operand(instr, 1)?,
+            })
+        }
+
+        // Exchange and add
+        Mnemonic::Xadd => convert_binary_op(instr, |dst, src| X86Instruction::Xadd { dst, src }),
+
+        // Conditional move
+        Mnemonic::Cmove
+        | Mnemonic::Cmovne
+        | Mnemonic::Cmovl
+        | Mnemonic::Cmovge
+        | Mnemonic::Cmovle
+        | Mnemonic::Cmovg
+        | Mnemonic::Cmovb
+        | Mnemonic::Cmovae
+        | Mnemonic::Cmovbe
+        | Mnemonic::Cmova
+        | Mnemonic::Cmovs
+        | Mnemonic::Cmovns
+        | Mnemonic::Cmovo
+        | Mnemonic::Cmovno
+        | Mnemonic::Cmovp
+        | Mnemonic::Cmovnp => convert_cmovcc(instr),
+
+        // Set byte on condition
+        Mnemonic::Sete
+        | Mnemonic::Setne
+        | Mnemonic::Setl
+        | Mnemonic::Setge
+        | Mnemonic::Setle
+        | Mnemonic::Setg
+        | Mnemonic::Setb
+        | Mnemonic::Setae
+        | Mnemonic::Setbe
+        | Mnemonic::Seta
+        | Mnemonic::Sets
+        | Mnemonic::Setns
+        | Mnemonic::Seto
+        | Mnemonic::Setno
+        | Mnemonic::Setp
+        | Mnemonic::Setnp => convert_setcc(instr),
 
         // Comparison
         Mnemonic::Cmp => convert_cmp(instr),
@@ -529,6 +568,17 @@ fn convert_instruction(instr: &Instruction, base_address: u64) -> Result<X86Inst
         Mnemonic::Nop | Mnemonic::Fnop => Ok(X86Instruction::Nop),
         Mnemonic::Cdq | Mnemonic::Cqo => Ok(X86Instruction::Cdq),
         Mnemonic::Cwde | Mnemonic::Cdqe => Ok(X86Instruction::Cwde),
+        Mnemonic::Cbw => Ok(X86Instruction::Cwde), // Sign-extend AL into AX
+        Mnemonic::Cwd => Ok(X86Instruction::Cdq),  // Sign-extend AX into DX:AX
+
+        // Flag manipulation without computational side effects.
+        // CLD/STD only affect direction flag (relevant for string ops we don't support).
+        // CLC/STC/CMC modify CF which matters for Adc/Sbb - but if no Adc/Sbb follows,
+        // these are effectively no-ops. We map them here; the SSA translator handles CF.
+        Mnemonic::Cld | Mnemonic::Std => Ok(X86Instruction::Nop),
+
+        // FPU synchronization (no computational side effects)
+        Mnemonic::Wait => Ok(X86Instruction::Nop),
 
         // Unsupported
         _ => Err(Error::X86Error(format!(
@@ -676,6 +726,71 @@ fn convert_jcc(instr: &Instruction) -> Result<X86Instruction> {
 fn convert_call(instr: &Instruction) -> Result<X86Instruction> {
     let target = get_branch_target(instr)?;
     Ok(X86Instruction::Call { target })
+}
+
+fn convert_cmovcc(instr: &Instruction) -> Result<X86Instruction> {
+    let condition = cmovcc_to_condition(instr.mnemonic())?;
+    let dst = convert_register(instr.op0_register())?;
+    let src = convert_operand(instr, 1)?;
+    Ok(X86Instruction::Cmovcc {
+        condition,
+        dst,
+        src,
+    })
+}
+
+fn convert_setcc(instr: &Instruction) -> Result<X86Instruction> {
+    let condition = setcc_to_condition(instr.mnemonic())?;
+    let dst = convert_operand(instr, 0)?;
+    Ok(X86Instruction::Setcc { condition, dst })
+}
+
+fn cmovcc_to_condition(mnemonic: Mnemonic) -> Result<X86Condition> {
+    match mnemonic {
+        Mnemonic::Cmove => Ok(X86Condition::E),
+        Mnemonic::Cmovne => Ok(X86Condition::Ne),
+        Mnemonic::Cmovl => Ok(X86Condition::L),
+        Mnemonic::Cmovge => Ok(X86Condition::Ge),
+        Mnemonic::Cmovle => Ok(X86Condition::Le),
+        Mnemonic::Cmovg => Ok(X86Condition::G),
+        Mnemonic::Cmovb => Ok(X86Condition::B),
+        Mnemonic::Cmovae => Ok(X86Condition::Ae),
+        Mnemonic::Cmovbe => Ok(X86Condition::Be),
+        Mnemonic::Cmova => Ok(X86Condition::A),
+        Mnemonic::Cmovs => Ok(X86Condition::S),
+        Mnemonic::Cmovns => Ok(X86Condition::Ns),
+        Mnemonic::Cmovo => Ok(X86Condition::O),
+        Mnemonic::Cmovno => Ok(X86Condition::No),
+        Mnemonic::Cmovp => Ok(X86Condition::P),
+        Mnemonic::Cmovnp => Ok(X86Condition::Np),
+        _ => Err(Error::SsaError(format!(
+            "Unknown CMOVcc mnemonic: {mnemonic:?}"
+        ))),
+    }
+}
+
+fn setcc_to_condition(mnemonic: Mnemonic) -> Result<X86Condition> {
+    match mnemonic {
+        Mnemonic::Sete => Ok(X86Condition::E),
+        Mnemonic::Setne => Ok(X86Condition::Ne),
+        Mnemonic::Setl => Ok(X86Condition::L),
+        Mnemonic::Setge => Ok(X86Condition::Ge),
+        Mnemonic::Setle => Ok(X86Condition::Le),
+        Mnemonic::Setg => Ok(X86Condition::G),
+        Mnemonic::Setb => Ok(X86Condition::B),
+        Mnemonic::Setae => Ok(X86Condition::Ae),
+        Mnemonic::Setbe => Ok(X86Condition::Be),
+        Mnemonic::Seta => Ok(X86Condition::A),
+        Mnemonic::Sets => Ok(X86Condition::S),
+        Mnemonic::Setns => Ok(X86Condition::Ns),
+        Mnemonic::Seto => Ok(X86Condition::O),
+        Mnemonic::Setno => Ok(X86Condition::No),
+        Mnemonic::Setp => Ok(X86Condition::P),
+        Mnemonic::Setnp => Ok(X86Condition::Np),
+        _ => Err(Error::SsaError(format!(
+            "Unknown SETcc mnemonic: {mnemonic:?}"
+        ))),
+    }
 }
 
 fn get_branch_target(instr: &Instruction) -> Result<u64> {
@@ -839,6 +954,14 @@ fn convert_register(reg: Register) -> Result<X86Register> {
         Register::SI => Ok(X86Register::Si),
         Register::DI => Ok(X86Register::Di),
 
+        // Segment registers
+        Register::ES => Ok(X86Register::Es),
+        Register::CS => Ok(X86Register::Cs),
+        Register::SS => Ok(X86Register::Ss),
+        Register::DS => Ok(X86Register::Ds),
+        Register::FS => Ok(X86Register::Fs),
+        Register::GS => Ok(X86Register::Gs),
+
         _ => Err(Error::SsaError(format!("Unsupported register: {reg:?}"))),
     }
 }
@@ -922,10 +1045,10 @@ const PATTERNS_X64: [&[u8]; 22] = [
 ///
 /// # Returns
 ///
-/// A [`PrologueInfo`] describing the detected prologue, or [`PrologueKind::None`]
+/// An [`X86PrologueInfo`] describing the detected prologue, or [`X86PrologueKind::None`]
 /// if no known pattern was found.
 #[must_use]
-pub fn detect_prologue(bytes: &[u8], bitness: u32) -> PrologueInfo {
+pub fn x86_detect_prologue(bytes: &[u8], bitness: u32) -> X86PrologueInfo {
     // DynCipher prologue (20 bytes) - ConfuserEx specific
     // 89 e0           mov eax, esp
     // 53              push ebx
@@ -944,16 +1067,16 @@ pub fn detect_prologue(bytes: &[u8], bitness: u32) -> PrologueInfo {
     ];
 
     if bytes.is_empty() {
-        return PrologueInfo {
-            kind: PrologueKind::None,
+        return X86PrologueInfo {
+            kind: X86PrologueKind::None,
             size: 0,
             arg_count: 0,
         };
     }
 
     if bytes.len() >= 20 && bytes[..20] == DYNCIPHER_PROLOGUE {
-        return PrologueInfo {
-            kind: PrologueKind::DynCipher,
+        return X86PrologueInfo {
+            kind: X86PrologueKind::DynCipher,
             size: 20,
             arg_count: 1,
         };
@@ -962,8 +1085,8 @@ pub fn detect_prologue(bytes: &[u8], bitness: u32) -> PrologueInfo {
     // Standard 32-bit prologue: push ebp; mov ebp, esp (MSVC)
     if bitness == 32 && bytes.len() >= 3 && bytes[0] == 0x55 && bytes[1] == 0x8B && bytes[2] == 0xEC
     {
-        return PrologueInfo {
-            kind: PrologueKind::Standard32,
+        return X86PrologueInfo {
+            kind: X86PrologueKind::Standard32,
             size: 3,
             arg_count: 0,
         };
@@ -972,8 +1095,8 @@ pub fn detect_prologue(bytes: &[u8], bitness: u32) -> PrologueInfo {
     // Standard 32-bit prologue: push ebp; mov ebp, esp (GCC)
     if bitness == 32 && bytes.len() >= 3 && bytes[0] == 0x55 && bytes[1] == 0x89 && bytes[2] == 0xE5
     {
-        return PrologueInfo {
-            kind: PrologueKind::Standard32,
+        return X86PrologueInfo {
+            kind: X86PrologueKind::Standard32,
             size: 3,
             arg_count: 0,
         };
@@ -987,8 +1110,8 @@ pub fn detect_prologue(bytes: &[u8], bitness: u32) -> PrologueInfo {
         && bytes[2] == 0x89
         && bytes[3] == 0xE5
     {
-        return PrologueInfo {
-            kind: PrologueKind::Standard64,
+        return X86PrologueInfo {
+            kind: X86PrologueKind::Standard64,
             size: 4,
             arg_count: 0,
         };
@@ -1003,8 +1126,8 @@ pub fn detect_prologue(bytes: &[u8], bitness: u32) -> PrologueInfo {
 
     for pattern in patterns {
         if bytes.len() >= pattern.len() && bytes[..pattern.len()] == **pattern {
-            return PrologueInfo {
-                kind: PrologueKind::StackFrame {
+            return X86PrologueInfo {
+                kind: X86PrologueKind::StackFrame {
                     is_64bit: bitness == 64,
                 },
                 size: pattern.len(),
@@ -1013,8 +1136,8 @@ pub fn detect_prologue(bytes: &[u8], bitness: u32) -> PrologueInfo {
         }
     }
 
-    PrologueInfo {
-        kind: PrologueKind::None,
+    X86PrologueInfo {
+        kind: X86PrologueKind::None,
         size: 0,
         arg_count: 0,
     }
@@ -1030,7 +1153,7 @@ pub fn detect_prologue(bytes: &[u8], bitness: u32) -> PrologueInfo {
 /// c3              ret
 /// ```
 #[must_use]
-pub fn detect_epilogue(instructions: &[DecodedInstruction]) -> Option<EpilogueInfo> {
+pub fn x86_detect_epilogue(instructions: &[X86DecodedInstruction]) -> Option<X86EpilogueInfo> {
     // Need at least 4 instructions for the epilogue
     if instructions.len() < 4 {
         return None;
@@ -1061,7 +1184,7 @@ pub fn detect_epilogue(instructions: &[DecodedInstruction]) -> Option<EpilogueIn
     let ret = matches!(instructions[len - 1].instruction, X86Instruction::Ret);
 
     if pop_esi && pop_edi && pop_ebx && ret {
-        Some(EpilogueInfo {
+        Some(X86EpilogueInfo {
             offset: instructions[len - 4].offset,
             size: 4, // 4 bytes: pop esi (1) + pop edi (1) + pop ebx (1) + ret (1)
         })
@@ -1073,15 +1196,15 @@ pub fn detect_epilogue(instructions: &[DecodedInstruction]) -> Option<EpilogueIn
 #[cfg(test)]
 mod tests {
     use crate::analysis::x86::{
-        decoder::{decode_all, detect_prologue},
-        types::{PrologueKind, X86Condition, X86Instruction, X86Operand, X86Register},
+        decoder::{x86_decode_all, x86_detect_prologue},
+        types::{X86Condition, X86Instruction, X86Operand, X86PrologueKind, X86Register},
     };
 
     #[test]
     fn test_decode_simple_mov() {
         // mov eax, 0x1234
         let bytes = [0xb8, 0x34, 0x12, 0x00, 0x00, 0xc3];
-        let result = decode_all(&bytes, 32, 0).unwrap();
+        let result = x86_decode_all(&bytes, 32, 0).unwrap();
 
         assert_eq!(result.len(), 2);
         match &result[0].instruction {
@@ -1099,7 +1222,7 @@ mod tests {
         // add eax, 5
         // ret
         let bytes = [0x83, 0xc0, 0x05, 0xc3];
-        let result = decode_all(&bytes, 32, 0).unwrap();
+        let result = x86_decode_all(&bytes, 32, 0).unwrap();
 
         assert_eq!(result.len(), 2);
         match &result[0].instruction {
@@ -1116,7 +1239,7 @@ mod tests {
         // xor eax, ecx
         // ret
         let bytes = [0x31, 0xc8, 0xc3];
-        let result = decode_all(&bytes, 32, 0).unwrap();
+        let result = x86_decode_all(&bytes, 32, 0).unwrap();
 
         assert_eq!(result.len(), 2);
         match &result[0].instruction {
@@ -1140,7 +1263,7 @@ mod tests {
             0x83, 0xc0, 0x01, // add eax, 1
             0xc3, // ret
         ];
-        let result = decode_all(&bytes, 32, 0).unwrap();
+        let result = x86_decode_all(&bytes, 32, 0).unwrap();
 
         assert_eq!(result.len(), 4);
         assert!(matches!(result[0].instruction, X86Instruction::Cmp { .. }));
@@ -1158,7 +1281,7 @@ mod tests {
         // mov eax, [esp + 16]
         // ret
         let bytes = [0x8b, 0x44, 0x24, 0x10, 0xc3];
-        let result = decode_all(&bytes, 32, 0).unwrap();
+        let result = x86_decode_all(&bytes, 32, 0).unwrap();
 
         assert_eq!(result.len(), 2);
         match &result[0].instruction {
@@ -1193,8 +1316,8 @@ mod tests {
             0xc3, // ret (body would follow)
         ];
 
-        let info = detect_prologue(&prologue, 32);
-        assert_eq!(info.kind, PrologueKind::DynCipher);
+        let info = x86_detect_prologue(&prologue, 32);
+        assert_eq!(info.kind, X86PrologueKind::DynCipher);
         assert_eq!(info.size, 20);
         assert_eq!(info.arg_count, 1);
     }
@@ -1202,8 +1325,8 @@ mod tests {
     #[test]
     fn test_detect_standard_32bit_prologue() {
         let bytes = [0x55, 0x89, 0xe5, 0xc3]; // push ebp; mov ebp, esp; ret
-        let info = detect_prologue(&bytes, 32);
-        assert_eq!(info.kind, PrologueKind::Standard32);
+        let info = x86_detect_prologue(&bytes, 32);
+        assert_eq!(info.kind, X86PrologueKind::Standard32);
         assert_eq!(info.size, 3);
     }
 
@@ -1214,7 +1337,7 @@ mod tests {
         let bytes = [
             0x48, 0xb8, 0x89, 0x67, 0x45, 0x23, 0x01, 0x00, 0x00, 0x00, 0xc3,
         ];
-        let result = decode_all(&bytes, 64, 0).unwrap();
+        let result = x86_decode_all(&bytes, 64, 0).unwrap();
 
         assert_eq!(result.len(), 2);
         match &result[0].instruction {

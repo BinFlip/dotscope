@@ -8,7 +8,8 @@ use std::sync::Arc;
 use crate::{
     compiler::SsaPass,
     deobfuscation::{
-        detection::{DetectionResult, DetectionScore},
+        detection::DetectionScore,
+        findings::DeobfuscationFindings,
         obfuscators::{Obfuscator, ObfuscatorRegistry},
     },
     CilObject,
@@ -25,9 +26,9 @@ use crate::{
 /// use dotscope::deobfuscation::ObfuscatorDetector;
 ///
 /// let detector = ObfuscatorDetector::with_defaults();
-/// let result = detector.detect(&assembly);
+/// let (obfuscator, findings) = detector.detect(&assembly);
 ///
-/// if let Some(obfuscator) = result.primary() {
+/// if let Some(obfuscator) = &obfuscator {
 ///     println!("Detected: {}", obfuscator.name());
 /// }
 /// ```
@@ -121,7 +122,7 @@ impl ObfuscatorDetector {
     /// Runs detection on an assembly using all registered obfuscators.
     ///
     /// Each obfuscator evaluates the assembly and returns a confidence score.
-    /// Obfuscators scoring above the threshold are included in the results.
+    /// The winning obfuscator's findings (with detection score) are returned.
     ///
     /// # Arguments
     ///
@@ -129,16 +130,30 @@ impl ObfuscatorDetector {
     ///
     /// # Returns
     ///
-    /// A [`DetectionResult`] containing the primary detected obfuscator
-    /// and all candidates that scored above the threshold.
-    pub fn detect(&self, assembly: &CilObject) -> DetectionResult {
-        let threshold = self.registry.threshold();
+    /// A tuple of the primary obfuscator (if any scored above threshold) and
+    /// the winning findings with detection score embedded.
+    pub fn detect(
+        &self,
+        assembly: &CilObject,
+    ) -> (Option<Arc<dyn Obfuscator>>, DeobfuscationFindings) {
         let all_detected = self.registry.detect(assembly);
+
         let primary_obfuscator = all_detected
             .first()
-            .and_then(|(id, _)| self.registry.get(id).cloned());
+            .and_then(|(id, _, _)| self.registry.get(id).cloned());
 
-        DetectionResult::new(primary_obfuscator, all_detected, threshold)
+        // Extract the winning findings, or create empty ones
+        let mut findings = all_detected
+            .first()
+            .map(|(_, _, f)| f.clone())
+            .unwrap_or_default();
+
+        // Populate obfuscator name from the winning obfuscator
+        if let Some(obfuscator) = &primary_obfuscator {
+            findings.obfuscator_name = Some(obfuscator.name());
+        }
+
+        (primary_obfuscator, findings)
     }
 
     /// Returns the best matching obfuscator for an assembly.
@@ -184,7 +199,8 @@ impl ObfuscatorDetector {
 
         for id in self.registry.obfuscator_ids() {
             if let Some(obfuscator) = self.registry.get(id) {
-                let score = obfuscator.detect(assembly);
+                let mut findings = DeobfuscationFindings::new();
+                let score = obfuscator.detect(assembly, &mut findings);
                 if score.score() >= threshold {
                     return Some(id.to_string());
                 }
@@ -211,9 +227,10 @@ impl ObfuscatorDetector {
             .obfuscator_ids()
             .iter()
             .filter_map(|id| {
-                self.registry
-                    .get(id)
-                    .map(|o| ((*id).to_string(), o.detect(assembly)))
+                self.registry.get(id).map(|o| {
+                    let mut findings = DeobfuscationFindings::new();
+                    ((*id).to_string(), o.detect(assembly, &mut findings))
+                })
             })
             .collect()
     }
@@ -307,7 +324,7 @@ impl DetectorBuilder {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::deobfuscation::{detection::DetectionScore, detector::ObfuscatorDetector};
 
     #[test]
     fn test_detector_creation() {
@@ -324,23 +341,9 @@ mod tests {
     }
 
     #[test]
-    fn test_detection_result() {
-        let result = DetectionResult::empty(50);
-
-        assert!(!result.detected());
-        assert!(result.primary().is_none());
-    }
-
-    #[test]
-    fn test_detection_result_with_candidates() {
-        // Test with candidates but no primary obfuscator (no Arc available in unit test)
-        let result = DetectionResult::new(
-            None,
-            vec![("test".to_string(), DetectionScore::with_score(80))],
-            50,
-        );
-
-        assert!(!result.detected());
-        assert!(result.has("test"));
+    fn test_detection_score_basic() {
+        let score = DetectionScore::with_score(80);
+        assert!(score.meets_threshold(50));
+        assert!(!score.meets_threshold(90));
     }
 }

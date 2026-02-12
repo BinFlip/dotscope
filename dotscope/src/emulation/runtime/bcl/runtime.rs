@@ -1,8 +1,8 @@
-//! `System.Runtime.CompilerServices.RuntimeHelpers` method hooks.
+//! `System.Runtime.CompilerServices.RuntimeHelpers` and `System.Object` method hooks.
 //!
-//! This module provides hook implementations for `RuntimeHelpers` and related methods
-//! commonly used by obfuscators for array initialization, hash code computation, and
-//! runtime support operations.
+//! This module provides hook implementations for `RuntimeHelpers` and `Object` methods
+//! commonly used by obfuscators for array initialization, hash code computation,
+//! equality checks, and runtime support operations.
 //!
 //! # Overview
 //!
@@ -20,6 +20,8 @@
 //! | `GetObjectValue(object)` | Returns object (boxes value types) |
 //! | `RunClassConstructor(RuntimeTypeHandle)` | Runs static constructor (no-op) |
 //! | `RunModuleConstructor(ModuleHandle)` | Runs module constructor (no-op) |
+//! | `Object.Equals(object)` | Instance reference/value equality |
+//! | `Object.Equals(object, object)` | Static reference/value equality |
 //!
 //! # Deobfuscation Use Cases
 //!
@@ -73,6 +75,7 @@ use crate::{
 /// - `RuntimeHelpers.GetObjectValue` - Return object (box value types)
 /// - `RuntimeHelpers.RunClassConstructor` - No-op
 /// - `RuntimeHelpers.RunModuleConstructor` - No-op
+/// - `Object.Equals` - Reference/value equality (instance and static)
 pub fn register(manager: &mut HookManager) {
     manager.register(
         Hook::new("System.Runtime.CompilerServices.RuntimeHelpers.InitializeArray")
@@ -132,6 +135,14 @@ pub fn register(manager: &mut HookManager) {
                 "RunModuleConstructor",
             )
             .pre(runtime_helpers_run_module_constructor_pre),
+    );
+
+    // System.Object.Equals - handles both instance and static overloads.
+    // Critical for ConfuserEx anti-tamper: Assembly.GetExecutingAssembly().Equals(...)
+    manager.register(
+        Hook::new("System.Object.Equals")
+            .match_name("System", "Object", "Equals")
+            .pre(object_equals_pre),
     );
 }
 
@@ -425,6 +436,40 @@ fn runtime_helpers_run_module_constructor_pre(
     PreHookResult::Bypass(None)
 }
 
+/// Hook for `System.Object.Equals` method.
+///
+/// Handles both the instance and static overloads:
+///
+/// - `object.Equals(object) -> bool` (instance, virtual)
+/// - `Object.Equals(object, object) -> bool` (static)
+///
+/// Uses reference equality for object references and value equality for
+/// primitives. This is critical for ConfuserEx anti-tamper checks which call
+/// `Assembly.GetExecutingAssembly().Equals(Assembly.GetCallingAssembly())`.
+/// Without this hook, the call returns a Symbolic value, and depending on
+/// how ControlFlow protection restructures branches, the anti-tamper check
+/// may incorrectly fail, causing decryptors to return null.
+fn object_equals_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    // Instance overload: this.Equals(other)
+    if let Some(this) = ctx.this {
+        let other = if ctx.args.is_empty() {
+            &EmValue::Null
+        } else {
+            &ctx.args[0]
+        };
+        let equal = this.clr_equals(other);
+        return PreHookResult::Bypass(Some(EmValue::I32(i32::from(equal))));
+    }
+
+    // Static overload: Object.Equals(a, b)
+    if ctx.args.len() >= 2 {
+        let equal = ctx.args[0].clr_equals(&ctx.args[1]);
+        return PreHookResult::Bypass(Some(EmValue::I32(i32::from(equal))));
+    }
+
+    PreHookResult::Bypass(Some(EmValue::I32(0)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -437,7 +482,7 @@ mod tests {
     fn test_register_hooks() {
         let mut manager = HookManager::new();
         register(&mut manager);
-        assert_eq!(manager.len(), 6);
+        assert_eq!(manager.len(), 7);
     }
 
     #[test]

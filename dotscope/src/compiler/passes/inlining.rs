@@ -30,6 +30,14 @@
 //! When a proxy is detected, the call is replaced with a direct call to the
 //! forwarding target, eliminating the proxy overhead.
 //!
+//! # Proxy-Only Mode
+//!
+//! When `proxy_only` is enabled, the pass only performs proxy devirtualization.
+//! Full method body inlining and no-op elimination are skipped. This mode is
+//! used when the pass is triggered by obfuscator proxy detection (e.g.,
+//! ConfuserEx ReferenceProxy) to remove obfuscation indirection without
+//! altering the original program structure.
+//!
 //! # Safety
 //!
 //! Inlining preserves semantics by:
@@ -415,30 +423,35 @@ impl<'a> InliningContext<'a> {
             // Resolve MemberRef tokens to MethodDef tokens for SSA lookup
             let callee_token = self.resolve_to_method_def(raw_callee_token);
 
-            // Try full inlining first (for pure methods)
-            if self.should_inline(callee_token) {
-                candidates.push(InlineCandidate {
-                    block_idx,
-                    instr_idx,
-                    callee_token,
-                    action: InlineAction::FullInline,
-                });
+            if !self.pass.proxy_only {
+                // Try full inlining first (for pure methods)
+                if self.should_inline(callee_token) {
+                    candidates.push(InlineCandidate {
+                        block_idx,
+                        instr_idx,
+                        callee_token,
+                        action: InlineAction::FullInline,
+                    });
+                    continue;
+                }
+                // Try no-op elimination
+                if let Some(noop_result) = self.detect_noop_method(callee_token) {
+                    let action = match noop_result {
+                        None => InlineAction::NoOpEliminate,
+                        Some(val) => InlineAction::ConstantFold(val),
+                    };
+                    candidates.push(InlineCandidate {
+                        block_idx,
+                        instr_idx,
+                        callee_token,
+                        action,
+                    });
+                    continue;
+                }
             }
-            // Try no-op elimination
-            else if let Some(noop_result) = self.detect_noop_method(callee_token) {
-                let action = match noop_result {
-                    None => InlineAction::NoOpEliminate,
-                    Some(val) => InlineAction::ConstantFold(val),
-                };
-                candidates.push(InlineCandidate {
-                    block_idx,
-                    instr_idx,
-                    callee_token,
-                    action,
-                });
-            }
-            // Try proxy devirtualization
-            else if let Some((target_method, arg_mapping, is_virtual)) =
+
+            // Try proxy devirtualization (always enabled)
+            if let Some((target_method, arg_mapping, is_virtual)) =
                 self.should_devirtualize_proxy(callee_token)
             {
                 candidates.push(InlineCandidate {
@@ -1032,30 +1045,33 @@ impl<'a> InliningContext<'a> {
 /// This pass operates on a per-method basis but consults the global context
 /// to access callee method SSA forms. It identifies call sites where the
 /// callee is small and pure, then replaces the call with the inlined body.
-#[derive(Debug, Default)]
+///
+/// In proxy-only mode, the pass skips full inlining and no-op elimination,
+/// performing only proxy devirtualization. This preserves the original
+/// program structure while removing obfuscation indirection.
+#[derive(Debug)]
 pub struct InliningPass {
     /// Maximum instruction count for inlining candidates.
     inline_threshold: usize,
+    /// When true, only perform proxy devirtualization.
+    /// Full method inlining and no-op elimination are skipped.
+    proxy_only: bool,
 }
 
 impl InliningPass {
-    /// Creates a new inlining pass with default threshold (20 instructions).
-    #[must_use]
-    pub fn new() -> Self {
-        Self {
-            inline_threshold: 20,
-        }
-    }
-
-    /// Creates a new inlining pass with a custom threshold.
+    /// Creates a new inlining pass.
     ///
     /// # Arguments
     ///
     /// * `threshold` - Maximum instruction count for methods to be inlined.
+    /// * `proxy_only` - When true, only proxy devirtualization is performed.
+    ///   Full method body inlining is disabled, preserving the original
+    ///   program structure while removing obfuscation indirection.
     #[must_use]
-    pub fn with_threshold(threshold: usize) -> Self {
+    pub fn new(threshold: usize, proxy_only: bool) -> Self {
         Self {
             inline_threshold: threshold,
+            proxy_only,
         }
     }
 
@@ -1249,12 +1265,18 @@ mod tests {
 
     #[test]
     fn test_pass_creation() {
-        let pass = InliningPass::new();
+        let pass = InliningPass::new(20, false);
         assert_eq!(pass.name(), "InliningPass");
         assert_eq!(pass.inline_threshold, 20);
+        assert!(!pass.proxy_only);
 
-        let pass_custom = InliningPass::with_threshold(50);
+        let pass_custom = InliningPass::new(50, false);
         assert_eq!(pass_custom.inline_threshold, 50);
+        assert!(!pass_custom.proxy_only);
+
+        let pass_proxy = InliningPass::new(0, true);
+        assert_eq!(pass_proxy.inline_threshold, 0);
+        assert!(pass_proxy.proxy_only);
     }
 
     #[test]
@@ -1295,7 +1317,7 @@ mod tests {
         let call_op = caller_ssa.block(0).unwrap().instructions()[0].op().clone();
 
         // Create inlining context and inline
-        let pass = InliningPass::new();
+        let pass = InliningPass::new(20, false);
         let assembly = test_assembly();
         let mut inline_ctx =
             InliningContext::new(&pass, &mut caller_ssa, caller_token, &ctx, &assembly);
@@ -1343,7 +1365,7 @@ mod tests {
         let call_op = caller_ssa.block(0).unwrap().instructions()[0].op().clone();
 
         // Create inlining context and inline
-        let pass = InliningPass::new();
+        let pass = InliningPass::new(20, false);
         let assembly = test_assembly();
         let mut inline_ctx =
             InliningContext::new(&pass, &mut caller_ssa, caller_token, &ctx, &assembly);
@@ -1363,7 +1385,7 @@ mod tests {
 
     #[test]
     fn test_no_inline_self_recursion() {
-        let pass = InliningPass::new();
+        let pass = InliningPass::new(20, false);
         let token = Token::new(0x06000001);
         let ctx = test_context();
         let assembly = test_assembly();
@@ -1397,7 +1419,7 @@ mod tests {
         let ctx = test_context();
         ctx.set_ssa(callee_token, callee_ssa);
 
-        let pass = InliningPass::new(); // threshold = 20
+        let pass = InliningPass::new(20, false);
         let assembly = test_assembly();
 
         // Create a dummy caller SSA
@@ -1442,7 +1464,7 @@ mod tests {
         let call_op = caller_ssa.block(0).unwrap().instructions()[1].op().clone();
 
         // Create inlining context and inline
-        let pass = InliningPass::new();
+        let pass = InliningPass::new(20, false);
         let assembly = test_assembly();
         let mut inline_ctx =
             InliningContext::new(&pass, &mut caller_ssa, caller_token, &ctx, &assembly);
@@ -1611,7 +1633,7 @@ mod tests {
         let call_op = caller_ssa.block(0).unwrap().instructions()[0].op().clone();
 
         // Devirtualize using InliningContext
-        let pass = InliningPass::new();
+        let pass = InliningPass::new(20, false);
         let assembly = test_assembly();
         let mut inline_ctx =
             InliningContext::new(&pass, &mut caller_ssa, caller_token, &ctx, &assembly);

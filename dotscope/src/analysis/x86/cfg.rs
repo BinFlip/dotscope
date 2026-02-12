@@ -7,7 +7,7 @@
 use crate::{
     analysis::{
         cfg::has_back_edges,
-        x86::types::{DecodedInstruction, X86EdgeKind, X86Instruction},
+        x86::types::{X86DecodedInstruction, X86EdgeKind, X86Instruction},
     },
     utils::graph::{
         algorithms::{compute_dominators, DominatorTree},
@@ -27,7 +27,7 @@ pub struct X86BasicBlock {
     /// Offset where this block ends (exclusive, start of next instruction)
     pub end_offset: u64,
     /// Instructions in this block
-    pub instructions: Vec<DecodedInstruction>,
+    pub instructions: Vec<X86DecodedInstruction>,
 }
 
 impl X86BasicBlock {
@@ -95,7 +95,7 @@ impl X86Function {
     /// The resulting CFG uses a directed graph internally and provides
     /// lazy-computed analysis (dominators, etc.).
     #[must_use]
-    pub fn new(instructions: &[DecodedInstruction], bitness: u32, base_address: u64) -> Self {
+    pub fn new(instructions: &[X86DecodedInstruction], bitness: u32, base_address: u64) -> Self {
         if instructions.is_empty() {
             let graph: DirectedGraph<'static, X86BasicBlock, X86EdgeKind> = DirectedGraph::new();
             return Self {
@@ -257,7 +257,7 @@ impl X86Function {
     }
 
     /// Returns an iterator over all instructions in the function.
-    pub fn instructions(&self) -> impl Iterator<Item = &DecodedInstruction> {
+    pub fn instructions(&self) -> impl Iterator<Item = &X86DecodedInstruction> {
         self.graph
             .nodes()
             .flat_map(|(_, block)| block.instructions.iter())
@@ -466,7 +466,7 @@ mod tests {
     use crate::{
         analysis::x86::{
             cfg::X86Function,
-            decoder::decode_all,
+            decoder::x86_decode_all,
             types::{X86Condition, X86EdgeKind},
         },
         utils::graph::NodeId,
@@ -480,7 +480,7 @@ mod tests {
             0x83, 0xc0, 0x02, // add eax, 2
             0xc3, // ret
         ];
-        let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
+        let instructions = x86_decode_all(&bytes, 32, 0x1000).unwrap();
         let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         assert_eq!(cfg.block_count(), 1);
@@ -502,7 +502,7 @@ mod tests {
             0x83, 0xc0, 0x05, // add eax, 5
             0xc3, // ret
         ];
-        let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
+        let instructions = x86_decode_all(&bytes, 32, 0x1000).unwrap();
         let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         // Should have 3 blocks:
@@ -531,7 +531,7 @@ mod tests {
             0xb8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
             0xc3, // ret
         ];
-        let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
+        let instructions = x86_decode_all(&bytes, 32, 0x1000).unwrap();
         let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         // Should have blocks
@@ -555,7 +555,7 @@ mod tests {
             0xeb, 0xf8, // jmp -8 (to cmp)
             0xc3, // ret
         ];
-        let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
+        let instructions = x86_decode_all(&bytes, 32, 0x1000).unwrap();
         let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         // Should have a loop (back edge)
@@ -579,7 +579,7 @@ mod tests {
             0x83, 0xc0, 0x02, // add eax, 2
             0xc3, // ret
         ];
-        let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
+        let instructions = x86_decode_all(&bytes, 32, 0x1000).unwrap();
         let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         let doms = cfg.dominators();
@@ -595,7 +595,7 @@ mod tests {
             0x83, 0xc0, 0x05, // add eax, 5
             0xc3, // ret
         ];
-        let instructions = decode_all(&bytes, 32, 0x1000).unwrap();
+        let instructions = x86_decode_all(&bytes, 32, 0x1000).unwrap();
         let cfg = X86Function::new(&instructions, 32, 0x1000);
 
         // Check that we have conditional edges

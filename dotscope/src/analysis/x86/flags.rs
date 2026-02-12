@@ -12,6 +12,8 @@
 //! - `CMP a, b` + `Jcc target` → `BranchCmp(cmp, a, b, true_target, false_target)`
 //! - `TEST a, b` + `Jcc target` → `BranchCmp(eq/ne, a & b, 0, ...)`
 //!
+//! For Cmovcc and Setcc, we evaluate the condition into a 0/1 SSA variable.
+//!
 //! # Flag Dependencies
 //!
 //! | Condition | Flags | Meaning |
@@ -48,6 +50,51 @@ use crate::analysis::{
     x86::types::X86Condition,
 };
 
+/// Distinguishes arithmetic operations for overflow flag computation.
+///
+/// Different arithmetic operations compute the overflow flag (OF) differently:
+/// - ADD: OF = sign mismatch between operands and result
+/// - SUB/CMP: OF = sign mismatch in subtraction
+/// - Logical ops: OF = 0 always
+/// - NEG: OF = (operand == INT_MIN)
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArithmeticKind {
+    /// Addition (ADD, INC, ADC, XADD).
+    Add,
+    /// Subtraction (SUB, DEC, SBB, CMP).
+    Sub,
+    /// Logical operation (AND, OR, XOR, TEST) — OF always 0.
+    LogicalOp,
+    /// Negation (NEG) — OF = 1 only when operand is INT_MIN.
+    Neg,
+    /// Other operations (MUL, DIV, shifts) — OF undefined or complex.
+    Other,
+}
+
+/// Source of a value for sign/parity flag testing.
+///
+/// This tells the SSA emitter how to obtain the value whose sign bit
+/// or parity should be tested.
+#[derive(Debug, Clone)]
+pub enum FlagTestSource {
+    /// Use an existing SSA variable directly (from arithmetic result).
+    Direct(SsaVarId),
+    /// Compute left - right (from CMP instruction).
+    Subtract {
+        /// Left operand of the subtraction.
+        left: SsaVarId,
+        /// Right operand of the subtraction.
+        right: SsaVarId,
+    },
+    /// Compute left & right (from TEST instruction).
+    BitwiseAnd {
+        /// Left operand of the AND.
+        left: SsaVarId,
+        /// Right operand of the AND.
+        right: SsaVarId,
+    },
+}
+
 /// Represents what instruction last set the flags.
 ///
 /// This tracks the operands from the most recent flag-setting instruction
@@ -81,24 +128,64 @@ pub enum FlagProducer {
     Arithmetic {
         /// The result of the arithmetic operation.
         result: SsaVarId,
+        /// The left operand of the operation (needed for signed overflow detection).
+        left: SsaVarId,
+        /// The right operand of the operation (needed for signed overflow detection).
+        right: SsaVarId,
+        /// What kind of arithmetic produced these flags (needed for OF computation).
+        kind: ArithmeticKind,
     },
 }
 
 /// Tracks the current state of x86 flags for SSA translation.
 ///
 /// This state is maintained per basic block during translation and is used
-/// to fuse compare/test instructions with subsequent conditional jumps.
+/// to fuse compare/test instructions with subsequent conditional jumps,
+/// and to evaluate conditions for Cmovcc and Setcc.
+///
+/// # Flag Tracking Strategy
+///
+/// Rather than tracking each flag (ZF, SF, OF, CF) as individual SSA variables,
+/// we use two complementary approaches:
+///
+/// 1. **FlagProducer**: Records the source instruction and its operands.
+///    This allows on-demand condition evaluation for Jcc/Cmovcc/Setcc by
+///    producing the right comparison (Clt/Cgt/Ceq) when needed.
+///
+/// 2. **Carry flag (CF)**: Tracked explicitly as an SSA variable because it
+///    is consumed by ADC and SBB which need the actual 0/1 value.
+///
+/// This hybrid approach avoids emitting unused flag computations while still
+/// providing correct flag semantics.
 #[derive(Debug, Clone, Default)]
 pub struct FlagState {
     /// The instruction that last set the flags, if any.
     producer: Option<FlagProducer>,
+    /// The current carry flag (CF) as an SSA variable holding 0 or 1.
+    ///
+    /// Set by:
+    /// - ADD/ADC: CF = (result < left) unsigned (unsigned overflow)
+    /// - SUB/SBB/CMP: CF = (left < right) unsigned (borrow)
+    /// - AND/OR/XOR/TEST: CF = 0
+    /// - NEG: CF = (operand != 0)
+    ///
+    /// Consumed by:
+    /// - ADC: dest = left + right + CF
+    /// - SBB: dest = left - right - CF
+    ///
+    /// Preserved by:
+    /// - INC/DEC (do NOT modify CF)
+    carry: Option<SsaVarId>,
 }
 
 impl FlagState {
     /// Creates a new flag state with no known flags.
     #[must_use]
     pub fn new() -> Self {
-        Self { producer: None }
+        Self {
+            producer: None,
+            carry: None,
+        }
     }
 
     /// Records that a CMP instruction set the flags.
@@ -123,16 +210,64 @@ impl FlagState {
 
     /// Records that an arithmetic operation set the flags.
     ///
-    /// # Arguments
+    /// Stores the result, both operands, and the arithmetic kind so that
+    /// all flag conditions (including S/NS/O/NO/P/NP) can be properly evaluated.
+    pub fn set_arithmetic(
+        &mut self,
+        result: SsaVarId,
+        left: SsaVarId,
+        right: SsaVarId,
+        kind: ArithmeticKind,
+    ) {
+        self.producer = Some(FlagProducer::Arithmetic {
+            result,
+            left,
+            right,
+            kind,
+        });
+    }
+
+    /// Records that a NEG operation set the flags.
     ///
-    /// * `result` - SSA variable for the operation result
-    pub fn set_arithmetic(&mut self, result: SsaVarId) {
-        self.producer = Some(FlagProducer::Arithmetic { result });
+    /// For NEG, the result is the only meaningful value. OF is set only
+    /// when the original operand was INT_MIN.
+    pub fn set_arithmetic_unary(&mut self, result: SsaVarId) {
+        self.producer = Some(FlagProducer::Arithmetic {
+            result,
+            left: result,
+            right: result,
+            kind: ArithmeticKind::Neg,
+        });
     }
 
     /// Clears the flag state (flags are now unknown).
+    /// Also clears the carry flag.
     pub fn clear(&mut self) {
         self.producer = None;
+        self.carry = None;
+    }
+
+    /// Clears only the producer (for instructions like MOV that don't set flags)
+    /// without affecting the carry flag.
+    pub fn clear_producer(&mut self) {
+        self.producer = None;
+    }
+
+    /// Sets the carry flag to a specific SSA variable (must hold 0 or 1).
+    pub fn set_carry(&mut self, carry: SsaVarId) {
+        self.carry = Some(carry);
+    }
+
+    /// Clears the carry flag to a specific SSA variable representing zero.
+    /// Used after AND/OR/XOR/TEST which always clear CF.
+    pub fn clear_carry(&mut self, zero: SsaVarId) {
+        self.carry = Some(zero);
+    }
+
+    /// Returns the current carry flag SSA variable, if known.
+    #[must_use]
+    pub fn carry(&self) -> Option<SsaVarId> {
+        self.carry
     }
 
     /// Returns the current flag producer, if any.
@@ -147,7 +282,7 @@ impl FlagState {
         self.producer.is_some()
     }
 
-    /// Converts an x86 condition to SSA comparison operands.
+    /// Converts an x86 condition to SSA comparison operands for `BranchCmp`.
     ///
     /// Returns the comparison kind, operands, and whether to use unsigned comparison.
     /// Returns `None` if the flags are unknown or the condition cannot be translated.
@@ -172,42 +307,222 @@ impl FlagState {
             Some(FlagProducer::Test { left, right }) => {
                 // TEST sets ZF = ((left & right) == 0)
                 // For E/NE conditions, we can translate directly
-                // For other conditions, we need the AND result
                 match condition {
                     X86Condition::E => {
                         // JE after TEST: branch if (left & right) == 0
-                        // We need to compute the AND first, then compare to 0
-                        // For now, return the test operands - the translator will handle this
                         Some((CmpKind::Eq, *left, *right, false))
                     }
                     X86Condition::Ne => {
                         // JNE after TEST: branch if (left & right) != 0
                         Some((CmpKind::Ne, *left, *right, false))
                     }
-                    // Other conditions after TEST are rare and complex
-                    // SF tests sign of (left & right), etc.
-                    X86Condition::S | X86Condition::Ns => {
-                        // Sign flag - need to check MSB of (left & right)
-                        None
-                    }
+                    // S/NS after TEST: test sign bit of (left & right)
+                    // These are handled by the caller computing AND first
+                    X86Condition::S | X86Condition::Ns => None,
                     _ => None,
                 }
             }
-            Some(FlagProducer::Arithmetic { result }) => {
+            Some(FlagProducer::Arithmetic {
+                result,
+                left,
+                right,
+                ..
+            }) => {
                 // Arithmetic ops set ZF/SF based on result
-                // Only E/NE (zero test) and S/NS (sign test) are straightforward
                 match condition {
-                    X86Condition::E => {
-                        // Result == 0
-                        Some((CmpKind::Eq, *result, *result, false))
+                    // Zero flag: result == 0
+                    X86Condition::E => Some((CmpKind::Eq, *result, *result, false)),
+                    X86Condition::Ne => Some((CmpKind::Ne, *result, *result, false)),
+                    // For signed comparisons after arithmetic, we use the original
+                    // operands since CIL comparison handles the signed semantics.
+                    // This works because ADD/SUB set flags based on (left op right).
+                    X86Condition::L | X86Condition::Ge | X86Condition::Le | X86Condition::G => {
+                        let (cmp, unsigned) = condition_to_cmp(condition)?;
+                        Some((cmp, *left, *right, unsigned))
                     }
-                    X86Condition::Ne => {
-                        // Result != 0
-                        Some((CmpKind::Ne, *result, *result, false))
+                    // Unsigned comparisons after arithmetic
+                    X86Condition::B | X86Condition::Ae | X86Condition::Be | X86Condition::A => {
+                        let (cmp, unsigned) = condition_to_cmp(condition)?;
+                        Some((cmp, *left, *right, unsigned))
                     }
+                    // S/NS/O/NO/P/NP handled via evaluate_condition fallback
                     _ => None,
                 }
             }
+            None => None,
+        }
+    }
+
+    /// Returns the condition evaluation info for producing a 0/1 SSA value.
+    ///
+    /// Used by Cmovcc, Setcc, and the Jcc fallback to evaluate conditions into
+    /// values rather than branches. Handles all 16 x86 condition codes including
+    /// S/NS (sign), O/NO (overflow), and P/NP (parity).
+    #[must_use]
+    pub fn get_condition_operands(&self, condition: X86Condition) -> Option<ConditionEval> {
+        match &self.producer {
+            Some(FlagProducer::Compare { left, right }) => match condition {
+                X86Condition::S => Some(ConditionEval::SignFlag {
+                    source: FlagTestSource::Subtract {
+                        left: *left,
+                        right: *right,
+                    },
+                    negated: false,
+                }),
+                X86Condition::Ns => Some(ConditionEval::SignFlag {
+                    source: FlagTestSource::Subtract {
+                        left: *left,
+                        right: *right,
+                    },
+                    negated: true,
+                }),
+                X86Condition::O => Some(ConditionEval::OverflowFlag {
+                    left: *left,
+                    right: *right,
+                    result: None,
+                    kind: ArithmeticKind::Sub,
+                    negated: false,
+                }),
+                X86Condition::No => Some(ConditionEval::OverflowFlag {
+                    left: *left,
+                    right: *right,
+                    result: None,
+                    kind: ArithmeticKind::Sub,
+                    negated: true,
+                }),
+                X86Condition::P => Some(ConditionEval::ParityFlag {
+                    source: FlagTestSource::Subtract {
+                        left: *left,
+                        right: *right,
+                    },
+                    negated: false,
+                }),
+                X86Condition::Np => Some(ConditionEval::ParityFlag {
+                    source: FlagTestSource::Subtract {
+                        left: *left,
+                        right: *right,
+                    },
+                    negated: true,
+                }),
+                _ => {
+                    let (cmp, unsigned) = condition_to_cmp(condition)?;
+                    Some(ConditionEval::Compare {
+                        cmp,
+                        left: *left,
+                        right: *right,
+                        unsigned,
+                    })
+                }
+            },
+            Some(FlagProducer::Test { left, right }) => match condition {
+                X86Condition::E => Some(ConditionEval::Test {
+                    cmp: CmpKind::Eq,
+                    left: *left,
+                    right: *right,
+                }),
+                X86Condition::Ne => Some(ConditionEval::Test {
+                    cmp: CmpKind::Ne,
+                    left: *left,
+                    right: *right,
+                }),
+                X86Condition::S => Some(ConditionEval::SignFlag {
+                    source: FlagTestSource::BitwiseAnd {
+                        left: *left,
+                        right: *right,
+                    },
+                    negated: false,
+                }),
+                X86Condition::Ns => Some(ConditionEval::SignFlag {
+                    source: FlagTestSource::BitwiseAnd {
+                        left: *left,
+                        right: *right,
+                    },
+                    negated: true,
+                }),
+                X86Condition::O => Some(ConditionEval::OverflowFlag {
+                    left: *left,
+                    right: *right,
+                    result: None,
+                    kind: ArithmeticKind::LogicalOp,
+                    negated: false,
+                }),
+                X86Condition::No => Some(ConditionEval::OverflowFlag {
+                    left: *left,
+                    right: *right,
+                    result: None,
+                    kind: ArithmeticKind::LogicalOp,
+                    negated: true,
+                }),
+                X86Condition::P => Some(ConditionEval::ParityFlag {
+                    source: FlagTestSource::BitwiseAnd {
+                        left: *left,
+                        right: *right,
+                    },
+                    negated: false,
+                }),
+                X86Condition::Np => Some(ConditionEval::ParityFlag {
+                    source: FlagTestSource::BitwiseAnd {
+                        left: *left,
+                        right: *right,
+                    },
+                    negated: true,
+                }),
+                _ => None,
+            },
+            Some(FlagProducer::Arithmetic {
+                result,
+                left,
+                right,
+                kind,
+            }) => match condition {
+                X86Condition::E => Some(ConditionEval::ZeroTest {
+                    cmp: CmpKind::Eq,
+                    result: *result,
+                }),
+                X86Condition::Ne => Some(ConditionEval::ZeroTest {
+                    cmp: CmpKind::Ne,
+                    result: *result,
+                }),
+                X86Condition::S => Some(ConditionEval::SignFlag {
+                    source: FlagTestSource::Direct(*result),
+                    negated: false,
+                }),
+                X86Condition::Ns => Some(ConditionEval::SignFlag {
+                    source: FlagTestSource::Direct(*result),
+                    negated: true,
+                }),
+                X86Condition::O => Some(ConditionEval::OverflowFlag {
+                    left: *left,
+                    right: *right,
+                    result: Some(*result),
+                    kind: *kind,
+                    negated: false,
+                }),
+                X86Condition::No => Some(ConditionEval::OverflowFlag {
+                    left: *left,
+                    right: *right,
+                    result: Some(*result),
+                    kind: *kind,
+                    negated: true,
+                }),
+                X86Condition::P => Some(ConditionEval::ParityFlag {
+                    source: FlagTestSource::Direct(*result),
+                    negated: false,
+                }),
+                X86Condition::Np => Some(ConditionEval::ParityFlag {
+                    source: FlagTestSource::Direct(*result),
+                    negated: true,
+                }),
+                _ => {
+                    let (cmp, unsigned) = condition_to_cmp(condition)?;
+                    Some(ConditionEval::Compare {
+                        cmp,
+                        left: *left,
+                        right: *right,
+                        unsigned,
+                    })
+                }
+            },
             None => None,
         }
     }
@@ -222,6 +537,56 @@ impl FlagState {
             _ => None,
         }
     }
+}
+
+/// Describes how to evaluate an x86 condition into a 0/1 SSA value.
+///
+/// Used by the translator to emit the right SSA instructions for Jcc/Cmovcc/Setcc.
+#[derive(Debug, Clone)]
+pub enum ConditionEval {
+    /// Direct comparison: emit Clt/Cgt/Ceq on left vs right.
+    Compare {
+        cmp: CmpKind,
+        left: SsaVarId,
+        right: SsaVarId,
+        unsigned: bool,
+    },
+    /// TEST pattern: emit AND(left, right), then compare result to zero.
+    Test {
+        cmp: CmpKind,
+        left: SsaVarId,
+        right: SsaVarId,
+    },
+    /// Zero test on arithmetic result: compare result to zero.
+    ZeroTest { cmp: CmpKind, result: SsaVarId },
+    /// Sign flag test: extract MSB of value.
+    ///
+    /// S (negated=false): result is 1 when SF=1 (negative).
+    /// NS (negated=true): result is 1 when SF=0 (non-negative).
+    SignFlag {
+        source: FlagTestSource,
+        negated: bool,
+    },
+    /// Overflow flag test: signed overflow detection.
+    ///
+    /// O (negated=false): result is 1 when OF=1 (overflow occurred).
+    /// NO (negated=true): result is 1 when OF=0 (no overflow).
+    OverflowFlag {
+        left: SsaVarId,
+        right: SsaVarId,
+        /// None for CMP (must emit Sub), Some for arithmetic operations.
+        result: Option<SsaVarId>,
+        kind: ArithmeticKind,
+        negated: bool,
+    },
+    /// Parity flag test: even parity of low byte.
+    ///
+    /// P (negated=false): result is 1 when PF=1 (even parity).
+    /// NP (negated=true): result is 1 when PF=0 (odd parity).
+    ParityFlag {
+        source: FlagTestSource,
+        negated: bool,
+    },
 }
 
 /// Converts an x86 condition code to an SSA comparison kind.
@@ -256,10 +621,7 @@ pub fn condition_to_cmp(condition: X86Condition) -> Option<(CmpKind, bool)> {
         X86Condition::Be => Some((CmpKind::Le, true)),
         X86Condition::A => Some((CmpKind::Gt, true)),
 
-        // These conditions don't map directly to CmpKind
-        // S (sign) would be Lt with 0, NS is Ge with 0
-        // O/NO (overflow) require special handling
-        // P/NP (parity) are rare and not supported
+        // Sign/Overflow/Parity require special handling
         X86Condition::S
         | X86Condition::Ns
         | X86Condition::O
@@ -270,8 +632,6 @@ pub fn condition_to_cmp(condition: X86Condition) -> Option<(CmpKind, bool)> {
 }
 
 /// Returns true if the condition tests only the zero flag (ZF).
-///
-/// These conditions can be optimized when following certain instructions.
 #[must_use]
 pub const fn is_zero_flag_only(condition: X86Condition) -> bool {
     matches!(condition, X86Condition::E | X86Condition::Ne)
@@ -412,5 +772,274 @@ mod tests {
         assert!(is_unsigned_condition(X86Condition::B));
         assert!(is_unsigned_condition(X86Condition::A));
         assert!(!is_unsigned_condition(X86Condition::L));
+    }
+
+    #[test]
+    fn test_carry_flag_tracking() {
+        let mut flags = FlagState::new();
+        assert!(flags.carry().is_none());
+
+        let cf = SsaVarId::new();
+        flags.set_carry(cf);
+        assert_eq!(flags.carry(), Some(cf));
+
+        let zero = SsaVarId::new();
+        flags.clear_carry(zero);
+        assert_eq!(flags.carry(), Some(zero));
+
+        flags.clear();
+        assert!(flags.carry().is_none());
+    }
+
+    #[test]
+    fn test_arithmetic_with_signed_conditions() {
+        let mut flags = FlagState::new();
+
+        let result = SsaVarId::new();
+        let left = SsaVarId::new();
+        let right = SsaVarId::new();
+        flags.set_arithmetic(result, left, right, ArithmeticKind::Add);
+
+        // Zero test should work
+        let branch = flags.get_branch_operands(X86Condition::E);
+        assert!(branch.is_some());
+
+        // Signed conditions should also work (using original operands)
+        let branch = flags.get_branch_operands(X86Condition::L);
+        assert!(branch.is_some());
+        let (cmp, l, r, unsigned) = branch.unwrap();
+        assert_eq!(cmp, CmpKind::Lt);
+        assert_eq!(l, left);
+        assert_eq!(r, right);
+        assert!(!unsigned);
+    }
+
+    #[test]
+    fn test_condition_eval() {
+        let mut flags = FlagState::new();
+
+        let v0 = SsaVarId::new();
+        let v1 = SsaVarId::new();
+        flags.set_compare(v0, v1);
+
+        let eval = flags.get_condition_operands(X86Condition::L);
+        assert!(eval.is_some());
+        assert!(matches!(eval.unwrap(), ConditionEval::Compare { .. }));
+
+        // TEST pattern
+        flags.set_test(v0, v1);
+        let eval = flags.get_condition_operands(X86Condition::E);
+        assert!(eval.is_some());
+        assert!(matches!(eval.unwrap(), ConditionEval::Test { .. }));
+    }
+
+    #[test]
+    fn test_sign_flag_from_compare() {
+        let mut flags = FlagState::new();
+        let v0 = SsaVarId::new();
+        let v1 = SsaVarId::new();
+        flags.set_compare(v0, v1);
+
+        // S condition should produce SignFlag with Subtract source
+        let eval = flags.get_condition_operands(X86Condition::S);
+        assert!(eval.is_some());
+        assert!(matches!(
+            eval.unwrap(),
+            ConditionEval::SignFlag {
+                source: FlagTestSource::Subtract { .. },
+                negated: false,
+            }
+        ));
+
+        // NS should be negated
+        let eval = flags.get_condition_operands(X86Condition::Ns);
+        assert!(matches!(
+            eval.unwrap(),
+            ConditionEval::SignFlag { negated: true, .. }
+        ));
+    }
+
+    #[test]
+    fn test_sign_flag_from_test() {
+        let mut flags = FlagState::new();
+        let v0 = SsaVarId::new();
+        let v1 = SsaVarId::new();
+        flags.set_test(v0, v1);
+
+        let eval = flags.get_condition_operands(X86Condition::S);
+        assert!(matches!(
+            eval.unwrap(),
+            ConditionEval::SignFlag {
+                source: FlagTestSource::BitwiseAnd { .. },
+                negated: false,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_sign_flag_from_arithmetic() {
+        let mut flags = FlagState::new();
+        let result = SsaVarId::new();
+        let left = SsaVarId::new();
+        let right = SsaVarId::new();
+        flags.set_arithmetic(result, left, right, ArithmeticKind::Add);
+
+        let eval = flags.get_condition_operands(X86Condition::S);
+        assert!(matches!(
+            eval.unwrap(),
+            ConditionEval::SignFlag {
+                source: FlagTestSource::Direct(_),
+                negated: false,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_overflow_flag_from_compare() {
+        let mut flags = FlagState::new();
+        let v0 = SsaVarId::new();
+        let v1 = SsaVarId::new();
+        flags.set_compare(v0, v1);
+
+        let eval = flags.get_condition_operands(X86Condition::O);
+        assert!(eval.is_some());
+        match eval.unwrap() {
+            ConditionEval::OverflowFlag {
+                result,
+                kind,
+                negated,
+                ..
+            } => {
+                assert!(result.is_none()); // CMP has no stored result
+                assert_eq!(kind, ArithmeticKind::Sub);
+                assert!(!negated);
+            }
+            other => panic!("Expected OverflowFlag, got {other:?}"),
+        }
+
+        // NO should be negated
+        let eval = flags.get_condition_operands(X86Condition::No);
+        assert!(matches!(
+            eval.unwrap(),
+            ConditionEval::OverflowFlag { negated: true, .. }
+        ));
+    }
+
+    #[test]
+    fn test_overflow_flag_from_test() {
+        let mut flags = FlagState::new();
+        let v0 = SsaVarId::new();
+        let v1 = SsaVarId::new();
+        flags.set_test(v0, v1);
+
+        // TEST always clears OF, so OverflowFlag with LogicalOp kind
+        let eval = flags.get_condition_operands(X86Condition::O);
+        assert!(matches!(
+            eval.unwrap(),
+            ConditionEval::OverflowFlag {
+                kind: ArithmeticKind::LogicalOp,
+                negated: false,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn test_overflow_flag_from_arithmetic() {
+        let mut flags = FlagState::new();
+        let result = SsaVarId::new();
+        let left = SsaVarId::new();
+        let right = SsaVarId::new();
+        flags.set_arithmetic(result, left, right, ArithmeticKind::Add);
+
+        let eval = flags.get_condition_operands(X86Condition::O);
+        match eval.unwrap() {
+            ConditionEval::OverflowFlag {
+                result: r,
+                kind,
+                negated,
+                ..
+            } => {
+                assert!(r.is_some());
+                assert_eq!(kind, ArithmeticKind::Add);
+                assert!(!negated);
+            }
+            other => panic!("Expected OverflowFlag, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_parity_flag_from_compare() {
+        let mut flags = FlagState::new();
+        let v0 = SsaVarId::new();
+        let v1 = SsaVarId::new();
+        flags.set_compare(v0, v1);
+
+        let eval = flags.get_condition_operands(X86Condition::P);
+        assert!(matches!(
+            eval.unwrap(),
+            ConditionEval::ParityFlag {
+                source: FlagTestSource::Subtract { .. },
+                negated: false,
+            }
+        ));
+
+        let eval = flags.get_condition_operands(X86Condition::Np);
+        assert!(matches!(
+            eval.unwrap(),
+            ConditionEval::ParityFlag { negated: true, .. }
+        ));
+    }
+
+    #[test]
+    fn test_parity_flag_from_test() {
+        let mut flags = FlagState::new();
+        let v0 = SsaVarId::new();
+        let v1 = SsaVarId::new();
+        flags.set_test(v0, v1);
+
+        let eval = flags.get_condition_operands(X86Condition::P);
+        assert!(matches!(
+            eval.unwrap(),
+            ConditionEval::ParityFlag {
+                source: FlagTestSource::BitwiseAnd { .. },
+                negated: false,
+            }
+        ));
+    }
+
+    #[test]
+    fn test_branch_operands_still_none_for_flag_conditions() {
+        let mut flags = FlagState::new();
+        flags.set_compare(SsaVarId::new(), SsaVarId::new());
+
+        // S/NS/O/NO/P/NP should still return None from get_branch_operands
+        // (these go through evaluate_condition fallback in Jcc handler)
+        assert!(flags.get_branch_operands(X86Condition::S).is_none());
+        assert!(flags.get_branch_operands(X86Condition::Ns).is_none());
+        assert!(flags.get_branch_operands(X86Condition::O).is_none());
+        assert!(flags.get_branch_operands(X86Condition::No).is_none());
+        assert!(flags.get_branch_operands(X86Condition::P).is_none());
+        assert!(flags.get_branch_operands(X86Condition::Np).is_none());
+
+        // But the standard conditions should still work
+        assert!(flags.get_branch_operands(X86Condition::E).is_some());
+        assert!(flags.get_branch_operands(X86Condition::L).is_some());
+    }
+
+    #[test]
+    fn test_arithmetic_kind_neg() {
+        let mut flags = FlagState::new();
+        let result = SsaVarId::new();
+        flags.set_arithmetic_unary(result);
+
+        // Should have Neg kind
+        let eval = flags.get_condition_operands(X86Condition::O);
+        match eval.unwrap() {
+            ConditionEval::OverflowFlag { kind, .. } => {
+                assert_eq!(kind, ArithmeticKind::Neg);
+            }
+            other => panic!("Expected OverflowFlag, got {other:?}"),
+        }
     }
 }

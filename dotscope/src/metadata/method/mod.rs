@@ -1114,15 +1114,23 @@ impl Method {
         types: &Arc<TypeRegistry>,
         shared_visited: Arc<VisitedMap>,
     ) -> Result<()> {
-        if let Some(rva) = self.rva {
-            let body = self.parse_method_body(file, blobs, sigs, types, rva)?;
-            self.body.set(body).ok();
+        // Native and runtime methods don't have CIL method bodies - their RVA
+        // points to x86/x64 machine code or runtime-provided implementations,
+        // not to a CIL method header. Skip body parsing and IL decoding for these.
+        let has_il_body = !self.is_code_native() && !self.is_code_runtime();
+        if has_il_body {
+            if let Some(rva) = self.rva {
+                let body = self.parse_method_body(file, blobs, sigs, types, rva)?;
+                self.body.set(body).ok();
+            }
         }
 
         self.resolve_parameter_signatures(types)?;
         self.parse_varargs(types)?;
 
-        assembly::decode_method(self, file, shared_visited)?;
+        if has_il_body {
+            assembly::decode_method(self, file, shared_visited)?;
+        }
         Ok(())
     }
 

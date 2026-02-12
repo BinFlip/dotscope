@@ -7,13 +7,13 @@ use std::time::Duration;
 
 use crate::{
     compiler::{DerivedStats, EventLog},
-    deobfuscation::detection::DetectionResult,
+    deobfuscation::findings::DeobfuscationFindings,
 };
 
 /// Result of running deobfuscation.
 ///
 /// Contains the event log capturing all activity during deobfuscation,
-/// and the detection result identifying the obfuscator. Statistics are
+/// and the findings describing what was detected. Statistics are
 /// derived from the event log on demand.
 ///
 /// # Example
@@ -24,16 +24,16 @@ use crate::{
 /// let engine = DeobfuscationEngine::new(EngineConfig::default());
 /// let result = engine.process_file(&mut assembly)?;
 ///
-/// println!("Detection: {:?}", result.detection);
+/// println!("Detection: {}", result.findings.detection_summary());
 /// println!("Events: {}", result.events.len());
 /// println!("Stats: {}", result.stats().summary());
 /// ```
 #[derive(Debug, Clone)]
 pub struct DeobfuscationResult {
-    /// Detection result identifying the obfuscator.
-    pub detection: DetectionResult,
     /// All events from the deobfuscation run.
     pub events: EventLog,
+    /// Framework-level findings from detection and deobfuscation.
+    pub findings: DeobfuscationFindings,
     /// Number of pass iterations.
     pub iterations: usize,
     /// Total processing time.
@@ -43,10 +43,10 @@ pub struct DeobfuscationResult {
 impl DeobfuscationResult {
     /// Creates a new deobfuscation result.
     #[must_use]
-    pub fn new(detection: DetectionResult, events: EventLog) -> Self {
+    pub fn new(events: EventLog, findings: DeobfuscationFindings) -> Self {
         Self {
-            detection,
             events,
+            findings,
             iterations: 0,
             total_time: Duration::ZERO,
         }
@@ -80,7 +80,7 @@ impl DeobfuscationResult {
         format!(
             "Deobfuscation complete: {}\nDetection: {}",
             self.stats().summary(),
-            self.detection.summary()
+            self.findings.detection_summary()
         )
     }
 }

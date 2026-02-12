@@ -269,16 +269,13 @@ fn compile_with_dotnet(
     std::fs::copy(source_path, &program_path)
         .map_err(|e| Error::Other(format!("Failed to copy source file: {}", e)))?;
 
-    // Build with appropriate configuration
+    // Build with appropriate configuration.
+    // Explicitly set env vars to suppress .NET first-time setup and NuGet migrations,
+    // which can race when multiple tests invoke `dotnet build` concurrently (the NuGet
+    // migration runner creates a shared-memory mutex under /tmp/.dotnet/shm/ that fails
+    // with EEXIST when two processes try to mkdir simultaneously).
     let configuration = if optimize { "Release" } else { "Debug" };
-    let build_output = Command::new("dotnet")
-        .arg("build")
-        .arg("--configuration")
-        .arg(configuration)
-        .arg("--nologo")
-        .current_dir(&project_dir)
-        .output()
-        .map_err(|e| Error::Other(format!("Failed to execute dotnet build: {}", e)))?;
+    let build_output = run_dotnet_build(&project_dir, configuration)?;
 
     if !build_output.status.success() {
         let error = format_compiler_error(&build_output.stdout, &build_output.stderr);
@@ -342,6 +339,55 @@ fn format_compiler_error(stdout: &[u8], stderr: &[u8]) -> String {
         stdout_str.to_string()
     } else {
         "Compilation failed with unknown error".to_string()
+    }
+}
+
+/// Run `dotnet build` with retry logic and environment hardening.
+///
+/// Sets `DOTNET_SKIP_FIRST_TIME_EXPERIENCE`, `DOTNET_NOLOGO`, and
+/// `DOTNET_CLI_TELEMETRY_OPTOUT` explicitly on the child process (in case the
+/// parent environment does not carry them). Retries once on transient failures
+/// — the NuGet migration runner can race when concurrent test threads all invoke
+/// `dotnet build` and try to `mkdir` the same shared-memory path.
+fn run_dotnet_build(
+    project_dir: &Path,
+    configuration: &str,
+) -> std::result::Result<std::process::Output, Error> {
+    let mut attempts = 0;
+    loop {
+        let output = Command::new("dotnet")
+            .arg("build")
+            .arg("--configuration")
+            .arg(configuration)
+            .arg("--nologo")
+            .env("DOTNET_SKIP_FIRST_TIME_EXPERIENCE", "true")
+            .env("DOTNET_CLI_TELEMETRY_OPTOUT", "true")
+            .env("DOTNET_NOLOGO", "true")
+            .current_dir(project_dir)
+            .output()
+            .map_err(|e| Error::Other(format!("Failed to execute dotnet build: {}", e)))?;
+
+        attempts += 1;
+
+        // If the build succeeded or we've exhausted retries, return as-is.
+        if output.status.success() || attempts >= 2 {
+            return Ok(output);
+        }
+
+        // Retry only on transient NuGet/shared-memory errors (EEXIST race).
+        let stderr = String::from_utf8_lossy(&output.stderr);
+        let stdout = String::from_utf8_lossy(&output.stdout);
+        let is_transient = stderr.contains("NuGet-Migrations")
+            || stderr.contains("EEXIST")
+            || stdout.contains("NuGet-Migrations")
+            || stdout.contains("EEXIST");
+
+        if !is_transient {
+            return Ok(output);
+        }
+
+        // Brief pause before retrying to let the other process finish.
+        std::thread::sleep(std::time::Duration::from_millis(500));
     }
 }
 

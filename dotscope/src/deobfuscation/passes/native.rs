@@ -33,7 +33,9 @@
 use rustc_hash::FxHashSet;
 
 use crate::{
-    analysis::{decode_x86, detect_x86_prologue, X86Function, X86PrologueKind, X86ToSsaTranslator},
+    analysis::{
+        x86_decode_all, x86_detect_prologue, X86Function, X86PrologueKind, X86ToSsaTranslator,
+    },
     cilassembly::{CilAssembly, MethodBodyBuilder},
     compiler::SsaCodeGenerator,
     file::File,
@@ -241,8 +243,7 @@ impl NativeMethodConversionPass {
             )));
         }
 
-        let rva = method_row.rva;
-        if rva == 0 {
+        if method_row.rva == 0 {
             return Err(Error::X86Error(format!(
                 "Method 0x{:08x} has no RVA",
                 token.value()
@@ -250,12 +251,12 @@ impl NativeMethodConversionPass {
         }
 
         // Step 2: Get x86 bytes from the RVA
-        let offset = file.rva_to_offset(rva as usize)?;
+        let offset = file.rva_to_offset(method_row.rva as usize)?;
         let x86_bytes = &file.data()[offset..];
 
         // Step 3: Detect prologue and adjust bytes if needed
         let (decode_bytes, base_offset) = if self.skip_prologue {
-            let prologue = detect_x86_prologue(x86_bytes, bitness);
+            let prologue = x86_detect_prologue(x86_bytes, bitness);
             if prologue.kind == X86PrologueKind::DynCipher {
                 // Skip the prologue
                 (&x86_bytes[prologue.size..], prologue.size as u64)
@@ -268,7 +269,7 @@ impl NativeMethodConversionPass {
         };
 
         // Step 4: Decode x86 instructions
-        let instructions = decode_x86(decode_bytes, bitness, base_offset)?;
+        let instructions = x86_decode_all(decode_bytes, bitness, base_offset)?;
 
         if instructions.is_empty() {
             return Err(Error::X86Error("No instructions decoded".to_string()));
@@ -296,16 +297,16 @@ impl NativeMethodConversionPass {
         // Step 9: Store the method body and get placeholder RVA
         let new_rva = assembly.store_method_body(method_body);
 
-        // Step 10: Update the MethodDef row with new RVA and change impl flags to IL
-        let new_impl_flags = (method_row.impl_flags & !0x0003) | MethodImplCodeType::IL.bits();
-
+        // Step 10: Update the MethodDef row with new RVA and change to CIL managed method.
         let updated_row = MethodDefRaw {
             rid: method_row.rid,
             token: method_row.token,
             offset: method_row.offset,
             rva: new_rva,
-            impl_flags: new_impl_flags,
-            flags: method_row.flags,
+            // Clear native-specific bits: CodeType (0x0003), Unmanaged (0x0004), PreserveSig (0x0080)
+            impl_flags: (method_row.impl_flags & !0x0087) | MethodImplCodeType::IL.bits(),
+            // Clear PINVOKE_IMPL (0x2000) from method flags since this is now a CIL method
+            flags: method_row.flags & !0x2000,
             name: method_row.name,
             signature: method_row.signature,
             param_list: method_row.param_list,

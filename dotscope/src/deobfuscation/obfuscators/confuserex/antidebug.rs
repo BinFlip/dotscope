@@ -155,20 +155,16 @@ use std::{
 
 use crate::{
     analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
-    assembly::Operand,
+    assembly::{opcodes, Operand},
     compiler::{CompilerContext, EventKind, EventLog, SsaPass},
     deobfuscation::{
         detection::{DetectionEvidence, DetectionScore},
-        obfuscators::confuserex::findings::ConfuserExFindings,
+        findings::DeobfuscationFindings,
+        obfuscators::confuserex::utils,
     },
     metadata::{tables::TableId, token::Token, typesystem::CilTypeReference},
     CilObject, Result,
 };
-
-/// CIL opcode for `call` instruction.
-const OPCODE_CALL: u8 = 0x28;
-/// CIL opcode for `callvirt` instruction.
-const OPCODE_CALLVIRT: u8 = 0x6F;
 
 /// Detected anti-debug mode.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -317,7 +313,7 @@ fn find_antidebug_methods(assembly: &CilObject) -> Vec<AntiDebugMethodInfo> {
             };
 
             for instr in &block.instructions {
-                if instr.opcode == OPCODE_CALL || instr.opcode == OPCODE_CALLVIRT {
+                if instr.opcode == opcodes::CALL || instr.opcode == opcodes::CALLVIRT {
                     if let Operand::Token(token) = &instr.operand {
                         if let Some(name) = assembly.resolve_method_name(*token) {
                             match name.as_str() {
@@ -415,7 +411,7 @@ fn determine_mode(result: &AntiDebugDetectionResult) -> Option<AntiDebugMode> {
 ///
 /// This is called by the orchestrator in detection.rs to detect
 /// ConfuserEx anti-debug protection.
-pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut ConfuserExFindings) {
+pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut DeobfuscationFindings) {
     let result = detect_antidebug(assembly);
 
     // Populate findings
@@ -425,24 +421,6 @@ pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut Confu
 
     // Add detection evidence
     add_antidebug_evidence(&result, score);
-}
-
-/// Helper function to get the full type name from a call operand token.
-/// Used by the SSA pass for pattern matching.
-fn get_type_name_from_token(assembly: &CilObject, token: Token) -> Option<String> {
-    if let Some(cil_type) = assembly.types().get(&token) {
-        return Some(cil_type.fullname());
-    }
-
-    // Try MemberRef lookup (for method/field references)
-    if let Some(member_ref) = assembly.member_ref(&token) {
-        // Extract the declaring type from the MemberRef
-        if let Some(type_name) = member_ref.declaredby.fullname() {
-            return Some(format!("{}::{}", type_name, member_ref.name));
-        }
-    }
-
-    None
 }
 
 /// Anti-debug neutralization pass for ConfuserEx.
@@ -540,7 +518,7 @@ impl ConfuserExAntiDebugPass {
                     // Check for Call operations
                     SsaOp::Call { dest, method, .. } | SsaOp::CallVirt { dest, method, .. } => {
                         // Resolve method token to full name for pattern matching
-                        let method_name = get_type_name_from_token(assembly, method.token())
+                        let method_name = utils::get_type_name_from_token(assembly, method.token())
                             .unwrap_or_else(|| format!("{method}"));
                         let dest = *dest;
                         let method_ref = *method;

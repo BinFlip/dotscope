@@ -469,13 +469,23 @@ impl DecryptionPass {
         let captured_value: Arc<Mutex<Option<ConstValue>>> = Arc::new(Mutex::new(None));
         let captured_clone = captured_value.clone();
 
-        // Use emulate_until to stop when we see a return
+        // Use emulate_until to stop when we see a return from the TARGET method.
+        // IMPORTANT: Only capture returns at call_depth == 1 (the outermost method).
+        // The condition fires for every `ret` instruction including nested calls.
+        // Without this check, we'd capture the return value from the first inner
+        // method call (e.g., the native x86 helper returning I32) instead of the
+        // actual decryptor result (e.g., a DecryptedString).
         let outcome = match process.emulate_until(
             method,
             em_args,
             move |step_result: &StepResult, thread: &EmulationThread| {
                 match step_result {
                     StepResult::Return { .. } => {
+                        // Only capture returns from the outermost (target) method.
+                        // call_depth == 1 means only the target method is on the stack.
+                        if thread.call_depth() != 1 {
+                            return false;
+                        }
                         // Method is returning - the return value is on the stack
                         // (the StepResult::Return { value } field is always None for ret instructions)
                         if let Ok(em_value) = thread.stack().peek() {
@@ -486,8 +496,6 @@ impl DecryptionPass {
                                 }
                                 return true; // Stop - we have a valid return value
                             }
-                        } else {
-                            // Stack is empty - this is a void return, continue
                         }
                         false
                     }
@@ -502,7 +510,7 @@ impl DecryptionPass {
         };
 
         // Extract the captured value
-        match outcome {
+        match &outcome {
             EmulationOutcome::Stopped { .. } | EmulationOutcome::Completed { .. } => {
                 let result = captured_value.lock().ok().and_then(|guard| guard.clone());
                 if result.is_some() {

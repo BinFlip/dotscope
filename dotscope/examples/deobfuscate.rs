@@ -139,23 +139,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Display detection results
     eprintln!();
     eprintln!("=== Detection ===");
-    if result.detection.all().is_empty() {
-        eprintln!("No known obfuscators detected.");
-    } else {
-        for (name, score) in result.detection.all() {
-            eprintln!(
-                "{}: score {} (threshold: {})",
-                name,
-                score.score(),
-                result.detection.threshold()
-            );
-            if verbose {
-                for evidence in score.evidence() {
-                    eprintln!("  - {:?}", evidence);
-                }
-            } else {
-                eprintln!("  Evidence: {}", score.evidence_summary());
+    if let Some(name) = &result.findings.obfuscator_name {
+        eprintln!("{}: score {}", name, result.findings.detection.score());
+        if verbose {
+            for evidence in result.findings.detection.evidence() {
+                eprintln!("  - {:?}", evidence);
             }
+        } else {
+            eprintln!(
+                "  Evidence: {}",
+                result.findings.detection.evidence_summary()
+            );
         }
     }
 

@@ -1315,6 +1315,93 @@ impl EmValue {
         }
     }
 
+    /// Implements CLR `Object.Equals` semantics for emulated values.
+    ///
+    /// This matches the behavior of `System.Object.Equals`:
+    /// - **Reference types** (`ObjectRef`): reference equality (same identity)
+    /// - **Value types** (`ValueType`): structural field-by-field comparison
+    /// - **Primitives** (`I32`, `I64`, etc.): value equality, including
+    ///   cross-type widening (e.g., `I32(1)` equals `I64(1)`)
+    /// - **Null**: `null.Equals(null)` is `true`; `null.Equals(x)` is `false`
+    /// - **Symbolic**: always `false` (unknown values cannot be compared)
+    ///
+    /// # Examples
+    ///
+    /// ```rust
+    /// use dotscope::emulation::EmValue;
+    /// use dotscope::emulation::HeapRef;
+    ///
+    /// // Primitive value equality
+    /// assert!(EmValue::I32(42).clr_equals(&EmValue::I32(42)));
+    /// assert!(!EmValue::I32(1).clr_equals(&EmValue::I32(2)));
+    ///
+    /// // Cross-type widening
+    /// assert!(EmValue::I32(10).clr_equals(&EmValue::I64(10)));
+    ///
+    /// // Reference equality for objects
+    /// let r1 = EmValue::ObjectRef(HeapRef::new(1));
+    /// let r2 = EmValue::ObjectRef(HeapRef::new(1));
+    /// let r3 = EmValue::ObjectRef(HeapRef::new(2));
+    /// assert!(r1.clr_equals(&r2)); // same identity
+    /// assert!(!r1.clr_equals(&r3)); // different identity
+    ///
+    /// // Null semantics
+    /// assert!(EmValue::Null.clr_equals(&EmValue::Null));
+    /// assert!(!EmValue::I32(0).clr_equals(&EmValue::Null));
+    /// ```
+    #[must_use]
+    pub fn clr_equals(&self, other: &EmValue) -> bool {
+        match (self, other) {
+            // Null equality
+            (EmValue::Null, EmValue::Null) => true,
+
+            // Reference types: identity comparison
+            (EmValue::ObjectRef(a), EmValue::ObjectRef(b)) => a.id() == b.id(),
+
+            // Same-type primitive equality
+            (EmValue::I32(a), EmValue::I32(b)) => a == b,
+            (EmValue::I64(a), EmValue::I64(b)) => a == b,
+            (EmValue::F32(a), EmValue::F32(b)) => a.to_bits() == b.to_bits(),
+            (EmValue::F64(a), EmValue::F64(b)) => a.to_bits() == b.to_bits(),
+            (EmValue::NativeInt(a), EmValue::NativeInt(b)) => a == b,
+            (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => a == b,
+            (EmValue::Bool(a), EmValue::Bool(b)) => a == b,
+            (EmValue::Char(a), EmValue::Char(b)) => a == b,
+            (EmValue::UnmanagedPtr(a), EmValue::UnmanagedPtr(b)) => a == b,
+
+            // Cross-type integer widening (boxed value types may compare across widths)
+            (EmValue::I32(a), EmValue::I64(b)) | (EmValue::I32(a), EmValue::NativeInt(b)) => {
+                i64::from(*a) == *b
+            }
+            (EmValue::I64(a), EmValue::I32(b)) | (EmValue::NativeInt(a), EmValue::I32(b)) => {
+                *a == i64::from(*b)
+            }
+            (EmValue::I64(a), EmValue::NativeInt(b)) | (EmValue::NativeInt(a), EmValue::I64(b)) => {
+                a == b
+            }
+
+            // Value type: structural field comparison
+            (
+                EmValue::ValueType {
+                    type_token: t1,
+                    fields: f1,
+                },
+                EmValue::ValueType {
+                    type_token: t2,
+                    fields: f2,
+                },
+            ) => {
+                t1 == t2 && f1.len() == f2.len() && f1.iter().zip(f2).all(|(a, b)| a.clr_equals(b))
+            }
+
+            // Managed pointer comparison
+            (EmValue::ManagedPtr(a), EmValue::ManagedPtr(b)) => a == b,
+
+            // Everything else (including Symbolic, Void, mismatched types)
+            _ => false,
+        }
+    }
+
     /// Extracts a size value (non-negative integer) from this value.
     ///
     /// Used for memory allocation and copy operations where a size is needed.

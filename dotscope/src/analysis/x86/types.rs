@@ -12,7 +12,7 @@
 //! - [`X86Memory`] - Memory operands with base, index, scale, displacement
 //! - [`X86Operand`] - Union of register, immediate, or memory operand
 //! - [`X86Instruction`] - Decoded instruction with operands
-//! - [`DecodedInstruction`] - Instruction with offset and length metadata
+//! - [`X86DecodedInstruction`] - Instruction with offset and length metadata
 //!
 //! # Condition Codes
 //!
@@ -120,6 +120,20 @@ pub enum X86Register {
     Si,
     /// 16-bit destination index (DI)
     Di,
+
+    // Segment registers (16-bit)
+    /// Extra segment register (ES)
+    Es,
+    /// Code segment register (CS)
+    Cs,
+    /// Stack segment register (SS)
+    Ss,
+    /// Data segment register (DS)
+    Ds,
+    /// FS segment register
+    Fs,
+    /// GS segment register
+    Gs,
 }
 
 impl X86Register {
@@ -145,7 +159,13 @@ impl X86Register {
             | X86Register::Sp
             | X86Register::Bp
             | X86Register::Si
-            | X86Register::Di => 2,
+            | X86Register::Di
+            | X86Register::Es
+            | X86Register::Cs
+            | X86Register::Ss
+            | X86Register::Ds
+            | X86Register::Fs
+            | X86Register::Gs => 2,
             // 32-bit
             X86Register::Eax
             | X86Register::Ecx
@@ -213,6 +233,12 @@ impl X86Register {
             X86Register::R13 => 13,
             X86Register::R14 => 14,
             X86Register::R15 => 15,
+            X86Register::Es => 16,
+            X86Register::Cs => 17,
+            X86Register::Ss => 18,
+            X86Register::Ds => 19,
+            X86Register::Fs => 20,
+            X86Register::Gs => 21,
         }
     }
 
@@ -499,10 +525,10 @@ impl X86Condition {
 ///
 /// # Instruction Categories
 ///
-/// - **Data Movement**: `Mov`, `Movzx`, `Movsx`, `Lea`, `Push`, `Pop`, `Xchg`
-/// - **Arithmetic**: `Add`, `Sub`, `Imul`, `Mul`, `Neg`, `Inc`, `Dec`
-/// - **Bitwise**: `And`, `Or`, `Xor`, `Not`, `Shl`, `Shr`, `Sar`, `Rol`, `Ror`
-/// - **Comparison**: `Cmp`, `Test`
+/// - **Data Movement**: `Mov`, `Movzx`, `Movsx`, `Lea`, `Push`, `Pop`, `Xchg`, `Cmovcc`, `Xadd`
+/// - **Arithmetic**: `Add`, `Sub`, `Imul`, `Mul`, `Neg`, `Inc`, `Dec`, `Adc`, `Sbb`, `Div`, `Idiv`
+/// - **Bitwise**: `And`, `Or`, `Xor`, `Not`, `Shl`, `Shr`, `Sar`, `Rol`, `Ror`, `Bswap`, `Bt`, `Bsf`, `Bsr`
+/// - **Comparison**: `Cmp`, `Test`, `Setcc`
 /// - **Control Flow**: `Jmp`, `Jcc`, `Call`, `Ret`
 /// - **Miscellaneous**: `Nop`, `Cdq`, `Cwde`
 ///
@@ -709,6 +735,80 @@ pub enum X86Instruction {
     /// Convert word to doubleword: `cwde` (sign-extends AX into EAX)
     Cwde,
 
+    /// Add with carry: `adc dst, src` (dst = dst + src + CF)
+    Adc {
+        /// Destination operand (receives result)
+        dst: X86Operand,
+        /// Source operand to add (plus carry flag)
+        src: X86Operand,
+    },
+    /// Subtract with borrow: `sbb dst, src` (dst = dst - src - CF)
+    Sbb {
+        /// Destination operand (receives result)
+        dst: X86Operand,
+        /// Source operand to subtract (plus carry flag)
+        src: X86Operand,
+    },
+    /// Unsigned division: `div src` (EDX:EAX / src → EAX quotient, EDX remainder)
+    Div {
+        /// Divisor operand
+        src: X86Operand,
+    },
+    /// Signed division: `idiv src` (EDX:EAX / src → EAX quotient, EDX remainder)
+    Idiv {
+        /// Divisor operand
+        src: X86Operand,
+    },
+    /// Byte swap: `bswap dst` (reverse byte order in 32/64-bit register)
+    Bswap {
+        /// Register whose bytes are reversed
+        dst: X86Register,
+    },
+    /// Conditional move: `cmovcc dst, src` (move if condition is true)
+    Cmovcc {
+        /// Condition for the move
+        condition: X86Condition,
+        /// Destination register
+        dst: X86Register,
+        /// Source operand (moved only if condition is true)
+        src: X86Operand,
+    },
+    /// Set byte on condition: `setcc dst` (dst = condition ? 1 : 0)
+    Setcc {
+        /// Condition to test
+        condition: X86Condition,
+        /// Destination operand (receives 0 or 1)
+        dst: X86Operand,
+    },
+    /// Bit scan forward: `bsf dst, src` (find lowest set bit)
+    Bsf {
+        /// Destination register (receives bit index)
+        dst: X86Register,
+        /// Source operand to scan
+        src: X86Operand,
+    },
+    /// Bit scan reverse: `bsr dst, src` (find highest set bit)
+    Bsr {
+        /// Destination register (receives bit index)
+        dst: X86Register,
+        /// Source operand to scan
+        src: X86Operand,
+    },
+    /// Bit test: `bt src, bit` (test bit and set CF)
+    Bt {
+        /// Source operand containing the bit field
+        src: X86Operand,
+        /// Bit index to test
+        bit: X86Operand,
+    },
+    /// Exchange and add: `xadd dst, src` (temp = dst + src; src = dst; dst = temp)
+    Xadd {
+        /// Destination operand
+        dst: X86Operand,
+        /// Source operand
+        src: X86Operand,
+    },
+
     /// Unsupported instruction (for graceful degradation)
     Unsupported {
         /// Offset of the instruction in the code
@@ -784,7 +884,11 @@ impl X86Instruction {
             | X86Instruction::Shr { dst, .. }
             | X86Instruction::Sar { dst, .. }
             | X86Instruction::Rol { dst, .. }
-            | X86Instruction::Ror { dst, .. } => dst.is_memory(),
+            | X86Instruction::Ror { dst, .. }
+            | X86Instruction::Adc { dst, .. }
+            | X86Instruction::Sbb { dst, .. }
+            | X86Instruction::Setcc { dst, .. }
+            | X86Instruction::Xadd { dst, .. } => dst.is_memory(),
             X86Instruction::Push { .. } => true, // Writes to stack
             _ => false,
         }
@@ -809,10 +913,19 @@ impl X86Instruction {
             | X86Instruction::Sar { count: src, .. }
             | X86Instruction::Rol { count: src, .. }
             | X86Instruction::Ror { count: src, .. }
-            | X86Instruction::Mul { src } => src.is_memory(),
+            | X86Instruction::Mul { src }
+            | X86Instruction::Div { src }
+            | X86Instruction::Idiv { src }
+            | X86Instruction::Adc { src, .. }
+            | X86Instruction::Sbb { src, .. }
+            | X86Instruction::Xadd { src, .. } => src.is_memory(),
             X86Instruction::Imul { src, src2, .. } => {
                 src.is_memory() || src2.as_ref().is_some_and(X86Operand::is_memory)
             }
+            X86Instruction::Cmovcc { src, .. }
+            | X86Instruction::Bsf { src, .. }
+            | X86Instruction::Bsr { src, .. } => src.is_memory(),
+            X86Instruction::Bt { src, bit } => src.is_memory() || bit.is_memory(),
             X86Instruction::Pop { .. } => true, // Reads from stack
             // LEA doesn't actually read memory
             _ => false,
@@ -828,12 +941,12 @@ impl X86Instruction {
 /// # Example
 ///
 /// ```rust,ignore
-/// let decoded = decode_x86_single(bytes, 32, 0x1000, 0)?;
+/// let decoded = x86_decode_single(bytes, 32, 0x1000, 0)?;
 /// println!("Instruction at 0x{:x}, {} bytes", decoded.offset, decoded.length);
 /// println!("Next instruction at 0x{:x}", decoded.end_offset());
 /// ```
 #[derive(Debug, Clone)]
-pub struct DecodedInstruction {
+pub struct X86DecodedInstruction {
     /// Byte offset from the start of the code section.
     pub offset: u64,
     /// Length of the encoded instruction in bytes (1-15 for x86).
@@ -842,7 +955,7 @@ pub struct DecodedInstruction {
     pub instruction: X86Instruction,
 }
 
-impl DecodedInstruction {
+impl X86DecodedInstruction {
     /// Returns the byte offset immediately after this instruction.
     ///
     /// This is equivalent to `offset + length` and represents where the
@@ -860,7 +973,7 @@ impl DecodedInstruction {
 /// prologue patterns. Identifying the prologue helps determine where
 /// the actual function body begins.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum PrologueKind {
+pub enum X86PrologueKind {
     /// ConfuserEx DynCipher prologue (20 bytes).
     ///
     /// Handles both 32-bit and 64-bit calling conventions by detecting
@@ -890,16 +1003,16 @@ pub enum PrologueKind {
 /// # Example
 ///
 /// ```rust,ignore
-/// let prologue = detect_x86_prologue(bytes, 32);
+/// let prologue = x86_detect_prologue(bytes, 32);
 /// if prologue.kind == X86PrologueKind::DynCipher {
 ///     println!("DynCipher function with {} args", prologue.arg_count);
 ///     let body_start = prologue.size;
 /// }
 /// ```
 #[derive(Debug, Clone)]
-pub struct PrologueInfo {
+pub struct X86PrologueInfo {
     /// The type of prologue pattern detected.
-    pub kind: PrologueKind,
+    pub kind: X86PrologueKind,
     /// Size of the prologue in bytes (offset to function body).
     pub size: usize,
     /// Number of arguments, if detectable from the prologue.
@@ -911,7 +1024,7 @@ pub struct PrologueInfo {
 /// An epilogue is the sequence of instructions at the end of a function
 /// that restores saved registers and returns to the caller.
 #[derive(Debug, Clone)]
-pub struct EpilogueInfo {
+pub struct X86EpilogueInfo {
     /// Byte offset where the epilogue sequence begins.
     pub offset: u64,
     /// Size of the epilogue in bytes.

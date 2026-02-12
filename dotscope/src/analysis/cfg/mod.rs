@@ -91,7 +91,6 @@ mod semantics;
 pub use analyzer::{LoopAnalyzer, SsaLoopAnalysis};
 pub use edge::{CfgEdge, CfgEdgeKind};
 pub use graph::ControlFlowGraph;
-#[cfg(feature = "deobfuscation")]
 pub use loops::has_back_edges;
 pub use loops::{
     detect_loops, InductionUpdateKind, InductionVar, LoopExit, LoopForest, LoopInfo, LoopType,

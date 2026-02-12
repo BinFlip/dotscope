@@ -11,8 +11,7 @@ use dashmap::DashSet;
 use crate::{
     compiler::CompilerContext,
     deobfuscation::{
-        config::EngineConfig, decryptors::DecryptorContext, detection::DetectionResult,
-        statemachine::StateMachineProvider,
+        config::EngineConfig, decryptors::DecryptorContext, statemachine::StateMachineProvider,
     },
     emulation::Hook,
     metadata::token::Token,
@@ -59,9 +58,6 @@ pub struct AnalysisContext {
     /// Methods are added here only when redirects were actually computed and applied.
     /// Used to skip methods that have already been processed.
     pub unflattened_dispatchers: Arc<DashSet<Token>>,
-
-    /// Detected obfuscator(s).
-    pub detection_result: DetectionResult,
 
     /// Engine configuration (for pass-specific thresholds).
     pub config: EngineConfig,
@@ -110,7 +106,6 @@ impl AnalysisContext {
             decryptors: Arc::new(DecryptorContext::new()),
             dispatchers: Arc::new(DashSet::new()),
             unflattened_dispatchers: Arc::new(DashSet::new()),
-            detection_result: DetectionResult::default(),
             config,
             emulation_hooks: Arc::new(boxcar::Vec::new()),
             warmup_methods: Arc::new(boxcar::Vec::new()),

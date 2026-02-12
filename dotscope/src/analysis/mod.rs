@@ -65,7 +65,7 @@ mod range;
 mod ssa;
 mod taint;
 
-#[cfg(feature = "deobfuscation")]
+#[cfg(feature = "x86")]
 mod x86;
 
 // Re-export primary types at module level
@@ -87,7 +87,7 @@ pub use dataflow::{
 };
 pub use defuse::{DefUseIndex, Location};
 pub use range::{IntervalRange, ValueRange};
-#[cfg(feature = "deobfuscation")]
+#[cfg(feature = "z3")]
 pub use ssa::Z3Solver;
 pub use ssa::{
     analyze_alias, AbstractValue, AliasResult, ArrayIndex, BinaryOpInfo, BinaryOpKind, CmpKind,
@@ -106,15 +106,12 @@ pub use taint::{
     TaintConfig, TaintStats, TokenTaintBuilder,
 };
 
-#[cfg(feature = "deobfuscation")]
+#[cfg(feature = "x86")]
 pub use x86::{
-    decode_all as decode_x86, decode_all_permissive as decode_x86_permissive,
-    decode_function_traversal as decode_x86_traversal, decode_single as decode_x86_single,
-    detect_epilogue as detect_x86_epilogue, detect_prologue as detect_x86_prologue,
-    DecodedInstruction as X86DecodedInstruction, EpilogueInfo as X86EpilogueInfo,
-    PrologueInfo as X86PrologueInfo, PrologueKind as X86PrologueKind,
-    TraversalDecodeResult as X86TraversalResult, X86BasicBlock, X86Condition, X86EdgeKind,
-    X86Function, X86Instruction, X86Memory, X86Operand, X86Register, X86ToSsaTranslator,
+    x86_decode_all, x86_decode_single, x86_decode_traversal, x86_detect_epilogue,
+    x86_detect_prologue, x86_native_body_size, X86BasicBlock, X86Condition, X86DecodedInstruction,
+    X86EdgeKind, X86EpilogueInfo, X86Function, X86Instruction, X86Memory, X86Operand,
+    X86PrologueInfo, X86PrologueKind, X86Register, X86ToSsaTranslator, X86TraversalDecodeResult,
 };
 
 #[cfg(test)]

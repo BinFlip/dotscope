@@ -1,14 +1,14 @@
 //! ConfuserEx deobfuscation integration tests.
 //!
 //! This test suite verifies deobfuscation of ConfuserEx-protected assemblies,
-//! with comprehensive pre- and post-deobfuscation verification.
+//! with comprehensive verification using engine findings.
 //!
 //! # Test Structure
 //!
 //! Each sample is tested through a unified harness that verifies:
-//! 1. Pre-deobfuscation: Expected protections are detected by the scanner
+//! 1. Detection: Engine findings confirm expected protections (including post-anti-tamper re-detection)
 //! 2. Deobfuscation: Engine processes successfully with cleanup enabled
-//! 3. Post-deobfuscation: Artifacts removed, assembly valid, semantics preserved
+//! 3. Removal: Re-detection on output confirms artifacts removed, assembly valid, semantics preserved
 
 #![cfg(feature = "deobfuscation")]
 
@@ -21,7 +21,7 @@ use std::{
 use dotscope::{
     analysis::{ConstValue, ControlFlowGraph, SsaConverter, SsaFunction, SsaOp, TypeContext},
     assembly::Operand,
-    deobfuscation::{detect_confuserex, find_encrypted_methods, DeobfuscationEngine, EngineConfig},
+    deobfuscation::{detect_confuserex, DeobfuscationEngine, EngineConfig},
     metadata::{
         method::MethodModifiers, signatures::TypeSignature, token::Token,
         typesystem::CilTypeReference, validation::ValidationConfig,
@@ -82,6 +82,8 @@ struct ExpectedProtections {
     has_control_flow: bool,
     /// Expect resource encryption.
     has_resources: bool,
+    /// Expect ReferenceProxy methods (call forwarding proxies).
+    has_reference_proxy: bool,
 }
 
 /// Verification level for semantic preservation checks.
@@ -121,12 +123,13 @@ fn all_samples() -> Vec<SampleSpec> {
         },
         SampleSpec {
             filename: "mkaring_normal.exe",
-            description: "Normal protection (constants + anti-debug)",
+            description: "Normal protection (constants + anti-debug + reference proxy)",
             expected_protections: ExpectedProtections {
                 has_marker_attributes: true,
                 has_suppress_ildasm: true,
                 has_decryptors: true,
                 has_anti_debug: true,
+                has_reference_proxy: true,
                 ..Default::default()
             },
             is_original: false,
@@ -186,9 +189,10 @@ fn all_samples() -> Vec<SampleSpec> {
                 has_anti_tamper: true,
                 has_control_flow: true,
                 has_resources: false,
+                has_reference_proxy: true,
             },
             is_original: false,
-            use_aggressive_config: true, // Use aggressive config for maximum
+            use_aggressive_config: false,
             // Uses signature + fingerprint matching (heavily obfuscated)
             check_semantic_preservation: true,
             verification_level: VerificationLevel::Normal,
@@ -233,9 +237,73 @@ fn all_samples() -> Vec<SampleSpec> {
             check_semantic_preservation: true,
             verification_level: VerificationLevel::Normal,
         },
-        // NOTE: mkaring_constants_x86.exe is intentionally excluded from integration tests
-        // because x86 mode requires native code support which is Windows-only and
-        // requires NativeMethodConversionPass. Add it when native code emulation is supported.
+        SampleSpec {
+            filename: "mkaring_controlflow_expression.exe",
+            description: "Control flow obfuscation with expression predicate",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                has_control_flow: true,
+                ..Default::default()
+            },
+            is_original: false,
+            use_aggressive_config: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+        },
+        SampleSpec {
+            filename: "mkaring_constants_x86.exe",
+            description: "Constants encryption with x86 native cipher",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                has_decryptors: true,
+                ..Default::default()
+            },
+            is_original: false,
+            use_aggressive_config: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+        },
+        SampleSpec {
+            filename: "mkaring_controlflow_x86.exe",
+            description: "Control flow obfuscation with x86 native predicate",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                has_control_flow: true,
+                ..Default::default()
+            },
+            is_original: false,
+            use_aggressive_config: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+        },
+        SampleSpec {
+            filename: "mkaring_constants_x86_controlflow.exe",
+            description: "Constants x86 cipher + control flow normal predicate",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                has_decryptors: true,
+                has_control_flow: true,
+                ..Default::default()
+            },
+            is_original: false,
+            use_aggressive_config: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+        },
+        SampleSpec {
+            filename: "mkaring_constants_x86_controlflow_x86.exe",
+            description: "Constants x86 cipher + control flow x86 predicate",
+            expected_protections: ExpectedProtections {
+                has_marker_attributes: true,
+                has_decryptors: true,
+                has_control_flow: true,
+                ..Default::default()
+            },
+            is_original: false,
+            use_aggressive_config: false,
+            check_semantic_preservation: true,
+            verification_level: VerificationLevel::Normal,
+        },
         SampleSpec {
             filename: "mkaring_antitamper_controlflow.exe",
             description: "Anti-tamper + ControlFlow (combination test)",
@@ -276,9 +344,7 @@ fn all_samples() -> Vec<SampleSpec> {
             is_original: false,
             use_aggressive_config: false,
             check_semantic_preservation: true,
-            // 8/11 methods preserved (73%) - CFG+ControlFlow combination loses some string
-            // references in DemoIfElse, DemoSwitch, DemoLoop during control flow recovery
-            verification_level: VerificationLevel::Relaxed,
+            verification_level: VerificationLevel::Normal,
         },
     ]
 }
@@ -297,10 +363,8 @@ struct DeobfuscationTestResult {
     methods_after: usize,
     /// Statistics from deobfuscation.
     stats: Option<DeobfuscationStats>,
-    /// Post-deobfuscation verification results.
+    /// Unified verification results (detection from engine findings + removal from re-detection).
     verification: VerificationResult,
-    /// Pre-deobfuscation verification results.
-    pre_verification: PreVerificationResult,
     /// Semantic preservation results (if applicable).
     semantic_result: Option<SemanticVerificationResult>,
 }
@@ -316,37 +380,32 @@ struct DeobfuscationStats {
 
 #[derive(Debug, Default)]
 struct VerificationResult {
-    /// Assembly can be reloaded from bytes.
+    // Assembly validity
     assembly_valid: bool,
-    /// Marker attributes removed (ConfusedByAttribute).
-    markers_removed: bool,
-    /// SuppressIldasm removed.
-    suppress_ildasm_removed: bool,
-    /// Entry point is valid.
     has_valid_entry_point: bool,
-    /// No validation errors on reload.
     no_validation_errors: bool,
-    /// Methods and types match after roundtrip.
     roundtrip_structure_matches: bool,
-    /// Anti-tamper encrypted methods were decrypted.
-    encrypted_methods_decrypted: bool,
-}
 
-/// Pre-deobfuscation verification: do detected protections match expectations?
-#[derive(Debug, Default)]
-struct PreVerificationResult {
-    /// All expected protections were detected.
-    all_expected_detected: bool,
-    /// Details for each protection type.
+    // Detection (from engine findings — includes post-anti-tamper re-detection)
     markers_detected: bool,
     suppress_ildasm_detected: bool,
-    decryptors_detected: bool,
-    anti_debug_detected: bool,
-    anti_tamper_detected: bool,
-    control_flow_detected: bool,
-    resources_detected: bool,
-    /// Count of switch instructions found (for control flow verification).
-    switch_count: usize,
+    decryptors_detected: usize,
+    anti_debug_detected: usize,
+    anti_tamper_detected: usize,
+    encrypted_methods_detected: usize,
+    resources_detected: usize,
+    proxy_methods_detected: usize,
+
+    // Removal (re-detection on deobfuscated output)
+    markers_remaining: bool,
+    suppress_ildasm_remaining: bool,
+    decryptors_remaining: usize,
+    anti_debug_remaining: usize,
+    anti_tamper_remaining: usize,
+    encrypted_methods_remaining: usize,
+    resources_remaining: usize,
+    proxy_methods_remaining: usize,
+    switches_remaining: usize,
 }
 
 /// Semantic preservation results.
@@ -361,54 +420,6 @@ fn load_sample(filename: &str) -> Result<CilObject, String> {
     let path = format!("{}/{}", SAMPLES_DIR, filename);
     CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
         .map_err(|e| format!("Failed to load {}: {}", filename, e))
-}
-
-/// Verify pre-deobfuscation state: do detected protections match expectations?
-fn verify_pre_deobfuscation(
-    assembly: &CilObject,
-    expected: &ExpectedProtections,
-) -> PreVerificationResult {
-    let (_, findings) = detect_confuserex(assembly);
-
-    let markers_detected = findings.has_confuser_attributes;
-    let suppress_ildasm_detected = findings.has_suppress_ildasm;
-    let decryptors_detected = findings.decryptor_methods.count() > 0;
-    let anti_debug_detected = findings.anti_debug_methods.count() > 0;
-    let anti_tamper_detected =
-        findings.anti_tamper_methods.count() > 0 || findings.encrypted_method_count > 0;
-    let resources_detected = findings.resource_handler_methods.count() > 0;
-
-    // For control flow, check if methods have switch instructions
-    let (control_flow_detected, switch_count) = check_has_switch_dispatcher(assembly);
-
-    // Verify each expected protection was detected
-    let markers_ok = !expected.has_marker_attributes || markers_detected;
-    let suppress_ok = !expected.has_suppress_ildasm || suppress_ildasm_detected;
-    let decryptors_ok = !expected.has_decryptors || decryptors_detected;
-    let anti_debug_ok = !expected.has_anti_debug || anti_debug_detected;
-    let anti_tamper_ok = !expected.has_anti_tamper || anti_tamper_detected;
-    let control_flow_ok = !expected.has_control_flow || control_flow_detected;
-    let resources_ok = !expected.has_resources || resources_detected;
-
-    let all_expected_detected = markers_ok
-        && suppress_ok
-        && decryptors_ok
-        && anti_debug_ok
-        && anti_tamper_ok
-        && control_flow_ok
-        && resources_ok;
-
-    PreVerificationResult {
-        all_expected_detected,
-        markers_detected,
-        suppress_ildasm_detected,
-        decryptors_detected,
-        anti_debug_detected,
-        anti_tamper_detected,
-        control_flow_detected,
-        resources_detected,
-        switch_count,
-    }
 }
 
 /// Check if assembly has switch dispatchers (CFF obfuscation indicator).
@@ -696,7 +707,6 @@ fn test_sample_comprehensive(
         methods_after: 0,
         stats: None,
         verification: VerificationResult::default(),
-        pre_verification: PreVerificationResult::default(),
         semantic_result: None,
     };
 
@@ -718,18 +728,8 @@ fn test_sample_comprehensive(
         result.verification.assembly_valid = true;
         result.verification.has_valid_entry_point = assembly.cor20header().entry_point_token != 0;
         result.verification.no_validation_errors = true;
-        result.pre_verification.all_expected_detected = true;
         return result;
     }
-
-    // PRE-DEOBFUSCATION VERIFICATION
-    result.pre_verification = verify_pre_deobfuscation(&assembly, &spec.expected_protections);
-
-    // Check pre-deobfuscation state for post-verification
-    let (_, findings) = detect_confuserex(&assembly);
-    let had_markers = findings.has_confuser_attributes;
-    let had_suppress_ildasm = findings.has_suppress_ildasm;
-    let encrypted_before = find_encrypted_methods(&assembly).len();
 
     // RUN DEOBFUSCATION
     let config = if spec.use_aggressive_config {
@@ -754,22 +754,31 @@ fn test_sample_comprehensive(
 
             result.methods_after = output.methods().iter().count();
 
-            // POST-DEOBFUSCATION VERIFICATION
+            // DETECTION from engine findings
+            let findings = &deob_result.findings;
+            result.verification.markers_detected = findings.has_marker_attributes();
+            result.verification.suppress_ildasm_detected = findings.has_suppress_ildasm();
+            result.verification.decryptors_detected = findings.decryptor_methods.count();
+            result.verification.anti_debug_detected = findings.anti_debug_methods.count();
+            result.verification.anti_tamper_detected = findings.anti_tamper_methods.count();
+            result.verification.encrypted_methods_detected = findings.encrypted_method_count;
+            result.verification.resources_detected = findings.resource_handler_methods.count();
+            result.verification.proxy_methods_detected = findings.proxy_methods.count();
 
-            // Entry point check
+            // REMOVAL: re-detect on output
             result.verification.has_valid_entry_point = output.cor20header().entry_point_token != 0;
-
-            // Check if markers were removed
             let (_, findings_after) = detect_confuserex(&output);
-            result.verification.markers_removed =
-                had_markers && !findings_after.has_confuser_attributes;
-            result.verification.suppress_ildasm_removed =
-                had_suppress_ildasm && !findings_after.has_suppress_ildasm;
-
-            // Check if encrypted methods were decrypted
-            let encrypted_after = find_encrypted_methods(&output).len();
-            result.verification.encrypted_methods_decrypted =
-                encrypted_before > 0 && encrypted_after == 0;
+            result.verification.markers_remaining = findings_after.has_marker_attributes();
+            result.verification.suppress_ildasm_remaining = findings_after.has_suppress_ildasm();
+            result.verification.decryptors_remaining = findings_after.decryptor_methods.count();
+            result.verification.anti_debug_remaining = findings_after.anti_debug_methods.count();
+            result.verification.anti_tamper_remaining = findings_after.anti_tamper_methods.count();
+            result.verification.encrypted_methods_remaining = findings_after.encrypted_method_count;
+            result.verification.resources_remaining =
+                findings_after.resource_handler_methods.count();
+            result.verification.proxy_methods_remaining = findings_after.proxy_methods.count();
+            let (_, switch_count) = check_has_switch_dispatcher(&output);
+            result.verification.switches_remaining = switch_count;
 
             // Roundtrip verification
             let bytes = output.file().data();
@@ -854,43 +863,40 @@ fn print_summary(results: &[DeobfuscationTestResult]) {
             status, result.sample.filename, result.sample.description
         );
 
-        // Pre-verification line
+        // Detection line (from engine findings)
         if !result.sample.is_original {
-            let pre = &result.pre_verification;
+            let v = &result.verification;
             let expected = &result.sample.expected_protections;
 
             let mut detected = Vec::new();
-            if expected.has_marker_attributes && pre.markers_detected {
+            if expected.has_marker_attributes && v.markers_detected {
                 detected.push("markers");
             }
-            if expected.has_suppress_ildasm && pre.suppress_ildasm_detected {
+            if expected.has_suppress_ildasm && v.suppress_ildasm_detected {
                 detected.push("suppress");
             }
-            if expected.has_decryptors && pre.decryptors_detected {
+            if expected.has_decryptors && v.decryptors_detected > 0 {
                 detected.push("decryptors");
             }
-            if expected.has_anti_debug && pre.anti_debug_detected {
+            if expected.has_anti_debug && v.anti_debug_detected > 0 {
                 detected.push("antidebug");
             }
-            if expected.has_anti_tamper && pre.anti_tamper_detected {
+            if expected.has_anti_tamper && v.anti_tamper_detected > 0 {
                 detected.push("antitamper");
             }
-            if expected.has_control_flow && pre.control_flow_detected {
-                detected.push(if pre.switch_count > 0 {
-                    "cf"
-                } else {
-                    "cf(none)"
-                });
-            }
-            if expected.has_resources && pre.resources_detected {
+            if expected.has_resources && v.resources_detected > 0 {
                 detected.push("resources");
+            }
+            if expected.has_reference_proxy && v.proxy_methods_detected > 0 {
+                detected.push("proxy");
             }
 
             if !detected.is_empty() {
                 eprintln!(
-                    "       Pre-check: {} [switches={}]",
+                    "       Detected: {} [decryptors={} antidebug={} antitamper={} encrypted={} resources={} proxies={}]",
                     detected.join(" "),
-                    pre.switch_count
+                    v.decryptors_detected, v.anti_debug_detected, v.anti_tamper_detected,
+                    v.encrypted_methods_detected, v.resources_detected, v.proxy_methods_detected,
                 );
             }
         }
@@ -913,16 +919,15 @@ fn print_summary(results: &[DeobfuscationTestResult]) {
             total_branches_simplified += stats.branches_simplified;
         }
 
-        // Post-verification line
+        // Removal line (re-detection on deobfuscated output)
         if !result.sample.is_original {
             let v = &result.verification;
             eprintln!(
-                "       Post-check: valid={} entry={} markers_rm={} suppress_rm={} encrypted_rm={} roundtrip={}",
-                v.assembly_valid,
-                v.has_valid_entry_point,
-                v.markers_removed,
-                v.suppress_ildasm_removed,
-                v.encrypted_methods_decrypted,
+                "       Removal: valid={} entry={} markers={} suppress={} decryptors={} encrypted={} proxies={} switches={} roundtrip={}",
+                v.assembly_valid, v.has_valid_entry_point,
+                v.markers_remaining, v.suppress_ildasm_remaining,
+                v.decryptors_remaining, v.encrypted_methods_remaining,
+                v.proxy_methods_remaining, v.switches_remaining,
                 v.roundtrip_structure_matches
             );
         }
@@ -1006,42 +1011,77 @@ fn test_all_confuserex_samples() {
             filename
         );
 
-        // Pre-verification assertions
-        assert!(
-            result.pre_verification.all_expected_detected,
-            "{}: Expected protections not detected. Expected: markers={} suppress={} decryptors={} antidebug={} antitamper={} cf={} resources={}",
-            filename,
-            expected.has_marker_attributes,
-            expected.has_suppress_ildasm,
-            expected.has_decryptors,
-            expected.has_anti_debug,
-            expected.has_anti_tamper,
-            expected.has_control_flow,
-            expected.has_resources
-        );
-
-        // Marker removal assertions
+        // Detection assertions (engine found expected protections)
+        let v = &result.verification;
         if expected.has_marker_attributes {
             assert!(
-                result.verification.markers_removed,
-                "{}: Marker attributes should be removed",
+                v.markers_detected,
+                "{}: markers not detected by engine",
                 filename
             );
         }
-
         if expected.has_suppress_ildasm {
             assert!(
-                result.verification.suppress_ildasm_removed,
-                "{}: SuppressIldasm should be removed",
+                v.suppress_ildasm_detected,
+                "{}: suppress_ildasm not detected",
+                filename
+            );
+        }
+        if expected.has_decryptors {
+            assert!(
+                v.decryptors_detected > 0,
+                "{}: decryptors not detected",
+                filename
+            );
+        }
+        if expected.has_anti_debug {
+            assert!(
+                v.anti_debug_detected > 0,
+                "{}: anti-debug not detected",
+                filename
+            );
+        }
+        if expected.has_anti_tamper {
+            assert!(
+                v.anti_tamper_detected > 0 || v.encrypted_methods_detected > 0,
+                "{}: anti-tamper not detected",
+                filename
+            );
+        }
+        if expected.has_resources {
+            assert!(
+                v.resources_detected > 0,
+                "{}: resources not detected",
+                filename
+            );
+        }
+        if expected.has_reference_proxy {
+            assert!(
+                v.proxy_methods_detected > 0,
+                "{}: reference proxy not detected",
                 filename
             );
         }
 
-        // Anti-tamper verification: encrypted method bodies should be decrypted
-        if expected.has_anti_tamper {
+        // Removal assertions (output should be clean)
+        if expected.has_marker_attributes {
             assert!(
-                result.verification.encrypted_methods_decrypted,
-                "{}: Encrypted method bodies should be decrypted after anti-tamper removal",
+                !v.markers_remaining,
+                "{}: markers should be removed",
+                filename
+            );
+        }
+        if expected.has_suppress_ildasm {
+            assert!(
+                !v.suppress_ildasm_remaining,
+                "{}: suppress_ildasm should be removed",
+                filename
+            );
+        }
+        if expected.has_anti_tamper {
+            assert_eq!(
+                v.encrypted_methods_remaining, 0,
+                "{}: encrypted methods should be decrypted",
                 filename
             );
         }
@@ -1764,11 +1804,9 @@ fn resolve_type_from_ctor(assembly: &CilObject, ctor_token: Token) -> Option<Str
         }
         0x0A => {
             // MemberRef
-            if let Some(member_ref) = assembly.member_ref(&ctor_token) {
-                Some(get_declaring_type_name(&member_ref.declaredby))
-            } else {
-                None
-            }
+            assembly
+                .member_ref(&ctor_token)
+                .map(|member_ref| get_declaring_type_name(&member_ref.declaredby))
         }
         _ => None,
     }

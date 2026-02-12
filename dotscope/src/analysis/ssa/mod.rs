@@ -114,10 +114,9 @@ pub use phi::{PhiNode, PhiOperand};
 pub use phis::PhiAnalyzer;
 pub use resolver::ValueResolver;
 pub use stack::{SimulationResult, StackSimulator, StackSlot, StackSlotSource};
-// SymbolicExpr, SymbolicOp, SymbolicEvaluator are always available for value tracking
 pub use symbolic::{SymbolicEvaluator, SymbolicExpr, SymbolicOp};
-// Z3Solver requires the z3 dependency which is only available with deobfuscation
-#[cfg(feature = "deobfuscation")]
+// Z3Solver requires the z3 dependency (independent of deobfuscation)
+#[cfg(feature = "z3")]
 pub use symbolic::Z3Solver;
 pub use types::{FieldRef, FnPtrSig, MethodRef, SigRef, SsaType, TypeClass, TypeContext, TypeRef};
 pub use value::{AbstractValue, ComputedOp, ComputedValue, ConstValue};

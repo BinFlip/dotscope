@@ -154,10 +154,18 @@ impl LocalVariables {
     ///
     /// # Errors
     ///
-    /// Returns error if index is invalid or type doesn't match.
+    /// Returns error if index is out of bounds.
     ///
-    /// Note: Type checking is relaxed for symbolic values and compatible
-    /// CIL types (e.g., storing I32 in I4 slot, I32 in Boolean slot).
+    /// # Type handling
+    ///
+    /// Matches .NET CLR runtime behavior: local variable types are NOT enforced
+    /// at execution time. The CLR only checks types during optional verification
+    /// (peverify), not at runtime. This is important for obfuscated code (e.g.,
+    /// CFF-protected methods) which is always unverifiable and may store different
+    /// types into the same local across different code paths.
+    ///
+    /// When a type mismatch is detected, the local's declared type is updated to
+    /// match the stored value, ensuring subsequent loads work correctly.
     pub fn set(&mut self, index: usize, value: EmValue) -> Result<()> {
         if index >= self.values.len() {
             return Err(EmulationError::LocalIndexOutOfBounds {
@@ -167,18 +175,15 @@ impl LocalVariables {
             .into());
         }
 
-        // Type check (relaxed for compatible types)
-        let expected = &self.types[index];
-        let found = value.cil_flavor();
-
-        // Check type compatibility using CilFlavor's stack compatibility rules
-        if !expected.is_stack_assignable_from(&found) && !value.is_symbolic() {
-            return Err(EmulationError::LocalFlavorMismatch {
-                index,
-                expected: Box::new(expected.clone()),
-                found: Box::new(found),
+        // Match .NET runtime behavior: accept all types for local stores.
+        // If the stored value's type differs from the declared type, update the
+        // declared type to match. This handles unverifiable code patterns like
+        // CFF obfuscation where different code paths store different types.
+        if !value.is_symbolic() {
+            let found = value.cil_flavor();
+            if !self.types[index].is_stack_assignable_from(&found) {
+                self.types[index] = found;
             }
-            .into());
         }
 
         self.values[index] = value;
@@ -331,14 +336,16 @@ mod tests {
     }
 
     #[test]
-    fn test_locals_type_mismatch() {
+    fn test_locals_type_mismatch_accepted() {
+        // Matches .NET CLR runtime behavior: local type mismatches are accepted.
+        // The CLR only checks types during optional verification, not at runtime.
         let mut locals = LocalVariables::new(vec![CilFlavor::I4]);
 
+        // Storing I64 into I4 local should succeed (type updated to match)
         let result = locals.set(0, EmValue::I64(100));
-        assert!(matches!(
-            result,
-            Err(Error::Emulation(ref e)) if matches!(e.as_ref(), EmulationError::LocalFlavorMismatch { .. })
-        ));
+        assert!(result.is_ok());
+        assert_eq!(locals.get(0).unwrap(), &EmValue::I64(100));
+        assert_eq!(locals.get_type(0).unwrap(), &CilFlavor::I8);
     }
 
     #[test]

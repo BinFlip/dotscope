@@ -98,6 +98,7 @@ mod decoder;
 mod encoder;
 mod instruction;
 mod instructions;
+pub mod opcodes;
 
 pub use block::{BasicBlock, HandlerEntryInfo};
 pub use builder::InstructionAssembler;

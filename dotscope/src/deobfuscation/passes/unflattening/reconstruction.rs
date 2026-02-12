@@ -260,12 +260,25 @@ fn extract_redirects_from_node(
                 // This block should redirect to target_block instead of dispatcher
                 plan.add_redirect(pred, *target_block, predecessor_of_pred);
                 plan.state_transitions_removed += 1;
+            } else if let Some(ext_pred) = external_predecessor {
+                // The sub-trace starts directly at the dispatcher (no preceding user blocks).
+                // This happens when a user branch at method entry sends one path directly
+                // to the dispatcher block. Redirect the external predecessor's
+                // dispatcher-targeting edge to the actual target.
+                plan.add_redirect(ext_pred, *target_block, None);
+                plan.state_transitions_removed += 1;
             }
 
             // Continue processing the rest of the trace
             // The continues trace starts at target_block, and its predecessor is pred_block
-            // (the block that was redirected to go to target_block)
-            extract_redirects_from_node(continues, dispatcher_block, plan, pred_block);
+            // (the block that was redirected to go to target_block).
+            // Fall back to external_predecessor when pred_block is None (direct-to-dispatcher path).
+            extract_redirects_from_node(
+                continues,
+                dispatcher_block,
+                plan,
+                pred_block.or(external_predecessor),
+            );
         }
 
         TraceTerminator::UserBranch {
@@ -571,7 +584,7 @@ mod tests {
     fn test_reconstruct_simple_cff() {
         let ssa = create_simple_cff();
         let config = UnflattenConfig::default();
-        let tree = trace_method_tree(&ssa, &config);
+        let tree = trace_method_tree(&ssa, &config, None);
 
         assert!(tree.dispatcher.is_some(), "Should detect dispatcher");
 
@@ -687,7 +700,7 @@ mod tests {
     fn test_reconstruct_with_user_branch() {
         let ssa = create_cff_with_user_branch();
         let config = UnflattenConfig::default();
-        let tree = trace_method_tree(&ssa, &config);
+        let tree = trace_method_tree(&ssa, &config, None);
 
         assert!(tree.dispatcher.is_some(), "Should detect dispatcher");
         assert!(

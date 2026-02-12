@@ -439,9 +439,17 @@ impl<'a> CffDetector<'a> {
             .any(|instr| matches!(instr.op(), SsaOp::Switch { .. }));
 
         if has_switch {
-            // Check predecessor count (should have many back edges)
+            // Check predecessor count (should have many back edges).
+            // block_predecessors excludes self-loops, but a switch targeting itself
+            // is a valid CFF back-edge (e.g., x86-resolved CFF where case blocks
+            // were folded into the dispatcher). Count it separately.
             let pred_count = self.ssa.block_predecessors(block_idx).len();
-            return pred_count >= 2;
+            let has_self_loop = block
+                .instructions()
+                .iter()
+                .any(|i| i.op().successors().contains(&block_idx));
+            let effective_preds = pred_count + usize::from(has_self_loop);
+            return effective_preds >= 2;
         }
 
         // Also consider blocks with conditional branches that could be if-else chains

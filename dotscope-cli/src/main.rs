@@ -95,7 +95,7 @@ fn main() -> anyhow::Result<()> {
             max_instructions,
             no_cleanup,
             aggressive,
-            stats,
+            detailed,
             report,
         } => commands::deobfuscate::run(
             path,
@@ -107,7 +107,7 @@ fn main() -> anyhow::Result<()> {
                 max_instructions: *max_instructions,
                 no_cleanup: *no_cleanup,
                 aggressive: *aggressive,
-                show_stats: *stats,
+                detailed: *detailed,
                 report: report.as_deref(),
                 global: &cli.global,
             },

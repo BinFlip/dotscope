@@ -1243,7 +1243,7 @@ impl EmulationController {
                 StepResult::TailCall { method, args: _ } => {
                     // Tail call replaces current frame - pop arguments first while stack is valid
                     let target_method = context.get_method(method)?;
-                    let param_count = target_method.params.count();
+                    let param_count = target_method.signature.params.len();
                     let is_instance = !context.is_static_method(method)?;
                     let total_args = if is_instance {
                         param_count + 1
@@ -1558,8 +1558,10 @@ impl EmulationController {
         // Get method signature for internal method
         let method = context.get_method(method_token)?;
 
-        // Get argument count
-        let param_count = method.params.count();
+        // Get argument count from the signature blob (authoritative source).
+        // The Param table may have fewer entries than the actual parameter count
+        // (e.g., ConfuserEx native stubs have signatures with params but no Param rows).
+        let param_count = method.signature.params.len();
         let is_instance = !context.is_static_method(method_token)?;
         let total_args = if is_instance {
             param_count + 1
@@ -1941,7 +1943,7 @@ impl EmulationController {
         // Try native hooks for P/Invoke
         if let Some(dll) = &dll_name {
             // Get argument count - P/Invoke methods are always static
-            let param_count = method.params.count();
+            let param_count = method.signature.params.len();
 
             // Pop arguments from stack
             let args = thread.pop_args(param_count)?;
@@ -2047,7 +2049,7 @@ impl EmulationController {
                 tn,
                 method.name.clone(),
                 true,
-                method.params.count(),
+                method.signature.params.len(),
                 has_this,
             )
         };
@@ -2148,7 +2150,7 @@ impl EmulationController {
 
         // Get constructor info for MethodDef tokens
         let method = context.get_method(constructor_token)?;
-        let param_count = method.params.count();
+        let param_count = method.signature.params.len();
 
         // Pop constructor arguments
         let arg_values = thread.pop_args(param_count)?;

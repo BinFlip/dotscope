@@ -26,9 +26,7 @@ use crate::{
     assembly::Operand,
     cilassembly::CleanupRequest,
     deobfuscation::{
-        cleanup::is_entry_point,
-        context::AnalysisContext,
-        obfuscators::confuserex::{findings::ConfuserExFindings, ConfuserExObfuscator},
+        cleanup::is_entry_point, context::AnalysisContext, findings::DeobfuscationFindings,
     },
     metadata::{method::Method, signatures::TypeSignature, tables::TableId, token::Token},
     prelude::{CilTypeRef, FlowType},
@@ -40,7 +38,7 @@ use crate::{
 /// This function builds a `CleanupRequest` from the detection findings,
 /// identifying all protection infrastructure that should be removed.
 fn build_cleanup_request(
-    findings: &ConfuserExFindings,
+    findings: &DeobfuscationFindings,
     assembly: &CilObject,
     ctx: &AnalysisContext,
 ) -> CleanupRequest {
@@ -78,6 +76,13 @@ fn build_cleanup_request(
             }
         }
 
+        // Anti-dump methods
+        for (_, token) in &findings.anti_dump_methods {
+            if !is_entry_point(assembly, *token, aggressive) {
+                request.add_method(*token);
+            }
+        }
+
         // Resource handler methods
         for (_, token) in &findings.resource_handler_methods {
             if !is_entry_point(assembly, *token, aggressive) {
@@ -99,6 +104,13 @@ fn build_cleanup_request(
         for (_, native_helper) in &findings.native_helpers {
             if !is_entry_point(assembly, native_helper.token, aggressive) {
                 request.add_method(native_helper.token);
+            }
+        }
+
+        // Proxy methods (ReferenceProxy call forwarders)
+        for (_, token) in &findings.proxy_methods {
+            if !is_entry_point(assembly, *token, aggressive) {
+                request.add_method(*token);
             }
         }
     }
@@ -184,17 +196,14 @@ fn build_cleanup_request(
 /// This is the main entry point called by `cleanup_request()`.
 /// Returns a CleanupRequest that the engine will execute.
 pub fn build_request(
-    obfuscator: &ConfuserExObfuscator,
     assembly: &CilObject,
     ctx: &AnalysisContext,
+    findings: &DeobfuscationFindings,
 ) -> Option<CleanupRequest> {
     let cleanup_config = &ctx.config.cleanup;
     if !cleanup_config.any_enabled() {
         return None;
     }
-
-    let findings_guard = obfuscator.findings.read().ok()?;
-    let findings = findings_guard.as_ref()?;
 
     let mut request = build_cleanup_request(findings, assembly, ctx);
 

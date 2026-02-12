@@ -79,7 +79,7 @@ pub fn create_lzma_hook() -> Hook {
 /// # Arguments
 ///
 /// * `tokens` - Set of protection method tokens to stub out (typically from
-///   `ConfuserExFindings` - `anti_tamper`, `anti_debug`, resource handlers)
+///   `DeobfuscationFindings` - `anti_tamper`, `anti_debug`, resource handlers)
 ///
 /// # Returns
 ///

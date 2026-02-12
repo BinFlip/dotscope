@@ -286,9 +286,9 @@ pub enum Command {
         #[arg(long)]
         aggressive: bool,
 
-        /// Print deobfuscation statistics.
+        /// Show detailed findings (individual tokens, methods, etc.).
         #[arg(long)]
-        stats: bool,
+        detailed: bool,
 
         /// Write detailed JSON report.
         #[arg(long, value_name = "FILE")]

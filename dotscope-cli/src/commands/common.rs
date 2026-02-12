@@ -1,27 +1,12 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
-use dotscope::{deobfuscation::DetectionResult, CilObject, ValidationConfig};
+use dotscope::{CilObject, ValidationConfig};
 
 /// Load a .NET assembly with the standard analysis validation config.
 pub fn load_assembly(path: &Path) -> anyhow::Result<CilObject> {
     CilObject::from_path_with_validation(path, ValidationConfig::analysis())
         .with_context(|| format!("failed to load assembly: {}", path.display()))
-}
-
-/// Extract the primary obfuscator name and score from a detection result.
-pub fn extract_detection_summary(result: &DetectionResult) -> (Option<String>, usize) {
-    if result.detected() {
-        let primary = result.primary().unwrap();
-        let score = result
-            .all()
-            .iter()
-            .find(|(name, _)| *name == primary.name())
-            .map_or(0, |(_, s)| s.score());
-        (Some(primary.name()), score)
-    } else {
-        (None, 0)
-    }
 }
 
 /// Collect all `.exe` and `.dll` files recursively from a directory.

@@ -275,7 +275,7 @@
 //! 5. Replace the call with a constant in SSA form
 //!
 //! Decryptor methods are identified during detection and stored in
-//! [`ConfuserExFindings::decryptor_methods`](super::ConfuserExFindings::decryptor_methods).
+//! [`DeobfuscationFindings::decryptor_methods`](crate::deobfuscation::DeobfuscationFindings::decryptor_methods).
 //!
 //! # Test Samples
 //!
@@ -321,7 +321,7 @@ use crate::{
     compiler::CompilerContext,
     deobfuscation::{
         detection::{DetectionEvidence, DetectionScore},
-        obfuscators::confuserex::findings::ConfuserExFindings,
+        findings::DeobfuscationFindings,
         CfgInfo, StateMachineCallSite, StateMachineProvider, StateMachineSemantics,
         StateSlotOperation, StateUpdateCall,
     },
@@ -562,6 +562,7 @@ impl StateMachineProvider for ConfuserExStateMachine {
                     instr_idx,
                     dest,
                     decryptor: resolved_target,
+                    call_target,
                     state_var,
                     encoded_var,
                     feeding_update_idx: feeding_idx,
@@ -697,7 +698,7 @@ impl StateMachineProvider for ConfuserExStateMachine {
 ///
 /// CFG mode is identified when the decryptor call argument traces back to an XOR
 /// operation (one operand constant, one from CFGCtx.Next() state machine).
-pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut ConfuserExFindings) {
+pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut DeobfuscationFindings) {
     let decryptors = find_decryptor_methods(assembly);
     if decryptors.is_empty() {
         return;
@@ -1220,7 +1221,7 @@ pub fn find_constants_initializer(assembly: &CilObject) -> Option<Token> {
 ///
 /// # Note
 ///
-/// Prefer using `ConfuserExFindings::decryptor_methods` from detection results
+/// Prefer using `DeobfuscationFindings::decryptor_methods` from detection results
 /// instead of calling this function directly, to avoid redundant scanning.
 pub fn find_decryptor_methods(assembly: &CilObject) -> Vec<Token> {
     let mut decryptors = Vec::new();

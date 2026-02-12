@@ -59,11 +59,11 @@ iced-x86 = { version = "1.21", default-features = false, features = ["std", "dec
 
 [dev-dependencies]
 criterion = "0.8.2"
-clap = { version = "4.5.57", features = ["derive"] }
-ctrlc = "3.5.1"
+clap = { version = "4.5.58", features = ["derive"] }
+ctrlc = "3.5.2"
 
 [features]
-default = ["legacy-crypto", "emulation", "deobfuscation"]
+default = ["legacy-crypto", "emulation", "x86", "deobfuscation"]
 
 # Include legacy cryptographic algorithms for full .NET compatibility.
 # Required for: public key token computation (SHA1), assembly hash verification (MD5/SHA1),
@@ -71,20 +71,28 @@ default = ["legacy-crypto", "emulation", "deobfuscation"]
 # Disable with `default-features = false` if you need to exclude these from your dependency tree.
 legacy-crypto = ["dep:sha1", "dep:md-5", "dep:des"]
 
-# CIL bytecode emulation engine for runtime value computation.
-# Required for: string decryption, dynamic value resolution, BCL method simulation.
-# Disable to reduce compilation time if you only need metadata parsing.
+# CIL bytecode emulation engine.
+# Enables: controlled CIL execution, BCL method hooks, heap/stack emulation.
+# Used by deobfuscation for runtime value computation and string decryption.
 emulation = ["dep:imbl"]
 
 # Compiler infrastructure: SSA optimization passes, code generation, pass scheduler.
-# Standalone provides SSA-to-CIL codegen. With deobfuscation, adds pass infrastructure.
+# Enables: interprocedural analysis, inlining, constant propagation, SSA-to-CIL codegen.
 compiler = []
 
-# Deobfuscation framework with transformation passes and obfuscator support.
-# Automatically enables compiler and emulation.
-# Includes: Z3 symbolic solver (control flow unflattening), iced-x86 (native code analysis).
-# Disable to reduce compilation time if you only need metadata parsing/analysis.
-deobfuscation = ["compiler", "dep:z3", "dep:iced-x86", "emulation"]
+# x86/x64 native code analysis: instruction decoding, CFG construction, SSA translation.
+# Enables: native method stub analysis, mixed-mode binary support in PE writer.
+x86 = ["dep:iced-x86"]
+
+# Z3 symbolic constraint solver for advanced analysis.
+# Enables: symbolic expression solving, satisfiability checking, constraint inversion.
+# Optional enhancement — not required by any other feature.
+z3 = ["dep:z3"]
+
+# Deobfuscation framework: transformation passes, obfuscator detection, assembly rewriting.
+# Automatically enables compiler, x86, and emulation features.
+# Optionally enhanced by the `z3` feature for symbolic constraint solving.
+deobfuscation = ["compiler", "x86", "emulation"]
 
 # Skip expensive validation tests that use ProjectLoader with dependency resolution.
 # These tests are slow on CI runners with limited cores/IO. Use this feature on slow runners (e.g., macOS/Windows CI).

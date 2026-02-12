@@ -30,6 +30,8 @@
 //! - ECMA-335 §II.25 - File format extensions to PE
 //! - [PE Format Specification](https://docs.microsoft.com/en-us/windows/win32/debug/pe-format)
 
+#[cfg(feature = "x86")]
+use crate::analysis::x86_native_body_size;
 use crate::{
     cilassembly::{
         changes::{AssemblyChanges, ChangeRef},
@@ -53,7 +55,7 @@ use crate::{
     metadata::{
         exports::NativeExports,
         imports::NativeImports,
-        method::MethodBody,
+        method::{MethodBody, MethodImplCodeType},
         root::Root,
         streams::{Blob, Guid, StreamHeader, Strings, UserStrings},
         tablefields::get_heap_fields,
@@ -1050,43 +1052,67 @@ impl<'a> PeGenerator<'a> {
                         }
                         written_rvas.insert(original_rva);
 
-                        // Read method body at original RVA
-                        let offset = file.rva_to_offset(original_rva as usize)?;
-                        let available_data = file.data_slice(offset, file.data().len() - offset)?;
+                        let code_type = MethodImplCodeType::from_impl_flags(row.impl_flags);
+                        let is_native = code_type.contains(MethodImplCodeType::NATIVE);
 
-                        // Parse method body to get its size
-                        let method_body = MethodBody::from(available_data).map_err(|e| {
-                            Error::ModificationInvalid(format!(
-                                "Cannot parse method body at RVA 0x{original_rva:08x}: {e}"
-                            ))
-                        })?;
-                        let body_size = method_body.size();
+                        if is_native || code_type.contains(MethodImplCodeType::RUNTIME) {
+                            // Native/runtime methods contain x86/x64 machine code, not CIL.
+                            // Copy the raw bytes as-is. Size is determined by decoding
+                            // x86 instructions to find the function's RET instruction.
+                            #[cfg(feature = "x86")]
+                            {
+                                let offset = file.rva_to_offset(original_rva as usize)?;
+                                let available = file.data().len().saturating_sub(offset);
+                                let scan_data = file.data_slice(offset, available)?;
 
-                        // Read just the method body bytes
-                        let body_data = file.data_slice(offset, body_size)?;
+                                let body_size = x86_native_body_size(scan_data, file.pe().is_64bit);
 
-                        // Fat method headers require 4-byte alignment (ECMA-335 §II.25.4.2)
-                        // Tiny headers have no alignment requirement
-                        if method_body.is_fat {
-                            ctx.align_to_4_with_padding()?;
-                        }
+                                if body_size > 0 {
+                                    let body_data = file.data_slice(offset, body_size)?;
 
-                        // Track new RVA for this method
-                        let new_rva = ctx.current_rva();
-                        ctx.method_body_rva_map.insert(original_rva, new_rva);
+                                    // Native code needs 4-byte alignment for consistency
+                                    ctx.align_to_4_with_padding()?;
 
-                        // Apply token patching if needed
-                        if has_userstring_changes || has_token_changes {
-                            let mut patched_body = body_data.to_vec();
-                            remap_method_body_tokens(
-                                &mut patched_body,
-                                &ctx.token_remapping,
-                                &ctx.heap_remapping.userstrings,
-                                None, // No changes for original methods
-                            )?;
-                            ctx.write(&patched_body)?;
+                                    let new_rva = ctx.current_rva();
+                                    ctx.method_body_rva_map.insert(original_rva, new_rva);
+                                    ctx.write(body_data)?;
+                                }
+                            }
                         } else {
-                            ctx.write(body_data)?;
+                            // CIL method - parse header to determine size
+                            let offset = file.rva_to_offset(original_rva as usize)?;
+                            let available_data =
+                                file.data_slice(offset, file.data().len() - offset)?;
+
+                            let method_body = MethodBody::from(available_data).map_err(|e| {
+                                Error::ModificationInvalid(format!(
+                                    "Cannot parse method body at RVA 0x{original_rva:08x}: {e}"
+                                ))
+                            })?;
+                            let body_size = method_body.size();
+                            let body_data = file.data_slice(offset, body_size)?;
+
+                            // Fat method headers require 4-byte alignment (ECMA-335 §II.25.4.2)
+                            if method_body.is_fat {
+                                ctx.align_to_4_with_padding()?;
+                            }
+
+                            let new_rva = ctx.current_rva();
+                            ctx.method_body_rva_map.insert(original_rva, new_rva);
+
+                            // Apply token patching if needed
+                            if has_userstring_changes || has_token_changes {
+                                let mut patched_body = body_data.to_vec();
+                                remap_method_body_tokens(
+                                    &mut patched_body,
+                                    &ctx.token_remapping,
+                                    &ctx.heap_remapping.userstrings,
+                                    None, // No changes for original methods
+                                )?;
+                                ctx.write(&patched_body)?;
+                            } else {
+                                ctx.write(body_data)?;
+                            }
                         }
                     }
                 }
@@ -2162,7 +2188,7 @@ impl<'a> PeGenerator<'a> {
             }
         }
 
-        // Phase 2: Compute output RIDs and build complete token remapping
+        // Phase 2: Compute output RIDs for original rows
         // Output RID = original RID - (deleted before) - (skipped before)
         let mut output_rid = 0u32;
         let mut rid_to_output: HashMap<u32, u32> = HashMap::new();
@@ -2175,7 +2201,32 @@ impl<'a> PeGenerator<'a> {
             rid_to_output.insert(sig.rid, output_rid);
         }
 
-        // Phase 3: Build token remapping
+        // Phase 2b: Compute output RIDs for inserted rows (appended after originals)
+        // Inserted rows are written after all original rows by write_table_data().
+        // When original rows are deduplicated/deleted, the inserted rows' output RIDs
+        // shift down accordingly.
+        if let Some(TableModifications::Sparse { operations, .. }) =
+            changes.get_table_modifications(TableId::StandAloneSig)
+        {
+            let mut inserts: Vec<u32> = operations
+                .iter()
+                .filter_map(|op| {
+                    if let Operation::Insert(rid, _) = &op.operation {
+                        Some(*rid)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            inserts.sort();
+
+            for rid in inserts {
+                output_rid += 1;
+                rid_to_output.insert(rid, output_rid);
+            }
+        }
+
+        // Phase 3: Build token remapping for original rows
         for sig in sig_table {
             if deleted_rids.contains(&sig.rid) {
                 continue;
@@ -2194,6 +2245,24 @@ impl<'a> PeGenerator<'a> {
                 if sig.rid != new_rid {
                     let new_token = Token::from_parts(TableId::StandAloneSig, new_rid).value();
                     ctx.token_remapping.insert(old_token, new_token);
+                }
+            }
+        }
+
+        // Phase 3b: Build token remapping for inserted rows
+        if let Some(TableModifications::Sparse { operations, .. }) =
+            changes.get_table_modifications(TableId::StandAloneSig)
+        {
+            for op in operations {
+                if let Operation::Insert(rid, _) = &op.operation {
+                    if let Some(&new_rid) = rid_to_output.get(rid) {
+                        if *rid != new_rid {
+                            let old_token = Token::from_parts(TableId::StandAloneSig, *rid).value();
+                            let new_token =
+                                Token::from_parts(TableId::StandAloneSig, new_rid).value();
+                            ctx.token_remapping.insert(old_token, new_token);
+                        }
+                    }
                 }
             }
         }

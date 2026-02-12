@@ -8,11 +8,13 @@
 //!
 //! ```text
 //! detect_confuserex()
-//!   ├─> metadata::detect()    - Invalid metadata, ENC tables, SuppressIldasm, markers
-//!   ├─> constants::detect()   - Constants decryptor methods
-//!   ├─> antitamper::detect()  - Anti-tamper initialization methods + encrypted bodies
-//!   ├─> antidebug::detect()   - Anti-debug check patterns
-//!   └─> resources::detect()   - Resource protection handler patterns
+//!   ├─> metadata::detect()        - Invalid metadata, ENC tables, SuppressIldasm, markers
+//!   ├─> constants::detect()       - Constants decryptor methods
+//!   ├─> antitamper::detect()      - Anti-tamper initialization methods + encrypted bodies
+//!   ├─> antidebug::detect()       - Anti-debug check patterns
+//!   ├─> antidump::detect()        - Anti-dump header corruption patterns
+//!   ├─> resources::detect()       - Resource protection handler patterns
+//!   └─> referenceproxy::detect()  - ReferenceProxy call forwarding methods
 //! ```
 //!
 //! Note: Control flow flattening (CFF) detection is handled separately by the
@@ -20,7 +22,7 @@
 //! `deobfuscation/passes/unflattening/detection.rs` for the `CffDetector` which
 //! uses dominator analysis, back-edge ratios, and state variable identification.
 //!
-//! The orchestrator creates a `DetectionScore` and `ConfuserExFindings` struct,
+//! The orchestrator creates a `DetectionScore` and `DeobfuscationFindings` struct,
 //! then calls each module's detect function to populate them.
 
 use std::collections::HashSet;
@@ -31,10 +33,9 @@ use crate::{
     assembly::{Instruction, Operand},
     deobfuscation::{
         detection::{DetectionEvidence, DetectionScore},
+        findings::{DeobfuscationFindings, NativeHelperInfo},
         obfuscators::confuserex::{
-            antidebug, antitamper, constants,
-            findings::{ConfuserExFindings, NativeHelperInfo},
-            metadata, resources,
+            antidebug, antidump, antitamper, constants, metadata, referenceproxy, resources,
         },
     },
     file::pe::SectionTable,
@@ -55,13 +56,13 @@ use crate::{
 /// This is the main entry point for ConfuserEx detection. It orchestrates
 /// detection across all protection modules and returns:
 /// - A `DetectionScore` with confidence and evidence
-/// - `ConfuserExFindings` with cached data for deobfuscation
+/// - `DeobfuscationFindings` with cached data for deobfuscation
 ///
 /// # Detection Strategy
 ///
 /// Each protection module has its own `detect()` function that:
 /// 1. Scans for protection-specific patterns
-/// 2. Populates the relevant fields in `ConfuserExFindings`
+/// 2. Populates the relevant fields in `DeobfuscationFindings`
 /// 3. Adds evidence to the `DetectionScore`
 ///
 /// # Arguments
@@ -70,10 +71,10 @@ use crate::{
 ///
 /// # Returns
 ///
-/// A tuple of `(DetectionScore, ConfuserExFindings)`.
-pub fn detect_confuserex(assembly: &CilObject) -> (DetectionScore, ConfuserExFindings) {
+/// A tuple of `(DetectionScore, DeobfuscationFindings)`.
+pub fn detect_confuserex(assembly: &CilObject) -> (DetectionScore, DeobfuscationFindings) {
     let score = DetectionScore::new();
-    let mut findings = ConfuserExFindings::new();
+    let mut findings = DeobfuscationFindings::new();
 
     // Metadata protection: invalid indices, ENC tables, SuppressIldasm, markers
     metadata::detect(assembly, &score, &mut findings);
@@ -91,8 +92,14 @@ pub fn detect_confuserex(assembly: &CilObject) -> (DetectionScore, ConfuserExFin
     // Anti-debug: debugger checks + FailFast patterns
     antidebug::detect(assembly, &score, &mut findings);
 
+    // Anti-dump: VirtualProtect + GetHINSTANCE + get_Module + Marshal.Copy patterns
+    antidump::detect(assembly, &score, &mut findings);
+
     // Resources: AssemblyResolve/ResourceResolve handler patterns
     resources::detect(assembly, &score, &mut findings);
+
+    // ReferenceProxy: indirect call forwarding methods
+    referenceproxy::detect(assembly, &score, &mut findings);
 
     // Note: Control flow flattening (CFF) detection is handled by the
     // UnflatteningPass using SSA-based structural analysis (see
@@ -117,86 +124,131 @@ pub fn detect_confuserex(assembly: &CilObject) -> (DetectionScore, ConfuserExFin
     (score, findings)
 }
 
-/// Detects native x86 helper methods called by decryptors.
+/// Detects native x86 helper methods used by ConfuserEx.
 ///
-/// ConfuserEx's x86Predicate protection uses native x86 methods for key transformation.
-/// These methods have the signature `static int32(int32)` and are called by decryptor
-/// methods to compute decryption keys.
+/// ConfuserEx uses native x86 methods in two ways:
+/// 1. **Constants encryption (x86 cipher)**: Native methods called by decryptor methods
+///    for key transformation during constant decryption.
+/// 2. **Control flow (x86 predicate)**: Native methods called by user code to evaluate
+///    opaque predicates for control flow obfuscation.
 ///
-/// Detection criteria:
-/// 1. Method has `MethodImplCodeType::NATIVE` flag
-/// 2. Method is called by a detected decryptor method
-/// 3. Method signature is `static int32(int32)`
+/// Detection uses two phases:
+/// - Phase 1: Scan decryptor methods for calls to native helpers (tracks callers)
+/// - Phase 2: Scan ALL methods in `<Module>` for native `int32(int32)` signature
+///   (catches x86 predicate helpers not called by decryptors)
 fn detect_native_helpers(
     assembly: &CilObject,
     score: &DetectionScore,
-    findings: &mut ConfuserExFindings,
+    findings: &mut DeobfuscationFindings,
 ) {
     // Build set of decryptor tokens for quick lookup
     let decryptor_tokens: std::collections::HashSet<Token> =
         findings.decryptor_methods.iter().map(|(_, t)| *t).collect();
 
-    if decryptor_tokens.is_empty() {
-        return;
-    }
-
     // Map from native method token to NativeHelperInfo
     let mut native_helpers: FxHashMap<Token, NativeHelperInfo> = FxHashMap::default();
 
-    // Scan decryptor methods for calls to native methods
+    // Phase 1: Scan decryptor methods for calls to native methods (tracks callers)
+    if !decryptor_tokens.is_empty() {
+        for method_entry in assembly.methods() {
+            let method = method_entry.value();
+
+            // Only scan decryptor methods
+            if !decryptor_tokens.contains(&method.token) {
+                continue;
+            }
+
+            // Scan instructions for call instructions
+            for instr in method.instructions() {
+                // Look for call instructions
+                if instr.flow_type != FlowType::Call {
+                    continue;
+                }
+
+                let Operand::Token(call_target) = &instr.operand else {
+                    continue;
+                };
+
+                // Check if the call target is a native method with int32(int32) signature
+                let Some(target_method) = assembly.method(call_target) else {
+                    continue;
+                };
+
+                // Check if it's a native method
+                if !target_method
+                    .impl_code_type
+                    .contains(MethodImplCodeType::NATIVE)
+                {
+                    continue;
+                }
+
+                // Check signature: static int32(int32)
+                let sig = &target_method.signature;
+                let is_int32_to_int32 = sig.return_type.base == TypeSignature::I4
+                    && sig.params.len() == 1
+                    && sig.params[0].base == TypeSignature::I4;
+
+                if !is_int32_to_int32 {
+                    continue;
+                }
+
+                // Get RVA
+                let Some(rva) = target_method.rva else {
+                    continue;
+                };
+
+                // Add or update the native helper entry
+                native_helpers
+                    .entry(*call_target)
+                    .or_insert_with(|| NativeHelperInfo::new(*call_target, rva))
+                    .add_caller(method.token);
+            }
+        }
+    }
+
+    // Phase 2: Detect ALL native methods in <Module> with int32(int32) signature.
+    // This catches x86 predicate helpers that are called by user code (not decryptors).
+    // ConfuserEx always places native helpers in <Module> (TypeDef RID 1).
+    let module_token = Token::from_parts(TableId::TypeDef, 1);
     for method_entry in assembly.methods() {
         let method = method_entry.value();
 
-        // Only scan decryptor methods
-        if !decryptor_tokens.contains(&method.token) {
+        // Skip if already detected in Phase 1
+        if native_helpers.contains_key(&method.token) {
             continue;
         }
 
-        // Scan instructions for call instructions
-        for instr in method.instructions() {
-            // Look for call instructions
-            if instr.flow_type != FlowType::Call {
-                continue;
-            }
-
-            let Operand::Token(call_target) = &instr.operand else {
-                continue;
-            };
-
-            // Check if the call target is a native method with int32(int32) signature
-            let Some(target_method) = assembly.method(call_target) else {
-                continue;
-            };
-
-            // Check if it's a native method
-            if !target_method
-                .impl_code_type
-                .contains(MethodImplCodeType::NATIVE)
-            {
-                continue;
-            }
-
-            // Check signature: static int32(int32)
-            let sig = &target_method.signature;
-            let is_int32_to_int32 = sig.return_type.base == TypeSignature::I4
-                && sig.params.len() == 1
-                && sig.params[0].base == TypeSignature::I4;
-
-            if !is_int32_to_int32 {
-                continue;
-            }
-
-            // Get RVA
-            let Some(rva) = target_method.rva else {
-                continue;
-            };
-
-            // Add or update the native helper entry
-            native_helpers
-                .entry(*call_target)
-                .or_insert_with(|| NativeHelperInfo::new(*call_target, rva))
-                .add_caller(method.token);
+        // Must be a native method
+        if !method.impl_code_type.contains(MethodImplCodeType::NATIVE) {
+            continue;
         }
+
+        // Must belong to <Module>
+        let is_module_method = method
+            .declaring_type_rc()
+            .is_some_and(|t| t.token == module_token);
+        if !is_module_method {
+            continue;
+        }
+
+        // Check signature: static int32(int32)
+        let sig = &method.signature;
+        let is_int32_to_int32 = sig.return_type.base == TypeSignature::I4
+            && sig.params.len() == 1
+            && sig.params[0].base == TypeSignature::I4;
+
+        if !is_int32_to_int32 {
+            continue;
+        }
+
+        // Get RVA
+        let Some(rva) = method.rva else {
+            continue;
+        };
+
+        native_helpers
+            .entry(method.token)
+            .or_insert_with(|| NativeHelperInfo::new(method.token, rva));
     }
 
     // Store findings
@@ -228,7 +280,7 @@ fn detect_native_helpers(
 fn detect_artifact_sections(
     assembly: &CilObject,
     score: &DetectionScore,
-    findings: &mut ConfuserExFindings,
+    findings: &mut DeobfuscationFindings,
 ) {
     let file = assembly.file();
     let sections = file.sections();
@@ -305,7 +357,7 @@ fn find_section_for_rva(sections: &[SectionTable], rva: u32) -> Option<&SectionT
 fn detect_constant_data_infrastructure(
     assembly: &CilObject,
     score: &DetectionScore,
-    findings: &mut ConfuserExFindings,
+    findings: &mut DeobfuscationFindings,
 ) {
     let mut data_field_tokens: HashSet<Token> = HashSet::new();
     let mut data_type_tokens: HashSet<Token> = HashSet::new();
@@ -511,11 +563,11 @@ fn find_field_declaring_type(tables: &TablesHeader, field_rid: u32) -> Option<u3
 fn detect_protection_infrastructure_types(
     assembly: &CilObject,
     score: &DetectionScore,
-    findings: &mut ConfuserExFindings,
+    findings: &mut DeobfuscationFindings,
 ) {
     // Only run if we have strong ConfuserEx detection
     // This prevents false positives on normal assemblies
-    if !findings.has_any_protection() && !findings.has_confuser_attributes {
+    if !findings.has_any_protection() && !findings.has_marker_attributes() {
         return;
     }
 
@@ -650,10 +702,10 @@ fn detect_protection_infrastructure_types(
 fn detect_infrastructure_fields(
     assembly: &CilObject,
     score: &DetectionScore,
-    findings: &mut ConfuserExFindings,
+    findings: &mut DeobfuscationFindings,
 ) {
     // Only run if we have strong ConfuserEx detection
-    if !findings.has_any_protection() && !findings.has_confuser_attributes {
+    if !findings.has_any_protection() && !findings.has_marker_attributes() {
         return;
     }
 
@@ -895,7 +947,7 @@ mod tests {
         )?;
         let (_, findings) = detect_confuserex(&assembly);
         assert!(
-            !findings.has_suppress_ildasm,
+            !findings.has_suppress_ildasm(),
             "Original should not have SuppressIldasm"
         );
         assert!(findings.suppress_ildasm_token.is_none());
@@ -913,7 +965,8 @@ mod tests {
         // Just verify we don't crash - minimal may or may not have this
         println!(
             "Minimal: suppress_ildasm={}, token={:?}",
-            findings.has_suppress_ildasm, findings.suppress_ildasm_token
+            findings.has_suppress_ildasm(),
+            findings.suppress_ildasm_token
         );
         Ok(())
     }
@@ -928,13 +981,13 @@ mod tests {
         let (score, findings) = detect_confuserex(&assembly);
         println!(
             "Maximum: suppress_ildasm={}, token={:?}, score={}",
-            findings.has_suppress_ildasm,
+            findings.has_suppress_ildasm(),
             findings.suppress_ildasm_token,
             score.score()
         );
         // Maximum protection should have SuppressIldasm enabled
         assert!(
-            findings.has_suppress_ildasm,
+            findings.has_suppress_ildasm(),
             "Maximum protection should have SuppressIldasm"
         );
         assert!(findings.suppress_ildasm_token.is_some());
@@ -1027,9 +1080,9 @@ mod tests {
             !findings.has_any_protection(),
             "Original should have no protections"
         );
-        assert!(!findings.has_invalid_metadata);
-        assert!(!findings.has_confuser_attributes);
-        assert!(!findings.has_suppress_ildasm);
+        assert!(!findings.has_invalid_metadata());
+        assert!(!findings.has_marker_attributes());
+        assert!(!findings.has_suppress_ildasm());
         assert_eq!(findings.anti_tamper_methods.count(), 0);
         assert_eq!(findings.anti_debug_methods.count(), 0);
         assert_eq!(findings.decryptor_methods.count(), 0);

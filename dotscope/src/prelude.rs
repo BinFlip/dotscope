@@ -882,7 +882,7 @@ pub use crate::deobfuscation::{DeobfuscationEngine, DeobfuscationResult, EngineC
 /// implementations for detecting and handling specific obfuscators.
 #[cfg(feature = "deobfuscation")]
 pub use crate::deobfuscation::{
-    DetectionResult, DetectionScore, Obfuscator, ObfuscatorDetector, ObfuscatorRegistry,
+    DetectionScore, Obfuscator, ObfuscatorDetector, ObfuscatorRegistry,
 };
 
 /// Pass system for SSA-based transformations.

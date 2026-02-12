@@ -322,12 +322,15 @@ impl EmulationContext {
 
     /// Gets the parameter count for a method.
     ///
+    /// Uses the method signature blob (authoritative source) rather than the Param
+    /// table, which may have fewer entries than the actual parameter count.
+    ///
     /// # Errors
     ///
     /// Returns [`EmulationError::MethodNotFound`] if the method is not found.
     pub fn get_parameter_count(&self, method_token: Token) -> Result<usize> {
         let method = self.get_method(method_token)?;
-        Ok(method.params.count())
+        Ok(method.signature.params.len())
     }
 
     /// Checks if a method is static.

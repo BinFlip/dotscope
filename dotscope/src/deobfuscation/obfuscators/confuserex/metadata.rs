@@ -27,7 +27,7 @@ use crate::{
     cilassembly::{CilAssembly, GeneratorConfig},
     deobfuscation::{
         detection::{DetectionEvidence, DetectionScore},
-        obfuscators::confuserex::findings::ConfuserExFindings,
+        findings::DeobfuscationFindings,
     },
     metadata::{
         cilassemblyview::CilAssemblyView,
@@ -55,7 +55,7 @@ const CONFUSEREX_MARKER_SHORT: u16 = 0x7fff;
 /// - ENC tables (unusual for release builds)
 /// - SuppressIldasmAttribute
 /// - ConfuserEx marker attributes (ConfuserVersion, ConfusedByAttribute)
-pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut ConfuserExFindings) {
+pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut DeobfuscationFindings) {
     // Check for invalid metadata patterns
     check_invalid_metadata(assembly, score, findings);
 
@@ -70,7 +70,7 @@ pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut Confu
 fn check_invalid_metadata(
     assembly: &CilObject,
     score: &DetectionScore,
-    findings: &mut ConfuserExFindings,
+    findings: &mut DeobfuscationFindings,
 ) {
     let Some(tables) = assembly.tables() else {
         return;
@@ -178,10 +178,17 @@ fn check_invalid_metadata(
         || tables.table::<EncMapRaw>().is_some_and(|t| t.row_count > 0);
 
     // Store in findings
-    findings.has_confuserex_marker = marker_count > 0;
-    findings.has_invalid_metadata = marker_count > 0 || oob_count > 0;
-    findings.invalid_metadata_count = marker_count + oob_count;
-    findings.has_enc_tables = has_enc_tables;
+    if marker_count > 0 {
+        findings.obfuscator_marker_value = Some(CONFUSEREX_MARKER);
+    }
+    if has_enc_tables {
+        if tables.table::<EncLogRaw>().is_some_and(|t| t.row_count > 0) {
+            findings.enc_tables.push(0x1E);
+        }
+        if tables.table::<EncMapRaw>().is_some_and(|t| t.row_count > 0) {
+            findings.enc_tables.push(0x1F);
+        }
+    }
 
     // Add evidence for specific ConfuserEx marker (high confidence)
     if marker_count > 0 {
@@ -213,7 +220,7 @@ fn check_invalid_metadata(
 fn check_suppress_ildasm(
     assembly: &CilObject,
     score: &DetectionScore,
-    findings: &mut ConfuserExFindings,
+    findings: &mut DeobfuscationFindings,
 ) {
     let Some(tables) = assembly.tables() else {
         return;
@@ -265,7 +272,6 @@ fn check_suppress_ildasm(
         // Check for SuppressIldasmAttribute in System.Runtime.CompilerServices
         if let (Some(name), Some(namespace)) = (type_name, type_namespace) {
             if name == "SuppressIldasmAttribute" && namespace == "System.Runtime.CompilerServices" {
-                findings.has_suppress_ildasm = true;
                 findings.suppress_ildasm_token = Some(attr.token);
 
                 score.add(DetectionEvidence::Attribute {
@@ -282,7 +288,7 @@ fn check_suppress_ildasm(
 fn check_confuser_attributes(
     assembly: &CilObject,
     score: &DetectionScore,
-    findings: &mut ConfuserExFindings,
+    findings: &mut DeobfuscationFindings,
 ) {
     let Some(tables) = assembly.tables() else {
         return;
@@ -362,11 +368,9 @@ fn check_confuser_attributes(
 
         if let Some(name) = type_name {
             if name.contains("ConfuserVersion") || name.contains("ConfusedByAttribute") {
-                findings.has_confuser_attributes = true;
-
                 // Store the token for later removal
                 let attr_token = Token::new((TableId::CustomAttribute as u32) << 24 | attr.rid);
-                findings.confuser_attribute_tokens.push(attr_token);
+                findings.marker_attribute_tokens.push(attr_token);
 
                 // Track the TypeDef if it's a local type (for removal)
                 if let Some(token) = typedef_token {
@@ -383,7 +387,7 @@ fn check_confuser_attributes(
                 if name.contains("ConfuserVersion") {
                     if let Some(blob) = assembly.blob() {
                         if let Ok(attr_data) = blob.get(attr.value as usize) {
-                            findings.version = extract_version_from_blob(attr_data);
+                            findings.obfuscator_version = extract_version_from_blob(attr_data);
                         }
                     }
                 }
@@ -1081,11 +1085,11 @@ mod tests {
         // Verify re-detection shows no invalid metadata
         let (_, new_findings) = detect_confuserex(&fixed);
         assert!(
-            !new_findings.has_invalid_metadata,
+            !new_findings.has_invalid_metadata(),
             "Re-detection should show no invalid metadata after fix"
         );
         assert!(
-            !new_findings.has_enc_tables,
+            !new_findings.has_enc_tables(),
             "Re-detection should show no ENC tables after fix"
         );
 
@@ -1105,7 +1109,7 @@ mod tests {
         // Detect to find the token
         let (_, findings) = detect_confuserex(&assembly);
         assert!(
-            findings.has_suppress_ildasm,
+            findings.has_suppress_ildasm(),
             "Normal protection should have SuppressIldasm"
         );
         let token = findings.suppress_ildasm_token.expect("Should have token");
@@ -1152,7 +1156,7 @@ mod tests {
         // Verify re-detection shows no SuppressIldasm
         let (_, new_findings) = detect_confuserex(&fixed);
         assert!(
-            !new_findings.has_suppress_ildasm,
+            !new_findings.has_suppress_ildasm(),
             "SuppressIldasm should be removed after fix"
         );
         assert!(
@@ -1226,11 +1230,11 @@ mod tests {
         // Detect to find marker attribute tokens
         let (_, findings) = detect_confuserex(&assembly);
         assert!(
-            findings.has_confuser_attributes,
+            findings.has_marker_attributes(),
             "Minimal protection should have ConfuserEx marker attributes"
         );
 
-        let marker_count = findings.confuser_attribute_tokens.count();
+        let marker_count = findings.marker_attribute_tokens.count();
         assert!(
             marker_count > 0,
             "Should have at least one marker attribute token"
@@ -1248,7 +1252,7 @@ mod tests {
 
         // Collect tokens for removal
         let tokens: Vec<_> = findings
-            .confuser_attribute_tokens
+            .marker_attribute_tokens
             .iter()
             .map(|(_, t)| *t)
             .collect();
@@ -1278,11 +1282,11 @@ mod tests {
         // Verify re-detection shows no marker attributes
         let (_, new_findings) = detect_confuserex(&fixed);
         assert!(
-            !new_findings.has_confuser_attributes,
+            !new_findings.has_marker_attributes(),
             "ConfuserEx marker attributes should be removed after fix"
         );
         assert_eq!(
-            new_findings.confuser_attribute_tokens.count(),
+            new_findings.marker_attribute_tokens.count(),
             0,
             "Should have no marker attribute tokens after removal"
         );

@@ -498,11 +498,13 @@ fn display_ssa_deobfuscated(
     }
 
     // Show detection results if any
-    if !result.detection.all().is_empty() {
-        println!("\n  Detected obfuscators:");
-        for (id, score) in result.detection.all() {
-            println!("    - {} (score: {})", id, score.score());
-        }
+    if let Some(name) = &result.findings.obfuscator_name {
+        println!("\n  Detected obfuscator:");
+        println!(
+            "    - {} (score: {})",
+            name,
+            result.findings.detection.score()
+        );
     }
 
     Ok(())

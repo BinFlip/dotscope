@@ -85,8 +85,8 @@ mod evaluator;
 mod expr;
 mod ops;
 
-// The solver module requires z3 which is gated behind the deobfuscation feature
-#[cfg(feature = "deobfuscation")]
+// The solver module requires the z3 dependency
+#[cfg(feature = "z3")]
 mod solver;
 
 // Re-export public types - SymbolicExpr, SymbolicOp, SymbolicEvaluator are always available
@@ -94,6 +94,6 @@ pub use evaluator::SymbolicEvaluator;
 pub use expr::SymbolicExpr;
 pub use ops::SymbolicOp;
 
-// Z3Solver is only available with the deobfuscation feature
-#[cfg(feature = "deobfuscation")]
+// Z3Solver is only available with the z3 feature
+#[cfg(feature = "z3")]
 pub use solver::Z3Solver;

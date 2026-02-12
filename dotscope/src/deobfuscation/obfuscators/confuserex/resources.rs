@@ -38,9 +38,9 @@ use crate::{
     compiler::EventLog,
     deobfuscation::{
         detection::{DetectionEvidence, DetectionScore},
+        findings::DeobfuscationFindings,
         obfuscators::confuserex::{
             candidates::{find_candidates, ProtectionType},
-            findings::ConfuserExFindings,
             hooks::create_lzma_hook,
         },
     },
@@ -196,7 +196,7 @@ impl ResourceDecryptionResult {
 /// - Assembly.Load calls (for loading hidden assemblies)
 /// - Delegate creation for event handlers
 /// - Decompression calls (LZMA, Inflate, etc.)
-pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut ConfuserExFindings) {
+pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut DeobfuscationFindings) {
     for method_entry in assembly.methods() {
         let method = method_entry.value();
 

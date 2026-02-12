@@ -64,9 +64,13 @@ use crate::{
 /// - `Ok(Some(ssa))` if unflattening succeeded (patched clone)
 /// - `Ok(None)` if method doesn't appear to be CFF-protected
 /// - `Err(...)` if an error occurred
-pub fn unflatten_with_tree(ssa: &SsaFunction, config: &UnflattenConfig) -> Option<SsaFunction> {
+pub fn unflatten_with_tree(
+    ssa: &SsaFunction,
+    config: &UnflattenConfig,
+    assembly: Option<&CilObject>,
+) -> Option<SsaFunction> {
     // Step 1: Trace the method into a tree
-    let tree = trace_method_tree(ssa, config);
+    let tree = trace_method_tree(ssa, config, assembly);
 
     // Step 2: Check if we found a dispatcher
     tree.dispatcher.as_ref()?;
@@ -270,7 +274,8 @@ impl SsaPass for CffReconstructionPass {
         // - DCE naturally cleans up unreachable dispatcher code
         let mut config = self.config.clone();
         config.pointer_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
-        match unflatten_with_tree(ssa, &config) {
+
+        match unflatten_with_tree(ssa, &config, Some(assembly.as_ref())) {
             Some(mut patched) => {
                 // After CFF unflattening, the CFG structure has changed significantly.
                 // Rebuild SSA form to ensure PHI nodes are correct for the new CFG.

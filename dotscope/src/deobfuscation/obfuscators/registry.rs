@@ -7,7 +7,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     compiler::SsaPass,
-    deobfuscation::{detection::DetectionScore, obfuscators::Obfuscator, ConfuserExObfuscator},
+    deobfuscation::{
+        detection::DetectionScore, findings::DeobfuscationFindings, obfuscators::Obfuscator,
+        ConfuserExObfuscator,
+    },
     CilObject,
 };
 
@@ -200,12 +203,21 @@ impl ObfuscatorRegistry {
     /// # Returns
     ///
     /// A list of (obfuscator_id, score) pairs sorted by score descending.
-    pub fn detect(&self, assembly: &CilObject) -> Vec<(String, DetectionScore)> {
-        let mut results: Vec<(String, DetectionScore)> = self
+    pub fn detect(
+        &self,
+        assembly: &CilObject,
+    ) -> Vec<(String, DetectionScore, DeobfuscationFindings)> {
+        let mut results: Vec<(String, DetectionScore, DeobfuscationFindings)> = self
             .obfuscators
             .iter()
-            .map(|(id, obfuscator)| (id.clone(), obfuscator.detect(assembly)))
-            .filter(|(_, score)| score.score() >= self.threshold)
+            .map(|(id, obfuscator)| {
+                let mut findings = DeobfuscationFindings::new();
+                let score = obfuscator.detect(assembly, &mut findings);
+                // Store the score in findings so consumers have a single source of truth
+                findings.detection = score.clone();
+                (id.clone(), score, findings)
+            })
+            .filter(|(_, score, _)| score.score() >= self.threshold)
             .collect();
 
         results.sort_by(|a, b| b.1.cmp(&a.1));
@@ -225,7 +237,7 @@ impl ObfuscatorRegistry {
         let results = self.detect(assembly);
         results
             .first()
-            .and_then(|(id, _)| self.obfuscators.get(id).cloned())
+            .and_then(|(id, _, _)| self.obfuscators.get(id).cloned())
     }
 
     /// Returns all passes from all detected obfuscators.
@@ -245,9 +257,9 @@ impl ObfuscatorRegistry {
         let detected = self.detect(assembly);
         let mut passes = Vec::new();
 
-        for (id, _) in detected {
-            if let Some(obfuscator) = self.obfuscators.get(&id) {
-                passes.extend(obfuscator.passes());
+        for (id, _, findings) in &detected {
+            if let Some(obfuscator) = self.obfuscators.get(id) {
+                passes.extend(obfuscator.passes(findings));
             }
         }
 
@@ -317,7 +329,11 @@ mod tests {
             self.id.clone()
         }
 
-        fn detect(&self, _assembly: &CilObject) -> DetectionScore {
+        fn detect(
+            &self,
+            _assembly: &CilObject,
+            _findings: &mut DeobfuscationFindings,
+        ) -> DetectionScore {
             DetectionScore::with_score(self.score)
         }
     }

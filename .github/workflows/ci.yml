@@ -85,25 +85,25 @@ jobs:
       run: cargo fmt --all -- --check
       
     - name: Run clippy
-      run: cargo clippy --all-targets -- -D warnings
+      run: cargo clippy --workspace --all-features --all-targets -- -D warnings
 
     - name: Check compilation
-      run: cargo check
+      run: cargo check --workspace --all-features
 
     - name: Run tests (Linux - full)
       if: runner.os == 'Linux'
-      run: cargo test --release --lib --verbose
+      run: cargo test --workspace --release --lib --features z3 --verbose
 
     - name: Run tests (macOS/Windows - skip expensive tests)
       if: runner.os != 'Linux'
-      run: cargo test -p dotscope --release --lib --features skip-expensive-tests --verbose
+      run: cargo test --workspace --release --lib --features z3,skip-expensive-tests --verbose
 
     - name: Run doc tests (Linux only)
       if: runner.os == 'Linux'
-      run: cargo test --release --doc
+      run: cargo test --workspace --release --doc --features z3
 
     - name: Check documentation
-      run: cargo doc --no-deps
+      run: cargo doc --workspace --all-features --no-deps
 
   # Ensures the crate compiles and tests pass without legacy-crypto feature (Linux only)
   minimal-features:
@@ -228,7 +228,7 @@ jobs:
       uses: taiki-e/install-action@cargo-llvm-cov
       
     - name: Generate code coverage
-      run: cargo llvm-cov --workspace --features skip-expensive-tests --lcov --output-path lcov.info
+      run: cargo llvm-cov --workspace --features z3,skip-expensive-tests --lcov --output-path lcov.info
       
     - name: Upload to codecov.io
       uses: codecov/codecov-action@v5

@@ -5,9 +5,7 @@ use serde::Serialize;
 
 use crate::{
     app::GlobalOptions,
-    commands::common::{
-        extract_detection_summary, file_display_name, load_assembly, process_directory,
-    },
+    commands::common::{file_display_name, load_assembly, process_directory},
     output::print_output,
 };
 
@@ -87,9 +85,10 @@ fn detect_file(path: &Path) -> anyhow::Result<DetectionInfo> {
     let assembly = load_assembly(path)?;
 
     let detector = ObfuscatorDetector::default();
-    let result = detector.detect(&assembly);
+    let (_, findings) = detector.detect(&assembly);
 
-    let (obfuscator_name, score) = extract_detection_summary(&result);
+    let obfuscator_name = findings.obfuscator_name.clone();
+    let score = findings.detection.score();
 
     // Collect evidence from all scores (use all_scores to include below-threshold)
     let all_scores = detector.all_scores(&assembly);
@@ -106,10 +105,10 @@ fn detect_file(path: &Path) -> anyhow::Result<DetectionInfo> {
 
     Ok(DetectionInfo {
         file: file_display_name(path),
-        detected: result.detected(),
+        detected: findings.obfuscator_name.is_some(),
         obfuscator: obfuscator_name,
         score,
-        threshold: result.threshold(),
+        threshold: detector.threshold(),
         evidence,
     })
 }

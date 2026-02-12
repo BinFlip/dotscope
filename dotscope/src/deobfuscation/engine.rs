@@ -23,8 +23,8 @@ use crate::{
         cleanup::execute_cleanup,
         config::EngineConfig,
         context::AnalysisContext,
-        detection::DetectionResult,
         detector::ObfuscatorDetector,
+        findings::DeobfuscationFindings,
         obfuscators::Obfuscator,
         passes::{CffReconstructionPass, DecryptionPass, NeutralizationPass, UnflattenConfig},
         result::DeobfuscationResult,
@@ -131,9 +131,9 @@ impl DeobfuscationEngine {
 
         // Phase 4: Proxy/delegate inlining
         if config.enable_inlining {
-            scheduler.inline.push(Box::new(InliningPass::with_threshold(
-                config.inline_threshold,
-            )));
+            scheduler
+                .inline
+                .push(Box::new(InliningPass::new(config.inline_threshold, false)));
         }
 
         // Normalization passes (run after each structural change in every phase)
@@ -219,19 +219,21 @@ impl DeobfuscationEngine {
         let start = Instant::now();
 
         // Phase 1: Detection (borrow, read-only)
-        let detection = self.detector.detect(&assembly);
+        let (obfuscator, mut findings) = self.detector.detect(&assembly);
 
         // Phase 2: Byte-level deobfuscation (consume → produce)
-        let (assembly, byte_level_events) = self.run_byte_level(assembly, &detection)?;
+        let (assembly, byte_level_events) =
+            self.run_byte_level(assembly, obfuscator.as_ref(), &mut findings)?;
 
         // Phase 3: SSA pipeline + code generation + postprocessing (consume → produce)
-        let (assembly, ssa_events, iterations) = self.run_ssa_pipeline(assembly, &detection)?;
+        let (assembly, ssa_events, iterations) =
+            self.run_ssa_pipeline(assembly, obfuscator.as_ref(), &findings)?;
 
         // Build result by merging all events
         let events = byte_level_events;
         events.merge(&ssa_events);
         let result =
-            DeobfuscationResult::new(detection, events).with_timing(start.elapsed(), iterations);
+            DeobfuscationResult::new(events, findings).with_timing(start.elapsed(), iterations);
 
         Ok((assembly, result))
     }
@@ -254,13 +256,14 @@ impl DeobfuscationEngine {
     fn run_byte_level(
         &self,
         assembly: CilObject,
-        detection: &DetectionResult,
+        obfuscator: Option<&Arc<dyn Obfuscator>>,
+        findings: &mut DeobfuscationFindings,
     ) -> Result<(CilObject, EventLog)> {
         let mut events = EventLog::new();
 
-        let assembly = if let Some(obfuscator) = detection.primary() {
+        let assembly = if let Some(obfuscator) = obfuscator {
             obfuscator.set_config(&self.config);
-            obfuscator.deobfuscate(assembly, &mut events)?
+            obfuscator.deobfuscate(assembly, &mut events, findings)?
         } else {
             assembly
         };
@@ -293,22 +296,23 @@ impl DeobfuscationEngine {
     fn run_ssa_pipeline(
         &mut self,
         assembly: CilObject,
-        detection: &DetectionResult,
+        obfuscator: Option<&Arc<dyn Obfuscator>>,
+        findings: &DeobfuscationFindings,
     ) -> Result<(CilObject, EventLog, usize)> {
         // Wrap in Arc for shared access during analysis
         let assembly_arc = Arc::new(assembly);
 
         // Build analysis context (doesn't store assembly)
-        let ctx = self.build_context(&assembly_arc, detection.clone())?;
+        let ctx = self.build_context(&assembly_arc)?;
 
         // Initialize context with obfuscator-specific data
         // This registers decryptors and other state needed by SSA passes
-        if let Some(obfuscator) = detection.primary() {
-            obfuscator.initialize_context(&ctx, &assembly_arc);
+        if let Some(obfuscator) = obfuscator {
+            obfuscator.initialize_context(&ctx, &assembly_arc, findings);
 
             // Add obfuscator-specific SSA passes to the simplification phase
             // These run after value recovery (decryption) to clean up obfuscator artifacts
-            let obfuscator_passes = obfuscator.passes();
+            let obfuscator_passes = obfuscator.passes(findings);
             if !obfuscator_passes.is_empty() {
                 self.scheduler.simplify.extend(obfuscator_passes);
             }
@@ -341,8 +345,8 @@ impl DeobfuscationEngine {
 
         // Get obfuscator's cleanup request and run neutralization pass
         // This removes instructions that reference protection infrastructure
-        let cleanup_request = if let Some(obfuscator) = detection.primary() {
-            if let Some(request) = obfuscator.cleanup_request(&assembly_arc, &ctx)? {
+        let cleanup_request = if let Some(obfuscator) = obfuscator {
+            if let Some(request) = obfuscator.cleanup_request(&assembly_arc, &ctx, findings)? {
                 let removed_tokens = request.all_tokens();
                 let mut neutralized = false;
 
@@ -482,18 +486,19 @@ impl DeobfuscationEngine {
         let start = Instant::now();
 
         // Phase 1: Detection
-        let detection = self.detector.detect(&assembly);
+        let (obfuscator, mut findings) = self.detector.detect(&assembly);
 
         // Phase 2: Byte-level deobfuscation (anti-tamper, etc.)
-        let (assembly, byte_events) = self.run_byte_level(assembly, &detection)?;
+        let (assembly, byte_events) =
+            self.run_byte_level(assembly, obfuscator.as_ref(), &mut findings)?;
         let assembly = Arc::new(assembly);
 
         // Phase 3: Build context with full obfuscator initialization
-        let ctx = self.build_context(&assembly, detection.clone())?;
+        let ctx = self.build_context(&assembly)?;
 
         // Initialize context with obfuscator-specific data (decryptors, MethodSpec mappings)
-        if let Some(obfuscator) = detection.primary() {
-            obfuscator.initialize_context(&ctx, &assembly);
+        if let Some(obfuscator) = obfuscator.as_ref() {
+            obfuscator.initialize_context(&ctx, &assembly, &findings);
         }
 
         // Create deob passes that share state with the AnalysisContext
@@ -526,7 +531,7 @@ impl DeobfuscationEngine {
         let events = byte_events;
         events.merge(&ctx.events.take());
         let result =
-            DeobfuscationResult::new(detection, events).with_timing(start.elapsed(), iterations);
+            DeobfuscationResult::new(events, findings).with_timing(start.elapsed(), iterations);
 
         Ok((final_ssa, result))
     }
@@ -587,8 +592,10 @@ impl DeobfuscationEngine {
         *ssa = final_ssa;
 
         let events = ctx.events.take();
-        Ok(DeobfuscationResult::new(DetectionResult::default(), events)
-            .with_timing(start.elapsed(), iterations))
+        Ok(
+            DeobfuscationResult::new(events, DeobfuscationFindings::new())
+                .with_timing(start.elapsed(), iterations),
+        )
     }
 
     /// Creates deobfuscation-specific passes that share state with the analysis context.
@@ -739,17 +746,12 @@ impl DeobfuscationEngine {
     ///
     /// Creates the call graph, SSA representations, and initializes the context
     /// with detection results and entry points.
-    fn build_context(
-        &self,
-        assembly: &CilObject,
-        detection: DetectionResult,
-    ) -> Result<AnalysisContext> {
+    fn build_context(&self, assembly: &CilObject) -> Result<AnalysisContext> {
         // Build call graph
         let call_graph = Arc::new(CallGraph::build(assembly)?);
 
         // Create context with engine config (important: cleanup settings!)
-        let mut ctx = AnalysisContext::with_config(call_graph.clone(), self.config.clone());
-        ctx.detection_result = detection;
+        let ctx = AnalysisContext::with_config(call_graph.clone(), self.config.clone());
 
         // Identify entry points
         Self::identify_entry_points(assembly, &ctx);
@@ -1048,7 +1050,7 @@ mod tests {
         },
         compiler::EventLog,
         deobfuscation::{
-            config::EngineConfig, detection::DetectionResult, engine::DeobfuscationEngine,
+            config::EngineConfig, engine::DeobfuscationEngine, findings::DeobfuscationFindings,
             result::DeobfuscationResult,
         },
         metadata::token::Token,
@@ -1377,7 +1379,7 @@ mod tests {
 
     #[test]
     fn test_deobfuscation_result_summary() {
-        let result = DeobfuscationResult::new(DetectionResult::default(), EventLog::new());
+        let result = DeobfuscationResult::new(EventLog::new(), DeobfuscationFindings::new());
 
         // summary() returns just the stats (no prefix)
         let summary = result.summary();

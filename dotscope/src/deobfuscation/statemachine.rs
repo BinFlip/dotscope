@@ -90,8 +90,11 @@ pub struct StateMachineCallSite {
     pub instr_idx: usize,
     /// SSA variable that receives the decrypted value.
     pub dest: SsaVarId,
-    /// Token of the decryptor method being called.
+    /// Token of the decryptor method being called (resolved MethodDef).
     pub decryptor: Token,
+    /// Original call target token (may be MethodSpec for generic calls).
+    /// Used for emulation to preserve generic type information.
+    pub call_target: Token,
     /// SSA variable containing the state machine output (from update call).
     pub state_var: SsaVarId,
     /// SSA variable containing the encoded constant (XOR operand).

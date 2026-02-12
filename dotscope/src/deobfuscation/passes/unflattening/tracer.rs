@@ -20,6 +20,8 @@ use crate::{
         SsaInstruction, SsaOp, SsaVarId, SsaVariable, TaintAnalysis, TaintConfig,
     },
     deobfuscation::passes::unflattening::{detection::CffDetector, UnflattenConfig},
+    metadata::{token::Token, typesystem::PointerSize},
+    CilObject,
 };
 
 /// Information about the dispatcher found during tracing.
@@ -261,6 +263,7 @@ impl TraceNode {
 struct TreeTraceContext<'a> {
     ssa: &'a SsaFunction,
     evaluator: SsaEvaluator<'a>,
+    assembly: Option<&'a CilObject>,
     dispatcher: Option<TracedDispatcher>,
     state_tainted: HashSet<SsaVarId>,
     next_node_id: usize,
@@ -271,10 +274,15 @@ struct TreeTraceContext<'a> {
 }
 
 impl<'a> TreeTraceContext<'a> {
-    fn new(ssa: &'a SsaFunction, config: &UnflattenConfig) -> Self {
+    fn new(
+        ssa: &'a SsaFunction,
+        config: &UnflattenConfig,
+        assembly: Option<&'a CilObject>,
+    ) -> Self {
         Self {
             ssa,
             evaluator: SsaEvaluator::new(ssa, config.pointer_size),
+            assembly,
             dispatcher: None,
             state_tainted: HashSet::new(),
             next_node_id: 0,
@@ -290,8 +298,9 @@ impl<'a> TreeTraceContext<'a> {
         ssa: &'a SsaFunction,
         dispatcher: TracedDispatcher,
         config: &UnflattenConfig,
+        assembly: Option<&'a CilObject>,
     ) -> Self {
-        let mut ctx = Self::new(ssa, config);
+        let mut ctx = Self::new(ssa, config, assembly);
 
         // Use generic taint analysis for state variable tracking
         if let Some(state_var) = dispatcher.state_var {
@@ -386,7 +395,11 @@ impl<'a> TreeTraceContext<'a> {
 /// A [`TraceTree`] containing all execution paths through the method.
 /// The tree includes dispatcher information if CFF was detected, along
 /// with state-tainted variables and execution statistics.
-pub fn trace_method_tree(ssa: &SsaFunction, config: &UnflattenConfig) -> TraceTree {
+pub fn trace_method_tree(
+    ssa: &SsaFunction,
+    config: &UnflattenConfig,
+    assembly: Option<&CilObject>,
+) -> TraceTree {
     // Step 1: Detect dispatcher upfront using CffDetector
     let mut detector = CffDetector::new(ssa);
     let dispatcher = detector.detect_best().map(|d| TracedDispatcher {
@@ -399,8 +412,8 @@ pub fn trace_method_tree(ssa: &SsaFunction, config: &UnflattenConfig) -> TraceTr
 
     // Step 2: Create context (with or without pre-detected dispatcher)
     let mut ctx = match dispatcher {
-        Some(d) => TreeTraceContext::with_dispatcher(ssa, d, config),
-        None => TreeTraceContext::new(ssa, config),
+        Some(d) => TreeTraceContext::with_dispatcher(ssa, d, config, assembly),
+        None => TreeTraceContext::new(ssa, config, assembly),
     };
 
     // Step 3: Trace from block 0
@@ -455,6 +468,66 @@ fn propagate_taint_forward(ssa: &SsaFunction, tainted: &mut HashSet<SsaVarId>) {
 
     // Update the tainted set with newly discovered tainted variables
     *tainted = taint.tainted_variables().clone();
+}
+
+/// Resolves a method call with concrete arguments by building the callee's SSA and evaluating it.
+///
+/// This is used for x86 predicate methods in ConfuserEx CFF, where state computation
+/// is done via `call <Module>::predicate(arg1, arg2)` instead of inline arithmetic.
+///
+/// # Arguments
+///
+/// * `assembly` - The assembly containing the method
+/// * `method_token` - Token of the method to call
+/// * `concrete_args` - Concrete argument values to pass
+/// * `pointer_size` - Target pointer size for evaluation
+///
+/// # Returns
+///
+/// The concrete return value if the method can be fully evaluated, `None` otherwise.
+fn resolve_call_result(
+    assembly: &CilObject,
+    method_token: Token,
+    concrete_args: &[ConstValue],
+    pointer_size: PointerSize,
+) -> Option<ConstValue> {
+    // Look up the method
+    let method = assembly.method(&method_token)?;
+
+    // Build SSA for the callee
+    let callee_ssa = method.ssa(assembly)?;
+
+    // Create evaluator for the callee
+    let mut eval = SsaEvaluator::new(&callee_ssa, pointer_size);
+
+    // Set concrete argument values
+    for (var, value) in callee_ssa.argument_variables().zip(concrete_args) {
+        eval.set_concrete(var.id(), value.clone());
+    }
+
+    // Execute with a safety limit of 50 blocks
+    let trace = eval.execute(0, None, 50);
+
+    // If execution didn't complete, we can't resolve the call
+    if !trace.is_complete() {
+        return None;
+    }
+
+    // Find the return value from the last block
+    let last_block_idx = trace.last_block()?;
+    let last_block = callee_ssa.block(last_block_idx)?;
+
+    // Look for a Return instruction with a value
+    for instr in last_block.instructions() {
+        if let SsaOp::Return {
+            value: Some(ret_var),
+        } = instr.op()
+        {
+            return eval.get_concrete(*ret_var).cloned();
+        }
+    }
+
+    None
 }
 
 /// Recursively traces from a block, building the trace tree.
@@ -593,11 +666,18 @@ fn handle_terminator_tree(
                 // USER BRANCH - fork the trace!
                 let snapshot = ctx.snapshot_evaluator();
 
+                // Set predecessor so phi nodes in the target block resolve correctly.
+                // Without this, sub-traces starting at a block with phis (e.g., a dispatcher
+                // block reached directly from a user branch) would fail to evaluate phis
+                // because blocks_visited only has the target block.
+                ctx.evaluator.set_predecessor(Some(block_idx));
+
                 // Trace true branch
                 let true_node = trace_from_block(ctx, *true_target, depth + 1);
 
                 // Restore evaluator and trace false branch
                 ctx.restore_evaluator(snapshot);
+                ctx.evaluator.set_predecessor(Some(block_idx));
                 let false_node = trace_from_block(ctx, *false_target, depth + 1);
 
                 node.set_terminator(TraceTerminator::UserBranch {
@@ -632,11 +712,15 @@ fn handle_terminator_tree(
                 // USER BRANCH - fork the trace (same as regular Branch)
                 let snapshot = ctx.snapshot_evaluator();
 
+                // Set predecessor for phi evaluation in target blocks
+                ctx.evaluator.set_predecessor(Some(block_idx));
+
                 // Trace true branch
                 let true_node = trace_from_block(ctx, *true_target, depth + 1);
 
                 // Restore evaluator and trace false branch
                 ctx.restore_evaluator(snapshot);
+                ctx.evaluator.set_predecessor(Some(block_idx));
                 let false_node = trace_from_block(ctx, *false_target, depth + 1);
 
                 // Use a synthetic condition variable for the terminator
@@ -680,6 +764,9 @@ fn handle_terminator_tree(
                     // Record state transition
                     let from_state = ctx.current_state().unwrap_or(0);
 
+                    // Set predecessor for phi evaluation in the target block
+                    ctx.evaluator.set_predecessor(Some(block_idx));
+
                     // Continue tracing from target
                     let continues = trace_from_block(ctx, target, depth + 1);
                     let to_state = ctx.current_state().unwrap_or(0);
@@ -704,6 +791,8 @@ fn handle_terminator_tree(
 
                 for (i, &target) in targets.iter().enumerate() {
                     ctx.restore_evaluator(snapshot.clone());
+                    // Set predecessor for phi evaluation in target blocks
+                    ctx.evaluator.set_predecessor(Some(block_idx));
                     let case_node = trace_from_block(ctx, target, depth + 1);
                     // Safe: switch case index fits in i64
                     #[allow(clippy::cast_possible_wrap)]
@@ -712,6 +801,7 @@ fn handle_terminator_tree(
                 }
 
                 ctx.restore_evaluator(snapshot);
+                ctx.evaluator.set_predecessor(Some(block_idx));
                 let default_node = trace_from_block(ctx, *default, depth + 1);
 
                 node.set_terminator(TraceTerminator::UserSwitch {
@@ -764,6 +854,31 @@ fn trace_instruction_tree(
 
     // Evaluate the instruction
     ctx.evaluator.evaluate_op(instr.op());
+
+    // Resolve calls with concrete arguments (e.g., x86 predicate methods)
+    if let SsaOp::Call {
+        dest: Some(dest),
+        method,
+        args,
+    } = instr.op()
+    {
+        if let Some(assembly) = ctx.assembly {
+            let concrete_args: Option<Vec<ConstValue>> = args
+                .iter()
+                .map(|&a| ctx.evaluator.get_concrete(a).cloned())
+                .collect();
+            if let Some(concrete_args) = concrete_args {
+                if let Some(result) = resolve_call_result(
+                    assembly,
+                    method.token(),
+                    &concrete_args,
+                    ctx.evaluator.pointer_size(),
+                ) {
+                    ctx.evaluator.set_concrete(*dest, result);
+                }
+            }
+        }
+    }
 
     // Capture output value AFTER evaluation
     let output_value = instr
@@ -871,7 +986,7 @@ mod tests {
     fn test_tree_trace_simple_cff() {
         let ssa = create_simple_cff();
         let config = UnflattenConfig::default();
-        let tree = trace_method_tree(&ssa, &config);
+        let tree = trace_method_tree(&ssa, &config, None);
 
         // Should find the dispatcher
         assert!(tree.dispatcher.is_some(), "Should detect dispatcher");
@@ -987,7 +1102,7 @@ mod tests {
     fn test_tree_trace_with_user_branch() {
         let ssa = create_cff_with_user_branch();
         let config = UnflattenConfig::default();
-        let tree = trace_method_tree(&ssa, &config);
+        let tree = trace_method_tree(&ssa, &config, None);
 
         println!("=== Tree Trace with User Branch ===");
         println!("Dispatcher: {:?}", tree.dispatcher);

@@ -145,26 +145,27 @@
 //!
 //! # State Management
 //!
-//! The obfuscator uses interior mutability to cache findings from detection.
-//! When `detect()` is called, it populates internal state that `deobfuscate()`
-//! and `passes()` can later access without re-scanning the assembly.
+//! Detection findings are stored in a framework-level [`DeobfuscationFindings`]
+//! struct, owned by the engine and passed through the pipeline. The obfuscator
+//! itself is stateless beyond engine configuration.
 
 mod antidebug;
+mod antidump;
 mod antitamper;
 mod candidates;
 mod constants;
 mod detection;
-mod findings;
 mod hooks;
 mod metadata;
+mod referenceproxy;
 mod resources;
+mod utils;
 
 mod cleanup;
 
-pub use antitamper::find_encrypted_methods;
 pub use detection::detect_confuserex;
-pub use findings::ConfuserExFindings;
 pub use hooks::{create_anti_tamper_stub_hook, create_lzma_hook};
+pub use utils::find_encrypted_methods;
 
 use std::{
     collections::HashSet,
@@ -173,10 +174,11 @@ use std::{
 
 use crate::{
     cilassembly::{CilAssembly, CleanupRequest, GeneratorConfig},
-    compiler::{EventLog, SsaPass},
+    compiler::{EventLog, InliningPass, SsaPass},
     deobfuscation::{
         config::EngineConfig, context::AnalysisContext, detection::DetectionScore,
-        obfuscators::Obfuscator, passes::NativeMethodConversionPass,
+        findings::DeobfuscationFindings, obfuscators::Obfuscator,
+        passes::NativeMethodConversionPass,
     },
     emulation::TracingConfig,
     metadata::{
@@ -191,15 +193,10 @@ use crate::{
 ///
 /// Handles detection and deobfuscation of assemblies protected by ConfuserEx.
 ///
-/// # State Management
-///
-/// This struct uses interior mutability to cache detection findings and
-/// engine configuration. When `detect()` is called via the `Obfuscator` trait,
-/// findings are stored internally and reused by `deobfuscate()` and `passes()`
-/// to avoid redundant scanning of the assembly.
+/// Detection populates a [`DeobfuscationFindings`] struct that is passed through
+/// the pipeline by the engine. The obfuscator itself is stateless except for
+/// the tracing configuration set by the engine.
 pub struct ConfuserExObfuscator {
-    /// Cached findings from detection (populated by `detect()`).
-    findings: RwLock<Option<ConfuserExFindings>>,
     /// Tracing configuration from engine (populated by `set_config()`).
     tracing: RwLock<Option<TracingConfig>>,
 }
@@ -215,14 +212,8 @@ impl ConfuserExObfuscator {
     #[must_use]
     pub fn new() -> Self {
         Self {
-            findings: RwLock::new(None),
             tracing: RwLock::new(None),
         }
-    }
-
-    /// Returns the cached findings from the last detection, if any.
-    fn findings(&self) -> Option<ConfuserExFindings> {
-        self.findings.read().ok().and_then(|f| f.clone())
     }
 
     /// Returns the cached tracing configuration, if set.
@@ -239,7 +230,7 @@ impl ConfuserExObfuscator {
     fn register_methodspec_mappings(
         ctx: &AnalysisContext,
         assembly: &CilObject,
-        findings: &ConfuserExFindings,
+        findings: &DeobfuscationFindings,
     ) {
         // Collect decryptor tokens into a HashSet for fast lookup
         // boxcar::Vec::iter() yields (index, &Token) tuples
@@ -339,16 +330,15 @@ impl ConfuserExObfuscator {
 
     /// Internal helper to run the deobfuscation pipeline.
     ///
-    /// Uses and updates the cached findings in `self.findings` as the pipeline
-    /// progresses and more of the binary becomes accessible.
-    fn run_deobfuscation(&self, assembly: CilObject, events: &mut EventLog) -> Result<CilObject> {
+    /// Reads and updates the provided findings as the pipeline progresses
+    /// and more of the binary becomes accessible (e.g., after anti-tamper).
+    fn run_deobfuscation(
+        &self,
+        assembly: CilObject,
+        events: &mut EventLog,
+        findings: &mut DeobfuscationFindings,
+    ) -> Result<CilObject> {
         let mut current = assembly;
-
-        // Get initial findings (from detection or re-detect if needed)
-        let mut findings = self.findings().unwrap_or_else(|| {
-            let (_, f) = detection::detect_confuserex(&current);
-            f
-        });
 
         // Pass 0: Extract embedded resources/assemblies (before any modifications)
         // ConfuserEx can encrypt embedded resources and assemblies.
@@ -377,7 +367,7 @@ impl ConfuserExObfuscator {
 
         // Pass 2: Re-run detection after anti-tamper decryption
         // Some detection (like native helpers) requires parsing method bodies that
-        // were encrypted before anti-tamper decryption. Update cached findings.
+        // were encrypted before anti-tamper decryption. Update findings in-place.
         if had_anti_tamper {
             // IMPORTANT: Preserve anti-tamper method tokens from original findings.
             // After decryption, re-detection won't find these because method bodies
@@ -398,10 +388,7 @@ impl ConfuserExObfuscator {
                 updated.anti_tamper_methods.push(token);
             }
 
-            findings = updated;
-            if let Ok(mut cached) = self.findings.write() {
-                *cached = Some(findings.clone());
-            }
+            *findings = updated;
             events.info(format!(
                 "Re-ran detection after anti-tamper decryption: {} decryptors, {} native helpers, {} anti-tamper methods preserved",
                 decryptor_count, native_count, findings.anti_tamper_methods.count()
@@ -426,9 +413,9 @@ impl ConfuserExObfuscator {
 
         // Pass 5: Remove ConfuserEx marker attributes (ConfuserVersion, ConfusedByAttribute)
         // These mark the assembly as obfuscated and can be removed for clean output.
-        if findings.has_confuser_attributes {
+        if findings.has_marker_attributes() {
             let tokens: Vec<_> = findings
-                .confuser_attribute_tokens
+                .marker_attribute_tokens
                 .iter()
                 .map(|(_, t)| *t)
                 .collect();
@@ -443,7 +430,7 @@ impl ConfuserExObfuscator {
         // ConfuserEx's x86Predicate protection creates native methods for key computation.
         // These must be converted to CIL before emulation can run string decryption.
         if findings.needs_native_conversion() {
-            current = Self::convert_native_helpers(&current, &findings, events)?;
+            current = Self::convert_native_helpers(&current, findings, events)?;
         }
 
         // The SSA-level passes (string decryption, control flow, etc.)
@@ -459,7 +446,7 @@ impl ConfuserExObfuscator {
     /// converted to CIL before emulation can proceed.
     fn convert_native_helpers(
         assembly: &CilObject,
-        findings: &ConfuserExFindings,
+        findings: &DeobfuscationFindings,
         events: &mut EventLog,
     ) -> Result<CilObject> {
         // Get the underlying file for reading native code bytes
@@ -520,44 +507,59 @@ impl Obfuscator for ConfuserExObfuscator {
         "ConfuserEx".to_string()
     }
 
-    fn detect(&self, assembly: &CilObject) -> DetectionScore {
-        // Run detection and cache the findings for later use
-        let (score, findings) = detection::detect_confuserex(assembly);
+    fn detect(&self, assembly: &CilObject, findings: &mut DeobfuscationFindings) -> DetectionScore {
+        let (score, detected) = detection::detect_confuserex(assembly);
 
-        // Store findings for use by deobfuscate() and passes()
-        if let Ok(mut cached) = self.findings.write() {
-            *cached = Some(findings);
-        }
+        // Copy detected findings into the framework-level findings
+        *findings = detected;
 
         score
     }
 
-    fn passes(&self) -> Vec<Box<dyn SsaPass>> {
+    fn passes(&self, findings: &DeobfuscationFindings) -> Vec<Box<dyn SsaPass>> {
         // SSA-level passes for ConfuserEx deobfuscation
         // These run during the main deobfuscation engine's pass scheduler
 
         let mut passes: Vec<Box<dyn SsaPass>> = Vec::new();
 
-        // Get cached findings to determine which passes to enable
-        if let Some(findings) = self.findings() {
-            // Anti-debug pass if anti-debug methods were detected
-            if findings.needs_anti_debug_patch() {
-                let anti_debug_tokens: Vec<_> = findings
-                    .anti_debug_methods
-                    .iter()
-                    .map(|(_, t)| *t)
-                    .collect();
-                passes.push(Box::new(antidebug::ConfuserExAntiDebugPass::with_methods(
-                    anti_debug_tokens,
-                )));
-            }
+        // Anti-debug pass if anti-debug methods were detected
+        if findings.needs_anti_debug_patch() {
+            let anti_debug_tokens: Vec<_> = findings
+                .anti_debug_methods
+                .iter()
+                .map(|(_, t)| *t)
+                .collect();
+            passes.push(Box::new(antidebug::ConfuserExAntiDebugPass::with_methods(
+                anti_debug_tokens,
+            )));
+        }
+
+        // Anti-dump pass if anti-dump methods were detected
+        if findings.needs_anti_dump_patch() {
+            let anti_dump_tokens: Vec<_> =
+                findings.anti_dump_methods.iter().map(|(_, t)| *t).collect();
+            passes.push(Box::new(antidump::ConfuserExAntiDumpPass::with_methods(
+                anti_dump_tokens,
+            )));
+        }
+
+        // Inlining pass if ReferenceProxy methods were detected
+        // The InliningPass handles proxy devirtualization at the SSA level,
+        // replacing indirect proxy calls with direct calls to the real targets.
+        if findings.needs_proxy_inlining() {
+            passes.push(Box::new(InliningPass::new(0, true)));
         }
 
         passes
     }
 
-    fn deobfuscate(&self, assembly: CilObject, events: &mut EventLog) -> Result<CilObject> {
-        self.run_deobfuscation(assembly, events)
+    fn deobfuscate(
+        &self,
+        assembly: CilObject,
+        events: &mut EventLog,
+        findings: &mut DeobfuscationFindings,
+    ) -> Result<CilObject> {
+        self.run_deobfuscation(assembly, events, findings)
     }
 
     fn set_config(&self, config: &EngineConfig) {
@@ -567,12 +569,12 @@ impl Obfuscator for ConfuserExObfuscator {
         }
     }
 
-    fn initialize_context(&self, ctx: &AnalysisContext, assembly: &CilObject) {
-        let findings = self.findings().unwrap_or_else(|| {
-            let (_, f) = detection::detect_confuserex(assembly);
-            f
-        });
-
+    fn initialize_context(
+        &self,
+        ctx: &AnalysisContext,
+        assembly: &CilObject,
+        findings: &DeobfuscationFindings,
+    ) {
         // Register detected decryptor methods
         // ConfuserEx uses generic decryptors that can return any type (string, int, float, etc.)
         let decryptor_count = findings.decryptor_methods.count();
@@ -604,7 +606,7 @@ impl Obfuscator for ConfuserExObfuscator {
             // Also register MethodSpec mappings for generic decryptors
             // ConfuserEx generic decryptors (T Get<T>(int32)) are called via MethodSpec
             // tokens that instantiate the generic with specific types
-            Self::register_methodspec_mappings(ctx, assembly, &findings);
+            Self::register_methodspec_mappings(ctx, assembly, findings);
 
             ctx.events.info(format!(
                 "Registered {decryptor_count} ConfuserEx decryptor method(s)"
@@ -662,8 +664,9 @@ impl Obfuscator for ConfuserExObfuscator {
         &self,
         assembly: &CilObject,
         ctx: &AnalysisContext,
+        findings: &DeobfuscationFindings,
     ) -> Result<Option<CleanupRequest>> {
-        Ok(cleanup::build_request(self, assembly, ctx))
+        Ok(cleanup::build_request(assembly, ctx, findings))
     }
 
     fn supported_versions(&self) -> &[&str] {
@@ -679,7 +682,10 @@ impl Obfuscator for ConfuserExObfuscator {
 mod tests {
     use crate::{
         compiler::EventLog,
-        deobfuscation::obfuscators::{confuserex::ConfuserExObfuscator, Obfuscator},
+        deobfuscation::{
+            findings::DeobfuscationFindings,
+            obfuscators::{confuserex::ConfuserExObfuscator, Obfuscator},
+        },
         CilObject, Result, ValidationConfig,
     };
 
@@ -700,7 +706,8 @@ mod tests {
         for path in obfuscated_samples {
             let assembly =
                 CilObject::from_path_with_validation(path, ValidationConfig::analysis())?;
-            let score = obfuscator.detect(&assembly);
+            let mut findings = DeobfuscationFindings::new();
+            let score = obfuscator.detect(&assembly, &mut findings);
 
             assert!(
                 score.score() > 0,
@@ -718,7 +725,8 @@ mod tests {
 
         // Test original unobfuscated sample - should NOT detect ConfuserEx
         let assembly = CilObject::from_path("tests/samples/packers/confuserex/original.exe")?;
-        let score = obfuscator.detect(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let score = obfuscator.detect(&assembly, &mut findings);
         println!(
             "original.exe: score={}, evidence={}",
             score.score(),
@@ -734,34 +742,30 @@ mod tests {
     }
 
     #[test]
-    fn test_findings_cached_after_detection() -> Result<()> {
+    fn test_detect_populates_findings() -> Result<()> {
         let obfuscator = ConfuserExObfuscator::new();
 
-        // Initially no findings
-        assert!(obfuscator.findings().is_none());
-
-        // After detection, findings should be cached
         let assembly = CilObject::from_path_with_validation(
             "tests/samples/packers/confuserex/mkaring_normal.exe",
             ValidationConfig::analysis(),
         )?;
-        let _score = obfuscator.detect(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let _score = obfuscator.detect(&assembly, &mut findings);
 
-        let findings = obfuscator.findings();
         assert!(
-            findings.is_some(),
-            "Findings should be cached after detect()"
+            findings.has_marker_attributes(),
+            "Normal protection should have marker attributes"
         );
-
-        let findings = findings.unwrap();
-        assert!(findings.has_confuser_attributes);
-        assert!(findings.decryptor_methods.count() > 0);
+        assert!(
+            findings.decryptor_methods.count() > 0,
+            "Normal protection should have decryptor methods"
+        );
 
         Ok(())
     }
 
     #[test]
-    fn test_deobfuscate_uses_cached_findings() -> Result<()> {
+    fn test_deobfuscate_with_findings() -> Result<()> {
         let obfuscator = ConfuserExObfuscator::new();
 
         let assembly = CilObject::from_path_with_validation(
@@ -769,12 +773,13 @@ mod tests {
             ValidationConfig::analysis(),
         )?;
 
-        // Call detect first (caches findings)
-        let _score = obfuscator.detect(&assembly);
+        // Detect populates findings
+        let mut findings = DeobfuscationFindings::new();
+        let _score = obfuscator.detect(&assembly, &mut findings);
 
-        // Deobfuscate should use cached findings (not re-scan)
+        // Deobfuscate uses the same findings
         let mut events = EventLog::new();
-        let result = obfuscator.deobfuscate(assembly, &mut events);
+        let result = obfuscator.deobfuscate(assembly, &mut events, &mut findings);
         assert!(result.is_ok());
 
         Ok(())

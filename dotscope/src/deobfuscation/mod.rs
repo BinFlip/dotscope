@@ -82,7 +82,7 @@
 //!
 //! - [`crate::deobfuscation::ObfuscatorDetector`] - Runs obfuscators to identify which one was used
 //! - [`crate::deobfuscation::ObfuscatorRegistry`] - Manages registered obfuscators
-//! - [`crate::deobfuscation::DetectionScore`] / [`crate::deobfuscation::DetectionResult`] - Confidence-based detection
+//! - [`crate::deobfuscation::DetectionScore`] / [`crate::deobfuscation::DeobfuscationFindings`] - Confidence-based detection with findings
 //!
 //! ## Pass System
 //!
@@ -189,6 +189,7 @@ mod config;
 mod context;
 mod decryptors;
 mod detection;
+mod findings;
 mod result;
 mod statemachine;
 
@@ -207,12 +208,13 @@ pub use cleanup::execute_cleanup;
 pub use config::{CleanupConfig, EngineConfig, ResolutionStrategy};
 pub use context::{AnalysisContext, HookFactory};
 pub use decryptors::{CacheKey, DecryptedCall, DecryptorContext, FailedCall, FailureReason};
-pub use detection::{DetectionEvidence, DetectionResult, DetectionScore};
+pub use detection::{DetectionEvidence, DetectionScore};
 pub use detector::{DetectorBuilder, ObfuscatorDetector};
 pub use engine::DeobfuscationEngine;
+pub use findings::{DeobfuscationFindings, NativeHelperInfo};
 pub use obfuscators::{
     create_anti_tamper_stub_hook, create_lzma_hook, detect_confuserex, find_encrypted_methods,
-    ConfuserExFindings, ConfuserExObfuscator, Obfuscator, ObfuscatorInfo, ObfuscatorRegistry,
+    ConfuserExObfuscator, Obfuscator, ObfuscatorInfo, ObfuscatorRegistry,
 };
 pub use passes::{
     CffReconstructionPass, ConversionStats, DecryptionPass, NativeMethodConversionPass,

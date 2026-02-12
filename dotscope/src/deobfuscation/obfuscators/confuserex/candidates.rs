@@ -46,17 +46,10 @@
 //! - Static field access (+2)
 
 use crate::{
-    assembly::Operand,
+    assembly::{opcodes, Operand},
     metadata::{tables::TableId, token::Token},
     CilObject,
 };
-
-/// CIL opcode for `call` instruction.
-const OPCODE_CALL: u8 = 0x28;
-/// CIL opcode for `callvirt` instruction.
-const OPCODE_CALLVIRT: u8 = 0x6F;
-/// CIL opcode for `newobj` instruction.
-const OPCODE_NEWOBJ: u8 = 0x73;
 
 /// Type of protection to detect.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -218,7 +211,7 @@ fn extract_direct_callees(assembly: &CilObject, method_token: Token) -> Vec<Toke
 
         for instr in &block.instructions {
             // Look for call/callvirt to MethodDef tokens
-            if instr.opcode == OPCODE_CALL || instr.opcode == OPCODE_CALLVIRT {
+            if instr.opcode == opcodes::CALL || instr.opcode == opcodes::CALLVIRT {
                 if let Operand::Token(token) = &instr.operand {
                     // Only include MethodDef tokens (table 0x06)
                     if token.is_table(TableId::MethodDef) && !callees.contains(token) {
@@ -258,14 +251,14 @@ fn score_candidate(
 
         for instr in &block.instructions {
             match instr.opcode {
-                OPCODE_CALL | OPCODE_CALLVIRT => {
+                opcodes::CALL | opcodes::CALLVIRT => {
                     if let Operand::Token(token) = &instr.operand {
                         if let Some(name) = assembly.resolve_method_name(*token) {
                             call_targets.push(name);
                         }
                     }
                 }
-                OPCODE_NEWOBJ => {
+                opcodes::NEWOBJ => {
                     if let Operand::Token(token) = &instr.operand {
                         if let Some(name) = assembly.resolve_method_name(*token) {
                             if name.contains("EventHandler") || name.contains("ResolveEventHandler")

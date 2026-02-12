@@ -45,7 +45,7 @@ use crate::{
             StackSimulator, StackSlot, StackSlotSource, TypeContext, UseSite, VariableOrigin,
         },
     },
-    assembly::{Immediate, Instruction, Operand},
+    assembly::{opcodes, Immediate, Instruction, Operand},
     metadata::{
         signatures::TypeSignature, tables::MemberRefSignature, token::Token,
         typesystem::CilTypeReference,
@@ -53,66 +53,6 @@ use crate::{
     utils::graph::{algorithms::DominatorTree, NodeId},
     CilObject, Error, Result,
 };
-
-mod opcodes {
-    //! CIL opcode constants for SSA-relevant instructions.
-    //!
-    //! These are the opcodes that require special handling during SSA construction
-    //! because they load/store arguments, locals, or duplicate stack values.
-
-    pub const LDARG_0: u8 = 0x02;
-    pub const LDARG_1: u8 = 0x03;
-    pub const LDARG_2: u8 = 0x04;
-    pub const LDARG_3: u8 = 0x05;
-    pub const LDLOC_0: u8 = 0x06;
-    pub const LDLOC_1: u8 = 0x07;
-    pub const LDLOC_2: u8 = 0x08;
-    pub const LDLOC_3: u8 = 0x09;
-    pub const STLOC_0: u8 = 0x0A;
-    pub const STLOC_1: u8 = 0x0B;
-    pub const STLOC_2: u8 = 0x0C;
-    pub const STLOC_3: u8 = 0x0D;
-    pub const LDARG_S: u8 = 0x0E;
-    pub const LDARGA_S: u8 = 0x0F;
-    pub const STARG_S: u8 = 0x10;
-    pub const LDLOC_S: u8 = 0x11;
-    pub const LDLOCA_S: u8 = 0x12;
-    pub const STLOC_S: u8 = 0x13;
-    pub const DUP: u8 = 0x25;
-    pub const CALL: u8 = 0x28;
-    pub const CALLI: u8 = 0x29;
-    pub const RET: u8 = 0x2A;
-    pub const CALLVIRT: u8 = 0x6F;
-    pub const NEWOBJ: u8 = 0x73;
-    pub const LDFTN: u8 = 0xFE;
-    pub const LDVIRTFTN: u8 = 0x07; // FE 07
-
-    pub const FE_PREFIX: u8 = 0xFE;
-    pub const FE_LDVIRTFTN: u8 = 0x07;
-    pub const FE_LDARG: u8 = 0x09;
-    pub const FE_LDARGA: u8 = 0x0A;
-    pub const FE_STARG: u8 = 0x0B;
-    pub const FE_LDLOC: u8 = 0x0C;
-    pub const FE_LDLOCA: u8 = 0x0D;
-    pub const FE_STLOC: u8 = 0x0E;
-    pub const FE_INITOBJ: u8 = 0x15;
-
-    // Exception handling instructions
-    pub const LEAVE: u8 = 0xDD;
-    pub const LEAVE_S: u8 = 0xDE;
-
-    // Indirect store instructions (stind.*)
-    // These write through a pointer and count as definitions if the address
-    // was from ldloca/ldarga
-    pub const STIND_REF: u8 = 0x51;
-    pub const STIND_I1: u8 = 0x52;
-    pub const STIND_I2: u8 = 0x53;
-    pub const STIND_I4: u8 = 0x54;
-    pub const STIND_I8: u8 = 0x55;
-    pub const STIND_R4: u8 = 0x56;
-    pub const STIND_R8: u8 = 0x57;
-    pub const STIND_I: u8 = 0xDF;
-}
 
 /// A variable definition record during SSA construction.
 #[derive(Debug, Clone)]
