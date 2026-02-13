@@ -1,0 +1,7 @@
+<project outputDir=".\protected" baseDir="." xmlns="http://confuser.codeplex.com">
+  <rule pattern="true" preset="none" inherit="false">
+    <!-- Resource protection - encrypts embedded resources -->
+    <protection id="resources" />
+  </rule>
+  <module path="ResourceTestApp.exe" />
+</project>

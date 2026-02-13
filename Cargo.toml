@@ -1,108 +1,19 @@
-[package]
-name = "dotscope"
-version = "0.5.2"
-authors = ["Johann Kempter <admin@binflip.rs>"]
+[workspace]
+members = ["dotscope", "dotscope-cli"]
+exclude = ["dotscope/fuzz"]
+resolver = "2"
+
+[workspace.package]
 edition = "2021"
-description = "A high-performance, cross-platform framework for analyzing and reverse engineering .NET PE executables"
 license = "Apache-2.0"
 repository = "https://github.com/BinFlip/dotscope"
 homepage = "https://github.com/BinFlip/dotscope"
-documentation = "https://docs.rs/dotscope"
-keywords = ["dotnet", "cil", "assembly", "reverse-engineering", "metadata"]
-categories = ["parsing", "development-tools", "encoding"]
-readme = "README.md"
-# Exclude large mono test directories from the crate package to stay under crates.io size limit.
-# Only mono_4.8 is included; other versions remain in the repository for local testing.
-exclude = [
-    "tests/samples/mono_2.0",
-    "tests/samples/mono_3.5",
-    "tests/samples/mono_4.0",
-    "tests/samples/mono_4.5",
-    "docs/",
-    "*.log",
-]
-
-[package.metadata.docs.rs]
-all-features = true
-rustdoc-args = ["--cfg", "docsrs"]
-
-[dependencies]
-thiserror = "2.0.17"
-uguid = "2.2.1"
-widestring = "1.2.1"
-strum = { version = "0.27.2", features = ["derive"]}
-memmap2 = "0.9.9"
-tempfile = "3.24.0"
-goblin = "0.10.4"
-ouroboros = "0.18.5"
-sha1 = { version = "0.10.6", optional = true }
-sha2 = "0.10.9"
-md-5 = { version = "0.10.6", optional = true }
-bitflags = "2.10.0"
-dashmap = "6.1.0"
-crossbeam-skiplist = "0.1.3"
-rayon = "1.11.0"
-rustc-hash = "2.1.1"
-boxcar = "0.2.14"
-quick-xml = "0.38.4"
-hex = "0.4.3"
-num_cpus = "1.17.0"
-flate2 = "1.1.5"
-
-[dev-dependencies]
-criterion = "0.8.1"
-
-[features]
-default = ["legacy-crypto"]
-# Include SHA1 and MD5 hash algorithms for full .NET compatibility.
-# Required for: public key token computation, assembly hash verification.
-# Disable with `default-features = false` if you need to exclude these from your dependency tree.
-legacy-crypto = ["sha1", "md-5"]
-# Skip expensive validation tests that use ProjectLoader with dependency resolution.
-# These tests are slow on CI runners with limited cores/IO. Use this feature on slow runners (e.g., macOS/Windows CI).
-skip-expensive-tests = []
-
-[[bench]]
-name = "cilobject"
-harness = false
-
-[[bench]]
-name = "cilassemblyview"
-harness = false
-
-[[bench]]
-name = "assembly"
-harness = false
-
-[[bench]]
-name = "resources"
-harness = false
-
-[[bench]]
-name = "method_body"
-harness = false
-
-[[bench]]
-name = "signatures"
-harness = false
-
-[[bench]]
-name = "streams"
-harness = false
-
-[[bench]]
-name = "cor20"
-harness = false
-
-[[bench]]
-name = "security"
-harness = false
 
 [profile.bench]
 debug = true
-lto="fat"
+lto = "fat"
 opt-level = 3
 
 [profile.release]
-lto="fat"
+lto = "fat"
 opt-level = 3

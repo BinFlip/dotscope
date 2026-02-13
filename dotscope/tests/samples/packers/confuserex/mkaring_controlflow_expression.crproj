@@ -1,0 +1,9 @@
+<project outputDir="./protected" baseDir="." xmlns="http://confuser.codeplex.com">
+  <rule pattern="true" preset="none" inherit="false">
+    <!-- Control flow obfuscation with expression predicate -->
+    <protection id="ctrl flow">
+      <argument name="predicate" value="expression" />
+    </protection>
+  </rule>
+  <module path="TestApp.exe" />
+</project>

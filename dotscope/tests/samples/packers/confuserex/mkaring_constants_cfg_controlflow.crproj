@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<project outputDir=".\protected" baseDir="." xmlns="http://confuser.codeplex.com">
+  <rule pattern="true" preset="none" inherit="false">
+    <!-- Constants (CFG mode) + ControlFlow combination test -->
+    <protection id="constants">
+      <argument name="cfg" value="true" />
+    </protection>
+    <protection id="ctrl flow" />
+  </rule>
+  <module path="TestApp.exe" />
+</project>

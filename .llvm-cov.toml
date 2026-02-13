@@ -2,7 +2,7 @@
 
 [run]
 branch = true
-source = "src"
+source = "dotscope/src"
 
 [report]
 exclude_lines = [

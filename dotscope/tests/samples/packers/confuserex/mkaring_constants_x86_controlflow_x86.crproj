@@ -1,0 +1,12 @@
+<project outputDir="./protected" baseDir="." xmlns="http://confuser.codeplex.com">
+  <rule pattern="true" preset="none" inherit="false">
+    <!-- Constants encryption with x86 cipher + control flow with x86 predicate (Windows only) -->
+    <protection id="constants">
+      <argument name="mode" value="x86" />
+    </protection>
+    <protection id="ctrl flow">
+      <argument name="predicate" value="x86" />
+    </protection>
+  </rule>
+  <module path="TestApp.exe" />
+</project>

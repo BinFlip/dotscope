@@ -46,19 +46,35 @@ jobs:
         dotnet new console -n warmup -o ${{ runner.temp }}/warmup
         dotnet build ${{ runner.temp }}/warmup
 
-    - name: Install Mono utilities (Linux)
+    - name: Install Mono and Z3 (Linux)
       if: runner.os == 'Linux'
       run: |
         sudo apt-get update
-        sudo apt-get install -y mono-utils
+        sudo apt-get install -y mono-utils libz3-dev
 
-    - name: Install Mono (macOS)
+    - name: Install Mono and Z3 (macOS)
       if: runner.os == 'macOS'
-      run: brew install mono
+      run: brew install mono z3
 
-    - name: Install dotnet-ildasm tool (Windows fallback)
+    - name: Install Z3 and dotnet-ildasm tool (Windows)
       if: runner.os == 'Windows'
-      run: dotnet tool install --global dotnet-ildasm
+      run: |
+        dotnet tool install --global dotnet-ildasm
+        # Download Z3 from GitHub releases (more reliable than Chocolatey)
+        $z3Version = "4.13.4"
+        $z3Url = "https://github.com/Z3Prover/z3/releases/download/z3-$z3Version/z3-$z3Version-x64-win.zip"
+        $z3Zip = "$env:RUNNER_TEMP\z3.zip"
+        $z3Dir = "$env:RUNNER_TEMP\z3"
+        Invoke-WebRequest -Uri $z3Url -OutFile $z3Zip
+        Expand-Archive -Path $z3Zip -DestinationPath $z3Dir
+        $z3Root = Get-ChildItem -Path $z3Dir -Directory | Select-Object -First 1
+        echo "Z3_SYS_Z3_HEADER=$(Join-Path $z3Root.FullName 'include\z3.h')" >> $env:GITHUB_ENV
+        echo "Z3_LIBRARY_PATH_OVERRIDE=$(Join-Path $z3Root.FullName 'bin')" >> $env:GITHUB_ENV
+        # Add Z3 bin to PATH so libz3.dll is found at runtime
+        echo "$(Join-Path $z3Root.FullName 'bin')" >> $env:GITHUB_PATH
+        echo "Installed Z3 $z3Version at: $($z3Root.FullName)"
+        ls (Join-Path $z3Root.FullName 'bin')
+      shell: pwsh
 
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
@@ -69,25 +85,48 @@ jobs:
       run: cargo fmt --all -- --check
       
     - name: Run clippy
-      run: cargo clippy --all-targets -- -D warnings
+      run: cargo clippy --workspace --all-features --all-targets -- -D warnings
 
     - name: Check compilation
-      run: cargo check
-      
+      run: cargo check --workspace --all-features
+
     - name: Run tests (Linux - full)
       if: runner.os == 'Linux'
-      run: cargo test --release --lib --verbose
+      run: cargo test --workspace --release --lib --features z3 --verbose
 
     - name: Run tests (macOS/Windows - skip expensive tests)
       if: runner.os != 'Linux'
-      run: cargo test --release --lib --features skip-expensive-tests --verbose
+      run: cargo test --workspace --release --lib --features z3,skip-expensive-tests --verbose
 
     - name: Run doc tests (Linux only)
       if: runner.os == 'Linux'
-      run: cargo test --release --doc
-      
+      run: cargo test --workspace --release --doc --features z3
+
     - name: Check documentation
-      run: cargo doc --no-deps
+      run: cargo doc --workspace --all-features --no-deps
+
+  # Ensures the crate compiles and tests pass without legacy-crypto feature (Linux only)
+  minimal-features:
+    name: Minimal Features
+    runs-on: ubuntu-latest
+
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v6
+
+    - name: Install Rust toolchain
+      uses: dtolnay/rust-toolchain@stable
+
+    - name: Setup Rust cache
+      uses: Swatinem/rust-cache@v2
+      with:
+        key: minimal-features
+
+    - name: Check compilation (no default features)
+      run: cargo check -p dotscope --no-default-features
+
+    - name: Run tests (no default features)
+      run: cargo test -p dotscope --no-default-features --release --verbose
 
   # Fuzzing on pushes to master or PRs targeting master
   fuzzing:
@@ -115,17 +154,17 @@ jobs:
         
     - name: Build fuzz target
       run: cargo +nightly fuzz build --release cilobject
-      working-directory: fuzz
+      working-directory: dotscope/fuzz
 
     - name: Run quick fuzz test
       run: timeout 60 cargo +nightly fuzz run cilobject --release -- -max_total_time=50 || true
-      working-directory: fuzz
-        
+      working-directory: dotscope/fuzz
+
     - name: Check for crashes
       run: |
-        if [ -d "fuzz/artifacts/cilobject" ] && [ "$(ls -A fuzz/artifacts/cilobject)" ]; then
+        if [ -d "dotscope/fuzz/artifacts/cilobject" ] && [ "$(ls -A dotscope/fuzz/artifacts/cilobject)" ]; then
           echo "Fuzzing found crashes!"
-          ls -la fuzz/artifacts/cilobject/
+          ls -la dotscope/fuzz/artifacts/cilobject/
           exit 1
         fi
 
@@ -175,10 +214,10 @@ jobs:
         dotnet new console -n warmup -o ${{ runner.temp }}/warmup
         dotnet build ${{ runner.temp }}/warmup
 
-    - name: Install Mono utilities
+    - name: Install Mono and Z3
       run: |
         sudo apt-get update
-        sudo apt-get install -y mono-utils
+        sudo apt-get install -y mono-utils libz3-dev
 
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
@@ -189,7 +228,7 @@ jobs:
       uses: taiki-e/install-action@cargo-llvm-cov
       
     - name: Generate code coverage
-      run: cargo llvm-cov --workspace --lcov --output-path lcov.info
+      run: cargo llvm-cov --workspace --features z3,skip-expensive-tests --lcov --output-path lcov.info --exclude dotscope-cli
       
     - name: Upload to codecov.io
       uses: codecov/codecov-action@v5

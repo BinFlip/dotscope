@@ -1,0 +1,25 @@
+[package]
+name = "dotscope-fuzz"
+version = "0.0.0"
+publish = false
+edition = "2021"
+
+[package.metadata]
+cargo-fuzz = true
+
+# Prevent cargo from treating this as part of the parent workspace.
+# cargo-fuzz requires nightly and its own isolated build environment.
+[workspace]
+
+[dependencies]
+libfuzzer-sys = "0.4.12"
+
+[dependencies.dotscope]
+path = ".."
+
+[[bin]]
+name = "cilobject"
+path = "fuzz_targets/cilobject.rs"
+test = false
+doc = false
+bench = false

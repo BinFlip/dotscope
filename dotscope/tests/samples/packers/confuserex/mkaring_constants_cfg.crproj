@@ -1,0 +1,10 @@
+<project outputDir="./protected" baseDir="." xmlns="http://confuser.codeplex.com">
+  <rule pattern="true" preset="none" inherit="false">
+    <!-- Constants encryption with CFGCtx state machine (order-dependent decryption) -->
+    <protection id="constants">
+      <argument name="mode" value="dynamic" />
+      <argument name="cfg" value="true" />
+    </protection>
+  </rule>
+  <module path="TestApp.exe" />
+</project>

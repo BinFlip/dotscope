@@ -1,8 +1,8 @@
 /target
-fuzz/target/
-fuzz/corpus/*
-fuzz/artifacts/*
-fuzz/coverage/*
+dotscope/fuzz/target/
+dotscope/fuzz/corpus/*
+dotscope/fuzz/artifacts/*
+dotscope/fuzz/coverage/*
 fuzz-*.log
 .DS_Store
 lcov.info

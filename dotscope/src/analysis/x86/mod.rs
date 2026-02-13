@@ -1,0 +1,922 @@
+//! x86/x64 native code analysis module.
+//!
+//! This module provides infrastructure for analyzing x86/x64 machine code,
+//! primarily for handling native method stubs used by obfuscators like
+//! ConfuserEx's x86Predicate protection.
+//!
+//! # Architecture
+//!
+//! ```text
+//! x86 bytes → decode (iced-x86) → CFG → SSA → existing codegen → CIL
+//! ```
+//!
+//! The module uses iced-x86 for decoding and provides a simplified instruction
+//! representation focused on the operations commonly used in obfuscator stubs.
+//!
+//! # Components
+//!
+//! - [`types`] - Simplified x86 instruction types ([`X86Instruction`], [`X86Register`], etc.)
+//! - [`decoder`] - Decoding using iced-x86 ([`x86_decode_all`], [`x86_detect_prologue`])
+//! - [`cfg`] - Control flow graph construction ([`X86Function`])
+//!
+//! # Decoding Strategies
+//!
+//! Two decoding approaches are available:
+//!
+//! ## Linear Decoding ([`x86_decode_all`])
+//!
+//! Decodes instructions sequentially from the start until a `RET` instruction.
+//! Fast and simple, but vulnerable to anti-disassembly tricks.
+//!
+//! ## Traversal-Based Decoding ([`x86_decode_function_traversal`])
+//!
+//! Follows control flow edges from the entry point, only decoding reachable code.
+//! More robust against:
+//! - Junk bytes inserted between instructions
+//! - Data embedded in code sections
+//! - Overlapping instructions
+//! - Anti-disassembly tricks
+//!
+//! # Example
+//!
+//! ```rust,no_run
+//! use dotscope::analysis::{x86_decode_all, x86_detect_prologue, X86Function};
+//!
+//! # fn main() -> Result<(), Box<dyn std::error::Error>> {
+//! // Decode x86 bytecode
+//! let bytes = &[0xb8, 0x01, 0x00, 0x00, 0x00, 0xc3]; // mov eax, 1; ret
+//! let instructions = x86_decode_all(bytes, 32, 0x1000)?;
+//!
+//! // Build CFG from decoded instructions
+//! let cfg = X86Function::new(&instructions, 32, 0x1000);
+//! println!("Blocks: {}", cfg.block_count());
+//! println!("Has loops: {}", cfg.has_loops());
+//! println!("Is reducible: {}", cfg.is_reducible());
+//!
+//! // Detect prologue type
+//! let prologue = x86_detect_prologue(bytes, 32);
+//! println!("Prologue: {:?}", prologue.kind);
+//! # Ok(())
+//! # }
+//! ```
+//!
+//! # Traversal-Based Example
+//!
+//! ```rust,ignore
+//! use dotscope::analysis::{x86_decode_function_traversal, X86Function};
+//!
+//! // Decode using control-flow following (more robust)
+//! let result = x86_decode_function_traversal(bytes, 32, 0x1000, 0)?;
+//! println!("Decoded {} instructions", result.instructions.len());
+//! println!("Has indirect jumps: {}", result.has_indirect_control_flow);
+//!
+//! // Build CFG
+//! let cfg = X86Function::new(&result.instructions, 32, 0x1000);
+//! ```
+//!
+//! # Supported Instructions
+//!
+//! The decoder supports a subset of x86 instructions commonly used in
+//! obfuscator stubs:
+//!
+//! | Category | Instructions |
+//! |----------|--------------|
+//! | Data Movement | MOV, MOVZX, MOVSX, LEA, PUSH, POP, XCHG, CMOVcc, XADD |
+//! | Arithmetic | ADD, SUB, ADC, SBB, IMUL, MUL, DIV, IDIV, NEG, INC, DEC |
+//! | Bitwise | AND, OR, XOR, NOT, SHL, SHR, SAR, ROL, ROR, BSWAP, BT, BSF, BSR |
+//! | Comparison | CMP, TEST, SETcc |
+//! | Control Flow | JMP, Jcc (all conditions), CALL, RET |
+//! | Miscellaneous | NOP, CDQ, CWDE, CBW, CWD |
+//! | No-op aliases | I/O (IN/OUT/INS/OUTS), FPU, BOUND, string ops, flag ops |
+//!
+//! Unsupported instructions are captured as [`X86Instruction::Unsupported`]
+//! for graceful degradation.
+//!
+//! # Control Flow Support
+//!
+//! The CFG builder handles:
+//!
+//! - **L0**: Linear code (no branches)
+//! - **L1**: Forward branches (if-then-else)
+//! - **L2**: Reducible control flow (loops with single entry)
+//!
+//! Irreducible control flow is detected via [`X86Function::is_reducible`].
+//!
+//! # Analysis Features
+//!
+//! [`X86Function`] provides:
+//!
+//! - **Dominator analysis**: Lazy-computed dominator tree via [`X86Function::dominators`]
+//! - **Loop detection**: [`X86Function::has_loops`] identifies back edges
+//! - **Reducibility check**: [`X86Function::is_reducible`] detects irreducible CFGs
+//! - **Edge classification**: [`X86EdgeKind`] distinguishes conditional/unconditional edges
+//!
+//! # SSA Translation
+//!
+//! The [`ssa`] module provides translation from x86 CFG to SSA form:
+//!
+//! ```rust,ignore
+//! use dotscope::analysis::{x86_decode_all, X86Function, X86ToSsaTranslator};
+//!
+//! // Decode and build CFG
+//! let instructions = x86_decode_all(bytes, 32, 0x1000)?;
+//! let cfg = X86Function::new(&instructions, 32, 0x1000);
+//!
+//! // Translate to SSA
+//! let translator = X86ToSsaTranslator::new(&cfg);
+//! let ssa_function = translator.translate()?;
+//! ```
+//!
+//! The translator handles:
+//! - Register versioning (new SSA variable per write)
+//! - Phi node insertion at control flow join points
+//! - CMP/TEST + Jcc fusion into `BranchCmp`
+//! - Memory operations via `LoadIndirect`/`StoreIndirect`
+
+mod cfg;
+mod decoder;
+mod flags;
+mod ssa;
+mod types;
+
+// Re-export primary types
+pub use cfg::{X86BasicBlock, X86Function};
+pub use decoder::{
+    x86_decode_all, x86_decode_single, x86_decode_traversal, x86_detect_epilogue,
+    x86_detect_prologue, x86_native_body_size, X86TraversalDecodeResult,
+};
+pub use types::{
+    X86Condition, X86DecodedInstruction, X86EdgeKind, X86EpilogueInfo, X86Instruction, X86Memory,
+    X86Operand, X86PrologueInfo, X86PrologueKind, X86Register,
+};
+
+// Re-export SSA translation types
+pub use ssa::X86ToSsaTranslator;
+
+#[cfg(test)]
+mod tests {
+    use crate::analysis::{
+        x86::{
+            x86_decode_all, x86_detect_prologue, X86Function, X86Instruction, X86Operand,
+            X86PrologueKind, X86Register, X86ToSsaTranslator,
+        },
+        ConstValue, SsaEvaluator, SsaOp,
+    };
+    use crate::metadata::typesystem::PointerSize;
+
+    /// Test the full pipeline: decode -> build CFG
+    #[test]
+    fn test_full_pipeline_linear() {
+        // Simple function: return arg + 5
+        // Simulated DynCipher-style code (without prologue for simplicity)
+        let bytes = [
+            0x58, // pop eax (get argument)
+            0x83, 0xc0, 0x05, // add eax, 5
+            0xc3, // ret
+        ];
+
+        let instructions = x86_decode_all(&bytes, 32, 0).unwrap();
+        assert_eq!(instructions.len(), 3);
+
+        let cfg = X86Function::new(&instructions, 32, 0);
+        assert_eq!(cfg.block_count(), 1);
+        assert!(!cfg.has_loops());
+        assert!(cfg.is_reducible());
+    }
+
+    /// Test conditional branch
+    #[test]
+    fn test_full_pipeline_conditional() {
+        // if (arg < 10) { arg += 5 } return arg
+        let bytes = [
+            0x58, // pop eax
+            0x83, 0xf8, 0x0a, // cmp eax, 10
+            0x7d, 0x03, // jge skip (+3)
+            0x83, 0xc0, 0x05, // add eax, 5
+            0xc3, // ret
+        ];
+
+        let instructions = x86_decode_all(&bytes, 32, 0).unwrap();
+        let cfg = X86Function::new(&instructions, 32, 0);
+
+        // Should have multiple blocks
+        assert!(cfg.block_count() >= 2);
+        assert!(!cfg.has_loops());
+        assert!(cfg.is_reducible());
+    }
+
+    /// Test loop detection
+    #[test]
+    fn test_full_pipeline_loop() {
+        // while (arg > 0) { arg-- } return arg
+        let bytes = [
+            0x58, // pop eax (0)
+            0x83, 0xf8, 0x00, // cmp eax, 0 (1)
+            0x7e, 0x04, // jle exit (4)
+            0x48, // dec eax (6)
+            0xeb, 0xf8, // jmp back to cmp (7) - goes back to offset 1
+            0xc3, // ret (9)
+        ];
+
+        let instructions = x86_decode_all(&bytes, 32, 0).unwrap();
+        let cfg = X86Function::new(&instructions, 32, 0);
+
+        assert!(cfg.has_loops());
+        assert!(cfg.is_reducible()); // Simple while loop is reducible
+    }
+
+    /// Test DynCipher prologue detection
+    #[test]
+    fn test_dyncipher_prologue_detection() {
+        let prologue_bytes = [
+            0x89, 0xe0, // mov eax, esp
+            0x53, // push ebx
+            0x57, // push edi
+            0x56, // push esi
+            0x29, 0xe0, // sub eax, esp
+            0x83, 0xf8, 0x18, // cmp eax, 24
+            0x74, 0x07, // je +7
+            0x8b, 0x44, 0x24, 0x10, // mov eax, [esp + 16]
+            0x50, // push eax
+            0xeb, 0x01, // jmp +1
+            0x51, // push ecx
+            // Body would follow...
+            0xb8, 0x01, 0x00, 0x00, 0x00, // mov eax, 1
+            0x5e, // pop esi
+            0x5f, // pop edi
+            0x5b, // pop ebx
+            0xc3, // ret
+        ];
+
+        let prologue = x86_detect_prologue(&prologue_bytes, 32);
+        assert_eq!(prologue.kind, X86PrologueKind::DynCipher);
+        assert_eq!(prologue.size, 20);
+    }
+
+    /// Test 64-bit support
+    #[test]
+    fn test_64bit_support() {
+        // mov rax, 0x123456789; ret
+        let bytes = [
+            0x48, 0xb8, 0x89, 0x67, 0x45, 0x23, 0x01, 0x00, 0x00,
+            0x00, // mov rax, 0x123456789
+            0xc3, // ret
+        ];
+
+        let instructions = x86_decode_all(&bytes, 64, 0).unwrap();
+        assert_eq!(instructions.len(), 2);
+
+        match &instructions[0].instruction {
+            X86Instruction::Mov { dst, src } => {
+                assert_eq!(dst.as_register(), Some(X86Register::Rax));
+                assert_eq!(src.as_immediate(), Some(0x123456789));
+            }
+            _ => panic!("Expected Mov instruction"),
+        }
+    }
+
+    /// Test memory operand handling
+    #[test]
+    fn test_memory_operand() {
+        // mov eax, [ebx + ecx*4 + 8]
+        // ret
+        let bytes = [
+            0x8b, 0x44, 0x8b, 0x08, // mov eax, [ebx + ecx*4 + 8]
+            0xc3, // ret
+        ];
+
+        let instructions = x86_decode_all(&bytes, 32, 0).unwrap();
+        match &instructions[0].instruction {
+            X86Instruction::Mov { src, .. } => match src {
+                X86Operand::Memory(mem) => {
+                    assert_eq!(mem.base, Some(X86Register::Ebx));
+                    assert_eq!(mem.index, Some(X86Register::Ecx));
+                    assert_eq!(mem.scale, 4);
+                    assert_eq!(mem.displacement, 8);
+                }
+                _ => panic!("Expected memory operand"),
+            },
+            _ => panic!("Expected Mov instruction"),
+        }
+    }
+
+    // ========================================================================
+    // ConfuserEx x86 native stub tests
+    //
+    // Bytecodes extracted from test samples in tests/samples/packers/confuserex/.
+    // All stubs use DynCipher calling convention: body starts after 20-byte
+    // prologue. These bytes are the body only (without prologue).
+    // ========================================================================
+
+    /// Helper: decode body bytes, build CFG, translate to SSA, evaluate with
+    /// concrete input, and return the i32 result.
+    fn eval_x86_stub(body: &[u8], input: i32) -> i32 {
+        let instructions =
+            x86_decode_all(body, 32, 0).unwrap_or_else(|e| panic!("decode failed: {e}"));
+        let cfg = X86Function::new(&instructions, 32, 0);
+        let translator = X86ToSsaTranslator::new(&cfg);
+        let ssa = translator
+            .translate()
+            .unwrap_or_else(|e| panic!("SSA translation failed: {e}"));
+
+        assert_eq!(ssa.block_count(), 1, "expected single-block function");
+
+        // Find argument variable and set concrete value
+        let arg_var = ssa
+            .argument_variables()
+            .next()
+            .expect("no argument variable");
+        let arg_id = arg_var.id();
+
+        let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit32);
+        eval.set_concrete(arg_id, ConstValue::I32(input));
+        let trace = eval.execute(0, None, 50);
+        assert!(trace.is_complete(), "evaluation did not complete");
+
+        // Find return value
+        let block = ssa.block(0).unwrap();
+        for instr in block.instructions() {
+            if let SsaOp::Return {
+                value: Some(ret_var),
+            } = instr.op()
+            {
+                return eval
+                    .get_concrete(*ret_var)
+                    .and_then(|v| v.as_i32())
+                    .expect("return value not concrete i32");
+            }
+        }
+        panic!("no Return instruction found");
+    }
+
+    /// Helper: decode body bytes, build CFG, translate to SSA, verify basics.
+    fn verify_x86_stub_ssa(body: &[u8], expected_instructions: usize) {
+        let instructions =
+            x86_decode_all(body, 32, 0).unwrap_or_else(|e| panic!("decode failed: {e}"));
+        assert_eq!(
+            instructions.len(),
+            expected_instructions,
+            "instruction count mismatch"
+        );
+
+        let cfg = X86Function::new(&instructions, 32, 0);
+        assert_eq!(cfg.block_count(), 1, "expected single-block CFG");
+        assert!(!cfg.has_loops(), "no loops expected");
+
+        let translator = X86ToSsaTranslator::new(&cfg);
+        let ssa = translator
+            .translate()
+            .unwrap_or_else(|e| panic!("SSA translation failed: {e}"));
+        assert_eq!(ssa.block_count(), 1, "expected single-block SSA");
+
+        // Verify it ends with Return
+        let block = ssa.block(0).unwrap();
+        let last = block.instructions().last().expect("no instructions");
+        assert!(
+            matches!(last.op(), SsaOp::Return { value: Some(_) }),
+            "expected Return with value, got {:?}",
+            last.op()
+        );
+    }
+
+    // --- mkaring_constants_x86.exe stubs ---
+
+    #[test]
+    fn test_confuserex_constants_x86_stub1() {
+        // Token 0x06000005: pop eax; mov ecx, 0x66a41306; not ecx; sub eax, ecx;
+        //                   neg eax; not eax; neg eax; pop esi; pop edi; pop ebx; ret
+        let body: &[u8] = &[
+            0x58, 0xb9, 0x06, 0x13, 0xa4, 0x66, 0xf7, 0xd1, 0x29, 0xc8, 0xf7, 0xd8, 0xf7, 0xd0,
+            0xf7, 0xd8, 0x5e, 0x5f, 0x5b, 0xc3,
+        ];
+        verify_x86_stub_ssa(body, 11);
+
+        // f(x): sub eax,ecx; neg; not; neg where ecx = not(0x66a41306)
+        let not_c = !0x66a41306i32; // -1722028807
+        for input in [0, 100, -1, i32::MAX] {
+            let result = eval_x86_stub(body, input);
+            let step1 = input.wrapping_sub(not_c); // sub
+            let step2 = step1.wrapping_neg(); // neg
+            let step3 = !step2; // not
+            let expected = step3.wrapping_neg(); // neg
+            assert_eq!(result, expected, "stub1 failed for input {input}");
+        }
+    }
+
+    #[test]
+    fn test_confuserex_constants_x86_stub2() {
+        // Token 0x06000007: pop eax; imul eax, -1323541493; imul eax, 447667239;
+        //                   not eax; pop esi; pop edi; pop ebx; ret
+        let body: &[u8] = &[
+            0x58, 0x69, 0xc0, 0x0b, 0x5c, 0x1c, 0xb1, 0x69, 0xc0, 0x27, 0xdc, 0xae, 0x1a, 0xf7,
+            0xd0, 0x5e, 0x5f, 0x5b, 0xc3,
+        ];
+        verify_x86_stub_ssa(body, 8);
+
+        // f(x) = not(x * -1323541493 * 447667239)
+        let result = eval_x86_stub(body, 42);
+        let expected = !42i32.wrapping_mul(-1323541493).wrapping_mul(447667239);
+        assert_eq!(result, expected);
+    }
+
+    #[test]
+    fn test_confuserex_constants_x86_stub3() {
+        // Token 0x06000009: complex multi-register computation (52 bytes, 18 instrs)
+        let body: &[u8] = &[
+            0xb8, 0x65, 0x11, 0x90, 0x52, 0x81, 0xf0, 0xab, 0x5d, 0xfc, 0xf5, 0xf7, 0xd0, 0xb9,
+            0x10, 0x3c, 0x13, 0xf3, 0xf7, 0xd1, 0xba, 0x8c, 0xe0, 0xc2, 0x76, 0x81, 0xf2, 0xb7,
+            0x0a, 0x54, 0x5b, 0x31, 0xd1, 0x31, 0xc8, 0x59, 0x29, 0xc8, 0xf7, 0xd0, 0x69, 0xc0,
+            0x85, 0x46, 0x7b, 0xd6, 0xf7, 0xd8, 0x5e, 0x5f, 0x5b, 0xc3,
+        ];
+        verify_x86_stub_ssa(body, 18);
+
+        // Verify deterministic: same input produces same output
+        let r1 = eval_x86_stub(body, 1000);
+        let r2 = eval_x86_stub(body, 1000);
+        assert_eq!(r1, r2);
+        // Different input produces different output
+        let r3 = eval_x86_stub(body, 1001);
+        assert_ne!(r1, r3);
+    }
+
+    // --- mkaring_controlflow_x86.exe stubs ---
+
+    #[test]
+    fn test_confuserex_controlflow_x86_stub1() {
+        // Token 0x06000002: 34 bytes, 12 instructions
+        let body: &[u8] = &[
+            0x58, 0xb9, 0x70, 0x92, 0x47, 0x1d, 0x69, 0xc9, 0xdb, 0x75, 0x70, 0x90, 0xf7, 0xd9,
+            0x31, 0xc8, 0xf7, 0xd0, 0x69, 0xc0, 0xe7, 0x21, 0xf0, 0x0a, 0x81, 0xf0, 0xdf, 0x98,
+            0x2b, 0x69, 0x5e, 0x5f, 0x5b, 0xc3,
+        ];
+        verify_x86_stub_ssa(body, 12);
+        // f(x) = (not(x ^ neg(0x1d4792_70 * 0x907075db))) * 0x0af021e7 ^ 0x692b98df
+        let r = eval_x86_stub(body, 0);
+        let ecx = 491229808i32.wrapping_mul(-1871677989).wrapping_neg();
+        let expected = !ecx;
+        let expected = expected.wrapping_mul(183509479) ^ 1764464863;
+        assert_eq!(r, expected);
+    }
+
+    #[test]
+    fn test_confuserex_controlflow_x86_stub3() {
+        // Token 0x06000004: shortest controlflow stub (25 bytes, 12 instrs)
+        // f(x) = not(x) ^ (not(0x4eb21bde) ^ neg(0x24a7290d))
+        let body: &[u8] = &[
+            0x58, 0xf7, 0xd0, 0xb9, 0xde, 0x1b, 0xb2, 0x4e, 0xf7, 0xd1, 0xba, 0x0d, 0x29, 0xa7,
+            0x24, 0xf7, 0xda, 0x31, 0xd1, 0x31, 0xc8, 0x5e, 0x5f, 0x5b, 0xc3,
+        ];
+        verify_x86_stub_ssa(body, 12);
+
+        let r = eval_x86_stub(body, 12345);
+        let ecx = !1320295390i32 ^ 614934797i32.wrapping_neg();
+        let expected = !12345i32 ^ ecx;
+        assert_eq!(r, expected);
+    }
+
+    // --- mkaring_constants_x86_controlflow.exe stubs ---
+
+    #[test]
+    fn test_confuserex_constants_x86_cf_stub4() {
+        // Token 0x0600000b: simplest stub (13 bytes, 7 instrs)
+        // f(x) = neg(x * 1256578577)
+        let body: &[u8] = &[
+            0x58, 0x69, 0xc0, 0x11, 0xde, 0xe5, 0x4a, 0xf7, 0xd8, 0x5e, 0x5f, 0x5b, 0xc3,
+        ];
+        verify_x86_stub_ssa(body, 7);
+
+        let r = eval_x86_stub(body, 7);
+        assert_eq!(r, 7i32.wrapping_mul(1256578577).wrapping_neg());
+
+        let r = eval_x86_stub(body, -1);
+        assert_eq!(r, (-1i32).wrapping_mul(1256578577).wrapping_neg());
+    }
+
+    #[test]
+    fn test_confuserex_constants_x86_cf_stub5() {
+        // Token 0x0600000d: not + two imuls + add (25 bytes, 9 instrs)
+        // f(x) = not(x) * -61914029 * -972333131 + -548832205
+        let body: &[u8] = &[
+            0x58, 0xf7, 0xd0, 0x69, 0xc0, 0x53, 0x44, 0x4f, 0xfc, 0x69, 0xc0, 0xb5, 0x5f, 0x0b,
+            0xc6, 0x81, 0xc0, 0x33, 0x7c, 0x49, 0xdf, 0x5e, 0x5f, 0x5b, 0xc3,
+        ];
+        verify_x86_stub_ssa(body, 9);
+
+        let r = eval_x86_stub(body, 0);
+        let expected = (!0i32)
+            .wrapping_mul(-61914029)
+            .wrapping_mul(-972333131)
+            .wrapping_add(-548832205);
+        assert_eq!(r, expected);
+    }
+
+    // --- mkaring_constants_x86_controlflow_x86.exe stubs ---
+
+    #[test]
+    fn test_confuserex_identity_stub() {
+        // Token 0x0600000b: identity function (neg(neg(x)) = x)
+        // Smallest possible stub: 9 bytes, 7 instructions
+        let body: &[u8] = &[0x58, 0xf7, 0xd8, 0xf7, 0xd8, 0x5e, 0x5f, 0x5b, 0xc3];
+        verify_x86_stub_ssa(body, 7);
+
+        // neg(neg(x)) == x for all inputs
+        for input in [0, 1, -1, 42, i32::MAX, i32::MIN, 0x12345678] {
+            assert_eq!(
+                eval_x86_stub(body, input),
+                input,
+                "identity stub failed for input {input}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_confuserex_constants_x86_cf_x86_stub7() {
+        // Token 0x0600000f: not; neg; imul; imul (21 bytes, 9 instrs)
+        // f(x) = neg(not(x)) * -1341064569 * -293788359
+        let body: &[u8] = &[
+            0x58, 0xf7, 0xd0, 0xf7, 0xd8, 0x69, 0xc0, 0x87, 0xfa, 0x10, 0xb0, 0x69, 0xc0, 0x39,
+            0x25, 0x7d, 0xee, 0x5e, 0x5f, 0x5b, 0xc3,
+        ];
+        verify_x86_stub_ssa(body, 9);
+
+        let r = eval_x86_stub(body, 99);
+        let expected = (!99i32)
+            .wrapping_neg()
+            .wrapping_mul(-1341064569)
+            .wrapping_mul(-293788359);
+        assert_eq!(r, expected);
+    }
+
+    #[test]
+    fn test_confuserex_constants_x86_cf_x86_stub11() {
+        // Token 0x06000013: neg; imul; imul (19 bytes, 8 instrs)
+        // f(x) = neg(x) * 2012340811 * -965825171
+        let body: &[u8] = &[
+            0x58, 0xf7, 0xd8, 0x69, 0xc0, 0x4b, 0xe2, 0xf1, 0x77, 0x69, 0xc0, 0x6d, 0xad, 0x6e,
+            0xc6, 0x5e, 0x5f, 0x5b, 0xc3,
+        ];
+        verify_x86_stub_ssa(body, 8);
+
+        let r = eval_x86_stub(body, 55);
+        let expected = 55i32
+            .wrapping_neg()
+            .wrapping_mul(2012340811)
+            .wrapping_mul(-965825171);
+        assert_eq!(r, expected);
+    }
+
+    #[test]
+    fn test_confuserex_largest_stub() {
+        // Token 0x0600000d (sample 4): largest stub (94 bytes, 27 instructions)
+        // Complex multi-register with 3 xor chains + mul + not
+        let body: &[u8] = &[
+            0x58, 0xb9, 0x9c, 0xe0, 0x3c, 0x3a, 0x81, 0xc1, 0xbf, 0x9c, 0x8f, 0xac, 0xba, 0x73,
+            0xa2, 0xad, 0xee, 0x81, 0xea, 0x69, 0xad, 0x28, 0xfb, 0x31, 0xd1, 0xba, 0xc4, 0xcc,
+            0xb2, 0xd5, 0x69, 0xd2, 0x05, 0x1d, 0xc8, 0x55, 0xbb, 0x11, 0x49, 0x0f, 0x2a, 0x69,
+            0xdb, 0xf3, 0x9c, 0xce, 0xcc, 0x29, 0xda, 0x31, 0xd1, 0x01, 0xc8, 0xb9, 0x10, 0x9e,
+            0x73, 0xca, 0x81, 0xe9, 0xd2, 0x03, 0x3e, 0xd2, 0xba, 0xab, 0xc5, 0x17, 0x5d, 0xf7,
+            0xd2, 0x31, 0xd1, 0x01, 0xc8, 0xb9, 0x39, 0x42, 0x5c, 0xab, 0x69, 0xc9, 0xc0, 0xb6,
+            0x6e, 0xa0, 0x29, 0xc8, 0xf7, 0xd0, 0x5e, 0x5f, 0x5b, 0xc3,
+        ];
+        verify_x86_stub_ssa(body, 27);
+
+        // Verify deterministic
+        let r1 = eval_x86_stub(body, 0);
+        let r2 = eval_x86_stub(body, 0);
+        assert_eq!(r1, r2);
+
+        // Verify different inputs produce different outputs
+        let r3 = eval_x86_stub(body, 1);
+        assert_ne!(r1, r3);
+    }
+
+    #[test]
+    fn test_confuserex_stub_with_pop_ecx_arg() {
+        // Token 0x06000007 (sample 4): argument loaded via mov eax, const; neg eax;
+        // then pop ecx (argument in ecx, not eax)
+        // This tests the non-standard argument position
+        let body: &[u8] = &[
+            0xb8, 0xf4, 0xd9, 0x38, 0x51, 0xf7, 0xd8, 0x59, 0xba, 0xd1, 0x84, 0x10, 0x2c, 0xf7,
+            0xd2, 0x29, 0xd1, 0xf7, 0xd9, 0x29, 0xc8, 0x81, 0xf0, 0x76, 0x8e, 0x58, 0x13, 0x5e,
+            0x5f, 0x5b, 0xc3,
+        ];
+        verify_x86_stub_ssa(body, 13);
+
+        // Deterministic check
+        let r1 = eval_x86_stub(body, 500);
+        let r2 = eval_x86_stub(body, 500);
+        assert_eq!(r1, r2);
+    }
+
+    #[test]
+    fn test_confuserex_all_stubs_decode_and_translate() {
+        // Comprehensive test: all 33 stubs must decode and translate to SSA
+        let all_stubs: &[(&[u8], usize)] = &[
+            // mkaring_constants_x86.exe (5 stubs)
+            (
+                &[
+                    0x58, 0xb9, 0x06, 0x13, 0xa4, 0x66, 0xf7, 0xd1, 0x29, 0xc8, 0xf7, 0xd8, 0xf7,
+                    0xd0, 0xf7, 0xd8, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                11,
+            ),
+            (
+                &[
+                    0x58, 0x69, 0xc0, 0x0b, 0x5c, 0x1c, 0xb1, 0x69, 0xc0, 0x27, 0xdc, 0xae, 0x1a,
+                    0xf7, 0xd0, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                8,
+            ),
+            (
+                &[
+                    0xb8, 0x65, 0x11, 0x90, 0x52, 0x81, 0xf0, 0xab, 0x5d, 0xfc, 0xf5, 0xf7, 0xd0,
+                    0xb9, 0x10, 0x3c, 0x13, 0xf3, 0xf7, 0xd1, 0xba, 0x8c, 0xe0, 0xc2, 0x76, 0x81,
+                    0xf2, 0xb7, 0x0a, 0x54, 0x5b, 0x31, 0xd1, 0x31, 0xc8, 0x59, 0x29, 0xc8, 0xf7,
+                    0xd0, 0x69, 0xc0, 0x85, 0x46, 0x7b, 0xd6, 0xf7, 0xd8, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                18,
+            ),
+            (
+                &[
+                    0x58, 0xb9, 0x0b, 0x93, 0xfa, 0x54, 0x69, 0xc9, 0xc2, 0xdb, 0x0b, 0x86, 0xba,
+                    0x2a, 0x4d, 0xb9, 0x08, 0xf7, 0xd2, 0x29, 0xd1, 0xba, 0x60, 0xba, 0x13, 0x6b,
+                    0x81, 0xc2, 0x3b, 0x3c, 0x0a, 0xa8, 0xbb, 0x0f, 0x21, 0x1d, 0x20, 0x81, 0xeb,
+                    0x1a, 0xbe, 0xfe, 0xbf, 0x31, 0xda, 0x01, 0xd1, 0x31, 0xc8, 0xf7, 0xd8, 0xf7,
+                    0xd8, 0xf7, 0xd8, 0x81, 0xc0, 0x2a, 0x31, 0x25, 0x77, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                21,
+            ),
+            (
+                &[
+                    0x58, 0xb9, 0x3c, 0x00, 0x4b, 0x1c, 0xf7, 0xd9, 0xba, 0x95, 0xe8, 0x42, 0xa3,
+                    0x81, 0xc2, 0x1f, 0x9a, 0xb2, 0x98, 0x01, 0xd1, 0xba, 0x07, 0x26, 0xc8, 0xf2,
+                    0x81, 0xea, 0x94, 0x73, 0x30, 0x06, 0xbb, 0x54, 0x86, 0x01, 0xcf, 0x81, 0xf3,
+                    0x1a, 0xff, 0x27, 0xbe, 0x29, 0xda, 0x01, 0xd1, 0x29, 0xc8, 0xf7, 0xd0, 0xb9,
+                    0xbf, 0x53, 0xe5, 0xfb, 0x69, 0xc9, 0xec, 0x60, 0x56, 0x0c, 0x29, 0xc8, 0x5e,
+                    0x5f, 0x5b, 0xc3,
+                ],
+                21,
+            ),
+            // mkaring_controlflow_x86.exe (4 stubs)
+            (
+                &[
+                    0x58, 0xb9, 0x70, 0x92, 0x47, 0x1d, 0x69, 0xc9, 0xdb, 0x75, 0x70, 0x90, 0xf7,
+                    0xd9, 0x31, 0xc8, 0xf7, 0xd0, 0x69, 0xc0, 0xe7, 0x21, 0xf0, 0x0a, 0x81, 0xf0,
+                    0xdf, 0x98, 0x2b, 0x69, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                12,
+            ),
+            (
+                &[
+                    0x58, 0xf7, 0xd8, 0xb9, 0xc9, 0x0e, 0xab, 0xd8, 0x69, 0xc9, 0x7f, 0xb6, 0xf6,
+                    0x97, 0xba, 0xbf, 0x02, 0xbb, 0xe1, 0xf7, 0xda, 0x29, 0xd1, 0x31, 0xc8, 0xb9,
+                    0x1d, 0x12, 0x7e, 0xa3, 0x81, 0xf1, 0xc3, 0x13, 0xec, 0xcf, 0x01, 0xc8, 0xf7,
+                    0xd8, 0x81, 0xc0, 0x12, 0x52, 0x44, 0x18, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                17,
+            ),
+            (
+                &[
+                    0x58, 0xf7, 0xd0, 0xb9, 0xde, 0x1b, 0xb2, 0x4e, 0xf7, 0xd1, 0xba, 0x0d, 0x29,
+                    0xa7, 0x24, 0xf7, 0xda, 0x31, 0xd1, 0x31, 0xc8, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                12,
+            ),
+            (
+                &[
+                    0x58, 0xb9, 0xe6, 0x55, 0x61, 0x74, 0xf7, 0xd1, 0x81, 0xf1, 0x02, 0x81, 0x5b,
+                    0x39, 0xf7, 0xd9, 0x31, 0xc8, 0xf7, 0xd0, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                11,
+            ),
+            // mkaring_constants_x86_controlflow.exe (5 stubs)
+            (
+                &[
+                    0x58, 0xb9, 0xbd, 0x45, 0x6f, 0xe8, 0x81, 0xf1, 0x97, 0xa9, 0x6c, 0x5e, 0xba,
+                    0xe0, 0x00, 0x74, 0x90, 0x81, 0xea, 0x04, 0x00, 0xf7, 0x0e, 0x31, 0xd1, 0xf7,
+                    0xd1, 0x31, 0xc8, 0x69, 0xc0, 0x95, 0xb1, 0xfa, 0xe8, 0xf7, 0xd0, 0x81, 0xf0,
+                    0x9b, 0x36, 0x4e, 0x46, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                15,
+            ),
+            (
+                &[
+                    0x58, 0xb9, 0xc1, 0xdf, 0x13, 0xc2, 0xf7, 0xd1, 0xf7, 0xd9, 0x01, 0xc8, 0x81,
+                    0xf0, 0x33, 0xb7, 0x36, 0x83, 0xf7, 0xd8, 0x69, 0xc0, 0x91, 0x9c, 0x5d, 0x59,
+                    0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                12,
+            ),
+            (
+                &[
+                    0x58, 0xb9, 0x74, 0x31, 0xfd, 0xbe, 0x81, 0xe9, 0x61, 0x36, 0xa9, 0xb7, 0xba,
+                    0x78, 0x72, 0x2c, 0x05, 0xf7, 0xd2, 0x29, 0xd1, 0xba, 0xd1, 0x77, 0xaf, 0xbf,
+                    0x81, 0xea, 0x95, 0x9b, 0x9a, 0x1a, 0xbb, 0xf9, 0x50, 0x2b, 0x65, 0xf7, 0xd3,
+                    0x01, 0xda, 0x29, 0xd1, 0x29, 0xc8, 0xb9, 0x35, 0x4e, 0x06, 0x6a, 0x69, 0xc9,
+                    0xca, 0x1c, 0xcf, 0x82, 0xba, 0xcf, 0xcf, 0xc6, 0xab, 0x81, 0xea, 0x53, 0xa5,
+                    0xa5, 0x83, 0x31, 0xd1, 0x31, 0xc8, 0xb9, 0x62, 0x65, 0xe8, 0x81, 0xf7, 0xd9,
+                    0x31, 0xc8, 0x81, 0xe8, 0x8d, 0x94, 0x43, 0x59, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                27,
+            ),
+            (
+                &[
+                    0x58, 0x69, 0xc0, 0x11, 0xde, 0xe5, 0x4a, 0xf7, 0xd8, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                7,
+            ),
+            (
+                &[
+                    0x58, 0xf7, 0xd0, 0x69, 0xc0, 0x53, 0x44, 0x4f, 0xfc, 0x69, 0xc0, 0xb5, 0x5f,
+                    0x0b, 0xc6, 0x81, 0xc0, 0x33, 0x7c, 0x49, 0xdf, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                9,
+            ),
+            // mkaring_constants_x86_controlflow_x86.exe (19 stubs)
+            (
+                &[
+                    0x58, 0xb9, 0xf4, 0xed, 0x90, 0x36, 0x81, 0xf1, 0x8c, 0x76, 0xa3, 0x72, 0xf7,
+                    0xd1, 0x69, 0xc9, 0x3b, 0xfb, 0x62, 0xda, 0x31, 0xc8, 0xf7, 0xd0, 0xf7, 0xd0,
+                    0xf7, 0xd0, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                13,
+            ),
+            (
+                &[
+                    0xb8, 0xf4, 0xd9, 0x38, 0x51, 0xf7, 0xd8, 0x59, 0xba, 0xd1, 0x84, 0x10, 0x2c,
+                    0xf7, 0xd2, 0x29, 0xd1, 0xf7, 0xd9, 0x29, 0xc8, 0x81, 0xf0, 0x76, 0x8e, 0x58,
+                    0x13, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                13,
+            ),
+            (
+                &[
+                    0x58, 0xb9, 0x8e, 0xc7, 0xf5, 0xea, 0x81, 0xf1, 0xe0, 0xda, 0x23, 0xb2, 0xba,
+                    0x2d, 0xd8, 0x92, 0xbd, 0x81, 0xc2, 0x7e, 0x4c, 0x90, 0x1e, 0x29, 0xd1, 0xba,
+                    0xed, 0x36, 0x75, 0xfe, 0x69, 0xd2, 0xdc, 0xc3, 0xba, 0x94, 0xbb, 0x35, 0x02,
+                    0x87, 0x78, 0x81, 0xc3, 0xe1, 0x87, 0x3d, 0x37, 0x29, 0xda, 0x29, 0xd1, 0x31,
+                    0xc8, 0xb9, 0xf8, 0x3a, 0x1b, 0x5e, 0x69, 0xc9, 0x8f, 0x6c, 0x80, 0x73, 0x31,
+                    0xc8, 0xf7, 0xd8, 0x81, 0xe8, 0x72, 0x28, 0xf6, 0x53, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                22,
+            ),
+            (&[0x58, 0xf7, 0xd8, 0xf7, 0xd8, 0x5e, 0x5f, 0x5b, 0xc3], 7),
+            (
+                &[
+                    0x58, 0xb9, 0x9c, 0xe0, 0x3c, 0x3a, 0x81, 0xc1, 0xbf, 0x9c, 0x8f, 0xac, 0xba,
+                    0x73, 0xa2, 0xad, 0xee, 0x81, 0xea, 0x69, 0xad, 0x28, 0xfb, 0x31, 0xd1, 0xba,
+                    0xc4, 0xcc, 0xb2, 0xd5, 0x69, 0xd2, 0x05, 0x1d, 0xc8, 0x55, 0xbb, 0x11, 0x49,
+                    0x0f, 0x2a, 0x69, 0xdb, 0xf3, 0x9c, 0xce, 0xcc, 0x29, 0xda, 0x31, 0xd1, 0x01,
+                    0xc8, 0xb9, 0x10, 0x9e, 0x73, 0xca, 0x81, 0xe9, 0xd2, 0x03, 0x3e, 0xd2, 0xba,
+                    0xab, 0xc5, 0x17, 0x5d, 0xf7, 0xd2, 0x31, 0xd1, 0x01, 0xc8, 0xb9, 0x39, 0x42,
+                    0x5c, 0xab, 0x69, 0xc9, 0xc0, 0xb6, 0x6e, 0xa0, 0x29, 0xc8, 0xf7, 0xd0, 0x5e,
+                    0x5f, 0x5b, 0xc3,
+                ],
+                27,
+            ),
+            (
+                &[
+                    0xb8, 0x9f, 0x90, 0xaf, 0x11, 0x81, 0xf0, 0x56, 0x79, 0xcd, 0xd8, 0x59, 0xf7,
+                    0xd1, 0x69, 0xc9, 0x25, 0xf3, 0xf2, 0x90, 0x29, 0xc8, 0x81, 0xf0, 0xbc, 0xe5,
+                    0x47, 0x21, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                11,
+            ),
+            (
+                &[
+                    0x58, 0xf7, 0xd0, 0xf7, 0xd8, 0x69, 0xc0, 0x87, 0xfa, 0x10, 0xb0, 0x69, 0xc0,
+                    0x39, 0x25, 0x7d, 0xee, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                9,
+            ),
+            (
+                &[
+                    0x58, 0xb9, 0x45, 0xd0, 0x83, 0x73, 0xf7, 0xd1, 0xba, 0x73, 0x50, 0x97, 0x3a,
+                    0xf7, 0xd2, 0x29, 0xd1, 0xba, 0xec, 0xc6, 0xdf, 0x74, 0xf7, 0xda, 0x69, 0xd2,
+                    0x0f, 0xff, 0x51, 0x36, 0x01, 0xd1, 0x29, 0xc8, 0xb9, 0x21, 0x2d, 0x91, 0xcd,
+                    0xf7, 0xd1, 0xba, 0xb2, 0xec, 0x80, 0x10, 0xf7, 0xda, 0x29, 0xd1, 0x31, 0xc8,
+                    0xb9, 0x9d, 0x3e, 0xc2, 0x48, 0x81, 0xf1, 0xe9, 0x02, 0xf0, 0x07, 0x31, 0xc8,
+                    0xf7, 0xd0, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                25,
+            ),
+            (
+                &[
+                    0x58, 0xb9, 0x41, 0x42, 0x9d, 0xd0, 0x69, 0xc9, 0xff, 0xcd, 0x1a, 0x0c, 0xba,
+                    0x93, 0xce, 0xd3, 0x1b, 0xf7, 0xd2, 0xbb, 0xfd, 0x63, 0x48, 0x83, 0x81, 0xc3,
+                    0x8c, 0x3d, 0xc5, 0x37, 0x01, 0xda, 0x31, 0xd1, 0x31, 0xc8, 0xf7, 0xd8, 0xf7,
+                    0xd0, 0x81, 0xe8, 0x86, 0xda, 0x5f, 0xcc, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                17,
+            ),
+            (
+                &[
+                    0x58, 0x69, 0xc0, 0x2f, 0xfd, 0x88, 0x75, 0xb9, 0x6c, 0x56, 0xf2, 0x2a, 0x81,
+                    0xf1, 0xb7, 0x7a, 0xbf, 0xcb, 0xf7, 0xd1, 0x31, 0xc8, 0xb9, 0x6c, 0xa7, 0x9d,
+                    0x74, 0xf7, 0xd1, 0x01, 0xc8, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                13,
+            ),
+            (
+                &[
+                    0x58, 0xf7, 0xd8, 0x69, 0xc0, 0x4b, 0xe2, 0xf1, 0x77, 0x69, 0xc0, 0x6d, 0xad,
+                    0x6e, 0xc6, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                8,
+            ),
+            (
+                &[
+                    0x58, 0xf7, 0xd0, 0xf7, 0xd8, 0xb9, 0x63, 0x58, 0x3c, 0x00, 0x69, 0xc9, 0x95,
+                    0x78, 0x35, 0xe3, 0x31, 0xc8, 0xf7, 0xd8, 0x81, 0xc0, 0xab, 0x79, 0xf2, 0xa6,
+                    0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                12,
+            ),
+            (
+                &[
+                    0x58, 0xf7, 0xd8, 0x69, 0xc0, 0xf9, 0x3f, 0x5b, 0x67, 0xb9, 0xfc, 0xe6, 0x80,
+                    0xcd, 0xf7, 0xd9, 0x29, 0xc8, 0x81, 0xe8, 0x0f, 0x76, 0x37, 0x2b, 0x5e, 0x5f,
+                    0x5b, 0xc3,
+                ],
+                11,
+            ),
+            (
+                &[
+                    0xb8, 0x77, 0x2f, 0xad, 0xc8, 0x81, 0xe8, 0xc8, 0xd5, 0x89, 0x04, 0x59, 0xba,
+                    0xda, 0x3a, 0xfd, 0xa6, 0x81, 0xf2, 0xd2, 0x2f, 0x26, 0xfd, 0xbb, 0x97, 0x5f,
+                    0x5b, 0x47, 0x81, 0xc3, 0x73, 0x74, 0x20, 0xb3, 0x29, 0xda, 0x81, 0xc2, 0xed,
+                    0x12, 0x90, 0xb2, 0x31, 0xd1, 0x81, 0xe9, 0x73, 0xa1, 0x37, 0xba, 0x29, 0xc8,
+                    0x81, 0xc0, 0x17, 0x3e, 0x1b, 0x33, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                17,
+            ),
+            (
+                &[
+                    0x58, 0x69, 0xc0, 0xef, 0xe0, 0x11, 0x18, 0xb9, 0xe4, 0x73, 0x99, 0x58, 0x81,
+                    0xe9, 0x79, 0x7a, 0x29, 0x1b, 0xf7, 0xd1, 0x29, 0xc8, 0xf7, 0xd0, 0x81, 0xe8,
+                    0x05, 0xc2, 0xca, 0x55, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                12,
+            ),
+            (
+                &[
+                    0xb8, 0xa2, 0xaf, 0x03, 0xf9, 0xf7, 0xd8, 0x81, 0xf0, 0x09, 0xce, 0xc4, 0xf5,
+                    0x59, 0xba, 0x88, 0xe4, 0x55, 0x1c, 0x81, 0xc2, 0x38, 0xa2, 0x85, 0xda, 0xbb,
+                    0x54, 0x48, 0xb5, 0x97, 0xf7, 0xd3, 0xbe, 0x5e, 0x78, 0xec, 0x77, 0x69, 0xf6,
+                    0x85, 0x53, 0xed, 0x8c, 0x01, 0xf3, 0x29, 0xda, 0x29, 0xd1, 0x29, 0xc8, 0xf7,
+                    0xd8, 0xf7, 0xd0, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                20,
+            ),
+            (
+                &[
+                    0x58, 0xb9, 0xe9, 0x93, 0x3f, 0xa3, 0xf7, 0xd9, 0xba, 0x40, 0x4e, 0x6c, 0x5e,
+                    0xf7, 0xd2, 0x01, 0xd1, 0x69, 0xc9, 0x63, 0xf2, 0x98, 0x4d, 0x29, 0xc8, 0xf7,
+                    0xd8, 0x81, 0xc0, 0x1c, 0x7d, 0xf9, 0x1a, 0x69, 0xc0, 0x59, 0x79, 0x89, 0x62,
+                    0x81, 0xf0, 0x5c, 0x82, 0x6c, 0x0e, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                16,
+            ),
+            (
+                &[
+                    0xb8, 0x37, 0xbc, 0x9c, 0x23, 0xf7, 0xd8, 0x59, 0xba, 0x71, 0xa9, 0xba, 0x6d,
+                    0x81, 0xea, 0xcd, 0x40, 0x22, 0x55, 0x69, 0xd2, 0xb1, 0x43, 0xf1, 0x55, 0xbb,
+                    0x5f, 0xff, 0xb9, 0x16, 0xf7, 0xd3, 0x01, 0xda, 0x31, 0xd1, 0x69, 0xc9, 0x9b,
+                    0x47, 0x7d, 0x02, 0x29, 0xc8, 0x81, 0xf0, 0x7a, 0xb5, 0x45, 0x81, 0x5e, 0x5f,
+                    0x5b, 0xc3,
+                ],
+                17,
+            ),
+            (
+                &[
+                    0x58, 0x69, 0xc0, 0xd9, 0x26, 0xed, 0x65, 0xb9, 0xba, 0x97, 0x6e, 0x61, 0xf7,
+                    0xd9, 0xba, 0xed, 0x1a, 0x1a, 0xcd, 0x81, 0xea, 0x38, 0x72, 0x59, 0x1d, 0x31,
+                    0xd1, 0x01, 0xc8, 0xb9, 0x48, 0x84, 0x93, 0xbc, 0x81, 0xf1, 0x4c, 0xab, 0x34,
+                    0xb2, 0x31, 0xc8, 0x69, 0xc0, 0x57, 0xd9, 0xa6, 0xb5, 0x5e, 0x5f, 0x5b, 0xc3,
+                ],
+                16,
+            ),
+        ];
+
+        assert_eq!(all_stubs.len(), 33, "expected 33 total stubs");
+
+        for (i, (body, expected_instrs)) in all_stubs.iter().enumerate() {
+            let instructions = x86_decode_all(body, 32, 0)
+                .unwrap_or_else(|e| panic!("stub {i}: decode failed: {e}"));
+            assert_eq!(
+                instructions.len(),
+                *expected_instrs,
+                "stub {i}: instruction count"
+            );
+
+            let cfg = X86Function::new(&instructions, 32, 0);
+            assert_eq!(cfg.block_count(), 1, "stub {i}: block count");
+
+            let translator = X86ToSsaTranslator::new(&cfg);
+            let ssa = translator
+                .translate()
+                .unwrap_or_else(|e| panic!("stub {i}: SSA failed: {e}"));
+            assert_eq!(ssa.block_count(), 1, "stub {i}: SSA block count");
+        }
+    }
+}

@@ -5,6 +5,20 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-02-12
+
+### Added
+
+- **Analysis Module**: Control flow graph (CFG), SSA form, dataflow analysis (SCCP, liveness, reaching definitions), callgraph construction, def-use chains, range analysis, taint analysis, algebraic simplification, x86 native analysis, and symbolic execution
+- **Emulation Engine**: Full CIL interpreter supporting 200+ opcodes, copy-on-write memory model with fork support, 200+ BCL method stubs, exception handling, thread model, and process builder
+- **Deobfuscation Pipeline**: 20 optimization passes, SSA-to-CIL code generation, detection framework, state machine analysis, and ConfuserEx obfuscator support
+- **ConfuserEx Support**: Anti-tamper, anti-debug, anti-dump, constants (normal, dynamic, CFG, x86 cipher modes), control flow (normal, expression, x86 predicates), reference proxy (mild + strong), marker cleanup, invalid metadata repair, resource decryption — covers all standard preset protections (Minimum through Maximum)
+- **Obfuscar Support**: Detection (scoring-based identification via helper type structure, XOR decryption loop, null parameter names), string decryption (emulation-based via `DecryptionPass` pipeline), SuppressIldasmAttribute removal, infrastructure cleanup (helper types, nested types, fields, accessor methods) — 6/6 test samples pass covering default, strings-only, rename-only, unicode, and maximum configurations
+- **Writing Pipeline**: Streaming PE generation, heap compaction, token remapping, IL patching, resource section generation, import/export tables
+- **Codegen Pipeline**: Complete SSA destruction, register allocation, phi elimination, instruction selection, exception handler remapping, local variable signature generation
+- **TypeQuery and MethodQuery System**: Structured query system for type and method resolution
+- **Workspace and CLI Tool**: Migration to Cargo workspace with first prototype of the `dotscope-cli`
+
 ## [0.5.1] - 2025-11-28
 
 ### Fixed

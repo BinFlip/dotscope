@@ -1,0 +1,12 @@
+<?xml version='1.0'?>
+<!-- Unicode naming mode: invisible/confusing Unicode characters for renamed symbols.
+     Combines with string hiding (default). Tests unicode name detection and cleanup. -->
+<Obfuscator>
+  <Var name="InPath" value="." />
+  <Var name="OutPath" value="./output_unicode" />
+
+  <Var name="UseUnicodeNames" value="true" />
+  <!-- All other settings use defaults (HideStrings=true, SuppressIldasm=true, etc.) -->
+
+  <Module file="$(InPath)/TestApp.exe" />
+</Obfuscator>

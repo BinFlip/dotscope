@@ -1,0 +1,9 @@
+<project outputDir="./protected" baseDir="." xmlns="http://confuser.codeplex.com">
+  <rule pattern="true" preset="none" inherit="false">
+    <!-- Control flow obfuscation with x86 native predicate (Windows only) -->
+    <protection id="ctrl flow">
+      <argument name="predicate" value="x86" />
+    </protection>
+  </rule>
+  <module path="TestApp.exe" />
+</project>

@@ -1,0 +1,11 @@
+<?xml version='1.0'?>
+<!-- True Obfuscar defaults: no explicit settings beyond InPath/OutPath.
+     This produces: rename private/internal API (types, methods, fields),
+     drop properties/events metadata, hide strings (XOR), SuppressIldasm,
+     method optimization, overload renaming (ReuseNames). Public API preserved. -->
+<Obfuscator>
+  <Var name="InPath" value="." />
+  <Var name="OutPath" value="./output" />
+
+  <Module file="$(InPath)/TestApp.exe" />
+</Obfuscator>

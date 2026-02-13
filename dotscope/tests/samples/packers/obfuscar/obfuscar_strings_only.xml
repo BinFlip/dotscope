@@ -1,0 +1,20 @@
+<?xml version='1.0'?>
+<!-- String hiding only: all renaming disabled, no SuppressIldasm.
+     Isolates the XOR string encryption for testing the emulation pipeline. -->
+<Obfuscator>
+  <Var name="InPath" value="." />
+  <Var name="OutPath" value="./output_strings" />
+
+  <!-- Disable all renaming -->
+  <Var name="KeepPublicApi" value="true" />
+  <Var name="HidePrivateApi" value="false" />
+  <Var name="RenameFields" value="false" />
+  <Var name="RenameProperties" value="false" />
+  <Var name="RenameEvents" value="false" />
+
+  <!-- Enable string hiding only -->
+  <Var name="HideStrings" value="true" />
+  <Var name="SuppressIldasm" value="false" />
+
+  <Module file="$(InPath)/TestApp.exe" />
+</Obfuscator>
