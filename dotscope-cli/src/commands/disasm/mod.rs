@@ -7,6 +7,7 @@ use std::{
 
 use anyhow::{bail, Context};
 use dotscope::deobfuscation::{DeobfuscationEngine, EngineConfig};
+use log::info;
 
 pub use crate::commands::disasm::formatter::DisasmOptions;
 use crate::commands::{
@@ -30,7 +31,7 @@ pub fn run(
         let (deobfuscated, result) = engine
             .process_assembly(assembly)
             .with_context(|| "deobfuscation failed")?;
-        eprintln!("{}", result.detailed_summary());
+        info!("{}", result.detailed_summary());
         deobfuscated
     } else {
         assembly

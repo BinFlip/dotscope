@@ -369,21 +369,23 @@ impl ConfuserExObfuscator {
         // Some detection (like native helpers) requires parsing method bodies that
         // were encrypted before anti-tamper decryption. Update findings in-place.
         if had_anti_tamper {
-            // IMPORTANT: Preserve anti-tamper method tokens from original findings.
-            // After decryption, re-detection won't find these because method bodies
-            // are no longer encrypted. We need to keep them so that initialize_context()
-            // can stub them during warmup emulation to prevent re-execution.
+            // IMPORTANT: Preserve fields from original findings that re-detection
+            // cannot recover:
+            // - obfuscator_name: set by the detector, not by detect_confuserex
+            // - anti_tamper_methods: bodies are already decrypted so won't be found
+            let preserved_name = findings.obfuscator_name.take();
             let preserved_anti_tamper: Vec<Token> = findings
                 .anti_tamper_methods
                 .iter()
                 .map(|(_, &t)| t)
                 .collect();
 
-            let (_, updated) = detection::detect_confuserex(&current);
+            let (_, mut updated) = detection::detect_confuserex(&current);
             let native_count = updated.native_helpers.count();
             let decryptor_count = updated.decryptor_methods.count();
 
-            // Restore the anti-tamper method tokens
+            // Restore preserved fields
+            updated.obfuscator_name = preserved_name;
             for token in preserved_anti_tamper {
                 updated.anti_tamper_methods.push(token);
             }

@@ -78,6 +78,8 @@
 use std::path::Path;
 use std::sync::Arc;
 
+use log::debug;
+
 use crate::{
     emulation::{
         capture::CaptureContext,
@@ -1015,6 +1017,10 @@ impl ProcessBuilder {
     /// # }
     /// ```
     pub fn build(self) -> Result<EmulationProcess> {
+        debug!(
+            "Creating emulation process: instruction_limit={}, call_depth={}",
+            self.config.limits.max_instructions, self.config.limits.max_call_depth
+        );
         let heap_size = self.config.memory.max_heap_size;
         let heap = SharedHeap::new(heap_size);
 
@@ -1143,7 +1149,8 @@ impl ProcessBuilder {
             None
         };
 
-        Ok(EmulationProcess {
+        let hook_count = runtime.hooks().len();
+        let process = EmulationProcess {
             name,
             assembly: self.assembly,
             config: config_arc,
@@ -1155,7 +1162,9 @@ impl ProcessBuilder {
             instruction_count: std::sync::atomic::AtomicU64::new(0),
             fake_objects,
             trace_writer,
-        })
+        };
+        debug!("Emulation process ready: {} hooks registered", hook_count);
+        Ok(process)
     }
 }
 

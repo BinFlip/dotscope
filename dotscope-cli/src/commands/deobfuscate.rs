@@ -5,6 +5,7 @@ use dotscope::deobfuscation::{
     CleanupConfig, DeobfuscationEngine, DeobfuscationFindings, DeobfuscationResult, EngineConfig,
     NativeHelperInfo,
 };
+use log::info;
 use serde::Serialize;
 
 use crate::{
@@ -108,7 +109,7 @@ fn run_single(path: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
         let json = serde_json::to_string_pretty(&report)?;
         std::fs::write(report_file, json)
             .with_context(|| format!("failed to write report: {}", report_file.display()))?;
-        eprintln!("Report written to {}", report_file.display());
+        info!("Report written to {}", report_file.display());
     }
 
     if opts.global.json {
@@ -185,7 +186,7 @@ fn run_recursive(dir: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
             let out_kb = format_size_short(report.output_size);
             #[allow(clippy::cast_precision_loss)]
             let time_secs = report.time_ms as f64 / 1000.0;
-            eprintln!("{fname}: {obf}, {in_kb} -> {out_kb}, {time_secs:.1}s");
+            info!("{fname}: {obf}, {in_kb} -> {out_kb}, {time_secs:.1}s");
         }
 
         Ok(report)
@@ -197,7 +198,7 @@ fn run_recursive(dir: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
         let json = serde_json::to_string_pretty(&reports)?;
         std::fs::write(report_file, json)
             .with_context(|| format!("failed to write report: {}", report_file.display()))?;
-        eprintln!("Report written to {}", report_file.display());
+        info!("Report written to {}", report_file.display());
     }
 
     if opts.global.json {

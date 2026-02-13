@@ -19,6 +19,10 @@ pub struct GlobalOptions {
     /// Emit output as JSON instead of human-readable text.
     #[arg(long, global = true)]
     pub json: bool,
+
+    /// Enable verbose (debug-level) logging output.
+    #[arg(short, long, global = true)]
+    pub verbose: bool,
 }
 
 #[derive(Debug, Subcommand)]

@@ -720,8 +720,12 @@ impl Interpreter {
                         element_type,
                         elements,
                     } => {
-                        // Verify the instruction's expected type matches the array's element type
-                        if !expected_type.is_compatible_with(&element_type) {
+                        // Verify the array's element type is assignable to the expected type.
+                        // E.g., ldelem.ref (expected=Object) on string[] (element=String)
+                        // should succeed since String is assignable to Object.
+                        if !element_type.is_compatible_with(expected_type)
+                            && !expected_type.is_compatible_with(&element_type)
+                        {
                             return Err(EmulationError::TypeMismatch {
                                 operation: "ldelem",
                                 expected: expected_type.as_str(),

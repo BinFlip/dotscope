@@ -9,7 +9,7 @@ use crate::{
     compiler::SsaPass,
     deobfuscation::{
         detection::DetectionScore, findings::DeobfuscationFindings, obfuscators::Obfuscator,
-        ConfuserExObfuscator,
+        ConfuserExObfuscator, ObfuscarObfuscator,
     },
     CilObject,
 };
@@ -56,6 +56,9 @@ impl ObfuscatorRegistry {
 
         let confuser: Arc<dyn Obfuscator> = Arc::new(ConfuserExObfuscator::new());
         obfuscators.insert(confuser.name(), confuser);
+
+        let obfuscar: Arc<dyn Obfuscator> = Arc::new(ObfuscarObfuscator::new());
+        obfuscators.insert(obfuscar.name(), obfuscar);
 
         Self {
             obfuscators,

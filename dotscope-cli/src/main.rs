@@ -7,7 +7,30 @@ use clap::Parser;
 use crate::app::{Cli, Command};
 
 fn main() -> anyhow::Result<()> {
+    ctrlc::set_handler(|| {
+        eprintln!("\nCancelled.");
+        std::process::exit(130);
+    })
+    .expect("failed to set Ctrl+C handler");
+
     let cli = Cli::parse();
+
+    // Show dotscope info+ on stderr unless --json; --verbose enables debug; RUST_LOG overrides
+    if !cli.global.json {
+        let level = if cli.global.verbose {
+            log::LevelFilter::Debug
+        } else {
+            log::LevelFilter::Info
+        };
+        env_logger::Builder::new()
+            .filter_module("dotscope", level)
+            .parse_default_env()
+            .target(env_logger::Target::Stderr)
+            .format_timestamp(None)
+            .format_module_path(false)
+            .format_target(false)
+            .init();
+    }
 
     match &cli.command {
         Command::Info { path } => commands::info::run(path, &cli.global),

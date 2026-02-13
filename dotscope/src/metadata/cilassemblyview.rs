@@ -107,6 +107,7 @@
 //! - [`crate::metadata::cor20header`] - Provides CLR header information
 //! - File I/O abstraction for memory-mapped or in-memory access
 
+use log::{debug, warn};
 use ouroboros::self_referencing;
 use std::{path::Path, sync::Arc};
 
@@ -214,6 +215,12 @@ impl<'a> CilAssemblyViewData<'a> {
         }
 
         let cor20_header = Cor20Header::read(&data[clr_offset..clr_end])?;
+        debug!(
+            "PE header: CLR {}.{}, metadata at RVA 0x{:X}",
+            cor20_header.major_runtime_version,
+            cor20_header.minor_runtime_version,
+            cor20_header.meta_data_rva
+        );
 
         let metadata_offset = file.rva_to_offset(cor20_header.meta_data_rva as usize)?;
         let metadata_end = metadata_offset
@@ -226,6 +233,12 @@ impl<'a> CilAssemblyViewData<'a> {
 
         let metadata_slice = &data[metadata_offset..metadata_end];
         let metadata_root = Root::read(metadata_slice)?;
+        let stream_names: Vec<&str> = metadata_root
+            .stream_headers
+            .iter()
+            .map(|s| s.name.as_str())
+            .collect();
+        debug!("Metadata streams: {}", stream_names.join(", "));
 
         let diagnostics = Arc::new(Diagnostics::new());
 
@@ -258,6 +271,10 @@ impl<'a> CilAssemblyViewData<'a> {
             match stream.name.as_str() {
                 "#~" | "#-" => {
                     if seen_tables {
+                        warn!(
+                            "Duplicate metadata stream '{}' detected, using first occurrence",
+                            stream.name
+                        );
                         diagnostics.warning(
                             DiagnosticCategory::Heap,
                             format!(
@@ -272,6 +289,9 @@ impl<'a> CilAssemblyViewData<'a> {
                 }
                 "#Strings" => {
                     if seen_strings {
+                        warn!(
+                            "Duplicate metadata stream '#Strings' detected, using first occurrence"
+                        );
                         diagnostics.warning(
                             DiagnosticCategory::Heap,
                             "Duplicate #Strings heap found, using first occurrence",
@@ -283,6 +303,7 @@ impl<'a> CilAssemblyViewData<'a> {
                 }
                 "#US" => {
                     if seen_userstrings {
+                        warn!("Duplicate metadata stream '#US' detected, using first occurrence");
                         diagnostics.warning(
                             DiagnosticCategory::Heap,
                             "Duplicate #US heap found, using first occurrence",
@@ -294,6 +315,7 @@ impl<'a> CilAssemblyViewData<'a> {
                 }
                 "#GUID" => {
                     if seen_guid {
+                        warn!("Duplicate metadata stream '#GUID' detected, using first occurrence");
                         diagnostics.warning(
                             DiagnosticCategory::Heap,
                             "Duplicate #GUID heap found, using first occurrence",
@@ -305,6 +327,7 @@ impl<'a> CilAssemblyViewData<'a> {
                 }
                 "#Blob" => {
                     if seen_blob {
+                        warn!("Duplicate metadata stream '#Blob' detected, using first occurrence");
                         diagnostics.warning(
                             DiagnosticCategory::Heap,
                             "Duplicate #Blob heap found, using first occurrence",

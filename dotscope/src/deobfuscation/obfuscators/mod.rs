@@ -14,6 +14,7 @@
 //! # Built-in Obfuscators
 //!
 //! - [`ConfuserExObfuscator`] - ConfuserEx open-source obfuscator
+//! - [`ObfuscarObfuscator`] - Obfuscar open-source obfuscator
 //!
 //! # Example
 //!
@@ -27,12 +28,15 @@
 //! ```
 
 mod confuserex;
+mod obfuscar;
 mod registry;
+pub(crate) mod utils;
 
 pub use confuserex::{
     create_anti_tamper_stub_hook, create_lzma_hook, detect_confuserex, find_encrypted_methods,
     ConfuserExObfuscator,
 };
+pub use obfuscar::{detect_obfuscar, ObfuscarObfuscator};
 pub use registry::{ObfuscatorInfo, ObfuscatorRegistry};
 
 use crate::{

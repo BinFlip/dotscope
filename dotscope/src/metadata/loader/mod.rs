@@ -142,8 +142,9 @@ static LOADERS: [&'static dyn MetadataLoader; 54] = [
 ];
 
 use crate::{metadata::tables::TableId, project::ProjectContext, Error, Result};
+use log::debug;
 use rayon::prelude::*;
-use std::sync::LazyLock;
+use std::{sync::LazyLock, time::Instant};
 
 /// Static cache of pre-computed execution levels for parallel loader execution.
 ///
@@ -515,8 +516,15 @@ pub(crate) fn execute_loaders_in_parallel(
     context: &LoaderContext,
     project_context: Option<&ProjectContext>,
 ) -> Result<()> {
+    let start = Instant::now();
     // Access pre-computed execution levels (computed once per process)
     let levels = &*EXECUTION_LEVELS;
+    let table_count: usize = levels.iter().map(|l| l.len()).sum();
+    debug!(
+        "Loading metadata: {} tables in {} dependency levels",
+        table_count,
+        levels.len()
+    );
 
     for (level_index, level) in levels.iter().enumerate() {
         if level_index == 4 {
@@ -566,5 +574,6 @@ pub(crate) fn execute_loaders_in_parallel(
         }
     }
 
+    debug!("Metadata loaded in {}ms", start.elapsed().as_millis());
     Ok(())
 }

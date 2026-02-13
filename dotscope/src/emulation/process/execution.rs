@@ -54,6 +54,8 @@ use std::sync::{
     Arc, RwLock,
 };
 
+use log::{debug, warn};
+
 use crate::{
     emulation::{
         capture::{
@@ -389,6 +391,10 @@ impl EmulationProcess {
         if self.config.limits.max_instructions > 0
             && new_count > self.config.limits.max_instructions
         {
+            warn!(
+                "Emulation limit reached: {} instructions (limit: {})",
+                new_count, self.config.limits.max_instructions
+            );
             return Err(EmulationError::InstructionLimitExceeded {
                 executed: new_count,
                 limit: self.config.limits.max_instructions,
@@ -649,6 +655,7 @@ impl EmulationProcess {
     /// - Method setup fails
     /// - An unrecoverable emulation error occurs
     pub fn execute_method(&self, method: Token, args: Vec<EmValue>) -> Result<EmulationOutcome> {
+        debug!("Executing method {}", method);
         let assembly = self
             .assembly
             .as_ref()
@@ -666,7 +673,15 @@ impl EmulationProcess {
         );
 
         // Execute the method
-        controller.emulate_method(method, args, Arc::clone(assembly))
+        let outcome = controller.emulate_method(method, args, Arc::clone(assembly));
+        if let Ok(ref result) = outcome {
+            let count = self.instruction_count.load(Ordering::Relaxed);
+            debug!(
+                "Execution completed: {} instructions, outcome={}",
+                count, result
+            );
+        }
+        outcome
     }
 
     /// Execute a method with a condition callback.

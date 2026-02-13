@@ -28,6 +28,7 @@ use crate::{
     deobfuscation::{
         detection::{DetectionEvidence, DetectionScore},
         findings::DeobfuscationFindings,
+        obfuscators::utils,
     },
     metadata::{
         cilassemblyview::CilAssemblyView,
@@ -59,8 +60,8 @@ pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut Deobf
     // Check for invalid metadata patterns
     check_invalid_metadata(assembly, score, findings);
 
-    // Check for SuppressIldasmAttribute
-    check_suppress_ildasm(assembly, score, findings);
+    // Check for SuppressIldasmAttribute (shared utility, confidence: 25)
+    utils::check_suppress_ildasm(assembly, score, findings, 25);
 
     // Check for ConfuserEx marker attributes
     check_confuser_attributes(assembly, score, findings);
@@ -213,74 +214,6 @@ fn check_invalid_metadata(
             description: "ENC tables present (unusual for release builds)".to_string(),
             confidence: 25,
         });
-    }
-}
-
-/// Checks for SuppressIldasmAttribute on the module.
-fn check_suppress_ildasm(
-    assembly: &CilObject,
-    score: &DetectionScore,
-    findings: &mut DeobfuscationFindings,
-) {
-    let Some(tables) = assembly.tables() else {
-        return;
-    };
-    let Some(strings) = assembly.strings() else {
-        return;
-    };
-    let Some(custom_attr_table) = tables.table::<CustomAttributeRaw>() else {
-        return;
-    };
-    let Some(memberref_table) = tables.table::<MemberRefRaw>() else {
-        return;
-    };
-    let Some(typeref_table) = tables.table::<TypeRefRaw>() else {
-        return;
-    };
-
-    for attr in custom_attr_table {
-        // Check if this attribute is applied to the Module or Assembly
-        let is_module_or_assembly_attr =
-            attr.parent.tag == TableId::Module || attr.parent.tag == TableId::Assembly;
-
-        if !is_module_or_assembly_attr {
-            continue;
-        }
-
-        // Get the type name and namespace from the constructor's declaring type
-        let (type_name, type_namespace) = match attr.constructor.tag {
-            TableId::MemberRef => {
-                if let Some(memberref) = memberref_table.get(attr.constructor.row) {
-                    if memberref.class.tag == TableId::TypeRef {
-                        if let Some(typeref) = typeref_table.get(memberref.class.row) {
-                            let name = strings.get(typeref.type_name as usize).ok();
-                            let namespace = strings.get(typeref.type_namespace as usize).ok();
-                            (name, namespace)
-                        } else {
-                            (None, None)
-                        }
-                    } else {
-                        (None, None)
-                    }
-                } else {
-                    (None, None)
-                }
-            }
-            _ => (None, None),
-        };
-
-        // Check for SuppressIldasmAttribute in System.Runtime.CompilerServices
-        if let (Some(name), Some(namespace)) = (type_name, type_namespace) {
-            if name == "SuppressIldasmAttribute" && namespace == "System.Runtime.CompilerServices" {
-                findings.suppress_ildasm_token = Some(attr.token);
-
-                score.add(DetectionEvidence::Attribute {
-                    name: format!("{namespace}.{name}"),
-                    confidence: 25, // Common protection, not ConfuserEx-specific
-                });
-                return;
-            }
-        }
     }
 }
 

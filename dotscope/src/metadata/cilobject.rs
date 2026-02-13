@@ -166,6 +166,8 @@
 //!
 use std::{path::Path, sync::Arc};
 
+use log::debug;
+
 use crate::{
     analysis::CallGraph,
     cilassembly::CilAssembly,
@@ -349,6 +351,7 @@ impl CilObject {
         path: impl AsRef<Path>,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
+        debug!("Loading assembly: {}", path.as_ref().display());
         let assembly_view = CilAssemblyView::from_path(path)?;
         let lenient = validation_config.lenient;
         let data = CilObjectData::from_assembly_view(&assembly_view, None, lenient)?;
@@ -359,6 +362,11 @@ impl CilObject {
         };
 
         object.validate(validation_config)?;
+        debug!(
+            "Assembly loaded: {} types, {} methods",
+            object.types().len(),
+            object.methods().len()
+        );
         Ok(object)
     }
 
@@ -444,6 +452,7 @@ impl CilObject {
         data: Vec<u8>,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
+        debug!("Loading assembly from memory buffer ({} bytes)", data.len());
         let assembly_view = CilAssemblyView::from_mem(data)?;
         let lenient = validation_config.lenient;
         let object_data = CilObjectData::from_assembly_view(&assembly_view, None, lenient)?;
@@ -454,6 +463,11 @@ impl CilObject {
         };
 
         object.validate(validation_config)?;
+        debug!(
+            "Assembly loaded: {} types, {} methods",
+            object.types().len(),
+            object.methods().len()
+        );
         Ok(object)
     }
 

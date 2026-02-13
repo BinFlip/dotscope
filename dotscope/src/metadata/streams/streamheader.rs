@@ -20,7 +20,7 @@
 //! ```
 //!
 //! ## ECMA-335 Compliance Requirements
-//! - **Size Alignment**: Stream size must be divisible by 4 (4-byte boundary alignment)
+//! - **Size Alignment**: Stream size should be divisible by 4 per spec, but unaligned sizes are tolerated
 //! - **Offset Range**: Stream offset must not exceed maximum reasonable metadata size
 //! - **Name Validation**: Stream name must match predefined standard stream identifiers
 //! - **Null Termination**: Stream name must be properly null-terminated ASCII
@@ -307,12 +307,12 @@ pub struct StreamHeader {
 
     /// Size of this stream's data in bytes, must be a multiple of 4 per ECMA-335.
     ///
-    /// The size represents the exact byte count of stream data and must be 4-byte aligned
-    /// according to ECMA-335 Section II.24.2.2. This alignment requirement ensures proper
-    /// memory access patterns and prevents buffer overrun vulnerabilities.
+    /// The size represents the exact byte count of stream data. ECMA-335 Section II.24.2.2
+    /// states sizes should be 4-byte aligned, but many real-world tools produce unaligned
+    /// sizes which are tolerated for compatibility.
     ///
     /// ## Validation Rules
-    /// - Must be divisible by 4 (4-byte boundary alignment)
+    /// - Should be divisible by 4 per spec (unaligned values are tolerated)
     /// - Must not exceed 0x7FFFFFFF (2GB limit)
     /// - Zero size is valid for empty streams
     ///
@@ -512,13 +512,10 @@ impl StreamHeader {
         let offset = read_le::<u32>(data)?;
         let size = read_le::<u32>(&data[4..])?;
 
-        // ECMA-335 compliance - Size must be aligned to 4-byte boundary
-        if size % 4 != 0 {
-            return Err(malformed_error!(
-                "Stream size {} is not aligned to 4-byte boundary (ECMA-335 II.24.2.2)",
-                size
-            ));
-        }
+        // ECMA-335 II.24.2.2 says stream sizes "shall be a multiple of 4", but many real-world
+        // .NET tools (AsmResolver, Mono's writer, etc.) produce unaligned sizes. The .NET runtime
+        // handles this gracefully, so we tolerate it here and use the actual size as-is. The stream
+        // data at [offset..offset+size] is still valid regardless of alignment.
 
         // Validate offset bounds - offset must be reasonable
         if offset > 0x7FFF_FFFF {

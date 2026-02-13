@@ -49,6 +49,8 @@
 //! - [`crate::metadata::validation::context`] - Validation context abstractions
 //! - [`crate::metadata::validation::config`] - Configuration for validation behavior
 
+use log::debug;
+
 use crate::{
     cilassembly::AssemblyChanges,
     metadata::{
@@ -203,6 +205,13 @@ impl ValidationEngine {
             .map_err(|e| Error::ValidationEngineInitFailed {
                 message: format!("Failed to create thread pool: {e}"),
             })?;
+
+        debug!(
+            "Validation starting: {} raw + {} owned validators, lenient={}",
+            init_raw_validators().len(),
+            init_owned_validators().len(),
+            config.lenient
+        );
 
         Ok(Self {
             config,
@@ -379,6 +388,12 @@ impl ValidationEngine {
 
         // Convert to named results for better error reporting
         let named_results: Vec<(&str, Result<()>)> = results.into_iter().collect();
+        let error_count = named_results.iter().filter(|(_, r)| r.is_err()).count();
+        debug!(
+            "Raw validation completed in {}ms: {} errors",
+            duration.as_millis(),
+            error_count
+        );
 
         let diagnostics = if self.config.lenient {
             Some(view.diagnostics())
@@ -447,6 +462,12 @@ impl ValidationEngine {
 
         // Convert to named results for comprehensive error collection
         let named_results: Vec<(&str, Result<()>)> = results.into_iter().collect();
+        let error_count = named_results.iter().filter(|(_, r)| r.is_err()).count();
+        debug!(
+            "Owned validation completed in {}ms: {} errors",
+            duration.as_millis(),
+            error_count
+        );
 
         let diagnostics = if self.config.lenient {
             Some(object.diagnostics())

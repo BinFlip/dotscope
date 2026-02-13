@@ -67,6 +67,7 @@ use crate::{
     utils::{align_to, calculate_table_row_size},
     Error, Result,
 };
+use log::debug;
 use std::{
     collections::{HashMap, HashSet},
     io::Write,
@@ -272,6 +273,7 @@ impl<'a> PeGenerator<'a> {
     /// - The assembly contains invalid metadata
     /// - Layout calculation fails due to size constraints
     pub fn to_file<P: AsRef<Path>>(&self, path: P) -> Result<()> {
+        debug!("Writing assembly to {}", path.as_ref().display());
         // Estimate file size for initial allocation (we'll truncate at the end)
         let estimated_size = self.estimate_file_size()?;
 
@@ -281,6 +283,7 @@ impl<'a> PeGenerator<'a> {
         // Generate using internal method
         let ctx = self.generate(output)?;
 
+        debug!("Writing assembly ({} bytes)", ctx.bytes_written);
         // Finalize file (truncate to actual size)
         ctx.output.finalize(Some(ctx.bytes_written))
     }
@@ -328,6 +331,7 @@ impl<'a> PeGenerator<'a> {
         // Generate using internal method
         let ctx = self.generate(output)?;
 
+        debug!("Writing assembly ({} bytes)", ctx.bytes_written);
         // Extract the bytes
         ctx.output.into_vec(Some(ctx.bytes_written))
     }
@@ -464,6 +468,12 @@ impl<'a> PeGenerator<'a> {
 
         // Phase 4: Apply fixups (patch headers with final values)
         apply_all_fixups(&mut ctx)?;
+
+        debug!(
+            "PE layout: .text={}, methods={} bytes, metadata={} bytes",
+            ctx.text_section_size, ctx.method_bodies_size, ctx.metadata_size
+        );
+        debug!("Applied {} RID remappings", ctx.token_remapping.len());
 
         Ok(ctx)
     }

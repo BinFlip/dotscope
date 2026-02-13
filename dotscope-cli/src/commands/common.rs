@@ -2,6 +2,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::{bail, Context};
 use dotscope::{CilObject, ValidationConfig};
+use log::warn;
 
 /// Load a .NET assembly with the standard analysis validation config.
 pub fn load_assembly(path: &Path) -> anyhow::Result<CilObject> {
@@ -62,7 +63,7 @@ pub fn process_directory<T>(
         match process(file) {
             Ok(r) => results.push(r),
             Err(e) => {
-                eprintln!("warning: {}: {e:#}", file.display());
+                warn!("{}: {e:#}", file.display());
                 fail_count += 1;
             }
         }

@@ -9,6 +9,7 @@ use std::sync::{
     Arc,
 };
 
+use log::debug;
 use rayon::prelude::*;
 
 use crate::{
@@ -296,6 +297,7 @@ impl PassScheduler {
 
         for iteration in 0..max_iterations {
             iterations = iteration + 1;
+            debug!("Pipeline iteration {}/{}", iterations, max_iterations);
             let mut iteration_changed = false;
 
             // Phase 1: Structure Recovery (unflattening)
@@ -358,6 +360,7 @@ impl PassScheduler {
             } else {
                 stable_count += 1;
                 if stable_count >= stable_iterations {
+                    debug!("Pipeline stable after {} iterations", iterations);
                     break;
                 }
             }

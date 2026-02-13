@@ -213,8 +213,9 @@ pub use detector::{DetectorBuilder, ObfuscatorDetector};
 pub use engine::DeobfuscationEngine;
 pub use findings::{DeobfuscationFindings, NativeHelperInfo};
 pub use obfuscators::{
-    create_anti_tamper_stub_hook, create_lzma_hook, detect_confuserex, find_encrypted_methods,
-    ConfuserExObfuscator, Obfuscator, ObfuscatorInfo, ObfuscatorRegistry,
+    create_anti_tamper_stub_hook, create_lzma_hook, detect_confuserex, detect_obfuscar,
+    find_encrypted_methods, ConfuserExObfuscator, ObfuscarObfuscator, Obfuscator, ObfuscatorInfo,
+    ObfuscatorRegistry,
 };
 pub use passes::{
     CffReconstructionPass, ConversionStats, DecryptionPass, NativeMethodConversionPass,

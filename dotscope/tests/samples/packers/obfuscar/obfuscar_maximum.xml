@@ -1,0 +1,23 @@
+<?xml version='1.0'?>
+<!-- Maximum obfuscation: everything enabled, public API also renamed.
+     This is the hardest test case — all protections at full strength. -->
+<Obfuscator>
+  <Var name="InPath" value="." />
+  <Var name="OutPath" value="./output_maximum" />
+
+  <!-- Rename everything including public API -->
+  <Var name="KeepPublicApi" value="false" />
+  <Var name="HidePrivateApi" value="true" />
+  <Var name="RenameFields" value="true" />
+  <Var name="RenameProperties" value="true" />
+  <Var name="RenameEvents" value="true" />
+  <Var name="ReuseNames" value="true" />
+  <Var name="UseUnicodeNames" value="true" />
+
+  <!-- All protections on -->
+  <Var name="HideStrings" value="true" />
+  <Var name="SuppressIldasm" value="true" />
+  <Var name="OptimizeMethods" value="true" />
+
+  <Module file="$(InPath)/TestApp.exe" />
+</Obfuscator>

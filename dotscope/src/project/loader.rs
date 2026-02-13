@@ -4,6 +4,8 @@
 //! with automatic dependency resolution, graceful fallback to single-assembly mode, and
 //! progressive dependency addition.
 
+use log::{debug, info, warn};
+
 use crate::{
     file::File,
     metadata::{
@@ -230,6 +232,8 @@ impl ProjectLoader {
             )
         })?;
 
+        info!("Loading project: primary={}", primary_path.display());
+
         let primary_search_dir = primary_path
             .parent()
             .ok_or_else(|| {
@@ -241,10 +245,19 @@ impl ProjectLoader {
 
         // Phase 1: Discover assemblies and their dependencies
         self.discover_assemblies(&primary_path, &primary_search_dir, &mut result)?;
+        debug!(
+            "Resolving {} assembly references",
+            result.pending_views.len()
+        );
 
         // Phase 2: Load all discovered assemblies in parallel
         self.load_assemblies_parallel(&mut result)?;
 
+        info!(
+            "Project loaded: {}/{} assemblies",
+            result.success_count(),
+            result.success_count() + result.failure_count()
+        );
         Ok(result)
     }
 
@@ -338,12 +351,21 @@ impl ProjectLoader {
 
             match self.resolve_dependency(&required, search_dir) {
                 Some((path, actual)) => {
+                    info!(
+                        "Resolved dependency: {} -> {}",
+                        required.name,
+                        path.display()
+                    );
                     if !actual.satisfies(&required) {
                         result.record_version_mismatch(required, actual);
                     }
                     result.enqueue(path);
                 }
                 None => {
+                    warn!(
+                        "Dependency not found: {} v{}",
+                        required.name, required.version
+                    );
                     result
                         .record_failure(required.name.clone(), "Dependency not found".to_string());
                 }

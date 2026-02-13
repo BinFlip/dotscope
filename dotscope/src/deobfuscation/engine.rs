@@ -6,6 +6,7 @@
 
 use std::{sync::Arc, time::Instant};
 
+use log::info;
 use rayon::prelude::*;
 
 use crate::{
@@ -220,6 +221,15 @@ impl DeobfuscationEngine {
 
         // Phase 1: Detection (borrow, read-only)
         let (obfuscator, mut findings) = self.detector.detect(&assembly);
+        if let Some(ref obf) = obfuscator {
+            info!(
+                "Detected: {} (score: {})",
+                obf.name(),
+                findings.detection_score()
+            );
+        } else {
+            info!("No obfuscator detected");
+        }
 
         // Phase 2: Byte-level deobfuscation (consume → produce)
         let (assembly, byte_level_events) =
@@ -235,6 +245,10 @@ impl DeobfuscationEngine {
         let result =
             DeobfuscationResult::new(events, findings).with_timing(start.elapsed(), iterations);
 
+        info!(
+            "Deobfuscation complete in {:.1}s",
+            start.elapsed().as_secs_f64()
+        );
         Ok((assembly, result))
     }
 
@@ -330,9 +344,17 @@ impl DeobfuscationEngine {
         }
 
         // Interprocedural analysis
+        info!(
+            "Interprocedural analysis on {} methods",
+            ctx.ssa_functions.len()
+        );
         self.run_interprocedural_analysis(&ctx)?;
 
         // Run SSA optimization passes
+        info!(
+            "Running SSA optimization pipeline (max {} iterations)",
+            self.config.max_iterations
+        );
         let mut iterations = self.run_pipeline_on_context(&ctx, &assembly_arc)?;
 
         // Run dead method elimination after all passes to identify methods that
@@ -388,10 +410,22 @@ impl DeobfuscationEngine {
         })?;
 
         // Generate code from SSA back to CIL
-        let (assembly, _methods_regenerated) = Self::generate_code(assembly, &ctx)?;
+        let (assembly, methods_regenerated) = Self::generate_code(assembly, &ctx)?;
+        info!(
+            "Code generation: {} method bodies regenerated",
+            methods_regenerated
+        );
 
         // Unified cleanup: combine obfuscator cleanup request with dead methods
         // All cleanup happens in one pass to avoid RID staleness issues.
+        let obfuscator_removals = cleanup_request
+            .as_ref()
+            .map_or(0, |r| r.types_len() + r.methods_len() + r.fields_len());
+        let dead_methods = ctx.dead_methods.len();
+        info!(
+            "Cleanup: {} obfuscator artifacts, {} dead methods",
+            obfuscator_removals, dead_methods
+        );
         let assembly = execute_cleanup(assembly, cleanup_request, &ctx)?;
 
         let events = ctx.compiler.events.take();
@@ -749,6 +783,11 @@ impl DeobfuscationEngine {
     fn build_context(&self, assembly: &CilObject) -> Result<AnalysisContext> {
         // Build call graph
         let call_graph = Arc::new(CallGraph::build(assembly)?);
+        let stats = call_graph.stats();
+        info!(
+            "Building analysis context: {} methods, {} call edges",
+            stats.method_count, stats.edge_count
+        );
 
         // Create context with engine config (important: cleanup settings!)
         let ctx = AnalysisContext::with_config(call_graph.clone(), self.config.clone());
@@ -758,6 +797,7 @@ impl DeobfuscationEngine {
 
         // Build SSA for all methods
         Self::build_ssa_functions(assembly, &ctx);
+        info!("Built SSA for {} methods", ctx.ssa_functions.len());
 
         Ok(ctx)
     }

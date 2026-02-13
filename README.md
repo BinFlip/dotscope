@@ -21,7 +21,7 @@ A high-performance, cross-platform framework for analyzing, reverse engineering,
 - **Memory safe** - Built in Rust with comprehensive error handling and fuzzing
 - **Rich type system** - Full support for generics, signatures, and complex .NET types
 - **Static analysis** - SSA form, control flow graphs, data flow analysis, call graphs, and loop detection
-- **Deobfuscation** - 20 optimization passes with ConfuserEx support, string decryption, control flow recovery
+- **Deobfuscation** - 20 optimization passes with ConfuserEx and Obfuscar support, string decryption, control flow recovery
 - **CIL emulation** - Full bytecode interpreter with BCL stubs for runtime value computation
 - **Extensible architecture** - Modular design for custom analysis and tooling
 
@@ -272,6 +272,7 @@ SSA-based deobfuscation engine for protected .NET assemblies:
 - **20 Transformation Passes**: Constant propagation, copy propagation, GVN, dead code elimination, control flow unflattening, opaque predicate removal, strength reduction, algebraic simplification, block merging, loop canonicalization, LICM, jump threading, inlining, and more
 - **Obfuscator Detection**: Confidence-scored detection framework with extensible registry
 - **ConfuserEx Support**: Anti-tamper, anti-debug, constants (normal/dynamic/CFG), control flow, resources
+- **Obfuscar Support**: String hiding (XOR decryption), symbol renaming, SuppressIldasm removal
 - **Code Generation**: SSA-to-CIL conversion with register coalescing and phi elimination
 - **Decryption**: Emulation-based string and constant decryption
 
@@ -303,7 +304,7 @@ Check out the [examples](examples/) directory for complete working examples with
 - **[Raw Assembly View](examples/raw_assembly_view.rs)** - Direct access to PE headers, metadata streams, and heaps
 - **[Project Loader](examples/project_loader.rs)** - Loading assemblies with automatic dependency resolution
 - **[Analysis](examples/analysis.rs)** - View SSA form, disassembly, control flow graphs, and call graphs
-- **[Deobfuscation](examples/deobfuscate.rs)** - CLI tool for deobfuscating .NET assemblies with ConfuserEx support
+- **[Deobfuscation](examples/deobfuscate.rs)** - CLI tool for deobfuscating .NET assemblies with ConfuserEx and Obfuscar support
 
 Each example includes detailed documentation explaining:
 
@@ -391,7 +392,6 @@ We're continuously working to improve `dotscope`. Here are features planned for 
 
 ### Core Improvements
 
-- Handling U/I (compilation dependent 64bit or 32bit) properly
 - Protections against large allocations from maliciously crafted files
 - Assembly linking and merging
 - Store and load full Assembly to/from JSON
@@ -401,7 +401,7 @@ We're continuously working to improve `dotscope`. Here are features planned for 
 
 - Expression-based opaque predicate solving
 - VM devirtualization for virtualized obfuscators
-- Additional obfuscator support beyond ConfuserEx
+- Additional obfuscator support
 
 ## Contributing
 
@@ -420,6 +420,19 @@ We welcome contributions! Please see our [Contributing Guide](CONTRIBUTING.md) f
 This project is licensed under the Apache License, Version 2.0.
 
 See [LICENSE-APACHE](LICENSE-APACHE) or <http://www.apache.org/licenses/LICENSE-2.0> for details.
+
+### Responsible Use Policy
+
+`dotscope` is developed and provided exclusively for the following purposes:
+
+- **Security research** - Analyzing malware, vulnerabilities, and security threats
+- **Malware analysis** - Reverse engineering malicious software for defensive purposes
+- **Educational use** - Learning about .NET internals, CIL, and PE structures
+- **Defensive tooling** - Building security tools and protective measures
+
+**Prohibited use**: You may not use `dotscope` to analyze, deobfuscate, reverse engineer, or modify software that is protected by intellectual property rights (including but not limited to commercial software, proprietary applications, or any software where such analysis would violate the software's license terms or applicable law) unless you have explicit authorization from the rights holder or such use is permitted by applicable law.
+
+**Disclaimer of responsibility**: The author(s) and contributor(s) of `dotscope` are not responsible for how users choose to use this software. Users are solely responsible for ensuring that their use of `dotscope` complies with all applicable laws, regulations, and license agreements. By using `dotscope`, you acknowledge that you assume full responsibility for your actions and any consequences arising from your use of this software.
 
 ## Acknowledgments
 
