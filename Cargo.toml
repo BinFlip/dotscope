@@ -1,5 +1,6 @@
 [workspace]
 members = ["dotscope", "dotscope-cli"]
+exclude = ["dotscope/fuzz"]
 resolver = "2"
 
 [workspace.package]

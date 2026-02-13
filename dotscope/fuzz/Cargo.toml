@@ -7,6 +7,10 @@ edition = "2021"
 [package.metadata]
 cargo-fuzz = true
 
+# Prevent cargo from treating this as part of the parent workspace.
+# cargo-fuzz requires nightly and its own isolated build environment.
+[workspace]
+
 [dependencies]
 libfuzzer-sys = "0.4.12"
 
