@@ -343,6 +343,14 @@ impl CilAssembly {
     /// Returns an error if cleanup execution fails.
     fn finalize_for_generation(&mut self) -> Result<cleanup::CleanupStats> {
         if self.pending_cleanup.is_empty() {
+            // Even without cleanup deletions, string heap modifications require
+            // referenced_string_offsets to be populated for correct substring remapping.
+            // The .NET string heap uses substring sharing (e.g., "Console" as a suffix
+            // of "writeToConsole"). When the heap is rebuilt after modifications, all
+            // table references (including TypeRef) need correct offset remapping.
+            if self.changes.string_heap_changes.modifications_count() > 0 {
+                let _ = cleanup::mark_unreferenced_heap_entries(self)?;
+            }
             return Ok(cleanup::CleanupStats::new());
         }
 

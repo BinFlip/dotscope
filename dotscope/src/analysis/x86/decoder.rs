@@ -268,8 +268,15 @@ pub fn x86_decode_traversal(
                     if next_addr < code_end && visited.insert(next_addr) {
                         worklist.push_back(next_addr);
                     }
-                    // Record call target as potentially interesting but don't follow
-                    if *target < code_start || *target >= code_end {
+
+                    // Follow intra-function call targets (e.g. `call $+5` trampolines
+                    // used for position-independent code). External targets are recorded
+                    // as unresolved.
+                    if *target >= code_start && *target < code_end {
+                        if visited.insert(*target) {
+                            worklist.push_back(*target);
+                        }
+                    } else {
                         unresolved_targets.push(*target);
                     }
                 }

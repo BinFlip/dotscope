@@ -41,7 +41,7 @@ use crate::{
     assembly::{decode_stream, Operand},
     cilassembly::{changes::ChangeRef, writer::output::Output, AssemblyChanges},
     metadata::{
-        method::{ExceptionHandler, ExceptionHandlerFlags, MethodBody},
+        method::{ExceptionHandlerFlags, MethodBody},
         tables::TableId,
     },
     Parser, Result,
@@ -189,203 +189,97 @@ pub fn remap_il_tokens(
     Ok(())
 }
 
-/// Remaps tokens in a complete method body in place.
+/// Rebuilds a method body by parsing, remapping tokens, and re-serializing.
 ///
-/// This is the main entry point for method body token remapping. It uses the existing
-/// [`MethodBody`] parser to decode the method structure, then patches token values
-/// directly in the byte slice.
+/// This encapsulates the full parse → remap → rebuild cycle for CIL method bodies.
+/// It handles both original methods (from the input assembly) and newly created
+/// methods (from assembly changes with placeholder tokens).
 ///
-/// It handles:
-/// - Fat header local_var_sig_token (at offset 8 in fat headers)
-/// - IL instruction tokens via [`remap_il_tokens`]
-/// - Exception handler catch type tokens (for EXCEPTION handlers)
+/// # Process
+///
+/// 1. Parse the method body header (with lenient fallback for malformed EH)
+/// 2. Extract IL bytecode
+/// 3. Remap IL tokens (metadata tokens, UserString references, placeholders)
+/// 4. Remap `local_var_sig_token` (placeholder resolution + token remapping)
+/// 5. Remap exception handler catch type tokens
+/// 6. Rebuild via `write_to()`, returning the complete method body bytes
 ///
 /// # Arguments
 ///
-/// * `method_body` - The complete method body bytes (modified in place)
-/// * `token_map` - Maps old metadata tokens to new tokens
+/// * `body_data` - Raw bytes starting at the method body header
+/// * `token_map` - Maps old metadata tokens to new tokens (for row deletions/shifts)
 /// * `userstring_map` - Maps old UserString offsets to new offsets
-/// * `changes` - Assembly changes for resolving placeholders
+/// * `changes` - Assembly changes for resolving placeholder tokens (None for original methods)
+///
+/// # Returns
+///
+/// The rebuilt method body as a byte vector (header + IL code + exception handlers).
 ///
 /// # Errors
 ///
-/// Returns an error if the method body cannot be parsed.
-pub fn remap_method_body_tokens(
-    method_body: &mut [u8],
+/// Returns an error if method body parsing or IL decoding fails.
+pub fn rebuild_method_body(
+    body_data: &[u8],
     token_map: &HashMap<u32, u32>,
     userstring_map: &HashMap<u32, u32>,
     changes: Option<&AssemblyChanges>,
-) -> Result<()> {
-    if method_body.is_empty() {
-        return Ok(());
-    }
+) -> Result<Vec<u8>> {
+    // Parse method body with lenient fallback for malformed exception handlers
+    let mut body = match MethodBody::from(body_data) {
+        Ok(b) => b,
+        Err(_) => match MethodBody::from_lenient(body_data) {
+            Ok(b) => {
+                log::warn!("Method body has malformed EH, using lenient parse");
+                b
+            }
+            Err(e) => return Err(e),
+        },
+    };
 
-    let parsed = MethodBody::from(method_body)?;
+    // Extract IL code from the body data
+    let mut il_code = body_data[body.size_header..body.size_header + body.size_code].to_vec();
 
-    // Handle local_var_sig_token remapping (fat headers only, at offset 8)
-    if parsed.is_fat && parsed.local_var_sig_token != 0 {
-        let mut new_local_var_sig_token = parsed.local_var_sig_token;
-        let table_id = new_local_var_sig_token >> 24;
-        let row = new_local_var_sig_token & 0x00FF_FFFF;
+    // Remap IL tokens (metadata tokens, UserString references, placeholders)
+    remap_il_tokens(&mut il_code, token_map, userstring_map, changes)?;
 
-        // Check for placeholder
-        if table_id == u32::from(TableId::StandAloneSig.token_type())
-            && ChangeRef::is_placeholder(row)
-        {
-            if let Some(changes) = changes {
-                if let Some(change_ref) = changes.lookup_by_placeholder(row) {
+    // Remap local_var_sig_token
+    if body.local_var_sig_token != 0 {
+        // Resolve placeholder tokens (for newly created methods)
+        if let Some(changes) = changes {
+            let table_id = body.local_var_sig_token >> 24;
+            let row_id = body.local_var_sig_token & 0x00FF_FFFF;
+
+            if table_id == u32::from(TableId::StandAloneSig.token_type())
+                && ChangeRef::is_placeholder(row_id)
+            {
+                if let Some(change_ref) = changes.lookup_by_placeholder(row_id) {
                     if let Some(resolved_token) = change_ref.token() {
-                        new_local_var_sig_token = resolved_token.value();
+                        body.local_var_sig_token = resolved_token.value();
                     }
                 }
             }
         }
 
         // Apply token remapping
-        if let Some(&new_token) = token_map.get(&new_local_var_sig_token) {
-            new_local_var_sig_token = new_token;
-        }
-
-        // Patch local_var_sig_token in place (offset 8 in fat header)
-        if new_local_var_sig_token != parsed.local_var_sig_token && method_body.len() >= 12 {
-            method_body[8..12].copy_from_slice(&new_local_var_sig_token.to_le_bytes());
+        if let Some(&new_token) = token_map.get(&body.local_var_sig_token) {
+            body.local_var_sig_token = new_token;
         }
     }
 
-    // Remap IL tokens in place
-    let il_start = parsed.size_header;
-    let il_end = il_start + parsed.size_code;
-    if il_end <= method_body.len() {
-        let il_slice = &mut method_body[il_start..il_end];
-        remap_il_tokens(il_slice, token_map, userstring_map, changes)?;
-    }
-
-    // Remap exception handler catch type tokens in place
-    if !parsed.exception_handlers.is_empty() {
-        // Exception section starts after IL code, aligned to 4 bytes
-        let aligned_offset = (il_end + 3) & !3;
-        if aligned_offset < method_body.len() {
-            remap_exception_handler_tokens(
-                &mut method_body[aligned_offset..],
-                &parsed.exception_handlers,
-                token_map,
-            );
-        }
-    }
-
-    Ok(())
-}
-
-/// Remaps catch type tokens in exception handler section data in place.
-///
-/// For EXCEPTION handlers, the class token (filter_offset field) may need remapping.
-/// This function patches the token values directly in the exception section bytes.
-fn remap_exception_handler_tokens(
-    exception_data: &mut [u8],
-    handlers: &[ExceptionHandler],
-    token_map: &HashMap<u32, u32>,
-) {
-    if exception_data.is_empty() || handlers.is_empty() {
-        return;
-    }
-
-    // Check if fat format is needed (same logic as encoding)
-    let needs_fat = handlers.iter().any(|h| {
-        h.try_offset > 0xFFFF
-            || h.try_length > 0xFF
-            || h.handler_offset > 0xFFFF
-            || h.handler_length > 0xFF
-    });
-
-    // Section header is 4 bytes, then handlers follow
-    let header_size = 4;
-    let handler_size = if needs_fat { 24 } else { 12 };
-    let class_token_offset = if needs_fat { 16 } else { 8 }; // Offset of ClassToken within handler
-
-    for (i, handler) in handlers.iter().enumerate() {
-        // Only EXCEPTION handlers have a class token to remap
-        if handler.flags != ExceptionHandlerFlags::EXCEPTION || handler.filter_offset == 0 {
-            continue;
-        }
-
-        let catch_token = handler.filter_offset;
-
-        // Only remap if it's a type token (TypeRef, TypeDef, or TypeSpec)
-        if let Some(table_id) = TableId::from_token_type((catch_token >> 24) as u8) {
-            if matches!(
-                table_id,
-                TableId::TypeRef | TableId::TypeDef | TableId::TypeSpec
-            ) {
-                if let Some(&new_token) = token_map.get(&catch_token) {
-                    let token_pos = header_size + (i * handler_size) + class_token_offset;
-                    if token_pos + 4 <= exception_data.len() {
-                        exception_data[token_pos..token_pos + 4]
-                            .copy_from_slice(&new_token.to_le_bytes());
-                    }
-                }
+    // Remap exception handler catch type tokens
+    for handler in &mut body.exception_handlers {
+        if handler.flags == ExceptionHandlerFlags::EXCEPTION && handler.filter_offset != 0 {
+            if let Some(&new_token) = token_map.get(&handler.filter_offset) {
+                handler.filter_offset = new_token;
             }
         }
     }
-}
 
-/// Remaps IL tokens in a method bodies region by modifying data in place.
-///
-/// This function properly handles the method body region format where each method body
-/// has its own header (tiny or fat) followed by IL code and potentially exception handlers.
-/// It patches token values directly in the byte slice.
-///
-/// # Arguments
-///
-/// * `region_data` - The method bodies region data (modified in place)
-/// * `method_offsets` - Offsets of each method body within the region
-/// * `userstring_map` - Maps old UserString offsets to new offsets (for ldstr)
-/// * `token_map` - Maps old metadata tokens to new tokens (for other instructions)
-///
-/// # Errors
-///
-/// Returns an error if a method body cannot be parsed or token remapping fails.
-pub fn remap_method_bodies_region(
-    region_data: &mut [u8],
-    method_offsets: &[usize],
-    userstring_map: &HashMap<u32, u32>,
-    token_map: &HashMap<u32, u32>,
-) -> Result<()> {
-    if method_offsets.is_empty() || region_data.is_empty() {
-        return Ok(());
-    }
+    // Rebuild method body
+    let mut rebuilt = Vec::new();
+    body.write_to(&mut rebuilt, &il_code)?;
 
-    // Only remap if there are tokens to remap
-    if token_map.is_empty() && userstring_map.is_empty() {
-        return Ok(());
-    }
-
-    for &offset in method_offsets {
-        if offset >= region_data.len() {
-            continue;
-        }
-
-        // Parse the method body to get its size (but don't keep the borrow)
-        let method_body_size = {
-            let method_body_slice = &region_data[offset..];
-            match MethodBody::from(method_body_slice) {
-                Ok(body) => body.size(),
-                Err(_) => {
-                    // Skip unparseable method bodies - they may be padding or corrupt
-                    continue;
-                }
-            }
-        };
-
-        if offset + method_body_size > region_data.len() {
-            continue;
-        }
-
-        // Remap tokens in place
-        let method_body_bytes = &mut region_data[offset..offset + method_body_size];
-        remap_method_body_tokens(method_body_bytes, token_map, userstring_map, None)?;
-    }
-
-    Ok(())
+    Ok(rebuilt)
 }
 
 #[cfg(test)]

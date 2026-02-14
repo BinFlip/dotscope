@@ -43,7 +43,7 @@ use crate::{
                 patch_row_heap_refs, precompute_heap_offsets, stream_blob_heap, stream_guid_heap,
                 stream_strings_heap, stream_userstring_heap,
             },
-            methods::remap_method_body_tokens,
+            methods::rebuild_method_body,
             output::Output,
             relocations::{generate_relocations, RelocationConfig},
             remapper::{RemapReferences, RidRemapper},
@@ -55,7 +55,7 @@ use crate::{
     metadata::{
         exports::NativeExports,
         imports::NativeImports,
-        method::{MethodBody, MethodImplCodeType},
+        method::MethodImplCodeType,
         root::Root,
         streams::{Blob, Guid, StreamHeader, Strings, UserStrings},
         tablefields::get_heap_fields,
@@ -1023,10 +1023,6 @@ impl<'a> PeGenerator<'a> {
         if !self.config.skip_original_method_bodies {
             if let Some(tables) = view.tables() {
                 if let Some(method_table) = tables.table::<MethodDefRaw>() {
-                    // Check if we need to patch IL tokens
-                    let has_userstring_changes = !ctx.heap_remapping.userstrings.is_empty();
-                    let has_token_changes = !ctx.token_remapping.is_empty();
-
                     let deleted_method_rids: HashSet<u32> = changes
                         .get_table_modifications(TableId::MethodDef)
                         .map(|mods| mods.deleted_rids().collect())
@@ -1089,40 +1085,27 @@ impl<'a> PeGenerator<'a> {
                                 }
                             }
                         } else {
-                            // CIL method - parse header to determine size
+                            // CIL method - parse, remap tokens, and rebuild
                             let offset = file.rva_to_offset(original_rva as usize)?;
                             let available_data =
                                 file.data_slice(offset, file.data().len() - offset)?;
 
-                            let method_body = MethodBody::from(available_data).map_err(|e| {
-                                Error::ModificationInvalid(format!(
-                                    "Cannot parse method body at RVA 0x{original_rva:08x}: {e}"
-                                ))
-                            })?;
-                            let body_size = method_body.size();
-                            let body_data = file.data_slice(offset, body_size)?;
+                            let rebuilt = rebuild_method_body(
+                                available_data,
+                                &ctx.token_remapping,
+                                &ctx.heap_remapping.userstrings,
+                                None,
+                            )?;
 
                             // Fat method headers require 4-byte alignment (ECMA-335 §II.25.4.2)
-                            if method_body.is_fat {
+                            let rebuilt_is_fat = !rebuilt.is_empty() && (rebuilt[0] & 0x3) == 0x3;
+                            if rebuilt_is_fat {
                                 ctx.align_to_4_with_padding()?;
                             }
 
                             let new_rva = ctx.current_rva();
                             ctx.method_body_rva_map.insert(original_rva, new_rva);
-
-                            // Apply token patching if needed
-                            if has_userstring_changes || has_token_changes {
-                                let mut patched_body = body_data.to_vec();
-                                remap_method_body_tokens(
-                                    &mut patched_body,
-                                    &ctx.token_remapping,
-                                    &ctx.heap_remapping.userstrings,
-                                    None, // No changes for original methods
-                                )?;
-                                ctx.write(&patched_body)?;
-                            } else {
-                                ctx.write(body_data)?;
-                            }
+                            ctx.write(&rebuilt)?;
                         }
                     }
                 }
@@ -1134,28 +1117,22 @@ impl<'a> PeGenerator<'a> {
         bodies.sort_by_key(|(placeholder, _)| *placeholder);
 
         for (placeholder_rva, body_bytes) in bodies {
-            // Fat method headers require 4-byte alignment (ECMA-335 §II.25.4.2)
-            // Check first byte: (byte & 0x3) == 0x3 means fat header
-            let is_fat = !body_bytes.is_empty() && (body_bytes[0] & 0x3) == 0x3;
-            if is_fat {
-                ctx.align_to_4_with_padding()?;
-            }
-
-            // Calculate actual RVA for this method body
-            let actual_rva = ctx.current_rva();
-            ctx.method_body_rva_map.insert(placeholder_rva, actual_rva);
-
-            // Remap tokens in the method body in place.
-            // This handles both placeholder resolution and token remapping for row deletions.
-            let mut resolved_body = body_bytes.clone();
-            remap_method_body_tokens(
-                &mut resolved_body,
+            let rebuilt = rebuild_method_body(
+                body_bytes,
                 &ctx.token_remapping,
-                &HashMap::new(), // No userstring remapping for new bodies
+                &HashMap::new(),
                 Some(changes),
             )?;
 
-            ctx.write(&resolved_body)?;
+            // Fat method headers require 4-byte alignment (ECMA-335 §II.25.4.2)
+            let rebuilt_is_fat = !rebuilt.is_empty() && (rebuilt[0] & 0x3) == 0x3;
+            if rebuilt_is_fat {
+                ctx.align_to_4_with_padding()?;
+            }
+
+            let actual_rva = ctx.current_rva();
+            ctx.method_body_rva_map.insert(placeholder_rva, actual_rva);
+            ctx.write(&rebuilt)?;
         }
 
         Ok(())

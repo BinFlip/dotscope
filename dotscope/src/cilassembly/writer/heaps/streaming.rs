@@ -124,6 +124,71 @@ pub fn compute_strings_heap_offsets(
     process_strings_heap(None, 0, source_data, changes, &empty)
 }
 
+/// Emits original substrings as standalone entries when their parent string was
+/// modified or removed.
+///
+/// When a string is renamed (e.g., "writeToConsole" → "a") or removed, other
+/// tables (TypeRef, etc.) may reference substring offsets within the original
+/// string's byte range. Those substrings must be preserved as standalone entries
+/// in the new heap so the references remain valid.
+///
+/// Uses deduplication: if the substring content already exists in the heap
+/// (from a prior entry or another substring), it reuses the existing offset.
+#[allow(clippy::too_many_arguments)]
+fn emit_orphaned_substrings(
+    output: &mut Option<&mut Output>,
+    start_offset: u64,
+    old_offset_u32: u32,
+    original_end: u32,
+    original_bytes: &[u8],
+    referenced_offsets: &HashSet<u32>,
+    dedup_map: &mut FxHashMap<u64, u32>,
+    pos: &mut u64,
+    result: &mut StreamResult,
+) -> Result<()> {
+    for &ref_offset in referenced_offsets {
+        if ref_offset > old_offset_u32 && ref_offset < original_end {
+            // Already mapped by a prior entry — skip
+            if result.remapping.contains_key(&ref_offset) {
+                continue;
+            }
+
+            let delta = (ref_offset - old_offset_u32) as usize;
+            if delta >= original_bytes.len() {
+                continue;
+            }
+
+            // Extract the null-terminated substring from the original string bytes
+            let sub_bytes = &original_bytes[delta..];
+            let sub_str = std::str::from_utf8(sub_bytes).unwrap_or("");
+            if sub_str.is_empty() {
+                result.remapping.insert(ref_offset, 0);
+                continue;
+            }
+
+            let sub_hash = hash_string(sub_str);
+            if let Some(&existing) = dedup_map.get(&sub_hash) {
+                result.remapping.insert(ref_offset, existing);
+                continue;
+            }
+
+            let new_sub_offset = u32::try_from(*pos).map_err(|_| {
+                Error::LayoutFailed(format!("Heap position {} exceeds u32 range", *pos))
+            })?;
+
+            if let Some(out) = output.as_mut() {
+                out.write_at(start_offset + *pos, sub_bytes)?;
+                out.write_at(start_offset + *pos + sub_bytes.len() as u64, &[0u8])?;
+            }
+
+            *pos += sub_bytes.len() as u64 + 1;
+            dedup_map.insert(sub_hash, new_sub_offset);
+            result.remapping.insert(ref_offset, new_sub_offset);
+        }
+    }
+    Ok(())
+}
+
 /// Unified string heap processor.
 ///
 /// When `output` is `Some(output)`, writes to output at `start_offset`.
@@ -172,18 +237,50 @@ fn process_strings_heap(
                 Error::LayoutFailed(format!("String offset {old_offset} exceeds u32 range"))
             })?;
 
+            // Calculate the original string's byte range for substring detection.
+            // This must use the ORIGINAL length, not the modified length, because
+            // other tables may reference substring offsets within the original range.
+            let original_bytes = original_str.as_bytes();
+            let original_end = old_offset_u32 + to_u32(original_bytes.len())? + 1; // +1 for null
+
             if changes.is_removed(old_offset_u32) {
+                // Even though this entry is removed, emit any referenced substrings
+                // as standalone entries so TypeRef/other tables can still resolve them.
+                emit_orphaned_substrings(
+                    &mut output,
+                    start_offset,
+                    old_offset_u32,
+                    original_end,
+                    original_bytes,
+                    referenced_offsets,
+                    &mut dedup_map,
+                    &mut pos,
+                    &mut result,
+                )?;
                 continue;
             }
 
-            let final_str = changes
-                .get_modification(old_offset_u32)
-                .map_or(original_str, |s| s.as_str());
+            let modification = changes.get_modification(old_offset_u32);
+            let final_str = modification.map_or(original_str, |s| s.as_str());
 
             let content_hash = hash_string(final_str);
             if let Some(&existing_offset) = dedup_map.get(&content_hash) {
                 if old_offset_u32 != existing_offset {
                     result.remapping.insert(old_offset_u32, existing_offset);
+                }
+                // Even when deduplicated, emit orphaned substrings if the string was modified
+                if modification.is_some() {
+                    emit_orphaned_substrings(
+                        &mut output,
+                        start_offset,
+                        old_offset_u32,
+                        original_end,
+                        original_bytes,
+                        referenced_offsets,
+                        &mut dedup_map,
+                        &mut pos,
+                        &mut result,
+                    )?;
                 }
                 continue;
             }
@@ -208,15 +305,29 @@ fn process_strings_heap(
                 result.remapping.insert(old_offset_u32, new_offset);
             }
 
-            // Add substring remappings for any referenced offset within this string's range.
-            // This handles .NET's ability to reference any offset within a string entry.
-            let str_end = old_offset_u32 + to_u32(str_bytes.len())? + 1; // +1 for null
-            for &ref_offset in referenced_offsets {
-                // Check if this reference is a substring of this entry (not the primary offset)
-                if ref_offset > old_offset_u32 && ref_offset < str_end {
-                    let substring_delta = ref_offset - old_offset_u32;
-                    let new_substring_offset = new_offset + substring_delta;
-                    result.remapping.insert(ref_offset, new_substring_offset);
+            // Add substring remappings for any referenced offset within the ORIGINAL range.
+            if modification.is_some() {
+                // Parent string was modified — substrings at the original deltas may no
+                // longer exist in the new entry. Emit them as standalone entries.
+                emit_orphaned_substrings(
+                    &mut output,
+                    start_offset,
+                    old_offset_u32,
+                    original_end,
+                    original_bytes,
+                    referenced_offsets,
+                    &mut dedup_map,
+                    &mut pos,
+                    &mut result,
+                )?;
+            } else {
+                // Unmodified: substrings are at the same delta in the new entry
+                for &ref_offset in referenced_offsets {
+                    if ref_offset > old_offset_u32 && ref_offset < original_end {
+                        let substring_delta = ref_offset - old_offset_u32;
+                        let new_substring_offset = new_offset + substring_delta;
+                        result.remapping.insert(ref_offset, new_substring_offset);
+                    }
                 }
             }
         }

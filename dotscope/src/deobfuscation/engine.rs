@@ -168,9 +168,12 @@ impl DeobfuscationEngine {
                 .push(Box::new(AlgebraicSimplificationPass::new()));
         }
 
+        let mut detector = ObfuscatorDetector::new();
+        detector.set_threshold(config.detection_threshold as usize);
+
         Self {
             config,
-            detector: ObfuscatorDetector::new(),
+            detector,
             scheduler,
         }
     }

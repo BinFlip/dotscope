@@ -707,12 +707,14 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
         return Ok(Vec::new());
     }
 
-    // Determine if we need fat or small format
+    // Determine if we need fat or small format.
+    // Small format limits: try_offset/handler_offset fit in u16 (0xFFFF),
+    // try_length/handler_length fit in u8 (0xFF).
     let needs_fat_format = handlers.iter().any(|eh| {
         eh.try_offset > 0xFFFF
-            || eh.try_length > 0xFFFF
+            || eh.try_length > 0xFF
             || eh.handler_offset > 0xFFFF
-            || eh.handler_length > 0xFFFF
+            || eh.handler_length > 0xFF
     });
 
     let mut section = Vec::new();
