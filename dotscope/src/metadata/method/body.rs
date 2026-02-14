@@ -298,6 +298,38 @@ impl MethodBody {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from(data: &[u8]) -> Result<MethodBody> {
+        let body = Self::parse(data)?;
+
+        // Validate exception handler bounds
+        let code_size = body.size_code as u32;
+        for (index, handler) in body.exception_handlers.iter().enumerate() {
+            validate_exception_handler_bounds(handler, code_size, index)?;
+        }
+
+        Ok(body)
+    }
+
+    /// Create a `MethodBody` from bytes without validating exception handler bounds.
+    ///
+    /// This is useful for parsing method bodies with malformed exception handlers
+    /// (e.g., injected by BitMono's AntiDecompiler) where the handler offsets are
+    /// garbage but the method header and IL code are valid. The caller can then
+    /// strip the invalid handlers and rebuild the method body cleanly.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The byte slice containing the complete method body data
+    ///
+    /// # Returns
+    ///
+    /// * [`Ok`]([`MethodBody`]) - Successfully parsed method body (EH bounds not validated)
+    /// * [`Err`]([`crate::Error`]) - Parsing failed due to invalid header format or insufficient data
+    pub fn from_lenient(data: &[u8]) -> Result<MethodBody> {
+        Self::parse(data)
+    }
+
+    /// Internal parsing logic shared by `from()` and `from_lenient()`.
+    fn parse(data: &[u8]) -> Result<MethodBody> {
         if data.is_empty() {
             return Err(malformed_error!("Provided data for body parsing is empty"));
         }
@@ -443,10 +475,6 @@ impl MethodBody {
                             break;
                         }
                     }
-                }
-
-                for (index, handler) in exception_handlers.iter().enumerate() {
-                    validate_exception_handler_bounds(handler, size_code, index)?;
                 }
 
                 Ok(MethodBody {
@@ -880,5 +908,52 @@ mod tests {
         assert_eq!(method_header.exception_handlers[1].handler_offset, 77);
         assert_eq!(method_header.exception_handlers[1].handler_length, 3);
         assert_eq!(method_header.exception_handlers[1].filter_offset, 0x100001D);
+    }
+
+    #[test]
+    fn from_lenient_accepts_malformed_eh() {
+        // Construct a fat method with a single exception handler whose
+        // try region extends far beyond the code size (malformed).
+        let il_code = [0x00u8; 10]; // 10 bytes of nop
+        let code_size: u32 = 10;
+
+        // Fat header: flags = FAT_FORMAT | MORE_SECTS | INIT_LOCALS, size=3 dwords
+        let flags: u16 = 0x3003 | 0x0008 | 0x0010;
+        let max_stack: u16 = 8;
+        let local_var_sig: u32 = 0;
+
+        let mut data = Vec::new();
+        data.extend_from_slice(&flags.to_le_bytes());
+        data.extend_from_slice(&max_stack.to_le_bytes());
+        data.extend_from_slice(&code_size.to_le_bytes());
+        data.extend_from_slice(&local_var_sig.to_le_bytes());
+        data.extend_from_slice(&il_code);
+
+        // Align to 4 bytes (header=12 + code=10 = 22, aligned = 24, pad 2)
+        data.extend_from_slice(&[0x00, 0x00]);
+
+        // Small exception section: flags=0x01 (EHTABLE), size=16 (4 header + 12 per handler)
+        data.push(0x01); // section flags: EHTABLE
+        data.push(16); // section size
+        data.push(0x00); // padding
+        data.push(0x00); // padding
+
+        // Small EH clause: EXCEPTION type, garbage offsets
+        data.extend_from_slice(&0x0000u16.to_le_bytes()); // flags: EXCEPTION
+        data.extend_from_slice(&0xFFFFu16.to_le_bytes()); // try_offset: way beyond code
+        data.push(0xFF); // try_length: way beyond code
+        data.extend_from_slice(&0xFFFFu16.to_le_bytes()); // handler_offset: way beyond code
+        data.push(0xFF); // handler_length: way beyond code
+        data.extend_from_slice(&0x01000001u32.to_le_bytes()); // filter_offset (class token)
+
+        // Strict from() should fail due to bad EH bounds
+        assert!(MethodBody::from(&data).is_err());
+
+        // Lenient from_lenient() should succeed
+        let body = MethodBody::from_lenient(&data).unwrap();
+        assert!(body.is_fat);
+        assert_eq!(body.size_code, 10);
+        assert_eq!(body.exception_handlers.len(), 1);
+        assert_eq!(body.exception_handlers[0].try_offset, 0xFFFF);
     }
 }

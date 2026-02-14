@@ -82,6 +82,7 @@ mod references;
 mod request;
 mod stats;
 
+pub(crate) use compaction::mark_unreferenced_heap_entries;
 pub use executor::execute_cleanup;
 pub use request::CleanupRequest;
 pub use stats::CleanupStats;

@@ -379,12 +379,12 @@ impl SsaCodeGenerator {
                 let try_end = eh
                     .try_end_block
                     .and_then(|b| self.block_offsets.get(&b).copied())
-                    .unwrap_or(handler_offset);
+                    .unwrap_or(eh.try_offset + eh.try_length);
 
                 let handler_end = eh
                     .handler_end_block
                     .and_then(|b| self.block_offsets.get(&b).copied())
-                    .unwrap_or(bytecode_len);
+                    .unwrap_or(eh.handler_offset + eh.handler_length);
 
                 let filter_offset = if eh.flags == ExceptionHandlerFlags::FILTER {
                     eh.filter_start_block

@@ -100,7 +100,9 @@ impl CompactionStats {
 /// # Returns
 ///
 /// Statistics about entries marked for removal.
-pub fn mark_unreferenced_heap_entries(assembly: &mut CilAssembly) -> Result<CompactionStats> {
+pub(crate) fn mark_unreferenced_heap_entries(
+    assembly: &mut CilAssembly,
+) -> Result<CompactionStats> {
     let mut stats = CompactionStats::default();
 
     // Collect all referenced heap offsets/indices from tables
@@ -198,7 +200,6 @@ pub fn mark_unreferenced_heap_entries(assembly: &mut CilAssembly) -> Result<Comp
     }
 
     // Mark unreferenced entries for removal
-
     for offset in unreferenced_strings {
         assembly.string_remove(offset)?;
         stats.strings += 1;

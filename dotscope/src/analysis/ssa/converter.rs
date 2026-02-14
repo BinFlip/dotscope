@@ -47,7 +47,9 @@ use crate::{
     },
     assembly::{opcodes, Immediate, Instruction, Operand},
     metadata::{
-        signatures::TypeSignature, tables::MemberRefSignature, token::Token,
+        signatures::TypeSignature,
+        tables::{MemberRefSignature, StandAloneSigRaw, StandAloneSignature},
+        token::Token,
         typesystem::CilTypeReference,
     },
     utils::graph::{algorithms::DominatorTree, NodeId},
@@ -983,6 +985,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 opcodes::NEWOBJ => {
                     return Self::simulate_call(simulator, instr, assembly, true);
                 }
+                // calli requires StandAloneSig resolution for correct stack simulation
+                opcodes::CALLI => {
+                    return Self::simulate_calli(simulator, instr, assembly);
+                }
                 // stind.* instructions write through an address - track as indirect store
                 opcodes::STIND_REF
                 | opcodes::STIND_I1
@@ -1075,6 +1081,71 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             .ok_or_else(|| {
                 Error::SsaError(format!("Stack underflow simulating {}", instr.mnemonic))
             })
+    }
+
+    /// Simulates a `calli` instruction by resolving its `StandAloneSig` token.
+    ///
+    /// The `calli` instruction pops: `arg0, arg1, ..., argN, function_pointer` and
+    /// optionally pushes a return value. The number of arguments and return type are
+    /// determined by the standalone method signature referenced by the instruction's
+    /// operand token (table 0x11).
+    fn simulate_calli(
+        simulator: &mut StackSimulator,
+        instr: &Instruction,
+        assembly: Option<&CilObject>,
+    ) -> Result<SimulationResult> {
+        let token = Self::extract_token(&instr.operand).ok_or_else(|| {
+            Error::SsaError(format!(
+                "calli instruction missing StandAloneSig token: {}",
+                instr.mnemonic
+            ))
+        })?;
+
+        if let Some(assembly) = assembly {
+            if let Some((param_count, has_this, has_return)) =
+                Self::resolve_calli_info(assembly, token)
+            {
+                // calli pops: param_count + has_this args + 1 function pointer
+                let pops = param_count + usize::from(has_this) + 1;
+                let pushes = usize::from(has_return);
+
+                #[allow(clippy::cast_possible_truncation)]
+                return simulator
+                    .simulate_stack_effect(pops.min(255) as u8, pushes.min(255) as u8)
+                    .ok_or_else(|| {
+                        Error::SsaError(format!(
+                            "Stack underflow simulating calli with {} pops",
+                            pops
+                        ))
+                    });
+            }
+        }
+
+        // Resolution failed — calli has VarPop/VarPush so static metadata is useless
+        Err(Error::SsaError(format!(
+            "Failed to resolve StandAloneSig for calli token 0x{:08X}. \
+             calli requires signature resolution for correct stack simulation.",
+            token.value()
+        )))
+    }
+
+    /// Resolves a `StandAloneSig` token to (param_count, has_this, has_return).
+    fn resolve_calli_info(assembly: &CilObject, token: Token) -> Option<(usize, bool, bool)> {
+        if token.table() != 0x11 {
+            return None;
+        }
+        let tables = assembly.tables()?;
+        let table = tables.table::<StandAloneSigRaw>()?;
+        let raw = table.get(token.row())?;
+        let blob = assembly.blob()?;
+        let owned = raw.to_owned(blob).ok()?;
+        match &owned.parsed_signature {
+            StandAloneSignature::Method(sig) => {
+                let has_return = !matches!(sig.return_type.base, TypeSignature::Void);
+                Some((sig.param_count as usize, sig.has_this, has_return))
+            }
+            _ => None,
+        }
     }
 
     /// Resolves call information (param_count, has_this, has_return) from a method token.
