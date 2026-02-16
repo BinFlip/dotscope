@@ -2984,9 +2984,9 @@ dependencies = [
 
 [[package]]
 name = "z3-sys"
-version = "0.10.4"
+version = "0.10.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "b18a464a6d3c31e6684906ca12e53c095ff625cd21fcbe09271a3aacb56a96f1"
+checksum = "1fab6d04d653bbb73381bc6c906c5545d522ac29def4571fadc720c39ab162f6"
 dependencies = [
  "bindgen",
  "pkg-config",
