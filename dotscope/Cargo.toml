@@ -30,9 +30,9 @@ thiserror = "2.0.18"
 uguid = "2.2.1"
 widestring = "1.2.1"
 strum = { version = "0.27.2", features = ["derive"]}
-memmap2 = "0.9.9"
+memmap2 = "0.9.10"
 tempfile = "3.25.0"
-goblin = "0.10.4"
+goblin = "0.10.5"
 ouroboros = "0.18.5"
 sha1 = { version = "0.10.6", optional = true }
 sha2 = "0.10.9"
@@ -43,20 +43,20 @@ pbkdf2 = "0.12.2"
 aes = "0.8.4"
 des = { version = "0.8.1", optional = true }
 cbc = "0.1.2"
-bitflags = "2.10.0"
+bitflags = "2.11.0"
 dashmap = "6.1.0"
 crossbeam-skiplist = "0.1.3"
 rayon = "1.11.0"
 rustc-hash = "2.1.1"
 boxcar = "0.2.14"
-quick-xml = "0.39.0"
+quick-xml = "0.39.1"
 hex = "0.4.3"
 log = "0.4.29"
 num_cpus = "1.17.0"
 flate2 = "1.1.9"
 lzma-rs = "0.3.0"
-z3 = { version = "0.19.7", optional = true }
-iced-x86 = { version = "1.21", default-features = false, features = ["std", "decoder", "instr_info"], optional = true }
+z3 = { version = "0.19.8", optional = true }
+iced-x86 = { version = "1.21.0", default-features = false, features = ["std", "decoder", "instr_info"], optional = true }
 
 [dev-dependencies]
 criterion = "0.8.2"
