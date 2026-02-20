@@ -54,31 +54,6 @@ use crate::{
 /// that point to regenerated method bodies stored in AssemblyChanges.
 const PLACEHOLDER_RVA_THRESHOLD: u32 = 0xF000_0000;
 
-/// Checks if a table row has been marked for deletion in AssemblyChanges.
-///
-/// This is used to skip rows that have been deleted during earlier cleanup
-/// phases when scanning for references.
-fn is_row_deleted(assembly: &CilAssembly, table_id: TableId, rid: u32) -> bool {
-    if let Some(table_mods) = assembly.changes().table_changes.get(&table_id) {
-        match table_mods {
-            TableModifications::Sparse { operations, .. } => {
-                // Check if there's a Delete operation for this RID
-                for op in operations.iter().rev() {
-                    if op.get_rid() == rid {
-                        return matches!(op.operation, Operation::Delete(_));
-                    }
-                }
-            }
-            TableModifications::Replaced(rows) => {
-                // For replaced tables, check if the row index exists
-                // (though this is less common for deletions)
-                return rid as usize > rows.len();
-            }
-        }
-    }
-    false
-}
-
 /// Gets the effective RVA for a MethodDef row, checking for updates.
 ///
 /// If the MethodDef row has been updated (e.g., after code regeneration),
@@ -321,7 +296,10 @@ pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32> {
     if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
         for memberref in memberref_table {
             // Skip MemberRefs that have been deleted in earlier cleanup phases
-            if is_row_deleted(assembly, TableId::MemberRef, memberref.rid) {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::MemberRef, memberref.rid)
+            {
                 continue;
             }
             if memberref.class.token.is_table(TableId::TypeRef) {
@@ -346,7 +324,10 @@ pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32> {
                 if attr.constructor.token.is_table(TableId::MemberRef) {
                     let memberref_rid = attr.constructor.token.row();
                     // Skip if the MemberRef has been deleted
-                    if is_row_deleted(assembly, TableId::MemberRef, memberref_rid) {
+                    if assembly
+                        .changes()
+                        .is_row_deleted(TableId::MemberRef, memberref_rid)
+                    {
                         continue;
                     }
                     if let Some(memberref) = memberref_table.get(memberref_rid) {
@@ -604,7 +585,10 @@ pub fn scan_signature_typeref_refs(assembly: &CilAssembly) -> HashSet<u32> {
     if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
         for memberref in memberref_table {
             // Skip MemberRefs that have been deleted in earlier cleanup phases
-            if is_row_deleted(assembly, TableId::MemberRef, memberref.rid) {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::MemberRef, memberref.rid)
+            {
                 continue;
             }
             // MemberRef can have either method or field signature

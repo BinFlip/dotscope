@@ -27,11 +27,11 @@ use crate::{
         method::MethodBody,
         streams::TablesHeader,
         tables::{
-            ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EventMapRaw,
-            FieldLayoutRaw, FieldMarshalRaw, FieldRvaRaw, GenericParamConstraintRaw,
+            AssemblyRefRaw, ClassLayoutRaw, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw,
+            EventMapRaw, FieldLayoutRaw, FieldMarshalRaw, FieldRvaRaw, GenericParamConstraintRaw,
             GenericParamRaw, ImplMapRaw, InterfaceImplRaw, MethodDefRaw, MethodImplRaw,
-            MethodSemanticsRaw, MethodSpecRaw, NestedClassRaw, ParamRaw, PropertyMapRaw,
-            RowReadable, StandAloneSigRaw, TableAccess, TableId,
+            MethodSemanticsRaw, MethodSpecRaw, ModuleRefRaw, NestedClassRaw, ParamRaw,
+            PropertyMapRaw, RowReadable, StandAloneSigRaw, TableAccess, TableId, TypeRefRaw,
         },
         token::Token,
     },
@@ -454,6 +454,126 @@ pub fn remove_orphan_standalonesigs(assembly: &mut CilAssembly, ctx: &OrphanCont
     remove_orphan_entries::<StandAloneSigRaw>(assembly, |sig| !referenced_rids.contains(&sig.rid))
 }
 
+/// Removes orphaned `ModuleRef` entries that are no longer referenced.
+///
+/// After ImplMap orphan removal and TypeRef cleanup, some `ModuleRef` entries
+/// may no longer be referenced by any surviving `ImplMap` entry or `TypeRef`
+/// resolution scope. This function removes such orphaned entries.
+///
+/// Must be called **after** `remove_orphan_implmap` and `remove_unreferenced_typerefs`
+/// to ensure cascaded deletions are accounted for.
+pub fn remove_orphan_modulerefs(assembly: &mut CilAssembly) -> usize {
+    // Collect ModuleRef RIDs still referenced by surviving ImplMap and TypeRef entries
+    let alive: HashSet<u32> = {
+        let view = assembly.view();
+        let Some(tables) = view.tables() else {
+            return 0;
+        };
+
+        let mut alive = HashSet::new();
+
+        // ImplMap.import_scope references ModuleRef by raw RID
+        if let Some(implmap_table) = tables.table::<ImplMapRaw>() {
+            for rid in 1..=implmap_table.row_count {
+                // Skip ImplMap entries that have been deleted
+                if assembly.changes().is_row_deleted(TableId::ImplMap, rid) {
+                    continue;
+                }
+                if let Some(implmap) = implmap_table.get(rid) {
+                    alive.insert(implmap.import_scope);
+                }
+            }
+        }
+
+        // TypeRef.resolution_scope can reference ModuleRef
+        if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
+            for rid in 1..=typeref_table.row_count {
+                if assembly.changes().is_row_deleted(TableId::TypeRef, rid) {
+                    continue;
+                }
+                if let Some(typeref) = typeref_table.get(rid) {
+                    if typeref.resolution_scope.tag == TableId::ModuleRef {
+                        alive.insert(typeref.resolution_scope.row);
+                    }
+                }
+            }
+        }
+
+        alive
+    };
+
+    // Get total count
+    let count = {
+        let view = assembly.view();
+        view.tables()
+            .and_then(TablesHeader::table::<ModuleRefRaw>)
+            .map_or(0, |t| t.row_count)
+    };
+
+    // Remove unreferenced ModuleRefs in reverse order
+    let mut removed = 0;
+    for rid in (1..=count).rev() {
+        if !alive.contains(&rid) && assembly.table_row_remove(TableId::ModuleRef, rid).is_ok() {
+            removed += 1;
+        }
+    }
+
+    removed
+}
+
+/// Removes orphaned `AssemblyRef` entries that are no longer referenced.
+///
+/// After TypeRef cleanup, some `AssemblyRef` entries may no longer be referenced
+/// by any surviving `TypeRef` resolution scope. This function removes such
+/// orphaned entries.
+///
+/// Must be called **after** `remove_unreferenced_typerefs` to ensure cascaded
+/// TypeRef deletions are accounted for.
+pub fn remove_orphan_assemblyrefs(assembly: &mut CilAssembly) -> usize {
+    let alive: HashSet<u32> = {
+        let view = assembly.view();
+        let Some(tables) = view.tables() else {
+            return 0;
+        };
+
+        let mut alive = HashSet::new();
+
+        // TypeRef.resolution_scope can reference AssemblyRef
+        if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
+            for rid in 1..=typeref_table.row_count {
+                if assembly.changes().is_row_deleted(TableId::TypeRef, rid) {
+                    continue;
+                }
+                if let Some(typeref) = typeref_table.get(rid) {
+                    if typeref.resolution_scope.tag == TableId::AssemblyRef {
+                        alive.insert(typeref.resolution_scope.row);
+                    }
+                }
+            }
+        }
+
+        alive
+    };
+
+    // Get total count
+    let count = {
+        let view = assembly.view();
+        view.tables()
+            .and_then(TablesHeader::table::<AssemblyRefRaw>)
+            .map_or(0, |t| t.row_count)
+    };
+
+    // Remove unreferenced AssemblyRefs in reverse order
+    let mut removed = 0;
+    for rid in (1..=count).rev() {
+        if !alive.contains(&rid) && assembly.table_row_remove(TableId::AssemblyRef, rid).is_ok() {
+            removed += 1;
+        }
+    }
+
+    removed
+}
+
 /// Removes all orphaned metadata entries caused by the deletions in the context.
 ///
 /// This is the main entry point for orphan removal. It calls all the individual
@@ -515,6 +635,12 @@ pub fn remove_all_orphans(assembly: &mut CilAssembly, ctx: &OrphanContext) -> Cl
     // reference TypeRefs. The signature blob remapping infrastructure now supports
     // TypeRef tokens (remap_token() handles table 0x01).
     stats.typerefs_removed = remove_unreferenced_typerefs(assembly);
+
+    // 8. Reference parent cleanup: remove ModuleRefs and AssemblyRefs that
+    // are no longer referenced by any surviving ImplMap or TypeRef entries.
+    // Must come after ImplMap orphan removal (step 4) and TypeRef removal (step 7).
+    stats.modulerefs_removed += remove_orphan_modulerefs(assembly);
+    stats.assemblyrefs_removed += remove_orphan_assemblyrefs(assembly);
 
     stats
 }

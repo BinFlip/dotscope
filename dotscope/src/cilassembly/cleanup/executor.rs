@@ -148,6 +148,26 @@ pub fn execute_cleanup(
         }
     }
 
+    // 2f: Remove AssemblyRefs (in descending RID order)
+    for asmref_token in request.assemblyrefs() {
+        if assembly
+            .table_row_remove(TableId::AssemblyRef, asmref_token.row())
+            .is_ok()
+        {
+            stats.assemblyrefs_removed += 1;
+        }
+    }
+
+    // 2g: Remove ModuleRefs (in descending RID order)
+    for modref_token in request.modulerefs() {
+        if assembly
+            .table_row_remove(TableId::ModuleRef, modref_token.row())
+            .is_ok()
+        {
+            stats.modulerefs_removed += 1;
+        }
+    }
+
     // Phase 3: Remove orphaned metadata (if enabled)
     if request.remove_orphans() {
         let ctx = OrphanContext::new(&removed_types, &removed_methods, &removed_fields);

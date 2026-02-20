@@ -72,6 +72,20 @@ pub struct CleanupRequest {
     /// These are removed without checking if they're orphaned.
     attributes: BTreeSet<Token>,
 
+    /// AssemblyRef tokens to remove.
+    ///
+    /// External assembly references that are no longer needed after
+    /// protection infrastructure is removed (e.g., `System.Private.CoreLib`
+    /// added by BitMono AntiDebug, fake references added by ConfuserEx).
+    assemblyrefs: BTreeSet<Token>,
+
+    /// ModuleRef tokens to remove.
+    ///
+    /// External module references (native DLLs) that are no longer needed
+    /// after P/Invoke-based protection methods are removed (e.g., `kernel32.dll`
+    /// used by anti-tamper, `libc.so.6` used by DotNetHook).
+    modulerefs: BTreeSet<Token>,
+
     /// PE sections to exclude from output.
     ///
     /// Section names (e.g., ".confuser", ".packed") that should not be
@@ -100,6 +114,8 @@ impl Default for CleanupRequest {
             methodspecs: BTreeSet::new(),
             fields: BTreeSet::new(),
             attributes: BTreeSet::new(),
+            assemblyrefs: BTreeSet::new(),
+            modulerefs: BTreeSet::new(),
             excluded_sections: HashSet::new(),
             remove_orphans: true,
             remove_empty_types: true,
@@ -127,6 +143,8 @@ impl CleanupRequest {
             methodspecs: BTreeSet::new(),
             fields: BTreeSet::new(),
             attributes: BTreeSet::new(),
+            assemblyrefs: BTreeSet::new(),
+            modulerefs: BTreeSet::new(),
             excluded_sections: HashSet::new(),
             remove_orphans,
             remove_empty_types,
@@ -261,6 +279,52 @@ impl CleanupRequest {
         self.attributes.len()
     }
 
+    /// Adds an AssemblyRef to be removed.
+    pub fn add_assemblyref(&mut self, token: Token) -> &mut Self {
+        self.assemblyrefs.insert(token);
+        self
+    }
+
+    /// Adds multiple AssemblyRefs to be removed.
+    pub fn add_assemblyrefs(&mut self, tokens: impl IntoIterator<Item = Token>) -> &mut Self {
+        self.assemblyrefs.extend(tokens);
+        self
+    }
+
+    /// Returns an iterator over AssemblyRefs to remove in descending RID order.
+    pub fn assemblyrefs(&self) -> impl Iterator<Item = &Token> + '_ {
+        self.assemblyrefs.iter().rev()
+    }
+
+    /// Returns the number of AssemblyRefs to remove.
+    #[must_use]
+    pub fn assemblyrefs_len(&self) -> usize {
+        self.assemblyrefs.len()
+    }
+
+    /// Adds a ModuleRef to be removed.
+    pub fn add_moduleref(&mut self, token: Token) -> &mut Self {
+        self.modulerefs.insert(token);
+        self
+    }
+
+    /// Adds multiple ModuleRefs to be removed.
+    pub fn add_modulerefs(&mut self, tokens: impl IntoIterator<Item = Token>) -> &mut Self {
+        self.modulerefs.extend(tokens);
+        self
+    }
+
+    /// Returns an iterator over ModuleRefs to remove in descending RID order.
+    pub fn modulerefs(&self) -> impl Iterator<Item = &Token> + '_ {
+        self.modulerefs.iter().rev()
+    }
+
+    /// Returns the number of ModuleRefs to remove.
+    #[must_use]
+    pub fn modulerefs_len(&self) -> usize {
+        self.modulerefs.len()
+    }
+
     /// Excludes a PE section from output.
     ///
     /// The section name should include the dot prefix (e.g., ".confuser").
@@ -313,6 +377,8 @@ impl CleanupRequest {
             && self.methodspecs.is_empty()
             && self.fields.is_empty()
             && self.attributes.is_empty()
+            && self.assemblyrefs.is_empty()
+            && self.modulerefs.is_empty()
     }
 
     /// Returns true if this request has any deletions specified.
@@ -329,6 +395,8 @@ impl CleanupRequest {
             + self.methodspecs.len()
             + self.fields.len()
             + self.attributes.len()
+            + self.assemblyrefs.len()
+            + self.modulerefs.len()
     }
 
     /// Checks if a specific token is marked for deletion.
@@ -341,6 +409,8 @@ impl CleanupRequest {
             || self.methodspecs.contains(&token)
             || self.fields.contains(&token)
             || self.attributes.contains(&token)
+            || self.assemblyrefs.contains(&token)
+            || self.modulerefs.contains(&token)
     }
 
     /// Merges another cleanup request into this one.
@@ -353,6 +423,8 @@ impl CleanupRequest {
         self.methodspecs.extend(other.methodspecs.iter().copied());
         self.fields.extend(other.fields.iter().copied());
         self.attributes.extend(other.attributes.iter().copied());
+        self.assemblyrefs.extend(other.assemblyrefs.iter().copied());
+        self.modulerefs.extend(other.modulerefs.iter().copied());
         self.excluded_sections
             .extend(other.excluded_sections.iter().cloned());
         self
@@ -369,6 +441,8 @@ impl CleanupRequest {
         all.extend(&self.methodspecs);
         all.extend(&self.fields);
         all.extend(&self.attributes);
+        all.extend(&self.assemblyrefs);
+        all.extend(&self.modulerefs);
         all
     }
 }

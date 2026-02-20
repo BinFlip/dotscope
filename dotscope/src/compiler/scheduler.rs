@@ -250,11 +250,7 @@ impl PassScheduler {
                         }
                         ModificationScope::CfgModifying => {
                             if let Err(e) = ssa.rebuild_ssa() {
-                                log::warn!(
-                                    "SSA rebuild failed for {}: {}",
-                                    method_token,
-                                    e
-                                );
+                                log::warn!("SSA rebuild failed for {}: {}", method_token, e);
                             }
                         }
                     }

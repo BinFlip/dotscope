@@ -89,6 +89,11 @@ pub fn execute_cleanup(
     // Determine if we should rename obfuscated names
     let rename_obfuscated = ctx.config.cleanup.rename_obfuscated_names;
 
+    // Detect empty module .cctor and add to cleanup request.
+    // ModuleRef/AssemblyRef orphan removal is handled by the CilAssembly executor's
+    // orphan removal phase (Phase 3) — see orphans.rs.
+    sweep_empty_module_cctor(&assembly, &mut request, ctx);
+
     // Nothing to do
     if !request.has_deletions() && request.excluded_sections().is_empty() && !rename_obfuscated {
         return Ok(assembly);
@@ -184,6 +189,36 @@ fn log_cleanup_request(request: &CleanupRequest, assembly: &CilObject, ctx: &Ana
                 "Removing custom attribute 0x{:08X}",
                 attr_token.value()
             ));
+    }
+}
+
+/// Detects and marks an empty module `.cctor` for removal.
+///
+/// If the module `.cctor` was processed by the SSA pipeline and its final
+/// instruction count is <= 1 (just a `ret`), it has become effectively empty
+/// after neutralization and should be removed.
+fn sweep_empty_module_cctor(
+    assembly: &CilObject,
+    request: &mut CleanupRequest,
+    ctx: &AnalysisContext,
+) {
+    let Some(cctor_token) = assembly.types().module_cctor() else {
+        return;
+    };
+
+    // Only consider if the SSA pipeline processed this method
+    let Some(ssa_func) = ctx.ssa_functions.get(&cctor_token) else {
+        return;
+    };
+
+    // If the .cctor has at most 1 instruction (just `ret`), it's empty
+    if ssa_func.instruction_count() <= 1 {
+        log::debug!(
+            "Sweep: empty module .cctor (0x{:08X}) with {} instructions",
+            cctor_token.value(),
+            ssa_func.instruction_count()
+        );
+        request.add_method(cctor_token);
     }
 }
 
