@@ -55,6 +55,10 @@ pub struct CleanupStats {
     pub eventmaps_removed: usize,
     /// Number of PropertyMap entries removed.
     pub propertymaps_removed: usize,
+    /// Number of AssemblyRef entries removed.
+    pub assemblyrefs_removed: usize,
+    /// Number of ModuleRef entries removed.
+    pub modulerefs_removed: usize,
     /// Number of TypeRef entries removed (orphaned).
     pub typerefs_removed: usize,
     /// Number of MemberRef entries removed (orphaned).
@@ -108,6 +112,8 @@ impl CleanupStats {
             + self.implmaps_removed
             + self.eventmaps_removed
             + self.propertymaps_removed
+            + self.assemblyrefs_removed
+            + self.modulerefs_removed
             + self.typerefs_removed
             + self.memberrefs_removed
             + self.typespecs_removed
@@ -174,6 +180,8 @@ impl CleanupStats {
         self.implmaps_removed += other.implmaps_removed;
         self.eventmaps_removed += other.eventmaps_removed;
         self.propertymaps_removed += other.propertymaps_removed;
+        self.assemblyrefs_removed += other.assemblyrefs_removed;
+        self.modulerefs_removed += other.modulerefs_removed;
         self.typerefs_removed += other.typerefs_removed;
         self.memberrefs_removed += other.memberrefs_removed;
         self.typespecs_removed += other.typespecs_removed;

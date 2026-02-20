@@ -42,7 +42,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    cilassembly::{ChangeRef, HeapChanges, TableModifications},
+    cilassembly::{operation::Operation, ChangeRef, HeapChanges, TableModifications},
     metadata::{exports::UnifiedExportContainer, imports::UnifiedImportContainer, tables::TableId},
 };
 
@@ -477,6 +477,29 @@ impl AssemblyChanges {
     /// Optional reference to the method body bytes if found.
     pub fn get_method_body(&self, placeholder_rva: u32) -> Option<&Vec<u8>> {
         self.method_bodies.get(&placeholder_rva)
+    }
+
+    /// Checks if a table row has been marked for deletion.
+    ///
+    /// Returns `true` if a Delete operation exists for the given table/RID combination.
+    /// Used by orphan removal and reference scanning to skip rows deleted in earlier phases.
+    #[must_use]
+    pub fn is_row_deleted(&self, table_id: TableId, rid: u32) -> bool {
+        if let Some(table_mods) = self.table_changes.get(&table_id) {
+            match table_mods {
+                TableModifications::Sparse { operations, .. } => {
+                    for op in operations.iter().rev() {
+                        if op.get_rid() == rid {
+                            return matches!(op.operation, Operation::Delete(_));
+                        }
+                    }
+                }
+                TableModifications::Replaced(rows) => {
+                    return rid as usize > rows.len();
+                }
+            }
+        }
+        false
     }
 
     /// Gets the total size of all stored method bodies.
