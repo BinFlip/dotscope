@@ -184,7 +184,6 @@ impl<'a> ConstEvaluator<'a> {
             // Copy - trace through to source
             SsaOp::Copy { src, .. } => self.evaluate_var_depth(*src, depth + 1),
 
-            // Binary operations (Task 2.2 will expand this)
             SsaOp::Xor { left, right, .. } => {
                 let l = self.evaluate_var_depth(*left, depth + 1)?;
                 let r = self.evaluate_var_depth(*right, depth + 1)?;
@@ -371,7 +370,7 @@ mod tests {
     use crate::{
         analysis::ssa::{
             ConstEvaluator, ConstValue, DefSite, SsaBlock, SsaFunction, SsaInstruction, SsaOp,
-            SsaVarId, SsaVariable, VariableOrigin,
+            SsaType, SsaVarId, VariableOrigin,
         },
         metadata::typesystem::PointerSize,
     };
@@ -382,9 +381,12 @@ mod tests {
         let mut block = SsaBlock::new(0);
 
         // Create a constant: v0 = 42
-        let var = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-        let var_id = var.id();
-        ssa.add_variable(var);
+        let var_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
 
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
             dest: var_id,
@@ -405,14 +407,20 @@ mod tests {
         let mut block = SsaBlock::new(0);
 
         // v0 = 100
-        let v0 = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-        let v0_id = v0.id();
-        ssa.add_variable(v0);
+        let v0_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
 
         // v1 = v0 (copy)
-        let v1 = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(0, 1));
-        let v1_id = v1.id();
-        ssa.add_variable(v1);
+        let v1_id = ssa.create_variable(
+            VariableOrigin::Local(1),
+            0,
+            DefSite::instruction(0, 1),
+            SsaType::Unknown,
+        );
 
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
             dest: v0_id,
@@ -434,7 +442,7 @@ mod tests {
     #[test]
     fn test_set_known_value() {
         let ssa = SsaFunction::new(0, 0);
-        let var_id = SsaVarId::new();
+        let var_id = SsaVarId::from_index(0);
 
         let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
         evaluator.set_known(var_id, ConstValue::I32(999));
@@ -446,8 +454,8 @@ mod tests {
     #[test]
     fn test_into_results() {
         let ssa = SsaFunction::new(0, 0);
-        let var1 = SsaVarId::new();
-        let var2 = SsaVarId::new();
+        let var1 = SsaVarId::from_index(0);
+        let var2 = SsaVarId::from_index(1);
 
         let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
         evaluator.set_known(var1, ConstValue::I32(1));

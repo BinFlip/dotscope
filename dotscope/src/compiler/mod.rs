@@ -58,7 +58,7 @@ mod summary;
 pub use codegen::{CompilationResult, SsaCodeGenerator};
 pub use context::CompilerContext;
 pub use events::{DerivedStats, Event, EventKind, EventLog};
-pub use pass::SsaPass;
+pub use pass::{ModificationScope, SsaPass};
 pub use passes::{
     AlgebraicSimplificationPass, BlockMergingPass, ConstantPropagationPass,
     ControlFlowSimplificationPass, CopyPropagationPass, DeadCodeEliminationPass,

@@ -53,8 +53,8 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     analysis::{
-        ConstValue, DefSite, MethodRef, ReturnInfo, SsaFunction, SsaInstruction, SsaOp, SsaVarId,
-        SsaVariable, VariableOrigin,
+        ConstValue, DefSite, MethodRef, ReturnInfo, SsaFunction, SsaInstruction, SsaOp, SsaType,
+        SsaVarId, VariableOrigin,
     },
     compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::{tables::MemberRefSignature, token::Token, typesystem::CilTypeReference},
@@ -1016,24 +1016,19 @@ impl<'a> InliningContext<'a> {
             return remapped;
         }
 
-        // Safe: SSA variable count fits in u32
-        #[allow(clippy::cast_possible_truncation)]
-        let new_id = if let Some(callee_var) = callee_ssa.variable(var) {
-            let new_var = SsaVariable::new_typed(
-                VariableOrigin::Stack(caller_ssa.variable_count() as u32),
-                0,
-                DefSite::instruction(0, 0),
-                callee_var.var_type().clone(),
-            );
-            caller_ssa.add_variable(new_var)
-        } else {
-            let new_var = SsaVariable::new(
-                VariableOrigin::Stack(caller_ssa.variable_count() as u32),
-                0,
-                DefSite::instruction(0, 0),
-            );
-            caller_ssa.add_variable(new_var)
-        };
+        // Allocate a Phi-origin variable for the inlined callee variable.
+        // Inlined callee variables are synthetic — use Phi origin since
+        // they don't correspond to any real CIL local in the caller.
+        let var_type = callee_ssa
+            .variable(var)
+            .map(|v| v.var_type().clone())
+            .unwrap_or(SsaType::Unknown);
+        let new_id = caller_ssa.create_variable(
+            VariableOrigin::Phi,
+            0,
+            DefSite::instruction(0, 0),
+            var_type,
+        );
 
         var_remap.insert(var, new_id);
         new_id
@@ -1243,7 +1238,9 @@ mod tests {
     use std::sync::Arc;
 
     use crate::{
-        analysis::{CallGraph, ConstValue, MethodRef, SsaFunctionBuilder, SsaOp, SsaVarId},
+        analysis::{
+            CallGraph, ConstValue, MethodRef, SsaFunctionBuilder, SsaOp, SsaType, SsaVarId,
+        },
         compiler::CompilerContext,
         compiler::{
             passes::inlining::{InliningContext, InliningPass},
@@ -1284,28 +1281,32 @@ mod tests {
         // Callee: returns constant 42
         let callee_token = Token::new(0x06000002);
         let (callee_ssa, callee_v0) = {
-            let mut v0_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(42);
-                    v0_out = v0;
-                    b.ret_val(v0);
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(42);
+                        v0_out = v0;
+                        b.ret_val(v0);
+                    });
+                })
+                .unwrap();
             (ssa, v0_out)
         };
 
         // Caller: calls callee
         let caller_token = Token::new(0x06000001);
         let (mut caller_ssa, call_dest) = {
-            let mut dest_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let dest = b.call(MethodRef::new(callee_token), &[]);
-                    dest_out = dest;
-                    b.ret_val(dest);
-                });
-            });
+            let mut dest_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let dest = b.call(MethodRef::new(callee_token), &[], SsaType::I32);
+                        dest_out = dest;
+                        b.ret_val(dest);
+                    });
+                })
+                .unwrap();
             (ssa, dest_out)
         };
 
@@ -1344,18 +1345,22 @@ mod tests {
     fn test_inline_void_pure() {
         // Callee: void method that does nothing impure
         let callee_token = Token::new(0x06000002);
-        let callee_ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.ret());
-        });
+        let callee_ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.ret());
+            })
+            .unwrap();
 
         // Caller: calls callee
         let caller_token = Token::new(0x06000001);
-        let mut caller_ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                b.call_void(MethodRef::new(callee_token), &[]);
-                b.ret();
-            });
-        });
+        let mut caller_ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    b.call_void(MethodRef::new(callee_token), &[]);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         // Set up context
         let ctx = test_context();
@@ -1391,9 +1396,11 @@ mod tests {
         let assembly = test_assembly();
 
         // Create a dummy SSA for the context
-        let mut dummy_ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.ret());
-        });
+        let mut dummy_ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.ret());
+            })
+            .unwrap();
 
         let inline_ctx = InliningContext::new(&pass, &mut dummy_ssa, token, &ctx, &assembly);
 
@@ -1407,14 +1414,16 @@ mod tests {
         let caller_token = Token::new(0x06000001);
 
         // Create a callee with many instructions (> threshold)
-        let callee_ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                for _ in 0..30 {
-                    let _ = b.const_i32(0);
-                }
-                b.ret();
-            });
-        });
+        let callee_ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    for _ in 0..30 {
+                        let _ = b.const_i32(0);
+                    }
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         let ctx = test_context();
         ctx.set_ssa(callee_token, callee_ssa);
@@ -1423,9 +1432,11 @@ mod tests {
         let assembly = test_assembly();
 
         // Create a dummy caller SSA
-        let mut caller_ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.ret());
-        });
+        let mut caller_ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.ret());
+            })
+            .unwrap();
 
         let inline_ctx =
             InliningContext::new(&pass, &mut caller_ssa, caller_token, &ctx, &assembly);
@@ -1437,24 +1448,28 @@ mod tests {
         // Callee: returns arg0 + 10
         // This is a PureComputation that requires full inlining
         let callee_token = Token::new(0x06000002);
-        let callee_ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-            let param0 = f.arg(0);
-            f.block(0, |b| {
-                let v1 = b.const_i32(10);
-                let v2 = b.add(param0, v1);
-                b.ret_val(v2);
-            });
-        });
+        let callee_ssa = SsaFunctionBuilder::new(1, 0)
+            .build_with(|f| {
+                let param0 = f.arg(0, SsaType::I32);
+                f.block(0, |b| {
+                    let v1 = b.const_i32(10);
+                    let v2 = b.add(param0, v1);
+                    b.ret_val(v2);
+                });
+            })
+            .unwrap();
 
         // Caller: calls callee with v0=5, stores result in v3
         let caller_token = Token::new(0x06000001);
-        let mut caller_ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let v0 = b.const_i32(5);
-                let v1 = b.call(MethodRef::new(callee_token), &[v0]);
-                b.ret_val(v1);
-            });
-        });
+        let mut caller_ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let v0 = b.const_i32(5);
+                    let v1 = b.call(MethodRef::new(callee_token), &[v0], SsaType::I32);
+                    b.ret_val(v1);
+                });
+            })
+            .unwrap();
 
         // Set up context
         let ctx = test_context();
@@ -1503,13 +1518,15 @@ mod tests {
         // void proxy(string s) { Console.WriteLine(s); }
         let target_token = Token::new(0x0A000001); // External method
 
-        let proxy_ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-            let param0 = f.arg(0);
-            f.block(0, |b| {
-                b.call_void(MethodRef::new(target_token), &[param0]);
-                b.ret();
-            });
-        });
+        let proxy_ssa = SsaFunctionBuilder::new(1, 0)
+            .build_with(|f| {
+                let param0 = f.arg(0, SsaType::I32);
+                f.block(0, |b| {
+                    b.call_void(MethodRef::new(target_token), &[param0]);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         // Should detect this as a proxy
         let result = InliningPass::detect_proxy_pattern(&proxy_ssa);
@@ -1527,14 +1544,20 @@ mod tests {
         // string proxy(string fmt, object arg) { return String.Format(fmt, arg); }
         let target_token = Token::new(0x0A000002);
 
-        let proxy_ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-            let param0 = f.arg(0);
-            let param1 = f.arg(1);
-            f.block(0, |b| {
-                let result = b.call(MethodRef::new(target_token), &[param0, param1]);
-                b.ret_val(result);
-            });
-        });
+        let proxy_ssa = SsaFunctionBuilder::new(2, 0)
+            .build_with(|f| {
+                let param0 = f.arg(0, SsaType::I32);
+                let param1 = f.arg(1, SsaType::I32);
+                f.block(0, |b| {
+                    let result = b.call(
+                        MethodRef::new(target_token),
+                        &[param0, param1],
+                        SsaType::I32,
+                    );
+                    b.ret_val(result);
+                });
+            })
+            .unwrap();
 
         let result = InliningPass::detect_proxy_pattern(&proxy_ssa);
         assert!(result.is_some(), "Should detect proxy with return");
@@ -1551,15 +1574,21 @@ mod tests {
         // int proxy(int a, int b) { return target(b, a); }
         let target_token = Token::new(0x0A000003);
 
-        let proxy_ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-            let param0 = f.arg(0);
-            let param1 = f.arg(1);
-            f.block(0, |b| {
-                // Pass args in reverse order
-                let result = b.call(MethodRef::new(target_token), &[param1, param0]);
-                b.ret_val(result);
-            });
-        });
+        let proxy_ssa = SsaFunctionBuilder::new(2, 0)
+            .build_with(|f| {
+                let param0 = f.arg(0, SsaType::I32);
+                let param1 = f.arg(1, SsaType::I32);
+                f.block(0, |b| {
+                    // Pass args in reverse order
+                    let result = b.call(
+                        MethodRef::new(target_token),
+                        &[param1, param0],
+                        SsaType::I32,
+                    );
+                    b.ret_val(result);
+                });
+            })
+            .unwrap();
 
         let result = InliningPass::detect_proxy_pattern(&proxy_ssa);
         assert!(result.is_some(), "Should detect proxy with reordered args");
@@ -1576,15 +1605,17 @@ mod tests {
         // int notProxy(int a) { return target(a + 1); }
         let target_token = Token::new(0x0A000004);
 
-        let not_proxy_ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-            let param0 = f.arg(0);
-            f.block(0, |b| {
-                let one = b.const_i32(1);
-                let sum = b.add(param0, one);
-                let result = b.call(MethodRef::new(target_token), &[sum]);
-                b.ret_val(result);
-            });
-        });
+        let not_proxy_ssa = SsaFunctionBuilder::new(1, 0)
+            .build_with(|f| {
+                let param0 = f.arg(0, SsaType::I32);
+                f.block(0, |b| {
+                    let one = b.const_i32(1);
+                    let sum = b.add(param0, one);
+                    let result = b.call(MethodRef::new(target_token), &[sum], SsaType::I32);
+                    b.ret_val(result);
+                });
+            })
+            .unwrap();
 
         let result = InliningPass::detect_proxy_pattern(&not_proxy_ssa);
         assert!(
@@ -1600,23 +1631,27 @@ mod tests {
         let target_token = Token::new(0x0A000001);
 
         // Proxy: forwards arg0 to target
-        let proxy_ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-            let param0 = f.arg(0);
-            f.block(0, |b| {
-                b.call_void(MethodRef::new(target_token), &[param0]);
-                b.ret();
-            });
-        });
+        let proxy_ssa = SsaFunctionBuilder::new(1, 0)
+            .build_with(|f| {
+                let param0 = f.arg(0, SsaType::I32);
+                f.block(0, |b| {
+                    b.call_void(MethodRef::new(target_token), &[param0]);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         // Caller: calls proxy
         let caller_token = Token::new(0x06000001);
-        let mut caller_ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-            let arg0 = f.arg(0);
-            f.block(0, |b| {
-                b.call_void(MethodRef::new(proxy_token), &[arg0]);
-                b.ret();
-            });
-        });
+        let mut caller_ssa = SsaFunctionBuilder::new(1, 0)
+            .build_with(|f| {
+                let arg0 = f.arg(0, SsaType::I32);
+                f.block(0, |b| {
+                    b.call_void(MethodRef::new(proxy_token), &[arg0]);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         let ctx = test_context();
         ctx.set_ssa(proxy_token, proxy_ssa);

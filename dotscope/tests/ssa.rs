@@ -8,8 +8,11 @@
 //! 5. Verify SSA properties (phi nodes, variable versions, def-use chains)
 //! 6. Test symbolic evaluation on SSA
 
+mod common;
+
 use std::collections::HashMap;
 
+use common::TestTypeProvider;
 use dotscope::{
     analysis::{
         ConstValue, ControlFlowGraph, SsaConverter, SsaExceptionHandler, SsaFunction, SsaOp,
@@ -36,7 +39,12 @@ fn build_ssa(
     num_args: usize,
     num_locals: usize,
 ) -> Result<SsaFunction> {
-    SsaConverter::build(cfg, num_args, num_locals, None)
+    SsaConverter::build(
+        cfg,
+        num_args,
+        num_locals,
+        &TestTypeProvider::new(num_args, num_locals),
+    )
 }
 
 /// Build SSA directly from an assembler for convenience.
@@ -72,7 +80,7 @@ fn test_ssa_simple_arithmetic() -> Result<()> {
         ssa.variable_count() >= 2,
         "Expected at least 2 variables for args"
     );
-    assert_eq!(ssa.total_phi_count(), 0, "No phi nodes expected");
+    assert_eq!(ssa.phi_count(), 0, "No phi nodes expected");
 
     Ok(())
 }
@@ -139,10 +147,7 @@ fn test_ssa_diamond_phi_nodes() -> Result<()> {
     assert_eq!(ssa.block_count(), 4, "Expected 4 blocks for diamond");
 
     // Should have at least one phi node for the merge point
-    assert!(
-        ssa.total_phi_count() > 0,
-        "Expected phi node(s) at merge point"
-    );
+    assert!(ssa.phi_count() > 0, "Expected phi node(s) at merge point");
 
     Ok(())
 }
@@ -198,7 +203,7 @@ fn test_ssa_conditional_both_return() -> Result<()> {
     assert_eq!(ssa.block_count(), 3);
 
     // No phi nodes needed (no merge point)
-    assert_eq!(ssa.total_phi_count(), 0);
+    assert_eq!(ssa.phi_count(), 0);
 
     Ok(())
 }
@@ -342,7 +347,7 @@ fn test_ssa_nested_conditionals() -> Result<()> {
     assert!(ssa.block_count() >= 4);
 
     // Should have phi nodes at merge points
-    assert!(ssa.total_phi_count() > 0);
+    assert!(ssa.phi_count() > 0);
 
     Ok(())
 }
@@ -466,7 +471,7 @@ fn test_ssa_empty_method() -> Result<()> {
     let ssa = ssa_from_asm(asm, 0, 0)?;
 
     assert_eq!(ssa.block_count(), 1);
-    assert_eq!(ssa.total_phi_count(), 0);
+    assert_eq!(ssa.phi_count(), 0);
 
     Ok(())
 }
@@ -771,7 +776,7 @@ fn test_ssa_total_instruction_count() -> Result<()> {
     let ssa = ssa_from_asm(asm, 0, 0)?;
 
     // Should have multiple instructions
-    assert!(ssa.total_instruction_count() >= 4);
+    assert!(ssa.instruction_count() >= 4);
 
     Ok(())
 }
@@ -1457,7 +1462,7 @@ fn test_ssa_variable_defined_in_multiple_branches() -> Result<()> {
     let ssa = ssa_from_asm(asm, 1, 1)?;
 
     // Should have phi nodes at the merge point
-    assert!(ssa.total_phi_count() > 0);
+    assert!(ssa.phi_count() > 0);
 
     Ok(())
 }
@@ -1697,7 +1702,7 @@ fn test_ssa_parameter_count() -> Result<()> {
 
     let ssa = ssa_from_asm(asm, 3, 0)?;
 
-    assert_eq!(ssa.parameter_count(), 3);
+    assert_eq!(ssa.num_args(), 3);
 
     Ok(())
 }
@@ -2094,7 +2099,7 @@ fn test_ssa_exception_handler_preservation() -> Result<()> {
     let (bytecode, _max_stack, handlers) = asm.finish()?;
     let blocks = decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len()))?;
     let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
-    let mut ssa = SsaConverter::build(&cfg, 1, 0, None)?;
+    let mut ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))?;
 
     // Convert the generated ExceptionHandlers to SsaExceptionHandlers
     // In a real scenario, this would be done during SSA construction
@@ -2172,7 +2177,7 @@ fn test_ssa_finally_handler() -> Result<()> {
     let (bytecode, _max_stack, handlers) = asm.finish()?;
     let blocks = decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len()))?;
     let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
-    let mut ssa = SsaConverter::build(&cfg, 1, 0, None)?;
+    let mut ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))?;
 
     // Convert the generated ExceptionHandlers to SsaExceptionHandlers
     for handler in &handlers {
@@ -2247,7 +2252,7 @@ fn test_ssa_nested_exception_handlers() -> Result<()> {
     let (bytecode, _max_stack, handlers) = asm.finish()?;
     let blocks = decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len()))?;
     let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
-    let mut ssa = SsaConverter::build(&cfg, 1, 0, None)?;
+    let mut ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))?;
 
     // Convert the generated ExceptionHandlers to SsaExceptionHandlers
     let mut ssa_handlers = Vec::new();

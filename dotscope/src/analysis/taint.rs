@@ -41,7 +41,10 @@
 
 use std::collections::HashSet;
 
-use crate::analysis::ssa::{SsaFunction, SsaOp, SsaVarId, VariableOrigin};
+use crate::{
+    analysis::ssa::{SsaFunction, SsaOp, SsaVarId, VariableOrigin},
+    metadata::token::Token,
+};
 
 /// How to handle PHI nodes during taint propagation.
 ///
@@ -678,7 +681,7 @@ pub fn cff_taint_config(
 #[derive(Debug)]
 pub struct TokenTaintBuilder {
     /// Tokens to find references to.
-    target_tokens: HashSet<crate::metadata::token::Token>,
+    target_tokens: HashSet<Token>,
     /// Configuration for the taint analysis.
     config: TaintConfig,
 }
@@ -690,7 +693,7 @@ impl TokenTaintBuilder {
     ///
     /// * `tokens` - Tokens to find references to.
     #[must_use]
-    pub fn new(tokens: impl IntoIterator<Item = crate::metadata::token::Token>) -> Self {
+    pub fn new(tokens: impl IntoIterator<Item = Token>) -> Self {
         Self {
             target_tokens: tokens.into_iter().collect(),
             config: TaintConfig::bidirectional(),
@@ -753,19 +756,21 @@ impl TokenTaintBuilder {
 #[must_use]
 pub fn find_token_dependencies(
     ssa: &SsaFunction,
-    removed_tokens: impl IntoIterator<Item = crate::metadata::token::Token>,
+    removed_tokens: impl IntoIterator<Item = Token>,
 ) -> TaintAnalysis {
     TokenTaintBuilder::new(removed_tokens).analyze(ssa)
 }
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashSet;
+
+    use super::*;
+
     use crate::analysis::{
         ConstValue, PhiNode, PhiOperand, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId,
         VariableOrigin,
     };
-
-    use super::*;
 
     /// Creates a simple SSA function for testing.
     ///
@@ -783,10 +788,10 @@ mod tests {
     fn create_simple_ssa() -> (SsaFunction, SsaVarId, SsaVarId, SsaVarId, SsaVarId) {
         let mut ssa = SsaFunction::new(0, 0);
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let v3 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
+        let v3 = SsaVarId::from_index(3);
 
         // Block 0
         let mut b0 = SsaBlock::new(0);
@@ -837,9 +842,9 @@ mod tests {
     fn create_phi_ssa() -> (SsaFunction, SsaVarId, SsaVarId, SsaVarId) {
         let mut ssa = SsaFunction::new(0, 0);
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(4);
+        let v1 = SsaVarId::from_index(5);
+        let v2 = SsaVarId::from_index(6);
 
         // Block 0
         let mut b0 = SsaBlock::new(0);
@@ -861,7 +866,7 @@ mod tests {
 
         // Block 2 with PHI
         let mut b2 = SsaBlock::new(2);
-        let mut phi = PhiNode::new(v2, VariableOrigin::Stack(0));
+        let mut phi = PhiNode::new(v2, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v0, 0));
         phi.add_operand(PhiOperand::new(v1, 1));
         b2.add_phi(phi);

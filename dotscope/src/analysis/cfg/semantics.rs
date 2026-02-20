@@ -719,7 +719,8 @@ impl<'a> SemanticAnalyzer<'a> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::SsaFunctionBuilder;
+
+    use crate::analysis::{SsaFunctionBuilder, SsaType};
 
     #[test]
     fn test_block_role_classification() {
@@ -735,11 +736,13 @@ mod tests {
 
     #[test]
     fn test_exit_block_detection() {
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                b.ret();
-            });
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         let mut analyzer = SemanticAnalyzer::new(&ssa);
         let sem = analyzer.analyze_block(0);
@@ -750,16 +753,18 @@ mod tests {
 
     #[test]
     fn test_condition_block_detection() {
-        let ssa = SsaFunctionBuilder::new(0, 1).build_with(|f| {
-            let local = f.local(0);
-            f.block(0, |b| {
-                let zero = b.const_i32(0);
-                let cmp = b.clt(local, zero);
-                b.branch(cmp, 1, 2);
-            });
-            f.block(1, |b| b.ret());
-            f.block(2, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 1)
+            .build_with(|f| {
+                let local = f.local(0, SsaType::I32);
+                f.block(0, |b| {
+                    let zero = b.const_i32(0);
+                    let cmp = b.clt(local, zero);
+                    b.branch(cmp, 1, 2);
+                });
+                f.block(1, |b| b.ret());
+                f.block(2, |b| b.ret());
+            })
+            .unwrap();
 
         let mut analyzer = SemanticAnalyzer::new(&ssa);
         let sem = analyzer.analyze_block(0);
@@ -770,14 +775,16 @@ mod tests {
 
     #[test]
     fn test_init_block_detection() {
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let _ = b.const_i32(0);
-                let _ = b.const_i32(1);
-                b.jump(1);
-            });
-            f.block(1, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let _ = b.const_i32(0);
+                    let _ = b.const_i32(1);
+                    b.jump(1);
+                });
+                f.block(1, |b| b.ret());
+            })
+            .unwrap();
 
         let mut analyzer = SemanticAnalyzer::new(&ssa);
         let sem = analyzer.analyze_block(0);

@@ -279,7 +279,7 @@ impl SsaPass for CffReconstructionPass {
             Some(mut patched) => {
                 // After CFF unflattening, the CFG structure has changed significantly.
                 // Rebuild SSA form to ensure PHI nodes are correct for the new CFG.
-                patched.rebuild_ssa();
+                patched.rebuild_ssa()?;
 
                 *ssa = patched;
 
@@ -311,13 +311,14 @@ mod tests {
         deobfuscation::passes::unflattening::{detection::CffDetector, dispatcher::Dispatcher},
         deobfuscation::{DeobfuscationEngine, EngineConfig},
         metadata::token::Token,
+        test::TestTypeProvider,
         CilObject,
     };
 
     fn create_dispatcher_ssa() -> (SsaFunction, Dispatcher) {
         let mut ssa = SsaFunction::new(0, 1);
-        let state_var = SsaVarId::new();
-        let switch_var = SsaVarId::new();
+        let state_var = SsaVarId::from_index(0);
+        let switch_var = SsaVarId::from_index(1);
 
         // B0: entry -> jump to dispatcher
         let mut b0 = SsaBlock::new(0);
@@ -385,7 +386,12 @@ mod tests {
         num_args: usize,
         num_locals: usize,
     ) -> crate::Result<SsaFunction> {
-        SsaConverter::build(cfg, num_args, num_locals, None)
+        SsaConverter::build(
+            cfg,
+            num_args,
+            num_locals,
+            &TestTypeProvider::new(num_args, num_locals),
+        )
     }
 
     /// Check if SSA has a switch instruction (indicates CFF dispatcher).

@@ -24,7 +24,7 @@ use crate::metadata::{
     method::Method,
     signatures::{
         CustomModifiers, SignatureArray, SignatureLocalVariable, SignatureMethod,
-        SignatureParameter, SignaturePointer, SignatureSzArray, TypeSignature,
+        SignatureMethodSpec, SignatureParameter, SignaturePointer, SignatureSzArray, TypeSignature,
     },
     tables::{MemberRefSignature, StandAloneSigRaw, StandAloneSignature},
     token::Token,
@@ -149,7 +149,7 @@ impl fmt::Display for SigRef {
 /// assert!(string_type.is_reference());
 /// assert!(array_type.is_array());
 /// ```
-#[derive(Debug, Clone, PartialEq, Eq, Hash, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SsaType {
     // ========== Primitives ==========
     /// No return value (void).
@@ -210,6 +210,11 @@ pub enum SsaType {
     /// Value type (struct) - stored inline, not by reference.
     ValueType(TypeRef),
 
+    /// Generic instantiation of a type with concrete type arguments.
+    ///
+    /// For example, `List<int>` is `GenericInst(Class(List), [I32])`.
+    GenericInst(Box<SsaType>, Vec<SsaType>),
+
     /// Single-dimensional or multi-dimensional array.
     ///
     /// The `u32` is the rank (number of dimensions). Rank 1 is a vector (SZ array).
@@ -261,7 +266,6 @@ pub enum SsaType {
     /// Type not yet inferred or unknown.
     ///
     /// This is used during type inference before a type is determined.
-    #[default]
     Unknown,
 
     /// Type that varies depending on control flow (for incomplete inference).
@@ -357,10 +361,11 @@ impl SsaType {
     /// Returns `true` if this is a reference type (can be null).
     #[must_use]
     pub fn is_reference(&self) -> bool {
-        matches!(
-            self,
-            Self::Object | Self::String | Self::Class(_) | Self::Array(_, _) | Self::Null
-        )
+        match self {
+            Self::Object | Self::String | Self::Class(_) | Self::Array(_, _) | Self::Null => true,
+            Self::GenericInst(base, _) => base.is_reference(),
+            _ => false,
+        }
     }
 
     /// Returns `true` if this is a value type (struct).
@@ -509,6 +514,9 @@ impl SsaType {
             | Self::RuntimeMethodHandle
             | Self::RuntimeFieldHandle => TypeClass::Reference,
 
+            // Generic instantiation delegates to its base type
+            Self::GenericInst(base, _) => base.storage_class(),
+
             // Other types
             Self::Void
             | Self::Unknown
@@ -626,6 +634,10 @@ impl SsaType {
             Self::String => TypeSignature::String,
             Self::Class(type_ref) => TypeSignature::Class(type_ref.token()),
             Self::ValueType(type_ref) => TypeSignature::ValueType(type_ref.token()),
+            Self::GenericInst(base, type_args) => TypeSignature::GenericInst(
+                Box::new(base.to_type_signature()),
+                type_args.iter().map(SsaType::to_type_signature).collect(),
+            ),
             Self::Array(elem, 1) => TypeSignature::SzArray(SignatureSzArray {
                 modifiers: CustomModifiers::default(),
                 base: Box::new(elem.to_type_signature()),
@@ -809,9 +821,14 @@ impl SsaType {
             TypeSignature::GenericParamType(index) => Self::GenericParam(*index),
             TypeSignature::GenericParamMethod(index) => Self::MethodGenericParam(*index),
 
-            // Generic instantiation
-            TypeSignature::GenericInst(base_type, _type_args) => {
-                Self::from_type_signature(base_type, assembly)
+            // Generic instantiation - preserve both base type and type arguments
+            TypeSignature::GenericInst(base_type, type_args) => {
+                let base = Self::from_type_signature(base_type, assembly);
+                let args = type_args
+                    .iter()
+                    .map(|a| Self::from_type_signature(a, assembly))
+                    .collect();
+                Self::GenericInst(Box::new(base), args)
             }
 
             // Pinned - unwrap to inner type
@@ -923,6 +940,16 @@ impl fmt::Display for SsaType {
             Self::String => write!(f, "string"),
             Self::Class(t) => write!(f, "class {t}"),
             Self::ValueType(t) => write!(f, "valuetype {t}"),
+            Self::GenericInst(base, args) => {
+                write!(f, "{base}<")?;
+                for (i, arg) in args.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{arg}")?;
+                }
+                write!(f, ">")
+            }
             Self::Array(elem, 1) => write!(f, "{elem}[]"),
             Self::Array(elem, rank) => write!(f, "{elem}[{rank}d]"),
             Self::Pointer(inner) => write!(f, "{inner}*"),
@@ -938,6 +965,40 @@ impl fmt::Display for SsaType {
             Self::Unknown => write!(f, "?"),
             Self::Varying => write!(f, "varying"),
         }
+    }
+}
+
+/// Trait for providing type information during SSA construction.
+///
+/// This abstracts the type resolution API so that the SSA converter can work
+/// with different sources of type information:
+/// - `TypeContext` for real assembly metadata
+/// - `TestTypeProvider` for synthetic CIL in tests
+pub trait TypeProvider {
+    /// Returns the type of a method argument by index.
+    fn arg_type(&self, idx: u16) -> SsaType;
+
+    /// Returns the type of a local variable by index.
+    fn local_type(&self, idx: u16) -> SsaType;
+
+    /// Returns the return type of a called method.
+    fn call_return_type(&self, token: Token) -> SsaType;
+
+    /// Returns the type of a newly constructed object (for newobj instruction).
+    fn newobj_type(&self, ctor_token: Token) -> SsaType;
+
+    /// Returns the type of a field.
+    fn field_type(&self, field_token: Token) -> SsaType;
+
+    /// Returns the return type of a `calli` (indirect call) from its `StandAloneSig` token.
+    fn call_indirect_return_type(&self, sig_token: Token) -> SsaType;
+
+    /// Returns the assembly reference, if available.
+    fn assembly(&self) -> Option<&CilObject>;
+
+    /// Returns the original local variable type signatures for code generation.
+    fn local_type_signatures(&self) -> Option<Vec<SignatureLocalVariable>> {
+        None
     }
 }
 
@@ -994,10 +1055,12 @@ impl<'a> TypeContext<'a> {
             }
             // Adjust for 'this' offset
             if let Some(param) = self.method.signature.params.get(idx - 1) {
-                return SsaType::from_type_signature(&param.base, self.assembly);
+                let ty = SsaType::from_type_signature(&param.base, self.assembly);
+                return self.validate_generic_params(ty);
             }
         } else if let Some(param) = self.method.signature.params.get(idx) {
-            return SsaType::from_type_signature(&param.base, self.assembly);
+            let ty = SsaType::from_type_signature(&param.base, self.assembly);
+            return self.validate_generic_params(ty);
         }
 
         SsaType::Unknown
@@ -1010,7 +1073,8 @@ impl<'a> TypeContext<'a> {
             .get_local_type_signatures()
             .and_then(|types| types.into_iter().nth(idx as usize))
             .map_or(SsaType::Unknown, |sig| {
-                SsaType::from_type_signature(&sig.base, self.assembly)
+                let ty = SsaType::from_type_signature(&sig.base, self.assembly);
+                self.validate_generic_params(ty)
             })
     }
 
@@ -1049,15 +1113,18 @@ impl<'a> TypeContext<'a> {
                 })
                 .unwrap_or(SsaType::Unknown),
 
-            // MethodSpec - resolve to underlying method and get its return type
-            0x2B => self
-                .assembly
-                .method_specs()
-                .get(&token)
-                .and_then(|entry| entry.value().method.token())
-                .map_or(SsaType::Unknown, |method_token| {
-                    self.call_return_type(method_token)
-                }),
+            // MethodSpec - resolve to underlying method and substitute generic params
+            0x2B => {
+                let Some(entry) = self.assembly.method_specs().get(&token) else {
+                    return SsaType::Unknown;
+                };
+                let spec = entry.value();
+                let Some(method_token) = spec.method.token() else {
+                    return SsaType::Unknown;
+                };
+                let base_type = self.call_return_type(method_token);
+                Self::resolve_method_generic_params(base_type, &spec.instantiation, self.assembly)
+            }
 
             _ => SsaType::Unknown,
         }
@@ -1173,6 +1240,91 @@ impl<'a> TypeContext<'a> {
         }
     }
 
+    /// Substitutes method generic parameters (`!!idx`) with concrete type arguments.
+    ///
+    /// When a `MethodSpec` instantiates a generic method, the base method's return
+    /// type may contain `MethodGenericParam(idx)` placeholders. This method replaces
+    /// them with the actual types from the `SignatureMethodSpec` instantiation.
+    fn resolve_method_generic_params(
+        ty: SsaType,
+        spec: &SignatureMethodSpec,
+        assembly: &CilObject,
+    ) -> SsaType {
+        match ty {
+            SsaType::MethodGenericParam(idx) => spec
+                .generic_args
+                .get(idx as usize)
+                .map_or(SsaType::Unknown, |sig| {
+                    SsaType::from_type_signature(sig, assembly)
+                }),
+            SsaType::Array(elem, rank) => {
+                let resolved = Self::resolve_method_generic_params(*elem, spec, assembly);
+                SsaType::Array(Box::new(resolved), rank)
+            }
+            SsaType::ByRef(inner) => {
+                let resolved = Self::resolve_method_generic_params(*inner, spec, assembly);
+                SsaType::ByRef(Box::new(resolved))
+            }
+            SsaType::Pointer(inner) => {
+                let resolved = Self::resolve_method_generic_params(*inner, spec, assembly);
+                SsaType::Pointer(Box::new(resolved))
+            }
+            SsaType::GenericInst(base, args) => {
+                let resolved_base = Self::resolve_method_generic_params(*base, spec, assembly);
+                let resolved_args = args
+                    .into_iter()
+                    .map(|a| Self::resolve_method_generic_params(a, spec, assembly))
+                    .collect();
+                SsaType::GenericInst(Box::new(resolved_base), resolved_args)
+            }
+            other => other,
+        }
+    }
+
+    /// Validates generic parameter references against the method's actual generic params.
+    ///
+    /// ConfuserEx-corrupted metadata can contain `!!0` references in non-generic methods.
+    /// This replaces out-of-range generic parameter references with `Unknown` to prevent
+    /// invalid types from propagating through the pipeline.
+    fn validate_generic_params(&self, ty: SsaType) -> SsaType {
+        match ty {
+            SsaType::MethodGenericParam(idx) => {
+                if (idx as usize) < self.method.generic_params.count() {
+                    SsaType::MethodGenericParam(idx)
+                } else {
+                    SsaType::Unknown
+                }
+            }
+            SsaType::GenericParam(idx) => {
+                let valid = self
+                    .method
+                    .declaring_type_rc()
+                    .is_some_and(|dt| (idx as usize) < dt.generic_params.count());
+                if valid {
+                    SsaType::GenericParam(idx)
+                } else {
+                    SsaType::Unknown
+                }
+            }
+            SsaType::Array(elem, rank) => {
+                SsaType::Array(Box::new(self.validate_generic_params(*elem)), rank)
+            }
+            SsaType::ByRef(inner) => SsaType::ByRef(Box::new(self.validate_generic_params(*inner))),
+            SsaType::Pointer(inner) => {
+                SsaType::Pointer(Box::new(self.validate_generic_params(*inner)))
+            }
+            SsaType::GenericInst(base, args) => {
+                let validated_base = self.validate_generic_params(*base);
+                let validated_args = args
+                    .into_iter()
+                    .map(|a| self.validate_generic_params(a))
+                    .collect();
+                SsaType::GenericInst(Box::new(validated_base), validated_args)
+            }
+            other => other,
+        }
+    }
+
     /// Returns the original local variable type signatures for code generation.
     ///
     /// This provides the full `SignatureLocalVariable` information (including
@@ -1183,9 +1335,46 @@ impl<'a> TypeContext<'a> {
     }
 }
 
+impl TypeProvider for TypeContext<'_> {
+    fn arg_type(&self, idx: u16) -> SsaType {
+        self.arg_type(idx)
+    }
+
+    fn local_type(&self, idx: u16) -> SsaType {
+        self.local_type(idx)
+    }
+
+    fn call_return_type(&self, token: Token) -> SsaType {
+        self.call_return_type(token)
+    }
+
+    fn newobj_type(&self, ctor_token: Token) -> SsaType {
+        self.newobj_type(ctor_token)
+    }
+
+    fn field_type(&self, field_token: Token) -> SsaType {
+        self.field_type(field_token)
+    }
+
+    fn call_indirect_return_type(&self, sig_token: Token) -> SsaType {
+        self.call_indirect_return_type(sig_token)
+    }
+
+    fn assembly(&self) -> Option<&CilObject> {
+        Some(self.assembly)
+    }
+
+    fn local_type_signatures(&self) -> Option<Vec<SignatureLocalVariable>> {
+        TypeContext::local_type_signatures(self)
+    }
+}
+
 #[cfg(test)]
 mod tests {
-    use crate::analysis::ssa::types::{SsaType, TypeClass};
+    use crate::{
+        analysis::ssa::types::{SsaType, TypeClass, TypeRef},
+        metadata::{signatures::TypeSignature, token::Token},
+    };
 
     #[test]
     fn test_primitive_types() {
@@ -1361,5 +1550,101 @@ mod tests {
         assert!(!SsaType::I32.is_compatible_for_storage(&SsaType::I64));
         assert!(!SsaType::I32.is_compatible_for_storage(&SsaType::Object));
         assert!(!SsaType::F32.is_compatible_for_storage(&SsaType::F64));
+    }
+
+    fn make_generic_inst_class(args: Vec<SsaType>) -> SsaType {
+        SsaType::GenericInst(
+            Box::new(SsaType::Class(TypeRef::new(Token::new(0x0200_0001)))),
+            args,
+        )
+    }
+
+    #[test]
+    fn test_generic_inst_is_reference() {
+        // GenericInst with Class base is a reference type
+        let list_int = make_generic_inst_class(vec![SsaType::I32]);
+        assert!(list_int.is_reference());
+
+        // GenericInst with ValueType base is NOT a reference type
+        let valuetype_inst = SsaType::GenericInst(
+            Box::new(SsaType::ValueType(TypeRef::new(Token::new(0x0200_0002)))),
+            vec![SsaType::I32],
+        );
+        assert!(!valuetype_inst.is_reference());
+    }
+
+    #[test]
+    fn test_generic_inst_storage_class() {
+        // GenericInst with Class base has Reference storage class
+        let list_int = make_generic_inst_class(vec![SsaType::I32]);
+        assert_eq!(list_int.storage_class(), TypeClass::Reference);
+
+        // GenericInst with ValueType base has Reference storage class (value types are Reference in storage)
+        let valuetype_inst = SsaType::GenericInst(
+            Box::new(SsaType::ValueType(TypeRef::new(Token::new(0x0200_0002)))),
+            vec![SsaType::I32],
+        );
+        assert_eq!(valuetype_inst.storage_class(), TypeClass::Reference);
+    }
+
+    #[test]
+    fn test_generic_inst_display() {
+        let list_int = make_generic_inst_class(vec![SsaType::I32]);
+        assert_eq!(format!("{list_int}"), "class TypeRef(0x02000001)<i32>");
+
+        let dict = SsaType::GenericInst(
+            Box::new(SsaType::Class(TypeRef::new(Token::new(0x0200_0003)))),
+            vec![SsaType::String, SsaType::I32],
+        );
+        assert_eq!(format!("{dict}"), "class TypeRef(0x02000003)<string, i32>");
+    }
+
+    #[test]
+    fn test_generic_inst_to_type_signature_roundtrip() {
+        let list_int = make_generic_inst_class(vec![SsaType::I32]);
+        let sig = list_int.to_type_signature();
+
+        // Should produce GenericInst with Class base and I4 arg
+        match &sig {
+            TypeSignature::GenericInst(base, args) => {
+                assert!(matches!(base.as_ref(), TypeSignature::Class(_)));
+                assert_eq!(args.len(), 1);
+                assert!(matches!(args[0], TypeSignature::I4));
+            }
+            other => panic!("Expected GenericInst, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn test_generic_inst_merge() {
+        let list_int = make_generic_inst_class(vec![SsaType::I32]);
+        let list_int2 = make_generic_inst_class(vec![SsaType::I32]);
+
+        // Same GenericInst merges to itself
+        assert_eq!(list_int.merge(&list_int2), list_int);
+
+        // Different type args produce Varying
+        let list_str = make_generic_inst_class(vec![SsaType::String]);
+        assert_eq!(list_int.merge(&list_str), SsaType::Varying);
+
+        // Null merges with GenericInst (reference type)
+        assert_eq!(SsaType::Null.merge(&list_int), list_int);
+        assert_eq!(list_int.merge(&SsaType::Null), list_int);
+
+        // Unknown merges with GenericInst
+        assert_eq!(SsaType::Unknown.merge(&list_int), list_int);
+        assert_eq!(list_int.merge(&SsaType::Unknown), list_int);
+    }
+
+    #[test]
+    fn test_generic_inst_storage_compatibility() {
+        let list_int = make_generic_inst_class(vec![SsaType::I32]);
+
+        // GenericInst(Class) is compatible with Object and String (all Reference)
+        assert!(list_int.is_compatible_for_storage(&SsaType::Object));
+        assert!(list_int.is_compatible_for_storage(&SsaType::String));
+
+        // Not compatible with Int32
+        assert!(!list_int.is_compatible_for_storage(&SsaType::I32));
     }
 }

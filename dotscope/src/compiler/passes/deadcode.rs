@@ -30,8 +30,13 @@ use std::{
 };
 
 use crate::{
-    analysis::{PhiAnalyzer, PhiNode, SsaCfg, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
-    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
+    analysis::{
+        PhiAnalyzer, PhiNode, SsaCfg, SsaFunction, SsaInstruction, SsaOp, SsaVarId, VariableOrigin,
+    },
+    compiler::{
+        pass::{ModificationScope, SsaPass},
+        CompilerContext, EventKind, EventLog,
+    },
     metadata::token::Token,
     utils::graph::{algorithms, NodeId},
     CilObject, Result,
@@ -222,116 +227,6 @@ impl DeadCodeEliminationPass {
         rpo
     }
 
-    /// Prunes phi operands that originate from unreachable predecessor blocks.
-    ///
-    /// When blocks become unreachable, phi nodes in their successors may still
-    /// reference values from those unreachable blocks. This function removes
-    /// such stale operands to maintain SSA invariants.
-    ///
-    /// # Arguments
-    ///
-    /// * `ssa` - The SSA function to modify.
-    /// * `reachable` - The set of reachable block indices.
-    ///
-    /// # Returns
-    ///
-    /// The number of phi operands that were pruned.
-    fn prune_phi_operands(ssa: &mut SsaFunction, reachable: &HashSet<usize>) -> usize {
-        // First, build a set of all defined variables
-        // This includes variables defined by instructions and PHIs in reachable blocks
-        let mut defined_vars: HashSet<SsaVarId> = HashSet::new();
-
-        for &block_idx in reachable {
-            if let Some(block) = ssa.block(block_idx) {
-                // Variables defined by PHIs
-                for phi in block.phi_nodes() {
-                    defined_vars.insert(phi.result());
-                }
-                // Variables defined by instructions
-                for instr in block.instructions() {
-                    if let Some(def) = instr.def() {
-                        defined_vars.insert(def);
-                    }
-                }
-            }
-        }
-
-        // Also include argument variables which are defined at entry
-        // (but not locals - they need explicit definitions)
-        for var in ssa.variables() {
-            // Only include arguments (which have implicit definitions at function entry)
-            // Locals must have explicit definitions to be considered defined
-            if var.origin().is_argument() {
-                defined_vars.insert(var.id());
-            }
-        }
-
-        // Compute actual predecessors from the CFG
-        let mut actual_predecessors: HashMap<usize, HashSet<usize>> = HashMap::new();
-
-        for &block_idx in reachable {
-            if let Some(block) = ssa.block(block_idx) {
-                for successor in block.successors() {
-                    actual_predecessors
-                        .entry(successor)
-                        .or_default()
-                        .insert(block_idx);
-                }
-            }
-        }
-
-        let mut pruned = 0;
-
-        for block_idx in reachable.iter().copied() {
-            if let Some(block) = ssa.block_mut(block_idx) {
-                let preds = actual_predecessors.get(&block_idx);
-
-                for phi in block.phi_nodes_mut() {
-                    let operands = phi.operands_mut();
-                    let original_len = operands.len();
-
-                    // Skip if already empty (nothing to prune)
-                    if original_len == 0 {
-                        continue;
-                    }
-
-                    // First, identify which operands to keep
-                    let to_keep: Vec<bool> = operands
-                        .iter()
-                        .map(|op| {
-                            let pred = op.predecessor();
-                            let value = op.value();
-
-                            // Keep if predecessor is in actual predecessors AND value is still defined
-                            // Both conditions must be true:
-                            // - Predecessor must be a valid CFG edge
-                            // - Value must have a definition (not Nop'd or from unreachable code)
-                            preds.is_some_and(|p| p.contains(&pred))
-                                && defined_vars.contains(&value)
-                        })
-                        .collect();
-
-                    // Safety check: never leave a PHI completely empty
-                    // If all operands would be removed, keep them all
-                    let keep_count = to_keep.iter().filter(|&&k| k).count();
-                    if keep_count == 0 {
-                        // All operands would be removed - this indicates a structural issue
-                        // Keep the PHI intact to avoid breaking the code
-                        continue;
-                    }
-
-                    // Apply the filtering
-                    let mut keep_iter = to_keep.iter();
-                    operands.retain(|_| *keep_iter.next().unwrap_or(&true));
-
-                    pruned += original_len - operands.len();
-                }
-            }
-        }
-
-        pruned
-    }
-
     /// Computes the set of live variables using reverse dataflow analysis.
     ///
     /// A variable is considered live if any of the following conditions hold:
@@ -400,27 +295,61 @@ impl DeadCodeEliminationPass {
         // Build def-to-uses map for efficiency
         let mut def_uses: HashMap<SsaVarId, Vec<SsaVarId>> = HashMap::new();
 
+        // Collect all definitions per Local/Arg origin, and all LoadLocal/LoadArg
+        // instructions. LoadLocal/LoadArg reference locals/args by index (not SSA
+        // variable), creating an implicit dependency that needs bridging.
+        let mut origin_defs: HashMap<VariableOrigin, Vec<SsaVarId>> = HashMap::new();
+        let mut load_local_info: Vec<(SsaVarId, VariableOrigin)> = Vec::new();
+
         for &block_idx in rpo {
             if !reachable.contains(&block_idx) {
                 continue;
             }
 
             if let Some(block) = ssa.block(block_idx) {
-                // Instructions
+                // Phi nodes: build def_uses and collect Local/Arg defs
+                for phi in block.phi_nodes() {
+                    let def = phi.result();
+                    for operand in phi.operands() {
+                        def_uses.entry(def).or_default().push(operand.value());
+                    }
+                    let origin = phi.origin();
+                    if matches!(
+                        origin,
+                        VariableOrigin::Local(_) | VariableOrigin::Argument(_)
+                    ) {
+                        origin_defs.entry(origin).or_default().push(def);
+                    }
+                }
+
+                // Instructions: build def_uses, collect LoadLocal/LoadArg, track defs
                 for instr in block.instructions() {
                     let op = instr.op();
                     if let Some(def) = op.dest() {
                         for use_var in op.uses() {
                             def_uses.entry(def).or_default().push(use_var);
                         }
-                    }
-                }
 
-                // Phi nodes
-                for phi in block.phi_nodes() {
-                    let def = phi.result();
-                    for operand in phi.operands() {
-                        def_uses.entry(def).or_default().push(operand.value());
+                        // Track Local/Arg-origin definitions (from stloc/starg Copies)
+                        if let Some(var) = ssa.variable(def) {
+                            let origin = var.origin();
+                            if matches!(
+                                origin,
+                                VariableOrigin::Local(_) | VariableOrigin::Argument(_)
+                            ) {
+                                origin_defs.entry(origin).or_default().push(def);
+                            }
+                        }
+                    }
+
+                    match op {
+                        SsaOp::LoadLocal { dest, local_index } => {
+                            load_local_info.push((*dest, VariableOrigin::Local(*local_index)));
+                        }
+                        SsaOp::LoadArg { dest, arg_index } => {
+                            load_local_info.push((*dest, VariableOrigin::Argument(*arg_index)));
+                        }
+                        _ => {}
                     }
                 }
             }
@@ -428,13 +357,53 @@ impl DeadCodeEliminationPass {
 
         // Worklist algorithm: if a variable is live, its defining uses are live
         while let Some(var) = worklist.pop_front() {
-            // Find what uses were needed to define this variable
             if let Some(uses) = def_uses.get(&var) {
                 for &use_var in uses {
                     if live.insert(use_var) {
                         worklist.push_back(use_var);
                     }
                 }
+            }
+        }
+
+        // Phase 3: Bridge the LoadLocal/LoadArg gap.
+        // For each live LoadLocal/LoadArg dest, mark ALL definitions of the
+        // corresponding Local(K)/Arg(K) origin as live. This is conservative
+        // (keeps all versions alive) but correct — the specific reaching def
+        // would require dominator tree traversal.
+        //
+        // This must loop because re-propagation can make new LoadLocal/LoadArg
+        // dests live (e.g., v6=Copy(v5) makes v5 live, and v5=LoadLocal(0)
+        // needs to bridge to defs of Local(0)).
+        loop {
+            let mut newly_live = false;
+            for (dest, origin) in &load_local_info {
+                if !live.contains(dest) {
+                    continue;
+                }
+                if let Some(defs) = origin_defs.get(origin) {
+                    for &def_var in defs {
+                        if live.insert(def_var) {
+                            worklist.push_back(def_var);
+                            newly_live = true;
+                        }
+                    }
+                }
+            }
+
+            // Re-propagate liveness from newly-live variables
+            while let Some(var) = worklist.pop_front() {
+                if let Some(uses) = def_uses.get(&var) {
+                    for &use_var in uses {
+                        if live.insert(use_var) {
+                            worklist.push_back(use_var);
+                        }
+                    }
+                }
+            }
+
+            if !newly_live {
+                break;
             }
         }
 
@@ -965,7 +934,7 @@ impl DeadCodeEliminationPass {
         total_changes += Self::remove_nop_instructions(ssa, &reachable, method_token, changes);
 
         // Step 5: Prune phi operands from unreachable predecessors
-        total_changes += Self::prune_phi_operands(ssa, &reachable);
+        total_changes += ssa.prune_phi_operands(&reachable);
 
         // Step 6: Find and simplify trivial phis (doesn't need liveness)
         // Trivial phis are identified purely by structure (all operands same or self-referential)
@@ -997,8 +966,23 @@ impl DeadCodeEliminationPass {
 
         // Step 10: Find and remove dead definitions (pure ops with unused results)
         let dead_defs = Self::find_dead_definitions(ssa, &reachable, &live, &dead_phi_results);
+        let c10 = dead_defs.len();
         Self::remove_instructions(ssa, &dead_defs, method_token, changes);
-        total_changes += dead_defs.len();
+        total_changes += c10;
+
+        // Step 10b: Clean up Nops created by remove_instructions (which replaces
+        // dead instructions with Nop to preserve indices). Without this, the next
+        // iteration would find these Nops as opless instructions, creating an
+        // oscillation: dead_def → Nop → opless → dead_def → ...
+        if c10 > 0 {
+            for &block_idx in &reachable {
+                if let Some(block) = ssa.block_mut(block_idx) {
+                    block
+                        .instructions_mut()
+                        .retain(|instr| !matches!(instr.op(), SsaOp::Nop));
+                }
+            }
+        }
 
         total_changes
     }
@@ -1013,6 +997,10 @@ impl SsaPass for DeadCodeEliminationPass {
         "Eliminates unreachable code and unused definitions"
     }
 
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::InstructionsOnly
+    }
+
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
@@ -1024,27 +1012,19 @@ impl SsaPass for DeadCodeEliminationPass {
 
         // Iterate until fixed point
         for _ in 0..MAX_ITERATIONS {
-            let iteration_changes = Self::run_iteration(ssa, method_token, &mut changes);
-
-            if iteration_changes == 0 {
+            if Self::run_iteration(ssa, method_token, &mut changes) == 0 {
                 break;
             }
         }
 
         // After removing dead instructions and phis, compact the variable table
-        // to remove orphaned variable entries
-        let compacted = ssa.compact_variables();
-        if compacted > 0 {
-            changes
-                .record(EventKind::VariablesCompacted)
-                .at(method_token, compacted)
-                .message(format!("removed {compacted} orphaned variables"));
-        }
-
+        // to remove orphaned variable entries.
         let changed = !changes.is_empty();
         if changed {
+            ssa.compact_variables();
             ctx.events.merge(&changes);
         }
+
         Ok(changed)
     }
 }
@@ -1186,14 +1166,19 @@ impl SsaPass for DeadMethodEliminationPass {
 
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::sync::Arc;
 
-    use super::*;
-    use crate::analysis::{
-        CallGraph, ConstValue, DefSite, PhiNode, PhiOperand, SsaBlock, SsaFunction,
-        SsaFunctionBuilder, SsaInstruction, SsaOp, SsaVariable, VariableOrigin,
+    use crate::{
+        analysis::{
+            CallGraph, ConstValue, DefSite, MethodRef, PhiNode, PhiOperand, SsaBlock, SsaFunction,
+            SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId, VariableOrigin,
+        },
+        compiler::{CompilerContext, SsaPass},
+        metadata::token::Token,
+        test::helpers::test_assembly_arc,
     };
-    use crate::test::helpers::test_assembly_arc;
 
     // Helper to create a minimal analysis context for testing
     fn test_context() -> CompilerContext {
@@ -1208,7 +1193,7 @@ mod tests {
         assert_eq!(op.successors(), vec![5]);
 
         // Test branch
-        let cond = SsaVarId::new();
+        let cond = SsaVarId::from_index(0);
         let op = SsaOp::Branch {
             condition: cond,
             true_target: 1,
@@ -1217,7 +1202,7 @@ mod tests {
         assert_eq!(op.successors(), vec![1, 2]);
 
         // Test switch
-        let val = SsaVarId::new();
+        let val = SsaVarId::from_index(1);
         let op = SsaOp::Switch {
             value: val,
             targets: vec![1, 2, 3],
@@ -1244,9 +1229,11 @@ mod tests {
 
     #[test]
     fn test_single_block_reachable() {
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.ret());
+            })
+            .unwrap();
 
         let reachable = DeadCodeEliminationPass::find_reachable_blocks(&ssa);
         assert_eq!(reachable.len(), 1);
@@ -1255,14 +1242,16 @@ mod tests {
 
     #[test]
     fn test_unreachable_block_detection() {
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            // Block 0: entry, jumps to block 1
-            f.block(0, |b| b.jump(1));
-            // Block 1: reachable from block 0
-            f.block(1, |b| b.ret());
-            // Block 2: unreachable
-            f.block(2, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                // Block 0: entry, jumps to block 1
+                f.block(0, |b| b.jump(1));
+                // Block 1: reachable from block 0
+                f.block(1, |b| b.ret());
+                // Block 2: unreachable
+                f.block(2, |b| b.ret());
+            })
+            .unwrap();
 
         let reachable = DeadCodeEliminationPass::find_reachable_blocks(&ssa);
         assert_eq!(reachable.len(), 2);
@@ -1278,16 +1267,18 @@ mod tests {
         // v2 = v1 + 3  (dead after v3 removed)
         // v3 = v2 * 2  (dead - unused)
         // return
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let v1 = b.const_i32(5);
-                let three = b.const_i32(3);
-                let v2 = b.add(v1, three);
-                let two = b.const_i32(2);
-                let _ = b.mul(v2, two);
-                b.ret(); // return (no value - nothing is live)
-            });
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let v1 = b.const_i32(5);
+                    let three = b.const_i32(3);
+                    let v2 = b.add(v1, three);
+                    let two = b.const_i32(2);
+                    let _ = b.mul(v2, two);
+                    b.ret(); // return (no value - nothing is live)
+                });
+            })
+            .unwrap();
 
         // Run DCE
         let pass = DeadCodeEliminationPass::new();
@@ -1314,30 +1305,32 @@ mod tests {
     fn test_dead_phi_elimination() {
         // Test that unused phi nodes are removed
         let mut ssa = {
-            let mut v1_out = SsaVarId::new();
-            let mut v2_out = SsaVarId::new();
-            SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                // Block 0: entry, branch
-                f.block(0, |b| {
-                    let cond = b.const_true();
-                    b.branch(cond, 1, 2);
-                });
-                // Block 1: defines v1
-                f.block(1, |b| {
-                    v1_out = b.const_i32(10);
-                    b.jump(3);
-                });
-                // Block 2: defines v2
-                f.block(2, |b| {
-                    v2_out = b.const_i32(20);
-                    b.jump(3);
-                });
-                // Block 3: merge with phi (but result is unused!)
-                f.block(3, |b| {
-                    let _ = b.phi(&[(1, v1_out), (2, v2_out)]);
-                    b.ret(); // Phi result not used!
-                });
-            })
+            let mut v1_out = SsaVarId::from_index(0);
+            let mut v2_out = SsaVarId::from_index(1);
+            SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    // Block 0: entry, branch
+                    f.block(0, |b| {
+                        let cond = b.const_true();
+                        b.branch(cond, 1, 2);
+                    });
+                    // Block 1: defines v1
+                    f.block(1, |b| {
+                        v1_out = b.const_i32(10);
+                        b.jump(3);
+                    });
+                    // Block 2: defines v2
+                    f.block(2, |b| {
+                        v2_out = b.const_i32(20);
+                        b.jump(3);
+                    });
+                    // Block 3: merge with phi (but result is unused!)
+                    f.block(3, |b| {
+                        let _ = b.phi(&[(1, v1_out), (2, v2_out)]);
+                        b.ret(); // Phi result not used!
+                    });
+                })
+                .unwrap()
         };
 
         // Run DCE
@@ -1356,19 +1349,21 @@ mod tests {
     fn test_trivial_phi_single_operand() {
         // Test that phi with single operand is simplified
         let (mut ssa, v1) = {
-            let mut v1_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                // Block 0: defines v1, jumps to block 1
-                f.block(0, |b| {
-                    v1_out = b.const_i32(42);
-                    b.jump(1);
-                });
-                // Block 1: phi with single operand (trivial)
-                f.block(1, |b| {
-                    let phi_result = b.phi(&[(0, v1_out)]);
-                    b.ret_val(phi_result);
-                });
-            });
+            let mut v1_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    // Block 0: defines v1, jumps to block 1
+                    f.block(0, |b| {
+                        v1_out = b.const_i32(42);
+                        b.jump(1);
+                    });
+                    // Block 1: phi with single operand (trivial)
+                    f.block(1, |b| {
+                        let phi_result = b.phi(&[(0, v1_out)]);
+                        b.ret_val(phi_result);
+                    });
+                })
+                .unwrap();
             (ssa, v1_out)
         };
 
@@ -1393,24 +1388,26 @@ mod tests {
     fn test_trivial_phi_all_same() {
         // Test that phi where all operands are the same is simplified
         let (mut ssa, v1) = {
-            let mut v1_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                // Block 0: entry, branch
-                f.block(0, |b| {
-                    let cond = b.const_true();
-                    v1_out = b.const_i32(42);
-                    b.branch(cond, 1, 2);
-                });
-                // Block 1: jumps to merge
-                f.block(1, |b| b.jump(3));
-                // Block 2: jumps to merge
-                f.block(2, |b| b.jump(3));
-                // Block 3: phi with all same operands (both from v1)
-                f.block(3, |b| {
-                    let phi_result = b.phi(&[(1, v1_out), (2, v1_out)]);
-                    b.ret_val(phi_result);
-                });
-            });
+            let mut v1_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    // Block 0: entry, branch
+                    f.block(0, |b| {
+                        let cond = b.const_true();
+                        v1_out = b.const_i32(42);
+                        b.branch(cond, 1, 2);
+                    });
+                    // Block 1: jumps to merge
+                    f.block(1, |b| b.jump(3));
+                    // Block 2: jumps to merge
+                    f.block(2, |b| b.jump(3));
+                    // Block 3: phi with all same operands (both from v1)
+                    f.block(3, |b| {
+                        let phi_result = b.phi(&[(1, v1_out), (2, v1_out)]);
+                        b.ret_val(phi_result);
+                    });
+                })
+                .unwrap();
             (ssa, v1_out)
         };
 
@@ -1437,14 +1434,19 @@ mod tests {
         // We need to manually construct this since the builder can't create self-references
         let mut ssa = SsaFunction::new(0, 0);
 
-        // Create variables (auto-allocates IDs)
-        let v2_var = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-        let v2 = v2_var.id();
-        ssa.add_variable(v2_var);
-
-        let phi_variable = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::phi(1));
-        let phi_var = phi_variable.id();
-        ssa.add_variable(phi_variable);
+        // Create variables
+        let v2 = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
+        let phi_var = ssa.create_variable(
+            VariableOrigin::Local(1),
+            0,
+            DefSite::phi(1),
+            SsaType::Unknown,
+        );
 
         // Block 0: entry, defines v2, jumps to block 1
         let mut block0 = SsaBlock::new(0);
@@ -1458,7 +1460,7 @@ mod tests {
         // Block 1: loop header with self-referential phi
         // phi_var = phi(v2 from block 0, phi_var from block 1)
         let mut block1 = SsaBlock::new(1);
-        let mut phi = PhiNode::new(phi_var, VariableOrigin::Stack(1));
+        let mut phi = PhiNode::new(phi_var, VariableOrigin::Local(1));
         phi.add_operand(PhiOperand::new(v2, 0)); // from block 0
         phi.add_operand(PhiOperand::new(phi_var, 1)); // from block 1 (self-reference)
         block1.add_phi(phi);
@@ -1488,25 +1490,27 @@ mod tests {
     fn test_phi_operand_pruning() {
         // Test that phi operands from unreachable blocks are pruned
         let mut ssa = {
-            let mut v1_out = SsaVarId::new();
-            let mut v2_out = SsaVarId::new();
-            SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                // Block 0: entry, always jumps to block 1 (block 2 is unreachable)
-                f.block(0, |b| {
-                    v1_out = b.const_i32(10);
-                    b.jump(1); // Always goes to 1
-                });
-                // Block 1: reachable merge
-                f.block(1, |b| {
-                    let phi_result = b.phi(&[(0, v1_out), (2, v2_out)]); // v2 from unreachable block 2
-                    b.ret_val(phi_result);
-                });
-                // Block 2: unreachable
-                f.block(2, |b| {
-                    v2_out = b.const_i32(20);
-                    b.jump(1);
-                });
-            })
+            let mut v1_out = SsaVarId::from_index(0);
+            let mut v2_out = SsaVarId::from_index(1);
+            SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    // Block 0: entry, always jumps to block 1 (block 2 is unreachable)
+                    f.block(0, |b| {
+                        v1_out = b.const_i32(10);
+                        b.jump(1); // Always goes to 1
+                    });
+                    // Block 1: reachable merge
+                    f.block(1, |b| {
+                        let phi_result = b.phi(&[(0, v1_out), (2, v2_out)]); // v2 from unreachable block 2
+                        b.ret_val(phi_result);
+                    });
+                    // Block 2: unreachable
+                    f.block(2, |b| {
+                        v2_out = b.const_i32(20);
+                        b.jump(1);
+                    });
+                })
+                .unwrap()
         };
 
         // Run DCE
@@ -1530,18 +1534,20 @@ mod tests {
     fn test_side_effect_preservation() {
         // Test that side-effectful operations are not removed
         let (mut ssa, v1) = {
-            let mut v1_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    // v1 = some value (will be used by call)
-                    v1_out = b.const_i32(42);
-                    // Call (side effect - should not be removed even if result unused)
-                    let method = crate::analysis::MethodRef::new(Token::new(0x06000002));
-                    let _ = b.call(method, &[v1_out]);
-                    // Return without using call result
-                    b.ret();
-                });
-            });
+            let mut v1_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        // v1 = some value (will be used by call)
+                        v1_out = b.const_i32(42);
+                        // Call (side effect - should not be removed even if result unused)
+                        let method = MethodRef::new(Token::new(0x06000002));
+                        let _ = b.call(method, &[v1_out], SsaType::I32);
+                        // Return without using call result
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v1_out)
         };
 
@@ -1571,15 +1577,17 @@ mod tests {
     #[test]
     fn test_reverse_postorder() {
         // Create a diamond CFG: 0 -> {1, 2} -> 3
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 1, 2);
-            });
-            f.block(1, |b| b.jump(3));
-            f.block(2, |b| b.jump(3));
-            f.block(3, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 1, 2);
+                });
+                f.block(1, |b| b.jump(3));
+                f.block(2, |b| b.jump(3));
+                f.block(3, |b| b.ret());
+            })
+            .unwrap();
 
         let reachable = DeadCodeEliminationPass::find_reachable_blocks(&ssa);
         let rpo = DeadCodeEliminationPass::compute_reverse_postorder(&ssa, &reachable);
@@ -1593,18 +1601,20 @@ mod tests {
     #[test]
     fn test_live_variable_computation() {
         let (ssa, v1, v2) = {
-            let mut v1_out = SsaVarId::new();
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    // v1 = 10 (live - used by return)
-                    v1_out = b.const_i32(10);
-                    // v2 = 20 (dead - not used)
-                    v2_out = b.const_i32(20);
-                    // return v1
-                    b.ret_val(v1_out);
-                });
-            });
+            let mut v1_out = SsaVarId::from_index(0);
+            let mut v2_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        // v1 = 10 (live - used by return)
+                        v1_out = b.const_i32(10);
+                        // v2 = 20 (dead - not used)
+                        v2_out = b.const_i32(20);
+                        // return v1
+                        b.ret_val(v1_out);
+                    });
+                })
+                .unwrap();
             (ssa, v1_out, v2_out)
         };
 
@@ -1626,21 +1636,23 @@ mod tests {
         // All should be live!
 
         let (ssa, v1, v2, v3, c1, c2) = {
-            let mut v1_out = SsaVarId::new();
-            let mut v2_out = SsaVarId::new();
-            let mut v3_out = SsaVarId::new();
-            let mut c1_out = SsaVarId::new();
-            let mut c2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    v1_out = b.const_i32(5);
-                    c1_out = b.const_i32(1);
-                    v2_out = b.add(v1_out, c1_out);
-                    c2_out = b.const_i32(2);
-                    v3_out = b.mul(v2_out, c2_out);
-                    b.ret_val(v3_out);
-                });
-            });
+            let mut v1_out = SsaVarId::from_index(0);
+            let mut v2_out = SsaVarId::from_index(1);
+            let mut v3_out = SsaVarId::from_index(2);
+            let mut c1_out = SsaVarId::from_index(3);
+            let mut c2_out = SsaVarId::from_index(4);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        v1_out = b.const_i32(5);
+                        c1_out = b.const_i32(1);
+                        v2_out = b.add(v1_out, c1_out);
+                        c2_out = b.const_i32(2);
+                        v3_out = b.mul(v2_out, c2_out);
+                        b.ret_val(v3_out);
+                    });
+                })
+                .unwrap();
             (ssa, v1_out, v2_out, v3_out, c1_out, c2_out)
         };
 
@@ -1660,26 +1672,28 @@ mod tests {
     fn test_iterative_convergence() {
         // Test that the algorithm converges (doesn't infinite loop)
         let mut ssa = {
-            let mut v0_out = SsaVarId::new();
-            let mut phi_out = SsaVarId::new();
-            SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                // Create a loop structure
-                f.block(0, |b| {
-                    v0_out = b.const_i32(0);
-                    b.jump(1);
-                });
-                f.block(1, |b| {
-                    // phi: from entry (v0) and from back edge (v2)
-                    phi_out = b.phi(&[(0, v0_out), (1, phi_out)]);
-                    // v2 = phi + 1 (unused, becomes back edge value)
-                    let one = b.const_i32(1);
-                    let _ = b.add(phi_out, one);
-                    // Condition to exit loop
-                    let cond = b.const_true();
-                    b.branch(cond, 2, 1);
-                });
-                f.block(2, |b| b.ret());
-            })
+            let mut v0_out = SsaVarId::from_index(0);
+            let mut phi_out = SsaVarId::from_index(1);
+            SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    // Create a loop structure
+                    f.block(0, |b| {
+                        v0_out = b.const_i32(0);
+                        b.jump(1);
+                    });
+                    f.block(1, |b| {
+                        // phi: from entry (v0) and from back edge (v2)
+                        phi_out = b.phi(&[(0, v0_out), (1, phi_out)]);
+                        // v2 = phi + 1 (unused, becomes back edge value)
+                        let one = b.const_i32(1);
+                        let _ = b.add(phi_out, one);
+                        // Condition to exit loop
+                        let cond = b.const_true();
+                        b.branch(cond, 2, 1);
+                    });
+                    f.block(2, |b| b.ret());
+                })
+                .unwrap()
         };
 
         // Run DCE - should converge

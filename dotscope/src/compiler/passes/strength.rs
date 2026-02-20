@@ -39,7 +39,10 @@ use std::{collections::HashSet, sync::Arc};
 
 use crate::{
     analysis::{ConstValue, DefUseIndex, SsaFunction, SsaOp, SsaVarId, ValueRange},
-    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
+    compiler::{
+        pass::{ModificationScope, SsaPass},
+        CompilerContext, EventKind, EventLog,
+    },
     metadata::token::Token,
     utils::is_power_of_two,
     CilObject, Result,
@@ -389,6 +392,10 @@ impl SsaPass for StrengthReductionPass {
 
     fn description(&self) -> &'static str {
         "Transform expensive operations (mul/div/rem) to cheaper equivalents (shl/shr/and)"
+    }
+
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::InstructionsOnly
     }
 
     fn run_on_method(

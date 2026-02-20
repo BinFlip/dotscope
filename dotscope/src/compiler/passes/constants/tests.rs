@@ -1,9 +1,12 @@
-use std::sync::Arc;
+use std::{collections::HashMap, sync::Arc};
 
-use super::*;
 use crate::{
-    analysis::{CallGraph, SsaFunctionBuilder, SsaType},
-    metadata::typesystem::PointerSize,
+    analysis::{CallGraph, ConstValue, SsaFunctionBuilder, SsaOp, SsaType, SsaVarId},
+    compiler::{
+        passes::constants::{AlgebraicResult, ConstantPropagationPass},
+        CompilerContext, EventLog, SsaPass,
+    },
+    metadata::{token::Token, typesystem::PointerSize},
     test::helpers::test_assembly_arc,
 };
 
@@ -174,9 +177,9 @@ fn test_conv_char() {
 #[test]
 fn test_identity_add_zero() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(42));
     constants.insert(v1, ConstValue::I32(0));
 
@@ -200,9 +203,9 @@ fn test_identity_add_zero() {
 #[test]
 fn test_identity_mul_one() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(42));
     constants.insert(v1, ConstValue::I32(1));
 
@@ -225,9 +228,9 @@ fn test_identity_mul_one() {
 #[test]
 fn test_identity_and_minus_one() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(42));
     constants.insert(v1, ConstValue::I32(-1));
 
@@ -250,9 +253,9 @@ fn test_identity_and_minus_one() {
 #[test]
 fn test_absorbing_mul_zero() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(42));
     constants.insert(v1, ConstValue::I32(0));
 
@@ -275,9 +278,9 @@ fn test_absorbing_mul_zero() {
 #[test]
 fn test_absorbing_and_zero() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(42));
     constants.insert(v1, ConstValue::I32(0));
 
@@ -300,9 +303,9 @@ fn test_absorbing_and_zero() {
 #[test]
 fn test_absorbing_or_minus_one() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(42));
     constants.insert(v1, ConstValue::I32(-1));
 
@@ -325,9 +328,9 @@ fn test_absorbing_or_minus_one() {
 #[test]
 fn test_add_ovf_no_overflow() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(100));
     constants.insert(v1, ConstValue::I32(50));
 
@@ -345,9 +348,9 @@ fn test_add_ovf_no_overflow() {
 #[test]
 fn test_mul_ovf_with_zero() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(100));
     constants.insert(v1, ConstValue::I32(0));
 
@@ -366,7 +369,7 @@ fn test_mul_ovf_with_zero() {
 #[test]
 fn test_pass_empty_function() {
     let pass = ConstantPropagationPass::new();
-    let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|_f| {});
+    let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|_f| {}).unwrap();
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
 
@@ -379,14 +382,16 @@ fn test_pass_empty_function() {
 fn test_pass_simple_folding() {
     let pass = ConstantPropagationPass::new();
     // Create a block with: v0 = 5, v1 = 3, v2 = add v0, v1
-    let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let v0 = b.const_i32(5);
-            let v1 = b.const_i32(3);
-            let _v2 = b.add(v0, v1);
-            b.ret();
-        });
-    });
+    let mut ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let v0 = b.const_i32(5);
+                let v1 = b.const_i32(3);
+                let _v2 = b.add(v0, v1);
+                b.ret();
+            });
+        })
+        .unwrap();
 
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
@@ -412,14 +417,16 @@ fn test_pass_simple_folding() {
 fn test_pass_branch_simplification() {
     let pass = ConstantPropagationPass::new();
     // Block 0: v0 = true, branch v0, B1, B2
-    let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let cond = b.const_true();
-            b.branch(cond, 1, 2);
-        });
-        f.block(1, |b| b.ret());
-        f.block(2, |b| b.ret());
-    });
+    let mut ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let cond = b.const_true();
+                b.branch(cond, 1, 2);
+            });
+            f.block(1, |b| b.ret());
+            f.block(2, |b| b.ret());
+        })
+        .unwrap();
 
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
@@ -440,17 +447,19 @@ fn test_pass_branch_simplification() {
 fn test_pass_switch_simplification() {
     let pass = ConstantPropagationPass::new();
     // Block 0: v0 = 1, switch v0, [B1, B2, B3], default=B4
-    let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let v0 = b.const_i32(1);
-            b.switch(v0, vec![1, 2, 3], 4);
-        });
-        // Blocks 1-4: return
-        f.block(1, |b| b.ret());
-        f.block(2, |b| b.ret());
-        f.block(3, |b| b.ret());
-        f.block(4, |b| b.ret());
-    });
+    let mut ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let v0 = b.const_i32(1);
+                b.switch(v0, vec![1, 2, 3], 4);
+            });
+            // Blocks 1-4: return
+            f.block(1, |b| b.ret());
+            f.block(2, |b| b.ret());
+            f.block(3, |b| b.ret());
+            f.block(4, |b| b.ret());
+        })
+        .unwrap();
 
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
@@ -471,14 +480,16 @@ fn test_pass_switch_simplification() {
 fn test_constants_cached_in_context() {
     let pass = ConstantPropagationPass::new();
     let (mut ssa, v0) = {
-        let mut v0_out = SsaVarId::new();
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let v0 = b.const_i32(42);
-                v0_out = v0;
-                b.ret_val(v0);
-            });
-        });
+        let mut v0_out = SsaVarId::from_index(0);
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let v0 = b.const_i32(42);
+                    v0_out = v0;
+                    b.ret_val(v0);
+                });
+            })
+            .unwrap();
         (ssa, v0_out)
     };
 
@@ -495,9 +506,9 @@ fn test_constants_cached_in_context() {
 #[test]
 fn test_identity_shl_zero() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(42));
     constants.insert(v1, ConstValue::I32(0));
 
@@ -520,9 +531,9 @@ fn test_identity_shl_zero() {
 #[test]
 fn test_identity_shr_zero() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(42));
     constants.insert(v1, ConstValue::I32(0));
 
@@ -546,9 +557,9 @@ fn test_identity_shr_zero() {
 #[test]
 fn test_identity_xor_zero() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(42));
     constants.insert(v1, ConstValue::I32(0));
 
@@ -571,9 +582,9 @@ fn test_identity_xor_zero() {
 #[test]
 fn test_identity_div_one() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(42));
     constants.insert(v1, ConstValue::I32(1));
 
@@ -597,9 +608,9 @@ fn test_identity_div_one() {
 #[test]
 fn test_identity_sub_zero() {
     let mut constants = HashMap::new();
-    let v0 = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     constants.insert(v0, ConstValue::I32(42));
     constants.insert(v1, ConstValue::I32(0));
 
@@ -624,21 +635,23 @@ fn test_chained_constant_folding() {
     let pass = ConstantPropagationPass::new();
     // v0 = 2, v1 = 3, v2 = v0 + v1, v3 = 2, v4 = v2 * v3, v5 = 0, v6 = v4 + v5
     let (mut ssa, v4) = {
-        let mut v4_out = SsaVarId::new();
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let v0 = b.const_i32(2);
-                let v1 = b.const_i32(3);
-                let v2 = b.add(v0, v1); // v2 = 5
-                let v3 = b.const_i32(2);
-                let v4 = b.mul(v2, v3); // v4 = 10
-                v4_out = v4;
-                let v5 = b.const_i32(0);
-                // Now add v4 + 0 (identity) - should fold to 10
-                let v6 = b.add(v4, v5);
-                b.ret_val(v6);
-            });
-        });
+        let mut v4_out = SsaVarId::from_index(0);
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let v0 = b.const_i32(2);
+                    let v1 = b.const_i32(3);
+                    let v2 = b.add(v0, v1); // v2 = 5
+                    let v3 = b.const_i32(2);
+                    let v4 = b.mul(v2, v3); // v4 = 10
+                    v4_out = v4;
+                    let v5 = b.const_i32(0);
+                    // Now add v4 + 0 (identity) - should fold to 10
+                    let v6 = b.add(v4, v5);
+                    b.ret_val(v6);
+                });
+            })
+            .unwrap();
         (ssa, v4_out)
     };
 
@@ -656,14 +669,16 @@ fn test_chained_constant_folding() {
 fn test_branch_false_condition() {
     let pass = ConstantPropagationPass::new();
     // Block 0: v0 = false, branch v0, B1, B2
-    let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let cond = b.const_false();
-            b.branch(cond, 1, 2);
-        });
-        f.block(1, |b| b.ret());
-        f.block(2, |b| b.ret());
-    });
+    let mut ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let cond = b.const_false();
+                b.branch(cond, 1, 2);
+            });
+            f.block(1, |b| b.ret());
+            f.block(2, |b| b.ret());
+        })
+        .unwrap();
 
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
@@ -684,17 +699,19 @@ fn test_branch_false_condition() {
 fn test_switch_out_of_range_uses_default() {
     let pass = ConstantPropagationPass::new();
     // Block 0: v0 = 100 (out of range), switch v0, [B1, B2, B3], default=B4
-    let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let v0 = b.const_i32(100); // Out of range
-            b.switch(v0, vec![1, 2, 3], 4);
-        });
-        // Blocks 1-4: return
-        f.block(1, |b| b.ret());
-        f.block(2, |b| b.ret());
-        f.block(3, |b| b.ret());
-        f.block(4, |b| b.ret());
-    });
+    let mut ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let v0 = b.const_i32(100); // Out of range
+                b.switch(v0, vec![1, 2, 3], 4);
+            });
+            // Blocks 1-4: return
+            f.block(1, |b| b.ret());
+            f.block(2, |b| b.ret());
+            f.block(3, |b| b.ret());
+            f.block(4, |b| b.ret());
+        })
+        .unwrap();
 
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
@@ -966,19 +983,21 @@ fn test_is_safe_widening_chain_float_rejected() {
 fn test_duplicate_conversion_elimination() {
     // conv.i4(conv.i4(v0)) should become conv.i4(v0)
     let (mut ssa, v0) = {
-        let mut v0_out = SsaVarId::new();
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                // v0 = some value (simulated by const for simplicity)
-                let v0 = b.const_i64(42);
-                v0_out = v0;
-                // v1 = conv.i4 v0
-                let v1 = b.conv(v0, SsaType::I32);
-                // v2 = conv.i4 v1 (duplicate!)
-                let v2 = b.conv(v1, SsaType::I32);
-                b.ret_val(v2);
-            });
-        });
+        let mut v0_out = SsaVarId::from_index(0);
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    // v0 = some value (simulated by const for simplicity)
+                    let v0 = b.const_i64(42);
+                    v0_out = v0;
+                    // v1 = conv.i4 v0
+                    let v1 = b.conv(v0, SsaType::I32);
+                    // v2 = conv.i4 v1 (duplicate!)
+                    let v2 = b.conv(v1, SsaType::I32);
+                    b.ret_val(v2);
+                });
+            })
+            .unwrap();
         (ssa, v0_out)
     };
 
@@ -1004,19 +1023,21 @@ fn test_duplicate_conversion_elimination() {
 fn test_widening_chain_elimination() {
     // conv.i8(conv.i4(v0)) should become conv.i8(v0) when unsigned
     let (mut ssa, v0) = {
-        let mut v0_out = SsaVarId::new();
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                // v0 = some value
-                let v0 = b.const_val(ConstValue::U8(42));
-                v0_out = v0;
-                // v1 = conv.u4 v0 (u8 -> u32)
-                let v1 = b.conv_un(v0, SsaType::U32);
-                // v2 = conv.u8 v1 (u32 -> u64 widening chain)
-                let v2 = b.conv_un(v1, SsaType::U64);
-                b.ret_val(v2);
-            });
-        });
+        let mut v0_out = SsaVarId::from_index(0);
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    // v0 = some value
+                    let v0 = b.const_val(ConstValue::U8(42));
+                    v0_out = v0;
+                    // v1 = conv.u4 v0 (u8 -> u32)
+                    let v1 = b.conv_un(v0, SsaType::U32);
+                    // v2 = conv.u8 v1 (u32 -> u64 widening chain)
+                    let v2 = b.conv_un(v1, SsaType::U64);
+                    b.ret_val(v2);
+                });
+            })
+            .unwrap();
         (ssa, v0_out)
     };
 
@@ -1043,18 +1064,20 @@ fn test_widening_chain_elimination() {
 fn test_overflow_checked_conversion_not_eliminated() {
     // conv.ovf.i4(conv.i4(v0)) should NOT eliminate the outer conversion
     let (mut ssa, v1) = {
-        let mut v1_out = SsaVarId::new();
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let v0 = b.const_i64(42);
-                // v1 = conv.i4 v0
-                let v1 = b.conv(v0, SsaType::I32);
-                v1_out = v1;
-                // v2 = conv.ovf.i4 v1 (overflow check!)
-                let v2 = b.conv_ovf(v1, SsaType::I32);
-                b.ret_val(v2);
-            });
-        });
+        let mut v1_out = SsaVarId::from_index(0);
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let v0 = b.const_i64(42);
+                    // v1 = conv.i4 v0
+                    let v1 = b.conv(v0, SsaType::I32);
+                    v1_out = v1;
+                    // v2 = conv.ovf.i4 v1 (overflow check!)
+                    let v2 = b.conv_ovf(v1, SsaType::I32);
+                    b.ret_val(v2);
+                });
+            })
+            .unwrap();
         (ssa, v1_out)
     };
 
@@ -1086,18 +1109,20 @@ fn test_overflow_checked_conversion_not_eliminated() {
 fn test_float_widening_not_eliminated() {
     // conv.r8(conv.r4(v0)) should NOT be simplified (precision loss)
     let (mut ssa, v1) = {
-        let mut v1_out = SsaVarId::new();
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let v0 = b.const_i32(42);
-                // v1 = conv.r4 v0 (int -> float32)
-                let v1 = b.conv(v0, SsaType::F32);
-                v1_out = v1;
-                // v2 = conv.r8 v1 (float32 -> float64, can lose precision info!)
-                let v2 = b.conv(v1, SsaType::F64);
-                b.ret_val(v2);
-            });
-        });
+        let mut v1_out = SsaVarId::from_index(0);
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let v0 = b.const_i32(42);
+                    // v1 = conv.r4 v0 (int -> float32)
+                    let v1 = b.conv(v0, SsaType::F32);
+                    v1_out = v1;
+                    // v2 = conv.r8 v1 (float32 -> float64, can lose precision info!)
+                    let v2 = b.conv(v1, SsaType::F64);
+                    b.ret_val(v2);
+                });
+            })
+            .unwrap();
         (ssa, v1_out)
     };
 

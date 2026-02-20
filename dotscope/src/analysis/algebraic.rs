@@ -223,6 +223,8 @@ pub fn simplify_op<S: BuildHasher>(
 
 #[cfg(test)]
 mod tests {
+    use std::collections::HashMap;
+
     use super::*;
 
     fn make_constants(pairs: &[(SsaVarId, ConstValue)]) -> HashMap<SsaVarId, ConstValue> {
@@ -231,8 +233,8 @@ mod tests {
 
     #[test]
     fn test_xor_self_cancels() {
-        let v1 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let dest = SsaVarId::from_index(1);
         let op = SsaOp::Xor {
             dest,
             left: v1,
@@ -246,9 +248,9 @@ mod tests {
 
     #[test]
     fn test_xor_zero_identity() {
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
         let op = SsaOp::Xor {
             dest,
             left: v1,
@@ -260,9 +262,9 @@ mod tests {
 
     #[test]
     fn test_mul_zero_absorbs() {
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
         let op = SsaOp::Mul {
             dest,
             left: v1,
@@ -277,9 +279,9 @@ mod tests {
 
     #[test]
     fn test_mul_one_identity() {
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
         let op = SsaOp::Mul {
             dest,
             left: v1,
@@ -291,9 +293,9 @@ mod tests {
 
     #[test]
     fn test_add_zero_identity() {
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
         let op = SsaOp::Add {
             dest,
             left: v1,
@@ -305,8 +307,8 @@ mod tests {
 
     #[test]
     fn test_sub_self_cancels() {
-        let v1 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let dest = SsaVarId::from_index(1);
         let op = SsaOp::Sub {
             dest,
             left: v1,
@@ -320,9 +322,9 @@ mod tests {
 
     #[test]
     fn test_and_zero_absorbs() {
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
         let op = SsaOp::And {
             dest,
             left: v1,
@@ -337,9 +339,9 @@ mod tests {
 
     #[test]
     fn test_or_zero_identity() {
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
         let op = SsaOp::Or {
             dest,
             left: v1,
@@ -351,9 +353,9 @@ mod tests {
 
     #[test]
     fn test_div_one_identity() {
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
         let op = SsaOp::Div {
             dest,
             left: v1,
@@ -366,9 +368,9 @@ mod tests {
 
     #[test]
     fn test_shl_zero_identity() {
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
         let op = SsaOp::Shl {
             dest,
             value: v1,
@@ -380,9 +382,9 @@ mod tests {
 
     #[test]
     fn test_no_simplification() {
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
         let op = SsaOp::Add {
             dest,
             left: v1,
@@ -394,9 +396,9 @@ mod tests {
 
     #[test]
     fn test_rem_one_zero() {
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
         let op = SsaOp::Rem {
             dest,
             left: v1,
@@ -412,8 +414,8 @@ mod tests {
 
     #[test]
     fn test_ceq_self_true() {
-        let v1 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let dest = SsaVarId::from_index(1);
         let op = SsaOp::Ceq {
             dest,
             left: v1,
@@ -427,8 +429,8 @@ mod tests {
 
     #[test]
     fn test_clt_self_false() {
-        let v1 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let dest = SsaVarId::from_index(1);
         let op = SsaOp::Clt {
             dest,
             left: v1,
@@ -443,8 +445,8 @@ mod tests {
 
     #[test]
     fn test_cgt_self_false() {
-        let v1 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let dest = SsaVarId::from_index(1);
         let op = SsaOp::Cgt {
             dest,
             left: v1,

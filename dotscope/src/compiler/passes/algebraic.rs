@@ -34,7 +34,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     analysis::{simplify_op, ConstValue, SimplifyResult, SsaFunction, SsaOp, SsaVarId},
-    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
+    compiler::{
+        pass::{ModificationScope, SsaPass},
+        CompilerContext, EventKind, EventLog,
+    },
     metadata::token::Token,
     CilObject, Result,
 };
@@ -166,6 +169,10 @@ impl SsaPass for AlgebraicSimplificationPass {
         "Simplify algebraic identities (x xor x = 0, x or x = x, etc.)"
     }
 
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::InstructionsOnly
+    }
+
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
@@ -195,6 +202,10 @@ impl SsaPass for AlgebraicSimplificationPass {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::collections::HashMap;
+
+    use crate::analysis::{ConstValue, SsaOp, SsaVarId};
 
     #[test]
     fn test_div_by_one() {

@@ -81,6 +81,7 @@ mod evaluator;
 mod exception;
 mod function;
 mod instruction;
+mod liveness;
 mod memory;
 mod ops;
 mod patterns;
@@ -92,9 +93,10 @@ mod symbolic;
 mod types;
 mod value;
 mod variable;
+pub(crate) mod verifier;
 
 // Re-export primary types at module level
-pub use block::SsaBlock;
+pub use block::{ReplaceResult, SsaBlock};
 pub use builder::{SsaBlockBuilder, SsaFunctionBuilder, SsaFunctionContext};
 pub use cfg::SsaCfg;
 pub use constraints::{Constraint, PathConstraint};
@@ -102,7 +104,7 @@ pub use consts::ConstEvaluator;
 pub use converter::SsaConverter;
 pub use evaluator::{ControlFlow, EvaluatorConfig, ExecutionTrace, SsaEvaluator};
 pub use exception::SsaExceptionHandler;
-pub use function::{MethodPurity, ReturnInfo, SsaFunction};
+pub use function::{MethodPurity, ReturnInfo, SsaFunction, TrivialPhiOptions};
 pub use instruction::SsaInstruction;
 pub use memory::{
     analyze_alias, AliasResult, ArrayIndex, MemoryDefSite, MemoryLocation, MemoryOp, MemoryPhi,
@@ -118,6 +120,8 @@ pub use symbolic::{SymbolicEvaluator, SymbolicExpr, SymbolicOp};
 // Z3Solver requires the z3 dependency (independent of deobfuscation)
 #[cfg(feature = "z3")]
 pub use symbolic::Z3Solver;
-pub use types::{FieldRef, FnPtrSig, MethodRef, SigRef, SsaType, TypeClass, TypeContext, TypeRef};
+pub use types::{
+    FieldRef, FnPtrSig, MethodRef, SigRef, SsaType, TypeClass, TypeContext, TypeProvider, TypeRef,
+};
 pub use value::{AbstractValue, ComputedOp, ComputedValue, ConstValue};
-pub use variable::{DefSite, SsaVarId, SsaVariable, UseSite, VariableOrigin};
+pub use variable::{DefSite, FunctionVarAllocator, SsaVarId, SsaVariable, UseSite, VariableOrigin};

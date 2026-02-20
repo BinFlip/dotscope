@@ -39,7 +39,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     analysis::{BinaryOpKind, SsaFunction, SsaOp, SsaVarId, UnaryOpKind},
-    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
+    compiler::{
+        pass::{ModificationScope, SsaPass},
+        CompilerContext, EventKind, EventLog,
+    },
     metadata::token::Token,
     CilObject, Result,
 };
@@ -61,6 +64,9 @@ enum ValueKey {
 
     /// Unary operation: (kind, operand)
     Unary(UnaryOpKind, SsaVarId),
+
+    /// Argument load: loading the same argument always produces the same value.
+    LoadArg(usize),
 }
 
 impl ValueKey {
@@ -97,6 +103,13 @@ impl ValueKey {
             return Some((Self::Unary(info.kind, info.operand), info.dest));
         }
 
+        // LoadArg: loading the same argument twice produces the same value.
+        // This enables downstream passes (e.g., opaque predicate removal) to
+        // detect self-comparisons like `ceq(arg0, arg0)`.
+        if let SsaOp::LoadArg { dest, arg_index } = op {
+            return Some((Self::LoadArg(*arg_index as usize), *dest));
+        }
+
         // Skip everything else (constants, loads, stores, calls, control flow, etc.)
         None
     }
@@ -128,16 +141,17 @@ impl GlobalValueNumberingPass {
         // Map from value key to the first variable that computed it
         let mut value_map: HashMap<ValueKey, SsaVarId> = HashMap::new();
 
-        // Collect redundant definitions: (redundant_var, original_var)
-        let mut redundant: Vec<(SsaVarId, SsaVarId)> = Vec::new();
+        // Collect redundant definitions: (redundant_var, original_var, block_idx, instr_idx)
+        let mut redundant: Vec<(SsaVarId, SsaVarId, usize, usize)> = Vec::new();
 
         // First pass: identify redundant computations
         for block in ssa.blocks() {
-            for instr in block.instructions() {
+            let block_idx = block.id();
+            for (instr_idx, instr) in block.instructions().iter().enumerate() {
                 if let Some((key, dest)) = ValueKey::from_op(instr.op()) {
                     if let Some(&original) = value_map.get(&key) {
                         // This computation is redundant
-                        redundant.push((dest, original));
+                        redundant.push((dest, original, block_idx, instr_idx));
                     } else {
                         // First time seeing this value
                         value_map.insert(key, dest);
@@ -146,19 +160,26 @@ impl GlobalValueNumberingPass {
             }
         }
 
-        // Second pass: replace uses of redundant variables with originals
+        // Second pass: replace uses of redundant variables with originals,
+        // including phi operands, then nop-out the dead instruction.
+        // This prevents ping-ponging with DCE: without nop-out, DCE would find
+        // the dead instruction as "new work" on the next normalization iteration.
         let mut total_replaced = 0;
-        for (redundant_var, original_var) in &redundant {
-            let replaced = ssa.replace_uses(*redundant_var, *original_var);
-            if replaced > 0 {
+        for (redundant_var, original_var, block_idx, instr_idx) in &redundant {
+            let result = ssa.replace_uses_including_phis(*redundant_var, *original_var);
+            if result.replaced > 0 {
                 changes
                     .record(EventKind::ConstantFolded) // Reuse existing kind for expression elimination
                     .method(method_token)
                     .message(format!(
-                        "GVN: {redundant_var} → {original_var} ({replaced} uses)"
+                        "GVN: {redundant_var} → {original_var} ({} uses)",
+                        result.replaced
                     ));
-                total_replaced += replaced;
+                total_replaced += result.replaced;
             }
+            // Nop-out the redundant instruction so rebuild_ssa's strip_nops
+            // removes it. This avoids leaving dead instructions for DCE to find.
+            ssa.remove_instruction(*block_idx, *instr_idx);
         }
 
         total_replaced
@@ -172,6 +193,10 @@ impl SsaPass for GlobalValueNumberingPass {
 
     fn description(&self) -> &'static str {
         "Eliminates redundant computations using value numbering"
+    }
+
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::UsesOnly
     }
 
     fn run_on_method(
@@ -198,15 +223,20 @@ impl SsaPass for GlobalValueNumberingPass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::{ConstValue, SsaFunctionBuilder};
+
+    use crate::{
+        analysis::{BinaryOpKind, ConstValue, SsaFunctionBuilder, SsaOp, SsaVarId, UnaryOpKind},
+        compiler::{EventLog, GlobalValueNumberingPass},
+        metadata::token::Token,
+    };
 
     #[test]
     fn test_value_key_binary_commutative() {
         // Test that commutative operations with swapped operands produce the same key
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let v3 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
+        let v3 = SsaVarId::from_index(3);
 
         // Add is commutative - should normalize to same key
         let add_op1 = SsaOp::Add {
@@ -243,9 +273,9 @@ mod tests {
 
     #[test]
     fn test_value_key_from_op() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
 
         // Add operation
         let add_op = SsaOp::Add {
@@ -281,18 +311,20 @@ mod tests {
         // v3 = add v0, v1  <- redundant
         // v4 = mul v2, v3
         let (mut ssa, v2) = {
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(10);
-                    let v1 = b.const_i32(20);
-                    let v2 = b.add(v0, v1);
-                    v2_out = v2;
-                    let v3 = b.add(v0, v1); // Redundant
-                    let v4 = b.mul(v2, v3);
-                    b.ret_val(v4);
-                });
-            });
+            let mut v2_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(10);
+                        let v1 = b.const_i32(20);
+                        let v2 = b.add(v0, v1);
+                        v2_out = v2;
+                        let v3 = b.add(v0, v1); // Redundant
+                        let v4 = b.mul(v2, v3);
+                        b.ret_val(v4);
+                    });
+                })
+                .unwrap();
             (ssa, v2_out)
         };
 
@@ -321,17 +353,19 @@ mod tests {
         // v2 = add v0, v1
         // v3 = add v1, v0  <- same as v2 (commutative)
         let (mut ssa, v2) = {
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(10);
-                    let v1 = b.const_i32(20);
-                    let v2 = b.add(v0, v1);
-                    v2_out = v2;
-                    let v3 = b.add(v1, v0); // Swapped
-                    b.ret_val(v3);
-                });
-            });
+            let mut v2_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(10);
+                        let v1 = b.const_i32(20);
+                        let v2 = b.add(v0, v1);
+                        v2_out = v2;
+                        let v3 = b.add(v1, v0); // Swapped
+                        b.ret_val(v3);
+                    });
+                })
+                .unwrap();
             (ssa, v2_out)
         };
 
@@ -360,15 +394,17 @@ mod tests {
         // Build SSA:
         // v2 = sub v0, v1
         // v3 = sub v1, v0  <- NOT the same (sub is not commutative)
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let v0 = b.const_i32(10);
-                let v1 = b.const_i32(20);
-                let _v2 = b.sub(v0, v1);
-                let v3 = b.sub(v1, v0);
-                b.ret_val(v3);
-            });
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let v0 = b.const_i32(10);
+                    let v1 = b.const_i32(20);
+                    let _v2 = b.sub(v0, v1);
+                    let v3 = b.sub(v1, v0);
+                    b.ret_val(v3);
+                });
+            })
+            .unwrap();
 
         let mut changes = EventLog::new();
         let replaced =

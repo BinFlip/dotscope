@@ -372,20 +372,28 @@ impl ConfuserExObfuscator {
             // IMPORTANT: Preserve fields from original findings that re-detection
             // cannot recover:
             // - obfuscator_name: set by the detector, not by detect_confuserex
+            // - detection: score from initial detection (re-detection score differs)
             // - anti_tamper_methods: bodies are already decrypted so won't be found
+            // - encrypted_method_count: bodies are already decrypted
             let preserved_name = findings.obfuscator_name.take();
+            let preserved_detection = std::mem::take(&mut findings.detection);
+            let preserved_encrypted_count = findings.encrypted_method_count;
             let preserved_anti_tamper: Vec<Token> = findings
                 .anti_tamper_methods
                 .iter()
                 .map(|(_, &t)| t)
                 .collect();
 
-            let (_, mut updated) = detection::detect_confuserex(&current);
+            let (new_score, mut updated) = detection::detect_confuserex(&current);
             let native_count = updated.native_helpers.count();
             let decryptor_count = updated.decryptor_methods.count();
 
             // Restore preserved fields
             updated.obfuscator_name = preserved_name;
+            // Merge detection scores: keep original score and merge new evidence
+            preserved_detection.merge(&new_score);
+            updated.detection = preserved_detection;
+            updated.encrypted_method_count = preserved_encrypted_count;
             for token in preserved_anti_tamper {
                 updated.anti_tamper_methods.push(token);
             }

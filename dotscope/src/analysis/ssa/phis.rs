@@ -1,8 +1,11 @@
-//! PHI node analysis utilities.
+//! PHI node analysis and placement utilities.
 //!
-//! This module provides utilities for analyzing PHI nodes in SSA form.
-//! The [`PhiAnalyzer`] helps identify patterns like trivial PHIs (single unique source),
-//! uniform constants (all operands resolve to the same value), and finding PHI definitions.
+//! This module provides utilities for PHI nodes in SSA form:
+//!
+//! - [`PhiAnalyzer`] - Identifies patterns like trivial PHIs (single unique source),
+//!   uniform constants (all operands resolve to the same value), and finding PHI definitions.
+//! - [`place_pruned_phis`] - Shared pruned phi placement algorithm used by both
+//!   `SsaConverter` (initial construction) and `SsaRebuilder` (repair).
 //!
 //! # Example
 //!
@@ -25,8 +28,12 @@
 
 use std::collections::{HashMap, HashSet};
 
-use crate::analysis::ssa::{
-    ConstEvaluator, ConstValue, PhiNode, PhiOperand, SsaFunction, SsaOp, SsaVarId,
+use crate::{
+    analysis::ssa::{
+        ConstEvaluator, ConstValue, PhiNode, PhiOperand, SsaBlock, SsaFunction, SsaOp, SsaVarId,
+        VariableOrigin,
+    },
+    utils::graph::NodeId,
 };
 
 /// Analyzes PHI nodes for various patterns.
@@ -102,15 +109,8 @@ impl<'a> PhiAnalyzer<'a> {
             let source = unique_sources.into_iter().next()?;
 
             // Check if replacing result with source would create a self-referential instruction.
-            // This happens when source is defined by an instruction that uses result.
-            // In such cases, the phi is NOT trivial - it's carrying a loop value.
-            if let Some(op) = self.ssa.get_definition(source) {
-                if op.uses().contains(&result) {
-                    // source is defined as: source = f(..., result, ...)
-                    // Replacing result with source would create: source = f(..., source, ...)
-                    // This is a self-referential instruction, so phi is NOT trivial.
-                    return None;
-                }
+            if self.ssa.would_create_self_reference(source, result) {
+                return None;
             }
 
             Some(source)
@@ -334,6 +334,107 @@ impl<'a> PhiAnalyzer<'a> {
     }
 }
 
+/// Callback type for resolving Leave targets in exception handler blocks.
+pub(crate) type LeaveTargetFn<'a> = dyn Fn(usize, &[SsaBlock]) -> Option<usize> + 'a;
+
+/// Places phi nodes at iterated dominance frontier blocks, pruned by liveness.
+///
+/// This implements the standard IDF phi placement algorithm from Cytron et al.,
+/// with pruning based on liveness analysis (only placing phis where the variable
+/// is live-in).
+///
+/// Data structures are keyed by `u32` group IDs. The `group_to_origin` mapping
+/// translates group IDs to `VariableOrigin` values for the created phi nodes.
+///
+/// # Arguments
+///
+/// * `blocks` - Mutable slice of SSA blocks to insert phi nodes into
+/// * `defs` - Definition sites for each group ID
+/// * `live_in` - Liveness information: for each group ID, the set of blocks where it's live-in
+/// * `dominance_frontiers` - Precomputed dominance frontiers
+/// * `reachable` - Set of reachable block indices (if `None`, all blocks are considered reachable)
+/// * `group_filter` - Predicate to select which group IDs to process
+/// * `group_to_origin` - Maps group ID to the `VariableOrigin` to use for the phi node
+/// * `leave_target_fn` - Optional function to get Leave targets for exception handler blocks
+///   (used to add extra phi placement points for handler exits)
+///
+/// # Returns
+/// A list of `(block_idx, group)` pairs for each phi node placed, in the order
+/// they were added to each block. This allows callers to associate phi nodes
+/// with their rename groups during the rename phase.
+#[allow(clippy::too_many_arguments)]
+pub(crate) fn place_pruned_phis(
+    blocks: &mut [SsaBlock],
+    defs: &HashMap<u32, HashSet<usize>>,
+    live_in: &HashMap<u32, HashSet<usize>>,
+    dominance_frontiers: &[HashSet<NodeId>],
+    reachable: Option<&HashSet<usize>>,
+    group_filter: &dyn Fn(u32) -> bool,
+    group_to_origin: &dyn Fn(u32) -> VariableOrigin,
+    leave_target_fn: Option<&LeaveTargetFn<'_>>,
+) -> Vec<(usize, u32)> {
+    let block_count = blocks.len();
+    let mut placements: Vec<(usize, u32)> = Vec::new();
+
+    for (&group, def_blocks) in defs {
+        if !group_filter(group) {
+            continue;
+        }
+
+        // Compute iterated dominance frontier
+        let mut phi_blocks: HashSet<usize> = HashSet::new();
+        let mut worklist: Vec<usize> = def_blocks.iter().copied().collect();
+
+        while let Some(block_idx) = worklist.pop() {
+            let node_id = NodeId::new(block_idx);
+            if node_id.index() < dominance_frontiers.len() {
+                for &frontier_node in &dominance_frontiers[node_id.index()] {
+                    let frontier_idx = frontier_node.index();
+                    let is_reachable = reachable.is_none_or(|r| r.contains(&frontier_idx));
+                    if frontier_idx < block_count && is_reachable && phi_blocks.insert(frontier_idx)
+                    {
+                        worklist.push(frontier_idx);
+                    }
+                }
+            }
+
+            // For exception handler blocks, use Leave targets as phi placement points
+            if let Some(leave_fn) = leave_target_fn {
+                if let Some(target) = leave_fn(block_idx, blocks) {
+                    let is_reachable = reachable.is_none_or(|r| r.contains(&target));
+                    if target < block_count && is_reachable && phi_blocks.insert(target) {
+                        worklist.push(target);
+                    }
+                }
+            }
+        }
+
+        // Pruned SSA: only place phi if variable is live at the frontier block.
+        // If no liveness data for this group, place unconditionally (used by
+        // converter for Stack origins that don't have liveness tracking).
+        let group_live_in = live_in.get(&group);
+
+        for &phi_block_idx in &phi_blocks {
+            if let Some(live_set) = group_live_in {
+                if !live_set.contains(&phi_block_idx) {
+                    continue;
+                }
+            }
+
+            if let Some(block) = blocks.get_mut(phi_block_idx) {
+                let origin = group_to_origin(group);
+                // Phi result IDs are temporary placeholders; they will be replaced
+                // during the rename phase with properly allocated variable IDs.
+                let phi = PhiNode::new(SsaVarId::PLACEHOLDER, origin);
+                block.add_phi(phi);
+                placements.push((phi_block_idx, group));
+            }
+        }
+    }
+
+    placements
+}
+
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
@@ -341,7 +442,7 @@ mod tests {
     use crate::{
         analysis::ssa::{
             ConstEvaluator, ConstValue, DefSite, PhiAnalyzer, PhiNode, PhiOperand, SsaBlock,
-            SsaFunction, SsaInstruction, SsaOp, SsaVarId, SsaVariable, VariableOrigin,
+            SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId, VariableOrigin,
         },
         metadata::typesystem::PointerSize,
     };
@@ -361,8 +462,8 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let result = SsaVarId::new();
-        let source = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let source = SsaVarId::from_index(1);
 
         // phi(v1, v1) - trivial, single unique source
         let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
@@ -377,8 +478,8 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let result = SsaVarId::new();
-        let source = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let source = SsaVarId::from_index(1);
 
         // phi(v1, result, v1) - trivial, self-references are ignored
         let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
@@ -394,9 +495,9 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let result = SsaVarId::new();
-        let source1 = SsaVarId::new();
-        let source2 = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let source1 = SsaVarId::from_index(1);
+        let source2 = SsaVarId::from_index(2);
 
         // phi(v1, v2) - not trivial, multiple different sources
         let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
@@ -411,7 +512,7 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let result = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
 
         // phi(result, result) - not trivial, only self-references (unreachable)
         let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
@@ -427,14 +528,20 @@ mod tests {
         let mut block = SsaBlock::new(0);
 
         // v1 = 42
-        let v1 = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-        let v1_id = v1.id();
-        ssa.add_variable(v1);
+        let v1_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
 
         // v2 = 42
-        let v2 = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(0, 1));
-        let v2_id = v2.id();
-        ssa.add_variable(v2);
+        let v2_id = ssa.create_variable(
+            VariableOrigin::Local(1),
+            0,
+            DefSite::instruction(0, 1),
+            SsaType::Unknown,
+        );
 
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
             dest: v1_id,
@@ -451,7 +558,7 @@ mod tests {
         let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
 
         // phi(v1, v2) where both are 42
-        let phi_result = SsaVarId::new();
+        let phi_result = SsaVarId::from_index(0);
         let mut phi = PhiNode::new(phi_result, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v1_id, 0));
         phi.add_operand(PhiOperand::new(v2_id, 1));
@@ -468,14 +575,20 @@ mod tests {
         let mut block = SsaBlock::new(0);
 
         // v1 = 42
-        let v1 = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-        let v1_id = v1.id();
-        ssa.add_variable(v1);
+        let v1_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
 
         // v2 = 99
-        let v2 = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(0, 1));
-        let v2_id = v2.id();
-        ssa.add_variable(v2);
+        let v2_id = ssa.create_variable(
+            VariableOrigin::Local(1),
+            0,
+            DefSite::instruction(0, 1),
+            SsaType::Unknown,
+        );
 
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
             dest: v1_id,
@@ -492,7 +605,7 @@ mod tests {
         let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
 
         // phi(v1, v2) where v1=42 and v2=99
-        let phi_result = SsaVarId::new();
+        let phi_result = SsaVarId::from_index(0);
         let mut phi = PhiNode::new(phi_result, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v1_id, 0));
         phi.add_operand(PhiOperand::new(v2_id, 1));
@@ -507,7 +620,7 @@ mod tests {
         let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
 
         // Empty PHI
-        let phi_result = SsaVarId::new();
+        let phi_result = SsaVarId::from_index(0);
         let phi = PhiNode::new(phi_result, VariableOrigin::Local(0));
 
         assert_eq!(analyzer.uniform_constant(&phi, &mut evaluator), None);
@@ -520,9 +633,9 @@ mod tests {
         let mut evaluator = ConstEvaluator::new(&ssa, PointerSize::Bit64);
 
         // phi(v1, v2) where neither is defined (not constant)
-        let phi_result = SsaVarId::new();
-        let v1_id = SsaVarId::new();
-        let v2_id = SsaVarId::new();
+        let phi_result = SsaVarId::from_index(0);
+        let v1_id = SsaVarId::from_index(1);
+        let v2_id = SsaVarId::from_index(2);
 
         let mut phi = PhiNode::new(phi_result, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v1_id, 0));
@@ -536,14 +649,17 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
 
         // Create a variable defined by a PHI
-        let phi_result = SsaVariable::new(VariableOrigin::Local(0), 0, DefSite::phi(0));
-        let phi_result_id = phi_result.id();
-        ssa.add_variable(phi_result);
+        let phi_result_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::phi(0),
+            SsaType::Unknown,
+        );
 
         // Create block with PHI node
         let mut block = SsaBlock::new(0);
         let mut phi = PhiNode::new(phi_result_id, VariableOrigin::Local(0));
-        let operand_id = SsaVarId::new();
+        let operand_id = SsaVarId::from_index(0);
         phi.add_operand(PhiOperand::new(operand_id, 1));
         block.add_phi(phi);
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
@@ -565,9 +681,12 @@ mod tests {
         let mut block = SsaBlock::new(0);
 
         // Create a variable defined by a regular instruction (not PHI)
-        let var = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-        let var_id = var.id();
-        ssa.add_variable(var);
+        let var_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
 
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
             dest: var_id,
@@ -587,7 +706,7 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let result = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
 
         // phi(result, result) - fully self-referential
         let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
@@ -602,8 +721,8 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let result = SsaVarId::new();
-        let source = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let source = SsaVarId::from_index(1);
 
         // phi(source, result) - not fully self-referential
         let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
@@ -618,7 +737,7 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let result = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
 
         // Empty phi - not fully self-referential
         let phi = PhiNode::new(result, VariableOrigin::Local(0));
@@ -631,8 +750,8 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let result = SsaVarId::new();
-        let source = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let source = SsaVarId::from_index(1);
 
         // phi(source, source) - trivial with replacement
         let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
@@ -647,7 +766,7 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let result = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
 
         // phi(result, result) - fully self-referential, should be removed
         let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
@@ -662,9 +781,9 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let result = SsaVarId::new();
-        let source1 = SsaVarId::new();
-        let source2 = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let source1 = SsaVarId::from_index(1);
+        let source2 = SsaVarId::from_index(2);
 
         // phi(source1, source2) - not trivial (different sources)
         let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
@@ -680,8 +799,8 @@ mod tests {
 
         // Block 0: entry with trivial phi
         let mut block0 = SsaBlock::new(0);
-        let phi_result1 = SsaVarId::new();
-        let source1 = SsaVarId::new();
+        let phi_result1 = SsaVarId::from_index(0);
+        let source1 = SsaVarId::from_index(1);
         let mut phi1 = PhiNode::new(phi_result1, VariableOrigin::Local(0));
         phi1.add_operand(PhiOperand::new(source1, 1)); // trivial: single source
         block0.add_phi(phi1);
@@ -690,7 +809,7 @@ mod tests {
 
         // Block 1: self-referential phi
         let mut block1 = SsaBlock::new(1);
-        let phi_result2 = SsaVarId::new();
+        let phi_result2 = SsaVarId::from_index(2);
         let mut phi2 = PhiNode::new(phi_result2, VariableOrigin::Local(1));
         phi2.add_operand(PhiOperand::new(phi_result2, 0)); // self-referential
         phi2.add_operand(PhiOperand::new(phi_result2, 1));

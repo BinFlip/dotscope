@@ -39,7 +39,10 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     analysis::{ConstValue, DefUseIndex, SsaFunction, SsaOp, SsaVarId},
-    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
+    compiler::{
+        pass::{ModificationScope, SsaPass},
+        CompilerContext, EventKind, EventLog,
+    },
     metadata::{token::Token, typesystem::PointerSize},
     CilObject, Result,
 };
@@ -401,6 +404,10 @@ impl SsaPass for ReassociationPass {
         "Reorder operations to enable constant folding (add, sub, mul, and, or, xor, shl, shr)"
     }
 
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::InstructionsOnly
+    }
+
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
@@ -430,9 +437,9 @@ impl SsaPass for ReassociationPass {
 
 #[cfg(test)]
 mod tests {
-    use crate::{analysis::ConstValue, metadata::typesystem::PointerSize};
-
     use super::OpKind;
+
+    use crate::{analysis::ConstValue, metadata::typesystem::PointerSize};
 
     #[test]
     fn test_op_kind_combine_add() {

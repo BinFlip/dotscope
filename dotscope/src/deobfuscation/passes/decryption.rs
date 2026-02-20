@@ -68,14 +68,14 @@ use rayon::prelude::*;
 
 use crate::{
     analysis::{ConstValue, SsaCfg, SsaFunction, SsaOp, SsaVarId, ValueResolver},
-    compiler::{CompilerContext, EventKind, EventLog, SsaPass},
+    compiler::{CompilerContext, EventKind, EventLog, ModificationScope, SsaPass},
     deobfuscation::{
-        context::AnalysisContext,
+        context::{AnalysisContext, HookFactory},
         decryptors::{DecryptorContext, FailureReason},
         CfgInfo, StateMachineProvider, StateMachineState, StateUpdateCall,
     },
     emulation::{
-        EmValue, EmulationError, EmulationOutcome, EmulationProcess, EmulationThread, Hook,
+        EmValue, EmulationError, EmulationOutcome, EmulationProcess, EmulationThread,
         ProcessBuilder, StepResult,
     },
     metadata::{token::Token, typesystem::PointerSize},
@@ -111,18 +111,6 @@ use crate::{
 ///
 /// If warmup methods are registered but fail to execute, the `warmup_failed`
 /// flag is set and all subsequent decryption attempts are skipped.
-/// A factory function that creates a new [`Hook`] instance.
-///
-/// Hook factories are used instead of storing hooks directly because hooks
-/// contain non-Clone types (closures, trait objects). Each emulation process
-/// gets fresh hook instances by calling all registered factories.
-pub type HookFactory = Box<dyn Fn() -> Hook + Send + Sync>;
-
-/// Decrypts obfuscated constant values by emulating decryptor methods.
-///
-/// This pass identifies calls to registered decryptor methods, emulates them
-/// to recover the original constant values, and replaces the calls with the
-/// decrypted constants directly in the SSA graph.
 pub struct DecryptionPass {
     /// Template emulation process for Copy-on-Write forking.
     ///
@@ -792,8 +780,13 @@ impl DecryptionPass {
                     value.clone(),
                 );
 
+                let event_kind = if value.is_string_like() {
+                    EventKind::StringDecrypted
+                } else {
+                    EventKind::ConstantDecrypted
+                };
                 changes
-                    .record(EventKind::ConstantDecrypted)
+                    .record(event_kind)
                     .at(method_token, location)
                     .message(format!(
                         "decrypted (CFG mode, flag=0x{flag:02X}, inc=0x{increment:08X}): {value}"
@@ -956,6 +949,10 @@ impl SsaPass for DecryptionPass {
         "Decrypts obfuscated values by emulating registered decryptor methods"
     }
 
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::InstructionsOnly
+    }
+
     fn initialize(&mut self, _ctx: &CompilerContext) -> Result<()> {
         // This pass relies on DecryptorContext being populated by obfuscator
         // detection before it runs. No additional setup needed.
@@ -992,8 +989,6 @@ impl SsaPass for DecryptionPass {
         let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
 
         // Check if this method uses a state machine (CFG mode) - requires sequential processing
-        // Track changes separately so we can still process remaining non-state-machine calls
-        let mut state_machine_changed = false;
         if let Some(provider) = self.get_statemachine_provider_for_method(method_token) {
             let (changed, sm_changes) = self.process_state_machine_mode(
                 ssa,
@@ -1006,14 +1001,15 @@ impl SsaPass for DecryptionPass {
             if !sm_changes.is_empty() {
                 ctx.events.merge(&sm_changes);
             }
-            state_machine_changed = changed;
-            // Fall through to try normal mode for any remaining calls that might
-            // not use state machine patterns (e.g., calls where argument doesn't come from XOR)
+            // CFG mode methods: all decryptor calls use the state machine pattern.
+            // Do not fall through to normal mode, as it would use wrong arguments
+            // (e.g., encoded constants that haven't been XORed with the state).
+            return Ok(changed);
         }
 
         let changes = EventLog::new();
 
-        let mut resolver = ValueResolver::new(&*ssa, ptr_size);
+        let mut resolver = ValueResolver::new(&*ssa, ptr_size).with_path_aware_fallback();
         resolver.load_known_values(ctx, method_token);
 
         // Phase 1: Collect decryption candidates (sequential)
@@ -1100,8 +1096,13 @@ impl SsaPass for DecryptionPass {
             self.decryptors
                 .record_success(decryptor, method_token, location, value.clone());
 
+            let event_kind = if value.is_string_like() {
+                EventKind::StringDecrypted
+            } else {
+                EventKind::ConstantDecrypted
+            };
             changes
-                .record(EventKind::ConstantDecrypted)
+                .record(event_kind)
                 .at(method_token, block_idx * 1000 + instr_idx)
                 .message(format!("decrypted: {value}"));
 
@@ -1128,12 +1129,12 @@ impl SsaPass for DecryptionPass {
                 ));
         }
 
-        // Determine if actual transformations were made (either CFG mode or normal mode)
-        let normal_mode_changed = changes.iter().any(|e| !e.kind.is_diagnostic());
+        // Determine if actual transformations were made
+        let changed = changes.iter().any(|e| !e.kind.is_diagnostic());
         if !changes.is_empty() {
             ctx.events.merge(&changes);
         }
-        Ok(state_machine_changed || normal_mode_changed)
+        Ok(changed)
     }
 }
 
@@ -1143,7 +1144,7 @@ mod tests {
 
     use crate::{
         analysis::{
-            CallGraph, ConstValue, MethodRef, SsaFunction, SsaFunctionBuilder, SsaVarId,
+            CallGraph, ConstValue, MethodRef, SsaFunction, SsaFunctionBuilder, SsaType, SsaVarId,
             ValueResolver,
         },
         compiler::SsaPass,
@@ -1180,12 +1181,14 @@ mod tests {
         let pass = DecryptionPass::new(&ctx);
 
         let method_token = Token::new(0x06000001);
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let _ = b.const_i32(42);
-                b.ret();
-            });
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let _ = b.const_i32(42);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         // No decryptors registered, should return false (no changes)
         let changed = pass
@@ -1205,12 +1208,14 @@ mod tests {
         let pass = DecryptionPass::new(&ctx);
 
         let method_token = Token::new(0x06000001);
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let _ = b.const_i32(42);
-                b.ret();
-            });
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let _ = b.const_i32(42);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         // Has decryptors but no calls to them
         let changed = pass
@@ -1230,13 +1235,15 @@ mod tests {
         let pass = DecryptionPass::new(&ctx);
 
         let method_token = Token::new(0x06000001);
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                // Call with no destination
-                b.call_void(MethodRef::new(decryptor_token), &[]);
-                b.ret();
-            });
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    // Call with no destination
+                    b.call_void(MethodRef::new(decryptor_token), &[]);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         // Call without destination, can't replace
         let changed = pass
@@ -1256,14 +1263,16 @@ mod tests {
         let pass = DecryptionPass::new(&ctx);
 
         let method_token = Token::new(0x06000001);
-        let mut ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-            let arg0 = f.arg(0);
-            f.block(0, |b| {
-                // Call with non-constant argument
-                let _ = b.call(MethodRef::new(decryptor_token), &[arg0]);
-                b.ret();
-            });
-        });
+        let mut ssa = SsaFunctionBuilder::new(1, 0)
+            .build_with(|f| {
+                let arg0 = f.arg(0, SsaType::I32);
+                f.block(0, |b| {
+                    // Call with non-constant argument
+                    let _ = b.call(MethodRef::new(decryptor_token), &[arg0], SsaType::I32);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         // Argument is not in known_values, should fail
         let changed = pass
@@ -1287,13 +1296,15 @@ mod tests {
 
         let method_token = Token::new(0x06000001);
         let other_method = Token::new(0x06000003);
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                // Call to a different method (not a decryptor)
-                let _ = b.call(MethodRef::new(other_method), &[]);
-                b.ret();
-            });
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    // Call to a different method (not a decryptor)
+                    let _ = b.call(MethodRef::new(other_method), &[], SsaType::I32);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         let changed = pass
             .run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc())
@@ -1315,14 +1326,16 @@ mod tests {
         let pass = DecryptionPass::new(&ctx);
 
         let method_token = Token::new(0x06000001);
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let c = b.const_i32(42);
-                // Call via MethodSpec with a destination so we can attempt decryption
-                let _ = b.call(MethodRef::new(methodspec_token), &[c]);
-                b.ret();
-            });
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let c = b.const_i32(42);
+                    // Call via MethodSpec with a destination so we can attempt decryption
+                    let _ = b.call(MethodRef::new(methodspec_token), &[c], SsaType::I32);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         // Set up the constant arg
         let var_id = ssa.block(0).unwrap().instructions()[0].op().dest().unwrap();
@@ -1356,8 +1369,8 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
 
         let method = Token::new(0x06000001);
-        let var1 = SsaVarId::new();
-        let var2 = SsaVarId::new();
+        let var1 = SsaVarId::from_index(0);
+        let var2 = SsaVarId::from_index(1);
 
         ctx.add_known_value(method, var1, ConstValue::I32(42));
         ctx.add_known_value(method, var2, ConstValue::I32(100));
@@ -1380,8 +1393,8 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
 
         let method = Token::new(0x06000001);
-        let var1 = SsaVarId::new();
-        let var2 = SsaVarId::new();
+        let var1 = SsaVarId::from_index(0);
+        let var2 = SsaVarId::from_index(1);
 
         ctx.add_known_value(method, var1, ConstValue::I32(42));
         // var2 not set

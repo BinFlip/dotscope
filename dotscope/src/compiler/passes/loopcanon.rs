@@ -238,7 +238,7 @@ impl LoopCanonicalizationPass {
 
                 if non_loop_operands.len() > 1 {
                     // Need a phi node in the preheader to merge these values
-                    let new_var = SsaVarId::new();
+                    let new_var = SsaVarId::PLACEHOLDER;
                     let mut preheader_phi = PhiNode::new(new_var, phi.origin());
                     for op in &non_loop_operands {
                         preheader_phi.add_operand(*op);
@@ -343,7 +343,7 @@ impl LoopCanonicalizationPass {
 
                 if latch_operands.len() > 1 {
                     // Need a phi node in the unified latch
-                    let new_var = SsaVarId::new();
+                    let new_var = SsaVarId::PLACEHOLDER;
                     let mut latch_phi = PhiNode::new(new_var, phi.origin());
                     for op in &latch_operands {
                         latch_phi.add_operand(*op);
@@ -506,7 +506,12 @@ impl SsaPass for LoopCanonicalizationPass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::{SsaFunctionBuilder, SsaLoopAnalysis};
+
+    use crate::{
+        analysis::{SsaFunctionBuilder, SsaLoopAnalysis},
+        compiler::EventLog,
+        metadata::token::Token,
+    };
 
     #[test]
     fn test_preheader_insertion() {
@@ -518,26 +523,28 @@ mod tests {
         // B4 -> B3 (back edge) or B5 (exit)
         // B5: return
 
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            // B0: entry - branch to B1 or B2
-            f.block(0, |b| {
-                let cond0 = b.const_true();
-                b.branch(cond0, 1, 2);
-            });
-            // B1: first path to header
-            f.block(1, |b| b.jump(3));
-            // B2: second path to header
-            f.block(2, |b| b.jump(3));
-            // B3: header, jump to body
-            f.block(3, |b| b.jump(4));
-            // B4: body with back edge or exit
-            f.block(4, |b| {
-                let cond1 = b.const_true();
-                b.branch(cond1, 3, 5); // back edge to 3, exit to 5
-            });
-            // B5: exit
-            f.block(5, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                // B0: entry - branch to B1 or B2
+                f.block(0, |b| {
+                    let cond0 = b.const_true();
+                    b.branch(cond0, 1, 2);
+                });
+                // B1: first path to header
+                f.block(1, |b| b.jump(3));
+                // B2: second path to header
+                f.block(2, |b| b.jump(3));
+                // B3: header, jump to body
+                f.block(3, |b| b.jump(4));
+                // B4: body with back edge or exit
+                f.block(4, |b| {
+                    let cond1 = b.const_true();
+                    b.branch(cond1, 3, 5); // back edge to 3, exit to 5
+                });
+                // B5: exit
+                f.block(5, |b| b.ret());
+            })
+            .unwrap();
 
         // Verify loop exists but doesn't have preheader
         let forest = ssa.analyze_loops();
@@ -568,24 +575,26 @@ mod tests {
         // B3 -> B1 (back edge 2), B4
         // B4: exit
 
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            // B0: entry
-            f.block(0, |b| b.jump(1));
-            // B1: header
-            f.block(1, |b| {
-                let cond1 = b.const_true();
-                b.branch(cond1, 2, 3);
-            });
-            // B2: latch 1 (back to header)
-            f.block(2, |b| b.jump(1));
-            // B3: latch 2 or exit
-            f.block(3, |b| {
-                let cond2 = b.const_true();
-                b.branch(cond2, 1, 4); // back edge to 1, exit to 4
-            });
-            // B4: exit
-            f.block(4, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                // B0: entry
+                f.block(0, |b| b.jump(1));
+                // B1: header
+                f.block(1, |b| {
+                    let cond1 = b.const_true();
+                    b.branch(cond1, 2, 3);
+                });
+                // B2: latch 1 (back to header)
+                f.block(2, |b| b.jump(1));
+                // B3: latch 2 or exit
+                f.block(3, |b| {
+                    let cond2 = b.const_true();
+                    b.branch(cond2, 1, 4); // back edge to 1, exit to 4
+                });
+                // B4: exit
+                f.block(4, |b| b.ret());
+            })
+            .unwrap();
 
         // Verify loop has multiple latches
         let forest = ssa.analyze_loops();
@@ -616,19 +625,21 @@ mod tests {
         // B2 -> B1 (single back edge), B3
         // B3: exit
 
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            // B0: preheader
-            f.block(0, |b| b.jump(1));
-            // B1: header
-            f.block(1, |b| b.jump(2));
-            // B2: body/latch
-            f.block(2, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 1, 3); // back edge to 1, exit to 3
-            });
-            // B3: exit
-            f.block(3, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                // B0: preheader
+                f.block(0, |b| b.jump(1));
+                // B1: header
+                f.block(1, |b| b.jump(2));
+                // B2: body/latch
+                f.block(2, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 1, 3); // back edge to 1, exit to 3
+                });
+                // B3: exit
+                f.block(3, |b| b.ret());
+            })
+            .unwrap();
 
         // Verify loop is already canonical
         let forest = ssa.analyze_loops();
@@ -647,11 +658,13 @@ mod tests {
     #[test]
     fn test_no_loops() {
         // Linear flow: B0 -> B1 -> B2
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.jump(1));
-            f.block(1, |b| b.jump(2));
-            f.block(2, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.jump(1));
+                f.block(1, |b| b.jump(2));
+                f.block(2, |b| b.ret());
+            })
+            .unwrap();
 
         let forest = ssa.analyze_loops();
         assert!(forest.is_empty());

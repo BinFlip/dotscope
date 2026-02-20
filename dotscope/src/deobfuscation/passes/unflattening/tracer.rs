@@ -21,6 +21,7 @@ use crate::{
     },
     deobfuscation::passes::unflattening::{detection::CffDetector, UnflattenConfig},
     metadata::{token::Token, typesystem::PointerSize},
+    utils::BitSet,
     CilObject,
 };
 
@@ -75,6 +76,21 @@ pub struct InstructionWithValues {
     pub output_value: Option<i64>,
 }
 
+/// A trace of an exception handler entry block.
+///
+/// When CFF exists inside exception handler blocks (catch/finally/filter),
+/// the normal trace from block 0 won't reach them because handlers are only
+/// reachable via runtime exceptions. This struct holds a separate trace
+/// starting from a handler entry block.
+#[derive(Debug, Clone)]
+pub struct HandlerTrace {
+    /// The handler's entry block index.
+    pub handler_start_block: usize,
+
+    /// The root node of the handler's trace tree.
+    pub root: TraceNode,
+}
+
 /// A trace tree represents all execution paths through a CFF-protected method.
 ///
 /// Unlike the linear `MethodTrace`, this structure forks at user branches
@@ -83,6 +99,9 @@ pub struct InstructionWithValues {
 pub struct TraceTree {
     /// The root node of the trace tree.
     pub root: TraceNode,
+
+    /// Traces of exception handler entry blocks that were not reached by the main trace.
+    pub handler_traces: Vec<HandlerTrace>,
 
     /// Dispatcher information (detected during tracing).
     pub dispatcher: Option<TracedDispatcher>,
@@ -198,6 +217,7 @@ impl TraceTree {
     pub fn new(root: TraceNode) -> Self {
         Self {
             root,
+            handler_traces: Vec::new(),
             dispatcher: None,
             state_tainted: HashSet::new(),
             stats: TraceStats::default(),
@@ -269,6 +289,13 @@ struct TreeTraceContext<'a> {
     next_node_id: usize,
     total_visits: usize,
     visited_states: HashSet<(usize, i64)>, // (block, state) pairs we've seen
+    /// Case blocks (dispatcher targets) visited on the current execution path.
+    /// Uses a `BitSet` indexed by block number for O(1) lookup without hashing.
+    /// Used for loop detection in CFF loops where the state value changes each
+    /// iteration (arithmetic encoding: mul+xor), making `(block, state)` pairs
+    /// insufficient for detecting revisits. When the dispatcher dispatches to a
+    /// case block already in this set, it's a loop back-edge.
+    visited_case_blocks: BitSet,
     max_block_visits: usize,
     max_tree_depth: usize,
 }
@@ -288,6 +315,7 @@ impl<'a> TreeTraceContext<'a> {
             next_node_id: 0,
             total_visits: 0,
             visited_states: HashSet::new(),
+            visited_case_blocks: BitSet::new(ssa.block_count()),
             max_block_visits: config.max_block_visits,
             max_tree_depth: config.max_tree_depth,
         }
@@ -419,19 +447,79 @@ pub fn trace_method_tree(
     // Step 3: Trace from block 0
     let root = trace_from_block(&mut ctx, 0, 0);
 
-    // Step 4: Forward taint propagation through instructions
+    // Step 4: Trace exception handler entry blocks that weren't reached
+    let handler_traces = trace_exception_handlers(&mut ctx);
+
+    // Step 5: Forward taint propagation through instructions
     // This is done during tracing via trace_instruction_tree, but we also
     // run a final pass using the generic taint analysis to ensure completeness
     propagate_taint_forward(ssa, &mut ctx.state_tainted);
 
     let mut tree = TraceTree::new(root);
+    tree.handler_traces = handler_traces;
     tree.dispatcher = ctx.dispatcher;
     tree.state_tainted = ctx.state_tainted;
 
     // Compute statistics
     compute_tree_stats(&tree.root, &mut tree.stats, 0);
+    for ht in &tree.handler_traces {
+        compute_tree_stats(&ht.root, &mut tree.stats, 0);
+    }
 
     tree
+}
+
+/// Traces exception handler entry blocks that were not visited by the main trace.
+///
+/// Handler blocks (catch, finally, filter) are only reachable via runtime exceptions,
+/// not explicit branches, so the main trace from block 0 never reaches them. This
+/// function creates a separate trace for each unvisited handler entry block, using
+/// a fresh evaluator (handlers don't inherit eval stack state from the try block)
+/// while sharing dispatcher detection and taint state.
+fn trace_exception_handlers(ctx: &mut TreeTraceContext<'_>) -> Vec<HandlerTrace> {
+    let mut handler_traces = Vec::new();
+
+    // Collect handler start blocks that weren't already visited
+    let handler_blocks: Vec<usize> = ctx
+        .ssa
+        .exception_handlers()
+        .iter()
+        .filter_map(|h| h.handler_start_block)
+        .filter(|&block| !ctx.visited_states.iter().any(|(b, _)| *b == block))
+        .collect();
+
+    for handler_start in handler_blocks {
+        if handler_start >= ctx.ssa.block_count() {
+            continue;
+        }
+
+        // Create a fresh evaluator for this handler — handlers don't inherit
+        // the try block's evaluation state.
+        let saved_evaluator = ctx.evaluator.clone();
+        ctx.evaluator = SsaEvaluator::new(ctx.ssa, ctx.evaluator.pointer_size());
+
+        // Reset per-trace state but preserve cross-trace counters and shared state
+        let saved_visited_states = std::mem::take(&mut ctx.visited_states);
+        let saved_visited_case_blocks = std::mem::replace(
+            &mut ctx.visited_case_blocks,
+            BitSet::new(ctx.ssa.block_count()),
+        );
+
+        // Trace from the handler entry block
+        let root = trace_from_block(ctx, handler_start, 0);
+
+        handler_traces.push(HandlerTrace {
+            handler_start_block: handler_start,
+            root,
+        });
+
+        // Restore per-trace state (keep total_visits and next_node_id incremented)
+        ctx.visited_states = saved_visited_states;
+        ctx.visited_case_blocks = saved_visited_case_blocks;
+        ctx.evaluator = saved_evaluator;
+    }
+
+    handler_traces
 }
 
 /// Propagates taint forward through instructions using the generic taint analysis.
@@ -542,14 +630,6 @@ fn trace_from_block(ctx: &mut TreeTraceContext<'_>, block_idx: usize, depth: usi
         return node;
     }
 
-    ctx.total_visits += 1;
-    if ctx.total_visits > ctx.max_block_visits {
-        node.set_terminator(TraceTerminator::Stopped {
-            reason: StopReason::MaxVisitsExceeded,
-        });
-        return node;
-    }
-
     // Check for loop (same block + state visited before)
     if let Some(state) = ctx.current_state() {
         if ctx.is_visited(block_idx, state) {
@@ -566,6 +646,39 @@ fn trace_from_block(ctx: &mut TreeTraceContext<'_>, block_idx: usize, depth: usi
     let mut current_block = block_idx;
 
     loop {
+        // Safety: detect cycles in the linear block chain.
+        // If we revisit a block within the same trace_from_block call,
+        // we have an unconditional loop (e.g., Jump back-edge).
+        ctx.total_visits += 1;
+        if ctx.total_visits > ctx.max_block_visits {
+            node.set_terminator(TraceTerminator::Stopped {
+                reason: StopReason::MaxVisitsExceeded,
+            });
+            return node;
+        }
+        // Exempt the dispatcher block — it's intentionally revisited as it dispatches
+        // to different case blocks based on the state variable.
+        let is_dispatcher = ctx
+            .dispatcher
+            .as_ref()
+            .is_some_and(|d| d.block == current_block);
+        if !is_dispatcher
+            && current_block != block_idx
+            && node.blocks_visited.len() > 1
+            && node.blocks_visited[..node.blocks_visited.len() - 1].contains(&current_block)
+        {
+            // We've looped back to a block already processed in this linear chain.
+            // Note: we check [..len-1] because the last entry is the current block
+            // just added by the previous iteration's visit_block() — it hasn't been
+            // processed yet, so it's not a cycle.
+            let state = ctx.current_state().unwrap_or(0);
+            node.set_terminator(TraceTerminator::LoopBack {
+                target_block: current_block,
+                state,
+            });
+            return node;
+        }
+
         let Some(block) = ctx.ssa.block(current_block) else {
             node.set_terminator(TraceTerminator::Stopped {
                 reason: StopReason::UnknownControlFlow {
@@ -665,6 +778,7 @@ fn handle_terminator_tree(
             } else {
                 // USER BRANCH - fork the trace!
                 let snapshot = ctx.snapshot_evaluator();
+                let case_blocks_snapshot = ctx.visited_case_blocks.clone();
 
                 // Set predecessor so phi nodes in the target block resolve correctly.
                 // Without this, sub-traces starting at a block with phis (e.g., a dispatcher
@@ -675,8 +789,11 @@ fn handle_terminator_tree(
                 // Trace true branch
                 let true_node = trace_from_block(ctx, *true_target, depth + 1);
 
-                // Restore evaluator and trace false branch
+                // Restore evaluator and case blocks for false branch.
+                // Each branch gets its own scope for case-block loop detection
+                // to prevent false positive loop detection in sibling branches.
                 ctx.restore_evaluator(snapshot);
+                ctx.visited_case_blocks = case_blocks_snapshot;
                 ctx.evaluator.set_predecessor(Some(block_idx));
                 let false_node = trace_from_block(ctx, *false_target, depth + 1);
 
@@ -711,6 +828,7 @@ fn handle_terminator_tree(
             } else {
                 // USER BRANCH - fork the trace (same as regular Branch)
                 let snapshot = ctx.snapshot_evaluator();
+                let case_blocks_snapshot = ctx.visited_case_blocks.clone();
 
                 // Set predecessor for phi evaluation in target blocks
                 ctx.evaluator.set_predecessor(Some(block_idx));
@@ -718,8 +836,9 @@ fn handle_terminator_tree(
                 // Trace true branch
                 let true_node = trace_from_block(ctx, *true_target, depth + 1);
 
-                // Restore evaluator and trace false branch
+                // Restore evaluator and case blocks for false branch
                 ctx.restore_evaluator(snapshot);
+                ctx.visited_case_blocks = case_blocks_snapshot;
                 ctx.evaluator.set_predecessor(Some(block_idx));
                 let false_node = trace_from_block(ctx, *false_target, depth + 1);
 
@@ -764,6 +883,33 @@ fn handle_terminator_tree(
                     // Record state transition
                     let from_state = ctx.current_state().unwrap_or(0);
 
+                    // Check for CFF loop: if this dispatcher target (case block)
+                    // was already visited via the dispatcher on the current path,
+                    // it's a loop back-edge. This handles CFF loops where the state
+                    // value changes each iteration (mul+xor encoding), making the
+                    // (block, state) pair check insufficient.
+                    if target < ctx.visited_case_blocks.len()
+                        && ctx.visited_case_blocks.contains(target)
+                    {
+                        let state = ctx.current_state().unwrap_or(0);
+                        let mut loop_node = TraceNode::new(ctx.next_id(), target);
+                        loop_node.set_terminator(TraceTerminator::LoopBack {
+                            target_block: target,
+                            state,
+                        });
+
+                        node.set_terminator(TraceTerminator::StateTransition {
+                            from_state,
+                            to_state: state,
+                            target_block: target,
+                            continues: Box::new(loop_node),
+                        });
+                        return TerminatorResult::Done;
+                    }
+                    if target < ctx.visited_case_blocks.len() {
+                        ctx.visited_case_blocks.insert(target);
+                    }
+
                     // Set predecessor for phi evaluation in the target block
                     ctx.evaluator.set_predecessor(Some(block_idx));
 
@@ -787,10 +933,12 @@ fn handle_terminator_tree(
             } else {
                 // USER SWITCH - fork for all cases
                 let snapshot = ctx.snapshot_evaluator();
+                let case_blocks_snapshot = ctx.visited_case_blocks.clone();
                 let mut cases = Vec::new();
 
                 for (i, &target) in targets.iter().enumerate() {
                     ctx.restore_evaluator(snapshot.clone());
+                    ctx.visited_case_blocks = case_blocks_snapshot.clone();
                     // Set predecessor for phi evaluation in target blocks
                     ctx.evaluator.set_predecessor(Some(block_idx));
                     let case_node = trace_from_block(ctx, target, depth + 1);
@@ -801,6 +949,7 @@ fn handle_terminator_tree(
                 }
 
                 ctx.restore_evaluator(snapshot);
+                ctx.visited_case_blocks = case_blocks_snapshot;
                 ctx.evaluator.set_predecessor(Some(block_idx));
                 let default_node = trace_from_block(ctx, *default, depth + 1);
 
@@ -943,8 +1092,8 @@ mod tests {
     /// Creates a simple CFF-like SSA function for testing.
     fn create_simple_cff() -> SsaFunction {
         let mut ssa = SsaFunction::new(0, 1);
-        let state_var = SsaVarId::new();
-        let const_var = SsaVarId::new();
+        let state_var = SsaVarId::from_index(0);
+        let const_var = SsaVarId::from_index(1);
 
         // B0: entry - set initial state and jump to dispatcher
         let mut b0 = SsaBlock::new(0);
@@ -1016,12 +1165,12 @@ mod tests {
     /// - B5: return
     fn create_cff_with_user_branch() -> SsaFunction {
         let mut ssa = SsaFunction::new(1, 1); // 1 arg, 1 local
-        let state_var = SsaVarId::new();
-        let init_state = SsaVarId::new(); // Separate var for initial state
-        let const_one = SsaVarId::new();
-        let arg0 = SsaVarId::new();
-        let user_zero = SsaVarId::new(); // Separate var for user comparison
-        let cmp_result = SsaVarId::new();
+        let state_var = SsaVarId::from_index(0);
+        let init_state = SsaVarId::from_index(1); // Separate var for initial state
+        let const_one = SsaVarId::from_index(2);
+        let arg0 = SsaVarId::from_index(3);
+        let user_zero = SsaVarId::from_index(4); // Separate var for user comparison
+        let cmp_result = SsaVarId::from_index(5);
 
         // B0: entry - set initial state = 0 and jump to dispatcher
         let mut b0 = SsaBlock::new(0);

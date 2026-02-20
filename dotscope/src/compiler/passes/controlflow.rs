@@ -311,12 +311,17 @@ impl SsaPass for ControlFlowSimplificationPass {
 }
 #[cfg(test)]
 mod tests {
+    use super::*;
+
     use std::sync::Arc;
 
-    use super::*;
     use crate::{
-        analysis::{CallGraph, ConstValue, SsaBlock, SsaFunctionBuilder, SsaInstruction, SsaVarId},
-        compiler::passes::deadcode::find_dead_tails,
+        analysis::{
+            CallGraph, ConstValue, SsaBlock, SsaFunction, SsaFunctionBuilder, SsaInstruction,
+            SsaOp, SsaVarId,
+        },
+        compiler::{passes::deadcode::find_dead_tails, CompilerContext, SsaPass},
+        metadata::token::Token,
         test::helpers::test_assembly_arc,
     };
 
@@ -328,12 +333,14 @@ mod tests {
 
     #[test]
     fn test_find_same_target_branches_none() {
-        let ssa = SsaFunctionBuilder::new(3, 0).build_with(|f| {
-            f.block(0, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 1, 2); // Different targets
-            });
-        });
+        let ssa = SsaFunctionBuilder::new(3, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 1, 2); // Different targets
+                });
+            })
+            .unwrap();
 
         let same_targets = ControlFlowSimplificationPass::find_same_target_branches(&ssa);
         assert!(same_targets.is_empty());
@@ -341,13 +348,15 @@ mod tests {
 
     #[test]
     fn test_find_same_target_branches_found() {
-        let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-            f.block(0, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 1, 1); // Same target!
-            });
-            f.block(1, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(2, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 1, 1); // Same target!
+                });
+                f.block(1, |b| b.ret());
+            })
+            .unwrap();
 
         let same_targets = ControlFlowSimplificationPass::find_same_target_branches(&ssa);
         assert_eq!(same_targets.len(), 1);
@@ -356,18 +365,20 @@ mod tests {
 
     #[test]
     fn test_find_same_target_branches_multiple() {
-        let ssa = SsaFunctionBuilder::new(4, 0).build_with(|f| {
-            f.block(0, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 2, 2);
-            });
-            f.block(1, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 3, 3);
-            });
-            f.block(2, |b| b.ret());
-            f.block(3, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(4, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 2, 2);
+                });
+                f.block(1, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 3, 3);
+                });
+                f.block(2, |b| b.ret());
+                f.block(3, |b| b.ret());
+            })
+            .unwrap();
 
         let same_targets = ControlFlowSimplificationPass::find_same_target_branches(&ssa);
         assert_eq!(same_targets.len(), 2);
@@ -375,7 +386,7 @@ mod tests {
 
     #[test]
     fn test_find_dead_tails_empty() {
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|_f| {});
+        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|_f| {}).unwrap();
         let dead_tails = find_dead_tails(&ssa);
         assert!(dead_tails.is_empty());
     }
@@ -390,7 +401,7 @@ mod tests {
         block0.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
         // Dead code after return
         block0.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
-            dest: SsaVarId::new(),
+            dest: SsaVarId::from_index(0),
             value: ConstValue::I32(42),
         }));
         ssa.add_block(block0);
@@ -402,12 +413,14 @@ mod tests {
 
     #[test]
     fn test_find_dead_tails_no_dead_code() {
-        let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-            f.block(0, |b| {
-                let _ = b.const_i32(42);
-                b.ret();
-            });
-        });
+        let ssa = SsaFunctionBuilder::new(1, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let _ = b.const_i32(42);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         let dead_tails = find_dead_tails(&ssa);
         assert!(dead_tails.is_empty());
@@ -422,15 +435,15 @@ mod tests {
         let mut block0 = SsaBlock::new(0);
         block0.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
         block0.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
-            dest: SsaVarId::new(),
+            dest: SsaVarId::from_index(0),
             value: ConstValue::I32(1),
         }));
         block0.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
-            dest: SsaVarId::new(),
+            dest: SsaVarId::from_index(1),
             value: ConstValue::I32(2),
         }));
         block0.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
-            dest: SsaVarId::new(),
+            dest: SsaVarId::from_index(2),
             value: ConstValue::I32(3),
         }));
         ssa.add_block(block0);
@@ -444,7 +457,7 @@ mod tests {
     fn test_pass_empty_function() {
         let pass = ControlFlowSimplificationPass::new();
         let ctx = test_context();
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|_f| {});
+        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|_f| {}).unwrap();
 
         let changed = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -456,12 +469,14 @@ mod tests {
     fn test_pass_no_simplification_needed() {
         let pass = ControlFlowSimplificationPass::new();
         let ctx = test_context();
-        let mut ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-            f.block(0, |b| {
-                let _ = b.const_i32(42);
-                b.ret();
-            });
-        });
+        let mut ssa = SsaFunctionBuilder::new(1, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let _ = b.const_i32(42);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         let changed = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -476,11 +491,13 @@ mod tests {
         // Block 0: jump to trampoline
         // Block 1: trampoline to block 2
         // Block 2: return
-        let mut ssa = SsaFunctionBuilder::new(3, 0).build_with(|f| {
-            f.block(0, |b| b.jump(1));
-            f.block(1, |b| b.jump(2));
-            f.block(2, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(3, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.jump(1));
+                f.block(1, |b| b.jump(2));
+                f.block(2, |b| b.ret());
+            })
+            .unwrap();
 
         let changed = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -502,11 +519,13 @@ mod tests {
         // Block 0: leave to trampoline
         // Block 1: trampoline (leave) to block 2
         // Block 2: return
-        let mut ssa = SsaFunctionBuilder::new(3, 0).build_with(|f| {
-            f.block(0, |b| b.leave(1));
-            f.block(1, |b| b.leave(2));
-            f.block(2, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(3, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.leave(1));
+                f.block(1, |b| b.leave(2));
+                f.block(2, |b| b.ret());
+            })
+            .unwrap();
 
         let changed = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -529,16 +548,18 @@ mod tests {
         // Block 1: trampoline to block 3
         // Block 2: trampoline to block 4
         // Block 3, 4: return
-        let mut ssa = SsaFunctionBuilder::new(5, 0).build_with(|f| {
-            f.block(0, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 1, 2);
-            });
-            f.block(1, |b| b.jump(3));
-            f.block(2, |b| b.jump(4));
-            f.block(3, |b| b.ret());
-            f.block(4, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(5, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 1, 2);
+                });
+                f.block(1, |b| b.jump(3));
+                f.block(2, |b| b.jump(4));
+                f.block(3, |b| b.ret());
+                f.block(4, |b| b.ret());
+            })
+            .unwrap();
 
         let changed = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -566,16 +587,18 @@ mod tests {
         // Block 0: switch with trampoline targets
         // Blocks 1, 2, 3: trampolines to block 4
         // Block 4: return
-        let mut ssa = SsaFunctionBuilder::new(5, 0).build_with(|f| {
-            f.block(0, |b| {
-                let val = b.const_i32(0);
-                b.switch(val, vec![1, 2], 3);
-            });
-            f.block(1, |b| b.jump(4));
-            f.block(2, |b| b.jump(4));
-            f.block(3, |b| b.jump(4));
-            f.block(4, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(5, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let val = b.const_i32(0);
+                    b.switch(val, vec![1, 2], 3);
+                });
+                f.block(1, |b| b.jump(4));
+                f.block(2, |b| b.jump(4));
+                f.block(3, |b| b.jump(4));
+                f.block(4, |b| b.ret());
+            })
+            .unwrap();
 
         let changed = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -599,13 +622,15 @@ mod tests {
         let pass = ControlFlowSimplificationPass::new();
         let ctx = test_context();
         // Block 0: branch to same target
-        let mut ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-            f.block(0, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 1, 1);
-            });
-            f.block(1, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(2, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 1, 1);
+                });
+                f.block(1, |b| b.ret());
+            })
+            .unwrap();
 
         let changed = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -632,7 +657,7 @@ mod tests {
         let mut block0 = SsaBlock::new(0);
         block0.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
         block0.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
-            dest: SsaVarId::new(),
+            dest: SsaVarId::from_index(0),
             value: ConstValue::I32(42),
         }));
         ssa.add_block(block0);
@@ -652,13 +677,15 @@ mod tests {
         let pass = ControlFlowSimplificationPass::new();
         let ctx = test_context();
         // Create a chain: 0 -> 1 -> 2 -> 3 -> 4
-        let mut ssa = SsaFunctionBuilder::new(5, 0).build_with(|f| {
-            f.block(0, |b| b.jump(1));
-            f.block(1, |b| b.jump(2));
-            f.block(2, |b| b.jump(3));
-            f.block(3, |b| b.jump(4));
-            f.block(4, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(5, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.jump(1));
+                f.block(1, |b| b.jump(2));
+                f.block(2, |b| b.jump(3));
+                f.block(3, |b| b.jump(4));
+                f.block(4, |b| b.ret());
+            })
+            .unwrap();
 
         let changed = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -686,7 +713,7 @@ mod tests {
         // Block 0: branch to same trampoline target
         let mut block0 = SsaBlock::new(0);
         block0.add_instruction(SsaInstruction::synthetic(SsaOp::Branch {
-            condition: SsaVarId::new(),
+            condition: SsaVarId::from_index(0),
             true_target: 1,
             false_target: 1,
         }));

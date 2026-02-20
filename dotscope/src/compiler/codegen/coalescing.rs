@@ -34,8 +34,8 @@ use std::{
 use rayon::prelude::*;
 
 use crate::analysis::{
-    AnalysisResults, DataFlowSolver, LiveVariables, LivenessResult, SsaCfg, SsaFunction, SsaType,
-    SsaVarId, TypeClass, VariableOrigin,
+    AnalysisResults, DataFlowSolver, LiveVariables, LivenessResult, SsaCfg, SsaFunction, SsaOp,
+    SsaType, SsaVarId, TypeClass, VariableOrigin,
 };
 
 /// Interference graph for register allocation.
@@ -250,7 +250,20 @@ impl LocalCoalescer {
             })
             .collect();
 
-        // Phase 4: Merge all edges into the interference graph
+        // Phase 4: Collect cross-subtree interference edges
+        //
+        // The codegen's dependency-driven scheduler processes root instructions
+        // (terminators, side-effect ops, dead computations) by generating their
+        // complete dependency subtrees in sequence. This can reorder operations
+        // relative to the original SSA instruction order. Variables from different
+        // root subtrees must interfere to prevent the scheduler from causing
+        // slot conflicts when it interleaves subtrees.
+        let cross_subtree_edges: Vec<(SsaVarId, SsaVarId)> = block_ids
+            .par_iter()
+            .flat_map(|&block_id| Self::collect_cross_subtree_edges(ssa, block_id))
+            .collect();
+
+        // Phase 5: Merge all edges into the interference graph
         for (a, b) in boundary_edges {
             interference.add_edge(a, b);
         }
@@ -260,17 +273,18 @@ impl LocalCoalescer {
         for (a, b) in phi_edge_edges {
             interference.add_edge(a, b);
         }
+        for (a, b) in cross_subtree_edges {
+            interference.add_edge(a, b);
+        }
 
-        // Collect variables that need allocation (Stack and Phi origins)
+        // Collect variables that need allocation (Phi-origin variables are freely
+        // coalescable, while original locals and arguments keep their fixed slots).
         let coalescable_vars: Vec<SsaVarId> = ssa
             .variables()
             .iter()
-            .filter_map(|v| {
-                match v.origin() {
-                    VariableOrigin::Stack(_) | VariableOrigin::Phi => Some(v.id()),
-                    // Arguments and original locals keep their slots
-                    VariableOrigin::Argument(_) | VariableOrigin::Local(_) => None,
-                }
+            .filter_map(|v| match v.origin() {
+                VariableOrigin::Phi => Some(v.id()),
+                VariableOrigin::Argument(_) | VariableOrigin::Local(_) => None,
             })
             .collect();
 
@@ -306,13 +320,13 @@ impl LocalCoalescer {
         // Track mapping from original local index to compacted index
         let mut original_to_new: HashMap<u16, u16> = HashMap::new();
 
-        // Collect Local-origin variables that have live intervals (are actually used)
+        // Collect Local-origin variables that have live intervals (are actually used).
+        // Phi-origin variables go through linear scan allocation separately.
         let mut used_local_vars: Vec<(SsaVarId, u16)> = ssa
             .variables()
             .iter()
             .filter_map(|v| {
                 if let VariableOrigin::Local(idx) = v.origin() {
-                    // Only include if it has a live interval
                     if intervals.contains_key(&v.id()) {
                         return Some((v.id(), idx));
                     }
@@ -322,6 +336,22 @@ impl LocalCoalescer {
             .collect();
         // Sort by original index for deterministic ordering
         used_local_vars.sort_by_key(|(_, idx)| *idx);
+
+        // Also collect local indices referenced by LoadLocal/LoadLocalAddr instructions.
+        // These reference locals by index (not SSA variable), so the coalescer's
+        // liveness analysis doesn't see them. We need to ensure they have slots.
+        let mut load_referenced_locals: HashSet<u16> = HashSet::new();
+        for block in ssa.blocks() {
+            for instr in block.instructions() {
+                match instr.op() {
+                    SsaOp::LoadLocal { local_index, .. }
+                    | SsaOp::LoadLocalAddr { local_index, .. } => {
+                        load_referenced_locals.insert(*local_index);
+                    }
+                    _ => {}
+                }
+            }
+        }
 
         // Assign consecutive slots to USED Local-origin variables
         // IMPORTANT: All SSA versions of the same original local must share
@@ -338,12 +368,24 @@ impl LocalCoalescer {
             reserved_slots.insert(new_slot);
         }
 
+        // Ensure LoadLocal/LoadLocalAddr-referenced locals also get compacted entries
+        let mut sorted_load_refs: Vec<u16> = load_referenced_locals.into_iter().collect();
+        sorted_load_refs.sort_unstable();
+        for original_idx in sorted_load_refs {
+            original_to_new.entry(original_idx).or_insert_with(|| {
+                let slot = next_local;
+                next_local += 1;
+                reserved_slots.insert(slot);
+                slot
+            });
+        }
+
         // Build a stable sort key for each variable: (origin, version).
         // This is deterministic within a method, unlike SsaVarId which depends on
         // global allocation order that varies with parallel processing.
         let var_sort_key = |var_id: SsaVarId| -> (VariableOrigin, u32) {
             ssa.variable(var_id)
-                .map_or((VariableOrigin::Stack(u32::MAX), u32::MAX), |v| {
+                .map_or((VariableOrigin::Phi, u32::MAX), |v| {
                     (v.origin(), v.version())
                 })
         };
@@ -537,6 +579,130 @@ impl LocalCoalescer {
         edges
     }
 
+    /// Collects interference edges between variables from different root subtrees.
+    ///
+    /// The codegen's dependency-driven scheduler processes root instructions by
+    /// generating their complete dependency subtrees in sequence. Since subtrees
+    /// can be executed in any relative order, variables from different subtrees
+    /// must be treated as potentially simultaneously live.
+    ///
+    /// For each block with multiple roots, this function:
+    /// 1. Identifies root instructions (those not consumed by other in-block ops)
+    /// 2. Assigns each instruction to the first root subtree that claims it (via DFS)
+    /// 3. Adds interference edges between all variable pairs from different subtrees
+    fn collect_cross_subtree_edges(
+        ssa: &SsaFunction,
+        block_id: usize,
+    ) -> Vec<(SsaVarId, SsaVarId)> {
+        let Some(block) = ssa.block(block_id) else {
+            return Vec::new();
+        };
+
+        let instructions = block.instructions();
+        if instructions.len() <= 1 {
+            return Vec::new();
+        }
+
+        // Build def_map: variable -> instruction index within this block
+        let mut def_map: HashMap<SsaVarId, usize> = HashMap::with_capacity(instructions.len());
+        for (idx, instr) in instructions.iter().enumerate() {
+            if let Some(dest) = instr.def() {
+                def_map.insert(dest, idx);
+            }
+        }
+
+        // Identify which variables are used as operands within this block
+        let mut used_in_block: HashSet<SsaVarId> = HashSet::with_capacity(instructions.len() * 2);
+        for instr in instructions {
+            for use_var in instr.uses() {
+                used_in_block.insert(use_var);
+            }
+        }
+
+        // Find root instructions: those whose results are NOT used by other ops
+        // in this block, or that have no result (side-effect only / terminators)
+        let roots: Vec<usize> = instructions
+            .iter()
+            .enumerate()
+            .filter_map(|(idx, instr)| {
+                let is_root = match instr.def() {
+                    Some(dest) => {
+                        !used_in_block.contains(&dest)
+                            || matches!(
+                                instr.op(),
+                                SsaOp::Jump { .. }
+                                    | SsaOp::Branch { .. }
+                                    | SsaOp::BranchCmp { .. }
+                                    | SsaOp::Switch { .. }
+                                    | SsaOp::Return { .. }
+                                    | SsaOp::Throw { .. }
+                                    | SsaOp::Rethrow
+                                    | SsaOp::Leave { .. }
+                                    | SsaOp::EndFinally
+                                    | SsaOp::EndFilter { .. }
+                            )
+                    }
+                    None => true,
+                };
+                if is_root {
+                    Some(idx)
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if roots.len() <= 1 {
+            return Vec::new();
+        }
+
+        // Assign each instruction to a root subtree via DFS.
+        // The first subtree (in root order) to reach an instruction claims it.
+        // This models the scheduler: subtrees processed first claim shared deps.
+        let mut instr_to_subtree: Vec<Option<usize>> = vec![None; instructions.len()];
+        for (subtree_id, &root_idx) in roots.iter().enumerate() {
+            let mut stack = vec![root_idx];
+            while let Some(idx) = stack.pop() {
+                if instr_to_subtree[idx].is_some() {
+                    continue;
+                }
+                instr_to_subtree[idx] = Some(subtree_id);
+
+                // Follow dependency edges: operands defined in this block
+                for use_var in instructions[idx].uses() {
+                    if let Some(&dep_idx) = def_map.get(&use_var) {
+                        if instr_to_subtree[dep_idx].is_none() {
+                            stack.push(dep_idx);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Group defined variables by their subtree
+        let num_subtrees = roots.len();
+        let mut subtree_vars: Vec<Vec<SsaVarId>> = vec![Vec::new(); num_subtrees];
+        for (idx, instr) in instructions.iter().enumerate() {
+            if let (Some(dest), Some(subtree_id)) = (instr.def(), instr_to_subtree[idx]) {
+                subtree_vars[subtree_id].push(dest);
+            }
+        }
+
+        // Add interference edges between all variable pairs from different subtrees
+        let mut edges = Vec::new();
+        for i in 0..num_subtrees {
+            for j in (i + 1)..num_subtrees {
+                for &var_a in &subtree_vars[i] {
+                    for &var_b in &subtree_vars[j] {
+                        edges.push((var_a, var_b));
+                    }
+                }
+            }
+        }
+
+        edges
+    }
+
     /// Allocates local slots for SSA variables.
     ///
     /// Returns a mapping from SSA variables to local slots, minimizing the
@@ -564,8 +730,8 @@ impl LocalCoalescer {
         // These slots must not be reused by other variables
         let mut reserved_slots: HashSet<u16> = HashSet::new();
 
-        // First, collect which Local-origin variables are actually USED
-        // A variable is used if it appears in any instruction's uses or phi operands
+        // First, collect which Local-origin variables are actually USED.
+        // Phi-origin variables go through graph coloring allocation separately.
         let mut used_local_vars: HashSet<SsaVarId> = HashSet::new();
         for block in ssa.blocks() {
             for phi in block.phi_nodes() {
@@ -637,12 +803,38 @@ impl LocalCoalescer {
             reserved_slots.insert(new_slot);
         }
 
+        // Also ensure LoadLocal/LoadLocalAddr-referenced locals get compacted entries.
+        // These reference locals by index (not SSA variable), so the coalescer's
+        // liveness analysis doesn't see them.
+        let mut sorted_load_refs: Vec<u16> = Vec::new();
+        for block in ssa.blocks() {
+            for instr in block.instructions() {
+                match instr.op() {
+                    SsaOp::LoadLocal { local_index, .. }
+                    | SsaOp::LoadLocalAddr { local_index, .. } => {
+                        if !original_to_new.contains_key(local_index) {
+                            sorted_load_refs.push(*local_index);
+                        }
+                    }
+                    _ => {}
+                }
+            }
+        }
+        sorted_load_refs.sort_unstable();
+        sorted_load_refs.dedup();
+        for original_idx in sorted_load_refs {
+            let slot = next_local;
+            next_local += 1;
+            original_to_new.insert(original_idx, slot);
+            reserved_slots.insert(slot);
+        }
+
         // Build a stable sort key for each variable: (origin, version).
         // This is deterministic within a method, unlike SsaVarId which depends on
         // global allocation order that varies with parallel processing.
         let var_sort_key = |var_id: SsaVarId| -> (VariableOrigin, u32) {
             ssa.variable(var_id)
-                .map_or((VariableOrigin::Stack(u32::MAX), u32::MAX), |v| {
+                .map_or((VariableOrigin::Phi, u32::MAX), |v| {
                     (v.origin(), v.version())
                 })
         };
@@ -727,9 +919,13 @@ fn types_compatible(t1: Option<&SsaType>, t2: Option<&SsaType>) -> bool {
 mod tests {
     use super::*;
 
+    use std::collections::HashSet;
+
+    use crate::analysis::{SsaFunctionBuilder, SsaType, SsaVarId};
+
     /// Helper to create N unique SsaVarIds
     fn make_vars(n: usize) -> Vec<SsaVarId> {
-        (0..n).map(|_| SsaVarId::new()).collect()
+        (0..n).map(SsaVarId::from_index).collect()
     }
 
     #[test]
@@ -1021,11 +1217,12 @@ mod tests {
 
     /// Creates a minimal SSA function for testing allocation.
     fn create_minimal_ssa_function() -> SsaFunction {
-        use crate::analysis::SsaFunctionBuilder;
-        SsaFunctionBuilder::new(0, 0).build_with(|ctx| {
-            ctx.block(0, |b| {
-                b.ret();
-            });
-        })
+        SsaFunctionBuilder::new(0, 0)
+            .build_with(|ctx| {
+                ctx.block(0, |b| {
+                    b.ret();
+                });
+            })
+            .unwrap()
     }
 }

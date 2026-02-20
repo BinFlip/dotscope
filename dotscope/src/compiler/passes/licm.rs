@@ -54,7 +54,10 @@ use std::{
 
 use crate::{
     analysis::{LoopAnalyzer, LoopInfo, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
-    compiler::{pass::SsaPass, CompilerContext, EventKind},
+    compiler::{
+        pass::{ModificationScope, SsaPass},
+        CompilerContext, EventKind,
+    },
     metadata::token::Token,
     utils::graph::NodeId,
     CilObject, Result,
@@ -88,6 +91,10 @@ impl SsaPass for LicmPass {
         "Moves loop-invariant computations to loop preheaders"
     }
 
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::InstructionsOnly
+    }
+
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
@@ -103,8 +110,12 @@ impl SsaPass for LicmPass {
 
         let mut total_hoisted = 0;
 
-        // Process loops from innermost to outermost
-        // This allows hoisting from inner loops, then outer loops
+        // Process loops from innermost to outermost.
+        // This naturally propagates hoists through nesting levels: inner hoists
+        // move instructions to the inner preheader (inside the outer loop body),
+        // and outer loop processing then hoists them further out if invariant.
+        // The Nop skip in find_loop_invariants prevents exponential blowup by
+        // ignoring the Nops left behind by inner hoists.
         for loop_info in forest.by_depth_descending() {
             // Skip loops without preheaders - we need somewhere to hoist to
             let Some(preheader) = loop_info.preheader else {
@@ -242,6 +253,13 @@ fn find_loop_invariants(ssa: &SsaFunction, loop_info: &LoopInfo) -> Vec<(usize, 
                         continue;
                     }
 
+                    // Skip Nop instructions - they have no effect and hoisting them
+                    // causes exponential blowup when processing nested loops
+                    // (inner hoists create Nops which outer loops then re-hoist)
+                    if matches!(instr.op(), SsaOp::Nop) {
+                        continue;
+                    }
+
                     // Check if instruction is invariant
                     if is_instruction_invariant(
                         instr,
@@ -297,6 +315,12 @@ fn can_hoist(ssa: &SsaFunction, loop_info: &LoopInfo, block_idx: usize, instr_id
     let Some(instr) = block.instruction(instr_idx) else {
         return false;
     };
+
+    // Only hoist instructions that define a value - hoisting effectless
+    // instructions (like Nop) is pointless and causes exponential blowup
+    if instr.def().is_none() {
+        return false;
+    }
 
     // Only hoist pure computations (is_pure is defined on SsaOp)
     if !instr.op().is_pure() {
@@ -387,20 +411,20 @@ mod tests {
     #[test]
     fn test_op_is_pure() {
         let add_op = SsaOp::Add {
-            dest: SsaVarId::new(),
-            left: SsaVarId::new(),
-            right: SsaVarId::new(),
+            dest: SsaVarId::from_index(0),
+            left: SsaVarId::from_index(1),
+            right: SsaVarId::from_index(2),
         };
         assert!(add_op.is_pure());
 
         let const_op = SsaOp::Const {
-            dest: SsaVarId::new(),
+            dest: SsaVarId::from_index(3),
             value: ConstValue::I32(42),
         };
         assert!(const_op.is_pure());
 
         let call_op = SsaOp::Call {
-            dest: Some(SsaVarId::new()),
+            dest: Some(SsaVarId::from_index(4)),
             method: MethodRef::new(Token::new(0x06000001)),
             args: vec![],
         };
@@ -409,9 +433,9 @@ mod tests {
 
     #[test]
     fn test_op_uses() {
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
 
         let op = SsaOp::Add {
             dest,
@@ -433,12 +457,14 @@ mod tests {
     #[test]
     fn test_no_loops() {
         // Function with no loops should return false
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let _ = b.const_i32(42);
-                b.ret();
-            });
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let _ = b.const_i32(42);
+                    b.ret();
+                });
+            })
+            .unwrap();
 
         let forest = LoopAnalyzer::new(&ssa).analyze();
         assert!(forest.is_empty());
@@ -448,24 +474,26 @@ mod tests {
     fn test_loop_without_preheader() {
         // Loop without preheader (multiple entry edges) can't be optimized
         // This creates a function where the loop header has multiple predecessors
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            // B0: entry with branch to different blocks
-            f.block(0, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 1, 2);
-            });
-            // B1: goes to loop header
-            f.block(1, |b| b.jump(3));
-            // B2: also goes to loop header (no single preheader)
-            f.block(2, |b| b.jump(3));
-            // B3: loop header
-            f.block(3, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 3, 4); // self-loop
-            });
-            // B4: exit
-            f.block(4, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                // B0: entry with branch to different blocks
+                f.block(0, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 1, 2);
+                });
+                // B1: goes to loop header
+                f.block(1, |b| b.jump(3));
+                // B2: also goes to loop header (no single preheader)
+                f.block(2, |b| b.jump(3));
+                // B3: loop header
+                f.block(3, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 3, 4); // self-loop
+                });
+                // B4: exit
+                f.block(4, |b| b.ret());
+            })
+            .unwrap();
 
         let forest = LoopAnalyzer::new(&ssa).analyze();
         assert!(!forest.is_empty());
@@ -478,17 +506,19 @@ mod tests {
     #[test]
     fn test_simple_loop_has_preheader() {
         // Create a loop with a single preheader
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            // B0: preheader
-            f.block(0, |b| b.jump(1));
-            // B1: header with self-loop
-            f.block(1, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 1, 2);
-            });
-            // B2: exit
-            f.block(2, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                // B0: preheader
+                f.block(0, |b| b.jump(1));
+                // B1: header with self-loop
+                f.block(1, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 1, 2);
+                });
+                // B2: exit
+                f.block(2, |b| b.ret());
+            })
+            .unwrap();
 
         let forest = LoopAnalyzer::new(&ssa).analyze();
         assert_eq!(forest.len(), 1);

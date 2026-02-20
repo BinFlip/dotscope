@@ -37,6 +37,40 @@ use std::{
 
 use crate::analysis::ssa::{PhiNode, PhiOperand, SsaInstruction, SsaOp, SsaVarId};
 
+/// Result of a variable replacement operation.
+///
+/// When `replace_uses` encounters an instruction whose destination equals
+/// `new_var`, it skips that instruction to avoid creating self-referential
+/// operations (e.g., `v5 = add(v5, v3)`). This struct reports both the
+/// successful replacements and the skipped ones, allowing callers to make
+/// informed decisions without post-hoc scanning.
+#[derive(Debug, Clone, Copy, Default)]
+pub struct ReplaceResult {
+    /// Number of uses successfully replaced.
+    pub replaced: usize,
+    /// Number of uses skipped due to the self-referential guard
+    /// (instruction's dest == new_var, replacement would create self-reference).
+    pub skipped: usize,
+}
+
+impl ReplaceResult {
+    /// Returns true if all uses were replaced (nothing was skipped).
+    #[must_use]
+    pub const fn is_complete(&self) -> bool {
+        self.skipped == 0
+    }
+}
+
+impl std::ops::Add for ReplaceResult {
+    type Output = Self;
+    fn add(self, rhs: Self) -> Self {
+        Self {
+            replaced: self.replaced + rhs.replaced,
+            skipped: self.skipped + rhs.skipped,
+        }
+    }
+}
+
 /// An SSA basic block with phi nodes and instructions.
 ///
 /// This represents a basic block in SSA form. It maintains a parallel structure
@@ -50,9 +84,9 @@ use crate::analysis::ssa::{PhiNode, PhiOperand, SsaInstruction, SsaOp, SsaVarId}
 /// let mut block = SsaBlock::new(0);
 ///
 /// // Add a phi node
-/// let v1 = SsaVarId::new();
-/// let v2 = SsaVarId::new();
-/// let result = SsaVarId::new();
+/// let v1 = SsaVarId::from_index(0);
+/// let v2 = SsaVarId::from_index(1);
+/// let result = SsaVarId::from_index(2);
 /// let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
 /// phi.set_operand(0, v1);
 /// phi.set_operand(1, v2);
@@ -337,25 +371,25 @@ impl SsaBlock {
     /// references which can break `rebuild_ssa`. For internal operations that
     /// need to also replace PHI operands (like eliminating trivial PHIs), use
     /// `replace_uses_including_phis`.
-    pub fn replace_uses(&mut self, old_var: SsaVarId, new_var: SsaVarId) -> usize {
+    pub fn replace_uses(&mut self, old_var: SsaVarId, new_var: SsaVarId) -> ReplaceResult {
         let mut replaced = 0;
+        let mut skipped = 0;
 
-        // Replace in instructions only
         for instr in &mut self.instructions {
             let op = instr.op_mut();
             // Skip if this would create a self-referential instruction
             if let Some(dest) = op.dest() {
                 if dest == new_var {
+                    if op.uses().contains(&old_var) {
+                        skipped += 1;
+                    }
                     continue;
                 }
             }
-            let count = op.replace_uses(old_var, new_var);
-            if count > 0 {
-                replaced += count;
-            }
+            replaced += op.replace_uses(old_var, new_var);
         }
 
-        replaced
+        ReplaceResult { replaced, skipped }
     }
 
     /// Replaces all uses of `old_var` with `new_var`, including in PHI operands.
@@ -397,35 +431,20 @@ impl SsaBlock {
         &mut self,
         old_var: SsaVarId,
         new_var: SsaVarId,
-    ) -> usize {
-        let mut replaced = 0;
-
-        // Replace in instructions
-        for instr in &mut self.instructions {
-            let op = instr.op_mut();
-            // Skip if this would create a self-referential instruction
-            if let Some(dest) = op.dest() {
-                if dest == new_var {
-                    continue;
-                }
-            }
-            let count = op.replace_uses(old_var, new_var);
-            if count > 0 {
-                replaced += count;
-            }
-        }
+    ) -> ReplaceResult {
+        let mut result = self.replace_uses(old_var, new_var);
 
         // Replace in phi node operands
         for phi in &mut self.phi_nodes {
             for operand in phi.operands_mut() {
                 if operand.value() == old_var {
                     *operand = PhiOperand::new(new_var, operand.predecessor());
-                    replaced += 1;
+                    result.replaced += 1;
                 }
             }
         }
 
-        replaced
+        result
     }
 
     /// Finds a phi node that defines the given variable.
@@ -682,9 +701,10 @@ impl fmt::Display for SsaBlock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::{
         analysis::{
-            ssa::{PhiOperand, VariableOrigin},
+            ssa::{PhiNode, PhiOperand, SsaInstruction, SsaOp, SsaVarId, VariableOrigin},
             SsaFunctionBuilder,
         },
         assembly::{FlowType, Instruction, InstructionCategory, Operand, StackBehavior},
@@ -730,9 +750,9 @@ mod tests {
     fn test_ssa_block_add_phi() {
         let mut block = SsaBlock::new(0);
 
-        let result = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v1, 0));
         phi.add_operand(PhiOperand::new(v2, 1));
@@ -749,9 +769,9 @@ mod tests {
     fn test_ssa_block_add_instruction() {
         let mut block = SsaBlock::new(0);
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let cil = make_test_cil_instruction("add", 2, 1);
         let instr = SsaInstruction::new(
             cil,
@@ -773,8 +793,8 @@ mod tests {
     fn test_ssa_block_phi_access() {
         let mut block = SsaBlock::new(0);
 
-        let r1 = SsaVarId::new();
-        let r2 = SsaVarId::new();
+        let r1 = SsaVarId::from_index(0);
+        let r2 = SsaVarId::from_index(1);
         block.add_phi(PhiNode::new(r1, VariableOrigin::Local(0)));
         block.add_phi(PhiNode::new(r2, VariableOrigin::Local(1)));
 
@@ -804,9 +824,9 @@ mod tests {
     fn test_ssa_block_find_phi_defining() {
         let mut block = SsaBlock::new(0);
 
-        let r1 = SsaVarId::new();
-        let r2 = SsaVarId::new();
-        let other = SsaVarId::new();
+        let r1 = SsaVarId::from_index(0);
+        let r2 = SsaVarId::from_index(1);
+        let other = SsaVarId::from_index(2);
         block.add_phi(PhiNode::new(r1, VariableOrigin::Local(0)));
         block.add_phi(PhiNode::new(r2, VariableOrigin::Local(1)));
 
@@ -819,11 +839,11 @@ mod tests {
     fn test_ssa_block_defined_variables() {
         let mut block = SsaBlock::new(0);
 
-        let phi_result = SsaVarId::new();
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let instr_result = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let phi_result = SsaVarId::from_index(0);
+        let v0 = SsaVarId::from_index(1);
+        let v1 = SsaVarId::from_index(2);
+        let instr_result = SsaVarId::from_index(3);
+        let v2 = SsaVarId::from_index(4);
 
         // Add phi defining phi_result
         block.add_phi(PhiNode::new(phi_result, VariableOrigin::Local(0)));
@@ -854,12 +874,12 @@ mod tests {
     fn test_ssa_block_used_variables() {
         let mut block = SsaBlock::new(0);
 
-        let phi_result = SsaVarId::new();
-        let phi_op1 = SsaVarId::new();
-        let phi_op2 = SsaVarId::new();
-        let instr_op1 = SsaVarId::new();
-        let instr_op2 = SsaVarId::new();
-        let instr_result = SsaVarId::new();
+        let phi_result = SsaVarId::from_index(0);
+        let phi_op1 = SsaVarId::from_index(1);
+        let phi_op2 = SsaVarId::from_index(2);
+        let instr_op1 = SsaVarId::from_index(3);
+        let instr_op2 = SsaVarId::from_index(4);
+        let instr_result = SsaVarId::from_index(5);
 
         // Add phi using phi_op1, phi_op2
         let mut phi = PhiNode::new(phi_result, VariableOrigin::Local(0));
@@ -926,8 +946,8 @@ mod tests {
     fn test_ssa_block_mutable_access() {
         let mut block = SsaBlock::new(0);
 
-        let result = SsaVarId::new();
-        let operand = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let operand = SsaVarId::from_index(1);
         block.add_phi(PhiNode::new(result, VariableOrigin::Local(0)));
 
         // Modify phi through mutable access
@@ -940,10 +960,12 @@ mod tests {
 
     #[test]
     fn test_is_trampoline_unconditional_jump() {
-        let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-            f.block(0, |b| b.jump(1));
-            f.block(1, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(2, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.jump(1));
+                f.block(1, |b| b.ret());
+            })
+            .unwrap();
 
         // Block with single jump is a trampoline
         assert_eq!(ssa.block(0).unwrap().is_trampoline(), Some(1));
@@ -953,10 +975,12 @@ mod tests {
 
     #[test]
     fn test_is_trampoline_leave_instruction() {
-        let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-            f.block(0, |b| b.leave(1));
-            f.block(1, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(2, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.leave(1));
+                f.block(1, |b| b.ret());
+            })
+            .unwrap();
 
         // Leave is also an unconditional transfer - valid trampoline
         assert_eq!(ssa.block(0).unwrap().is_trampoline(), Some(1));
@@ -964,16 +988,19 @@ mod tests {
 
     #[test]
     fn test_is_trampoline_blocked_by_phi_nodes() {
-        use crate::analysis::SsaFunctionBuilder;
-
-        let mut ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-            f.block(0, |b| b.jump(1));
-            f.block(1, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(2, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.jump(1));
+                f.block(1, |b| b.ret());
+            })
+            .unwrap();
 
         // Adding a phi node makes it not a trampoline (it merges values)
         if let Some(block) = ssa.block_mut(0) {
-            block.add_phi(PhiNode::new(SsaVarId::new(), VariableOrigin::Local(0)));
+            block.add_phi(PhiNode::new(
+                SsaVarId::from_index(0),
+                VariableOrigin::Local(0),
+            ));
         }
 
         assert_eq!(ssa.block(0).unwrap().is_trampoline(), None);
@@ -981,13 +1008,15 @@ mod tests {
 
     #[test]
     fn test_is_trampoline_blocked_by_multiple_instructions() {
-        let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-            f.block(0, |b| {
-                let _ = b.const_i32(42); // Extra instruction before jump
-                b.jump(1);
-            });
-            f.block(1, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(2, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let _ = b.const_i32(42); // Extra instruction before jump
+                    b.jump(1);
+                });
+                f.block(1, |b| b.ret());
+            })
+            .unwrap();
 
         // Multiple instructions means not a pure trampoline
         assert_eq!(ssa.block(0).unwrap().is_trampoline(), None);
@@ -995,13 +1024,15 @@ mod tests {
 
     #[test]
     fn test_is_trampoline_conditional_branch_not_trampoline() {
-        let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-            f.block(0, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 1, 1);
-            });
-            f.block(1, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(2, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 1, 1);
+                });
+                f.block(1, |b| b.ret());
+            })
+            .unwrap();
 
         // Conditional branch is not an unconditional transfer
         assert_eq!(ssa.block(0).unwrap().is_trampoline(), None);

@@ -961,7 +961,7 @@ impl DeobfuscationEngine {
     /// - Whether it's only used in pure operations (foldable)
     /// - Whether it's passed through to return value unchanged
     fn analyze_parameters(ssa: &SsaFunction) -> Vec<ParameterSummary> {
-        let param_count = ssa.parameter_count();
+        let param_count = ssa.num_args();
         let mut summaries = Vec::with_capacity(param_count);
 
         for i in 0..param_count {
@@ -1089,7 +1089,7 @@ mod tests {
     use crate::{
         analysis::{
             ConstValue, FieldRef, MethodPurity, MethodRef, ReturnInfo, SsaBlock, SsaFunction,
-            SsaInstruction, SsaOp, SsaVarId,
+            SsaInstruction, SsaOp, SsaType, SsaVarId,
         },
         compiler::EventLog,
         deobfuscation::{
@@ -1175,7 +1175,7 @@ mod tests {
         let mut block = SsaBlock::new(0);
 
         // Define a constant
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
             dest: var,
             value: ConstValue::I32(42),
@@ -1209,9 +1209,9 @@ mod tests {
         let mut block = SsaBlock::new(0);
 
         // Pure arithmetic operation
-        let dest = SsaVarId::new();
-        let src1 = SsaVarId::new();
-        let src2 = SsaVarId::new();
+        let dest = SsaVarId::from_index(0);
+        let src1 = SsaVarId::from_index(1);
+        let src2 = SsaVarId::from_index(2);
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Add {
             dest,
             left: src1,
@@ -1232,8 +1232,8 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
         let mut block = SsaBlock::new(0);
 
-        let obj = SsaVarId::new();
-        let val = SsaVarId::new();
+        let obj = SsaVarId::from_index(0);
+        let val = SsaVarId::from_index(1);
         block.add_instruction(SsaInstruction::synthetic(SsaOp::StoreField {
             object: obj,
             field: FieldRef::new(Token::new(0x04000001)),
@@ -1252,7 +1252,7 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
         let mut block = SsaBlock::new(0);
 
-        let exc = SsaVarId::new();
+        let exc = SsaVarId::from_index(0);
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Throw { exception: exc }));
         ssa.add_block(block);
 
@@ -1266,13 +1266,16 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
         let mut block = SsaBlock::new(0);
 
-        let dest = SsaVarId::new();
-        let obj = SsaVarId::new();
-        block.add_instruction(SsaInstruction::synthetic(SsaOp::LoadField {
+        let dest = SsaVarId::from_index(0);
+        let obj = SsaVarId::from_index(1);
+        block.add_instruction(
+            SsaInstruction::synthetic(SsaOp::LoadField {
             dest,
             object: obj,
             field: FieldRef::new(Token::new(0x04000001)),
-        }));
+            })
+            .with_result_type(SsaType::I32),
+        );
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Return {
             value: Some(dest),
         }));
@@ -1288,12 +1291,15 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
         let mut block = SsaBlock::new(0);
 
-        let dest = SsaVarId::new();
-        block.add_instruction(SsaInstruction::synthetic(SsaOp::Call {
+        let dest = SsaVarId::from_index(0);
+        block.add_instruction(
+            SsaInstruction::synthetic(SsaOp::Call {
             dest: Some(dest),
             method: MethodRef::new(Token::new(0x06000001)),
             args: vec![],
-        }));
+            })
+            .with_result_type(SsaType::I32),
+        );
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Return {
             value: Some(dest),
         }));
@@ -1309,9 +1315,9 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
         let mut block = SsaBlock::new(0);
 
-        let dest = SsaVarId::new();
-        let left = SsaVarId::new();
-        let right = SsaVarId::new();
+        let dest = SsaVarId::from_index(0);
+        let left = SsaVarId::from_index(1);
+        let right = SsaVarId::from_index(2);
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Xor { dest, left, right }));
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Return {
             value: Some(dest),
@@ -1330,7 +1336,7 @@ mod tests {
 
         // Add 250 instructions
         for _ in 0..250_usize {
-            let dest = SsaVarId::new();
+            let dest = SsaVarId::from_index(0);
             block.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
                 dest,
                 value: ConstValue::I32(42),
@@ -1350,7 +1356,7 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
         let mut block = SsaBlock::new(0);
 
-        let value = SsaVarId::new();
+        let value = SsaVarId::from_index(0);
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Switch {
             value,
             targets: vec![1, 2, 3, 4, 5], // 5 targets
@@ -1368,7 +1374,7 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
         let mut block = SsaBlock::new(0);
 
-        let value = SsaVarId::new();
+        let value = SsaVarId::from_index(0);
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Switch {
             value,
             targets: vec![1, 2],
@@ -1400,7 +1406,7 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
         let mut block = SsaBlock::new(0);
 
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
             dest: var,
             value: ConstValue::I32(42),

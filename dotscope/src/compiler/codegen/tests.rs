@@ -1,18 +1,16 @@
 use crate::{
     analysis::{
         ConstValue, DefSite, FieldRef, MethodRef, PhiNode, PhiOperand, SsaBlock, SsaFunction,
-        SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable, TypeRef,
-        VariableOrigin,
+        SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId, TypeRef, VariableOrigin,
     },
     assembly::decode_stream,
+    compiler::codegen::{SsaCodeGenerator, VarStorage},
     deobfuscation::{DeobfuscationEngine, EngineConfig},
     metadata::{
         method::MethodBody, tables::MethodDefRaw, token::Token, validation::ValidationConfig,
     },
     CilObject, Parser,
 };
-
-use super::{SsaCodeGenerator, VarStorage};
 
 /// Generates bytecode from an SSA function and returns the decoded mnemonics.
 fn generate_mnemonics(ssa: &SsaFunction) -> Vec<&'static str> {
@@ -81,20 +79,24 @@ fn test_empty_ssa_function() {
 
 #[test]
 fn test_void_return() {
-    let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| b.ret());
-    });
+    let ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| b.ret());
+        })
+        .unwrap();
     assert_generates(&ssa, &["ret"]);
 }
 
 #[test]
 fn test_simple_codegen() {
-    let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let v = b.const_i32(42);
-            b.ret_val(v);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let v = b.const_i32(42);
+                b.ret_val(v);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldc.i4.s", "ret"]);
 }
 
@@ -103,17 +105,24 @@ fn test_optimized_return() {
     // Create: v0 = arg0 + arg1; return v0
     let mut ssa = SsaFunction::new(2, 0);
 
-    let var0 = SsaVariable::new(VariableOrigin::Argument(0), 0, DefSite::phi(0));
-    let v0 = var0.id();
-    ssa.add_variable(var0);
-
-    let var1 = SsaVariable::new(VariableOrigin::Argument(1), 0, DefSite::phi(0));
-    let v1 = var1.id();
-    ssa.add_variable(var1);
-
-    let var2 = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-    let v2 = var2.id();
-    ssa.add_variable(var2);
+    let v0 = ssa.create_variable(
+        VariableOrigin::Argument(0),
+        0,
+        DefSite::phi(0),
+        SsaType::Unknown,
+    );
+    let v1 = ssa.create_variable(
+        VariableOrigin::Argument(1),
+        0,
+        DefSite::phi(0),
+        SsaType::Unknown,
+    );
+    let v2 = ssa.create_variable(
+        VariableOrigin::Local(0),
+        0,
+        DefSite::instruction(0, 0),
+        SsaType::Unknown,
+    );
 
     let mut block = SsaBlock::new(0);
     block.add_instruction(SsaInstruction::synthetic(SsaOp::Add {
@@ -144,12 +153,14 @@ fn test_const_i32_special_values() {
     ];
 
     for (expected_mnemonic, value) in expected_mnemonics {
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let v = b.const_i32(value);
-                b.ret_val(v);
-            });
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let v = b.const_i32(value);
+                    b.ret_val(v);
+                });
+            })
+            .unwrap();
         assert_generates(&ssa, &[expected_mnemonic, "ret"]);
     }
 }
@@ -157,465 +168,537 @@ fn test_const_i32_special_values() {
 #[test]
 fn test_const_i32_short_form() {
     // Value in short form range (-128 to 127, excluding special values)
-    let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let v = b.const_i32(100);
-            b.ret_val(v);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let v = b.const_i32(100);
+                b.ret_val(v);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldc.i4.s", "ret"]);
 }
 
 #[test]
 fn test_const_i32_full() {
     // Value requiring full ldc.i4 (outside -128..127)
-    let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let v = b.const_i32(1_000_000);
-            b.ret_val(v);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let v = b.const_i32(1_000_000);
+                b.ret_val(v);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldc.i4", "ret"]);
 }
 
 #[test]
 fn test_const_i64() {
-    let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let v = b.const_i64(9_000_000_000);
-            b.ret_val(v);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let v = b.const_i64(9_000_000_000);
+                b.ret_val(v);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldc.i8", "ret"]);
 }
 
 #[test]
 fn test_const_null() {
-    let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let v = b.const_null();
-            b.ret_val(v);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let v = b.const_null();
+                b.ret_val(v);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldnull", "ret"]);
 }
 
 #[test]
 fn test_const_true_false() {
     // true = ldc.i4.1
-    let ssa_true = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let v = b.const_true();
-            b.ret_val(v);
-        });
-    });
+    let ssa_true = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let v = b.const_true();
+                b.ret_val(v);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa_true, &["ldc.i4.1", "ret"]);
 
     // false = ldc.i4.0
-    let ssa_false = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let v = b.const_false();
-            b.ret_val(v);
-        });
-    });
+    let ssa_false = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let v = b.const_false();
+                b.ret_val(v);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa_false, &["ldc.i4.0", "ret"]);
 }
 
 #[test]
 fn test_const_floats() {
-    let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let v = b.const_f32(std::f32::consts::PI);
-            b.ret_val(v);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let v = b.const_f32(std::f32::consts::PI);
+                b.ret_val(v);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldc.r4", "ret"]);
 }
 
 #[test]
 fn test_const_f64() {
-    let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            let v = b.const_f64(std::f64::consts::E);
-            b.ret_val(v);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                let v = b.const_f64(std::f64::consts::E);
+                b.ret_val(v);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldc.r8", "ret"]);
 }
 
 #[test]
 fn test_add() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.add(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.add(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "add", "ret"]);
 }
 
 #[test]
 fn test_sub() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.sub(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.sub(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "sub", "ret"]);
 }
 
 #[test]
 fn test_mul() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.mul(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.mul(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "mul", "ret"]);
 }
 
 #[test]
 fn test_div_signed() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.div(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.div(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "div", "ret"]);
 }
 
 #[test]
 fn test_div_unsigned() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.div_un(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.div_un(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "div.un", "ret"]);
 }
 
 #[test]
 fn test_rem_signed() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.rem(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.rem(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "rem", "ret"]);
 }
 
 #[test]
 fn test_rem_unsigned() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.rem_un(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.rem_un(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "rem.un", "ret"]);
 }
 
 #[test]
 fn test_add_ovf_signed() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        let dest = f.var();
-        f.block(0, |blk| {
-            blk.op(SsaOp::AddOvf {
-                dest,
-                left: a,
-                right: b,
-                unsigned: false,
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            let dest = f.var();
+            f.block(0, |blk| {
+                blk.op(SsaOp::AddOvf {
+                    dest,
+                    left: a,
+                    right: b,
+                    unsigned: false,
+                });
+                blk.ret_val(dest);
             });
-            blk.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "add.ovf", "ret"]);
 }
 
 #[test]
 fn test_add_ovf_unsigned() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        let dest = f.var();
-        f.block(0, |blk| {
-            blk.op(SsaOp::AddOvf {
-                dest,
-                left: a,
-                right: b,
-                unsigned: true,
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            let dest = f.var();
+            f.block(0, |blk| {
+                blk.op(SsaOp::AddOvf {
+                    dest,
+                    left: a,
+                    right: b,
+                    unsigned: true,
+                });
+                blk.ret_val(dest);
             });
-            blk.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "add.ovf.un", "ret"]);
 }
 
 #[test]
 fn test_sub_ovf_signed() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        let dest = f.var();
-        f.block(0, |blk| {
-            blk.op(SsaOp::SubOvf {
-                dest,
-                left: a,
-                right: b,
-                unsigned: false,
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            let dest = f.var();
+            f.block(0, |blk| {
+                blk.op(SsaOp::SubOvf {
+                    dest,
+                    left: a,
+                    right: b,
+                    unsigned: false,
+                });
+                blk.ret_val(dest);
             });
-            blk.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "sub.ovf", "ret"]);
 }
 
 #[test]
 fn test_sub_ovf_unsigned() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        let dest = f.var();
-        f.block(0, |blk| {
-            blk.op(SsaOp::SubOvf {
-                dest,
-                left: a,
-                right: b,
-                unsigned: true,
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            let dest = f.var();
+            f.block(0, |blk| {
+                blk.op(SsaOp::SubOvf {
+                    dest,
+                    left: a,
+                    right: b,
+                    unsigned: true,
+                });
+                blk.ret_val(dest);
             });
-            blk.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "sub.ovf.un", "ret"]);
 }
 
 #[test]
 fn test_mul_ovf_signed() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        let dest = f.var();
-        f.block(0, |blk| {
-            blk.op(SsaOp::MulOvf {
-                dest,
-                left: a,
-                right: b,
-                unsigned: false,
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            let dest = f.var();
+            f.block(0, |blk| {
+                blk.op(SsaOp::MulOvf {
+                    dest,
+                    left: a,
+                    right: b,
+                    unsigned: false,
+                });
+                blk.ret_val(dest);
             });
-            blk.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "mul.ovf", "ret"]);
 }
 
 #[test]
 fn test_mul_ovf_unsigned() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        let dest = f.var();
-        f.block(0, |blk| {
-            blk.op(SsaOp::MulOvf {
-                dest,
-                left: a,
-                right: b,
-                unsigned: true,
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            let dest = f.var();
+            f.block(0, |blk| {
+                blk.op(SsaOp::MulOvf {
+                    dest,
+                    left: a,
+                    right: b,
+                    unsigned: true,
+                });
+                blk.ret_val(dest);
             });
-            blk.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "mul.ovf.un", "ret"]);
 }
 
 #[test]
 fn test_neg() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let a = f.arg(0);
-        f.block(0, |blk| {
-            let r = blk.neg(a);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let a = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let r = blk.neg(a);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "neg", "ret"]);
 }
 
 #[test]
 fn test_not() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let a = f.arg(0);
-        f.block(0, |blk| {
-            let r = blk.not(a);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let a = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let r = blk.not(a);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "not", "ret"]);
 }
 
 #[test]
 fn test_and() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.and(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.and(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "and", "ret"]);
 }
 
 #[test]
 fn test_or() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.or(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.or(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "or", "ret"]);
 }
 
 #[test]
 fn test_xor() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.xor(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.xor(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "xor", "ret"]);
 }
 
 #[test]
 fn test_shl() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.shl(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.shl(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "shl", "ret"]);
 }
 
 #[test]
 fn test_shr_signed() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.shr(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.shr(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "shr", "ret"]);
 }
 
 #[test]
 fn test_shr_unsigned() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.shr_un(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.shr_un(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "shr.un", "ret"]);
 }
 
 #[test]
 fn test_ceq() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.ceq(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.ceq(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "ceq", "ret"]);
 }
 
 #[test]
 fn test_clt_signed() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.clt(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.clt(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "clt", "ret"]);
 }
 
 #[test]
 fn test_clt_unsigned() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.clt_un(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.clt_un(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "clt.un", "ret"]);
 }
 
 #[test]
 fn test_cgt_signed() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.cgt(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.cgt(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "cgt", "ret"]);
 }
 
 #[test]
 fn test_cgt_unsigned() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (a, b) = (f.arg(0), f.arg(1));
-        f.block(0, |blk| {
-            let r = blk.cgt_un(a, b);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (a, b) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |blk| {
+                let r = blk.cgt_un(a, b);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "cgt.un", "ret"]);
 }
 
 #[test]
 fn test_jump_fallthrough_optimization() {
     // Jump to immediately following block should be eliminated
-    let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| b.jump(1));
-        f.block(1, |b| b.ret());
-    });
+    let ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| b.jump(1));
+            f.block(1, |b| b.ret());
+        })
+        .unwrap();
     // The jump should be optimized away, leaving just ret
     assert_generates(&ssa, &["ret"]);
 }
 
 #[test]
 fn test_branch_instruction() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let cond = f.arg(0);
-        f.block(0, |b| b.branch(cond, 1, 2));
-        f.block(1, |b| {
-            let v = b.const_i32(1);
-            b.ret_val(v);
-        });
-        f.block(2, |b| {
-            let v = b.const_i32(0);
-            b.ret_val(v);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let cond = f.arg(0, SsaType::I32);
+            f.block(0, |b| b.branch(cond, 1, 2));
+            f.block(1, |b| {
+                let v = b.const_i32(1);
+                b.ret_val(v);
+            });
+            f.block(2, |b| {
+                let v = b.const_i32(0);
+                b.ret_val(v);
+            });
+        })
+        .unwrap();
     let mnemonics = generate_mnemonics(&ssa);
     // Should contain brfalse or brtrue
     assert!(
@@ -628,21 +711,23 @@ fn test_branch_instruction() {
 #[test]
 fn test_switch_instruction() {
     // Use SsaFunctionBuilder to properly create and register variables
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let v0 = f.arg(0);
-        f.block(0, |blk| {
-            blk.op(SsaOp::Switch {
-                value: v0,
-                targets: vec![1, 2, 3],
-                default: 4,
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let v0 = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                blk.op(SsaOp::Switch {
+                    value: v0,
+                    targets: vec![1, 2, 3],
+                    default: 4,
+                });
             });
-        });
-        for i in 1..=4 {
-            f.block(i, |blk| {
-                blk.ret();
-            });
-        }
-    });
+            for i in 1..=4 {
+                f.block(i, |blk| {
+                    blk.ret();
+                });
+            }
+        })
+        .unwrap();
 
     let mnemonics = generate_mnemonics(&ssa);
     assert!(
@@ -654,134 +739,156 @@ fn test_switch_instruction() {
 
 #[test]
 fn test_conversion_i8() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let a = f.arg(0);
-        f.block(0, |blk| {
-            let r = blk.conv(a, SsaType::I8);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let a = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let r = blk.conv(a, SsaType::I8);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "conv.i1", "ret"]);
 }
 
 #[test]
 fn test_conversion_i16() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let a = f.arg(0);
-        f.block(0, |blk| {
-            let r = blk.conv(a, SsaType::I16);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let a = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let r = blk.conv(a, SsaType::I16);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "conv.i2", "ret"]);
 }
 
 #[test]
 fn test_conversion_i32() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let a = f.arg(0);
-        f.block(0, |blk| {
-            let r = blk.conv(a, SsaType::I32);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let a = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let r = blk.conv(a, SsaType::I32);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "conv.i4", "ret"]);
 }
 
 #[test]
 fn test_conversion_i64() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let a = f.arg(0);
-        f.block(0, |blk| {
-            let r = blk.conv(a, SsaType::I64);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let a = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let r = blk.conv(a, SsaType::I64);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "conv.i8", "ret"]);
 }
 
 #[test]
 fn test_conversion_u8() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let a = f.arg(0);
-        f.block(0, |blk| {
-            let r = blk.conv(a, SsaType::U8);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let a = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let r = blk.conv(a, SsaType::U8);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "conv.u1", "ret"]);
 }
 
 #[test]
 fn test_conversion_u16() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let a = f.arg(0);
-        f.block(0, |blk| {
-            let r = blk.conv(a, SsaType::U16);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let a = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let r = blk.conv(a, SsaType::U16);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "conv.u2", "ret"]);
 }
 
 #[test]
 fn test_conversion_u32() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let a = f.arg(0);
-        f.block(0, |blk| {
-            let r = blk.conv(a, SsaType::U32);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let a = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let r = blk.conv(a, SsaType::U32);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "conv.u4", "ret"]);
 }
 
 #[test]
 fn test_conversion_f32() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let a = f.arg(0);
-        f.block(0, |blk| {
-            let r = blk.conv(a, SsaType::F32);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let a = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let r = blk.conv(a, SsaType::F32);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "conv.r4", "ret"]);
 }
 
 #[test]
 fn test_conversion_f64() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let a = f.arg(0);
-        f.block(0, |blk| {
-            let r = blk.conv(a, SsaType::F64);
-            blk.ret_val(r);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let a = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let r = blk.conv(a, SsaType::F64);
+                blk.ret_val(r);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "conv.r8", "ret"]);
 }
 
 #[test]
 fn test_dup_instruction() {
     // Use SsaFunctionBuilder to properly create and register variables
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let v0 = f.arg(0);
-        f.block(0, |blk| {
-            let v1 = blk.copy(v0);
-            blk.ret_val(v1);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let v0 = f.arg(0, SsaType::I32);
+            f.block(0, |blk| {
+                let v1 = blk.copy(v0);
+                blk.ret_val(v1);
+            });
+        })
+        .unwrap();
     assert_generates_ok(&ssa);
 }
 
 #[test]
 fn test_pop_instruction() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let value = f.arg(0);
-        f.block(0, |b| {
-            b.op(SsaOp::Pop { value });
-            b.ret();
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let value = f.arg(0, SsaType::I32);
+            f.block(0, |b| {
+                b.op(SsaOp::Pop { value });
+                b.ret();
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "pop", "ret"]);
 }
 
@@ -790,12 +897,14 @@ fn test_nop_instruction() {
     // Nop instructions are optimized away during code generation
     // to produce cleaner bytecode. An SSA with only nop + ret
     // should just generate ret.
-    let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-        f.block(0, |b| {
-            b.nop();
-            b.ret();
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                b.nop();
+                b.ret();
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ret"]);
 }
 
@@ -811,10 +920,12 @@ fn test_break_instruction() {
 
 #[test]
 fn test_throw_instruction() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let exc = f.arg(0);
-        f.block(0, |b| b.throw(exc));
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let exc = f.arg(0, SsaType::I32);
+            f.block(0, |b| b.throw(exc));
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "throw"]);
 }
 
@@ -830,49 +941,59 @@ fn test_rethrow_instruction() {
 #[test]
 fn test_ldfld() {
     let field_token = Token::new(0x04000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let object = f.arg(0);
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::LoadField {
-                dest,
-                object,
-                field: FieldRef::new(field_token),
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let object = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op_typed(
+                    SsaOp::LoadField {
+                        dest,
+                        object,
+                        field: FieldRef::new(field_token),
+                    },
+                    SsaType::I32,
+                );
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldfld", "ret"]);
 }
 
 #[test]
 fn test_stfld() {
     let field_token = Token::new(0x04000001);
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (object, value) = (f.arg(0), f.arg(1));
-        f.block(0, |b| {
-            b.op(SsaOp::StoreField {
-                object,
-                field: FieldRef::new(field_token),
-                value,
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (object, value) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |b| {
+                b.op(SsaOp::StoreField {
+                    object,
+                    field: FieldRef::new(field_token),
+                    value,
+                });
+                b.ret();
             });
-            b.ret();
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "stfld", "ret"]);
 }
 
 #[test]
 fn test_ldsfld() {
     let field_token = Token::new(0x04000001);
-    let v0 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
-    block.add_instruction(SsaInstruction::synthetic(SsaOp::LoadStaticField {
-        dest: v0,
-        field: FieldRef::new(field_token),
-    }));
+    block.add_instruction(
+        SsaInstruction::synthetic(SsaOp::LoadStaticField {
+            dest: v0,
+            field: FieldRef::new(field_token),
+        })
+        .with_result_type(SsaType::I32),
+    );
     block.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(v0) }));
     ssa.add_block(block);
 
@@ -882,48 +1003,58 @@ fn test_ldsfld() {
 #[test]
 fn test_stsfld() {
     let field_token = Token::new(0x04000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let value = f.arg(0);
-        f.block(0, |b| {
-            b.op(SsaOp::StoreStaticField {
-                field: FieldRef::new(field_token),
-                value,
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let value = f.arg(0, SsaType::I32);
+            f.block(0, |b| {
+                b.op(SsaOp::StoreStaticField {
+                    field: FieldRef::new(field_token),
+                    value,
+                });
+                b.ret();
             });
-            b.ret();
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "stsfld", "ret"]);
 }
 
 #[test]
 fn test_ldflda() {
     let field_token = Token::new(0x04000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let object = f.arg(0);
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::LoadFieldAddr {
-                dest,
-                object,
-                field: FieldRef::new(field_token),
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let object = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op_typed(
+                    SsaOp::LoadFieldAddr {
+                        dest,
+                        object,
+                        field: FieldRef::new(field_token),
+                    },
+                    SsaType::ByRef(Box::new(SsaType::I32)),
+                );
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldflda", "ret"]);
 }
 
 #[test]
 fn test_ldsflda() {
     let field_token = Token::new(0x04000001);
-    let v0 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
-    block.add_instruction(SsaInstruction::synthetic(SsaOp::LoadStaticFieldAddr {
-        dest: v0,
-        field: FieldRef::new(field_token),
-    }));
+    block.add_instruction(
+        SsaInstruction::synthetic(SsaOp::LoadStaticFieldAddr {
+            dest: v0,
+            field: FieldRef::new(field_token),
+        })
+        .with_result_type(SsaType::ByRef(Box::new(SsaType::I32))),
+    );
     block.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(v0) }));
     ssa.add_block(block);
 
@@ -932,16 +1063,21 @@ fn test_ldsflda() {
 
 #[test]
 fn test_ldloca() {
-    let ssa = SsaFunctionBuilder::new(0, 1).build_with(|f| {
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::LoadLocalAddr {
-                dest,
-                local_index: 0,
+    let ssa = SsaFunctionBuilder::new(0, 1)
+        .build_with(|f| {
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op_typed(
+                    SsaOp::LoadLocalAddr {
+                        dest,
+                        local_index: 0,
+                    },
+                    SsaType::ByRef(Box::new(SsaType::I32)),
+                );
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     let mnemonics = generate_mnemonics(&ssa);
     assert!(
         mnemonics.iter().any(|m| m.starts_with("ldloca")),
@@ -952,13 +1088,18 @@ fn test_ldloca() {
 
 #[test]
 fn test_ldarga() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::LoadArgAddr { dest, arg_index: 0 });
-            b.ret_val(dest);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op_typed(
+                    SsaOp::LoadArgAddr { dest, arg_index: 0 },
+                    SsaType::ByRef(Box::new(SsaType::I32)),
+                );
+                b.ret_val(dest);
+            });
+        })
+        .unwrap();
     let mnemonics = generate_mnemonics(&ssa);
     assert!(
         mnemonics.iter().any(|m| m.starts_with("ldarga")),
@@ -970,15 +1111,18 @@ fn test_ldarga() {
 #[test]
 fn test_call() {
     let method_token = Token::new(0x06000001);
-    let v0 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
-    block.add_instruction(SsaInstruction::synthetic(SsaOp::Call {
-        dest: Some(v0),
-        method: MethodRef::new(method_token),
-        args: vec![],
-    }));
+    block.add_instruction(
+        SsaInstruction::synthetic(SsaOp::Call {
+            dest: Some(v0),
+            method: MethodRef::new(method_token),
+            args: vec![],
+        })
+        .with_result_type(SsaType::I32),
+    );
     block.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(v0) }));
     ssa.add_block(block);
 
@@ -1005,43 +1149,53 @@ fn test_call_void() {
 #[test]
 fn test_call_with_args() {
     let method_token = Token::new(0x06000001);
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (arg0, arg1) = (f.arg(0), f.arg(1));
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::Call {
-                dest: Some(dest),
-                method: MethodRef::new(method_token),
-                args: vec![arg0, arg1],
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (arg0, arg1) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op_typed(
+                    SsaOp::Call {
+                        dest: Some(dest),
+                        method: MethodRef::new(method_token),
+                        args: vec![arg0, arg1],
+                    },
+                    SsaType::I32,
+                );
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "call", "ret"]);
 }
 
 #[test]
 fn test_callvirt() {
     let method_token = Token::new(0x06000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let object = f.arg(0);
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::CallVirt {
-                dest: Some(dest),
-                method: MethodRef::new(method_token),
-                args: vec![object],
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let object = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op_typed(
+                    SsaOp::CallVirt {
+                        dest: Some(dest),
+                        method: MethodRef::new(method_token),
+                        args: vec![object],
+                    },
+                    SsaType::I32,
+                );
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "callvirt", "ret"]);
 }
 
 #[test]
 fn test_newobj() {
     let ctor_token = Token::new(0x06000001);
-    let v0 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
@@ -1059,173 +1213,197 @@ fn test_newobj() {
 #[test]
 fn test_newobj_with_args() {
     let ctor_token = Token::new(0x06000001);
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (arg0, arg1) = (f.arg(0), f.arg(1));
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::NewObj {
-                dest,
-                ctor: MethodRef::new(ctor_token),
-                args: vec![arg0, arg1],
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (arg0, arg1) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::NewObj {
+                    dest,
+                    ctor: MethodRef::new(ctor_token),
+                    args: vec![arg0, arg1],
+                });
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "newobj", "ret"]);
 }
 
 #[test]
 fn test_newarr() {
     let type_token = Token::new(0x02000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let len = f.arg(0);
-        let dest = f.var();
-        f.block(0, |blk| {
-            blk.op(SsaOp::NewArr {
-                dest,
-                elem_type: TypeRef(type_token),
-                length: len,
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let len = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |blk| {
+                blk.op(SsaOp::NewArr {
+                    dest,
+                    elem_type: TypeRef(type_token),
+                    length: len,
+                });
+                blk.ret_val(dest);
             });
-            blk.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "newarr", "ret"]);
 }
 
 #[test]
 fn test_ldlen() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let arr = f.arg(0);
-        f.block(0, |b| {
-            let len = b.array_length(arr);
-            b.ret_val(len);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let arr = f.arg(0, SsaType::I32);
+            f.block(0, |b| {
+                let len = b.array_length(arr);
+                b.ret_val(len);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldlen", "ret"]);
 }
 
 #[test]
 fn test_ldelem_i4() {
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (arr, idx) = (f.arg(0), f.arg(1));
-        let dest = f.var();
-        f.block(0, |blk| {
-            blk.op(SsaOp::LoadElement {
-                dest,
-                array: arr,
-                index: idx,
-                elem_type: SsaType::I32,
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (arr, idx) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            let dest = f.var();
+            f.block(0, |blk| {
+                blk.op(SsaOp::LoadElement {
+                    dest,
+                    array: arr,
+                    index: idx,
+                    elem_type: SsaType::I32,
+                });
+                blk.ret_val(dest);
             });
-            blk.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "ldelem.i4", "ret"]);
 }
 
 #[test]
 fn test_stelem_i4() {
-    let ssa = SsaFunctionBuilder::new(3, 0).build_with(|f| {
-        let (arr, idx, val) = (f.arg(0), f.arg(1), f.arg(2));
-        f.block(0, |blk| {
-            blk.op(SsaOp::StoreElement {
-                array: arr,
-                index: idx,
-                value: val,
-                elem_type: SsaType::I32,
+    let ssa = SsaFunctionBuilder::new(3, 0)
+        .build_with(|f| {
+            let (arr, idx, val) = (
+                f.arg(0, SsaType::I32),
+                f.arg(1, SsaType::I32),
+                f.arg(2, SsaType::I32),
+            );
+            f.block(0, |blk| {
+                blk.op(SsaOp::StoreElement {
+                    array: arr,
+                    index: idx,
+                    value: val,
+                    elem_type: SsaType::I32,
+                });
+                blk.ret();
             });
-            blk.ret();
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "ldarg.2", "stelem.i4", "ret"]);
 }
 
 #[test]
 fn test_box() {
     let type_token = Token::new(0x02000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let value = f.arg(0);
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::Box {
-                dest,
-                value,
-                value_type: TypeRef(type_token),
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let value = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::Box {
+                    dest,
+                    value,
+                    value_type: TypeRef(type_token),
+                });
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "box", "ret"]);
 }
 
 #[test]
 fn test_unbox() {
     let type_token = Token::new(0x02000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let object = f.arg(0);
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::Unbox {
-                dest,
-                object,
-                value_type: TypeRef(type_token),
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let object = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::Unbox {
+                    dest,
+                    object,
+                    value_type: TypeRef(type_token),
+                });
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "unbox", "ret"]);
 }
 
 #[test]
 fn test_unbox_any() {
     let type_token = Token::new(0x02000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let object = f.arg(0);
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::UnboxAny {
-                dest,
-                object,
-                value_type: TypeRef(type_token),
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let object = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::UnboxAny {
+                    dest,
+                    object,
+                    value_type: TypeRef(type_token),
+                });
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "unbox.any", "ret"]);
 }
 
 #[test]
 fn test_isinst() {
     let type_token = Token::new(0x02000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let object = f.arg(0);
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::IsInst {
-                dest,
-                object,
-                target_type: TypeRef(type_token),
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let object = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::IsInst {
+                    dest,
+                    object,
+                    target_type: TypeRef(type_token),
+                });
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "isinst", "ret"]);
 }
 
 #[test]
 fn test_castclass() {
     let type_token = Token::new(0x02000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let object = f.arg(0);
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::CastClass {
-                dest,
-                object,
-                target_type: TypeRef(type_token),
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let object = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::CastClass {
+                    dest,
+                    object,
+                    target_type: TypeRef(type_token),
+                });
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
 
     assert_generates(&ssa, &["ldarg.0", "castclass", "ret"]);
 }
@@ -1233,7 +1411,7 @@ fn test_castclass() {
 #[test]
 fn test_sizeof() {
     let type_token = Token::new(0x02000001);
-    let v0 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
@@ -1250,58 +1428,64 @@ fn test_sizeof() {
 #[test]
 fn test_initobj() {
     let type_token = Token::new(0x02000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let dest_addr = f.arg(0);
-        f.block(0, |b| {
-            b.op(SsaOp::InitObj {
-                dest_addr,
-                value_type: TypeRef(type_token),
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let dest_addr = f.arg(0, SsaType::I32);
+            f.block(0, |b| {
+                b.op(SsaOp::InitObj {
+                    dest_addr,
+                    value_type: TypeRef(type_token),
+                });
+                b.ret();
             });
-            b.ret();
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "initobj", "ret"]);
 }
 
 #[test]
 fn test_ldobj() {
     let type_token = Token::new(0x02000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let src_addr = f.arg(0);
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::LoadObj {
-                dest,
-                src_addr,
-                value_type: TypeRef(type_token),
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let src_addr = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::LoadObj {
+                    dest,
+                    src_addr,
+                    value_type: TypeRef(type_token),
+                });
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldobj", "ret"]);
 }
 
 #[test]
 fn test_stobj() {
     let type_token = Token::new(0x02000001);
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let (dest_addr, value) = (f.arg(0), f.arg(1));
-        f.block(0, |b| {
-            b.op(SsaOp::StoreObj {
-                dest_addr,
-                value,
-                value_type: TypeRef(type_token),
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let (dest_addr, value) = (f.arg(0, SsaType::I32), f.arg(1, SsaType::I32));
+            f.block(0, |b| {
+                b.op(SsaOp::StoreObj {
+                    dest_addr,
+                    value,
+                    value_type: TypeRef(type_token),
+                });
+                b.ret();
             });
-            b.ret();
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "stobj", "ret"]);
 }
 
 #[test]
 fn test_ldtoken() {
     let token = Token::new(0x02000001);
-    let v0 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
@@ -1318,7 +1502,7 @@ fn test_ldtoken() {
 #[test]
 fn test_ldftn() {
     let method_token = Token::new(0x06000001);
-    let v0 = SsaVarId::new();
+    let v0 = SsaVarId::from_index(0);
 
     let mut ssa = SsaFunction::new(0, 0);
     let mut block = SsaBlock::new(0);
@@ -1335,51 +1519,57 @@ fn test_ldftn() {
 #[test]
 fn test_ldvirtftn() {
     let method_token = Token::new(0x06000001);
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let object = f.arg(0);
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::LoadVirtFunctionPtr {
-                dest,
-                object,
-                method: MethodRef::new(method_token),
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let object = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::LoadVirtFunctionPtr {
+                    dest,
+                    object,
+                    method: MethodRef::new(method_token),
+                });
+                b.ret_val(dest);
             });
-            b.ret_val(dest);
-        });
-    });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ldvirtftn", "ret"]);
 }
 
 #[test]
 fn test_localloc() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let size = f.arg(0);
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::LocalAlloc { dest, size });
-            b.ret_val(dest);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let size = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::LocalAlloc { dest, size });
+                b.ret_val(dest);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "localloc", "ret"]);
 }
 
 #[test]
 fn test_ckfinite() {
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let operand = f.arg(0);
-        let dest = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::Ckfinite { dest, operand });
-            b.ret_val(dest);
-        });
-    });
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let operand = f.arg(0, SsaType::I32);
+            let dest = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::Ckfinite { dest, operand });
+                b.ret_val(dest);
+            });
+        })
+        .unwrap();
     assert_generates(&ssa, &["ldarg.0", "ckfinite", "ret"]);
 }
 
 #[test]
 fn test_is_immediately_consumed_return() {
     let gen = SsaCodeGenerator::new();
-    let var = SsaVarId::new();
+    let var = SsaVarId::from_index(0);
     let next = SsaOp::Return { value: Some(var) };
     assert!(gen.is_immediately_consumed(var, Some(&next)));
 }
@@ -1387,7 +1577,7 @@ fn test_is_immediately_consumed_return() {
 #[test]
 fn test_is_immediately_consumed_branch() {
     let gen = SsaCodeGenerator::new();
-    let var = SsaVarId::new();
+    let var = SsaVarId::from_index(0);
     let next = SsaOp::Branch {
         condition: var,
         true_target: 1,
@@ -1399,9 +1589,9 @@ fn test_is_immediately_consumed_branch() {
 #[test]
 fn test_is_immediately_consumed_add_left() {
     let gen = SsaCodeGenerator::new();
-    let var = SsaVarId::new();
-    let v1 = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let var = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
     let next = SsaOp::Add {
         dest: v2,
         left: var,
@@ -1413,9 +1603,9 @@ fn test_is_immediately_consumed_add_left() {
 #[test]
 fn test_is_immediately_consumed_right_operand_simple_left() {
     let mut gen = SsaCodeGenerator::new();
-    let var = SsaVarId::new();
-    let other_var = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let var = SsaVarId::from_index(0);
+    let other_var = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
 
     // Allocate storage for other_var so it's a "simple load"
     gen.var_storage.insert(other_var, VarStorage::Arg(0));
@@ -1432,9 +1622,9 @@ fn test_is_immediately_consumed_right_operand_simple_left() {
 #[test]
 fn test_is_immediately_consumed_right_operand_complex_left() {
     let gen = SsaCodeGenerator::new();
-    let var = SsaVarId::new();
-    let other_var = SsaVarId::new();
-    let v2 = SsaVarId::new();
+    let var = SsaVarId::from_index(0);
+    let other_var = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
 
     // Don't allocate storage for other_var, so it's not a "simple load"
     let next = SsaOp::Add {
@@ -1450,18 +1640,20 @@ fn test_is_immediately_consumed_right_operand_complex_left() {
 fn test_dup_optimization_same_arg_twice() {
     // Test that x * x generates ldarg.0 + dup instead of ldarg.0 + ldarg.0
     // This saves 1 byte (dup is 1 byte vs ldarg.s which is 2 bytes)
-    let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-        let x = f.arg(0);
-        let result = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::Mul {
-                dest: result,
-                left: x,
-                right: x,
+    let ssa = SsaFunctionBuilder::new(1, 0)
+        .build_with(|f| {
+            let x = f.arg(0, SsaType::I32);
+            let result = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::Mul {
+                    dest: result,
+                    left: x,
+                    right: x,
+                });
+                b.ret_val(result);
             });
-            b.ret_val(result);
-        });
-    });
+        })
+        .unwrap();
     // Should use dup for the second load of x
     assert_generates(&ssa, &["ldarg.0", "dup", "mul", "ret"]);
 }
@@ -1469,18 +1661,20 @@ fn test_dup_optimization_same_arg_twice() {
 #[test]
 fn test_dup_optimization_same_local_twice() {
     // Test that local used twice generates ldloc + dup
-    let ssa = SsaFunctionBuilder::new(0, 1).build_with(|f| {
-        let x = f.local(0);
-        let result = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::Add {
-                dest: result,
-                left: x,
-                right: x,
+    let ssa = SsaFunctionBuilder::new(0, 1)
+        .build_with(|f| {
+            let x = f.local(0, SsaType::I32);
+            let result = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::Add {
+                    dest: result,
+                    left: x,
+                    right: x,
+                });
+                b.ret_val(result);
             });
-            b.ret_val(result);
-        });
-    });
+        })
+        .unwrap();
     // Should use dup for the second load of x
     assert_generates(&ssa, &["ldloc.0", "dup", "add", "ret"]);
 }
@@ -1488,19 +1682,21 @@ fn test_dup_optimization_same_local_twice() {
 #[test]
 fn test_no_dup_for_different_vars() {
     // Test that x + y does NOT use dup
-    let ssa = SsaFunctionBuilder::new(2, 0).build_with(|f| {
-        let x = f.arg(0);
-        let y = f.arg(1);
-        let result = f.var();
-        f.block(0, |b| {
-            b.op(SsaOp::Add {
-                dest: result,
-                left: x,
-                right: y,
+    let ssa = SsaFunctionBuilder::new(2, 0)
+        .build_with(|f| {
+            let x = f.arg(0, SsaType::I32);
+            let y = f.arg(1, SsaType::I32);
+            let result = f.var();
+            f.block(0, |b| {
+                b.op(SsaOp::Add {
+                    dest: result,
+                    left: x,
+                    right: y,
+                });
+                b.ret_val(result);
             });
-            b.ret_val(result);
-        });
-    });
+        })
+        .unwrap();
     // Should NOT use dup since x and y are different
     assert_generates(&ssa, &["ldarg.0", "ldarg.1", "add", "ret"]);
 }
@@ -1531,29 +1727,42 @@ fn test_loop_variable_phi_nodes() {
     let mut ssa = SsaFunction::new(1, 1); // 1 arg (n), 1 local (i)
 
     // Variables
-    let n = SsaVariable::new(VariableOrigin::Argument(0), 0, DefSite::phi(0));
-    let n_id = n.id();
-    ssa.add_variable(n);
-
-    let i_init = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-    let i_init_id = i_init.id();
-    ssa.add_variable(i_init);
-
-    let i_phi = SsaVariable::new(VariableOrigin::Local(0), 0, DefSite::phi(1));
-    let i_phi_id = i_phi.id();
-    ssa.add_variable(i_phi);
-
-    let cond = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(1, 0));
-    let cond_id = cond.id();
-    ssa.add_variable(cond);
-
-    let one = SsaVariable::new(VariableOrigin::Stack(2), 0, DefSite::instruction(2, 0));
-    let one_id = one.id();
-    ssa.add_variable(one);
-
-    let i_next = SsaVariable::new(VariableOrigin::Stack(3), 0, DefSite::instruction(2, 1));
-    let i_next_id = i_next.id();
-    ssa.add_variable(i_next);
+    let n_id = ssa.create_variable(
+        VariableOrigin::Argument(0),
+        0,
+        DefSite::phi(0),
+        SsaType::Unknown,
+    );
+    let i_init_id = ssa.create_variable(
+        VariableOrigin::Local(1),
+        0,
+        DefSite::instruction(0, 0),
+        SsaType::Unknown,
+    );
+    let i_phi_id = ssa.create_variable(
+        VariableOrigin::Local(0),
+        0,
+        DefSite::phi(1),
+        SsaType::Unknown,
+    );
+    let cond_id = ssa.create_variable(
+        VariableOrigin::Local(2),
+        0,
+        DefSite::instruction(1, 0),
+        SsaType::Unknown,
+    );
+    let one_id = ssa.create_variable(
+        VariableOrigin::Local(3),
+        0,
+        DefSite::instruction(2, 0),
+        SsaType::Unknown,
+    );
+    let i_next_id = ssa.create_variable(
+        VariableOrigin::Local(4),
+        0,
+        DefSite::instruction(2, 1),
+        SsaType::Unknown,
+    );
 
     // Block 0: entry - initialize i to 0
     let mut block0 = SsaBlock::new(0);
@@ -1679,53 +1888,80 @@ fn test_fibonacci_style_loop() {
     let mut ssa = SsaFunction::new(1, 4); // 1 arg (n), 4 locals (a, b, i, temp)
 
     // Variables - arguments
-    let n = SsaVariable::new(VariableOrigin::Argument(0), 0, DefSite::phi(0));
-    let n_id = n.id();
-    ssa.add_variable(n);
+    let n_id = ssa.create_variable(
+        VariableOrigin::Argument(0),
+        0,
+        DefSite::phi(0),
+        SsaType::Unknown,
+    );
 
     // Entry block variables
-    let a_init = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-    let a_init_id = a_init.id();
-    ssa.add_variable(a_init);
-
-    let b_init = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(0, 1));
-    let b_init_id = b_init.id();
-    ssa.add_variable(b_init);
-
-    let i_init = SsaVariable::new(VariableOrigin::Stack(2), 0, DefSite::instruction(0, 2));
-    let i_init_id = i_init.id();
-    ssa.add_variable(i_init);
+    let a_init_id = ssa.create_variable(
+        VariableOrigin::Local(4),
+        0,
+        DefSite::instruction(0, 0),
+        SsaType::Unknown,
+    );
+    let b_init_id = ssa.create_variable(
+        VariableOrigin::Local(5),
+        0,
+        DefSite::instruction(0, 1),
+        SsaType::Unknown,
+    );
+    let i_init_id = ssa.create_variable(
+        VariableOrigin::Local(6),
+        0,
+        DefSite::instruction(0, 2),
+        SsaType::Unknown,
+    );
 
     // Phi variables at loop header
-    let a_phi = SsaVariable::new(VariableOrigin::Local(0), 0, DefSite::phi(1));
-    let a_phi_id = a_phi.id();
-    ssa.add_variable(a_phi);
-
-    let b_phi = SsaVariable::new(VariableOrigin::Local(1), 0, DefSite::phi(1));
-    let b_phi_id = b_phi.id();
-    ssa.add_variable(b_phi);
-
-    let i_phi = SsaVariable::new(VariableOrigin::Local(2), 0, DefSite::phi(1));
-    let i_phi_id = i_phi.id();
-    ssa.add_variable(i_phi);
+    let a_phi_id = ssa.create_variable(
+        VariableOrigin::Local(0),
+        0,
+        DefSite::phi(1),
+        SsaType::Unknown,
+    );
+    let b_phi_id = ssa.create_variable(
+        VariableOrigin::Local(1),
+        0,
+        DefSite::phi(1),
+        SsaType::Unknown,
+    );
+    let i_phi_id = ssa.create_variable(
+        VariableOrigin::Local(2),
+        0,
+        DefSite::phi(1),
+        SsaType::Unknown,
+    );
 
     // Loop header condition
-    let cond = SsaVariable::new(VariableOrigin::Stack(3), 0, DefSite::instruction(1, 0));
-    let cond_id = cond.id();
-    ssa.add_variable(cond);
+    let cond_id = ssa.create_variable(
+        VariableOrigin::Local(7),
+        0,
+        DefSite::instruction(1, 0),
+        SsaType::Unknown,
+    );
 
     // Loop body variables
-    let temp = SsaVariable::new(VariableOrigin::Local(3), 0, DefSite::instruction(2, 0));
-    let temp_id = temp.id();
-    ssa.add_variable(temp);
-
-    let one = SsaVariable::new(VariableOrigin::Stack(4), 0, DefSite::instruction(2, 1));
-    let one_id = one.id();
-    ssa.add_variable(one);
-
-    let i_next = SsaVariable::new(VariableOrigin::Stack(5), 0, DefSite::instruction(2, 2));
-    let i_next_id = i_next.id();
-    ssa.add_variable(i_next);
+    let temp_id = ssa.create_variable(
+        VariableOrigin::Local(3),
+        0,
+        DefSite::instruction(2, 0),
+        SsaType::Unknown,
+    );
+    let one_id = ssa.create_variable(
+        VariableOrigin::Local(8),
+        0,
+        DefSite::instruction(2, 1),
+        SsaType::Unknown,
+    );
+    let i_next_id = ssa.create_variable(
+        VariableOrigin::Local(9),
+        0,
+        DefSite::instruction(2, 2),
+        SsaType::Unknown,
+    );
 
     // Block 0: entry - initialize a=0, b=1, i=2
     let mut block0 = SsaBlock::new(0);
@@ -2043,37 +2279,54 @@ fn test_factorial_style_loop() {
     let mut ssa = SsaFunction::new(1, 2); // 1 arg (n), 2 locals (result, i)
 
     // Variables
-    let n = SsaVariable::new(VariableOrigin::Argument(0), 0, DefSite::phi(0));
-    let n_id = n.id();
-    ssa.add_variable(n);
-
-    let result_init = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-    let result_init_id = result_init.id();
-    ssa.add_variable(result_init);
-
-    let result_phi = SsaVariable::new(VariableOrigin::Local(0), 0, DefSite::phi(1));
-    let result_phi_id = result_phi.id();
-    ssa.add_variable(result_phi);
-
-    let i_phi = SsaVariable::new(VariableOrigin::Local(1), 0, DefSite::phi(1));
-    let i_phi_id = i_phi.id();
-    ssa.add_variable(i_phi);
-
-    let one = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(1, 0));
-    let one_id = one.id();
-    ssa.add_variable(one);
-
-    let cond = SsaVariable::new(VariableOrigin::Stack(2), 0, DefSite::instruction(1, 1));
-    let cond_id = cond.id();
-    ssa.add_variable(cond);
-
-    let result_next = SsaVariable::new(VariableOrigin::Stack(3), 0, DefSite::instruction(2, 0));
-    let result_next_id = result_next.id();
-    ssa.add_variable(result_next);
-
-    let i_next = SsaVariable::new(VariableOrigin::Stack(4), 0, DefSite::instruction(2, 1));
-    let i_next_id = i_next.id();
-    ssa.add_variable(i_next);
+    let n_id = ssa.create_variable(
+        VariableOrigin::Argument(0),
+        0,
+        DefSite::phi(0),
+        SsaType::Unknown,
+    );
+    let result_init_id = ssa.create_variable(
+        VariableOrigin::Local(2),
+        0,
+        DefSite::instruction(0, 0),
+        SsaType::Unknown,
+    );
+    let result_phi_id = ssa.create_variable(
+        VariableOrigin::Local(0),
+        0,
+        DefSite::phi(1),
+        SsaType::Unknown,
+    );
+    let i_phi_id = ssa.create_variable(
+        VariableOrigin::Local(1),
+        0,
+        DefSite::phi(1),
+        SsaType::Unknown,
+    );
+    let one_id = ssa.create_variable(
+        VariableOrigin::Local(3),
+        0,
+        DefSite::instruction(1, 0),
+        SsaType::Unknown,
+    );
+    let cond_id = ssa.create_variable(
+        VariableOrigin::Local(4),
+        0,
+        DefSite::instruction(1, 1),
+        SsaType::Unknown,
+    );
+    let result_next_id = ssa.create_variable(
+        VariableOrigin::Local(5),
+        0,
+        DefSite::instruction(2, 0),
+        SsaType::Unknown,
+    );
+    let i_next_id = ssa.create_variable(
+        VariableOrigin::Local(6),
+        0,
+        DefSite::instruction(2, 1),
+        SsaType::Unknown,
+    );
 
     // Block 0: entry - result = 1
     let mut block0 = SsaBlock::new(0);
@@ -2176,73 +2429,112 @@ fn test_nested_loop_pattern() {
     let mut ssa = SsaFunction::new(2, 3); // 2 args (n, m), 3 locals (sum, i, j)
 
     // Variables
-    let n = SsaVariable::new(VariableOrigin::Argument(0), 0, DefSite::phi(0));
-    let n_id = n.id();
-    ssa.add_variable(n);
-
-    let m = SsaVariable::new(VariableOrigin::Argument(1), 0, DefSite::phi(0));
-    let m_id = m.id();
-    ssa.add_variable(m);
+    let n_id = ssa.create_variable(
+        VariableOrigin::Argument(0),
+        0,
+        DefSite::phi(0),
+        SsaType::Unknown,
+    );
+    let m_id = ssa.create_variable(
+        VariableOrigin::Argument(1),
+        0,
+        DefSite::phi(0),
+        SsaType::Unknown,
+    );
 
     // Entry block inits
-    let sum_init = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-    let sum_init_id = sum_init.id();
-    ssa.add_variable(sum_init);
-
-    let i_init = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(0, 1));
-    let i_init_id = i_init.id();
-    ssa.add_variable(i_init);
+    let sum_init_id = ssa.create_variable(
+        VariableOrigin::Local(3),
+        0,
+        DefSite::instruction(0, 0),
+        SsaType::Unknown,
+    );
+    let i_init_id = ssa.create_variable(
+        VariableOrigin::Local(4),
+        0,
+        DefSite::instruction(0, 1),
+        SsaType::Unknown,
+    );
 
     // Outer loop header phis
-    let sum_outer = SsaVariable::new(VariableOrigin::Local(0), 0, DefSite::phi(1));
-    let sum_outer_id = sum_outer.id();
-    ssa.add_variable(sum_outer);
-
-    let i_phi = SsaVariable::new(VariableOrigin::Local(1), 0, DefSite::phi(1));
-    let i_phi_id = i_phi.id();
-    ssa.add_variable(i_phi);
+    let sum_outer_id = ssa.create_variable(
+        VariableOrigin::Local(0),
+        0,
+        DefSite::phi(1),
+        SsaType::Unknown,
+    );
+    let i_phi_id = ssa.create_variable(
+        VariableOrigin::Local(1),
+        0,
+        DefSite::phi(1),
+        SsaType::Unknown,
+    );
 
     // Outer loop condition
-    let outer_cond = SsaVariable::new(VariableOrigin::Stack(2), 0, DefSite::instruction(1, 0));
-    let outer_cond_id = outer_cond.id();
-    ssa.add_variable(outer_cond);
+    let outer_cond_id = ssa.create_variable(
+        VariableOrigin::Local(5),
+        0,
+        DefSite::instruction(1, 0),
+        SsaType::Unknown,
+    );
 
     // Inner loop setup
-    let j_init = SsaVariable::new(VariableOrigin::Stack(3), 0, DefSite::instruction(2, 0));
-    let j_init_id = j_init.id();
-    ssa.add_variable(j_init);
+    let j_init_id = ssa.create_variable(
+        VariableOrigin::Local(6),
+        0,
+        DefSite::instruction(2, 0),
+        SsaType::Unknown,
+    );
 
     // Inner loop header phis
-    let sum_inner = SsaVariable::new(VariableOrigin::Local(0), 0, DefSite::phi(3));
-    let sum_inner_id = sum_inner.id();
-    ssa.add_variable(sum_inner);
-
-    let j_phi = SsaVariable::new(VariableOrigin::Local(2), 0, DefSite::phi(3));
-    let j_phi_id = j_phi.id();
-    ssa.add_variable(j_phi);
+    let sum_inner_id = ssa.create_variable(
+        VariableOrigin::Local(0),
+        0,
+        DefSite::phi(3),
+        SsaType::Unknown,
+    );
+    let j_phi_id = ssa.create_variable(
+        VariableOrigin::Local(2),
+        0,
+        DefSite::phi(3),
+        SsaType::Unknown,
+    );
 
     // Inner loop condition
-    let inner_cond = SsaVariable::new(VariableOrigin::Stack(4), 0, DefSite::instruction(3, 0));
-    let inner_cond_id = inner_cond.id();
-    ssa.add_variable(inner_cond);
+    let inner_cond_id = ssa.create_variable(
+        VariableOrigin::Local(7),
+        0,
+        DefSite::instruction(3, 0),
+        SsaType::Unknown,
+    );
 
     // Inner body updates
-    let one = SsaVariable::new(VariableOrigin::Stack(5), 0, DefSite::instruction(4, 0));
-    let one_id = one.id();
-    ssa.add_variable(one);
-
-    let sum_next = SsaVariable::new(VariableOrigin::Stack(6), 0, DefSite::instruction(4, 1));
-    let sum_next_id = sum_next.id();
-    ssa.add_variable(sum_next);
-
-    let j_next = SsaVariable::new(VariableOrigin::Stack(7), 0, DefSite::instruction(4, 2));
-    let j_next_id = j_next.id();
-    ssa.add_variable(j_next);
+    let one_id = ssa.create_variable(
+        VariableOrigin::Local(8),
+        0,
+        DefSite::instruction(4, 0),
+        SsaType::Unknown,
+    );
+    let sum_next_id = ssa.create_variable(
+        VariableOrigin::Local(9),
+        0,
+        DefSite::instruction(4, 1),
+        SsaType::Unknown,
+    );
+    let j_next_id = ssa.create_variable(
+        VariableOrigin::Local(10),
+        0,
+        DefSite::instruction(4, 2),
+        SsaType::Unknown,
+    );
 
     // Inner loop exit -> outer loop continue
-    let i_next = SsaVariable::new(VariableOrigin::Stack(8), 0, DefSite::instruction(5, 0));
-    let i_next_id = i_next.id();
-    ssa.add_variable(i_next);
+    let i_next_id = ssa.create_variable(
+        VariableOrigin::Local(11),
+        0,
+        DefSite::instruction(5, 0),
+        SsaType::Unknown,
+    );
 
     // Block 0: entry
     let mut block0 = SsaBlock::new(0);
@@ -2391,49 +2683,72 @@ fn test_accumulator_with_early_exit() {
     let mut ssa = SsaFunction::new(1, 2); // 1 arg (n), 2 locals (sum, i)
 
     // Variables
-    let n = SsaVariable::new(VariableOrigin::Argument(0), 0, DefSite::phi(0));
-    let n_id = n.id();
-    ssa.add_variable(n);
-
-    let sum_init = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-    let sum_init_id = sum_init.id();
-    ssa.add_variable(sum_init);
-
-    let i_init = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(0, 1));
-    let i_init_id = i_init.id();
-    ssa.add_variable(i_init);
-
-    let sum_phi = SsaVariable::new(VariableOrigin::Local(0), 0, DefSite::phi(1));
-    let sum_phi_id = sum_phi.id();
-    ssa.add_variable(sum_phi);
-
-    let i_phi = SsaVariable::new(VariableOrigin::Local(1), 0, DefSite::phi(1));
-    let i_phi_id = i_phi.id();
-    ssa.add_variable(i_phi);
-
-    let loop_cond = SsaVariable::new(VariableOrigin::Stack(2), 0, DefSite::instruction(1, 0));
-    let loop_cond_id = loop_cond.id();
-    ssa.add_variable(loop_cond);
-
-    let sum_next = SsaVariable::new(VariableOrigin::Stack(3), 0, DefSite::instruction(2, 0));
-    let sum_next_id = sum_next.id();
-    ssa.add_variable(sum_next);
-
-    let hundred = SsaVariable::new(VariableOrigin::Stack(4), 0, DefSite::instruction(2, 1));
-    let hundred_id = hundred.id();
-    ssa.add_variable(hundred);
-
-    let break_cond = SsaVariable::new(VariableOrigin::Stack(5), 0, DefSite::instruction(2, 2));
-    let break_cond_id = break_cond.id();
-    ssa.add_variable(break_cond);
-
-    let one = SsaVariable::new(VariableOrigin::Stack(6), 0, DefSite::instruction(3, 0));
-    let one_id = one.id();
-    ssa.add_variable(one);
-
-    let i_next = SsaVariable::new(VariableOrigin::Stack(7), 0, DefSite::instruction(3, 1));
-    let i_next_id = i_next.id();
-    ssa.add_variable(i_next);
+    let n_id = ssa.create_variable(
+        VariableOrigin::Argument(0),
+        0,
+        DefSite::phi(0),
+        SsaType::Unknown,
+    );
+    let sum_init_id = ssa.create_variable(
+        VariableOrigin::Local(2),
+        0,
+        DefSite::instruction(0, 0),
+        SsaType::Unknown,
+    );
+    let i_init_id = ssa.create_variable(
+        VariableOrigin::Local(3),
+        0,
+        DefSite::instruction(0, 1),
+        SsaType::Unknown,
+    );
+    let sum_phi_id = ssa.create_variable(
+        VariableOrigin::Local(0),
+        0,
+        DefSite::phi(1),
+        SsaType::Unknown,
+    );
+    let i_phi_id = ssa.create_variable(
+        VariableOrigin::Local(1),
+        0,
+        DefSite::phi(1),
+        SsaType::Unknown,
+    );
+    let loop_cond_id = ssa.create_variable(
+        VariableOrigin::Local(4),
+        0,
+        DefSite::instruction(1, 0),
+        SsaType::Unknown,
+    );
+    let sum_next_id = ssa.create_variable(
+        VariableOrigin::Local(5),
+        0,
+        DefSite::instruction(2, 0),
+        SsaType::Unknown,
+    );
+    let hundred_id = ssa.create_variable(
+        VariableOrigin::Local(6),
+        0,
+        DefSite::instruction(2, 1),
+        SsaType::Unknown,
+    );
+    let break_cond_id = ssa.create_variable(
+        VariableOrigin::Local(7),
+        0,
+        DefSite::instruction(2, 2),
+        SsaType::Unknown,
+    );
+    let one_id = ssa.create_variable(
+        VariableOrigin::Local(8),
+        0,
+        DefSite::instruction(3, 0),
+        SsaType::Unknown,
+    );
+    let i_next_id = ssa.create_variable(
+        VariableOrigin::Local(9),
+        0,
+        DefSite::instruction(3, 1),
+        SsaType::Unknown,
+    );
 
     // Block 0: entry
     let mut block0 = SsaBlock::new(0);

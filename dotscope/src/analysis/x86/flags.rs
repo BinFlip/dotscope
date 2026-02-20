@@ -35,8 +35,8 @@
 //! let mut flags = FlagState::new();
 //!
 //! // After CMP eax, 10
-//! let v0 = SsaVarId::new();  // SSA var for eax
-//! let v1 = SsaVarId::new();  // SSA var for constant 10
+//! let v0 = SsaVarId::from_index(0);  // SSA var for eax
+//! let v1 = SsaVarId::from_index(1);  // SSA var for constant 10
 //! flags.set_compare(v0, v1);
 //!
 //! // Get SSA comparison for JL
@@ -664,8 +664,8 @@ mod tests {
         let mut flags = FlagState::new();
         assert!(!flags.is_known());
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         flags.set_compare(v0, v1);
 
         assert!(flags.is_known());
@@ -687,8 +687,8 @@ mod tests {
     fn test_flag_state_test() {
         let mut flags = FlagState::new();
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         flags.set_test(v0, v1);
 
         // E/NE work with TEST
@@ -707,13 +707,13 @@ mod tests {
     fn test_zero_test_pattern() {
         let mut flags = FlagState::new();
 
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         flags.set_test(v0, v0);
 
         assert_eq!(flags.is_zero_test(), Some(v0));
 
         // Different operands - not a zero test
-        let v1 = SsaVarId::new();
+        let v1 = SsaVarId::from_index(1);
         flags.set_test(v0, v1);
         assert!(flags.is_zero_test().is_none());
     }
@@ -752,7 +752,7 @@ mod tests {
     #[test]
     fn test_flag_state_clear() {
         let mut flags = FlagState::new();
-        flags.set_compare(SsaVarId::new(), SsaVarId::new());
+        flags.set_compare(SsaVarId::from_index(0), SsaVarId::from_index(1));
         assert!(flags.is_known());
 
         flags.clear();
@@ -779,11 +779,11 @@ mod tests {
         let mut flags = FlagState::new();
         assert!(flags.carry().is_none());
 
-        let cf = SsaVarId::new();
+        let cf = SsaVarId::from_index(0);
         flags.set_carry(cf);
         assert_eq!(flags.carry(), Some(cf));
 
-        let zero = SsaVarId::new();
+        let zero = SsaVarId::from_index(1);
         flags.clear_carry(zero);
         assert_eq!(flags.carry(), Some(zero));
 
@@ -795,9 +795,9 @@ mod tests {
     fn test_arithmetic_with_signed_conditions() {
         let mut flags = FlagState::new();
 
-        let result = SsaVarId::new();
-        let left = SsaVarId::new();
-        let right = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let left = SsaVarId::from_index(1);
+        let right = SsaVarId::from_index(2);
         flags.set_arithmetic(result, left, right, ArithmeticKind::Add);
 
         // Zero test should work
@@ -818,8 +818,8 @@ mod tests {
     fn test_condition_eval() {
         let mut flags = FlagState::new();
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         flags.set_compare(v0, v1);
 
         let eval = flags.get_condition_operands(X86Condition::L);
@@ -836,8 +836,8 @@ mod tests {
     #[test]
     fn test_sign_flag_from_compare() {
         let mut flags = FlagState::new();
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         flags.set_compare(v0, v1);
 
         // S condition should produce SignFlag with Subtract source
@@ -862,8 +862,8 @@ mod tests {
     #[test]
     fn test_sign_flag_from_test() {
         let mut flags = FlagState::new();
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         flags.set_test(v0, v1);
 
         let eval = flags.get_condition_operands(X86Condition::S);
@@ -879,9 +879,9 @@ mod tests {
     #[test]
     fn test_sign_flag_from_arithmetic() {
         let mut flags = FlagState::new();
-        let result = SsaVarId::new();
-        let left = SsaVarId::new();
-        let right = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let left = SsaVarId::from_index(1);
+        let right = SsaVarId::from_index(2);
         flags.set_arithmetic(result, left, right, ArithmeticKind::Add);
 
         let eval = flags.get_condition_operands(X86Condition::S);
@@ -897,8 +897,8 @@ mod tests {
     #[test]
     fn test_overflow_flag_from_compare() {
         let mut flags = FlagState::new();
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         flags.set_compare(v0, v1);
 
         let eval = flags.get_condition_operands(X86Condition::O);
@@ -928,8 +928,8 @@ mod tests {
     #[test]
     fn test_overflow_flag_from_test() {
         let mut flags = FlagState::new();
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         flags.set_test(v0, v1);
 
         // TEST always clears OF, so OverflowFlag with LogicalOp kind
@@ -947,9 +947,9 @@ mod tests {
     #[test]
     fn test_overflow_flag_from_arithmetic() {
         let mut flags = FlagState::new();
-        let result = SsaVarId::new();
-        let left = SsaVarId::new();
-        let right = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let left = SsaVarId::from_index(1);
+        let right = SsaVarId::from_index(2);
         flags.set_arithmetic(result, left, right, ArithmeticKind::Add);
 
         let eval = flags.get_condition_operands(X86Condition::O);
@@ -971,8 +971,8 @@ mod tests {
     #[test]
     fn test_parity_flag_from_compare() {
         let mut flags = FlagState::new();
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         flags.set_compare(v0, v1);
 
         let eval = flags.get_condition_operands(X86Condition::P);
@@ -994,8 +994,8 @@ mod tests {
     #[test]
     fn test_parity_flag_from_test() {
         let mut flags = FlagState::new();
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         flags.set_test(v0, v1);
 
         let eval = flags.get_condition_operands(X86Condition::P);
@@ -1011,7 +1011,7 @@ mod tests {
     #[test]
     fn test_branch_operands_still_none_for_flag_conditions() {
         let mut flags = FlagState::new();
-        flags.set_compare(SsaVarId::new(), SsaVarId::new());
+        flags.set_compare(SsaVarId::from_index(0), SsaVarId::from_index(1));
 
         // S/NS/O/NO/P/NP should still return None from get_branch_operands
         // (these go through evaluate_condition fallback in Jcc handler)
@@ -1030,7 +1030,7 @@ mod tests {
     #[test]
     fn test_arithmetic_kind_neg() {
         let mut flags = FlagState::new();
-        let result = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
         flags.set_arithmetic_unary(result);
 
         // Should have Neg kind

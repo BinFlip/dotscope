@@ -62,6 +62,7 @@ impl SsaLoopAnalysis for SsaFunction {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::{
         analysis::{cfg::LoopType, SsaFunctionBuilder, SsaVarId},
         utils::graph::NodeId,
@@ -76,21 +77,23 @@ mod tests {
         // B3 (body): jump to B1 (back edge)
         // B4 (exit): ret
 
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            // B0: entry, jump to header
-            f.block(0, |b| b.jump(1));
-            // B1: header (dispatcher-like), jump to condition
-            f.block(1, |b| b.jump(2));
-            // B2: condition block with branch
-            f.block(2, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 3, 4);
-            });
-            // B3: body, jump back to header (back edge to B1)
-            f.block(3, |b| b.jump(1));
-            // B4: exit
-            f.block(4, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                // B0: entry, jump to header
+                f.block(0, |b| b.jump(1));
+                // B1: header (dispatcher-like), jump to condition
+                f.block(1, |b| b.jump(2));
+                // B2: condition block with branch
+                f.block(2, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 3, 4);
+                });
+                // B3: body, jump back to header (back edge to B1)
+                f.block(3, |b| b.jump(1));
+                // B4: exit
+                f.block(4, |b| b.ret());
+            })
+            .unwrap();
 
         let forest = ssa.analyze_loops();
 
@@ -118,23 +121,25 @@ mod tests {
         // B4: branch cond3, B1, B5 (back edge or exit)
         // B5: ret
 
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.jump(1));
-            f.block(1, |b| b.jump(2));
-            f.block(2, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 3, 4);
-            });
-            f.block(3, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 5, 1);
-            });
-            f.block(4, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 1, 5);
-            });
-            f.block(5, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.jump(1));
+                f.block(1, |b| b.jump(2));
+                f.block(2, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 3, 4);
+                });
+                f.block(3, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 5, 1);
+                });
+                f.block(4, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 1, 5);
+                });
+                f.block(5, |b| b.ret());
+            })
+            .unwrap();
 
         let forest = ssa.analyze_loops();
         assert!(!forest.is_empty(), "Should have at least one loop");
@@ -157,19 +162,21 @@ mod tests {
         // B2 (body) -> B1 (back edge)
         // B3 (exit)
 
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            // B0: entry, jump to header
-            f.block(0, |b| b.jump(1));
-            // B1: header with conditional branch
-            f.block(1, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 2, 3);
-            });
-            // B2: body, jump back to header
-            f.block(2, |b| b.jump(1));
-            // B3: exit
-            f.block(3, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                // B0: entry, jump to header
+                f.block(0, |b| b.jump(1));
+                // B1: header with conditional branch
+                f.block(1, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 2, 3);
+                });
+                // B2: body, jump back to header
+                f.block(2, |b| b.jump(1));
+                // B3: exit
+                f.block(3, |b| b.ret());
+            })
+            .unwrap();
 
         let forest = ssa.analyze_loops();
 
@@ -202,17 +209,19 @@ mod tests {
         // B1: branch cond, B1, B2 (back edge is latch with exit)
         // B2 (exit)
 
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            // B0: entry, jump to header
-            f.block(0, |b| b.jump(1));
-            // B1: header/body with conditional back edge
-            f.block(1, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 1, 2); // back edge to 1, exit to 2
-            });
-            // B2: exit
-            f.block(2, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                // B0: entry, jump to header
+                f.block(0, |b| b.jump(1));
+                // B1: header/body with conditional back edge
+                f.block(1, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 1, 2); // back edge to 1, exit to 2
+                });
+                // B2: exit
+                f.block(2, |b| b.ret());
+            })
+            .unwrap();
 
         let forest = ssa.analyze_loops();
 
@@ -239,23 +248,25 @@ mod tests {
         // B4 (exit)
 
         let ssa = {
-            let mut cond_out = SsaVarId::new();
-            SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                // B0: entry
-                f.block(0, |b| b.jump(1));
-                // B1: outer header
-                f.block(1, |b| b.jump(2));
-                // B2: inner header with self-loop
-                f.block(2, |b| {
-                    let c = b.const_true();
-                    cond_out = c;
-                    b.branch(c, 2, 3); // inner back edge to 2, exit to 3
-                });
-                // B3: between inner and outer, branches back to outer header or exits
-                f.block(3, |b| b.branch(cond_out, 1, 4)); // outer back edge to 1, exit to 4
-                                                          // B4: exit
-                f.block(4, |b| b.ret());
-            })
+            let mut cond_out = SsaVarId::from_index(0);
+            SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    // B0: entry
+                    f.block(0, |b| b.jump(1));
+                    // B1: outer header
+                    f.block(1, |b| b.jump(2));
+                    // B2: inner header with self-loop
+                    f.block(2, |b| {
+                        let c = b.const_true();
+                        cond_out = c;
+                        b.branch(c, 2, 3); // inner back edge to 2, exit to 3
+                    });
+                    // B3: between inner and outer, branches back to outer header or exits
+                    f.block(3, |b| b.branch(cond_out, 1, 4)); // outer back edge to 1, exit to 4
+                                                              // B4: exit
+                    f.block(4, |b| b.ret());
+                })
+                .unwrap()
         };
 
         let forest = ssa.analyze_loops();
@@ -283,19 +294,21 @@ mod tests {
         // Test that the induction variable detection API works correctly.
         // We use an existing loop structure and verify the method can be called.
 
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            // B0: entry, jump to header
-            f.block(0, |b| b.jump(1));
-            // B1: header with conditional branch
-            f.block(1, |b| {
-                let cond = b.const_true();
-                b.branch(cond, 2, 3);
-            });
-            // B2: body, jump back to header
-            f.block(2, |b| b.jump(1));
-            // B3: exit
-            f.block(3, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                // B0: entry, jump to header
+                f.block(0, |b| b.jump(1));
+                // B1: header with conditional branch
+                f.block(1, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 2, 3);
+                });
+                // B2: body, jump back to header
+                f.block(2, |b| b.jump(1));
+                // B3: exit
+                f.block(3, |b| b.ret());
+            })
+            .unwrap();
 
         let forest = ssa.analyze_loops();
 

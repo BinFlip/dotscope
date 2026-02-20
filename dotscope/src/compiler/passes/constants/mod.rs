@@ -33,14 +33,20 @@
 //! v5 = 0           // absorbing element
 //! ```
 
-use std::{collections::HashMap, sync::Arc};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
 use crate::{
     analysis::{
         simplify_op, CmpKind, ConstValue, ConstantPropagation, SccpResult, SimplifyResult, SsaCfg,
         SsaFunction, SsaOp, SsaType, SsaVarId,
     },
-    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
+    compiler::{
+        pass::{ModificationScope, SsaPass},
+        CompilerContext, EventKind, EventLog,
+    },
     metadata::{token::Token, typesystem::PointerSize},
     CilObject, Result,
 };
@@ -854,91 +860,197 @@ impl ConstantPropagationPass {
         }
     }
 
-    /// Simplifies involutory operations (operations that are their own inverse).
+    /// Simplifies chains of involutory operations (Neg/Not).
     ///
-    /// Handles patterns like:
-    /// - `--x = x` (double negation)
-    /// - `~~x = x` (double bitwise not)
+    /// Involutory operations satisfy f(f(x)) = x. This pass finds maximal chains
+    /// of same-type operations and collapses them:
     ///
-    /// # Arguments
+    /// - **Even-length chains** (e.g., neg(neg(neg(neg(x))))): cancel completely,
+    ///   replacing all uses of the outermost result with the innermost operand.
+    /// - **Odd-length chains** (e.g., neg(neg(neg(x)))): collapse to a single
+    ///   operation on the innermost operand.
     ///
-    /// * `ssa` - The SSA function to analyze.
-    /// * `method_token` - The method token for change tracking.
-    /// * `changes` - The change set to record modifications.
+    /// # Chain-based algorithm
+    ///
+    /// 1. Build a set of all Neg/Not operands to identify outermost instructions
+    ///    (an instruction is outermost if its result is NOT used as the operand
+    ///    of another same-type operation).
+    /// 2. From each outermost instruction, walk backwards through same-op
+    ///    definitions to collect the full chain.
+    /// 3. Verify all intermediates have exactly 1 use (only the next chain member).
+    /// 4. Apply the appropriate transform based on chain parity.
     fn simplify_involutory_ops(ssa: &mut SsaFunction, method_token: Token, changes: &mut EventLog) {
-        // First, build a map of variable definitions: var_id -> (block_idx, instr_idx)
+        // Step 1: Build definition map and use counts
         let mut definitions: HashMap<SsaVarId, (usize, usize)> = HashMap::new();
+        let mut use_counts: HashMap<SsaVarId, usize> = HashMap::new();
 
         for (block_idx, instr_idx, instr) in ssa.iter_instructions() {
             if let Some(dest) = instr.op().dest() {
                 definitions.insert(dest, (block_idx, instr_idx));
             }
+            for use_var in instr.op().uses() {
+                *use_counts.entry(use_var).or_default() += 1;
+            }
+        }
+        for phi in ssa.all_phi_nodes() {
+            for operand in phi.operands() {
+                *use_counts.entry(operand.value()).or_default() += 1;
+            }
         }
 
-        // Now find involutory patterns
-        let mut transformations: Vec<(usize, usize, SsaVarId, SsaVarId, &'static str)> = Vec::new();
-
-        for (block_idx, instr_idx, instr) in ssa.iter_instructions() {
+        // Step 2: Identify outermost Neg/Not instructions.
+        // A Neg is outermost if its dest is NOT used as the operand of another Neg.
+        let mut neg_operands: HashSet<SsaVarId> = HashSet::new();
+        let mut not_operands: HashSet<SsaVarId> = HashSet::new();
+        for (_, _, instr) in ssa.iter_instructions() {
             match instr.op() {
-                // Check for --x pattern: Neg(Neg(x)) = x
-                SsaOp::Neg { dest, operand } => {
-                    // Look up what defines the operand
-                    if let Some(&(def_block, def_instr)) = definitions.get(operand) {
-                        if let Some(def_block_ref) = ssa.block(def_block) {
-                            if let SsaOp::Neg {
-                                operand: inner_operand,
-                                ..
-                            } = def_block_ref.instructions()[def_instr].op()
-                            {
-                                // Found --x pattern, replace with copy of inner_operand
-                                transformations.push((
-                                    block_idx,
-                                    instr_idx,
-                                    *dest,
-                                    *inner_operand,
-                                    "neg(neg(x))",
-                                ));
-                            }
-                        }
-                    }
+                SsaOp::Neg { operand, .. } => {
+                    neg_operands.insert(*operand);
                 }
-                // Check for ~~x pattern: Not(Not(x)) = x
-                SsaOp::Not { dest, operand } => {
-                    // Look up what defines the operand
-                    if let Some(&(def_block, def_instr)) = definitions.get(operand) {
-                        if let Some(def_block_ref) = ssa.block(def_block) {
-                            if let SsaOp::Not {
-                                operand: inner_operand,
-                                ..
-                            } = def_block_ref.instructions()[def_instr].op()
-                            {
-                                // Found ~~x pattern, replace with copy of inner_operand
-                                transformations.push((
-                                    block_idx,
-                                    instr_idx,
-                                    *dest,
-                                    *inner_operand,
-                                    "not(not(x))",
-                                ));
-                            }
-                        }
-                    }
+                SsaOp::Not { operand, .. } => {
+                    not_operands.insert(*operand);
                 }
                 _ => {}
             }
         }
 
-        // Apply transformations
-        for (block_idx, instr_idx, dest, src, pattern) in transformations {
-            if let Some(block) = ssa.block_mut(block_idx) {
-                let instr = &mut block.instructions_mut()[instr_idx];
-                let old_op_str = format!("{}", instr.op());
+        // Step 3: From each outermost instruction, walk backwards to find chains
+        struct ChainTransform {
+            outermost_dest: SsaVarId,
+            innermost_operand: SsaVarId,
+            chain_length: usize,
+            instructions_to_nop: Vec<(usize, usize)>,
+            outermost_location: (usize, usize),
+            is_neg: bool,
+        }
 
-                instr.set_op(SsaOp::Copy { dest, src });
+        let mut processed: HashSet<SsaVarId> = HashSet::new();
+        let mut transforms: Vec<ChainTransform> = Vec::new();
+
+        for (block_idx, instr_idx, instr) in ssa.iter_instructions() {
+            let (dest, operand, is_neg) = match instr.op() {
+                SsaOp::Neg { dest, operand } => (*dest, *operand, true),
+                SsaOp::Not { dest, operand } => (*dest, *operand, false),
+                _ => continue,
+            };
+
+            if processed.contains(&dest) {
+                continue;
+            }
+
+            // Only start chains from outermost instructions
+            let is_outermost = if is_neg {
+                !neg_operands.contains(&dest)
+            } else {
+                !not_operands.contains(&dest)
+            };
+            if !is_outermost {
+                continue;
+            }
+
+            // Walk chain backwards through same-op definitions
+            let mut chain_locations: Vec<(usize, usize)> = vec![(block_idx, instr_idx)];
+            let mut chain_dests: Vec<SsaVarId> = vec![dest];
+            let mut current_operand = operand;
+            let mut all_intermediates_single_use = true;
+
+            loop {
+                // Check that this intermediate has exactly 1 use (the previous chain member)
+                let uses = use_counts.get(&current_operand).copied().unwrap_or(0);
+                if uses != 1 {
+                    all_intermediates_single_use = false;
+                    break;
+                }
+
+                let Some(&(def_block, def_instr)) = definitions.get(&current_operand) else {
+                    break;
+                };
+                let Some(def_block_ref) = ssa.block(def_block) else {
+                    break;
+                };
+
+                let inner = match def_block_ref.instructions()[def_instr].op() {
+                    SsaOp::Neg {
+                        dest: d,
+                        operand: inner,
+                    } if is_neg => (*d, *inner),
+                    SsaOp::Not {
+                        dest: d,
+                        operand: inner,
+                    } if !is_neg => (*d, *inner),
+                    _ => break,
+                };
+
+                chain_locations.push((def_block, def_instr));
+                chain_dests.push(inner.0);
+                current_operand = inner.1;
+            }
+
+            // Mark all chain members as processed
+            for d in &chain_dests {
+                processed.insert(*d);
+            }
+
+            let chain_len = chain_locations.len();
+            if chain_len < 2 || !all_intermediates_single_use {
+                continue;
+            }
+
+            transforms.push(ChainTransform {
+                outermost_dest: dest,
+                innermost_operand: current_operand,
+                chain_length: chain_len,
+                instructions_to_nop: chain_locations,
+                outermost_location: (block_idx, instr_idx),
+                is_neg,
+            });
+        }
+
+        // Step 4: Apply transforms
+        for t in transforms {
+            let op_name = if t.is_neg { "neg" } else { "not" };
+
+            if t.chain_length % 2 == 0 {
+                // Even chain: all cancel out, result = innermost_operand
+                ssa.replace_uses_including_phis(t.outermost_dest, t.innermost_operand);
+                for &(b, i) in &t.instructions_to_nop {
+                    ssa.remove_instruction(b, i);
+                }
                 changes
                     .record(EventKind::ConstantFolded)
-                    .at(method_token, instr_idx)
-                    .message(format!("{old_op_str} → copy {src} ({pattern})"));
+                    .at(method_token, t.outermost_location.1)
+                    .message(format!(
+                        "{} → {} ({op_name}^{}(x))",
+                        t.outermost_dest, t.innermost_operand, t.chain_length
+                    ));
+            } else {
+                // Odd chain: one operation remains, rewrite outermost to use innermost_operand
+                let (b, i) = t.outermost_location;
+                if let Some(block) = ssa.block_mut(b) {
+                    let instr = &mut block.instructions_mut()[i];
+                    if t.is_neg {
+                        instr.set_op(SsaOp::Neg {
+                            dest: t.outermost_dest,
+                            operand: t.innermost_operand,
+                        });
+                    } else {
+                        instr.set_op(SsaOp::Not {
+                            dest: t.outermost_dest,
+                            operand: t.innermost_operand,
+                        });
+                    }
+                }
+                // Nop all except the outermost
+                for &(b, i) in &t.instructions_to_nop[1..] {
+                    ssa.remove_instruction(b, i);
+                }
+                changes
+                    .record(EventKind::ConstantFolded)
+                    .at(method_token, t.outermost_location.1)
+                    .message(format!(
+                        "{} = {op_name}({}) ({op_name}^{}(x))",
+                        t.outermost_dest, t.innermost_operand, t.chain_length
+                    ));
             }
         }
     }
@@ -1098,6 +1210,10 @@ impl SsaPass for ConstantPropagationPass {
 
     fn description(&self) -> &'static str {
         "Propagates constant values and folds constant expressions using SCCP"
+    }
+
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::InstructionsOnly
     }
 
     fn run_on_method(

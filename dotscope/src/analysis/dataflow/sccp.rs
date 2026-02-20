@@ -736,7 +736,11 @@ impl SccpResult {
 
 #[cfg(test)]
 mod tests {
+    use std::collections::{HashMap, HashSet};
+
     use super::*;
+
+    use crate::analysis::{dataflow::lattice::MeetSemiLattice, ConstValue, SsaVarId};
 
     #[test]
     fn test_scalar_value_meet() {
@@ -789,9 +793,9 @@ mod tests {
 
     #[test]
     fn test_sccp_result() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
 
         let mut values = HashMap::new();
         values.insert(v0, ScalarValue::Constant(ConstValue::I32(42)));

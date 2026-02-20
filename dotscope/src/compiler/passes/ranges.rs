@@ -38,7 +38,10 @@ use std::{
 
 use crate::{
     analysis::{ConstValue, PhiNode, SsaBlock, SsaCfg, SsaFunction, SsaOp, SsaVarId, ValueRange},
-    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
+    compiler::{
+        pass::{ModificationScope, SsaPass},
+        CompilerContext, EventKind, EventLog,
+    },
     metadata::token::Token,
     utils::graph::{NodeId, RootedGraph, Successors},
     CilObject, Result,
@@ -72,6 +75,10 @@ impl SsaPass for ValueRangePropagationPass {
 
     fn description(&self) -> &'static str {
         "Propagates value ranges through CFG to detect opaque predicates"
+    }
+
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::CfgModifying
     }
 
     fn run_on_method(
@@ -715,9 +722,14 @@ impl RangeResult {
 
 #[cfg(test)]
 mod tests {
-    use crate::analysis::SsaFunctionBuilder;
-
     use super::*;
+
+    use std::collections::HashMap;
+
+    use crate::{
+        analysis::{SsaFunctionBuilder, SsaOp, SsaVarId, ValueRange},
+        compiler::SsaPass,
+    };
 
     #[test]
     fn test_pass_metadata() {
@@ -729,13 +741,15 @@ mod tests {
     #[test]
     fn test_constant_range() {
         let (ssa, v0) = {
-            let mut v0_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    v0_out = b.const_i32(42);
-                    b.ret();
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        v0_out = b.const_i32(42);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v0_out)
         };
 
@@ -750,15 +764,17 @@ mod tests {
     #[test]
     fn test_add_range() {
         let (ssa, v2) = {
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(5);
-                    let v1 = b.const_i32(10);
-                    v2_out = b.add(v0, v1); // 5 + 10 = 15
-                    b.ret();
-                });
-            });
+            let mut v2_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(5);
+                        let v1 = b.const_i32(10);
+                        v2_out = b.add(v0, v1); // 5 + 10 = 15
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v2_out)
         };
 
@@ -772,15 +788,17 @@ mod tests {
     #[test]
     fn test_sub_range() {
         let (ssa, v2) = {
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(20);
-                    let v1 = b.const_i32(7);
-                    v2_out = b.sub(v0, v1); // 20 - 7 = 13
-                    b.ret();
-                });
-            });
+            let mut v2_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(20);
+                        let v1 = b.const_i32(7);
+                        v2_out = b.sub(v0, v1); // 20 - 7 = 13
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v2_out)
         };
 
@@ -794,15 +812,17 @@ mod tests {
     #[test]
     fn test_and_range() {
         let (ssa, v2) = {
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(1000);
-                    let v1 = b.const_i32(0xFF); // Mask to byte range
-                    v2_out = b.and(v0, v1);
-                    b.ret();
-                });
-            });
+            let mut v2_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(1000);
+                        let v1 = b.const_i32(0xFF); // Mask to byte range
+                        v2_out = b.and(v0, v1);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v2_out)
         };
 
@@ -818,14 +838,16 @@ mod tests {
     #[test]
     fn test_array_length_range() {
         let (ssa, v1) = {
-            let mut v1_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_null(); // Placeholder array
-                    v1_out = b.array_length(v0);
-                    b.ret();
-                });
-            });
+            let mut v1_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_null(); // Placeholder array
+                        v1_out = b.array_length(v0);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v1_out)
         };
 
@@ -839,15 +861,17 @@ mod tests {
     #[test]
     fn test_comparison_range() {
         let (ssa, v2) = {
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(5);
-                    let v1 = b.const_i32(10);
-                    v2_out = b.clt(v0, v1); // 5 < 10
-                    b.ret();
-                });
-            });
+            let mut v2_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(5);
+                        let v1 = b.const_i32(10);
+                        v2_out = b.clt(v0, v1); // 5 < 10
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v2_out)
         };
 
@@ -887,9 +911,9 @@ mod tests {
 
     #[test]
     fn test_try_simplify_clt() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
 
         let mut ranges = HashMap::new();
         ranges.insert(v0, ValueRange::bounded(0, 5)); // [0, 5]
@@ -910,9 +934,9 @@ mod tests {
 
     #[test]
     fn test_try_simplify_cgt() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
 
         let mut ranges = HashMap::new();
         ranges.insert(v0, ValueRange::bounded(100, 200)); // [100, 200]
@@ -933,9 +957,9 @@ mod tests {
 
     #[test]
     fn test_try_simplify_ceq_never() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
 
         let mut ranges = HashMap::new();
         ranges.insert(v0, ValueRange::bounded(0, 5)); // [0, 5]
@@ -955,9 +979,9 @@ mod tests {
 
     #[test]
     fn test_try_simplify_ceq_constants() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let dest = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
 
         let mut ranges = HashMap::new();
         ranges.insert(v0, ValueRange::constant(42));
