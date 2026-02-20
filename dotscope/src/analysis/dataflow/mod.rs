@@ -61,10 +61,12 @@ pub use solver::DataFlowSolver;
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::{
         analysis::{cfg::ControlFlowGraph, ssa::SsaConverter},
         assembly::{decode_blocks, InstructionAssembler},
         metadata::typesystem::PointerSize,
+        test::TestTypeProvider,
     };
 
     /// Helper to build CFG from assembled bytecode.
@@ -82,8 +84,13 @@ mod tests {
         num_locals: usize,
     ) -> (crate::analysis::SsaFunction, ControlFlowGraph<'static>) {
         let cfg = build_cfg(assembler);
-        let ssa =
-            SsaConverter::build(&cfg, num_args, num_locals, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(
+            &cfg,
+            num_args,
+            num_locals,
+            &TestTypeProvider::new(num_args, num_locals),
+        )
+        .expect("SSA construction failed");
         (ssa, cfg)
     }
 

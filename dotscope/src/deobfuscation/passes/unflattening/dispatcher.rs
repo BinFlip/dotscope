@@ -633,7 +633,7 @@ mod tests {
     fn test_dispatcher_info_switch() {
         let dispatcher = DispatcherInfo::Switch {
             block: 0,
-            switch_var: SsaVarId::new(),
+            switch_var: SsaVarId::from_index(0),
             cases: vec![1, 2, 3, 4, 5],
             default: 6,
             transform: StateTransform::Modulo(5),
@@ -655,7 +655,7 @@ mod tests {
         // XOR key = -576502913, divisor = 7
         let dispatcher = DispatcherInfo::Switch {
             block: 1,
-            switch_var: SsaVarId::new(),
+            switch_var: SsaVarId::from_index(0),
             cases: vec![2, 3, 4, 5, 6, 7, 8], // 7 cases (0-6)
             default: 9,
             transform: StateTransform::XorModulo {
@@ -681,7 +681,7 @@ mod tests {
     fn test_dispatcher_info_if_else() {
         let dispatcher = DispatcherInfo::IfElseChain {
             head_block: 0,
-            state_var: SsaVarId::new(),
+            state_var: SsaVarId::from_index(0),
             comparisons: vec![(10, 1), (20, 2), (30, 3)],
             default: Some(4),
         };
@@ -697,7 +697,7 @@ mod tests {
     fn test_dispatcher_all_targets() {
         let dispatcher = DispatcherInfo::Switch {
             block: 0,
-            switch_var: SsaVarId::new(),
+            switch_var: SsaVarId::from_index(0),
             cases: vec![1, 2, 2, 3], // Note: 2 appears twice
             default: 4,
             transform: StateTransform::Identity,
@@ -714,7 +714,7 @@ mod tests {
     fn test_dispatcher_info_computed_jump() {
         let dispatcher = DispatcherInfo::ComputedJump {
             block: 5,
-            target_var: SsaVarId::new(),
+            target_var: SsaVarId::from_index(0),
             jump_table: vec![10, 20, 30, 40],
             base_address: Some(0x1000),
         };

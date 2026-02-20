@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn test_path_constraint_satisfied() {
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
 
         let eq = PathConstraint::equal(var, ConstValue::I32(5));
         assert!(eq.is_satisfied_by(&ConstValue::I32(5)));
@@ -236,7 +236,7 @@ mod tests {
 
     #[test]
     fn test_path_constraint_kinds() {
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
 
         assert!(PathConstraint::less_than(var, ConstValue::I32(10))
             .is_satisfied_by(&ConstValue::I32(5)));

@@ -283,6 +283,38 @@ impl<'a> SymbolicEvaluator<'a> {
                         .insert(*dest, SymbolicExpr::variable(*operand));
                 }
             }
+
+            // LoadArg/LoadLocal: propagate expression from the source argument/local variable
+            SsaOp::LoadArg { dest, arg_index } => {
+                // Find the argument variable (version 0) and propagate its expression
+                if let Some(arg_var) = self
+                    .ssa
+                    .variables_from_argument(*arg_index)
+                    .find(|v| v.version() == 0)
+                {
+                    let src = arg_var.id();
+                    if let Some(expr) = self.expressions.get(&src).cloned() {
+                        self.expressions.insert(*dest, expr);
+                    } else {
+                        self.expressions.insert(*dest, SymbolicExpr::variable(src));
+                    }
+                }
+            }
+            SsaOp::LoadLocal { dest, local_index } => {
+                if let Some(local_var) = self
+                    .ssa
+                    .variables_from_local(*local_index)
+                    .find(|v| v.version() == 0)
+                {
+                    let src = local_var.id();
+                    if let Some(expr) = self.expressions.get(&src).cloned() {
+                        self.expressions.insert(*dest, expr);
+                    } else {
+                        self.expressions.insert(*dest, SymbolicExpr::variable(src));
+                    }
+                }
+            }
+
             _ => {}
         }
     }

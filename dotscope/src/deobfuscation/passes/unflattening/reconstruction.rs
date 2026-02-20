@@ -135,7 +135,7 @@ impl PatchPlan {
     }
 
     /// Returns redirects that are safe to apply (no conflicts/cloning needed).
-    fn safe_redirects(&self) -> Vec<(usize, usize)> {
+    pub(crate) fn safe_redirects(&self) -> Vec<(usize, usize)> {
         self.redirects
             .iter()
             .filter(|(source, _)| {
@@ -147,7 +147,7 @@ impl PatchPlan {
     }
 
     /// Returns blocks that need cloning with their (predecessor, target) pairs.
-    fn blocks_to_clone(&self) -> Vec<(usize, Vec<(usize, usize)>)> {
+    pub(crate) fn blocks_to_clone(&self) -> Vec<(usize, Vec<(usize, usize)>)> {
         self.clone_requests
             .iter()
             .filter(|(_, paths)| paths.len() > 1) // Only clone if multiple paths
@@ -184,9 +184,15 @@ pub fn extract_patch_plan(tree: &TraceTree) -> Option<PatchPlan> {
 
     let mut plan = PatchPlan::new(dispatcher.block, tree.state_tainted.clone());
 
-    // Walk the tree and extract redirects
+    // Walk the main trace tree and extract redirects
     // Start with no external predecessor since we're at the root
     extract_redirects_from_node(&tree.root, dispatcher.block, &mut plan, None);
+
+    // Walk exception handler traces and merge their redirects into the same plan.
+    // Handler blocks may contain their own CFF dispatchers that need unflattening.
+    for handler_trace in &tree.handler_traces {
+        extract_redirects_from_node(&handler_trace.root, dispatcher.block, &mut plan, None);
+    }
 
     Some(plan)
 }
@@ -439,19 +445,51 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
         ssa.blocks_mut().push(cloned);
     }
 
-    // Filter out state-tainted instructions from all original blocks
-    let original_block_count = ssa.block_count();
+    // Filter out state-tainted instructions ONLY from blocks that were patched.
+    // Unresolved blocks (not redirected or cloned) must keep their CFF machinery
+    // so they remain functional. Stripping state instructions from unresolved
+    // blocks would remove their Jump-to-dispatcher terminators, orphaning them.
+    let mut patched_blocks: HashSet<usize> = HashSet::new();
+    for &(source, _) in &safe {
+        patched_blocks.insert(source);
+    }
+    for (merge_block, _) in &to_clone {
+        patched_blocks.insert(*merge_block);
+    }
 
-    for block_idx in 0..original_block_count {
+    for &block_idx in &patched_blocks {
         if let Some(block) = ssa.block_mut(block_idx) {
             filter_state_instructions(block, &plan.state_tainted, plan.dispatcher_block);
         }
     }
 
-    // Clear the dispatcher block entirely - it's no longer reachable since all blocks
-    // that used to jump to it now jump directly to their targets.
-    if let Some(dispatcher) = ssa.block_mut(plan.dispatcher_block) {
-        dispatcher.clear();
+    // Only clear the dispatcher if no unresolved blocks still jump to it.
+    // When partial unflattening occurs, unresolved blocks need the dispatcher
+    // to route their execution through the CFF state machine.
+    let dispatcher_still_needed = (0..ssa.block_count()).any(|bi| {
+        !patched_blocks.contains(&bi)
+            && bi != plan.dispatcher_block
+            && ssa
+                .block(bi)
+                .and_then(|b| b.terminator_op())
+                .is_some_and(|op| match op {
+                    SsaOp::Jump { target } => *target == plan.dispatcher_block,
+                    SsaOp::BranchCmp {
+                        true_target,
+                        false_target,
+                        ..
+                    } => {
+                        *true_target == plan.dispatcher_block
+                            || *false_target == plan.dispatcher_block
+                    }
+                    _ => false,
+                })
+    });
+
+    if !dispatcher_still_needed {
+        if let Some(dispatcher) = ssa.block_mut(plan.dispatcher_block) {
+            dispatcher.clear();
+        }
     }
 
     // NOTE: PHI propagation and variable definition cleanup is NOT done here.
@@ -541,8 +579,8 @@ mod tests {
     /// Creates a simple CFF-like SSA function for testing.
     fn create_simple_cff() -> SsaFunction {
         let mut ssa = SsaFunction::new(0, 1);
-        let state_var = SsaVarId::new();
-        let const_var = SsaVarId::new();
+        let state_var = SsaVarId::from_index(0);
+        let const_var = SsaVarId::from_index(1);
 
         // B0: entry - set initial state and jump to dispatcher
         let mut b0 = SsaBlock::new(0);
@@ -616,12 +654,12 @@ mod tests {
     /// Creates a CFF with a user branch inside a case block.
     fn create_cff_with_user_branch() -> SsaFunction {
         let mut ssa = SsaFunction::new(1, 1); // 1 arg, 1 local
-        let state_var = SsaVarId::new();
-        let init_state = SsaVarId::new();
-        let const_one = SsaVarId::new();
-        let arg0 = SsaVarId::new();
-        let user_zero = SsaVarId::new();
-        let cmp_result = SsaVarId::new();
+        let state_var = SsaVarId::from_index(0);
+        let init_state = SsaVarId::from_index(1);
+        let const_one = SsaVarId::from_index(2);
+        let arg0 = SsaVarId::from_index(3);
+        let user_zero = SsaVarId::from_index(4);
+        let cmp_result = SsaVarId::from_index(5);
 
         // B0: entry - set initial state = 0 and jump to dispatcher
         let mut b0 = SsaBlock::new(0);

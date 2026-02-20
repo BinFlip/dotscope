@@ -68,8 +68,9 @@ use crate::{
 pub struct SsaCfg<'a> {
     /// Reference to the SSA function.
     ssa: &'a SsaFunction,
-    /// Precomputed predecessor lists for each block.
-    /// predecessors[block_id] = list of blocks that can jump to block_id.
+    /// Precomputed successor lists for each block (includes exception handler edges).
+    successors: Vec<Vec<usize>>,
+    /// Precomputed predecessor lists for each block (includes exception handler edges).
     predecessors: Vec<Vec<usize>>,
 }
 
@@ -97,13 +98,13 @@ impl<'a> SsaCfg<'a> {
     #[must_use]
     pub fn from_ssa(ssa: &'a SsaFunction) -> Self {
         let block_count = ssa.block_count();
+        let mut successors = vec![Vec::new(); block_count];
         let mut predecessors = vec![Vec::new(); block_count];
 
-        // Build predecessor lists by iterating over all blocks and their terminators
-        for block_idx in 0..block_count {
+        // Build successor/predecessor lists from block terminators
+        for (block_idx, block_succs_list) in successors.iter_mut().enumerate() {
             if let Some(block) = ssa.block(block_idx) {
-                // Find the terminator instruction (last instruction that is a terminator)
-                let successors = block
+                let block_succs = block
                     .instructions()
                     .iter()
                     .rev()
@@ -117,16 +118,40 @@ impl<'a> SsaCfg<'a> {
                     })
                     .unwrap_or_default();
 
-                // Add this block as a predecessor of each successor
-                for succ in successors {
+                for succ in block_succs {
                     if succ < block_count {
+                        block_succs_list.push(succ);
                         predecessors[succ].push(block_idx);
                     }
                 }
             }
         }
 
-        Self { ssa, predecessors }
+        // Add synthetic edges for exception handlers. Handler blocks are only
+        // reachable via runtime exceptions, not explicit branches, so they
+        // appear disconnected in the terminator-based CFG. We add an edge from
+        // the try region's entry block to the handler entry block so that
+        // analyses (dominator computation, reachability, etc.) treat them as
+        // connected.
+        for handler in ssa.exception_handlers() {
+            if let (Some(try_start), Some(handler_start)) =
+                (handler.try_start_block, handler.handler_start_block)
+            {
+                if handler_start < block_count
+                    && try_start < block_count
+                    && !predecessors[handler_start].contains(&try_start)
+                {
+                    successors[try_start].push(handler_start);
+                    predecessors[handler_start].push(try_start);
+                }
+            }
+        }
+
+        Self {
+            ssa,
+            successors,
+            predecessors,
+        }
     }
 
     /// Returns the underlying SSA function.
@@ -152,7 +177,8 @@ impl<'a> SsaCfg<'a> {
 
     /// Returns the successor block indices for a given block.
     ///
-    /// Successors are determined by the block's terminator instruction.
+    /// Includes both terminator-derived edges and synthetic exception handler
+    /// edges (try entry → handler entry).
     ///
     /// # Arguments
     ///
@@ -160,23 +186,11 @@ impl<'a> SsaCfg<'a> {
     ///
     /// # Returns
     ///
-    /// A vector of successor block indices. Empty if the block has no
+    /// A slice of successor block indices. Empty if the block has no
     /// successors (e.g., return, throw) or doesn't exist.
     #[must_use]
-    pub fn block_successors(&self, block_idx: usize) -> Vec<usize> {
-        self.ssa
-            .block(block_idx)
-            .and_then(|block| {
-                block.instructions().iter().rev().find_map(|instr| {
-                    let op = instr.op();
-                    if op.is_terminator() {
-                        Some(op.successors())
-                    } else {
-                        None
-                    }
-                })
-            })
-            .unwrap_or_default()
+    pub fn block_successors(&self, block_idx: usize) -> &[usize] {
+        self.successors.get(block_idx).map_or(&[], Vec::as_slice)
     }
 
     /// Returns the predecessor block indices for a given block.
@@ -250,7 +264,8 @@ impl GraphBase for SsaCfg<'_> {
 impl Successors for SsaCfg<'_> {
     fn successors(&self, node: NodeId) -> impl Iterator<Item = NodeId> {
         self.block_successors(node.index())
-            .into_iter()
+            .iter()
+            .copied()
             .map(NodeId::new)
     }
 }
@@ -273,7 +288,11 @@ impl RootedGraph for SsaCfg<'_> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::ssa::{SsaBlock, SsaInstruction, SsaOp, SsaVarId};
+
+    use crate::{
+        analysis::ssa::{SsaBlock, SsaInstruction, SsaOp, SsaVarId},
+        utils::graph::{GraphBase, NodeId, Predecessors, RootedGraph, Successors},
+    };
 
     /// Creates a simple test SSA function with the given block structure.
     fn create_test_ssa(terminators: Vec<SsaOp>) -> SsaFunction {
@@ -334,7 +353,7 @@ mod tests {
     #[test]
     fn test_diamond_cfg() {
         // B0 (branch) -> B1, B2 -> B3 (return)
-        let cond = SsaVarId::new();
+        let cond = SsaVarId::from_index(0);
         let ssa = create_test_ssa(vec![
             SsaOp::Branch {
                 condition: cond,
@@ -365,7 +384,7 @@ mod tests {
     #[test]
     fn test_loop_cfg() {
         // B0 -> B1 (loop) -> B1 (back edge) or B2 (exit)
-        let cond = SsaVarId::new();
+        let cond = SsaVarId::from_index(0);
         let ssa = create_test_ssa(vec![
             SsaOp::Jump { target: 1 },
             SsaOp::Branch {
@@ -389,7 +408,7 @@ mod tests {
     #[test]
     fn test_switch_cfg() {
         // B0 (switch) -> B1, B2, B3 (cases), B4 (default)
-        let val = SsaVarId::new();
+        let val = SsaVarId::from_index(0);
         let ssa = create_test_ssa(vec![
             SsaOp::Switch {
                 value: val,

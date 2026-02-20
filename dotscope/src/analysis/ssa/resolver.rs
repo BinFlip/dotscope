@@ -138,26 +138,27 @@ impl<'a> ValueResolver<'a> {
 
 #[cfg(test)]
 mod tests {
+    use super::ValueResolver;
+
     use crate::{
         analysis::ssa::{
             ConstValue, DefSite, PhiNode, PhiOperand, SsaBlock, SsaFunction, SsaInstruction, SsaOp,
-            SsaVarId, SsaVariable, VariableOrigin,
+            SsaType, SsaVarId, VariableOrigin,
         },
         metadata::typesystem::PointerSize,
     };
-
-    use super::ValueResolver;
-
-    // ── Basic constant resolution ────────────────────────────────────
 
     #[test]
     fn test_resolve_const() {
         let mut ssa = SsaFunction::new(0, 0);
         let mut block = SsaBlock::new(0);
 
-        let var = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-        let var_id = var.id();
-        ssa.add_variable(var);
+        let var_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
 
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
             dest: var_id,
@@ -176,19 +177,28 @@ mod tests {
         let mut block = SsaBlock::new(0);
 
         // v0 = 10
-        let v0 = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-        let v0_id = v0.id();
-        ssa.add_variable(v0);
+        let v0_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
 
         // v1 = 3
-        let v1 = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(0, 1));
-        let v1_id = v1.id();
-        ssa.add_variable(v1);
+        let v1_id = ssa.create_variable(
+            VariableOrigin::Local(1),
+            0,
+            DefSite::instruction(0, 1),
+            SsaType::Unknown,
+        );
 
         // v2 = v0 + v1
-        let v2 = SsaVariable::new(VariableOrigin::Stack(2), 0, DefSite::instruction(0, 2));
-        let v2_id = v2.id();
-        ssa.add_variable(v2);
+        let v2_id = ssa.create_variable(
+            VariableOrigin::Local(2),
+            0,
+            DefSite::instruction(0, 2),
+            SsaType::Unknown,
+        );
 
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
             dest: v0_id,
@@ -210,16 +220,17 @@ mod tests {
         assert_eq!(resolver.resolve(v2_id), Some(ConstValue::I32(13)));
     }
 
-    // ── PHI uniform constant ─────────────────────────────────────────
-
     #[test]
     fn test_resolve_phi_uniform() {
         let mut ssa = SsaFunction::new(0, 0);
 
         // Block 0: v0 = 42, jump to block 2
-        let v0 = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-        let v0_id = v0.id();
-        ssa.add_variable(v0);
+        let v0_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
 
         let mut block0 = SsaBlock::new(0);
         block0.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
@@ -230,9 +241,12 @@ mod tests {
         ssa.add_block(block0);
 
         // Block 1: v1 = 42, jump to block 2
-        let v1 = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(1, 0));
-        let v1_id = v1.id();
-        ssa.add_variable(v1);
+        let v1_id = ssa.create_variable(
+            VariableOrigin::Local(1),
+            0,
+            DefSite::instruction(1, 0),
+            SsaType::Unknown,
+        );
 
         let mut block1 = SsaBlock::new(1);
         block1.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
@@ -243,9 +257,12 @@ mod tests {
         ssa.add_block(block1);
 
         // Block 2: phi(v0, v1) - both are 42
-        let phi_result = SsaVariable::new(VariableOrigin::Local(0), 0, DefSite::phi(2));
-        let phi_result_id = phi_result.id();
-        ssa.add_variable(phi_result);
+        let phi_result_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::phi(2),
+            SsaType::Unknown,
+        );
 
         let mut block2 = SsaBlock::new(2);
         let mut phi = PhiNode::new(phi_result_id, VariableOrigin::Local(0));
@@ -264,9 +281,12 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
 
         // v0 = 42
-        let v0 = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-        let v0_id = v0.id();
-        ssa.add_variable(v0);
+        let v0_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
 
         let mut block0 = SsaBlock::new(0);
         block0.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
@@ -277,9 +297,12 @@ mod tests {
         ssa.add_block(block0);
 
         // v1 = 99 (different)
-        let v1 = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(1, 0));
-        let v1_id = v1.id();
-        ssa.add_variable(v1);
+        let v1_id = ssa.create_variable(
+            VariableOrigin::Local(1),
+            0,
+            DefSite::instruction(1, 0),
+            SsaType::Unknown,
+        );
 
         let mut block1 = SsaBlock::new(1);
         block1.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
@@ -290,9 +313,12 @@ mod tests {
         ssa.add_block(block1);
 
         // phi(v0, v1) - different values
-        let phi_result = SsaVariable::new(VariableOrigin::Local(0), 0, DefSite::phi(2));
-        let phi_result_id = phi_result.id();
-        ssa.add_variable(phi_result);
+        let phi_result_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::phi(2),
+            SsaType::Unknown,
+        );
 
         let mut block2 = SsaBlock::new(2);
         let mut phi = PhiNode::new(phi_result_id, VariableOrigin::Local(0));
@@ -306,12 +332,10 @@ mod tests {
         assert_eq!(resolver.resolve(phi_result_id), None);
     }
 
-    // ── Known values / load_known_values ─────────────────────────────
-
     #[test]
     fn test_set_known() {
         let ssa = SsaFunction::new(0, 0);
-        let var_id = SsaVarId::new();
+        let var_id = SsaVarId::from_index(0);
 
         let mut resolver = ValueResolver::new(&ssa, PointerSize::Bit64);
         resolver.set_known(var_id, ConstValue::I32(999));
@@ -330,8 +354,8 @@ mod tests {
         let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
         let method = Token::new(0x06000001);
 
-        let var1 = SsaVarId::new();
-        let var2 = SsaVarId::new();
+        let var1 = SsaVarId::from_index(0);
+        let var2 = SsaVarId::from_index(1);
         ctx.add_known_value(method, var1, ConstValue::I32(10));
         ctx.add_known_value(method, var2, ConstValue::I32(20));
 
@@ -342,14 +366,12 @@ mod tests {
         assert_eq!(resolver.resolve(var2), Some(ConstValue::I32(20)));
     }
 
-    // ── resolve_all ──────────────────────────────────────────────────
-
     #[test]
     fn test_resolve_all_success() {
         let ssa = SsaFunction::new(0, 0);
 
-        let var1 = SsaVarId::new();
-        let var2 = SsaVarId::new();
+        let var1 = SsaVarId::from_index(0);
+        let var2 = SsaVarId::from_index(1);
 
         let mut resolver = ValueResolver::new(&ssa, PointerSize::Bit64);
         resolver.set_known(var1, ConstValue::I32(1));
@@ -363,8 +385,8 @@ mod tests {
     fn test_resolve_all_partial_failure() {
         let ssa = SsaFunction::new(0, 0);
 
-        let var1 = SsaVarId::new();
-        let var2 = SsaVarId::new();
+        let var1 = SsaVarId::from_index(0);
+        let var2 = SsaVarId::from_index(1);
 
         let mut resolver = ValueResolver::new(&ssa, PointerSize::Bit64);
         resolver.set_known(var1, ConstValue::I32(1));
@@ -381,12 +403,10 @@ mod tests {
         assert_eq!(resolver.resolve_all(&[]), Some(vec![]));
     }
 
-    // ── Edge cases ───────────────────────────────────────────────────
-
     #[test]
     fn test_resolve_unknown_var() {
         let ssa = SsaFunction::new(0, 0);
-        let unknown = SsaVarId::new();
+        let unknown = SsaVarId::from_index(0);
 
         let mut resolver = ValueResolver::new(&ssa, PointerSize::Bit64);
         assert_eq!(resolver.resolve(unknown), None);
@@ -397,17 +417,26 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
         let mut block = SsaBlock::new(0);
 
-        let v0 = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-        let v0_id = v0.id();
-        ssa.add_variable(v0);
+        let v0_id = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
 
-        let v1 = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(0, 1));
-        let v1_id = v1.id();
-        ssa.add_variable(v1);
+        let v1_id = ssa.create_variable(
+            VariableOrigin::Local(1),
+            0,
+            DefSite::instruction(0, 1),
+            SsaType::Unknown,
+        );
 
-        let v2 = SsaVariable::new(VariableOrigin::Stack(2), 0, DefSite::instruction(0, 2));
-        let v2_id = v2.id();
-        ssa.add_variable(v2);
+        let v2_id = ssa.create_variable(
+            VariableOrigin::Local(2),
+            0,
+            DefSite::instruction(0, 2),
+            SsaType::Unknown,
+        );
 
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
             dest: v0_id,

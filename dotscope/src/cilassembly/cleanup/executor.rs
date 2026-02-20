@@ -17,6 +17,7 @@ use crate::{
         cleanup::{
             compaction::mark_unreferenced_heap_entries,
             orphans::{remove_all_orphans, OrphanContext},
+            references::scan_method_body_tokens,
             CleanupRequest, CleanupStats,
         },
         CilAssembly,
@@ -264,6 +265,14 @@ fn expand_type_members(
 ///
 /// The number of empty types removed.
 fn remove_empty_types(assembly: &mut CilAssembly) -> usize {
+    // Collect all TypeDef RIDs referenced in method bodies — these must not be removed
+    // even if they have no methods/fields (e.g., value types used with newarr/box/unbox).
+    let referenced_typedefs: HashSet<u32> = scan_method_body_tokens(assembly)
+        .iter()
+        .filter(|t| t.is_table(TableId::TypeDef))
+        .map(|t| t.row())
+        .collect();
+
     // Collect empty type RIDs
     let empty_types: Vec<u32> = {
         let view = assembly.view();
@@ -289,6 +298,11 @@ fn remove_empty_types(assembly: &mut CilAssembly) -> usize {
 
             // Skip <Module> (RID 1) - it's special
             if type_rid == 1 {
+                continue;
+            }
+
+            // Skip types that are still referenced in method bodies
+            if referenced_typedefs.contains(&type_rid) {
                 continue;
             }
 

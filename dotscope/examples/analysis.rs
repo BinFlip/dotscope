@@ -515,7 +515,7 @@ fn display_ssa(ssa: &SsaFunction) {
         "Variables: {} | Blocks: {} | Phi nodes: {}",
         ssa.variable_count(),
         ssa.block_count(),
-        ssa.total_phi_count()
+        ssa.phi_count()
     );
 
     println!("\nVariables:");

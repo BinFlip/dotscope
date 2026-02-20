@@ -838,10 +838,7 @@ mod tests {
     use std::collections::HashMap;
 
     use crate::{
-        analysis::ssa::{
-            symbolic::{expr::SymbolicExpr, ops::SymbolicOp},
-            ConstValue, SsaVarId,
-        },
+        analysis::ssa::{ConstValue, SsaVarId, SymbolicExpr, SymbolicOp},
         metadata::typesystem::PointerSize,
     };
 
@@ -858,7 +855,7 @@ mod tests {
 
     #[test]
     fn test_variable_expression() {
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let expr = SymbolicExpr::variable(var);
         assert!(expr.is_variable());
         assert_eq!(expr.as_variable(), Some(var));
@@ -886,7 +883,7 @@ mod tests {
 
     #[test]
     fn test_simplify_identity() {
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let expr = SymbolicExpr::binary(
             SymbolicOp::Add,
             SymbolicExpr::variable(var),
@@ -917,7 +914,7 @@ mod tests {
     #[test]
     fn test_simplify_xor_self_cancellation() {
         // x ^ x = 0
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let expr = SymbolicExpr::binary(
             SymbolicOp::Xor,
             SymbolicExpr::variable(var),
@@ -932,7 +929,7 @@ mod tests {
     #[test]
     fn test_simplify_sub_self_cancellation() {
         // x - x = 0
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let expr = SymbolicExpr::binary(
             SymbolicOp::Sub,
             SymbolicExpr::variable(var),
@@ -947,7 +944,7 @@ mod tests {
     #[test]
     fn test_simplify_or_self_idempotent() {
         // x | x = x
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let expr = SymbolicExpr::binary(
             SymbolicOp::Or,
             SymbolicExpr::variable(var),
@@ -962,7 +959,7 @@ mod tests {
     #[test]
     fn test_simplify_and_self_idempotent() {
         // x & x = x
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let expr = SymbolicExpr::binary(
             SymbolicOp::And,
             SymbolicExpr::variable(var),
@@ -977,7 +974,7 @@ mod tests {
     #[test]
     fn test_simplify_double_negation() {
         // --x = x
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let expr = SymbolicExpr::unary(
             SymbolicOp::Neg,
             SymbolicExpr::unary(SymbolicOp::Neg, SymbolicExpr::variable(var)),
@@ -991,7 +988,7 @@ mod tests {
     #[test]
     fn test_simplify_double_not() {
         // ~~x = x
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let expr = SymbolicExpr::unary(
             SymbolicOp::Not,
             SymbolicExpr::unary(SymbolicOp::Not, SymbolicExpr::variable(var)),
@@ -1005,7 +1002,7 @@ mod tests {
     #[test]
     fn test_simplify_xor_constant_cancellation() {
         // (x ^ c) ^ c = x
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let const_val = ConstValue::I32(0x12345678_u32 as i32);
         let expr = SymbolicExpr::binary(
             SymbolicOp::Xor,
@@ -1025,7 +1022,7 @@ mod tests {
     #[test]
     fn test_simplify_xor_constant_cancellation_reversed() {
         // c ^ (x ^ c) = x
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let const_val = ConstValue::I64(0xDEADBEEF_u32 as i64);
         let expr = SymbolicExpr::binary(
             SymbolicOp::Xor,
@@ -1045,7 +1042,7 @@ mod tests {
     #[test]
     fn test_simplify_and_all_ones() {
         // x & -1 = x
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let expr = SymbolicExpr::binary(
             SymbolicOp::And,
             SymbolicExpr::variable(var),
@@ -1060,7 +1057,7 @@ mod tests {
     #[test]
     fn test_simplify_or_all_ones() {
         // x | -1 = -1
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let expr = SymbolicExpr::binary(
             SymbolicOp::Or,
             SymbolicExpr::variable(var),
@@ -1078,7 +1075,7 @@ mod tests {
     #[test]
     fn test_simplify_xor_all_ones() {
         // x ^ -1 = ~x
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let expr = SymbolicExpr::binary(
             SymbolicOp::Xor,
             SymbolicExpr::variable(var),

@@ -783,7 +783,6 @@ pub enum SsaOp {
     /// No operation (for nop instructions)
     Nop,
 
-    /// Duplicate value (SSA form: just a copy)
     /// Breakpoint trap
     Break,
 
@@ -2557,6 +2556,114 @@ impl SsaOp {
             }
         }
     }
+
+    /// Tries to infer the result type of this SSA operation.
+    ///
+    /// Returns `Some(type)` for operations whose result type can be determined
+    /// structurally (constants, conversions, comparisons, arithmetic, etc.),
+    /// or `None` for operations that don't produce values or need metadata.
+    #[must_use]
+    pub fn infer_result_type(&self) -> Option<SsaType> {
+        match self {
+            // Constants - infer type from the constant value
+            Self::Const { value, .. } => Some(match value {
+                ConstValue::I8(_) => SsaType::I8,
+                ConstValue::I16(_) => SsaType::I16,
+                ConstValue::I32(_) => SsaType::I32,
+                ConstValue::I64(_) => SsaType::I64,
+                ConstValue::U8(_) => SsaType::U8,
+                ConstValue::U16(_) => SsaType::U16,
+                ConstValue::U32(_) => SsaType::U32,
+                ConstValue::U64(_) => SsaType::U64,
+                ConstValue::NativeInt(_) => SsaType::NativeInt,
+                ConstValue::NativeUInt(_) => SsaType::NativeUInt,
+                ConstValue::F32(_) => SsaType::F32,
+                ConstValue::F64(_) => SsaType::F64,
+                ConstValue::String(_) | ConstValue::DecryptedString(_) => SsaType::String,
+                ConstValue::Null => SsaType::Null,
+                ConstValue::True | ConstValue::False => SsaType::Bool,
+                ConstValue::Type(_) | ConstValue::MethodHandle(_) | ConstValue::FieldHandle(_) => {
+                    SsaType::Object
+                }
+            }),
+            // Type conversions have explicit target type
+            Self::Conv { target, .. } => Some(target.clone()),
+            // Comparisons produce bool (represented as I32 on CIL stack, but
+            // semantically boolean for type inference purposes)
+            Self::Ceq { .. } | Self::Clt { .. } | Self::Cgt { .. } => Some(SsaType::Bool),
+            // Arithmetic/bitwise ops and SizeOf produce I32 per CIL spec
+            Self::Add { .. }
+            | Self::Sub { .. }
+            | Self::Mul { .. }
+            | Self::Div { .. }
+            | Self::Rem { .. }
+            | Self::And { .. }
+            | Self::Or { .. }
+            | Self::Xor { .. }
+            | Self::Shl { .. }
+            | Self::Shr { .. }
+            | Self::Neg { .. }
+            | Self::Not { .. }
+            | Self::AddOvf { .. }
+            | Self::SubOvf { .. }
+            | Self::MulOvf { .. }
+            | Self::SizeOf { .. } => Some(SsaType::I32),
+            // UnboxAny/LoadObj — use the embedded value_type
+            Self::UnboxAny { value_type, .. } | Self::LoadObj { value_type, .. } => {
+                Some(SsaType::ValueType(*value_type))
+            }
+            // Context-dependent ops — return None; resolved from
+            // SsaInstruction.result_type() which is set during SSA construction
+            // with full TypeContext metadata.
+            Self::LoadField { .. }
+            | Self::LoadStaticField { .. }
+            | Self::Call { dest: Some(_), .. }
+            | Self::CallVirt { dest: Some(_), .. }
+            | Self::CallIndirect { dest: Some(_), .. }
+            | Self::LoadArg { .. }
+            | Self::LoadLocal { .. } => None,
+            // Box, NewObj, NewArr, CastClass/IsInst produce object references
+            Self::Box { .. }
+            | Self::NewObj { .. }
+            | Self::NewArr { .. }
+            | Self::CastClass { .. }
+            | Self::IsInst { .. } => Some(SsaType::Object),
+            // Array length and LocalAlloc return native int
+            Self::ArrayLength { .. } | Self::LocalAlloc { .. } => Some(SsaType::NativeInt),
+            // Ckfinite operates on F64 stack type
+            Self::Ckfinite { .. } => Some(SsaType::F64),
+            // Function pointer loads produce native int
+            Self::LoadFunctionPtr { .. } | Self::LoadVirtFunctionPtr { .. } => {
+                Some(SsaType::NativeInt)
+            }
+            // Load element — type embedded in the op
+            Self::LoadElement { elem_type, .. } => Some(elem_type.clone()),
+            // Load indirect — type embedded in the op
+            Self::LoadIndirect { value_type, .. } => Some(value_type.clone()),
+            // Load token — determine handle type from token table
+            Self::LoadToken { token, .. } => Some(match token.token().table() {
+                0x06 | 0x0A | 0x2B => SsaType::RuntimeMethodHandle,
+                0x04 => SsaType::RuntimeFieldHandle,
+                _ => SsaType::RuntimeTypeHandle,
+            }),
+            // Unbox produces ByRef to the embedded value type
+            Self::Unbox { value_type, .. } => {
+                Some(SsaType::ByRef(Box::new(SsaType::ValueType(*value_type))))
+            }
+            // LoadElementAddr produces ByRef to the embedded element type
+            Self::LoadElementAddr { elem_type, .. } => {
+                Some(SsaType::ByRef(Box::new(SsaType::Class(*elem_type))))
+            }
+            // Context-dependent address loads — return None; resolved from
+            // SsaInstruction.result_type()
+            Self::LoadFieldAddr { .. }
+            | Self::LoadStaticFieldAddr { .. }
+            | Self::LoadArgAddr { .. }
+            | Self::LoadLocalAddr { .. } => None,
+            // Operations that don't produce values or have complex types
+            _ => None,
+        }
+    }
 }
 
 impl fmt::Display for SsaOp {
@@ -2905,16 +3012,16 @@ mod tests {
 
     #[test]
     fn test_dest_extraction() {
-        let dest = SsaVarId::new();
-        let left = SsaVarId::new();
-        let right = SsaVarId::new();
+        let dest = SsaVarId::from_index(0);
+        let left = SsaVarId::from_index(1);
+        let right = SsaVarId::from_index(2);
         let op = SsaOp::Add { dest, left, right };
         assert_eq!(op.dest(), Some(dest));
 
         let op = SsaOp::Jump { target: 1 };
         assert_eq!(op.dest(), None);
 
-        let call_dest = SsaVarId::new();
+        let call_dest = SsaVarId::from_index(3);
         let op = SsaOp::Call {
             dest: Some(call_dest),
             method: MethodRef::new(Token::new(0x06000001)),
@@ -2932,22 +3039,22 @@ mod tests {
 
     #[test]
     fn test_uses_extraction() {
-        let dest = SsaVarId::new();
-        let left = SsaVarId::new();
-        let right = SsaVarId::new();
+        let dest = SsaVarId::from_index(0);
+        let left = SsaVarId::from_index(1);
+        let right = SsaVarId::from_index(2);
         let op = SsaOp::Add { dest, left, right };
         assert_eq!(op.uses(), vec![left, right]);
 
-        let const_dest = SsaVarId::new();
+        let const_dest = SsaVarId::from_index(3);
         let op = SsaOp::Const {
             dest: const_dest,
             value: ConstValue::I32(42),
         };
         assert!(op.uses().is_empty());
 
-        let phi_dest = SsaVarId::new();
-        let phi_op1 = SsaVarId::new();
-        let phi_op2 = SsaVarId::new();
+        let phi_dest = SsaVarId::from_index(4);
+        let phi_op1 = SsaVarId::from_index(5);
+        let phi_op2 = SsaVarId::from_index(6);
         let op = SsaOp::Phi {
             dest: phi_dest,
             operands: vec![(0, phi_op1), (1, phi_op2)],
@@ -2957,11 +3064,11 @@ mod tests {
 
     #[test]
     fn test_is_terminator() {
-        let cond = SsaVarId::new();
-        let exc = SsaVarId::new();
-        let dest = SsaVarId::new();
-        let left = SsaVarId::new();
-        let right = SsaVarId::new();
+        let cond = SsaVarId::from_index(0);
+        let exc = SsaVarId::from_index(1);
+        let dest = SsaVarId::from_index(2);
+        let left = SsaVarId::from_index(3);
+        let right = SsaVarId::from_index(4);
 
         assert!(SsaOp::Jump { target: 1 }.is_terminator());
         assert!(SsaOp::Branch {
@@ -2979,12 +3086,12 @@ mod tests {
 
     #[test]
     fn test_is_pure() {
-        let dest = SsaVarId::new();
-        let left = SsaVarId::new();
-        let right = SsaVarId::new();
-        let const_dest = SsaVarId::new();
-        let object = SsaVarId::new();
-        let value = SsaVarId::new();
+        let dest = SsaVarId::from_index(0);
+        let left = SsaVarId::from_index(1);
+        let right = SsaVarId::from_index(2);
+        let const_dest = SsaVarId::from_index(3);
+        let object = SsaVarId::from_index(4);
+        let value = SsaVarId::from_index(5);
 
         assert!(SsaOp::Add { dest, left, right }.is_pure());
         assert!(SsaOp::Const {
@@ -3040,13 +3147,13 @@ mod tests {
 
     #[test]
     fn test_successors() {
-        let cond = SsaVarId::new();
-        let switch_val = SsaVarId::new();
-        let ret_val = SsaVarId::new();
-        let exc = SsaVarId::new();
-        let dest = SsaVarId::new();
-        let left = SsaVarId::new();
-        let right = SsaVarId::new();
+        let cond = SsaVarId::from_index(0);
+        let switch_val = SsaVarId::from_index(1);
+        let ret_val = SsaVarId::from_index(2);
+        let exc = SsaVarId::from_index(3);
+        let dest = SsaVarId::from_index(4);
+        let left = SsaVarId::from_index(5);
+        let right = SsaVarId::from_index(6);
 
         // Jump has single successor
         let op = SsaOp::Jump { target: 5 };
@@ -3095,9 +3202,9 @@ mod tests {
 
     #[test]
     fn test_as_binary_op() {
-        let dest = SsaVarId::new();
-        let left = SsaVarId::new();
-        let right = SsaVarId::new();
+        let dest = SsaVarId::from_index(0);
+        let left = SsaVarId::from_index(1);
+        let right = SsaVarId::from_index(2);
 
         // Add is a binary operation
         let op = SsaOp::Add { dest, left, right };
@@ -3120,8 +3227,8 @@ mod tests {
         assert!(info.unsigned);
 
         // Shl maps value/amount to left/right
-        let value = SsaVarId::new();
-        let amount = SsaVarId::new();
+        let value = SsaVarId::from_index(3);
+        let amount = SsaVarId::from_index(4);
         let op = SsaOp::Shl {
             dest,
             value,
@@ -3162,8 +3269,8 @@ mod tests {
 
     #[test]
     fn test_as_unary_op() {
-        let dest = SsaVarId::new();
-        let operand = SsaVarId::new();
+        let dest = SsaVarId::from_index(0);
+        let operand = SsaVarId::from_index(1);
 
         // Neg is a unary operation
         let op = SsaOp::Neg { dest, operand };
@@ -3186,8 +3293,8 @@ mod tests {
         assert!(SsaOp::Nop.as_unary_op().is_none());
         assert!(SsaOp::Jump { target: 1 }.as_unary_op().is_none());
 
-        let left = SsaVarId::new();
-        let right = SsaVarId::new();
+        let left = SsaVarId::from_index(2);
+        let right = SsaVarId::from_index(3);
         assert!(SsaOp::Add { dest, left, right }.as_unary_op().is_none());
 
         assert!(SsaOp::Const {

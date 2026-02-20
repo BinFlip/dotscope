@@ -63,6 +63,9 @@ pub struct DominatorTree {
     /// Immediate dominator for each node (indexed by node ID)
     /// Entry node maps to itself (or we could use Option, but this simplifies queries)
     idom: Vec<NodeId>,
+    /// Pre-computed children for each node (indexed by node ID)
+    /// children[i] = list of nodes whose immediate dominator is node i
+    children: Vec<Vec<NodeId>>,
     /// Number of nodes in the graph
     node_count: usize,
 }
@@ -184,16 +187,13 @@ impl DominatorTree {
     ///
     /// # Complexity
     ///
-    /// O(V) where V is the number of nodes.
-    pub fn children(&self, node: NodeId) -> Vec<NodeId> {
-        let mut result = Vec::new();
-        for i in 0..self.node_count {
-            let n = NodeId::new(i);
-            if n != self.entry && self.idom[i] == node {
-                result.push(n);
-            }
+    /// O(1) — children are pre-computed during dominator tree construction.
+    pub fn children(&self, node: NodeId) -> &[NodeId] {
+        if node.index() < self.children.len() {
+            &self.children[node.index()]
+        } else {
+            &[]
         }
-        result
     }
 
     /// Returns the number of nodes in the dominator tree.
@@ -298,17 +298,34 @@ where
         return DominatorTree {
             entry,
             idom: Vec::new(),
+            children: Vec::new(),
             node_count: 0,
         };
     }
 
+    // Pre-compute predecessors in a single O(V+E) pass for the Lengauer-Tarjan algorithm
+    let predecessors = precompute_predecessors(graph);
+
     // Lengauer-Tarjan algorithm implementation
     let mut lt = LengauerTarjan::new(node_count, entry);
-    lt.compute(graph);
+    lt.compute(graph, &predecessors);
+
+    // Build children list in a single O(V) pass from the idom array
+    let mut children = vec![Vec::new(); node_count];
+    for i in 0..node_count {
+        let node = NodeId::new(i);
+        if node != entry {
+            let parent = lt.idom[i];
+            if parent.index() < node_count {
+                children[parent.index()].push(node);
+            }
+        }
+    }
 
     DominatorTree {
         entry,
         idom: lt.idom,
+        children,
         node_count,
     }
 }
@@ -321,6 +338,21 @@ where
     G: RootedGraph,
 {
     compute_dominators(graph, graph.entry())
+}
+
+/// Pre-computes the predecessor list for all nodes in a single O(V+E) pass.
+///
+/// Returns a vector where `result[i]` contains all predecessors of node `i`.
+fn precompute_predecessors<G: Successors>(graph: &G) -> Vec<Vec<NodeId>> {
+    let n = graph.node_count();
+    let mut preds = vec![Vec::new(); n];
+    for i in 0..n {
+        let v = NodeId::new(i);
+        for succ in graph.successors(v) {
+            preds[succ.index()].push(v);
+        }
+    }
+    preds
 }
 
 /// Internal state for the Lengauer-Tarjan algorithm.
@@ -367,7 +399,7 @@ impl LengauerTarjan {
         }
     }
 
-    fn compute<G: Successors>(&mut self, graph: &G) {
+    fn compute<G: Successors>(&mut self, graph: &G, predecessors: &[Vec<NodeId>]) {
         // Phase 1: DFS numbering
         self.dfs(graph, self.entry);
 
@@ -379,7 +411,8 @@ impl LengauerTarjan {
             // Phase 2: Compute semidominators
             // semi(w) = min { v : v -> w is a CFG edge and dfnum(v) < dfnum(w) } ∪
             //           { semi(u) : u -> w via tree edges where dfnum(u) > dfnum(w) }
-            for v in self.predecessors_of(graph, w) {
+            for v in &predecessors[w.index()] {
+                let v = *v;
                 if self.dfnum[v.index()] == 0 {
                     // v is unreachable from entry, skip
                     continue;
@@ -452,22 +485,6 @@ impl LengauerTarjan {
                 }
             }
         }
-    }
-
-    /// Get predecessors of a node by checking all nodes.
-    /// This is O(V) per call; a better implementation would precompute predecessors.
-    fn predecessors_of<G: Successors>(&self, graph: &G, node: NodeId) -> Vec<NodeId> {
-        let mut preds = Vec::new();
-        for i in 0..self.n {
-            let v = NodeId::new(i);
-            for succ in graph.successors(v) {
-                if succ == node {
-                    preds.push(v);
-                    break;
-                }
-            }
-        }
-        preds
     }
 
     /// Link v as a child of w in the spanning forest.
@@ -564,13 +581,13 @@ where
     let n = graph.node_count();
     let mut frontiers: Vec<HashSet<NodeId>> = vec![HashSet::new(); n];
 
+    // Pre-compute predecessors in a single O(V+E) pass
+    let all_preds = precompute_predecessors(graph);
+
     // For each node, check if it's a join point (has multiple predecessors)
     // For each join point, walk up the dominator tree from each predecessor
-    for node_idx in 0..n {
+    for (node_idx, preds) in all_preds.iter().enumerate() {
         let node = NodeId::new(node_idx);
-
-        // Get predecessors of this node
-        let preds = get_predecessors(graph, node);
 
         if preds.len() < 2 {
             continue; // Not a join point
@@ -579,7 +596,7 @@ where
         // For each predecessor, walk up its dominators until we reach idom(node)
         let idom_node = dom_tree.immediate_dominator(node);
 
-        for pred in preds {
+        for &pred in preds {
             let mut runner = pred;
             // Guard against unreachable nodes (their index may be invalid/sentinel)
             while Some(runner) != idom_node && runner != dom_tree.entry() && runner.index() < n {
@@ -602,21 +619,6 @@ where
     }
 
     frontiers
-}
-
-/// Helper to get predecessors of a node.
-fn get_predecessors<G: Successors>(graph: &G, node: NodeId) -> Vec<NodeId> {
-    let mut preds = Vec::new();
-    for i in 0..graph.node_count() {
-        let v = NodeId::new(i);
-        for succ in graph.successors(v) {
-            if succ == node {
-                preds.push(v);
-                break;
-            }
-        }
-    }
-    preds
 }
 
 #[cfg(test)]
@@ -841,7 +843,7 @@ mod tests {
         let dom_tree = compute_dominators(&graph, entry);
 
         // entry has children: a, b, exit
-        let mut children = dom_tree.children(entry);
+        let mut children = dom_tree.children(entry).to_vec();
         children.sort_by_key(|n| n.index());
         assert_eq!(children, vec![a, b, exit]);
 

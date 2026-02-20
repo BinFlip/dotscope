@@ -8,11 +8,14 @@ use std::{collections::HashSet, fmt};
 use crate::{
     analysis::{
         CallGraph, ConstantPropagation, ControlFlowGraph, DataFlowSolver, LiveVariables, NodeId,
-        ReachingDefinitions, SsaConverter, SsaFunction, TypeContext,
+        ReachingDefinitions, SsaConverter, SsaFunction, TypeContext, TypeProvider,
     },
     metadata::{method::Method, typesystem::PointerSize},
-    test::analysis::expectations::{
-        CallGraphExpectation, CfgExpectation, DataFlowExpectation, SsaExpectation,
+    test::{
+        analysis::expectations::{
+            CallGraphExpectation, CfgExpectation, DataFlowExpectation, SsaExpectation,
+        },
+        TestTypeProvider,
     },
     CilObject,
 };
@@ -200,7 +203,7 @@ pub fn verify_ssa(
         ));
     }
 
-    // Check local count (use range to allow for debug build variations)
+    // Check local count (use range to allow for debug build variations).
     let num_locals = ssa.num_locals();
     if num_locals < expectation.min_locals {
         errors.push(VerificationError::new(
@@ -220,7 +223,7 @@ pub fn verify_ssa(
     }
 
     // Check phi node count
-    let phi_count = ssa.total_phi_count();
+    let phi_count = ssa.phi_count();
     if expectation.has_phi_nodes && phi_count == 0 {
         errors.push(VerificationError::new(
             "SSA",
@@ -507,7 +510,12 @@ pub fn build_analysis(
 
     // Build SSA with type context if assembly is available
     let type_context = assembly.map(|asm| TypeContext::new(method, asm));
-    let ssa = SsaConverter::build(&cfg, num_args, num_locals, type_context.as_ref())
+    let fallback = TestTypeProvider::new(num_args, num_locals);
+    let provider: &dyn TypeProvider = match &type_context {
+        Some(ctx) => ctx,
+        None => &fallback,
+    };
+    let ssa = SsaConverter::build(&cfg, num_args, num_locals, provider)
         .map_err(|e| format!("Failed to build SSA: {}", e))?;
 
     Ok((cfg, ssa))

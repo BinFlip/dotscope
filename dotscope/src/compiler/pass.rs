@@ -3,12 +3,68 @@
 //! This module defines the `SsaPass` trait that all SSA transformation passes implement.
 //! Passes are organized into a fixed pipeline following a canonical multi-phase
 //! optimization sequence.
+//!
+//! # Modification Scope
+//!
+//! Each pass declares a [`ModificationScope`] that describes the extent of its
+//! modifications to the SSA function. The scheduler uses this to select the
+//! appropriate repair strategy after each pass:
+//!
+//! - [`ModificationScope::UsesOnly`] — No repair needed (SSA invariants preserved)
+//! - [`ModificationScope::InstructionsOnly`] — Lightweight repair (recompute def-use, clean up)
+//! - [`ModificationScope::CfgModifying`] — Full `rebuild_ssa()` (recompute dominators, phis, etc.)
 
 use std::sync::Arc;
 
 use crate::{
     analysis::SsaFunction, compiler::CompilerContext, metadata::token::Token, CilObject, Result,
 };
+
+/// Describes the extent of modifications a pass makes to the SSA function.
+///
+/// The scheduler uses this to select the minimum repair necessary after a pass
+/// runs, avoiding expensive full SSA reconstruction when it isn't needed.
+///
+/// Passes should declare the **tightest** scope that covers all their
+/// modifications. For example, a pass that only forwards uses should declare
+/// `UsesOnly`, not `CfgModifying`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
+pub enum ModificationScope {
+    /// The pass only replaces uses of variables with other existing variables.
+    ///
+    /// Examples: GVN (forwarding redundant uses to earlier definitions).
+    ///
+    /// SSA invariants are preserved automatically — no repair needed.
+    /// The pass does not create new variables, does not change instruction
+    /// opcodes (except possibly Nop-ing dead copies as a side effect),
+    /// and does not modify the CFG.
+    UsesOnly,
+
+    /// The pass replaces or removes instructions but does not change the CFG.
+    ///
+    /// Examples: constant propagation (replacing ops with Const), copy
+    /// propagation (Nop-ing propagated copies), DCE (Nop-ing dead
+    /// instructions), algebraic simplification, strength reduction.
+    ///
+    /// After this scope, a lightweight repair is needed to:
+    /// - Strip Nop instructions and reindex DefSites
+    /// - Recompute variable metadata from surviving instructions
+    /// - Eliminate trivial phis and compact variables
+    ///
+    /// No dominator/dominance frontier recomputation is needed since
+    /// the CFG structure is unchanged.
+    InstructionsOnly,
+
+    /// The pass may add or remove blocks, change successors/predecessors,
+    /// or otherwise modify control flow.
+    ///
+    /// Examples: control-flow unflattening, jump threading, block merging,
+    /// loop canonicalization, inlining.
+    ///
+    /// After this scope, a full `rebuild_ssa()` is required to restore
+    /// SSA invariants (recompute dominators, place phis, rename variables).
+    CfgModifying,
+}
 
 /// An SSA transformation pass that operates on SSA form.
 ///
@@ -124,6 +180,20 @@ pub trait SsaPass: Send + Sync {
     /// Returns an error if finalization fails.
     fn finalize(&mut self, _ctx: &CompilerContext) -> Result<()> {
         Ok(())
+    }
+
+    /// Declares the extent of modifications this pass makes to the SSA function.
+    ///
+    /// The scheduler uses this to select the appropriate repair strategy:
+    ///
+    /// - [`ModificationScope::UsesOnly`] — No repair needed
+    /// - [`ModificationScope::InstructionsOnly`] — Lightweight [`SsaFunction::repair_ssa`]
+    /// - [`ModificationScope::CfgModifying`] — Full [`SsaFunction::rebuild_ssa`]
+    ///
+    /// The default is `CfgModifying` (conservative). Override this to declare
+    /// a tighter scope for passes that don't modify the CFG.
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::CfgModifying
     }
 
     /// Get a description of what this pass does.

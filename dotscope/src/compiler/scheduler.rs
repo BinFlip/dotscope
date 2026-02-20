@@ -5,7 +5,7 @@
 //! each structural change.
 
 use std::sync::{
-    atomic::{AtomicBool, Ordering},
+    atomic::{AtomicBool, AtomicUsize, Ordering},
     Arc,
 };
 
@@ -13,7 +13,10 @@ use log::debug;
 use rayon::prelude::*;
 
 use crate::{
-    compiler::{context::CompilerContext, pass::SsaPass},
+    compiler::{
+        context::CompilerContext,
+        pass::{ModificationScope, SsaPass},
+    },
     CilObject, Result,
 };
 
@@ -218,6 +221,8 @@ impl PassScheduler {
                 continue;
             }
 
+            let pass_change_count = AtomicUsize::new(0);
+
             // Process methods in parallel for this pass
             methods_with_ssa.par_iter().for_each(|&method_token| {
                 if !pass.should_run(method_token, ctx) {
@@ -232,11 +237,27 @@ impl PassScheduler {
                 // Run the pass with no locks held
                 let result = pass.run_on_method(&mut ssa, method_token, ctx, assembly);
 
-                // If pass made changes, rebuild SSA to ensure valid state.
-                // This cleans up orphan Pop instructions and fixes def-use chains.
-                // rebuild_ssa also eliminates trivial PHIs to prevent oscillation.
+                // If pass made changes, repair or rebuild SSA based on the
+                // pass's declared modification scope:
+                // - UsesOnly/InstructionsOnly: lightweight repair (strip Nops,
+                //   trivial/dead phi elimination, variable compaction)
+                // - CfgModifying: full SSA rebuild (recompute dominators,
+                //   dominance frontiers, liveness, phi placement, rename)
                 if let Ok(true) = result {
-                    ssa.rebuild_ssa();
+                    match pass.modification_scope() {
+                        ModificationScope::UsesOnly | ModificationScope::InstructionsOnly => {
+                            ssa.repair_ssa();
+                        }
+                        ModificationScope::CfgModifying => {
+                            if let Err(e) = ssa.rebuild_ssa() {
+                                log::warn!(
+                                    "SSA rebuild failed for {}: {}",
+                                    method_token,
+                                    e
+                                );
+                            }
+                        }
+                    }
                 }
 
                 // Reinsert SSA (brief lock, then released)
@@ -245,12 +266,18 @@ impl PassScheduler {
                 // Track if changes were made and mark method for code regeneration
                 if let Ok(true) = result {
                     any_changed.store(true, Ordering::Relaxed);
+                    pass_change_count.fetch_add(1, Ordering::Relaxed);
                     // Only mark methods as processed (needing code regeneration) if they
                     // actually had changes. This preserves original method bodies for
                     // methods that don't need modification.
                     ctx.processed_methods.insert(method_token);
                 }
             });
+
+            let count = pass_change_count.load(Ordering::Relaxed);
+            if count > 0 {
+                debug!("  pass '{}' changed {} methods", pass.name(), count);
+            }
         }
 
         // Finalize passes

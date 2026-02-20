@@ -48,7 +48,10 @@ use crate::{
         x86::{
             cfg::X86Function,
             flags::{ArithmeticKind, ConditionEval, FlagState, FlagTestSource},
-            types::{X86DecodedInstruction, X86Instruction, X86Memory, X86Operand, X86Register},
+            types::{
+                X86Condition, X86DecodedInstruction, X86Instruction, X86Memory, X86Operand,
+                X86Register,
+            },
         },
     },
     utils::graph::NodeId,
@@ -214,9 +217,14 @@ impl<'a> X86ToSsaTranslator<'a> {
             ssa_func.add_block(block);
         }
 
-        // Add variables
-        for var in self.variables {
-            ssa_func.add_variable(var);
+        // Transfer variables — they already have dense IDs from our local allocator
+        for var in &self.variables {
+            ssa_func.create_variable(
+                var.origin(),
+                var.version(),
+                var.def_site(),
+                var.var_type().clone(),
+            );
         }
 
         Ok(ssa_func)
@@ -334,7 +342,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             for seg in seg_regs {
                 if reg_state.get(seg).is_none() {
                     let seg_var = self.create_variable(
-                        VariableOrigin::Stack(0),
+                        VariableOrigin::Phi,
                         DefSite::entry(),
                         self.func.bitness,
                     );
@@ -514,7 +522,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     // Subsequent POPs restore saved registers (prologue handling)
                     // We create an undefined value
                     let var = self.create_variable(
-                        VariableOrigin::Stack(0),
+                        VariableOrigin::Phi,
                         DefSite::instruction(block_idx, result.len()),
                         self.func.bitness,
                     );
@@ -536,7 +544,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let src_var = self.get_operand_value(src, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -549,7 +557,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 flags.set_arithmetic(res_var, dst_var, src_var, ArithmeticKind::Add);
                 // CF = (result < left) unsigned — unsigned overflow detection
                 let cf = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -566,7 +574,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let src_var = self.get_operand_value(src, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -579,7 +587,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 flags.set_arithmetic(res_var, dst_var, src_var, ArithmeticKind::Sub);
                 // CF = (left < right) unsigned — borrow detection
                 let cf = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -601,7 +609,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     Self::get_register_value(*dst, reg_state)?
                 };
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -620,7 +628,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let eax = Self::get_register_value(X86Register::Eax, reg_state)?;
                 let src_var = self.get_operand_value(src, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -636,7 +644,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             X86Instruction::Neg { dst } => {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -649,7 +657,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 // NEG sets CF = (operand != 0)
                 let zero = self.get_constant(0, &mut result, block_idx);
                 let cf = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -664,7 +672,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 // We can XOR with 1 to flip it
                 let one = self.get_constant(1, &mut result, block_idx);
                 let neg_cf = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -680,7 +688,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let one = self.get_constant(1, &mut result, block_idx);
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -698,7 +706,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let one = self.get_constant(1, &mut result, block_idx);
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -722,7 +730,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     .unwrap_or_else(|| self.get_constant(0, &mut result, block_idx));
                 // temp = dst + src
                 let temp_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -733,7 +741,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 }));
                 // result = temp + CF
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -746,7 +754,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 flags.set_arithmetic(res_var, dst_var, src_var, ArithmeticKind::Add);
                 // CF = (temp < dst) | (result < temp) — carry from either addition
                 let cf1 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -757,7 +765,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     unsigned: true,
                 }));
                 let cf2 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -768,7 +776,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     unsigned: true,
                 }));
                 let new_cf = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -790,7 +798,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     .unwrap_or_else(|| self.get_constant(0, &mut result, block_idx));
                 // temp = dst - src
                 let temp_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -801,7 +809,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 }));
                 // result = temp - CF
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -814,7 +822,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 flags.set_arithmetic(res_var, dst_var, src_var, ArithmeticKind::Sub);
                 // CF = (dst < src) | (temp < CF) — borrow from either subtraction
                 let cf1 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -825,7 +833,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     unsigned: true,
                 }));
                 let cf2 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -836,7 +844,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     unsigned: true,
                 }));
                 let new_cf = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -854,7 +862,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let src_var = self.get_operand_value(src, reg_state, &mut result, block_idx)?;
                 // Quotient → EAX
                 let quot_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -867,7 +875,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 reg_state.set(X86Register::Eax, quot_var);
                 // Remainder → EDX
                 let rem_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -887,7 +895,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let src_var = self.get_operand_value(src, reg_state, &mut result, block_idx)?;
                 // Quotient → EAX
                 let quot_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -900,7 +908,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 reg_state.set(X86Register::Eax, quot_var);
                 // Remainder → EDX
                 let rem_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -930,7 +938,7 @@ impl<'a> X86ToSsaTranslator<'a> {
 
                 // byte0 = (val >> 24) & 0xFF
                 let shr24 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -941,7 +949,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     unsigned: true,
                 }));
                 let byte0 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -953,7 +961,7 @@ impl<'a> X86ToSsaTranslator<'a> {
 
                 // byte1 = (val >> 8) & 0xFF00
                 let shr8 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -964,7 +972,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     unsigned: true,
                 }));
                 let byte1 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -976,7 +984,7 @@ impl<'a> X86ToSsaTranslator<'a> {
 
                 // byte2 = (val << 8) & 0xFF0000
                 let shl8 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -986,7 +994,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     amount: c8,
                 }));
                 let byte2 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -998,7 +1006,7 @@ impl<'a> X86ToSsaTranslator<'a> {
 
                 // byte3 = (val << 24) & 0xFF000000
                 let shl24 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1008,7 +1016,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     amount: c24,
                 }));
                 let byte3 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1020,7 +1028,7 @@ impl<'a> X86ToSsaTranslator<'a> {
 
                 // Combine: result = byte0 | byte1 | byte2 | byte3
                 let or01 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1030,7 +1038,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     right: byte1,
                 }));
                 let or012 = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1040,7 +1048,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     right: byte2,
                 }));
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1070,7 +1078,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 // Implement conditional move as: result = dst ^ (cond_mask & (src ^ dst))
                 // where cond_mask = 0 - cond (produces 0 or 0xFFFFFFFF)
                 let neg_cond = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1079,7 +1087,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     operand: cond_var,
                 }));
                 let xor_diff = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1089,7 +1097,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     right: dst_var,
                 }));
                 let masked = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1099,7 +1107,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     right: neg_cond,
                 }));
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1141,7 +1149,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let src_var = self.get_operand_value(src, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1155,7 +1163,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 flags.set_arithmetic(res_var, dst_var, src_var, ArithmeticKind::Add);
                 // XADD sets CF like ADD: CF = (result < left) unsigned
                 let cf = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1173,7 +1181,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let src_var = self.get_operand_value(src, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1193,7 +1201,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let src_var = self.get_operand_value(src, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1213,7 +1221,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let src_var = self.get_operand_value(src, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1232,7 +1240,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             X86Instruction::Not { dst } => {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1248,7 +1256,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let count_var = self.get_operand_value(count, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1265,7 +1273,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let count_var = self.get_operand_value(count, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1283,7 +1291,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let dst_var = self.get_operand_value(dst, reg_state, &mut result, block_idx)?;
                 let count_var = self.get_operand_value(count, reg_state, &mut result, block_idx)?;
                 let res_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1315,7 +1323,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 flags.set_compare(left_var, right_var);
                 // CMP sets CF = (left < right) unsigned (same as SUB)
                 let cf = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1358,7 +1366,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     ) {
                         // For TEST + JE/JNE, we need to compare (left & right) with 0
                         let and_result = self.create_variable(
-                            VariableOrigin::Stack(0),
+                            VariableOrigin::Phi,
                             DefSite::instruction(block_idx, result.len()),
                             self.func.bitness,
                         );
@@ -1433,7 +1441,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 // EDX gets sign bits of EAX (all 0s or all 1s)
                 // For simplicity, create a new variable
                 let edx_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, result.len()),
                     self.func.bitness,
                 );
@@ -1519,7 +1527,7 @@ impl<'a> X86ToSsaTranslator<'a> {
     ) -> Result<SsaVarId> {
         let addr = self.compute_memory_address(mem, reg_state, instrs, block_idx)?;
         let result = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -1574,7 +1582,7 @@ impl<'a> X86ToSsaTranslator<'a> {
     /// and returns an SSA variable holding 0 (false) or 1 (true).
     fn evaluate_condition(
         &mut self,
-        condition: crate::analysis::x86::types::X86Condition,
+        condition: X86Condition,
         flags: &FlagState,
         instrs: &mut Vec<SsaInstruction>,
         block_idx: usize,
@@ -1595,7 +1603,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             ConditionEval::Test { cmp, left, right } => {
                 // Compute AND first, then compare to zero
                 let and_result = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1630,17 +1638,15 @@ impl<'a> X86ToSsaTranslator<'a> {
     /// Emits a comparison SSA operation (Ceq/Clt/Cgt) and returns the result variable.
     fn emit_comparison(
         &mut self,
-        cmp: crate::analysis::ssa::CmpKind,
+        cmp: CmpKind,
         left: SsaVarId,
         right: SsaVarId,
         unsigned: bool,
         instrs: &mut Vec<SsaInstruction>,
         block_idx: usize,
     ) -> Result<SsaVarId> {
-        use crate::analysis::ssa::CmpKind;
-
         let result = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -1656,7 +1662,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             CmpKind::Ne => {
                 // Ne = !Eq: compute Ceq then XOR with 1
                 let eq_result = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1691,7 +1697,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             CmpKind::Le => {
                 // Le = !Gt: compute Cgt then XOR with 1
                 let gt_result = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1711,7 +1717,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             CmpKind::Ge => {
                 // Ge = !Lt: compute Clt then XOR with 1
                 let lt_result = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1744,7 +1750,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             FlagTestSource::Direct(var) => var,
             FlagTestSource::Subtract { left, right } => {
                 let result = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1757,7 +1763,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             }
             FlagTestSource::BitwiseAnd { left, right } => {
                 let result = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1787,7 +1793,7 @@ impl<'a> X86ToSsaTranslator<'a> {
 
         // sign_shifted = value >> (bitwidth-1), unsigned shift
         let sign_shifted = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -1801,7 +1807,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         // sign_bit = sign_shifted & 1
         let one = self.get_constant(1, instrs, block_idx);
         let sign_bit = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -1814,7 +1820,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         if negated {
             // NS: return !SF = sign_bit ^ 1
             let result = self.create_variable(
-                VariableOrigin::Stack(0),
+                VariableOrigin::Phi,
                 DefSite::instruction(block_idx, instrs.len()),
                 self.func.bitness,
             );
@@ -1861,7 +1867,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     r
                 } else {
                     let r = self.create_variable(
-                        VariableOrigin::Stack(0),
+                        VariableOrigin::Phi,
                         DefSite::instruction(block_idx, instrs.len()),
                         self.func.bitness,
                     );
@@ -1875,7 +1881,7 @@ impl<'a> X86ToSsaTranslator<'a> {
 
                 // OF = ((left ^ right) & (left ^ result)) >> (bitwidth-1)
                 let xor_lr = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1886,7 +1892,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 }));
 
                 let xor_ls = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1897,7 +1903,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 }));
 
                 let and_both = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1910,7 +1916,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let shift_amount = if self.func.bitness == 64 { 63 } else { 31 };
                 let shift_const = self.get_constant(shift_amount, instrs, block_idx);
                 let shifted = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1923,7 +1929,7 @@ impl<'a> X86ToSsaTranslator<'a> {
 
                 let one = self.get_constant(1, instrs, block_idx);
                 let of_bit = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1939,7 +1945,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let add_result = result.unwrap_or(left); // Should always have result for Add
 
                 let xor_lr = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1950,7 +1956,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 }));
 
                 let xor_rr = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1961,7 +1967,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 }));
 
                 let and_both = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1974,7 +1980,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 let shift_amount = if self.func.bitness == 64 { 63 } else { 31 };
                 let shift_const = self.get_constant(shift_amount, instrs, block_idx);
                 let shifted = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -1987,7 +1993,7 @@ impl<'a> X86ToSsaTranslator<'a> {
 
                 let one = self.get_constant(1, instrs, block_idx);
                 let of_bit = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -2007,7 +2013,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     self.get_constant(i64::from(i32::MIN), instrs, block_idx)
                 };
                 let of_bit = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -2023,7 +2029,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         if negated {
             // NO: return !OF = of ^ 1
             let result_var = self.create_variable(
-                VariableOrigin::Stack(0),
+                VariableOrigin::Phi,
                 DefSite::instruction(block_idx, instrs.len()),
                 self.func.bitness,
             );
@@ -2055,7 +2061,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         // b = value & 0xFF (isolate low byte)
         let mask_ff = self.get_constant(0xFF, instrs, block_idx);
         let b = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -2068,7 +2074,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         // b ^= b >> 4
         let c4 = self.get_constant(4, instrs, block_idx);
         let shr4 = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -2079,7 +2085,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             unsigned: true,
         }));
         let b1 = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -2092,7 +2098,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         // b ^= b >> 2
         let c2 = self.get_constant(2, instrs, block_idx);
         let shr2 = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -2103,7 +2109,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             unsigned: true,
         }));
         let b2 = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -2116,7 +2122,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         // b ^= b >> 1
         let c1 = self.get_constant(1, instrs, block_idx);
         let shr1 = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -2127,7 +2133,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             unsigned: true,
         }));
         let b3 = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -2140,7 +2146,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         // odd_parity = b3 & 1
         let one = self.get_constant(1, instrs, block_idx);
         let odd_parity = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -2156,7 +2162,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         } else {
             // P (PF=1): return !odd_parity (1 when even number of bits)
             let result = self.create_variable(
-                VariableOrigin::Stack(0),
+                VariableOrigin::Phi,
                 DefSite::instruction(block_idx, instrs.len()),
                 self.func.bitness,
             );
@@ -2195,7 +2201,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             } else {
                 let scale_const = self.get_constant(i64::from(mem.scale), instrs, block_idx);
                 let scaled_var = self.create_variable(
-                    VariableOrigin::Stack(0),
+                    VariableOrigin::Phi,
                     DefSite::instruction(block_idx, instrs.len()),
                     self.func.bitness,
                 );
@@ -2209,7 +2215,7 @@ impl<'a> X86ToSsaTranslator<'a> {
 
             // Add to address
             let new_addr = self.create_variable(
-                VariableOrigin::Stack(0),
+                VariableOrigin::Phi,
                 DefSite::instruction(block_idx, instrs.len()),
                 self.func.bitness,
             );
@@ -2225,7 +2231,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         if mem.displacement != 0 {
             let disp_const = self.get_constant(mem.displacement, instrs, block_idx);
             let new_addr = self.create_variable(
-                VariableOrigin::Stack(0),
+                VariableOrigin::Phi,
                 DefSite::instruction(block_idx, instrs.len()),
                 self.func.bitness,
             );
@@ -2248,7 +2254,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         block_idx: usize,
     ) -> SsaVarId {
         let var = self.create_variable(
-            VariableOrigin::Stack(0),
+            VariableOrigin::Phi,
             DefSite::instruction(block_idx, instrs.len()),
             self.func.bitness,
         );
@@ -2285,7 +2291,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         zero
     }
 
-    /// Creates a new SSA variable.
+    /// Creates a new SSA variable using the local allocator.
     fn create_variable(
         &mut self,
         origin: VariableOrigin,
@@ -2297,8 +2303,8 @@ impl<'a> X86ToSsaTranslator<'a> {
         } else {
             SsaType::I32
         };
-        let var = SsaVariable::new_typed(origin, 0, def_site, var_type);
-        let id = var.id();
+        let id = SsaVarId::from_index(self.variables.len());
+        let var = SsaVariable::new(id, origin, 0, def_site, var_type);
         self.variables.push(var);
         id
     }
@@ -2431,7 +2437,8 @@ fn index_to_register(index: usize, bitness: u32) -> Option<X86Register> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::x86::decoder::x86_decode_all;
+
+    use crate::{analysis::x86::decoder::x86_decode_all, compiler::SsaCodeGenerator};
 
     #[test]
     fn test_translate_linear_code() {
@@ -2453,6 +2460,135 @@ mod tests {
         // Should end with return
         let last_instr = block.instructions().last().unwrap();
         assert!(matches!(last_instr.op(), SsaOp::Return { .. }));
+    }
+
+    /// Verifies that all x86 SSA variables use `Phi` origin, not `Local`.
+    ///
+    /// This is critical: the codegen coalescer treats `Local(n)` variables as
+    /// fixed CIL local slots. If x86 variables used `Local(0)`, they'd all
+    /// map to the same CIL local, producing corrupt code.
+    #[test]
+    fn test_variables_use_phi_origin() {
+        // pop eax; xor eax, 0x1234; add eax, 5; ret
+        let bytes = [
+            0x58, // pop eax
+            0x35, 0x34, 0x12, 0x00, 0x00, // xor eax, 0x1234
+            0x83, 0xc0, 0x05, // add eax, 5
+            0xc3, // ret
+        ];
+        let instructions = x86_decode_all(&bytes, 32, 0x1000).unwrap();
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
+        let translator = X86ToSsaTranslator::new(&cfg);
+        let ssa = translator.translate().unwrap();
+
+        let mut has_argument = false;
+        for var in ssa.variables() {
+            match var.origin() {
+                VariableOrigin::Argument(0) => has_argument = true,
+                VariableOrigin::Phi => {}
+                other => panic!(
+                    "x86 variable {:?} has origin {:?}, expected Argument(0) or Phi",
+                    var.id(),
+                    other
+                ),
+            }
+        }
+        // The x86 function takes one argument (the input value)
+        assert!(has_argument, "No argument variable found in x86 SSA");
+        // Non-argument variables must use Phi origin so the codegen
+        // coalescer allocates separate CIL locals (not all sharing local 0)
+        assert!(
+            ssa.variable_count() > 1,
+            "Should have more than just the argument variable"
+        );
+    }
+
+    /// Verifies that variable IDs are dense (0..N) and consistent with instructions.
+    #[test]
+    fn test_variable_ids_are_dense() {
+        // pop eax; xor eax, 0xAB; not eax; ret
+        let bytes = [
+            0x58, // pop eax
+            0x35, 0xAB, 0x00, 0x00, 0x00, // xor eax, 0xAB
+            0xf7, 0xd0, // not eax
+            0xc3, // ret
+        ];
+        let instructions = x86_decode_all(&bytes, 32, 0x1000).unwrap();
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
+        let translator = X86ToSsaTranslator::new(&cfg);
+        let ssa = translator.translate().unwrap();
+
+        // Variable IDs should be 0..N with no gaps
+        let var_count = ssa.variable_count();
+        assert!(var_count > 0);
+        for (i, var) in ssa.variables().iter().enumerate() {
+            assert_eq!(
+                var.id().index(),
+                i,
+                "Variable at position {} has id {:?}",
+                i,
+                var.id()
+            );
+        }
+
+        // All variable IDs referenced by instructions should be valid
+        for block in ssa.blocks() {
+            for instr in block.instructions() {
+                if let Some(def) = instr.def() {
+                    assert!(
+                        def.index() < var_count,
+                        "Instruction def {:?} exceeds variable count {}",
+                        def,
+                        var_count
+                    );
+                }
+                for &use_var in &instr.uses() {
+                    assert!(
+                        use_var.index() < var_count,
+                        "Instruction use {:?} exceeds variable count {}",
+                        use_var,
+                        var_count
+                    );
+                }
+            }
+        }
+    }
+
+    /// Tests that x86 SSA can be compiled to CIL via codegen without errors.
+    ///
+    /// This is the critical x86 → SSA → CIL pipeline used for native method
+    /// conversion in ConfuserEx x86 cipher deobfuscation.
+    #[test]
+    fn test_x86_ssa_codegen_roundtrip() {
+        // pop eax; xor eax, 0x1234; add eax, 5; ret
+        let bytes = [
+            0x58, // pop eax
+            0x35, 0x34, 0x12, 0x00, 0x00, // xor eax, 0x1234
+            0x83, 0xc0, 0x05, // add eax, 5
+            0xc3, // ret
+        ];
+        let instructions = x86_decode_all(&bytes, 32, 0x1000).unwrap();
+        let cfg = X86Function::new(&instructions, 32, 0x1000);
+        let translator = X86ToSsaTranslator::new(&cfg);
+        let ssa = translator.translate().unwrap();
+
+        let mut codegen = SsaCodeGenerator::new();
+        let result = codegen.generate(&ssa);
+        assert!(
+            result.is_ok(),
+            "Codegen failed for x86 SSA: {:?}",
+            result.err()
+        );
+
+        let (bytecode, max_stack, num_locals) = result.unwrap();
+        assert!(!bytecode.is_empty(), "Codegen produced empty bytecode");
+        assert!(max_stack > 0, "Codegen produced zero max_stack");
+        // All variables should get separate local slots (not all mapped to local 0)
+        assert!(
+            num_locals > 1,
+            "Codegen allocated only {} local(s) — variables may be incorrectly sharing slot 0",
+            num_locals
+        );
     }
 
     #[test]
@@ -2529,7 +2665,7 @@ mod tests {
     fn test_register_state() {
         let mut state = RegisterState::new(32);
 
-        let v1 = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
         state.set(X86Register::Eax, v1);
         assert_eq!(state.get(X86Register::Eax), Some(v1));
 

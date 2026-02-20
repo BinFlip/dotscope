@@ -588,8 +588,9 @@ impl DefUseIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::analysis::ssa::{
-        ConstValue, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId, SsaVariable,
+        ConstValue, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable,
         VariableOrigin,
     };
 
@@ -603,13 +604,25 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
 
         // Create variables first to get their IDs
-        let mut v0 = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
+        let mut v0 = SsaVariable::new(
+            SsaVarId::from_index(0),
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
         let id0 = v0.id();
         v0.add_use(UseSite::instruction(0, 1));
         v0.add_use(UseSite::instruction(0, 1)); // Used twice in add
         ssa.variables_mut().push(v0);
 
-        let mut v1 = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(0, 1));
+        let mut v1 = SsaVariable::new(
+            SsaVarId::from_index(1),
+            VariableOrigin::Local(1),
+            0,
+            DefSite::instruction(0, 1),
+            SsaType::Unknown,
+        );
         let id1 = v1.id();
         v1.add_use(UseSite::instruction(0, 2));
         ssa.variables_mut().push(v1);
@@ -735,8 +748,8 @@ mod tests {
         let mut ssa = SsaFunction::new(0, 0);
         let mut block = SsaBlock::new(0);
 
-        let dest0 = SsaVarId::new();
-        let dest1 = SsaVarId::new();
+        let dest0 = SsaVarId::from_index(0);
+        let dest1 = SsaVarId::from_index(1);
         block.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
             dest: dest0,
             value: ConstValue::I32(42),
@@ -752,12 +765,24 @@ mod tests {
         ssa.add_block(block);
 
         // v0: defined but never used
-        let v0 = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
+        let v0 = SsaVariable::new(
+            SsaVarId::from_index(2),
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
         let v0_id = v0.id();
         ssa.variables_mut().push(v0);
 
         // v1: defined and used
-        let mut v1 = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::instruction(0, 1));
+        let mut v1 = SsaVariable::new(
+            SsaVarId::from_index(3),
+            VariableOrigin::Local(1),
+            0,
+            DefSite::instruction(0, 1),
+            SsaType::Unknown,
+        );
         let v1_id = v1.id();
         v1.add_use(UseSite::instruction(0, 2));
         ssa.variables_mut().push(v1);
@@ -797,12 +822,24 @@ mod tests {
         ssa.add_block(block);
 
         // v0: phi definition
-        let v0 = SsaVariable::new(VariableOrigin::Phi, 0, DefSite::phi(0));
+        let v0 = SsaVariable::new(
+            SsaVarId::from_index(0),
+            VariableOrigin::Phi,
+            0,
+            DefSite::phi(0),
+            SsaType::Unknown,
+        );
         let v0_id = v0.id();
         ssa.variables_mut().push(v0);
 
         // v1: instruction definition
-        let v1 = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
+        let v1 = SsaVariable::new(
+            SsaVarId::from_index(1),
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
         let v1_id = v1.id();
         ssa.variables_mut().push(v1);
 
@@ -883,7 +920,13 @@ mod tests {
         ssa.add_block(block);
 
         // v0: phi definition (no instruction index)
-        let v0 = SsaVariable::new(VariableOrigin::Phi, 0, DefSite::phi(0));
+        let v0 = SsaVariable::new(
+            SsaVarId::from_index(0),
+            VariableOrigin::Phi,
+            0,
+            DefSite::phi(0),
+            SsaType::Unknown,
+        );
         let v0_id = v0.id();
         ssa.variables_mut().push(v0);
 

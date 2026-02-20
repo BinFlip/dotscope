@@ -70,7 +70,7 @@ use crate::{
         constraints::Constraint,
         memory::{MemoryLocation, MemoryState},
         symbolic::{SymbolicExpr, SymbolicOp},
-        CmpKind, ConstValue, SsaFunction, SsaOp, SsaType, SsaVarId,
+        CmpKind, ConstValue, SsaFunction, SsaOp, SsaType, SsaVarId, VariableOrigin,
     },
     metadata::typesystem::PointerSize,
 };
@@ -296,6 +296,14 @@ pub struct SsaEvaluator<'a> {
     memory: MemoryState,
     /// Target pointer size for native int/uint masking.
     pointer_size: PointerSize,
+    /// Current value of CIL local variables, indexed by local_index.
+    /// Updated whenever a variable with `Local(N)` origin receives a value,
+    /// and read by `LoadLocal` instructions.
+    local_state: HashMap<u16, SymbolicExpr>,
+    /// Current value of CIL arguments, indexed by arg_index.
+    /// Updated whenever a variable with `Argument(N)` origin receives a value,
+    /// and read by `LoadArg` instructions.
+    arg_state: HashMap<u16, SymbolicExpr>,
 }
 
 impl<'a> SsaEvaluator<'a> {
@@ -335,6 +343,8 @@ impl<'a> SsaEvaluator<'a> {
             path: Vec::new(),
             memory: MemoryState::new(),
             pointer_size: ptr_size,
+            local_state: HashMap::new(),
+            arg_state: HashMap::new(),
         }
     }
 
@@ -381,6 +391,8 @@ impl<'a> SsaEvaluator<'a> {
             path: Vec::new(),
             memory: MemoryState::new(),
             pointer_size: ptr_size,
+            local_state: HashMap::new(),
+            arg_state: HashMap::new(),
         }
     }
 
@@ -426,7 +438,9 @@ impl<'a> SsaEvaluator<'a> {
     /// The caller is responsible for providing the correct `ConstValue` type
     /// that matches the variable's type in the SSA function.
     pub fn set_concrete(&mut self, var: SsaVarId, value: ConstValue) {
-        self.values.insert(var, SymbolicExpr::constant(value));
+        let expr = SymbolicExpr::constant(value);
+        self.values.insert(var, expr.clone());
+        self.track_origin_state(var, &expr);
     }
 
     /// Sets a symbolic value for a variable using a named expression.
@@ -434,12 +448,15 @@ impl<'a> SsaEvaluator<'a> {
     /// This is useful for marking method arguments or other external inputs
     /// as symbolic with descriptive names.
     pub fn set_symbolic(&mut self, var: SsaVarId, name: impl Into<String>) {
-        self.values.insert(var, SymbolicExpr::named(name));
+        let expr = SymbolicExpr::named(name);
+        self.values.insert(var, expr.clone());
+        self.track_origin_state(var, &expr);
     }
 
     /// Sets a symbolic value for a variable using an expression.
     pub fn set_symbolic_expr(&mut self, var: SsaVarId, expr: SymbolicExpr) {
-        self.values.insert(var, expr);
+        self.values.insert(var, expr.clone());
+        self.track_origin_state(var, &expr);
     }
 
     /// Sets a variable as unknown by removing it from the values map.
@@ -449,7 +466,8 @@ impl<'a> SsaEvaluator<'a> {
 
     /// Sets an expression for a variable.
     pub fn set(&mut self, var: SsaVarId, value: SymbolicExpr) {
-        self.values.insert(var, value);
+        self.values.insert(var, value.clone());
+        self.track_origin_state(var, &value);
     }
 
     // Value Getting
@@ -538,7 +556,9 @@ impl<'a> SsaEvaluator<'a> {
     pub fn add_constraint(&mut self, var: SsaVarId, constraint: Constraint) {
         // If it's an equality constraint, we can directly set the value
         if let Constraint::Equal(ref v) = constraint {
-            self.values.insert(var, SymbolicExpr::constant(v.clone()));
+            let expr = SymbolicExpr::constant(v.clone());
+            self.values.insert(var, expr.clone());
+            self.track_origin_state(var, &expr);
         }
 
         self.constraints.entry(var).or_default().push(constraint);
@@ -919,7 +939,8 @@ impl<'a> SsaEvaluator<'a> {
         // Phase 2: Write all results
         for (result, value) in phi_results {
             if let Some(v) = value {
-                self.values.insert(result, v);
+                self.values.insert(result, v.clone());
+                self.track_origin_state(result, &v);
             } else {
                 // No predecessor or no operand from predecessor = no value
                 self.values.remove(&result);
@@ -1026,33 +1047,7 @@ impl<'a> SsaEvaluator<'a> {
 
     /// Checks if current values match a snapshot.
     fn values_match(&self, snapshot: &HashMap<SsaVarId, SymbolicExpr>) -> bool {
-        if self.values.len() != snapshot.len() {
-            return false;
-        }
-
-        for (var, value) in &self.values {
-            match snapshot.get(var) {
-                Some(old_value) => {
-                    // Compare expressions
-                    match (value.as_constant(), old_value.as_constant()) {
-                        (Some(a), Some(b)) => {
-                            if a != b {
-                                return false;
-                            }
-                        }
-                        (None, None) => {
-                            // For symbolic, compare by structure (simple equality check)
-                            if format!("{value}") != format!("{old_value}") {
-                                return false;
-                            }
-                        }
-                        _ => return false, // One constant, one symbolic
-                    }
-                }
-                None => return false,
-            }
-        }
-        true
+        self.values == *snapshot
     }
 
     /// Widens values that didn't stabilize in a loop to Unknown.
@@ -1112,11 +1107,35 @@ impl<'a> SsaEvaluator<'a> {
             SsaOp::Const { dest, value } => {
                 let expr = SymbolicExpr::constant(value.clone());
                 self.values.insert(*dest, expr.clone());
+                self.track_origin_state(*dest, &expr);
                 Some(expr)
             }
 
             SsaOp::Copy { dest, src } => {
                 let value = self.values.get(src).cloned();
+                if let Some(v) = value {
+                    self.values.insert(*dest, v.clone());
+                    self.track_origin_state(*dest, &v);
+                    Some(v)
+                } else {
+                    self.values.remove(dest);
+                    None
+                }
+            }
+
+            SsaOp::LoadLocal { dest, local_index } => {
+                let value = self.local_state.get(local_index).cloned();
+                if let Some(v) = value {
+                    self.values.insert(*dest, v.clone());
+                    Some(v)
+                } else {
+                    self.values.remove(dest);
+                    None
+                }
+            }
+
+            SsaOp::LoadArg { dest, arg_index } => {
+                let value = self.arg_state.get(arg_index).cloned();
                 if let Some(v) = value {
                     self.values.insert(*dest, v.clone());
                     Some(v)
@@ -1248,10 +1267,12 @@ impl<'a> SsaEvaluator<'a> {
                         let converted = self.apply_conversion(v, target, *unsigned);
                         let result = SymbolicExpr::constant(converted);
                         self.values.insert(*dest, result.clone());
+                        self.track_origin_state(*dest, &result);
                         Some(result)
                     } else {
                         // Symbolic/Unknown pass through (conversions don't change symbolic structure)
                         self.values.insert(*dest, expr.clone());
+                        self.track_origin_state(*dest, &expr);
                         Some(expr)
                     }
                 } else {
@@ -1382,6 +1403,7 @@ impl<'a> SsaEvaluator<'a> {
         let result = self.mask_symbolic_native(result);
 
         self.values.insert(dest, result.clone());
+        self.track_origin_state(dest, &result);
         Some(result)
     }
 
@@ -1401,7 +1423,25 @@ impl<'a> SsaEvaluator<'a> {
         let result = self.mask_symbolic_native(result);
 
         self.values.insert(dest, result.clone());
+        self.track_origin_state(dest, &result);
         Some(result)
+    }
+
+    /// Updates local/arg state when a variable with Local(N) or Argument(N)
+    /// origin receives a value. This enables `LoadLocal`/`LoadArg` to read
+    /// the most recently written value for the corresponding CIL local/arg.
+    fn track_origin_state(&mut self, var: SsaVarId, value: &SymbolicExpr) {
+        if let Some(ssa_var) = self.ssa.variable(var) {
+            match ssa_var.origin() {
+                VariableOrigin::Local(idx) => {
+                    self.local_state.insert(idx, value.clone());
+                }
+                VariableOrigin::Argument(idx) => {
+                    self.arg_state.insert(idx, value.clone());
+                }
+                _ => {}
+            }
+        }
     }
 
     /// Masks a `SymbolicExpr` constant to the target pointer width if it contains
@@ -1810,13 +1850,15 @@ mod tests {
     #[test]
     fn test_const_evaluation() {
         let (ssa, v0) = {
-            let mut v0_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    v0_out = b.const_i32(42);
-                    b.ret();
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        v0_out = b.const_i32(42);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v0_out)
         };
 
@@ -1829,15 +1871,17 @@ mod tests {
     #[test]
     fn test_add_evaluation() {
         let (ssa, v2) = {
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(10);
-                    let v1 = b.const_i32(32);
-                    v2_out = b.add(v0, v1);
-                    b.ret();
-                });
-            });
+            let mut v2_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(10);
+                        let v1 = b.const_i32(32);
+                        v2_out = b.add(v0, v1);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v2_out)
         };
 
@@ -1852,20 +1896,22 @@ mod tests {
         // Test the typical ConfuserEx-style state computation:
         // next_state = (current_state * mul_const) ^ xor_const
         let (ssa, current_state, next_state) = {
-            let mut current_state_out = SsaVarId::new();
-            let mut next_state_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-                // Use an argument as current_state (so it's "external" input)
-                let current_state = f.arg(0);
-                current_state_out = current_state;
-                f.block(0, |b| {
-                    let mul_const = b.const_i32(785121953);
-                    let xor_const = b.const_i32(-934590555);
-                    let mul_result = b.mul(current_state, mul_const);
-                    next_state_out = b.xor(mul_result, xor_const);
-                    b.ret();
-                });
-            });
+            let mut current_state_out = SsaVarId::from_index(0);
+            let mut next_state_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(1, 0)
+                .build_with(|f| {
+                    // Use an argument as current_state (so it's "external" input)
+                    let current_state = f.arg(0, SsaType::I32);
+                    current_state_out = current_state;
+                    f.block(0, |b| {
+                        let mul_const = b.const_i32(785121953);
+                        let xor_const = b.const_i32(-934590555);
+                        let mul_result = b.mul(current_state, mul_const);
+                        next_state_out = b.xor(mul_result, xor_const);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, current_state_out, next_state_out)
         };
 
@@ -1882,15 +1928,17 @@ mod tests {
     #[test]
     fn test_rem_un_evaluation() {
         let (ssa, v2) = {
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(120931986); // Some large positive number
-                    let v1 = b.const_i32(13);
-                    v2_out = b.rem_un(v0, v1);
-                    b.ret();
-                });
-            });
+            let mut v2_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(120931986); // Some large positive number
+                        let v1 = b.const_i32(13);
+                        v2_out = b.rem_un(v0, v1);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v2_out)
         };
 
@@ -1904,16 +1952,18 @@ mod tests {
     #[test]
     fn test_wrapping_mul() {
         let (ssa, v2) = {
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    // Test overflow wrapping
-                    let v0 = b.const_i32(i32::MAX);
-                    let v1 = b.const_i32(2);
-                    v2_out = b.mul(v0, v1);
-                    b.ret();
-                });
-            });
+            let mut v2_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        // Test overflow wrapping
+                        let v0 = b.const_i32(i32::MAX);
+                        let v1 = b.const_i32(2);
+                        v2_out = b.mul(v0, v1);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v2_out)
         };
 
@@ -1930,19 +1980,21 @@ mod tests {
     #[test]
     fn test_comparison_ops() {
         let (ssa, ceq_result, clt_result, cgt_result) = {
-            let mut ceq_out = SsaVarId::new();
-            let mut clt_out = SsaVarId::new();
-            let mut cgt_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(5);
-                    let v1 = b.const_i32(10);
-                    ceq_out = b.ceq(v0, v1);
-                    clt_out = b.clt(v0, v1);
-                    cgt_out = b.cgt(v0, v1);
-                    b.ret();
-                });
-            });
+            let mut ceq_out = SsaVarId::from_index(0);
+            let mut clt_out = SsaVarId::from_index(1);
+            let mut cgt_out = SsaVarId::from_index(2);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(5);
+                        let v1 = b.const_i32(10);
+                        ceq_out = b.ceq(v0, v1);
+                        clt_out = b.clt(v0, v1);
+                        cgt_out = b.cgt(v0, v1);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, ceq_out, clt_out, cgt_out)
         };
 
@@ -1965,12 +2017,14 @@ mod tests {
 
     #[test]
     fn test_set_value_manual() {
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.ret());
+            })
+            .unwrap();
         let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
 
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         eval.set_concrete(v0, ConstValue::I32(12345));
 
         assert_eq!(
@@ -1986,16 +2040,18 @@ mod tests {
     #[test]
     fn test_unknown_operand_returns_unknown() {
         let (ssa, v2) = {
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-                // Use an argument as unknown variable (it won't have a value set)
-                let unknown = f.arg(0);
-                f.block(0, |b| {
-                    let v1 = b.const_i32(10);
-                    v2_out = b.add(unknown, v1);
-                    b.ret();
-                });
-            });
+            let mut v2_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(1, 0)
+                .build_with(|f| {
+                    // Use an argument as unknown variable (it won't have a value set)
+                    let unknown = f.arg(0, SsaType::I32);
+                    f.block(0, |b| {
+                        let v1 = b.const_i32(10);
+                        v2_out = b.add(unknown, v1);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v2_out)
         };
 
@@ -2010,16 +2066,18 @@ mod tests {
     #[test]
     fn test_symbolic_evaluation() {
         let (ssa, arg0, v2) = {
-            let mut arg0_out = SsaVarId::new();
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-                arg0_out = f.arg(0);
-                f.block(0, |b| {
-                    let v1 = b.const_i32(10);
-                    v2_out = b.add(arg0_out, v1);
-                    b.ret();
-                });
-            });
+            let mut arg0_out = SsaVarId::from_index(0);
+            let mut v2_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(1, 0)
+                .build_with(|f| {
+                    arg0_out = f.arg(0, SsaType::I32);
+                    f.block(0, |b| {
+                        let v1 = b.const_i32(10);
+                        v2_out = b.add(arg0_out, v1);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, arg0_out, v2_out)
         };
 
@@ -2040,18 +2098,20 @@ mod tests {
         // Test the ConfuserEx-style dispatch computation:
         // switch_idx = (state ^ xor_const) % modulo
         let (ssa, state_var, result_var) = {
-            let mut state_out = SsaVarId::new();
-            let mut result_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-                state_out = f.arg(0);
-                f.block(0, |b| {
-                    let xor_const = b.const_i32(-557527955);
-                    let modulo = b.const_i32(13);
-                    let xored = b.xor(state_out, xor_const);
-                    result_out = b.rem_un(xored, modulo);
-                    b.ret();
-                });
-            });
+            let mut state_out = SsaVarId::from_index(0);
+            let mut result_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(1, 0)
+                .build_with(|f| {
+                    state_out = f.arg(0, SsaType::I32);
+                    f.block(0, |b| {
+                        let xor_const = b.const_i32(-557527955);
+                        let modulo = b.const_i32(13);
+                        let xored = b.xor(state_out, xor_const);
+                        result_out = b.rem_un(xored, modulo);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, state_out, result_out)
         };
 
@@ -2080,18 +2140,20 @@ mod tests {
     fn test_mixed_operations() {
         // Test: (arg0 * const1) ^ const2
         let (ssa, arg0, result) = {
-            let mut arg0_out = SsaVarId::new();
-            let mut result_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-                arg0_out = f.arg(0);
-                f.block(0, |b| {
-                    let const1 = b.const_i32(785121953);
-                    let const2 = b.const_i32(-934590555);
-                    let mul_result = b.mul(arg0_out, const1);
-                    result_out = b.xor(mul_result, const2);
-                    b.ret();
-                });
-            });
+            let mut arg0_out = SsaVarId::from_index(0);
+            let mut result_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(1, 0)
+                .build_with(|f| {
+                    arg0_out = f.arg(0, SsaType::I32);
+                    f.block(0, |b| {
+                        let const1 = b.const_i32(785121953);
+                        let const2 = b.const_i32(-934590555);
+                        let mul_result = b.mul(arg0_out, const1);
+                        result_out = b.xor(mul_result, const2);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, arg0_out, result_out)
         };
 
@@ -2110,12 +2172,14 @@ mod tests {
 
     #[test]
     fn test_with_values_constructor() {
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.ret());
+            })
+            .unwrap();
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         let mut initial = HashMap::new();
         initial.insert(v0, ConstValue::I64(42));
         initial.insert(v1, ConstValue::I64(100));
@@ -2132,16 +2196,18 @@ mod tests {
     #[test]
     fn test_concrete_values_extraction() {
         let (ssa, v0, v1) = {
-            let mut v0_out = SsaVarId::new();
-            let mut v1_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-                let arg0 = f.arg(0);
-                v0_out = arg0;
-                f.block(0, |b| {
-                    v1_out = b.const_i32(42);
-                    b.ret();
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let mut v1_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(1, 0)
+                .build_with(|f| {
+                    let arg0 = f.arg(0, SsaType::I32);
+                    v0_out = arg0;
+                    f.block(0, |b| {
+                        v1_out = b.const_i32(42);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v0_out, v1_out)
         };
 
@@ -2158,14 +2224,16 @@ mod tests {
     fn test_conversion_truncation() {
         // Test that conversions properly truncate values
         let (ssa, v1) = {
-            let mut v1_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(256); // Larger than byte
-                    v1_out = b.conv_un(v0, SsaType::U8);
-                    b.ret();
-                });
-            });
+            let mut v1_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(256); // Larger than byte
+                        v1_out = b.conv_un(v0, SsaType::U8);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v1_out)
         };
 
@@ -2180,14 +2248,16 @@ mod tests {
     fn test_conversion_sign_extension() {
         // Test that signed conversions sign-extend
         let (ssa, v1) = {
-            let mut v1_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(255); // 0xFF as u8, -1 as i8
-                    v1_out = b.conv(v0, SsaType::I8);
-                    b.ret();
-                });
-            });
+            let mut v1_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(255); // 0xFF as u8, -1 as i8
+                        v1_out = b.conv(v0, SsaType::I8);
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v1_out)
         };
 
@@ -2202,13 +2272,15 @@ mod tests {
     fn test_constraint_equal() {
         // Test that Equal constraint propagates value
         let (ssa, arg0) = {
-            let mut arg0_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-                arg0_out = f.arg(0);
-                f.block(0, |b| {
-                    b.ret();
-                });
-            });
+            let mut arg0_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(1, 0)
+                .build_with(|f| {
+                    arg0_out = f.arg(0, SsaType::I32);
+                    f.block(0, |b| {
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, arg0_out)
         };
 
@@ -2252,27 +2324,29 @@ mod tests {
         // B3: exit, ret
 
         let (ssa, v0, v1) = {
-            let mut v0_out = SsaVarId::new();
-            let mut v1_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                // B0: entry with initial value
-                f.block(0, |b| {
-                    v0_out = b.const_i32(0);
-                    b.jump(1);
-                });
-                // B1: header with conditional
-                f.block(1, |b| {
-                    // Increment the value (simulating an induction variable)
-                    let one = b.const_i32(1);
-                    v1_out = b.add(v0_out, one);
-                    let cond = b.const_true();
-                    b.branch(cond, 2, 3);
-                });
-                // B2: body, jump back
-                f.block(2, |b| b.jump(1));
-                // B3: exit
-                f.block(3, |b| b.ret());
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let mut v1_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    // B0: entry with initial value
+                    f.block(0, |b| {
+                        v0_out = b.const_i32(0);
+                        b.jump(1);
+                    });
+                    // B1: header with conditional
+                    f.block(1, |b| {
+                        // Increment the value (simulating an induction variable)
+                        let one = b.const_i32(1);
+                        v1_out = b.add(v0_out, one);
+                        let cond = b.const_true();
+                        b.branch(cond, 2, 3);
+                    });
+                    // B2: body, jump back
+                    f.block(2, |b| b.jump(1));
+                    // B3: exit
+                    f.block(3, |b| b.ret());
+                })
+                .unwrap();
             (ssa, v0_out, v1_out)
         };
 
@@ -2296,9 +2370,11 @@ mod tests {
 
     #[test]
     fn test_evaluate_loop_to_fixpoint_empty() {
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.ret());
+            })
+            .unwrap();
 
         let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
 
@@ -2318,9 +2394,9 @@ mod tests {
         // Coming from B0, v2 should be 10
         // Coming from B1, v2 should be 20
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
 
         let mut ssa = SsaFunction::new(0, 0);
 
@@ -2344,7 +2420,7 @@ mod tests {
 
         // Block 2: v2 = phi(v0 from B0, v1 from B1), ret
         let mut b2 = SsaBlock::new(2);
-        let mut phi = PhiNode::new(v2, VariableOrigin::Stack(0));
+        let mut phi = PhiNode::new(v2, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v0, 0));
         phi.add_operand(PhiOperand::new(v1, 1));
         b2.add_phi(phi);
@@ -2401,10 +2477,10 @@ mod tests {
         //   v1' = 20 (correct)
         //   v2' = 20 (WRONG - read v1' instead of v1)
 
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let v1_prime = SsaVarId::new();
-        let v2_prime = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
+        let v1_prime = SsaVarId::from_index(2);
+        let v2_prime = SsaVarId::from_index(3);
 
         let mut ssa = SsaFunction::new(0, 0);
 
@@ -2424,10 +2500,10 @@ mod tests {
         // Block 1: phi nodes that swap v1 and v2
         let mut b1 = SsaBlock::new(1);
         // v1' = phi(v2 from B0) - reads v2
-        let mut phi1 = PhiNode::new(v1_prime, VariableOrigin::Stack(0));
+        let mut phi1 = PhiNode::new(v1_prime, VariableOrigin::Local(0));
         phi1.add_operand(PhiOperand::new(v2, 0));
         // v2' = phi(v1 from B0) - reads v1
-        let mut phi2 = PhiNode::new(v2_prime, VariableOrigin::Stack(1));
+        let mut phi2 = PhiNode::new(v2_prime, VariableOrigin::Local(1));
         phi2.add_operand(PhiOperand::new(v1, 0));
         b1.add_phi(phi1);
         b1.add_phi(phi2);
@@ -2466,12 +2542,12 @@ mod tests {
         //
         // After: a' = 3, b' = 1, c' = 2
 
-        let a = SsaVarId::new();
-        let b = SsaVarId::new();
-        let c = SsaVarId::new();
-        let a_prime = SsaVarId::new();
-        let b_prime = SsaVarId::new();
-        let c_prime = SsaVarId::new();
+        let a = SsaVarId::from_index(0);
+        let b = SsaVarId::from_index(1);
+        let c = SsaVarId::from_index(2);
+        let a_prime = SsaVarId::from_index(3);
+        let b_prime = SsaVarId::from_index(4);
+        let c_prime = SsaVarId::from_index(5);
 
         let mut ssa = SsaFunction::new(0, 0);
 
@@ -2494,13 +2570,13 @@ mod tests {
 
         // Block 1: rotate a, b, c = c, a, b
         let mut blk1 = SsaBlock::new(1);
-        let mut phi_a = PhiNode::new(a_prime, VariableOrigin::Stack(0));
+        let mut phi_a = PhiNode::new(a_prime, VariableOrigin::Local(0));
         phi_a.add_operand(PhiOperand::new(c, 0));
         blk1.add_phi(phi_a);
-        let mut phi_b = PhiNode::new(b_prime, VariableOrigin::Stack(1));
+        let mut phi_b = PhiNode::new(b_prime, VariableOrigin::Local(1));
         phi_b.add_operand(PhiOperand::new(a, 0));
         blk1.add_phi(phi_b);
-        let mut phi_c = PhiNode::new(c_prime, VariableOrigin::Stack(2));
+        let mut phi_c = PhiNode::new(c_prime, VariableOrigin::Local(2));
         phi_c.add_operand(PhiOperand::new(b, 0));
         blk1.add_phi(phi_c);
         blk1.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: None }));
@@ -2539,8 +2615,8 @@ mod tests {
         // Coming from B0: v2 = 10
         // Coming from B1: v2 should remain as its current value (or unknown if not set)
 
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
 
         let mut ssa = SsaFunction::new(0, 0);
 
@@ -2555,7 +2631,7 @@ mod tests {
 
         // Block 1: v2 = phi(v1 from B0, v2 from B1)
         let mut blk1 = SsaBlock::new(1);
-        let mut phi = PhiNode::new(v2, VariableOrigin::Stack(0));
+        let mut phi = PhiNode::new(v2, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v1, 0));
         phi.add_operand(PhiOperand::new(v2, 1));
         blk1.add_phi(phi);
@@ -2593,9 +2669,9 @@ mod tests {
         //
         // With predecessor set to B0, should get 42 from v0
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
 
         let mut ssa = SsaFunction::new(0, 0);
 
@@ -2616,7 +2692,7 @@ mod tests {
         ssa.add_block(blk1);
 
         let mut blk2 = SsaBlock::new(2);
-        let mut phi = PhiNode::new(v2, VariableOrigin::Stack(0));
+        let mut phi = PhiNode::new(v2, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v0, 0));
         phi.add_operand(PhiOperand::new(v1, 1));
         blk2.add_phi(phi);
@@ -2658,9 +2734,9 @@ mod tests {
         //
         // Without predecessor, should be unknown since 10 != 20
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
 
         let mut ssa = SsaFunction::new(0, 0);
 
@@ -2681,7 +2757,7 @@ mod tests {
         ssa.add_block(blk1);
 
         let mut blk2 = SsaBlock::new(2);
-        let mut phi = PhiNode::new(v2, VariableOrigin::Stack(0));
+        let mut phi = PhiNode::new(v2, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v0, 0));
         phi.add_operand(PhiOperand::new(v1, 1));
         blk2.add_phi(phi);
@@ -2703,11 +2779,13 @@ mod tests {
     fn test_next_block_jump() {
         // Test unconditional jump
         // B0: jump B2
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.jump(2));
-            f.block(1, |b| b.ret());
-            f.block(2, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.jump(2));
+                f.block(1, |b| b.ret());
+                f.block(2, |b| b.ret());
+            })
+            .unwrap();
 
         let eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         let result = eval.next_block(0);
@@ -2717,9 +2795,11 @@ mod tests {
     #[test]
     fn test_next_block_return() {
         // Test return (terminal)
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.ret());
+            })
+            .unwrap();
 
         let eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         let result = eval.next_block(0);
@@ -2731,15 +2811,17 @@ mod tests {
         // Test conditional branch with known true condition
         // B0: cond = true, branch(cond, B1, B2)
         let (ssa, cond) = {
-            let mut cond_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    cond_out = b.const_true();
-                    b.branch(cond_out, 1, 2);
-                });
-                f.block(1, |b| b.ret());
-                f.block(2, |b| b.ret());
-            });
+            let mut cond_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        cond_out = b.const_true();
+                        b.branch(cond_out, 1, 2);
+                    });
+                    f.block(1, |b| b.ret());
+                    f.block(2, |b| b.ret());
+                })
+                .unwrap();
             (ssa, cond_out)
         };
 
@@ -2755,15 +2837,17 @@ mod tests {
         // Test conditional branch with known false condition
         // B0: cond = false, branch(cond, B1, B2)
         let (ssa, _cond) = {
-            let mut cond_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    cond_out = b.const_false();
-                    b.branch(cond_out, 1, 2);
-                });
-                f.block(1, |b| b.ret());
-                f.block(2, |b| b.ret());
-            });
+            let mut cond_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        cond_out = b.const_false();
+                        b.branch(cond_out, 1, 2);
+                    });
+                    f.block(1, |b| b.ret());
+                    f.block(2, |b| b.ret());
+                })
+                .unwrap();
             (ssa, cond_out)
         };
 
@@ -2777,15 +2861,17 @@ mod tests {
     fn test_next_block_branch_unknown() {
         // Test conditional branch with unknown condition
         let (ssa, cond) = {
-            let mut cond_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(1, 0).build_with(|f| {
-                cond_out = f.arg(0); // Argument is unknown
-                f.block(0, |b| {
-                    b.branch(cond_out, 1, 2);
-                });
-                f.block(1, |b| b.ret());
-                f.block(2, |b| b.ret());
-            });
+            let mut cond_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(1, 0)
+                .build_with(|f| {
+                    cond_out = f.arg(0, SsaType::I32); // Argument is unknown
+                    f.block(0, |b| {
+                        b.branch(cond_out, 1, 2);
+                    });
+                    f.block(1, |b| b.ret());
+                    f.block(2, |b| b.ret());
+                })
+                .unwrap();
             (ssa, cond_out)
         };
 
@@ -2803,20 +2889,22 @@ mod tests {
         // B1: v1 = v0 + 5, jump B2
         // B2: ret
         let (ssa, v0, v1) = {
-            let mut v0_out = SsaVarId::new();
-            let mut v1_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    v0_out = b.const_i32(10);
-                    b.jump(1);
-                });
-                f.block(1, |b| {
-                    let five = b.const_i32(5);
-                    v1_out = b.add(v0_out, five);
-                    b.jump(2);
-                });
-                f.block(2, |b| b.ret());
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let mut v1_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        v0_out = b.const_i32(10);
+                        b.jump(1);
+                    });
+                    f.block(1, |b| {
+                        let five = b.const_i32(5);
+                        v1_out = b.add(v0_out, five);
+                        b.jump(2);
+                    });
+                    f.block(2, |b| b.ret());
+                })
+                .unwrap();
             (ssa, v0_out, v1_out)
         };
 
@@ -2837,21 +2925,23 @@ mod tests {
         // B2: ret (true path)
         // B3: ret (false path)
         let (ssa, state, cmp_result) = {
-            let mut state_out = SsaVarId::new();
-            let mut cmp_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    state_out = b.const_i32(5);
-                    b.jump(1);
-                });
-                f.block(1, |b| {
-                    let five = b.const_i32(5);
-                    cmp_out = b.ceq(state_out, five);
-                    b.branch(cmp_out, 2, 3);
-                });
-                f.block(2, |b| b.ret());
-                f.block(3, |b| b.ret());
-            });
+            let mut state_out = SsaVarId::from_index(0);
+            let mut cmp_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        state_out = b.const_i32(5);
+                        b.jump(1);
+                    });
+                    f.block(1, |b| {
+                        let five = b.const_i32(5);
+                        cmp_out = b.ceq(state_out, five);
+                        b.branch(cmp_out, 2, 3);
+                    });
+                    f.block(2, |b| b.ret());
+                    f.block(3, |b| b.ret());
+                })
+                .unwrap();
             (ssa, state_out, cmp_out)
         };
 
@@ -2871,9 +2961,11 @@ mod tests {
     fn test_execute_max_steps() {
         // Test that execute respects max_steps limit
         // Infinite loop: B0 -> B0 -> B0 -> ...
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.jump(0)); // Self-loop
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.jump(0)); // Self-loop
+            })
+            .unwrap();
 
         let mut eval = SsaEvaluator::new(&ssa, PointerSize::Bit64);
         let trace = eval.execute(0, None, 5);
@@ -2891,17 +2983,19 @@ mod tests {
         // B1: jump B2 (state unchanged)
         // B2: ret
         let (ssa, state) = {
-            let mut state_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    state_out = b.const_i32(10);
-                    b.jump(1);
-                });
-                f.block(1, |b| {
-                    b.jump(2);
-                });
-                f.block(2, |b| b.ret());
-            });
+            let mut state_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        state_out = b.const_i32(10);
+                        b.jump(1);
+                    });
+                    f.block(1, |b| {
+                        b.jump(2);
+                    });
+                    f.block(2, |b| b.ret());
+                })
+                .unwrap();
             (ssa, state_out)
         };
 

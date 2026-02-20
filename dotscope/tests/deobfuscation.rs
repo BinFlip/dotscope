@@ -12,8 +12,11 @@
 
 #![cfg(feature = "deobfuscation")]
 
+mod common;
+
 use std::sync::Arc;
 
+use common::TestTypeProvider;
 use dotscope::{
     analysis::{CallGraph, ControlFlowGraph, SsaConverter, SsaFunction},
     assembly::{
@@ -325,7 +328,12 @@ fn build_ssa(
     num_args: usize,
     num_locals: usize,
 ) -> Result<SsaFunction> {
-    SsaConverter::build(cfg, num_args, num_locals, None)
+    SsaConverter::build(
+        cfg,
+        num_args,
+        num_locals,
+        &TestTypeProvider::new(num_args, num_locals),
+    )
 }
 
 /// Generate CIL from SSA.
@@ -886,18 +894,13 @@ fn test_roundtrip_conversion_u1() -> Result<()> {
 /// Test: return (int)arg0.
 ///
 /// Input:  ldarg.0, conv.i4, ret
-/// Output: ldarg.0, conv.i4, ret
+/// Output: ldarg.0, ret  (conv.i4 eliminated: arg0 is already I32)
 #[test]
 fn test_roundtrip_conversion_i4() -> Result<()> {
     let mut asm = InstructionAssembler::new();
     asm.ldarg_0()?.conv_i4()?.ret()?;
 
-    run_deobfuscation_test(
-        asm,
-        1,
-        0,
-        &[instr!("ldarg.0"), instr!("conv.i4"), instr!("ret")],
-    )
+    run_deobfuscation_test(asm, 1, 0, &[instr!("ldarg.0"), instr!("ret")])
 }
 
 /// Test: 64-bit constant roundtrip.
@@ -3309,32 +3312,35 @@ fn test_loop_diamond_pattern() -> Result<()> {
     // point loads from that local.
     //
     // Code generator may invert branch condition and swap blocks for optimization.
+    // The phi coalescing can sometimes eliminate the temp for one branch, allowing
+    // it to store directly to the phi result local.
+    //
     // Output pattern (with brtrue and swapped blocks):
     //   ldarg.0              ; test condition
     //   brtrue.s true_branch ; branch if true
     //   ldc.i4.2             ; false: load 2
+    //   stloc.1              ; false: store to temp
+    //   ldloc.1              ; false: load temp
     //   stloc.0              ; false: store to phi result
     //   ldloc.0              ; merge: load phi result
     //   ret                  ; return
     //   ldc.i4.1             ; true: load 1
-    //   stloc.0              ; true: store to phi result
+    //   stloc.0              ; true: store directly to phi result
     //   br.s merge           ; true: jump to merge
     run_deobfuscation_test(
         asm,
         1,
-        3, // Three locals: phi result + one temp per branch
+        3,
         &[
             instr!("ldarg.0"),
             instr!(any_conditional_branch), // may be brfalse or brtrue
             instr!("ldc.i4.2"),             // false branch: load constant 2
-            instr!(any_stloc),              // false branch: store to phi temp
-            instr!(any_ldloc),              // false branch: load phi temp
+            instr!(any_stloc),              // false branch: store to temp
+            instr!(any_ldloc),              // false branch: load temp
             instr!(any_stloc),              // false branch: store to phi result
             instr!(any_ldloc),              // merge: load phi result
             instr!("ret"),
             instr!("ldc.i4.1"),       // true branch: load constant 1
-            instr!(any_stloc),        // true branch: store to phi temp
-            instr!(any_ldloc),        // true branch: load phi temp
             instr!(any_stloc),        // true branch: store to phi result
             instr!(any_branch: "br"), // true branch: jump to merge
         ],

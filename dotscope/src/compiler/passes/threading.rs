@@ -279,8 +279,15 @@ impl SsaPass for JumpThreadingPass {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::analysis::{CallGraph, ConstValue, SsaBlock, SsaInstruction};
-    use crate::test::helpers::test_assembly_arc;
+
+    use std::sync::Arc;
+
+    use crate::{
+        analysis::{CallGraph, ConstValue, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
+        compiler::{CompilerContext, SsaPass},
+        metadata::token::Token,
+        test::helpers::test_assembly_arc,
+    };
 
     fn test_context() -> CompilerContext {
         let call_graph = Arc::new(CallGraph::new());
@@ -332,7 +339,7 @@ mod tests {
         // B0: cond = true; jump B1
         // B1: if cond goto B2 else B3
         // Should thread B0 directly to B2
-        let cond_var = SsaVarId::new();
+        let cond_var = SsaVarId::from_index(0);
 
         // Block 0: const true, jump to 1
         let mut block0 = SsaBlock::new(0);
@@ -383,7 +390,7 @@ mod tests {
         let pass = JumpThreadingPass::new();
         let ctx = test_context();
 
-        let cond_var = SsaVarId::new();
+        let cond_var = SsaVarId::from_index(0);
 
         // Block 0: const false, jump to 1
         let mut block0 = SsaBlock::new(0);
@@ -434,9 +441,9 @@ mod tests {
         let pass = JumpThreadingPass::new();
         let ctx = test_context();
 
-        let x_var = SsaVarId::new();
-        let zero_var = SsaVarId::new();
-        let cmp_var = SsaVarId::new();
+        let x_var = SsaVarId::from_index(0);
+        let zero_var = SsaVarId::from_index(1);
+        let cmp_var = SsaVarId::from_index(2);
 
         // Block 0: x = 5; zero = 0; cmp = (x > zero); jump to 1
         let mut block0 = SsaBlock::new(0);
@@ -500,7 +507,7 @@ mod tests {
         // Block 0: jump to 1
         // Block 1: branch on x (which has no known definition)
         // Should NOT thread since x is unknown
-        let x_var = SsaVarId::new();
+        let x_var = SsaVarId::from_index(0);
 
         // x has no definition - simulating an argument or external value
         let mut block0 = SsaBlock::new(0);

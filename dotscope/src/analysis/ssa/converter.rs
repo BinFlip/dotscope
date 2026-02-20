@@ -24,7 +24,7 @@
 //! let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
 //!
 //! // Construct SSA form
-//! let ssa = SsaConverter::build(&cfg, 2, 3, None)?; // 2 args, 3 locals
+//! let ssa = SsaConverter::build(&cfg, 2, 3, &type_provider)?; // 2 args, 3 locals
 //!
 //! // Analyze the SSA form
 //! for block in ssa.blocks() {
@@ -40,9 +40,10 @@ use crate::{
     analysis::{
         cfg::ControlFlowGraph,
         ssa::{
-            decompose::decompose_instruction, ConstValue, DefSite, PhiNode, SimulationResult,
-            SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable,
-            StackSimulator, StackSlot, StackSlotSource, TypeContext, UseSite, VariableOrigin,
+            decompose::decompose_instruction, liveness, phis::place_pruned_phis, ConstValue,
+            DefSite, PhiNode, SimulationResult, SsaBlock, SsaFunction, SsaInstruction, SsaOp,
+            SsaType, SsaVarId, StackSimulator, StackSlot, StackSlotSource, TypeProvider, UseSite,
+            VariableOrigin,
         },
     },
     assembly::{opcodes, Immediate, Instruction, Operand},
@@ -87,19 +88,27 @@ pub struct SsaConverter<'a, 'cfg> {
     /// The SSA function being built.
     function: SsaFunction,
 
-    /// Definitions of each original variable (by origin) -> list of defining blocks.
+    /// Definitions of each variable (by group ID) -> list of defining blocks.
     /// Used for phi placement.
-    defs: HashMap<VariableOrigin, HashSet<usize>>,
+    defs: HashMap<u32, HashSet<usize>>,
+
+    /// Uses of each variable (by group ID) -> list of using blocks.
+    /// Used for pruned SSA phi placement (liveness filtering).
+    uses: HashMap<u32, HashSet<usize>>,
 
     /// Current version stack for each variable during renaming.
-    /// Maps origin -> stack of (version, `SsaVarId`).
-    version_stacks: HashMap<VariableOrigin, Vec<(u32, SsaVarId)>>,
+    /// Maps group ID -> stack of (version, `SsaVarId`).
+    version_stacks: HashMap<u32, Vec<(u32, SsaVarId)>>,
 
-    /// Next version number for each variable origin.
-    next_version: HashMap<VariableOrigin, u32>,
+    /// Next version number for each group ID.
+    next_version: HashMap<u32, u32>,
 
-    /// Variables that have had their address taken.
-    address_taken: HashSet<VariableOrigin>,
+    /// Variables (by group ID) that have had their address taken.
+    address_taken: HashSet<u32>,
+
+    /// Maps group ID -> VariableOrigin for the group.
+    /// Used to look up the origin when creating variables from a group.
+    group_origins: HashMap<u32, VariableOrigin>,
 
     /// Maps simulation variable IDs to their load origin (for ldloc/ldarg).
     ///
@@ -128,11 +137,17 @@ pub struct SsaConverter<'a, 'cfg> {
     /// Used during rename phase to track definitions through pointers.
     indirect_stores: HashMap<(usize, usize), VariableOrigin>,
 
-    /// Optional type context for assigning types during SSA construction.
+    /// Maps simulation variable IDs to their stack depth positions.
     ///
-    /// When provided, variables are assigned correct types at creation time
-    /// based on method signature, local variable signature, and call return types.
-    type_context: Option<&'a TypeContext<'a>>,
+    /// Used during rename to assign correct stack-derived origins for temporary
+    /// variables (those not covered by `infer_origin`, e.g. add, box, call results).
+    var_stack_positions: HashMap<SsaVarId, usize>,
+
+    /// Type provider for assigning types during SSA construction.
+    ///
+    /// Variables are assigned correct types at creation time based on method
+    /// signature, local variable signature, and call return types.
+    type_provider: &'a dyn TypeProvider,
 }
 
 impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
@@ -149,6 +164,55 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         })
     }
 
+    /// Returns the origin for a stack slot (always `Phi` — stack temps are synthetic).
+    fn stack_slot_origin(&self, _slot: usize) -> VariableOrigin {
+        VariableOrigin::Phi
+    }
+
+    /// Returns the rename group ID for a stack slot at the given depth.
+    #[allow(clippy::cast_possible_truncation)]
+    fn stack_group(&self, depth: usize) -> u32 {
+        self.num_args as u32 + self.num_locals as u32 + depth as u32
+    }
+
+    /// Returns the rename group ID for an argument.
+    fn arg_group(&self, idx: u16) -> u32 {
+        idx as u32
+    }
+
+    /// Returns the rename group ID for a local.
+    fn local_group(&self, idx: u16) -> u32 {
+        self.num_args as u32 + idx as u32
+    }
+
+    /// If a group ID corresponds to a stack slot, returns the slot index.
+    fn stack_slot_from_group(&self, group: u32) -> Option<usize> {
+        let base = self.num_args as u32 + self.num_locals as u32;
+        if group >= base {
+            Some((group - base) as usize)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the origin for a rename group.
+    fn origin_for_group(&self, group: u32) -> VariableOrigin {
+        if let Some(origin) = self.group_origins.get(&group) {
+            *origin
+        } else if (group as usize) < self.num_args {
+            VariableOrigin::Argument(group as u16)
+        } else if (group as usize) < self.num_args + self.num_locals {
+            VariableOrigin::Local((group as usize - self.num_args) as u16)
+        } else {
+            VariableOrigin::Phi
+        }
+    }
+
+    /// Returns true if a group ID corresponds to a stack slot.
+    fn is_stack_group(&self, group: u32) -> bool {
+        group >= self.num_args as u32 + self.num_locals as u32
+    }
+
     /// Returns the SSA type for a variable origin.
     ///
     /// Uses the type context to look up types from the method signature:
@@ -156,10 +220,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
     /// - Locals: type from local variable signature
     /// - Stack temps: Unknown (must be inferred from producing instruction)
     fn type_for_origin(&self, origin: VariableOrigin) -> SsaType {
-        match (origin, &self.type_context) {
-            (VariableOrigin::Argument(idx), Some(ctx)) => ctx.arg_type(idx),
-            (VariableOrigin::Local(idx), Some(ctx)) => ctx.local_type(idx),
-            _ => SsaType::Unknown,
+        match origin {
+            VariableOrigin::Argument(idx) => self.type_provider.arg_type(idx),
+            VariableOrigin::Local(idx) => self.type_provider.local_type(idx),
+            VariableOrigin::Phi => SsaType::Unknown,
         }
     }
 
@@ -178,24 +242,24 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             return SsaType::Unknown;
         };
 
-        match instr.op() {
+        self.infer_op_result_type(instr.op())
+    }
+
+    /// Infers the result type of an SSA operation using the TypeContext.
+    ///
+    /// This is the core type inference routine that resolves types for all ops,
+    /// including context-dependent ones (Call, LoadField, LoadArg, etc.) that
+    /// require assembly metadata. The result is stored on `SsaInstruction.result_type`
+    /// at construction time so it survives through deobfuscation transforms.
+    fn infer_op_result_type(&self, op: &SsaOp) -> SsaType {
+        match op {
             // Call instructions - look up return type from method signature
             SsaOp::Call { method, .. } | SsaOp::CallVirt { method, .. } => {
-                if let Some(ctx) = &self.type_context {
-                    ctx.call_return_type(method.token())
-                } else {
-                    SsaType::Unknown
-                }
+                self.type_provider.call_return_type(method.token())
             }
 
             // NewObj - look up constructed type from constructor
-            SsaOp::NewObj { ctor, .. } => {
-                if let Some(ctx) = &self.type_context {
-                    ctx.newobj_type(ctor.token())
-                } else {
-                    SsaType::Object
-                }
-            }
+            SsaOp::NewObj { ctor, .. } => self.type_provider.newobj_type(ctor.token()),
 
             // Constants - infer type from the constant value
             SsaOp::Const { value, .. } => match value {
@@ -250,13 +314,11 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             // NewArr produces array
             SsaOp::NewArr { elem_type, .. } => {
-                // Resolve the element type through the type context so that
+                // Resolve the element type through the type provider so that
                 // primitives like System.Char are represented as SsaType::Char
-                // rather than SsaType::Class(TypeRef). This ensures the
-                // generated LocalVarSig uses ELEMENT_TYPE_CHAR (0x03) instead
-                // of ELEMENT_TYPE_CLASS which is invalid for value types.
-                let elem_ssa_type = if let Some(ctx) = &self.type_context {
-                    SsaType::from_type_token(elem_type.token(), ctx.assembly())
+                // rather than SsaType::Class(TypeRef).
+                let elem_ssa_type = if let Some(asm) = self.type_provider.assembly() {
+                    SsaType::from_type_token(elem_type.token(), asm)
                 } else {
                     SsaType::Class(*elem_type)
                 };
@@ -265,17 +327,17 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             // Cast and type check produce the target type
             SsaOp::CastClass { target_type, .. } | SsaOp::IsInst { target_type, .. } => {
-                if let Some(ctx) = &self.type_context {
-                    SsaType::from_type_token(target_type.token(), ctx.assembly())
+                if let Some(asm) = self.type_provider.assembly() {
+                    SsaType::from_type_token(target_type.token(), asm)
                 } else {
                     SsaType::Class(*target_type)
                 }
             }
 
-            // Unbox operations - resolve value type through type context for primitives
+            // Unbox operations - resolve value type through type provider for primitives
             SsaOp::Unbox { value_type, .. } => {
-                let resolved = if let Some(ctx) = &self.type_context {
-                    SsaType::from_type_token(value_type.token(), ctx.assembly())
+                let resolved = if let Some(asm) = self.type_provider.assembly() {
+                    SsaType::from_type_token(value_type.token(), asm)
                 } else {
                     SsaType::ValueType(*value_type)
                 };
@@ -284,8 +346,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             SsaOp::UnboxAny { value_type, .. }
             // Load object (value type copy) — type from value_type token
             | SsaOp::LoadObj { value_type, .. } => {
-                if let Some(ctx) = &self.type_context {
-                    SsaType::from_type_token(value_type.token(), ctx.assembly())
+                if let Some(asm) = self.type_provider.assembly() {
+                    SsaType::from_type_token(value_type.token(), asm)
                 } else {
                     SsaType::ValueType(*value_type)
                 }
@@ -293,27 +355,19 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             // Load field - look up field type from assembly
             SsaOp::LoadField { field, .. } | SsaOp::LoadStaticField { field, .. } => {
-                if let Some(ctx) = &self.type_context {
-                    ctx.field_type(field.token())
-                } else {
-                    SsaType::Unknown
-                }
+                self.type_provider.field_type(field.token())
             }
 
             // Load field address - byref to field type
             SsaOp::LoadFieldAddr { field, .. } | SsaOp::LoadStaticFieldAddr { field, .. } => {
-                if let Some(ctx) = &self.type_context {
-                    SsaType::ByRef(Box::new(ctx.field_type(field.token())))
-                } else {
-                    SsaType::Unknown
-                }
+                SsaType::ByRef(Box::new(self.type_provider.field_type(field.token())))
             }
 
             // Load array element - use the element type from the op
             SsaOp::LoadElement { elem_type, .. } => elem_type.clone(),
             SsaOp::LoadElementAddr { elem_type, .. } => {
-                let resolved = if let Some(ctx) = &self.type_context {
-                    SsaType::from_type_token(elem_type.token(), ctx.assembly())
+                let resolved = if let Some(asm) = self.type_provider.assembly() {
+                    SsaType::from_type_token(elem_type.token(), asm)
                 } else {
                     SsaType::Class(*elem_type)
                 };
@@ -340,36 +394,16 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 }
             }
 
-            // Load argument/local — rare from inlining, type comes from context
-            SsaOp::LoadArg { arg_index, .. } => {
-                if let Some(ctx) = &self.type_context {
-                    ctx.arg_type(*arg_index)
-                } else {
-                    SsaType::Unknown
-                }
-            }
-            SsaOp::LoadLocal { local_index, .. } => {
-                if let Some(ctx) = &self.type_context {
-                    ctx.local_type(*local_index)
-                } else {
-                    SsaType::Unknown
-                }
-            }
+            // Load argument/local — type from type provider
+            SsaOp::LoadArg { arg_index, .. } => self.type_provider.arg_type(*arg_index),
+            SsaOp::LoadLocal { local_index, .. } => self.type_provider.local_type(*local_index),
 
             // Load argument/local address — byref to the argument/local type
             SsaOp::LoadArgAddr { arg_index, .. } => {
-                if let Some(ctx) = &self.type_context {
-                    SsaType::ByRef(Box::new(ctx.arg_type(*arg_index)))
-                } else {
-                    SsaType::Unknown
-                }
+                SsaType::ByRef(Box::new(self.type_provider.arg_type(*arg_index)))
             }
             SsaOp::LoadLocalAddr { local_index, .. } => {
-                if let Some(ctx) = &self.type_context {
-                    SsaType::ByRef(Box::new(ctx.local_type(*local_index)))
-                } else {
-                    SsaType::Unknown
-                }
+                SsaType::ByRef(Box::new(self.type_provider.local_type(*local_index)))
             }
 
             // Ckfinite — operates on F64 stack type
@@ -377,18 +411,20 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             // CallIndirect — resolve return type from standalone signature
             SsaOp::CallIndirect { signature, .. } => {
-                if let Some(ctx) = &self.type_context {
-                    ctx.call_indirect_return_type(signature.token())
-                } else {
-                    SsaType::Unknown
-                }
+                self.type_provider.call_indirect_return_type(signature.token())
             }
 
-            // Copy/Phi — types resolved via origin or during rename, not here.
+            // Copy — inherit type from source operand
+            SsaOp::Copy { src, .. } => self
+                .function
+                .variable(*src)
+                .map(|v| v.var_type().clone())
+                .unwrap_or(SsaType::Unknown),
+
+            // Phi — types resolved during resolve_phi_types() after rename.
             // Non-value-producing operations — exhaustive list so new SsaOp
             // variants cause a compiler error instead of silently returning Unknown
-            SsaOp::Copy { .. }
-            | SsaOp::Phi { .. }
+            SsaOp::Phi { .. }
             | SsaOp::StoreField { .. }
             | SsaOp::StoreStaticField { .. }
             | SsaOp::StoreElement { .. }
@@ -432,10 +468,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
     /// A properly registered variable ID representing an undefined value.
     fn create_undefined_var(&mut self, origin: VariableOrigin) -> SsaVarId {
         let var_type = self.type_for_origin(origin);
-        let var = SsaVariable::new_typed(origin, 0, DefSite::entry(), var_type);
-        let id = var.id();
-        self.function.add_variable(var);
-        id
+        self.function
+            .create_variable(origin, 0, DefSite::entry(), var_type)
     }
 
     /// Tries to map a placeholder variable to a value from a predecessor's exit stack.
@@ -457,8 +491,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         placeholder: SsaVarId,
         rename_map: &mut HashMap<SsaVarId, SsaVarId>,
     ) {
-        #[allow(clippy::cast_possible_truncation)]
-        let origin = VariableOrigin::Stack(slot as u32);
+        let origin = self.stack_slot_origin(slot);
 
         // Iterate over actual predecessors to find one with the needed slot
         for pred_id in self.cfg.predecessors(NodeId::new(block_idx)) {
@@ -469,38 +502,31 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     if let Some(&mapped) = rename_map.get(&stack_slot.var) {
                         // Ensure the mapped variable exists in the function
                         if self.function.variable(mapped).is_none() {
-                            let new_var =
-                                SsaVariable::new_with_id(mapped, origin, 0, DefSite::entry());
-                            self.function.add_variable(new_var);
+                            let new_id = self.function.create_variable_for_origin(
+                                origin,
+                                0,
+                                DefSite::entry(),
+                            );
+                            rename_map.insert(placeholder, new_id);
+                        } else {
+                            rename_map.insert(placeholder, mapped);
                         }
-                        rename_map.insert(placeholder, mapped);
                         return;
                     }
                     // No mapping exists - stack_slot.var is a simulation variable.
-                    // Ensure it exists in the function before using it.
-                    if self.function.variable(stack_slot.var).is_none() {
-                        let new_var =
-                            SsaVariable::new_with_id(stack_slot.var, origin, 0, DefSite::entry());
-                        self.function.add_variable(new_var);
-                    }
-                    rename_map.insert(placeholder, stack_slot.var);
+                    // Create a proper variable and map both the original and placeholder.
+                    let new_id =
+                        self.function
+                            .create_variable_for_origin(origin, 0, DefSite::entry());
+                    rename_map.insert(stack_slot.var, new_id);
+                    rename_map.insert(placeholder, new_id);
                     return;
                 }
             }
         }
 
         // No predecessor has this slot - create a synthetic variable to avoid orphan uses.
-        // This can happen with anti-disassembly patterns like `br.s +1` that create
-        // unusual CFG structures where stack values cross block boundaries unexpectedly.
-        //
-        // Rather than leaving the placeholder unmapped (which causes orphan uses that
-        // break constant propagation), we create a proper variable entry so the SSA
-        // remains well-formed. The value will be Unknown but at least traceable.
-        #[allow(clippy::cast_possible_truncation)]
-        let origin = VariableOrigin::Stack(slot as u32);
-        let new_var = SsaVariable::new(origin, 0, DefSite::entry());
-        let new_var_id = new_var.id();
-        self.function.add_variable(new_var);
+        let new_var_id = self.create_undefined_var(origin);
         rename_map.insert(placeholder, new_var_id);
     }
 
@@ -511,10 +537,9 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
     /// * `cfg` - The control flow graph to transform
     /// * `num_args` - Number of method arguments (including `this` for instance methods)
     /// * `num_locals` - Number of local variables
-    /// * `type_context` - Optional type context for assigning types during construction.
-    ///   When provided, variables are assigned correct types based on method signature,
-    ///   local variable signature, and call return types. When `None`, variables get
-    ///   `Unknown` type and types can be inferred later.
+    /// * `type_provider` - Type provider for assigning types during construction.
+    ///   Variables are assigned correct types based on method signature,
+    ///   local variable signature, and call return types.
     ///
     /// # Returns
     ///
@@ -530,7 +555,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         cfg: &'a ControlFlowGraph<'cfg>,
         num_args: usize,
         num_locals: usize,
-        type_context: Option<&'a TypeContext<'a>>,
+        type_provider: &'a dyn TypeProvider,
     ) -> Result<SsaFunction> {
         let block_count = cfg.block_count();
         if block_count == 0 {
@@ -545,18 +570,21 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             num_locals,
             function: SsaFunction::with_capacity(num_args, num_locals, block_count, 0),
             defs: HashMap::new(),
+            uses: HashMap::new(),
             version_stacks: HashMap::new(),
             next_version: HashMap::new(),
             address_taken: HashSet::new(),
+            group_origins: HashMap::new(),
             load_origins: HashMap::new(),
             exit_stacks: HashMap::new(),
             entry_stacks: HashMap::new(),
             indirect_stores: HashMap::new(),
-            type_context,
+            var_stack_positions: HashMap::new(),
+            type_provider,
         };
 
-        // Get assembly reference from type context for stack simulation
-        let assembly = type_context.map(TypeContext::assembly);
+        // Get assembly reference from type provider for stack simulation
+        let assembly = type_provider.assembly();
 
         // Phase 1: Simulate stack and collect definitions
         builder.simulate_all_blocks(assembly)?;
@@ -567,12 +595,21 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         // Phase 3: Rename variables using dominator tree traversal
         builder.rename_variables()?;
 
-        // Set original local type signatures from type context for code generation
-        if let Some(ctx) = type_context {
-            if let Some(local_types) = ctx.local_type_signatures() {
-                builder.function.set_original_local_types(local_types);
-            }
+        // Phase 3b: Strip Nops left by LoadLocal/LoadArg resolution during rename.
+        // Resolved loads are converted to Nop during rename; removing them here
+        // keeps the initial SSA clean and avoids stale instruction indices.
+        builder.strip_resolved_loads();
+
+        // Set original local type signatures from type provider for code generation
+        if let Some(local_types) = type_provider.local_type_signatures() {
+            builder.function.set_original_local_types(local_types);
         }
+
+        // Establish dense variable indexing for O(1) lookups in subsequent passes.
+        builder.function.reindex_variables();
+
+        // Validate no Unknown types remain on used variables
+        builder.function.validate_types().map_err(Error::SsaError)?;
 
         Ok(builder.function)
     }
@@ -622,12 +659,17 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         }
 
         for i in 0..self.num_args {
-            let origin = VariableOrigin::Argument(Self::idx_to_u16(i)?);
-            self.defs.entry(origin).or_default().insert(0);
+            let idx = Self::idx_to_u16(i)?;
+            let group = self.arg_group(idx);
+            self.group_origins
+                .insert(group, VariableOrigin::Argument(idx));
+            self.defs.entry(group).or_default().insert(0);
         }
         for i in 0..self.num_locals {
-            let origin = VariableOrigin::Local(Self::idx_to_u16(i)?);
-            self.defs.entry(origin).or_default().insert(0);
+            let idx = Self::idx_to_u16(i)?;
+            let group = self.local_group(idx);
+            self.group_origins.insert(group, VariableOrigin::Local(idx));
+            self.defs.entry(group).or_default().insert(0);
         }
 
         // First pass: compute stack depths at block exits (including all handler-reachable blocks)
@@ -658,6 +700,15 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         // Store load_origins for use during rename phase.
         // This maps simulation variables from ldloc/ldarg to their origins.
         self.load_origins = simulator.load_origins().clone();
+
+        // Store stack positions for use during rename phase.
+        // Maps simulation variable IDs to their stack depth at allocation time.
+        self.var_stack_positions = simulator.var_stack_positions().clone();
+
+        // num_locals stays at the original declared count — stack temps use
+        // Phi origin and are grouped by rename_groups, not by Local index.
+        self.function
+            .set_num_locals(self.num_locals, self.num_locals);
 
         Ok(())
     }
@@ -856,8 +907,13 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 assembly,
             )?;
 
-            // Create SSA instruction with the decomposed operation
-            let ssa_instr = SsaInstruction::new(cil_instr.clone(), op);
+            // Create SSA instruction with the decomposed operation and resolved type
+            let result_type = self.infer_op_result_type(&op);
+            let ssa_instr = if result_type.is_unknown() {
+                SsaInstruction::new(cil_instr.clone(), op)
+            } else {
+                SsaInstruction::new(cil_instr.clone(), op).with_result_type(result_type)
+            };
 
             if let Some(block) = self.function.block_mut(block_idx) {
                 block.add_instruction(ssa_instr);
@@ -865,14 +921,34 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             // Record direct stores (stloc/starg) as definitions
             if let Some(origin) = Self::infer_origin(cil_instr)? {
-                self.defs.entry(origin).or_default().insert(block_idx);
+                let group = match origin {
+                    VariableOrigin::Argument(idx) => self.arg_group(idx),
+                    VariableOrigin::Local(idx) => self.local_group(idx),
+                    VariableOrigin::Phi => continue,
+                };
+                self.defs.entry(group).or_default().insert(block_idx);
+            }
+
+            // Record loads (ldloc/ldarg) as uses for pruned SSA liveness
+            if let Some(use_origin) = Self::infer_use_origin(cil_instr)? {
+                let use_group = match use_origin {
+                    VariableOrigin::Argument(idx) => self.arg_group(idx),
+                    VariableOrigin::Local(idx) => self.local_group(idx),
+                    VariableOrigin::Phi => continue,
+                };
+                self.uses.entry(use_group).or_default().insert(block_idx);
             }
 
             // Record indirect stores (initobj/stind via ldloca/ldarga) as definitions
             // This ensures phi nodes are placed correctly for variables initialized
             // through pointers rather than through direct stloc/starg
             if let Some(store_target) = result.store_target {
-                self.defs.entry(store_target).or_default().insert(block_idx);
+                let store_group = match store_target {
+                    VariableOrigin::Argument(idx) => self.arg_group(idx),
+                    VariableOrigin::Local(idx) => self.local_group(idx),
+                    VariableOrigin::Phi => continue,
+                };
+                self.defs.entry(store_group).or_default().insert(block_idx);
                 // Also store for rename phase
                 self.indirect_stores
                     .insert((block_idx, instr_idx), store_target);
@@ -899,14 +975,14 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
         for i in 0..self.num_args {
             if simulator.is_arg_address_taken(i) {
-                self.address_taken
-                    .insert(VariableOrigin::Argument(Self::idx_to_u16(i)?));
+                let idx = Self::idx_to_u16(i)?;
+                self.address_taken.insert(self.arg_group(idx));
             }
         }
         for i in 0..self.num_locals {
             if simulator.is_local_address_taken(i) {
-                self.address_taken
-                    .insert(VariableOrigin::Local(Self::idx_to_u16(i)?));
+                let idx = Self::idx_to_u16(i)?;
+                self.address_taken.insert(self.local_group(idx));
             }
         }
 
@@ -1219,7 +1295,49 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         }
     }
 
-    /// Infers the variable origin from an instruction.
+    /// Infers the variable origin for a load (use) instruction (ldarg/ldloc).
+    /// Returns `Some(origin)` for load instructions, `None` for others.
+    fn infer_use_origin(instr: &Instruction) -> Result<Option<VariableOrigin>> {
+        if instr.prefix == opcodes::FE_PREFIX {
+            match instr.opcode {
+                opcodes::FE_LDARG | opcodes::FE_LDARGA => {
+                    match Self::extract_index(&instr.operand) {
+                        Some(idx) => Ok(Some(VariableOrigin::Argument(Self::idx_to_u16(idx)?))),
+                        None => Ok(None),
+                    }
+                }
+                opcodes::FE_LDLOC | opcodes::FE_LDLOCA => {
+                    match Self::extract_index(&instr.operand) {
+                        Some(idx) => Ok(Some(VariableOrigin::Local(Self::idx_to_u16(idx)?))),
+                        None => Ok(None),
+                    }
+                }
+                _ => Ok(None),
+            }
+        } else {
+            match instr.opcode {
+                opcodes::LDARG_0 => Ok(Some(VariableOrigin::Argument(0))),
+                opcodes::LDARG_1 => Ok(Some(VariableOrigin::Argument(1))),
+                opcodes::LDARG_2 => Ok(Some(VariableOrigin::Argument(2))),
+                opcodes::LDARG_3 => Ok(Some(VariableOrigin::Argument(3))),
+                opcodes::LDLOC_0 => Ok(Some(VariableOrigin::Local(0))),
+                opcodes::LDLOC_1 => Ok(Some(VariableOrigin::Local(1))),
+                opcodes::LDLOC_2 => Ok(Some(VariableOrigin::Local(2))),
+                opcodes::LDLOC_3 => Ok(Some(VariableOrigin::Local(3))),
+                opcodes::LDARG_S | opcodes::LDARGA_S => match Self::extract_index(&instr.operand) {
+                    Some(idx) => Ok(Some(VariableOrigin::Argument(Self::idx_to_u16(idx)?))),
+                    None => Ok(None),
+                },
+                opcodes::LDLOC_S | opcodes::LDLOCA_S => match Self::extract_index(&instr.operand) {
+                    Some(idx) => Ok(Some(VariableOrigin::Local(Self::idx_to_u16(idx)?))),
+                    None => Ok(None),
+                },
+                _ => Ok(None),
+            }
+        }
+    }
+
+    /// Infers the variable origin from a store (def) instruction (starg/stloc).
     fn infer_origin(instr: &Instruction) -> Result<Option<VariableOrigin>> {
         if instr.prefix == opcodes::FE_PREFIX {
             match instr.opcode {
@@ -1262,36 +1380,49 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
     fn place_phi_nodes(&mut self) {
         let dominance_frontiers = self.cfg.dominance_frontiers();
 
-        // First, place PHI nodes for args/locals at dominance frontiers (standard algorithm)
+        // Compute liveness for pruned SSA: only place phis where variable is live.
+        // Build CFG successor list for liveness analysis.
+        let block_count = self.cfg.block_count();
+        let successors_list: Vec<Vec<usize>> = (0..block_count)
+            .map(|i| {
+                self.cfg
+                    .successors(NodeId::new(i))
+                    .map(NodeId::index)
+                    .collect()
+            })
+            .collect();
+
+        let live_in =
+            liveness::compute_live_in_blocks(&self.defs, &self.uses, &successors_list, block_count);
+
+        // Place PHI nodes for all groups at dominance frontiers (pruned algorithm)
         // NOTE: We place phi nodes even for address-taken variables. While address-taken
         // variables may also be modified through pointers, they still have normal definitions
         // via stloc/starg that need phi nodes at merge points. The address-taken tracking
         // is used elsewhere for memory modeling, not for skipping phi placement.
-        for (origin, def_blocks) in &self.defs {
-            // Compute iterated dominance frontier
-            let mut phi_blocks: HashSet<usize> = HashSet::new();
-            let mut worklist: Vec<usize> = def_blocks.iter().copied().collect();
-
-            while let Some(block_idx) = worklist.pop() {
-                let node_id = NodeId::new(block_idx);
-                if node_id.index() < dominance_frontiers.len() {
-                    for &frontier_node in &dominance_frontiers[node_id.index()] {
-                        let frontier_idx = frontier_node.index();
-                        if phi_blocks.insert(frontier_idx) {
-                            worklist.push(frontier_idx);
-                        }
+        let group_origins = self.group_origins.clone();
+        let num_args = self.num_args;
+        let num_locals = self.num_locals;
+        let _ = place_pruned_phis(
+            self.function.blocks_mut(),
+            &self.defs,
+            &live_in,
+            dominance_frontiers,
+            None,      // All blocks reachable during initial construction
+            &|_| true, // Process all groups
+            &|group| {
+                group_origins.get(&group).copied().unwrap_or_else(|| {
+                    if (group as usize) < num_args {
+                        VariableOrigin::Argument(group as u16)
+                    } else if (group as usize) < num_args + num_locals {
+                        VariableOrigin::Local((group as usize - num_args) as u16)
+                    } else {
+                        VariableOrigin::Phi
                     }
-                }
-            }
-
-            // Place phi nodes for this origin at each frontier block
-            for &phi_block_idx in &phi_blocks {
-                if let Some(block) = self.function.block_mut(phi_block_idx) {
-                    let phi = PhiNode::new(SsaVarId::new(), *origin);
-                    block.add_phi(phi);
-                }
-            }
-        }
+                })
+            },
+            None, // No Leave target handling during initial construction
+        );
 
         // Second, place PHI nodes for stack positions at merge points
         // A merge point is a block with multiple predecessors
@@ -1340,14 +1471,71 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
             // Create PHI nodes for slots with actual data flow
             for slot in slots_with_data {
-                #[allow(clippy::cast_possible_truncation)]
-                let origin = VariableOrigin::Stack(slot as u32);
+                // Check if ALL predecessors carry values from the same Local/Arg
+                // origin for this slot. If so, the existing Local/Arg PHI handles
+                // the merge and a redundant Stack PHI is not needed.
+                if self.all_preds_same_local_arg_origin(&predecessors, slot) {
+                    continue;
+                }
+
+                let origin = self.stack_slot_origin(slot);
+                let group = self.stack_group(slot);
+                let phi_var_id =
+                    self.function
+                        .create_variable_for_origin(origin, 0, DefSite::entry());
+                self.function.set_rename_group(phi_var_id, group);
                 if let Some(block) = self.function.block_mut(block_idx) {
-                    let phi = PhiNode::new(SsaVarId::new(), origin);
+                    let phi = PhiNode::new(phi_var_id, origin);
                     block.add_phi(phi);
                 }
             }
         }
+    }
+
+    /// Returns true if ALL predecessors have a Defined exit stack value for `slot`
+    /// that traces back to the same Local or Argument origin via `load_origins`.
+    ///
+    /// When this returns true, the value merge at this slot is already handled by
+    /// the Local/Arg PHI — creating a Stack PHI would be redundant and creates
+    /// dual-origin variables that break `rebuild_ssa()`.
+    fn all_preds_same_local_arg_origin(&self, predecessors: &[usize], slot: usize) -> bool {
+        let mut common_origin: Option<VariableOrigin> = None;
+
+        for &pred_idx in predecessors {
+            let Some(exit_stack) = self.exit_stacks.get(&pred_idx) else {
+                return false;
+            };
+            let Some(stack_slot) = exit_stack.get(slot) else {
+                return false;
+            };
+
+            // Only handle Defined values — Inherited values would need tracing
+            // back through dominator chains which is complex and error-prone
+            if !matches!(stack_slot.source, StackSlotSource::Defined { .. }) {
+                return false;
+            }
+
+            // Check if this variable traces to a Local/Arg via load_origins
+            let Some(&origin) = self.load_origins.get(&stack_slot.var) else {
+                return false;
+            };
+
+            // Verify it's actually a Local or Argument origin
+            if !matches!(
+                origin,
+                VariableOrigin::Argument(_) | VariableOrigin::Local(_)
+            ) {
+                return false;
+            }
+
+            match common_origin {
+                None => common_origin = Some(origin),
+                Some(existing) if existing == origin => {}
+                _ => return false,
+            }
+        }
+
+        common_origin.is_some()
     }
 
     /// Phase 3: Renames variables using dominator tree traversal.
@@ -1357,22 +1545,57 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
     fn rename_variables(&mut self) -> Result<()> {
         // Initialize version stacks and create initial variables for args/locals
         for i in 0..self.num_args {
-            let origin = VariableOrigin::Argument(Self::idx_to_u16(i)?);
+            let idx = Self::idx_to_u16(i)?;
+            let origin = VariableOrigin::Argument(idx);
+            let group = self.arg_group(idx);
             let var_type = self.type_for_origin(origin);
-            let var = SsaVariable::new_typed(origin, 0, DefSite::entry(), var_type);
-            let initial_var = var.id();
-            self.function.add_variable(var);
-            self.version_stacks.insert(origin, vec![(0, initial_var)]);
-            self.next_version.insert(origin, 1);
+            let initial_var = self
+                .function
+                .create_variable(origin, 0, DefSite::entry(), var_type);
+            self.function.set_rename_group(initial_var, group);
+            self.version_stacks.insert(group, vec![(0, initial_var)]);
+            self.next_version.insert(group, 1);
         }
         for i in 0..self.num_locals {
-            let origin = VariableOrigin::Local(Self::idx_to_u16(i)?);
+            let idx = Self::idx_to_u16(i)?;
+            let origin = VariableOrigin::Local(idx);
+            let group = self.local_group(idx);
             let var_type = self.type_for_origin(origin);
-            let var = SsaVariable::new_typed(origin, 0, DefSite::entry(), var_type);
-            let initial_var = var.id();
-            self.function.add_variable(var);
-            self.version_stacks.insert(origin, vec![(0, initial_var)]);
-            self.next_version.insert(origin, 1);
+            let initial_var = self
+                .function
+                .create_variable(origin, 0, DefSite::entry(), var_type);
+            self.function.set_rename_group(initial_var, group);
+            self.version_stacks.insert(group, vec![(0, initial_var)]);
+            self.next_version.insert(group, 1);
+        }
+
+        // Create v0 entries for stack groups that have phi nodes.
+        // In the old code, num_locals was inflated to include stack depths,
+        // so the local init loop above covered them. Now that num_locals is
+        // no longer inflated, stack groups need explicit v0 entries so that
+        // phi operands from predecessors without definitions can resolve.
+        // Scan placed phi nodes to find which stack groups exist.
+        let mut stack_groups_needing_v0: HashSet<u32> = HashSet::new();
+        for block in self.function.blocks() {
+            for phi in block.phi_nodes() {
+                let group = self.function.rename_group(phi.result());
+                if group != u32::MAX
+                    && self.is_stack_group(group)
+                    && !self.version_stacks.contains_key(&group)
+                {
+                    stack_groups_needing_v0.insert(group);
+                }
+            }
+        }
+        for group in stack_groups_needing_v0 {
+            let origin = VariableOrigin::Phi;
+            let var_type = SsaType::Unknown;
+            let initial_var = self
+                .function
+                .create_variable(origin, 0, DefSite::entry(), var_type);
+            self.function.set_rename_group(initial_var, group);
+            self.version_stacks.insert(group, vec![(0, initial_var)]);
+            self.next_version.insert(group, 1);
         }
 
         // Start renaming from entry block
@@ -1440,38 +1663,246 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             }
         }
 
+        // Resolve phi types from their operands
+        self.resolve_phi_types();
+
         Ok(())
     }
 
-    /// Gets the current SSA variable for a given origin.
-    fn current_def(&self, origin: VariableOrigin) -> Option<SsaVarId> {
+    /// Resolves Unknown-typed phi variables from their operands.
+    ///
+    /// After rename, phi nodes may have Unknown type because they were created
+    /// before their operands were known. This pass iterates until fixpoint,
+    /// propagating non-Unknown types bidirectionally:
+    /// - Forward: from phi operands to phi results
+    /// - Backward: from phi results to Unknown-typed operands
+    ///
+    /// After fixpoint, resolves any remaining Unknown-typed variables by
+    /// examining their defining instruction's result type.
+    fn resolve_phi_types(&mut self) {
+        // Phase 1: Fixpoint iteration over phi nodes (bidirectional)
+        let mut changed = true;
+        while changed {
+            changed = false;
+            for block_idx in 0..self.function.blocks().len() {
+                let phi_count = self.function.block(block_idx).map_or(0, |b| b.phi_count());
+                for phi_idx in 0..phi_count {
+                    let (result, operand_ids) = {
+                        let Some(block) = self.function.block(block_idx) else {
+                            continue;
+                        };
+                        let Some(phi) = block.phi(phi_idx) else {
+                            continue;
+                        };
+                        let result = phi.result();
+                        let ops: Vec<SsaVarId> = phi.operands().iter().map(|o| o.value()).collect();
+                        (result, ops)
+                    };
+
+                    // Find first non-Unknown type among result and all operands
+                    let known_type = {
+                        let result_type = self
+                            .function
+                            .variable(result)
+                            .map(|v| v.var_type().clone())
+                            .filter(|t| !t.is_unknown());
+
+                        result_type.or_else(|| {
+                            operand_ids.iter().find_map(|&op_id| {
+                                self.function
+                                    .variable(op_id)
+                                    .map(|v| v.var_type().clone())
+                                    .filter(|t| !t.is_unknown())
+                            })
+                        })
+                    };
+
+                    let Some(ty) = known_type else {
+                        continue;
+                    };
+
+                    // Forward: resolve phi result if Unknown
+                    if let Some(var) = self.function.variable(result) {
+                        if var.var_type().is_unknown() {
+                            if let Some(var) = self.function.variable_mut(result) {
+                                var.set_type(ty.clone());
+                                changed = true;
+                            }
+                        }
+                    }
+
+                    // Backward: resolve Unknown-typed operands from the phi type
+                    for &op_id in &operand_ids {
+                        if let Some(var) = self.function.variable(op_id) {
+                            if var.var_type().is_unknown() {
+                                if let Some(var) = self.function.variable_mut(op_id) {
+                                    var.set_type(ty.clone());
+                                    changed = true;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 2: Resolve remaining Unknown-typed variables from their def instructions
+        let var_count = self.function.variables().len();
+        for var_idx in 0..var_count {
+            let var_id = SsaVarId::from_index(var_idx);
+            let (is_unknown, block, instr_idx) = {
+                let Some(var) = self.function.variable(var_id) else {
+                    continue;
+                };
+                let ds = var.def_site();
+                (var.var_type().is_unknown(), ds.block, ds.instruction)
+            };
+            if !is_unknown {
+                continue;
+            }
+            if let Some(idx) = instr_idx {
+                let resolved = self.infer_instruction_result_type(block, idx);
+                if !resolved.is_unknown() {
+                    if let Some(var) = self.function.variable_mut(var_id) {
+                        var.set_type(resolved);
+                    }
+                }
+            }
+        }
+
+        // Phase 3: Propagate types within rename groups.
+        // All variables in the same rename group represent the same logical value
+        // and should share the same type. Find the known type per group, then apply.
+        let var_count = self.function.variables().len();
+        let mut group_types: HashMap<u32, SsaType> = HashMap::new();
+
+        // Collect known types per group
+        for var_idx in 0..var_count {
+            let var_id = SsaVarId::from_index(var_idx);
+            let group = self.function.rename_group(var_id);
+            if group == u32::MAX {
+                continue;
+            }
+            if let Some(var) = self.function.variable(var_id) {
+                if !var.var_type().is_unknown() {
+                    group_types
+                        .entry(group)
+                        .or_insert_with(|| var.var_type().clone());
+                }
+            }
+        }
+
+        // Apply group types to Unknown-typed variables
+        for var_idx in 0..var_count {
+            let var_id = SsaVarId::from_index(var_idx);
+            let group = self.function.rename_group(var_id);
+            if group == u32::MAX {
+                continue;
+            }
+            if let Some(var) = self.function.variable(var_id) {
+                if var.var_type().is_unknown() {
+                    if let Some(ty) = group_types.get(&group) {
+                        if let Some(var) = self.function.variable_mut(var_id) {
+                            var.set_type(ty.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Strips Nop instructions left by LoadLocal/LoadArg resolution.
+    ///
+    /// During rename, resolved LoadLocal/LoadArg instructions are converted to
+    /// Nop. This method removes them and updates variable DefSites to reflect
+    /// the new instruction positions.
+    fn strip_resolved_loads(&mut self) {
+        for block_idx in 0..self.function.blocks().len() {
+            let Some(block) = self.function.block_mut(block_idx) else {
+                continue;
+            };
+            let instructions = block.instructions_mut();
+
+            if !instructions.iter().any(|i| matches!(i.op(), SsaOp::Nop)) {
+                continue;
+            }
+
+            // Build old→new index remapping for non-Nop instructions
+            let mut index_remap: HashMap<usize, usize> = HashMap::new();
+            let mut new_idx = 0usize;
+            for (old_idx, instr) in instructions.iter().enumerate() {
+                if !matches!(instr.op(), SsaOp::Nop) {
+                    if old_idx != new_idx {
+                        index_remap.insert(old_idx, new_idx);
+                    }
+                    new_idx += 1;
+                }
+            }
+
+            instructions.retain(|instr| !matches!(instr.op(), SsaOp::Nop));
+
+            // Update variable DefSites that referenced shifted instructions
+            if !index_remap.is_empty() {
+                for var in self.function.variables_mut() {
+                    let site = var.def_site();
+                    if site.block == block_idx {
+                        if let Some(old_instr) = site.instruction {
+                            if let Some(&new_instr) = index_remap.get(&old_instr) {
+                                var.set_def_site(DefSite::instruction(block_idx, new_instr));
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// Gets the current SSA variable for a given group ID.
+    fn current_def(&self, group: u32) -> Option<SsaVarId> {
         self.version_stacks
-            .get(&origin)
+            .get(&group)
             .and_then(|stack| stack.last())
             .map(|(_, var_id)| *var_id)
     }
 
-    /// Creates a new SSA variable for a definition and pushes it on the stack.
+    /// Gets the current SSA variable for a given origin (convenience wrapper).
+    fn current_def_for_origin(&self, origin: VariableOrigin) -> Option<SsaVarId> {
+        let group = match origin {
+            VariableOrigin::Argument(idx) => self.arg_group(idx),
+            VariableOrigin::Local(idx) => self.local_group(idx),
+            VariableOrigin::Phi => return None,
+        };
+        self.current_def(group)
+    }
+
+    /// Creates a new SSA variable for a definition and pushes it on the version stack.
+    ///
+    /// The caller must provide the correct type for the variable and the
+    /// rename group. This ensures every variable gets its type from the
+    /// caller who has the right context, rather than guessing internally.
     fn new_def(
         &mut self,
         origin: VariableOrigin,
+        group: u32,
         block_idx: usize,
         instr_idx: Option<usize>,
+        var_type: SsaType,
     ) -> SsaVarId {
-        let version = *self.next_version.get(&origin).unwrap_or(&0);
-        *self.next_version.entry(origin).or_insert(0) += 1;
+        let version = *self.next_version.get(&group).unwrap_or(&0);
+        *self.next_version.entry(group).or_insert(0) += 1;
 
         let def_site = match instr_idx {
             Some(idx) => DefSite::instruction(block_idx, idx),
             None => DefSite::phi(block_idx),
         };
-        let var_type = self.type_for_origin(origin);
-        let var = SsaVariable::new_typed(origin, version, def_site, var_type);
-        let var_id = var.id();
-        self.function.add_variable(var);
+
+        let var_id = self
+            .function
+            .create_variable(origin, version, def_site, var_type);
+        self.function.set_rename_group(var_id, group);
 
         self.version_stacks
-            .entry(origin)
+            .entry(group)
             .or_default()
             .push((version, var_id));
         var_id
@@ -1496,7 +1927,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         exit_stack: Option<&Vec<StackSlot>>,
         rename_map: &HashMap<SsaVarId, SsaVarId>,
     ) -> SsaVarId {
-        let origin = VariableOrigin::Stack(slot);
+        let origin = self.stack_slot_origin(slot as usize);
+        let group = self.stack_group(slot as usize);
 
         let Some(stack) = exit_stack else {
             return self.create_undefined_var(origin);
@@ -1516,18 +1948,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         // Get the renamed variable, ensuring it exists in the function
         let renamed = if let Some(&mapped) = rename_map.get(&stack_slot.var) {
             // Ensure the mapped variable exists
-            if self.function.variable(mapped).is_none() {
-                let new_var = SsaVariable::new_with_id(mapped, origin, 0, DefSite::entry());
-                self.function.add_variable(new_var);
-            }
-            mapped
+            self.ensure_or_create(mapped, origin)
         } else {
             // No mapping - use stack_slot.var directly, ensuring it exists
-            if self.function.variable(stack_slot.var).is_none() {
-                let new_var = SsaVariable::new_with_id(stack_slot.var, origin, 0, DefSite::entry());
-                self.function.add_variable(new_var);
-            }
-            stack_slot.var
+            self.ensure_or_create(stack_slot.var, origin)
         };
 
         // If the value was computed in this block, use it directly
@@ -1545,37 +1969,263 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             if matches!(s.source, StackSlotSource::Defined { .. }) {
                 let result = if let Some(&mapped) = rename_map.get(&s.var) {
                     // Ensure the mapped variable exists
-                    if self.function.variable(mapped).is_none() {
-                        let new_var = SsaVariable::new_with_id(mapped, origin, 0, DefSite::entry());
-                        self.function.add_variable(new_var);
-                    }
-                    mapped
+                    self.ensure_or_create(mapped, origin)
                 } else {
                     // Ensure s.var exists
-                    if self.function.variable(s.var).is_none() {
-                        let new_var = SsaVariable::new_with_id(s.var, origin, 0, DefSite::entry());
-                        self.function.add_variable(new_var);
-                    }
-                    s.var
+                    self.ensure_or_create(s.var, origin)
                 };
                 return result;
             }
         }
 
         // No defined value found. Try version stack as last resort.
-        self.current_def(origin)
+        self.current_def(group)
             .unwrap_or_else(|| self.create_undefined_var(origin))
     }
 
-    /// Recursively renames variables in a block and its dominated children.
+    /// Ensures a variable with the given ID exists in the function, or creates a new one.
+    ///
+    /// If the variable exists, returns the same `var_id`. If it doesn't exist,
+    /// creates a new variable via the allocator with the given origin and returns
+    /// the newly allocated ID.
+    fn ensure_or_create(&mut self, var_id: SsaVarId, origin: VariableOrigin) -> SsaVarId {
+        if self.function.variable(var_id).is_some() {
+            var_id
+        } else {
+            self.create_undefined_var(origin)
+        }
+    }
+
+    /// Resolves a stack slot variable from a predecessor or idom exit stack.
+    ///
+    /// Given a stack slot's variable from an exit stack, resolves it through:
+    /// 1. rename_map (already renamed)
+    /// 2. load_origins → current_def (simulation variable from ldarg/ldloc)
+    /// 3. Direct use (untracked stack variable)
+    ///
+    /// In all cases, ensures the resolved variable exists in the function.
+    fn resolve_exit_stack_var(
+        &mut self,
+        stack_var: SsaVarId,
+        origin: VariableOrigin,
+        rename_map: &HashMap<SsaVarId, SsaVarId>,
+    ) -> SsaVarId {
+        if let Some(&already_renamed) = rename_map.get(&stack_var) {
+            self.ensure_or_create(already_renamed, origin)
+        } else if let Some(&load_origin) = self.load_origins.get(&stack_var) {
+            if let Some(resolved) = self.current_def_for_origin(load_origin) {
+                self.ensure_or_create(resolved, load_origin)
+            } else {
+                self.ensure_or_create(stack_var, origin)
+            }
+        } else {
+            self.ensure_or_create(stack_var, origin)
+        }
+    }
+
+    /// Resolves a use variable to its SSA-renamed counterpart.
+    ///
+    /// For Argument/Local origins, uses current_def from the version stack.
+    /// For Stack origins, uses the rename_map.
+    /// Ensures the resolved variable exists in the function.
+    fn resolve_use(
+        &mut self,
+        use_var: SsaVarId,
+        rename_map: &HashMap<SsaVarId, SsaVarId>,
+    ) -> SsaVarId {
+        if let Some(&mapped) = rename_map.get(&use_var) {
+            self.resolve_mapped_use(mapped)
+        } else {
+            self.resolve_unmapped_use(use_var)
+        }
+    }
+
+    /// Resolves a use variable that was found in the rename_map.
+    fn resolve_mapped_use(&mut self, mapped: SsaVarId) -> SsaVarId {
+        if let Some(var_info) = self.function.variable(mapped) {
+            let origin = var_info.origin();
+            match origin {
+                VariableOrigin::Argument(_) | VariableOrigin::Local(_) => {
+                    if let Some(resolved) = self.current_def_for_origin(origin) {
+                        self.ensure_or_create(resolved, origin)
+                    } else {
+                        mapped
+                    }
+                }
+                VariableOrigin::Phi => {
+                    // Stack temps have Phi origin — resolve via rename group or
+                    // var_stack_positions (simulation variables may not have groups yet)
+                    let group = self.function.rename_group(mapped);
+                    let group = if group != u32::MAX {
+                        group
+                    } else if let Some(&slot) = self.var_stack_positions.get(&mapped) {
+                        self.stack_group(slot)
+                    } else {
+                        u32::MAX
+                    };
+                    if group != u32::MAX {
+                        if let Some(resolved) = self.current_def(group) {
+                            self.ensure_or_create(resolved, origin)
+                        } else {
+                            mapped
+                        }
+                    } else {
+                        mapped
+                    }
+                }
+            }
+        } else {
+            let origin = self.stack_slot_origin(0);
+            self.ensure_or_create(mapped, origin)
+        }
+    }
+
+    /// Resolves a use variable that was NOT found in the rename_map.
+    fn resolve_unmapped_use(&mut self, use_var: SsaVarId) -> SsaVarId {
+        if let Some(var_info) = self.function.variable(use_var) {
+            let origin = var_info.origin();
+            match origin {
+                VariableOrigin::Argument(_) | VariableOrigin::Local(_) => {
+                    if let Some(resolved) = self.current_def_for_origin(origin) {
+                        self.ensure_or_create(resolved, origin)
+                    } else {
+                        use_var
+                    }
+                }
+                VariableOrigin::Phi => {
+                    // Stack temps have Phi origin — resolve via rename group or
+                    // var_stack_positions (simulation variables may not have groups yet)
+                    let group = self.function.rename_group(use_var);
+                    let group = if group != u32::MAX {
+                        group
+                    } else if let Some(&slot) = self.var_stack_positions.get(&use_var) {
+                        self.stack_group(slot)
+                    } else {
+                        u32::MAX
+                    };
+                    if group != u32::MAX {
+                        if let Some(resolved) = self.current_def(group) {
+                            self.ensure_or_create(resolved, origin)
+                        } else {
+                            use_var
+                        }
+                    } else {
+                        use_var
+                    }
+                }
+            }
+        } else if let Some(&origin) = self.load_origins.get(&use_var) {
+            if let Some(resolved) = self.current_def_for_origin(origin) {
+                self.ensure_or_create(resolved, origin)
+            } else {
+                self.ensure_or_create(use_var, origin)
+            }
+        } else {
+            self.ensure_or_create(use_var, self.stack_slot_origin(0))
+        }
+    }
+
+    /// Resolves an entry stack slot to its reaching definition.
+    ///
+    /// For Stack origins, tries (in order):
+    /// 1. Predecessor exit stacks
+    /// 2. Immediate dominator exit stack
+    /// 3. current_def from version stack
+    ///
+    /// Returns `None` if all resolution strategies fail.
+    fn resolve_entry_stack_slot(
+        &mut self,
+        block_idx: usize,
+        slot: usize,
+        origin: VariableOrigin,
+        idom_exit_stack: &Option<Vec<StackSlot>>,
+        rename_map: &HashMap<SsaVarId, SsaVarId>,
+    ) -> Option<SsaVarId> {
+        // Try direct predecessors first (most accurate for stack values)
+        for pred_id in self.cfg.predecessors(NodeId::new(block_idx)) {
+            if let Some(pred_exit) = self.exit_stacks.get(&pred_id.index()) {
+                if let Some(stack_slot) = pred_exit.get(slot) {
+                    let resolved = self.resolve_exit_stack_var(stack_slot.var, origin, rename_map);
+                    return Some(resolved);
+                }
+            }
+        }
+
+        // Fall back to immediate dominator's exit stack
+        if let Some(ref idom_exit) = idom_exit_stack {
+            if let Some(stack_slot) = idom_exit.get(slot) {
+                let resolved = self.resolve_exit_stack_var(stack_slot.var, origin, rename_map);
+                return Some(resolved);
+            }
+        }
+
+        // Last resort: current_def via group (may be stale but better than nothing)
+        // For stack origins, use the stack group
+        let group = self.stack_group(slot);
+        self.current_def(group)
+    }
+
+    /// Iteratively renames variables in a block and its dominated children.
+    ///
+    /// Uses an explicit work stack instead of recursion to avoid stack overflow
+    /// on deeply nested dominator trees (common in obfuscated code).
     fn rename_block(
+        &mut self,
+        entry_block_idx: usize,
+        dom_tree: &DominatorTree,
+        rename_map: &mut HashMap<SsaVarId, SsaVarId>,
+    ) -> Result<()> {
+        // Work stack: Enter processes a block, Exit pops its version stack entries
+        enum RenameAction {
+            Enter(usize),
+            Exit(HashMap<u32, usize>),
+        }
+
+        let mut work_stack = vec![RenameAction::Enter(entry_block_idx)];
+
+        while let Some(action) = work_stack.pop() {
+            match action {
+                RenameAction::Exit(pushed_counts) => {
+                    // Pop pushed definitions from version stacks
+                    for (group, count) in pushed_counts {
+                        if let Some(stack) = self.version_stacks.get_mut(&group) {
+                            for _ in 0..count {
+                                stack.pop();
+                            }
+                        }
+                    }
+                }
+                RenameAction::Enter(block_idx) => {
+                    let pushed_counts =
+                        self.rename_block_process(block_idx, dom_tree, rename_map)?;
+
+                    // Schedule exit (pop) BEFORE children so it runs AFTER children
+                    // (work_stack is LIFO: last pushed = first processed)
+                    let children: Vec<_> = dom_tree.children(NodeId::new(block_idx)).to_vec();
+
+                    // Push exit action first (will be processed after all children)
+                    work_stack.push(RenameAction::Exit(pushed_counts));
+
+                    // Push children in reverse order so they're processed in forward order
+                    for child in children.into_iter().rev() {
+                        work_stack.push(RenameAction::Enter(child.index()));
+                    }
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Processes a single block during rename: phi nodes, entry stack, instructions,
+    /// and successor phi operands. Returns the pushed_counts for version stack cleanup.
+    fn rename_block_process(
         &mut self,
         block_idx: usize,
         dom_tree: &DominatorTree,
         rename_map: &mut HashMap<SsaVarId, SsaVarId>,
-    ) -> Result<()> {
-        // Track how many definitions we push for each origin (for cleanup)
-        let mut pushed_counts: HashMap<VariableOrigin, usize> = HashMap::new();
+    ) -> Result<HashMap<u32, usize>> {
+        let mut pushed_counts: HashMap<u32, usize> = HashMap::new();
 
         // Step 1: Process phi nodes - they define new versions
         let phi_count = self
@@ -1583,32 +2233,42 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             .block(block_idx)
             .map_or(0, SsaBlock::phi_count);
 
-        // Get entry stack for mapping placeholder variables to stack values
         let entry_stack = self.entry_stacks.get(&block_idx).cloned();
-
-        // Track which stack slots have PHIs in this block
         let mut slots_with_phis: HashSet<u32> = HashSet::new();
 
         for phi_idx in 0..phi_count {
             if let Some(block) = self.function.block(block_idx) {
                 if let Some(phi) = block.phi(phi_idx) {
                     let origin = phi.origin();
-                    // Create new definition for this phi
-                    let new_var = self.new_def(origin, block_idx, None);
-                    *pushed_counts.entry(origin).or_insert(0) += 1;
+                    // Determine group from phi result's rename_group (set during phi placement)
+                    let group = self.function.rename_group(phi.result());
+                    let group = if group == u32::MAX {
+                        // Fallback: determine group from origin
+                        match origin {
+                            VariableOrigin::Argument(idx) => self.arg_group(idx),
+                            VariableOrigin::Local(idx) => self.local_group(idx),
+                            VariableOrigin::Phi => {
+                                // Stack phi — find slot from entry stack
+                                self.stack_group(0)
+                            }
+                        }
+                    } else {
+                        group
+                    };
+                    // Phi type starts Unknown, resolved by resolve_phi_types() after rename
+                    let new_var = self.new_def(origin, group, block_idx, None, SsaType::Unknown);
+                    *pushed_counts.entry(group).or_insert(0) += 1;
 
-                    // For stack PHIs, map the placeholder variable to the PHI result
-                    // This ensures instructions that use the placeholder get the PHI result
-                    if let VariableOrigin::Stack(slot) = origin {
-                        slots_with_phis.insert(slot);
+                    if let Some(slot) = self.stack_slot_from_group(group) {
+                        #[allow(clippy::cast_possible_truncation)]
+                        slots_with_phis.insert(slot as u32);
                         if let Some(ref entry) = entry_stack {
-                            if let Some(&placeholder) = entry.get(slot as usize) {
+                            if let Some(&placeholder) = entry.get(slot) {
                                 rename_map.insert(placeholder, new_var);
                             }
                         }
                     }
 
-                    // Update the phi's result
                     if let Some(block) = self.function.block_mut(block_idx) {
                         if let Some(phi) = block.phi_mut(phi_idx) {
                             phi.set_result(new_var);
@@ -1618,28 +2278,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             }
         }
 
-        // For entry stack slots that DON'T have PHIs in this block, we still need
-        // to map the placeholder to the correct reaching definition.
-        //
-        // There are two cases:
-        // For entry stack slots without PHIs, map placeholders to reaching definitions.
-        //
-        // For Stack origins, we MUST prefer the predecessor's exit stack over current_def
-        // from version_stacks. This is because:
-        // 1. ldc.i4 and other push operations create new stack variables but don't update
-        //    version_stacks (they're tracked in exit_stacks instead)
-        // 2. current_def would return a stale PHI value from a dominator that doesn't
-        //    reflect the actual value pushed by the immediate predecessor
-        //
-        // Example: CFF with anti-disassembly pattern `ldc.i4 KEY; br.s +0; call decryptor`
-        // - Block 3 (dispatcher) has PHI for Stack(0) = state value
-        // - Block 5 does `ldc.i4 KEY` (pushes KEY to stack)
-        // - Block 6 does `call decryptor` (should use KEY, not state)
-        // Without this fix, current_def(Stack(0)) returns the dispatcher's PHI result
-        // instead of the KEY pushed by block 5.
-        //
-        // For Argument/Local origins, current_def from version_stacks IS correct because
-        // stloc/starg instructions explicitly call new_def() to update version_stacks.
+        // Map entry stack slots without PHIs to reaching definitions.
+        // For Stack groups, prefer predecessor exit stacks over current_def.
         let idom = dom_tree.immediate_dominator(NodeId::new(block_idx));
         let idom_exit_stack = idom.and_then(|d| self.exit_stacks.get(&d.index()).cloned());
 
@@ -1647,233 +2287,34 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             for (slot, &placeholder) in entry.iter().enumerate() {
                 #[allow(clippy::cast_possible_truncation)]
                 let slot_u32 = slot as u32;
-                if !slots_with_phis.contains(&slot_u32) {
-                    let origin = VariableOrigin::Stack(slot_u32);
+                if slots_with_phis.contains(&slot_u32) {
+                    continue;
+                }
+                let origin = self.stack_slot_origin(slot);
 
-                    // For Stack origins: Try predecessor exit stacks FIRST
-                    // This ensures we get the actual pushed value, not a stale PHI from a dominator
-                    let mapped = if matches!(origin, VariableOrigin::Stack(_)) {
-                        // First try direct predecessors (most accurate for stack values)
-                        let mut found = false;
-                        for pred_id in self.cfg.predecessors(NodeId::new(block_idx)) {
-                            if let Some(pred_exit) = self.exit_stacks.get(&pred_id.index()) {
-                                if let Some(stack_slot) = pred_exit.get(slot) {
-                                    // The predecessor's exit stack has a variable. This might be:
-                                    // 1. A renamed SSA variable (in rename_map)
-                                    // 2. A simulation variable from ldarg/ldloc (in load_origins)
-                                    // 3. An untracked stack variable from simulation
-                                    let renamed_var = if let Some(&already_renamed) =
-                                        rename_map.get(&stack_slot.var)
-                                    {
-                                        // Ensure the mapped variable exists
-                                        if self.function.variable(already_renamed).is_none() {
-                                            let new_var = SsaVariable::new_with_id(
-                                                already_renamed,
-                                                origin,
-                                                0,
-                                                DefSite::entry(),
-                                            );
-                                            self.function.add_variable(new_var);
-                                        }
-                                        already_renamed
-                                    } else if let Some(&load_origin) =
-                                        self.load_origins.get(&stack_slot.var)
-                                    {
-                                        // This is a simulation variable from ldarg/ldloc.
-                                        // Resolve it to the correct reaching definition.
-                                        if let Some(resolved) = self.current_def(load_origin) {
-                                            // Verify the resolved variable exists
-                                            if self.function.variable(resolved).is_none() {
-                                                let new_var = SsaVariable::new_with_id(
-                                                    resolved,
-                                                    load_origin,
-                                                    0,
-                                                    DefSite::entry(),
-                                                );
-                                                self.function.add_variable(new_var);
-                                            }
-                                            resolved
-                                        } else {
-                                            // current_def returned None, ensure stack_slot.var exists
-                                            if self.function.variable(stack_slot.var).is_none() {
-                                                let new_var = SsaVariable::new_with_id(
-                                                    stack_slot.var,
-                                                    origin,
-                                                    0,
-                                                    DefSite::entry(),
-                                                );
-                                                self.function.add_variable(new_var);
-                                            }
-                                            stack_slot.var
-                                        }
-                                    } else {
-                                        // Untracked stack variable from simulation.
-                                        // Ensure it has an SsaVariable entry in the function.
-                                        // Simulation creates SsaVarIds without SsaVariables,
-                                        // so we need to create one now using the existing ID.
-                                        if self.function.variable(stack_slot.var).is_none() {
-                                            let new_var = SsaVariable::new_with_id(
-                                                stack_slot.var,
-                                                origin,
-                                                0,
-                                                DefSite::entry(),
-                                            );
-                                            self.function.add_variable(new_var);
-                                        }
-                                        stack_slot.var
-                                    };
-                                    rename_map.insert(placeholder, renamed_var);
-                                    found = true;
-                                    break;
-                                }
-                            }
-                        }
-
-                        // Fall back to immediate dominator's exit stack
-                        if !found {
-                            if let Some(ref idom_exit) = idom_exit_stack {
-                                if let Some(stack_slot) = idom_exit.get(slot) {
-                                    // Same resolution logic as predecessor case - ensure variables exist
-                                    let renamed_var = if let Some(&already_renamed) =
-                                        rename_map.get(&stack_slot.var)
-                                    {
-                                        // Ensure the mapped variable exists
-                                        if self.function.variable(already_renamed).is_none() {
-                                            let new_var = SsaVariable::new_with_id(
-                                                already_renamed,
-                                                origin,
-                                                0,
-                                                DefSite::entry(),
-                                            );
-                                            self.function.add_variable(new_var);
-                                        }
-                                        already_renamed
-                                    } else if let Some(&load_origin) =
-                                        self.load_origins.get(&stack_slot.var)
-                                    {
-                                        if let Some(resolved) = self.current_def(load_origin) {
-                                            // Verify the resolved variable exists
-                                            if self.function.variable(resolved).is_none() {
-                                                let new_var = SsaVariable::new_with_id(
-                                                    resolved,
-                                                    load_origin,
-                                                    0,
-                                                    DefSite::entry(),
-                                                );
-                                                self.function.add_variable(new_var);
-                                            }
-                                            resolved
-                                        } else {
-                                            // current_def returned None, ensure stack_slot.var exists
-                                            if self.function.variable(stack_slot.var).is_none() {
-                                                let new_var = SsaVariable::new_with_id(
-                                                    stack_slot.var,
-                                                    origin,
-                                                    0,
-                                                    DefSite::entry(),
-                                                );
-                                                self.function.add_variable(new_var);
-                                            }
-                                            stack_slot.var
-                                        }
-                                    } else {
-                                        // Ensure the variable has an SsaVariable entry
-                                        if self.function.variable(stack_slot.var).is_none() {
-                                            let new_var = SsaVariable::new_with_id(
-                                                stack_slot.var,
-                                                origin,
-                                                0,
-                                                DefSite::entry(),
-                                            );
-                                            self.function.add_variable(new_var);
-                                        }
-                                        stack_slot.var
-                                    };
-                                    rename_map.insert(placeholder, renamed_var);
-                                    found = true;
-                                }
-                            }
-                        }
-
-                        // Last resort: current_def (may be stale but better than nothing)
-                        if !found {
-                            if let Some(current) = self.current_def(origin) {
-                                rename_map.insert(placeholder, current);
-                            } else {
-                                // current_def also failed - use predecessor lookup which
-                                // will create a synthetic variable if needed
-                                self.try_map_from_predecessors(
-                                    block_idx,
-                                    slot,
-                                    placeholder,
-                                    rename_map,
-                                );
-                            }
-                        }
-                        true
-                    } else {
-                        false
-                    };
-
-                    // For non-Stack origins (Argument, Local): use original logic
-                    if !mapped {
-                        if let Some(current) = self.current_def(origin) {
-                            // Verify current exists (should always, but check to be safe)
-                            if self.function.variable(current).is_none() {
-                                let new_var =
-                                    SsaVariable::new_with_id(current, origin, 0, DefSite::entry());
-                                self.function.add_variable(new_var);
-                            }
-                            rename_map.insert(placeholder, current);
-                        } else if let Some(ref idom_exit) = idom_exit_stack {
-                            if let Some(stack_slot) = idom_exit.get(slot) {
-                                // Ensure the variable exists before inserting into rename_map
-                                let renamed_var =
-                                    if let Some(&mapped_var) = rename_map.get(&stack_slot.var) {
-                                        if self.function.variable(mapped_var).is_none() {
-                                            let new_var = SsaVariable::new_with_id(
-                                                mapped_var,
-                                                origin,
-                                                0,
-                                                DefSite::entry(),
-                                            );
-                                            self.function.add_variable(new_var);
-                                        }
-                                        mapped_var
-                                    } else {
-                                        // No mapping - ensure stack_slot.var exists
-                                        if self.function.variable(stack_slot.var).is_none() {
-                                            let new_var = SsaVariable::new_with_id(
-                                                stack_slot.var,
-                                                origin,
-                                                0,
-                                                DefSite::entry(),
-                                            );
-                                            self.function.add_variable(new_var);
-                                        }
-                                        stack_slot.var
-                                    };
-                                rename_map.insert(placeholder, renamed_var);
-                            } else {
-                                // Immediate dominator doesn't have this slot - fall through to
-                                // predecessor lookup below
-                                self.try_map_from_predecessors(
-                                    block_idx,
-                                    slot,
-                                    placeholder,
-                                    rename_map,
-                                );
-                            }
-                        } else {
-                            // No immediate dominator exit stack - try predecessors directly
-                            self.try_map_from_predecessors(
-                                block_idx,
-                                slot,
-                                placeholder,
-                                rename_map,
-                            );
-                        }
-                    }
+                // Stack-derived locals: prefer predecessor exit stacks over current_def
+                if let Some(resolved) = self.resolve_entry_stack_slot(
+                    block_idx,
+                    slot,
+                    origin,
+                    &idom_exit_stack,
+                    rename_map,
+                ) {
+                    rename_map.insert(placeholder, resolved);
+                    // Also push to version stack so that resolve_mapped_use (which
+                    // checks current_def for the group) finds the correct reaching
+                    // definition. Without this, handler blocks processed via BFS
+                    // have stale version stacks (the predecessor's push was already
+                    // popped by the Exit action), causing resolve_mapped_use to
+                    // return the wrong variable.
+                    let group = self.stack_group(slot);
+                    self.version_stacks
+                        .entry(group)
+                        .or_default()
+                        .push((0, resolved));
+                    *pushed_counts.entry(group).or_insert(0) += 1;
+                } else {
+                    self.try_map_from_predecessors(block_idx, slot, placeholder, rename_map);
                 }
             }
         }
@@ -1885,163 +2326,56 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             .map_or(0, SsaBlock::instruction_count);
 
         for instr_idx in 0..instr_count {
-            // Get instruction info
             let instr_info = self.function.block(block_idx).and_then(|b| {
-                b.instruction(instr_idx)
-                    .map(|instr| (instr.original().clone(), instr.uses(), instr.def()))
+                b.instruction(instr_idx).map(|instr| {
+                    // Detect LoadLocal/LoadArg for direct resolution to
+                    // reaching definitions (avoids leaving unresolved
+                    // memory-access ops that no optimisation pass can handle).
+                    let load_target = match instr.op() {
+                        SsaOp::LoadArg { arg_index, .. } => {
+                            Some(VariableOrigin::Argument(*arg_index))
+                        }
+                        SsaOp::LoadLocal { local_index, .. } => {
+                            Some(VariableOrigin::Local(*local_index))
+                        }
+                        _ => None,
+                    };
+                    (
+                        instr.original().clone(),
+                        instr.uses(),
+                        instr.def(),
+                        load_target,
+                    )
+                })
             });
 
-            if let Some((cil_instr, uses, old_def)) = instr_info {
-                // Rename uses: replace simulation variables with their renamed counterparts.
-                // If a use was the previous definition of an arg/local, replace it with
-                // the current reaching definition for that origin.
-                let mut renamed_uses = Vec::with_capacity(uses.len());
-
-                for &use_var in &uses {
-                    // For Local/Arg origin variables, ALWAYS use current_def() from version stack.
-                    // This is necessary because:
-                    // 1. ldloc/ldarg push the simulation variable from a previous stloc/starg
-                    // 2. That stloc might be in a non-dominating predecessor block
-                    // 3. The rename_map entry from that block is stale and shouldn't be used
-                    // 4. The version stack correctly tracks the reaching definition per origin
-                    //
-                    // For stack temporaries (no origin), use rename_map since they don't have
-                    // version stacks.
-                    let renamed = if let Some(&mapped) = rename_map.get(&use_var) {
-                        // Check if the MAPPED variable (SSA var) has a Local/Arg origin
-                        // If so, use current_def() instead of the stale rename_map entry
-                        if let Some(var_info) = self.function.variable(mapped) {
-                            let origin = var_info.origin();
-                            match origin {
-                                VariableOrigin::Argument(_) | VariableOrigin::Local(_) => {
-                                    // Use the current reaching definition from version stack
-                                    // Ensure the fallback exists in the function
-                                    if let Some(resolved) = self.current_def(origin) {
-                                        // Verify the resolved variable exists
-                                        if self.function.variable(resolved).is_some() {
-                                            resolved
-                                        } else {
-                                            // Version stack returned non-existent variable, create it
-                                            let new_var = SsaVariable::new_with_id(
-                                                resolved,
-                                                origin,
-                                                0,
-                                                DefSite::entry(),
-                                            );
-                                            self.function.add_variable(new_var);
-                                            resolved
-                                        }
-                                    } else {
-                                        // current_def returned None, use mapped (which exists)
-                                        mapped
-                                    }
-                                }
-                                _ => mapped,
-                            }
-                        } else {
-                            // Mapped variable not in function - ensure it exists.
-                            // This can happen when simulation creates SsaVarIds without
-                            // corresponding SsaVariables. Create the entry now.
-                            let origin = VariableOrigin::Stack(0); // Default stack origin
-                            let new_var =
-                                SsaVariable::new_with_id(mapped, origin, 0, DefSite::entry());
-                            self.function.add_variable(new_var);
-                            mapped
-                        }
-                    } else {
-                        // Not in rename_map - check if this variable has a Local/Arg origin.
-                        // First check if it's a known SSA variable, then check load_origins
-                        // for simulation variables from ldloc/ldarg.
-                        if let Some(var_info) = self.function.variable(use_var) {
-                            let origin = var_info.origin();
-                            match origin {
-                                VariableOrigin::Argument(_) | VariableOrigin::Local(_) => {
-                                    // Use the current reaching definition for this origin
-                                    // Ensure the fallback exists in the function
-                                    if let Some(resolved) = self.current_def(origin) {
-                                        // Verify the resolved variable exists
-                                        if self.function.variable(resolved).is_some() {
-                                            resolved
-                                        } else {
-                                            // Version stack returned non-existent variable, create it
-                                            let new_var = SsaVariable::new_with_id(
-                                                resolved,
-                                                origin,
-                                                0,
-                                                DefSite::entry(),
-                                            );
-                                            self.function.add_variable(new_var);
-                                            resolved
-                                        }
-                                    } else {
-                                        // current_def returned None, use use_var (which exists)
-                                        use_var
-                                    }
-                                }
-                                _ => use_var,
-                            }
-                        } else if let Some(&origin) = self.load_origins.get(&use_var) {
-                            // This is a simulation variable from ldloc/ldarg.
-                            // The simulator recorded its origin, so we can resolve it
-                            // to the correct reaching definition from the version stack.
-                            // If current_def returns None, create a synthetic entry for use_var.
-                            if let Some(resolved) = self.current_def(origin) {
-                                // Verify the resolved variable exists (should always be true,
-                                // but check to be safe since orphan uses break constant propagation)
-                                if self.function.variable(resolved).is_some() {
-                                    resolved
-                                } else {
-                                    // The version stack returned a variable that doesn't exist.
-                                    // This shouldn't happen, but create the variable to avoid orphan.
-                                    let new_var = SsaVariable::new_with_id(
-                                        resolved,
-                                        origin,
-                                        0,
-                                        DefSite::entry(),
-                                    );
-                                    self.function.add_variable(new_var);
-                                    resolved
-                                }
-                            } else {
-                                // current_def returned None - need to create a synthetic variable
-                                // for use_var since it's not in the function.
-                                if self.function.variable(use_var).is_none() {
-                                    let new_var = SsaVariable::new_with_id(
-                                        use_var,
-                                        origin,
-                                        0,
-                                        DefSite::entry(),
-                                    );
-                                    self.function.add_variable(new_var);
-                                }
-                                use_var
-                            }
-                        } else {
-                            // FALLTHROUGH: use_var is not in rename_map, not a known variable,
-                            // and not in load_origins. Ensure it has an SsaVariable entry.
-                            if self.function.variable(use_var).is_none() {
-                                let origin = VariableOrigin::Stack(0);
-                                let new_var =
-                                    SsaVariable::new_with_id(use_var, origin, 0, DefSite::entry());
-                                self.function.add_variable(new_var);
-                            }
-                            use_var
-                        }
+            if let Some((cil_instr, uses, old_def, mut load_target)) = instr_info {
+                // Skip resolution for address-taken locals/args: they may be
+                // modified through pointers, so the reaching definition is
+                // unsound.
+                if let Some(ref origin) = load_target {
+                    let group = match origin {
+                        VariableOrigin::Argument(idx) => self.arg_group(*idx),
+                        VariableOrigin::Local(idx) => self.local_group(*idx),
+                        _ => u32::MAX,
                     };
-                    renamed_uses.push(renamed);
+                    if self.address_taken.contains(&group) {
+                        load_target = None;
+                    }
+                }
+                let mut renamed_uses = Vec::with_capacity(uses.len());
+                for &use_var in &uses {
+                    renamed_uses.push(self.resolve_use(use_var, rename_map));
                 }
 
-                // Record uses for each renamed operand
                 for &use_var in &renamed_uses {
                     let use_site = UseSite::instruction(block_idx, instr_idx);
                     self.record_use(use_var, use_site);
                 }
 
-                // Update the instruction's uses to use renamed variables
                 if renamed_uses != uses {
                     if let Some(block) = self.function.block_mut(block_idx) {
                         if let Some(instr) = block.instruction_mut(instr_idx) {
-                            // Update uses in the SsaOp (uses are derived from the op)
                             let op = instr.op_mut();
                             for (old_use, &new_use) in uses.iter().zip(renamed_uses.iter()) {
                                 if *old_use != new_use {
@@ -2052,40 +2386,75 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     }
                 }
 
-                // Determine the origin this instruction defines (if any)
+                // LoadLocal/LoadArg: convert to a Copy from the reaching definition
+                // to a new stack-temp variable. This preserves an explicit bridge
+                // between the local/arg group and the stack-temp group so that
+                // rebuild_ssa (which operates per-group) can correctly recreate
+                // the data flow across groups.
+                if let (Some(sim_var), Some(target_origin)) = (old_def, load_target) {
+                    let target_group = match target_origin {
+                        VariableOrigin::Argument(idx) => self.arg_group(idx),
+                        VariableOrigin::Local(idx) => self.local_group(idx),
+                        _ => u32::MAX,
+                    };
+                    if let Some(reaching_def) = self.current_def(target_group) {
+                        // Create a new stack-temp variable for the Copy dest
+                        let slot = self.var_stack_positions.get(&sim_var).copied().unwrap_or(0);
+                        let origin = self.stack_slot_origin(slot);
+                        let dest_group = self.stack_group(slot);
+                        let var_type = self.type_for_origin(target_origin);
+                        let new_var =
+                            self.new_def(origin, dest_group, block_idx, Some(instr_idx), var_type);
+                        *pushed_counts.entry(dest_group).or_insert(0) += 1;
+
+                        rename_map.insert(sim_var, new_var);
+
+                        // Record the use of reaching_def by this Copy
+                        let use_site = UseSite::instruction(block_idx, instr_idx);
+                        self.record_use(reaching_def, use_site);
+
+                        // Convert to Copy; the bridge instruction survives rebuild.
+                        if let Some(block) = self.function.block_mut(block_idx) {
+                            if let Some(instr) = block.instruction_mut(instr_idx) {
+                                instr.set_op(SsaOp::Copy {
+                                    dest: new_var,
+                                    src: reaching_def,
+                                });
+                            }
+                        }
+                        continue;
+                    }
+                }
+
                 let def_origin = Self::infer_origin(&cil_instr)?;
 
-                // If this instruction defines a variable, we need to track it
                 if let Some(sim_var) = old_def {
                     let new_var = if let Some(origin) = def_origin {
-                        // For args/locals, create new SSA version and track in version stack
-                        let v = self.new_def(origin, block_idx, Some(instr_idx));
-                        *pushed_counts.entry(origin).or_insert(0) += 1;
+                        let group = match origin {
+                            VariableOrigin::Argument(idx) => self.arg_group(idx),
+                            VariableOrigin::Local(idx) => self.local_group(idx),
+                            VariableOrigin::Phi => u32::MAX, // shouldn't happen for infer_origin
+                        };
+                        let var_type = self.type_for_origin(origin);
+                        let v = self.new_def(origin, group, block_idx, Some(instr_idx), var_type);
+                        *pushed_counts.entry(group).or_insert(0) += 1;
                         v
                     } else {
-                        // For temps (no origin), create a new SSA variable without version tracking
-                        // Use the simulation variable's index as the stack slot number
-                        #[allow(clippy::cast_possible_truncation)]
-                        let slot = sim_var.index() as u32;
+                        // Use the stack depth position recorded during simulation,
+                        // NOT sim_var.index() which is a globally unique ID.
+                        // This ensures the group matches the PHI group at successor
+                        // blocks (placed by place_stack_phi_nodes with stack_group).
+                        let slot = self.var_stack_positions.get(&sim_var).copied().unwrap_or(0);
+                        let origin = self.stack_slot_origin(slot);
+                        let group = self.stack_group(slot);
                         let var_type = self.infer_instruction_result_type(block_idx, instr_idx);
-                        let temp_var = SsaVariable::new_typed(
-                            VariableOrigin::Stack(slot),
-                            0,
-                            DefSite::instruction(block_idx, instr_idx),
-                            var_type,
-                        );
-                        let v = temp_var.id();
-                        self.function.add_variable(temp_var);
+                        let v = self.new_def(origin, group, block_idx, Some(instr_idx), var_type);
+                        *pushed_counts.entry(group).or_insert(0) += 1;
                         v
                     };
 
-                    // Record the mapping from simulation var to renamed var
-                    // This allows later uses to be renamed correctly
                     rename_map.insert(sim_var, new_var);
 
-                    // Update the op's dest (def is derived from op.dest())
-                    // This is critical: the phi operands use the renamed variable,
-                    // so the op must also use the same variable ID.
                     if let Some(block) = self.function.block_mut(block_idx) {
                         if let Some(instr) = block.instruction_mut(instr_idx) {
                             instr.op_mut().set_dest(new_var);
@@ -2093,16 +2462,21 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     }
                 }
 
-                // Handle indirect stores (initobj/stind via ldloca/ldarga)
-                // These don't have a stack def but they do define the underlying variable.
-                // We need to track this in the version stack so that phi operands get the
-                // correct reaching definition.
                 if let Some(&store_target) = self.indirect_stores.get(&(block_idx, instr_idx)) {
-                    // Create a new version for the indirectly stored variable
-                    // The value being stored is conceptually "zero/default" for initobj,
-                    // but we just need to mark that this block defines this variable
-                    let _new_version = self.new_def(store_target, block_idx, Some(instr_idx));
-                    *pushed_counts.entry(store_target).or_insert(0) += 1;
+                    let store_group = match store_target {
+                        VariableOrigin::Argument(idx) => self.arg_group(idx),
+                        VariableOrigin::Local(idx) => self.local_group(idx),
+                        VariableOrigin::Phi => u32::MAX,
+                    };
+                    let var_type = self.type_for_origin(store_target);
+                    let _new_version = self.new_def(
+                        store_target,
+                        store_group,
+                        block_idx,
+                        Some(instr_idx),
+                        var_type,
+                    );
+                    *pushed_counts.entry(store_group).or_insert(0) += 1;
                 }
             }
         }
@@ -2120,25 +2494,39 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             let succ_phi_count = self.function.block(succ_idx).map_or(0, SsaBlock::phi_count);
 
             for phi_idx in 0..succ_phi_count {
-                let (origin, phi_result) =
+                let (phi_result, phi_group) =
                     match self.function.block(succ_idx).and_then(|b| b.phi(phi_idx)) {
-                        Some(phi) => (Some(phi.origin()), phi.result()),
+                        Some(phi) => {
+                            let mut group = self.function.rename_group(phi.result());
+                            // If the phi result hasn't been renamed yet (still a
+                            // placeholder from phi placement), determine the group
+                            // from the phi's origin — same fallback as Step 1.
+                            if group == u32::MAX {
+                                group = match phi.origin() {
+                                    VariableOrigin::Argument(idx) => self.arg_group(idx),
+                                    VariableOrigin::Local(idx) => self.local_group(idx),
+                                    VariableOrigin::Phi => u32::MAX,
+                                };
+                            }
+                            (phi.result(), group)
+                        }
                         None => continue,
                     };
 
-                let Some(origin) = origin else { continue };
-
-                let reaching_def = match origin {
-                    VariableOrigin::Stack(slot) => self.resolve_stack_phi_operand(
-                        slot,
+                let reaching_def = if let Some(slot) = self.stack_slot_from_group(phi_group) {
+                    #[allow(clippy::cast_possible_truncation)]
+                    self.resolve_stack_phi_operand(
+                        slot as u32,
                         phi_result,
                         exit_stack_enhanced.as_ref(),
                         rename_map,
-                    ),
-                    VariableOrigin::Argument(_) | VariableOrigin::Local(_) => self
-                        .current_def(origin)
-                        .unwrap_or_else(|| self.create_undefined_var(origin)),
-                    VariableOrigin::Phi => self.create_undefined_var(origin),
+                    )
+                } else if phi_group != u32::MAX {
+                    let origin = self.origin_for_group(phi_group);
+                    self.current_def(phi_group)
+                        .unwrap_or_else(|| self.create_undefined_var(origin))
+                } else {
+                    self.create_undefined_var(VariableOrigin::Phi)
                 };
 
                 if let Some(block) = self.function.block_mut(succ_idx) {
@@ -2152,32 +2540,18 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             }
         }
 
-        // Step 4: Recursively process dominated children
-        let children: Vec<_> = dom_tree
-            .children(NodeId::new(block_idx))
-            .into_iter()
-            .collect();
-        for child in children {
-            self.rename_block(child.index(), dom_tree, rename_map)?;
-        }
-
-        // Step 5: Pop pushed definitions from stacks
-        for (origin, count) in pushed_counts {
-            if let Some(stack) = self.version_stacks.get_mut(&origin) {
-                for _ in 0..count {
-                    stack.pop();
-                }
-            }
-        }
-
-        Ok(())
+        Ok(pushed_counts)
     }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assembly::{decode_blocks, InstructionAssembler};
+
+    use crate::{
+        assembly::{decode_blocks, InstructionAssembler},
+        test::TestTypeProvider,
+    };
 
     /// Helper to build a CFG from assembled bytecode.
     fn build_cfg(assembler: InstructionAssembler) -> ControlFlowGraph<'static> {
@@ -2201,7 +2575,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 2, 0, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 2, 0, &TestTypeProvider::new(2, 0))
+            .expect("SSA construction failed");
 
         // Should have 1 block
         assert_eq!(ssa.block_count(), 1);
@@ -2224,7 +2599,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1))
+            .expect("SSA construction failed");
 
         // Should have 1 block
         assert_eq!(ssa.block_count(), 1);
@@ -2254,13 +2630,14 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))
+            .expect("SSA construction failed");
 
         // Should have 3 blocks: entry, then, else
         assert_eq!(ssa.block_count(), 3);
 
         // No phi nodes should be needed (no merge point)
-        assert_eq!(ssa.total_phi_count(), 0);
+        assert_eq!(ssa.phi_count(), 0);
     }
 
     #[test]
@@ -2291,14 +2668,15 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1))
+            .expect("SSA construction failed");
 
         // Should have 4 blocks: entry, then, else, merge
         assert_eq!(ssa.block_count(), 4);
 
         // Should have a phi node in the merge block
         // (local0 is defined in both then and else branches)
-        assert!(ssa.total_phi_count() > 0);
+        assert!(ssa.phi_count() > 0);
     }
 
     #[test]
@@ -2335,7 +2713,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1))
+            .expect("SSA construction failed");
 
         // Should have multiple blocks
         assert!(ssa.block_count() >= 2);
@@ -2352,7 +2731,7 @@ mod tests {
         asm.ret().unwrap();
 
         let cfg = build_cfg(asm);
-        let result = SsaConverter::build(&cfg, 0, 0, None);
+        let result = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0));
         assert!(result.is_ok());
     }
 
@@ -2379,7 +2758,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 1, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1))
+            .expect("SSA construction failed");
 
         // Collect all versions of local0
         let local0_vars: Vec<_> = ssa.variables_from_local(0).collect();
@@ -2435,14 +2815,12 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1))
+            .expect("SSA construction failed");
 
         // Find the merge block (block 3 in 0-indexed: entry=0, then=1, else=2, merge=3)
         // There should be a phi node for local0 in the merge block
-        assert!(
-            ssa.total_phi_count() > 0,
-            "Expected phi nodes in merge block"
-        );
+        assert!(ssa.phi_count() > 0, "Expected phi nodes in merge block");
 
         // Get all phi nodes
         let phi_nodes: Vec<_> = ssa.all_phi_nodes().collect();
@@ -2511,11 +2889,12 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 1, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1))
+            .expect("SSA construction failed");
 
         // Loop header should have a phi node for local0 (merges initial value and loop value)
         assert!(
-            ssa.total_phi_count() > 0,
+            ssa.phi_count() > 0,
             "Expected phi node(s) for loop variable"
         );
 
@@ -2575,7 +2954,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 2, 1, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 2, 1, &TestTypeProvider::new(2, 1))
+            .expect("SSA construction failed");
 
         // All variable IDs should be unique
         let mut ids: Vec<_> = ssa.variables().iter().map(|v| v.id().index()).collect();
@@ -2607,7 +2987,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 3, 0, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 3, 0, &TestTypeProvider::new(3, 0))
+            .expect("SSA construction failed");
 
         // Check that we have argument variables
         let arg_vars: Vec<_> = ssa.argument_variables().collect();
@@ -2651,7 +3032,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))
+            .expect("SSA construction failed");
 
         // Should succeed without error (this was failing before the stack depth fix)
         assert!(ssa.block_count() >= 2);
@@ -2706,13 +3088,11 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 2, 1, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 2, 1, &TestTypeProvider::new(2, 1))
+            .expect("SSA construction failed");
 
         // Should have phi nodes at merge points
-        assert!(
-            ssa.total_phi_count() >= 1,
-            "Expected phi nodes at merge points"
-        );
+        assert!(ssa.phi_count() >= 1, "Expected phi nodes at merge points");
 
         // Multiple versions of local0 should exist
         let local0_vars: Vec<_> = ssa.variables_from_local(0).collect();
@@ -2742,7 +3122,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))
+            .expect("SSA construction failed");
 
         // Should have multiple versions of arg0
         let arg0_vars: Vec<_> = ssa.variables_from_argument(0).collect();
@@ -2785,7 +3166,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 1, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 1, 1, &TestTypeProvider::new(1, 1))
+            .expect("SSA construction failed");
 
         // For each phi node, verify all operand values reference valid variables
         let var_ids: std::collections::HashSet<_> =
@@ -2816,7 +3198,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 1, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 0, 1, &TestTypeProvider::new(0, 1))
+            .expect("SSA construction failed");
 
         // Find the non-initial version of local0 (the one from stloc)
         let local0_defs: Vec<_> = ssa
@@ -2872,7 +3255,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))
+            .expect("SSA construction failed");
 
         // Find the merge block (should be the last block)
         let merge_block_idx = ssa.block_count() - 1;
@@ -2948,7 +3332,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0))
+            .expect("SSA construction failed");
 
         // The dispatcher block should use the constant from block 0 in rem.un
         // Find the rem.un instruction
@@ -3015,7 +3400,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0))
+            .expect("SSA construction failed");
 
         // Find the add instruction and check its operands
         let mut add_found = false;
@@ -3071,7 +3457,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 1, 0, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 1, 0, &TestTypeProvider::new(1, 0))
+            .expect("SSA construction failed");
 
         // Find the switch instruction
         let mut switch_found = false;
@@ -3162,7 +3549,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0))
+            .expect("SSA construction failed");
 
         // Verify ALL instruction operands are in the variable table
         // This catches any case where simulation variables aren't properly renamed
@@ -3279,7 +3667,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0))
+            .expect("SSA construction failed");
 
         // Collect all variables used in the SSA
         let mut all_uses = std::collections::HashSet::new();
@@ -3355,7 +3744,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 0, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 0, 0, &TestTypeProvider::new(0, 0))
+            .expect("SSA construction failed");
 
         // Find the pop instruction and verify its operand is registered
         let mut pop_found = false;
@@ -3435,7 +3825,8 @@ mod tests {
             .unwrap();
 
         let cfg = build_cfg(asm);
-        let ssa = SsaConverter::build(&cfg, 0, 3, None).expect("SSA construction failed");
+        let ssa = SsaConverter::build(&cfg, 0, 3, &TestTypeProvider::new(0, 3))
+            .expect("SSA construction failed");
 
         // Verify ALL uses are registered
         let mut unregistered = vec![];

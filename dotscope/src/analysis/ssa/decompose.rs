@@ -724,16 +724,41 @@ fn decompose_standard_instruction(
         // =====================================================================
         // Load/Store arguments and locals
         // =====================================================================
-        // ldarg and ldloc don't define new variables - they just read existing
-        // argument/local variables. The actual variable is tracked by the stack
-        // simulator, so we just emit Nop here.
-        0x02..=0x05 | 0x0E => {
-            // ldarg.0-3, ldarg.s
-            Some(SsaOp::Nop)
+        // ldarg and ldloc produce a LoadArg/LoadLocal op with the new stack
+        // variable allocated by the simulator as dest. This makes them visible
+        // to SSA analysis and enables correct data flow through rebuild_ssa.
+        0x02 => def.map(|dest| SsaOp::LoadArg { dest, arg_index: 0 }), // ldarg.0
+        0x03 => def.map(|dest| SsaOp::LoadArg { dest, arg_index: 1 }), // ldarg.1
+        0x04 => def.map(|dest| SsaOp::LoadArg { dest, arg_index: 2 }), // ldarg.2
+        0x05 => def.map(|dest| SsaOp::LoadArg { dest, arg_index: 3 }), // ldarg.3
+        0x0E => {
+            // ldarg.s
+            def.and_then(|dest| {
+                extract_u16(&instr.operand).map(|arg_index| SsaOp::LoadArg { dest, arg_index })
+            })
         }
-        0x06..=0x09 | 0x11 => {
-            // ldloc.0-3, ldloc.s
-            Some(SsaOp::Nop)
+        0x06 => def.map(|dest| SsaOp::LoadLocal {
+            dest,
+            local_index: 0,
+        }), // ldloc.0
+        0x07 => def.map(|dest| SsaOp::LoadLocal {
+            dest,
+            local_index: 1,
+        }), // ldloc.1
+        0x08 => def.map(|dest| SsaOp::LoadLocal {
+            dest,
+            local_index: 2,
+        }), // ldloc.2
+        0x09 => def.map(|dest| SsaOp::LoadLocal {
+            dest,
+            local_index: 3,
+        }), // ldloc.3
+        0x11 => {
+            // ldloc.s
+            def.and_then(|dest| {
+                extract_u16(&instr.operand)
+                    .map(|local_index| SsaOp::LoadLocal { dest, local_index })
+            })
         }
         0x0A..=0x0D | 0x13 => {
             // stloc.0-3, stloc.s
@@ -1225,8 +1250,10 @@ fn decompose_fe_instruction(
 
         // Argument/Local long forms
         0x09 => {
-            // ldarg (long form) - no definition, just reads existing arg variable
-            Some(SsaOp::Nop)
+            // ldarg (long form)
+            def.and_then(|dest| {
+                extract_u16(&instr.operand).map(|arg_index| SsaOp::LoadArg { dest, arg_index })
+            })
         }
         0x0A => {
             // ldarga
@@ -1242,8 +1269,11 @@ fn decompose_fe_instruction(
             }
         }
         0x0C => {
-            // ldloc (long form) - no definition, just reads existing local variable
-            Some(SsaOp::Nop)
+            // ldloc (long form)
+            def.and_then(|dest| {
+                extract_u16(&instr.operand)
+                    .map(|local_index| SsaOp::LoadLocal { dest, local_index })
+            })
         }
         0x0D => {
             // ldloca
@@ -1637,9 +1667,9 @@ mod tests {
     #[test]
     fn test_decompose_add() {
         let instr = make_instruction(0x58, 0, "add", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1658,7 +1688,7 @@ mod tests {
     #[test]
     fn test_decompose_ldc_i4_0() {
         let instr = make_instruction(0x16, 0, "ldc.i4.0", Operand::None, 0, 1);
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let uses = vec![];
         let def = Some(v0);
 
@@ -1683,7 +1713,7 @@ mod tests {
             0,
             1,
         );
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let uses = vec![];
         let def = Some(v0);
 
@@ -1701,7 +1731,7 @@ mod tests {
     #[test]
     fn test_decompose_ret_with_value() {
         let instr = make_instruction(0x2A, 0, "ret", Operand::None, 1, 0);
-        let v = SsaVarId::new();
+        let v = SsaVarId::from_index(0);
         let uses = vec![v];
         let def = None;
 
@@ -1734,9 +1764,9 @@ mod tests {
     #[test]
     fn test_decompose_ceq() {
         let instr = make_instruction(0x01, 0xFE, "ceq", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1765,8 +1795,8 @@ mod tests {
     #[test]
     fn test_decompose_conv_i4() {
         let instr = make_instruction(0x69, 0, "conv.i4", Operand::None, 1, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         let uses = vec![v0];
         let def = Some(v1);
 
@@ -1793,9 +1823,9 @@ mod tests {
     #[test]
     fn test_decompose_sub() {
         let instr = make_instruction(0x59, 0, "sub", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1806,9 +1836,9 @@ mod tests {
     #[test]
     fn test_decompose_mul() {
         let instr = make_instruction(0x5A, 0, "mul", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1819,10 +1849,10 @@ mod tests {
     #[test]
     fn test_decompose_div() {
         let instr = make_instruction(0x5B, 0, "div", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         let uses = vec![v0, v1];
-        let v2 = SsaVarId::new();
+        let v2 = SsaVarId::from_index(2);
         let def = Some(v2);
 
         let op = decompose_instruction(&instr, &uses, def, &[], None);
@@ -1836,9 +1866,9 @@ mod tests {
     #[test]
     fn test_decompose_div_un() {
         let instr = make_instruction(0x5C, 0, "div.un", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1853,9 +1883,9 @@ mod tests {
     #[test]
     fn test_decompose_rem() {
         let instr = make_instruction(0x5D, 0, "rem", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1870,9 +1900,9 @@ mod tests {
     #[test]
     fn test_decompose_rem_un() {
         let instr = make_instruction(0x5E, 0, "rem.un", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1887,8 +1917,8 @@ mod tests {
     #[test]
     fn test_decompose_neg() {
         let instr = make_instruction(0x65, 0, "neg", Operand::None, 1, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         let uses = vec![v0];
         let def = Some(v1);
 
@@ -1899,9 +1929,9 @@ mod tests {
     #[test]
     fn test_decompose_add_ovf() {
         let instr = make_instruction(0xD6, 0, "add.ovf", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1916,9 +1946,9 @@ mod tests {
     #[test]
     fn test_decompose_add_ovf_un() {
         let instr = make_instruction(0xD7, 0, "add.ovf.un", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1933,9 +1963,9 @@ mod tests {
     #[test]
     fn test_decompose_mul_ovf() {
         let instr = make_instruction(0xD8, 0, "mul.ovf", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1950,9 +1980,9 @@ mod tests {
     #[test]
     fn test_decompose_sub_ovf() {
         let instr = make_instruction(0xDA, 0, "sub.ovf", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1967,9 +1997,9 @@ mod tests {
     #[test]
     fn test_decompose_and() {
         let instr = make_instruction(0x5F, 0, "and", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1980,9 +2010,9 @@ mod tests {
     #[test]
     fn test_decompose_or() {
         let instr = make_instruction(0x60, 0, "or", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -1993,9 +2023,9 @@ mod tests {
     #[test]
     fn test_decompose_xor() {
         let instr = make_instruction(0x61, 0, "xor", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -2006,8 +2036,8 @@ mod tests {
     #[test]
     fn test_decompose_not() {
         let instr = make_instruction(0x66, 0, "not", Operand::None, 1, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         let uses = vec![v0];
         let def = Some(v1);
 
@@ -2018,9 +2048,9 @@ mod tests {
     #[test]
     fn test_decompose_shl() {
         let instr = make_instruction(0x62, 0, "shl", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -2031,9 +2061,9 @@ mod tests {
     #[test]
     fn test_decompose_shr() {
         let instr = make_instruction(0x63, 0, "shr", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -2048,9 +2078,9 @@ mod tests {
     #[test]
     fn test_decompose_shr_un() {
         let instr = make_instruction(0x64, 0, "shr.un", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -2065,7 +2095,7 @@ mod tests {
     #[test]
     fn test_decompose_ldnull() {
         let instr = make_instruction(0x14, 0, "ldnull", Operand::None, 0, 1);
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let uses = vec![];
         let def = Some(v0);
 
@@ -2080,7 +2110,7 @@ mod tests {
     #[test]
     fn test_decompose_ldc_i4_m1() {
         let instr = make_instruction(0x15, 0, "ldc.i4.m1", Operand::None, 0, 1);
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let uses = vec![];
         let def = Some(v0);
 
@@ -2106,7 +2136,7 @@ mod tests {
             (0x1E, 8),
         ] {
             let instr = make_instruction(opcode, 0, "ldc.i4.N", Operand::None, 0, 1);
-            let v0 = SsaVarId::new();
+            let v0 = SsaVarId::from_index(0);
             let op = decompose_instruction(&instr, &[], Some(v0), &[], None);
             if let Ok(SsaOp::Const { value, .. }) = op {
                 assert_eq!(value, ConstValue::I32(expected_value));
@@ -2126,7 +2156,7 @@ mod tests {
             0,
             1,
         );
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let op = decompose_instruction(&instr, &[], Some(v0), &[], None);
         if let Ok(SsaOp::Const { value, .. }) = op {
             assert_eq!(value, ConstValue::I32(0x12345678));
@@ -2145,7 +2175,7 @@ mod tests {
             0,
             1,
         );
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let op = decompose_instruction(&instr, &[], Some(v0), &[], None);
         if let Ok(SsaOp::Const { value, .. }) = op {
             assert_eq!(value, ConstValue::I64(0x123456789ABCDEF0));
@@ -2164,7 +2194,7 @@ mod tests {
             0,
             1,
         );
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let op = decompose_instruction(&instr, &[], Some(v0), &[], None);
         if let Ok(SsaOp::Const { value, .. }) = op {
             assert_eq!(value, ConstValue::F32(std::f32::consts::PI));
@@ -2183,7 +2213,7 @@ mod tests {
             0,
             1,
         );
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let op = decompose_instruction(&instr, &[], Some(v0), &[], None);
         if let Ok(SsaOp::Const { value, .. }) = op {
             assert_eq!(value, ConstValue::F64(std::f64::consts::E));
@@ -2195,8 +2225,8 @@ mod tests {
     #[test]
     fn test_decompose_dup() {
         let instr = make_instruction(0x25, 0, "dup", Operand::None, 1, 2);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         let uses = vec![v0];
         let def = Some(v1);
 
@@ -2212,7 +2242,7 @@ mod tests {
     #[test]
     fn test_decompose_pop() {
         let instr = make_instruction(0x26, 0, "pop", Operand::None, 1, 0);
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let uses = vec![v0];
         let def = None;
 
@@ -2253,7 +2283,7 @@ mod tests {
     #[test]
     fn test_decompose_brfalse() {
         let instr = make_instruction(0x39, 0, "brfalse", Operand::None, 1, 0);
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let uses = vec![v0];
         let successors = vec![5, 2]; // branch target, fallthrough
 
@@ -2275,7 +2305,7 @@ mod tests {
     #[test]
     fn test_decompose_brtrue() {
         let instr = make_instruction(0x3A, 0, "brtrue", Operand::None, 1, 0);
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let uses = vec![v0];
         let successors = vec![5, 2]; // branch target, fallthrough
 
@@ -2297,7 +2327,7 @@ mod tests {
     #[test]
     fn test_decompose_switch() {
         let instr = make_instruction(0x45, 0, "switch", Operand::None, 1, 0);
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let uses = vec![v0];
         let successors = vec![10, 20, 30, 5]; // case targets, then default
 
@@ -2319,9 +2349,9 @@ mod tests {
     #[test]
     fn test_decompose_cgt() {
         let instr = make_instruction(0x02, 0xFE, "cgt", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -2336,9 +2366,9 @@ mod tests {
     #[test]
     fn test_decompose_cgt_un() {
         let instr = make_instruction(0x03, 0xFE, "cgt.un", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -2353,9 +2383,9 @@ mod tests {
     #[test]
     fn test_decompose_clt() {
         let instr = make_instruction(0x04, 0xFE, "clt", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -2370,9 +2400,9 @@ mod tests {
     #[test]
     fn test_decompose_clt_un() {
         let instr = make_instruction(0x05, 0xFE, "clt.un", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses = vec![v0, v1];
         let def = Some(v2);
 
@@ -2403,8 +2433,8 @@ mod tests {
 
         for (opcode, expected_type, expected_ovf, expected_unsigned) in test_cases {
             let instr = make_instruction(opcode, 0, "conv.*", Operand::None, 1, 1);
-            let v0 = SsaVarId::new();
-            let v1 = SsaVarId::new();
+            let v0 = SsaVarId::from_index(0);
+            let v1 = SsaVarId::from_index(1);
             let op = decompose_instruction(&instr, &[v0], Some(v1), &[], None);
 
             if let Ok(SsaOp::Conv {
@@ -2449,8 +2479,8 @@ mod tests {
 
         for (opcode, expected_type, expected_ovf, expected_unsigned) in test_cases {
             let instr = make_instruction(opcode, 0, "conv.ovf.*", Operand::None, 1, 1);
-            let v0 = SsaVarId::new();
-            let v1 = SsaVarId::new();
+            let v0 = SsaVarId::from_index(0);
+            let v1 = SsaVarId::from_index(1);
             let op = decompose_instruction(&instr, &[v0], Some(v1), &[], None);
 
             if let Ok(SsaOp::Conv {
@@ -2481,7 +2511,7 @@ mod tests {
     #[test]
     fn test_decompose_throw() {
         let instr = make_instruction(0x7A, 0, "throw", Operand::None, 1, 0);
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let uses = vec![v0];
 
         let op = decompose_instruction(&instr, &uses, None, &[], None);
@@ -2529,8 +2559,8 @@ mod tests {
     #[test]
     fn test_decompose_localloc() {
         let instr = make_instruction(0x0F, 0xFE, "localloc", Operand::None, 1, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         let uses = vec![v0];
         let def = Some(v1);
 
@@ -2547,8 +2577,8 @@ mod tests {
     fn test_decompose_binary_missing_operands() {
         // Binary op with insufficient operands should return None
         let instr = make_instruction(0x58, 0, "add", Operand::None, 2, 1);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         let uses = vec![v0]; // Only one operand
         let def = Some(v1);
 
@@ -2560,7 +2590,7 @@ mod tests {
     fn test_decompose_unary_missing_operand() {
         // Unary op with no operands should return None
         let instr = make_instruction(0x65, 0, "neg", Operand::None, 1, 1);
-        let v0 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
         let uses = vec![]; // No operand
         let def = Some(v0);
 

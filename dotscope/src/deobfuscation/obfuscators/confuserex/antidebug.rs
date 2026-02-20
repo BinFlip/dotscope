@@ -156,7 +156,7 @@ use std::{
 use crate::{
     analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
     assembly::{opcodes, Operand},
-    compiler::{CompilerContext, EventKind, EventLog, SsaPass},
+    compiler::{CompilerContext, EventKind, EventLog, ModificationScope, SsaPass},
     deobfuscation::{
         detection::{DetectionEvidence, DetectionScore},
         findings::DeobfuscationFindings,
@@ -543,7 +543,7 @@ impl ConfuserExAntiDebugPass {
                         else if Self::is_fail_fast(&method_name) {
                             // For FailFast, we need to replace it with something harmless.
                             // Use a dummy variable if no dest, otherwise use the existing dest.
-                            let dummy_dest = dest.unwrap_or_else(SsaVarId::new);
+                            let dummy_dest = dest.unwrap_or(SsaVarId::PLACEHOLDER);
                             instr.set_op(SsaOp::Const {
                                 dest: dummy_dest,
                                 value: ConstValue::Null,
@@ -586,7 +586,7 @@ impl ConfuserExAntiDebugPass {
                         }
                         // Replace reflection Invoke with null to break reflection-based execution
                         else if Self::is_reflection_invoke(&method_name) {
-                            let dummy_dest = dest.unwrap_or_else(SsaVarId::new);
+                            let dummy_dest = dest.unwrap_or(SsaVarId::PLACEHOLDER);
                             instr.set_op(SsaOp::Const {
                                 dest: dummy_dest,
                                 value: ConstValue::Null,
@@ -607,6 +607,10 @@ impl ConfuserExAntiDebugPass {
 impl SsaPass for ConfuserExAntiDebugPass {
     fn name(&self) -> &'static str {
         "ConfuserExAntiDebug"
+    }
+
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::InstructionsOnly
     }
 
     fn should_run(&self, method_token: Token, _ctx: &CompilerContext) -> bool {

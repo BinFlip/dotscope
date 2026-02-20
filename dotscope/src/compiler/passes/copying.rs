@@ -44,7 +44,11 @@ use std::{collections::HashMap, sync::Arc};
 
 use crate::{
     analysis::{PhiAnalyzer, SsaFunction, SsaType, SsaVarId, VariableOrigin},
-    compiler::{pass::SsaPass, passes::utils::resolve_chain, CompilerContext, EventKind, EventLog},
+    compiler::{
+        pass::{ModificationScope, SsaPass},
+        passes::utils::resolve_chain,
+        CompilerContext, EventKind, EventLog,
+    },
     metadata::token::Token,
     CilObject, Result,
 };
@@ -131,37 +135,30 @@ impl CopyPropagationPass {
         let resolved = Self::resolve_chains(&copies);
 
         // Step 3: Propagate types from Local-origin destinations to their sources
-        // This ensures that when copy propagation replaces uses of a local variable
-        // with its source (e.g., a phi result), the source inherits the local's
-        // original type. This is crucial for preserving type information in the
-        // final generated code.
         Self::propagate_local_types(ssa, &resolved, assembly);
 
-        // Step 4: Apply propagations
-        // Note: replace_uses only affects instructions, not PHI operands. This is the
-        // safe default that avoids creating cross-origin PHI operand references which
-        // can break rebuild_ssa's assumption that each variable flows to at most one
-        // PHI origin.
-        let mut total_replaced = 0;
+        // Step 4: Apply propagations and record events
+        let result = ssa.propagate_copies(&resolved);
 
-        for (dest, src) in &resolved {
-            // Skip identity mappings (can happen with cycles)
-            if dest == src {
-                continue;
-            }
-
-            let replaced = ssa.replace_uses(*dest, *src);
-
-            if replaced > 0 {
+        for dest in result
+            .fully_propagated
+            .iter()
+            .chain(result.partially_propagated.iter())
+        {
+            if let Some(src) = resolved.get(dest) {
                 changes
                     .record(EventKind::CopyPropagated)
                     .method(method_token)
-                    .message(format!("{dest} → {src} ({replaced} uses)"));
-                total_replaced += replaced;
+                    .message(format!("{dest} → {src}"));
             }
         }
 
-        total_replaced
+        // Step 5: Neutralize dead Copy instructions whose dests were fully propagated
+        for dest in &result.fully_propagated {
+            ssa.nop_copy_defining(*dest);
+        }
+
+        result.total_replaced
     }
 
     /// Propagates types from Local-origin destinations to their ultimate sources.
@@ -245,6 +242,10 @@ impl SsaPass for CopyPropagationPass {
         "Propagates copy operations, replacing uses with original sources"
     }
 
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::InstructionsOnly
+    }
+
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
@@ -278,7 +279,7 @@ mod tests {
     use crate::{
         analysis::{
             CallGraph, ConstValue, DefSite, PhiAnalyzer, PhiNode, PhiOperand, SsaBlock,
-            SsaFunction, SsaFunctionBuilder, SsaInstruction, SsaOp, SsaVarId, SsaVariable,
+            SsaFunction, SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId,
             VariableOrigin,
         },
         compiler::CompilerContext,
@@ -295,9 +296,11 @@ mod tests {
 
     #[test]
     fn test_collect_empty_function() {
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.ret());
+            })
+            .unwrap();
         let copies = PhiAnalyzer::new(&ssa).collect_all_copies();
         assert!(copies.is_empty());
     }
@@ -305,17 +308,19 @@ mod tests {
     #[test]
     fn test_collect_single_copy() {
         let (ssa, v0, v1) = {
-            let mut v0_out = SsaVarId::new();
-            let mut v1_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(42);
-                    let v1 = b.copy(v0);
-                    v0_out = v0;
-                    v1_out = v1;
-                    b.ret();
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let mut v1_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(42);
+                        let v1 = b.copy(v0);
+                        v0_out = v0;
+                        v1_out = v1;
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v0_out, v1_out)
         };
 
@@ -327,20 +332,22 @@ mod tests {
     #[test]
     fn test_collect_multiple_copies() {
         let (ssa, v0, v1, v2) = {
-            let mut v0_out = SsaVarId::new();
-            let mut v1_out = SsaVarId::new();
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(42);
-                    let v1 = b.copy(v0);
-                    let v2 = b.copy(v1);
-                    v0_out = v0;
-                    v1_out = v1;
-                    v2_out = v2;
-                    b.ret();
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let mut v1_out = SsaVarId::from_index(1);
+            let mut v2_out = SsaVarId::from_index(2);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(42);
+                        let v1 = b.copy(v0);
+                        let v2 = b.copy(v1);
+                        v0_out = v0;
+                        v1_out = v1;
+                        v2_out = v2;
+                        b.ret();
+                    });
+                })
+                .unwrap();
             (ssa, v0_out, v1_out, v2_out)
         };
 
@@ -353,24 +360,26 @@ mod tests {
     #[test]
     fn test_collect_trivial_phi_all_same() {
         let (ssa, v0, v_phi) = {
-            let mut v0_out = SsaVarId::new();
-            let mut v_phi_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(42);
-                    let cond = b.const_true();
-                    v0_out = v0;
-                    b.branch(cond, 1, 2);
-                });
-                f.block(1, |b| b.jump(3));
-                f.block(2, |b| b.jump(3));
-                f.block(3, |b| {
-                    // phi with all same operands (v0 from both paths)
-                    let phi_result = b.phi(&[(1, v0_out), (2, v0_out)]);
-                    v_phi_out = phi_result;
-                    b.ret_val(phi_result);
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let mut v_phi_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(42);
+                        let cond = b.const_true();
+                        v0_out = v0;
+                        b.branch(cond, 1, 2);
+                    });
+                    f.block(1, |b| b.jump(3));
+                    f.block(2, |b| b.jump(3));
+                    f.block(3, |b| {
+                        // phi with all same operands (v0 from both paths)
+                        let phi_result = b.phi(&[(1, v0_out), (2, v0_out)]);
+                        v_phi_out = phi_result;
+                        b.ret_val(phi_result);
+                    });
+                })
+                .unwrap();
             (ssa, v0_out, v_phi_out)
         };
 
@@ -385,14 +394,19 @@ mod tests {
         // We need to manually construct this since the builder can't create self-references
         let mut ssa = SsaFunction::new(0, 0);
 
-        // Create variables (auto-allocates IDs)
-        let v0_var = SsaVariable::new(VariableOrigin::Stack(0), 0, DefSite::instruction(0, 0));
-        let v0 = v0_var.id();
-        ssa.add_variable(v0_var);
-
-        let phi_variable = SsaVariable::new(VariableOrigin::Stack(1), 0, DefSite::phi(1));
-        let phi_var = phi_variable.id();
-        ssa.add_variable(phi_variable);
+        // Create variables
+        let v0 = ssa.create_variable(
+            VariableOrigin::Local(0),
+            0,
+            DefSite::instruction(0, 0),
+            SsaType::Unknown,
+        );
+        let phi_var = ssa.create_variable(
+            VariableOrigin::Local(1),
+            0,
+            DefSite::phi(1),
+            SsaType::Unknown,
+        );
 
         // Block 0: entry, defines v0, jumps to block 1
         let mut block0 = SsaBlock::new(0);
@@ -406,7 +420,7 @@ mod tests {
         // Block 1: loop header with self-referential phi
         // phi_var = phi(v0 from block 0, phi_var from block 1)
         let mut block1 = SsaBlock::new(1);
-        let mut phi = PhiNode::new(phi_var, VariableOrigin::Stack(1));
+        let mut phi = PhiNode::new(phi_var, VariableOrigin::Local(1));
         phi.add_operand(PhiOperand::new(v0, 0)); // from block 0
         phi.add_operand(PhiOperand::new(phi_var, 1)); // from block 1 (self-reference)
         block1.add_phi(phi);
@@ -424,29 +438,31 @@ mod tests {
     #[test]
     fn test_collect_non_trivial_phi() {
         let ssa = {
-            let mut v0_out = SsaVarId::new();
-            let mut v1_out = SsaVarId::new();
-            SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let cond = b.const_true();
-                    b.branch(cond, 1, 2);
-                });
-                f.block(1, |b| {
-                    let v0 = b.const_i32(10);
-                    v0_out = v0;
-                    b.jump(3);
-                });
-                f.block(2, |b| {
-                    let v1 = b.const_i32(20);
-                    v1_out = v1;
-                    b.jump(3);
-                });
-                f.block(3, |b| {
-                    // phi with different operands
-                    let phi_result = b.phi(&[(1, v0_out), (2, v1_out)]);
-                    b.ret_val(phi_result);
-                });
-            })
+            let mut v0_out = SsaVarId::from_index(0);
+            let mut v1_out = SsaVarId::from_index(1);
+            SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let cond = b.const_true();
+                        b.branch(cond, 1, 2);
+                    });
+                    f.block(1, |b| {
+                        let v0 = b.const_i32(10);
+                        v0_out = v0;
+                        b.jump(3);
+                    });
+                    f.block(2, |b| {
+                        let v1 = b.const_i32(20);
+                        v1_out = v1;
+                        b.jump(3);
+                    });
+                    f.block(3, |b| {
+                        // phi with different operands
+                        let phi_result = b.phi(&[(1, v0_out), (2, v1_out)]);
+                        b.ret_val(phi_result);
+                    });
+                })
+                .unwrap()
         };
 
         let copies = PhiAnalyzer::new(&ssa).collect_all_copies();
@@ -456,9 +472,9 @@ mod tests {
 
     #[test]
     fn test_resolve_simple_chain() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let mut copies = HashMap::new();
         // v2 → v1 → v0
         copies.insert(v2, v1);
@@ -473,11 +489,11 @@ mod tests {
 
     #[test]
     fn test_resolve_long_chain() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let v3 = SsaVarId::new();
-        let v4 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
+        let v3 = SsaVarId::from_index(3);
+        let v4 = SsaVarId::from_index(4);
         let mut copies = HashMap::new();
         // v4 → v3 → v2 → v1 → v0
         copies.insert(v4, v3);
@@ -496,8 +512,8 @@ mod tests {
 
     #[test]
     fn test_resolve_cycle() {
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
+        let v2 = SsaVarId::from_index(1);
         let mut copies = HashMap::new();
         // v1 → v2 → v1 (cycle)
         copies.insert(v1, v2);
@@ -512,12 +528,12 @@ mod tests {
 
     #[test]
     fn test_resolve_multiple_independent_chains() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let v3 = SsaVarId::new();
-        let v4 = SsaVarId::new();
-        let v5 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
+        let v3 = SsaVarId::from_index(3);
+        let v4 = SsaVarId::from_index(4);
+        let v5 = SsaVarId::from_index(5);
         let mut copies = HashMap::new();
         // Chain 1: v2 → v1 → v0
         copies.insert(v2, v1);
@@ -541,8 +557,8 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let result = SsaVarId::new();
-        let v0 = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let v0 = SsaVarId::from_index(1);
         let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v0, 0));
 
@@ -555,8 +571,8 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let result = SsaVarId::new();
-        let v0 = SsaVarId::new();
+        let result = SsaVarId::from_index(0);
+        let v0 = SsaVarId::from_index(1);
         let mut phi = PhiNode::new(result, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v0, 0));
         phi.add_operand(PhiOperand::new(v0, 1));
@@ -571,8 +587,8 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
         let mut phi = PhiNode::new(v1, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v0, 0)); // Non-self
         phi.add_operand(PhiOperand::new(v1, 1)); // Self-reference
@@ -587,9 +603,9 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v5 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v5 = SsaVarId::from_index(2);
         let mut phi = PhiNode::new(v5, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v0, 0));
         phi.add_operand(PhiOperand::new(v1, 1));
@@ -603,7 +619,7 @@ mod tests {
         let ssa = SsaFunction::new(0, 0);
         let analyzer = PhiAnalyzer::new(&ssa);
 
-        let v1 = SsaVarId::new();
+        let v1 = SsaVarId::from_index(0);
         let mut phi = PhiNode::new(v1, VariableOrigin::Local(0));
         phi.add_operand(PhiOperand::new(v1, 0)); // Self
         phi.add_operand(PhiOperand::new(v1, 1)); // Self
@@ -616,18 +632,20 @@ mod tests {
     #[test]
     fn test_propagate_single_copy() {
         let (mut ssa, v0, _v1) = {
-            let mut v0_out = SsaVarId::new();
-            let mut v1_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(42);
-                    let v1 = b.copy(v0);
-                    let _v2 = b.add(v1, v1);
-                    v0_out = v0;
-                    v1_out = v1;
-                    b.ret_val(v1);
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let mut v1_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(42);
+                        let v1 = b.copy(v0);
+                        let _v2 = b.add(v1, v1);
+                        v0_out = v0;
+                        v1_out = v1;
+                        b.ret_val(v1);
+                    });
+                })
+                .unwrap();
             (ssa, v0_out, v1_out)
         };
 
@@ -663,17 +681,19 @@ mod tests {
     #[test]
     fn test_propagate_copy_chain() {
         let (mut ssa, v0) = {
-            let mut v0_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(42);
-                    let v1 = b.copy(v0);
-                    let v2 = b.copy(v1);
-                    let v3 = b.copy(v2);
-                    v0_out = v0;
-                    b.ret_val(v3);
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(42);
+                        let v1 = b.copy(v0);
+                        let v2 = b.copy(v1);
+                        let v3 = b.copy(v2);
+                        v0_out = v0;
+                        b.ret_val(v3);
+                    });
+                })
+                .unwrap();
             (ssa, v0_out)
         };
 
@@ -696,26 +716,28 @@ mod tests {
     #[test]
     fn test_propagate_trivial_phi() {
         let (mut ssa, v0) = {
-            let mut v0_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                // Block 0: entry
-                f.block(0, |b| {
-                    v0_out = b.const_i32(42);
-                    let cond = b.const_true();
-                    b.branch(cond, 1, 2);
-                });
-                // Block 1
-                f.block(1, |b| b.jump(3));
-                // Block 2
-                f.block(2, |b| b.jump(3));
-                // Block 3: trivial phi (both operands are v0)
-                f.block(3, |b| {
-                    let phi_result = b.phi(&[(1, v0_out), (2, v0_out)]);
-                    // Use phi result
-                    let _ = b.add(phi_result, phi_result);
-                    b.ret_val(phi_result);
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    // Block 0: entry
+                    f.block(0, |b| {
+                        v0_out = b.const_i32(42);
+                        let cond = b.const_true();
+                        b.branch(cond, 1, 2);
+                    });
+                    // Block 1
+                    f.block(1, |b| b.jump(3));
+                    // Block 2
+                    f.block(2, |b| b.jump(3));
+                    // Block 3: trivial phi (both operands are v0)
+                    f.block(3, |b| {
+                        let phi_result = b.phi(&[(1, v0_out), (2, v0_out)]);
+                        // Use phi result
+                        let _ = b.add(phi_result, phi_result);
+                        b.ret_val(phi_result);
+                    });
+                })
+                .unwrap();
             (ssa, v0_out)
         };
 
@@ -739,12 +761,14 @@ mod tests {
 
     #[test]
     fn test_no_propagation_needed() {
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let v0 = b.const_i32(42);
-                b.ret_val(v0); // no copies
-            });
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let v0 = b.const_i32(42);
+                    b.ret_val(v0); // no copies
+                });
+            })
+            .unwrap();
 
         // Run pass
         let pass = CopyPropagationPass::new();
@@ -761,21 +785,23 @@ mod tests {
     fn test_iterative_convergence() {
         // Test that the pass converges even with complex copy patterns
         let (mut ssa, v0) = {
-            let mut v0_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(42);
-                    v0_out = v0;
-                    // Create a chain: v1 = v0, v2 = v1, v3 = v2
-                    let v1 = b.copy(v0);
-                    let v2 = b.copy(v1);
-                    let v3 = b.copy(v2);
-                    // Use all copies
-                    let v10 = b.add(v1, v2);
-                    let v11 = b.add(v10, v3);
-                    b.ret_val(v11);
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(42);
+                        v0_out = v0;
+                        // Create a chain: v1 = v0, v2 = v1, v3 = v2
+                        let v1 = b.copy(v0);
+                        let v2 = b.copy(v1);
+                        let v3 = b.copy(v2);
+                        // Use all copies
+                        let v10 = b.add(v1, v2);
+                        let v11 = b.add(v10, v3);
+                        b.ret_val(v11);
+                    });
+                })
+                .unwrap();
             (ssa, v0_out)
         };
 
@@ -809,17 +835,19 @@ mod tests {
     fn test_copy_not_propagated_to_definition() {
         // Ensure we don't replace the copy's own definition
         let (mut ssa, v0, v1) = {
-            let mut v0_out = SsaVarId::new();
-            let mut v1_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                f.block(0, |b| {
-                    let v0 = b.const_i32(42);
-                    v0_out = v0;
-                    let v1 = b.copy(v0);
-                    v1_out = v1;
-                    b.ret_val(v1);
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let mut v1_out = SsaVarId::from_index(1);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(42);
+                        v0_out = v0;
+                        let v1 = b.copy(v0);
+                        v1_out = v1;
+                        b.ret_val(v1);
+                    });
+                })
+                .unwrap();
             (ssa, v0_out, v1_out)
         };
 
@@ -846,32 +874,34 @@ mod tests {
         // references that break rebuild_ssa's assumption that each variable
         // flows to at most one PHI origin.
         let (mut ssa, _v0, v1, v2) = {
-            let mut v0_out = SsaVarId::new();
-            let mut v1_out = SsaVarId::new();
-            let mut v2_out = SsaVarId::new();
-            let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-                // Block 0: entry
-                f.block(0, |b| {
-                    let v0 = b.const_i32(42);
-                    v0_out = v0;
-                    let v1 = b.copy(v0);
-                    v1_out = v1;
-                    let cond = b.const_true();
-                    b.branch(cond, 1, 2);
-                });
-                // Block 1: defines v2
-                f.block(1, |b| {
-                    v2_out = b.const_i32(100);
-                    b.jump(3);
-                });
-                // Block 2: just jumps
-                f.block(2, |b| b.jump(3));
-                // Block 3: phi using v1 (copy of v0) and v2
-                f.block(3, |b| {
-                    let phi_result = b.phi(&[(1, v2_out), (2, v1_out)]);
-                    b.ret_val(phi_result);
-                });
-            });
+            let mut v0_out = SsaVarId::from_index(0);
+            let mut v1_out = SsaVarId::from_index(1);
+            let mut v2_out = SsaVarId::from_index(2);
+            let ssa = SsaFunctionBuilder::new(0, 0)
+                .build_with(|f| {
+                    // Block 0: entry
+                    f.block(0, |b| {
+                        let v0 = b.const_i32(42);
+                        v0_out = v0;
+                        let v1 = b.copy(v0);
+                        v1_out = v1;
+                        let cond = b.const_true();
+                        b.branch(cond, 1, 2);
+                    });
+                    // Block 1: defines v2
+                    f.block(1, |b| {
+                        v2_out = b.const_i32(100);
+                        b.jump(3);
+                    });
+                    // Block 2: just jumps
+                    f.block(2, |b| b.jump(3));
+                    // Block 3: phi using v1 (copy of v0) and v2
+                    f.block(3, |b| {
+                        let phi_result = b.phi(&[(1, v2_out), (2, v1_out)]);
+                        b.ret_val(phi_result);
+                    });
+                })
+                .unwrap();
             (ssa, v0_out, v1_out, v2_out)
         };
 

@@ -183,6 +183,12 @@ impl ConstValue {
         }
     }
 
+    /// Returns `true` if this value is a string (`String` or `DecryptedString`).
+    #[must_use]
+    pub const fn is_string_like(&self) -> bool {
+        matches!(self, Self::String(_) | Self::DecryptedString(_))
+    }
+
     /// Returns the constant as an i32 if applicable.
     #[must_use]
     pub const fn as_i32(&self) -> Option<i32> {
@@ -1637,6 +1643,7 @@ impl fmt::Display for ComputedOp {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::metadata::typesystem::PointerSize;
 
     #[test]
@@ -1709,8 +1716,8 @@ mod tests {
 
     #[test]
     fn test_computed_value_normalization() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
 
         // add(v1, v0) should normalize to add(v0, v1)
         let cv1 = ComputedValue::binary(ComputedOp::Add, v1, v0).normalized();

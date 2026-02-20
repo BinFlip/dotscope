@@ -967,6 +967,8 @@ pub fn analyze_alias(loc1: &MemoryLocation, loc2: &MemoryLocation) -> AliasResul
 mod tests {
     use super::*;
 
+    use crate::analysis::ssa::{FieldRef, SsaVarId};
+
     #[test]
     fn test_memory_location_static_field_alias() {
         let field1 = FieldRef::new(crate::metadata::token::Token::new(0x04000001));
@@ -984,8 +986,8 @@ mod tests {
     #[test]
     fn test_memory_location_instance_field_alias() {
         let field = FieldRef::new(crate::metadata::token::Token::new(0x04000001));
-        let obj1 = SsaVarId::new();
-        let obj2 = SsaVarId::new();
+        let obj1 = SsaVarId::from_index(0);
+        let obj2 = SsaVarId::from_index(1);
 
         let loc1 = MemoryLocation::InstanceField(obj1, field);
         let loc2 = MemoryLocation::InstanceField(obj1, field);
@@ -1011,7 +1013,7 @@ mod tests {
 
     #[test]
     fn test_memory_location_array_element_alias() {
-        let arr = SsaVarId::new();
+        let arr = SsaVarId::from_index(0);
         let idx1 = ArrayIndex::Constant(5);
         let idx2 = ArrayIndex::Constant(5);
         let idx3 = ArrayIndex::Constant(10);
@@ -1042,8 +1044,8 @@ mod tests {
 
         assert_eq!(analyze_alias(&loc1, &loc2), AliasResult::MustAlias);
 
-        let arr1 = SsaVarId::new();
-        let arr2 = SsaVarId::new();
+        let arr1 = SsaVarId::from_index(0);
+        let arr2 = SsaVarId::from_index(1);
         let loc3 = MemoryLocation::ArrayElement(arr1, ArrayIndex::Constant(0));
         let loc4 = MemoryLocation::ArrayElement(arr2, ArrayIndex::Constant(0));
 
@@ -1055,7 +1057,7 @@ mod tests {
         let mut state = MemoryState::new();
         let field = FieldRef::new(crate::metadata::token::Token::new(0x04000001));
         let loc = MemoryLocation::StaticField(field);
-        let value = SsaVarId::new();
+        let value = SsaVarId::from_index(0);
 
         state.store(loc.clone(), value, 1);
         assert_eq!(state.load(&loc), Some(value));
@@ -1086,8 +1088,8 @@ mod tests {
     fn test_memory_op() {
         let field = FieldRef::new(crate::metadata::token::Token::new(0x04000001));
         let loc = MemoryLocation::StaticField(field);
-        let dest = SsaVarId::new();
-        let value = SsaVarId::new();
+        let dest = SsaVarId::from_index(0);
+        let value = SsaVarId::from_index(1);
 
         let load = MemoryOp::Load {
             location: loc.clone(),

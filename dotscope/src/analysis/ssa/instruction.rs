@@ -28,7 +28,7 @@
 use std::fmt;
 
 use crate::{
-    analysis::ssa::{SsaOp, SsaVarId},
+    analysis::ssa::{SsaOp, SsaType, SsaVarId},
     assembly::{FlowType, Instruction, InstructionCategory, Operand, StackBehavior},
 };
 
@@ -45,9 +45,9 @@ use crate::{
 /// use dotscope::assembly::Instruction;
 ///
 /// // An add instruction: result = left + right
-/// let left = SsaVarId::new();
-/// let right = SsaVarId::new();
-/// let result = SsaVarId::new();
+/// let left = SsaVarId::from_index(0);
+/// let right = SsaVarId::from_index(1);
+/// let result = SsaVarId::from_index(2);
 /// let instr = SsaInstruction::new(
 ///     cil_instr,
 ///     SsaOp::Add { dest: result, left, right },
@@ -63,6 +63,15 @@ pub struct SsaInstruction {
     /// This is the authoritative representation used by analysis passes. It provides
     /// a clean `result = op(operands)` form where all data dependencies are explicit.
     op: SsaOp,
+
+    /// Resolved result type from the converter's TypeContext.
+    ///
+    /// This captures the precise type information available during initial SSA
+    /// construction (when the full assembly metadata is available). It survives
+    /// through deobfuscation transforms and is used by rebuild and codegen to
+    /// recover types that cannot be inferred structurally from the op alone
+    /// (e.g., Call return types, LoadField types, LoadArg/LoadLocal types).
+    result_type: Option<SsaType>,
 }
 
 impl SsaInstruction {
@@ -74,7 +83,11 @@ impl SsaInstruction {
     /// * `op` - The decomposed SSA operation
     #[must_use]
     pub fn new(original: Instruction, op: SsaOp) -> Self {
-        Self { original, op }
+        Self {
+            original,
+            op,
+            result_type: None,
+        }
     }
 
     /// Creates an SSA instruction with only a decomposed operation (no CIL instruction).
@@ -104,6 +117,7 @@ impl SsaInstruction {
         Self {
             original: dummy,
             op,
+            result_type: None,
         }
     }
 
@@ -125,8 +139,30 @@ impl SsaInstruction {
     }
 
     /// Sets the decomposed SSA operation.
+    ///
+    /// Clears `result_type` because the new op may have a different result type.
+    /// Callers that know the type should call `set_result_type()` afterwards.
     pub fn set_op(&mut self, op: SsaOp) {
         self.op = op;
+        self.result_type = None;
+    }
+
+    /// Returns the resolved result type, if set during SSA construction.
+    #[must_use]
+    pub fn result_type(&self) -> Option<&SsaType> {
+        self.result_type.as_ref()
+    }
+
+    /// Sets the resolved result type.
+    pub fn set_result_type(&mut self, ty: Option<SsaType>) {
+        self.result_type = ty;
+    }
+
+    /// Builder pattern: sets the result type and returns self.
+    #[must_use]
+    pub fn with_result_type(mut self, ty: SsaType) -> Self {
+        self.result_type = Some(ty);
+        self
     }
 
     /// Returns `true` if this instruction is a terminator.
@@ -210,6 +246,11 @@ impl fmt::Display for SsaInstruction {
 mod tests {
     use super::*;
 
+    use crate::{
+        analysis::ssa::{value::ConstValue, SsaOp, SsaVarId},
+        assembly::{FlowType, Instruction, InstructionCategory, Operand, StackBehavior},
+    };
+
     fn make_test_instruction(mnemonic: &'static str, pops: u8, pushes: u8) -> Instruction {
         Instruction {
             rva: 0x1000,
@@ -232,9 +273,9 @@ mod tests {
 
     #[test]
     fn test_ssa_instruction_new() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let cil = make_test_instruction("add", 2, 1);
         let op = SsaOp::Add {
             dest: v2,
@@ -251,9 +292,9 @@ mod tests {
 
     #[test]
     fn test_ssa_instruction_uses() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let cil = make_test_instruction("add", 2, 1);
         let op = SsaOp::Add {
             dest: v2,
@@ -270,9 +311,9 @@ mod tests {
 
     #[test]
     fn test_ssa_instruction_all_variables() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let cil = make_test_instruction("add", 2, 1);
         let op = SsaOp::Add {
             dest: v2,
@@ -290,7 +331,7 @@ mod tests {
 
     #[test]
     fn test_ssa_instruction_all_variables_no_def() {
-        let v = SsaVarId::new();
+        let v = SsaVarId::from_index(0);
         let cil = make_test_instruction("pop", 1, 0);
         let op = SsaOp::Pop { value: v };
         let instr = SsaInstruction::new(cil, op);
@@ -328,7 +369,6 @@ mod tests {
 
     #[test]
     fn test_ssa_instruction_display_const() {
-        use crate::analysis::ssa::ConstValue;
         let v = SsaVarId::from_index(3);
         let cil = make_test_instruction("ldc.i4", 0, 1);
         let op = SsaOp::Const {
@@ -342,9 +382,9 @@ mod tests {
 
     #[test]
     fn test_ssa_instruction_synthetic() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let op = SsaOp::Add {
             dest: v2,
             left: v0,
@@ -359,10 +399,10 @@ mod tests {
 
     #[test]
     fn test_ssa_instruction_set_op() {
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
-        let v3 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
+        let v3 = SsaVarId::from_index(3);
         let cil = make_test_instruction("add", 2, 1);
         let op = SsaOp::Add {
             dest: v2,

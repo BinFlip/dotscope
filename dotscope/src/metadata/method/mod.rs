@@ -1436,7 +1436,7 @@ impl Method {
         let type_context = TypeContext::new(self, assembly);
 
         // Build SSA from CFG with type context (also sets original local types)
-        let mut ssa = SsaConverter::build(&cfg, num_args, num_locals, Some(&type_context)).ok()?;
+        let mut ssa = SsaConverter::build(&cfg, num_args, num_locals, &type_context).ok()?;
 
         // Populate exception handlers from method body
         if let Some(body) = self.body.get() {
@@ -1726,10 +1726,13 @@ impl Method {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assembly::{
-        BasicBlock, FlowType, Instruction, InstructionCategory, Operand, StackBehavior,
+
+    use crate::{
+        assembly::{
+            BasicBlock, FlowType, Instruction, InstructionCategory, Operand, StackBehavior,
+        },
+        test::builders::MethodBuilder,
     };
-    use crate::test::builders::MethodBuilder;
 
     #[test]
     fn test_instructions_iterator_empty_method() {

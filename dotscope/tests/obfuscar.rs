@@ -12,6 +12,14 @@
 
 #![cfg(feature = "deobfuscation")]
 
+mod common;
+
+use std::sync::Arc;
+
+use common::verification::{
+    assert_deobfuscation_diagnostics, verify_semantic_preservation, SemanticVerificationResult,
+    VerificationLevel,
+};
 use dotscope::{
     deobfuscation::{detect_obfuscar, DeobfuscationEngine, EngineConfig},
     metadata::validation::ValidationConfig,
@@ -19,6 +27,21 @@ use dotscope::{
 };
 
 const SAMPLES_DIR: &str = "tests/samples/packers/obfuscar";
+
+/// Methods to test for semantic preservation (compared against original.exe).
+const SEMANTIC_TEST_METHODS: &[&str] = &[
+    "DemoIfElse",
+    "DemoSwitch",
+    "DemoLoop",
+    "Add",
+    "Subtract",
+    "Multiply",
+    "Divide",
+    "Factorial",
+    "Fibonacci",
+    "SayHello",
+    "SayGoodbye",
+];
 
 /// Description of an Obfuscar sample and its expected characteristics.
 #[derive(Debug, Clone)]
@@ -31,6 +54,8 @@ struct SampleSpec {
     expected_protections: ObfuscarExpectedProtections,
     /// Whether this is the unprotected original (baseline).
     is_original: bool,
+    /// Check semantic preservation against original.exe.
+    check_semantic_preservation: bool,
 }
 
 /// Expected protections in an Obfuscar sample.
@@ -61,9 +86,14 @@ struct TestResult {
     // Post-deobfuscation results
     assembly_valid: bool,
     roundtrip_ok: bool,
+    // Diagnostic counts
+    warning_count: usize,
+    error_count: usize,
     // Re-detection on output
     post_detection_score: usize,
     post_helper_types_found: usize,
+    // Semantic preservation
+    semantic_result: Option<SemanticVerificationResult>,
 }
 
 /// All Obfuscar samples with their expected characteristics.
@@ -79,6 +109,7 @@ fn all_samples() -> Vec<SampleSpec> {
             description: "Unprotected original (baseline)",
             expected_protections: ObfuscarExpectedProtections::default(),
             is_original: true,
+            check_semantic_preservation: true,
         },
         SampleSpec {
             filename: "obfuscar_default.exe",
@@ -92,6 +123,7 @@ fn all_samples() -> Vec<SampleSpec> {
                 has_null_params: true,
             },
             is_original: false,
+            check_semantic_preservation: true,
         },
         SampleSpec {
             filename: "obfuscar_strings_only.exe",
@@ -102,6 +134,7 @@ fn all_samples() -> Vec<SampleSpec> {
                 has_null_params: false,
             },
             is_original: false,
+            check_semantic_preservation: true,
         },
         SampleSpec {
             filename: "obfuscar_rename_only.exe",
@@ -112,6 +145,7 @@ fn all_samples() -> Vec<SampleSpec> {
                 has_null_params: true,
             },
             is_original: false,
+            check_semantic_preservation: true,
         },
         SampleSpec {
             filename: "obfuscar_unicode.exe",
@@ -122,6 +156,7 @@ fn all_samples() -> Vec<SampleSpec> {
                 has_null_params: true,
             },
             is_original: false,
+            check_semantic_preservation: true,
         },
         SampleSpec {
             filename: "obfuscar_maximum.exe",
@@ -132,6 +167,7 @@ fn all_samples() -> Vec<SampleSpec> {
                 has_null_params: true,
             },
             is_original: false,
+            check_semantic_preservation: true,
         },
     ]
 }
@@ -143,7 +179,7 @@ fn load_sample(filename: &str) -> Result<CilObject, String> {
 }
 
 /// Run comprehensive deobfuscation test on a sample.
-fn test_sample(spec: &SampleSpec) -> TestResult {
+fn test_sample(spec: &SampleSpec, original_asm: Option<&CilObject>) -> TestResult {
     let mut result = TestResult {
         sample: spec.clone(),
         success: false,
@@ -156,8 +192,11 @@ fn test_sample(spec: &SampleSpec) -> TestResult {
         decryptor_methods_found: 0,
         assembly_valid: false,
         roundtrip_ok: false,
+        warning_count: 0,
+        error_count: 0,
         post_detection_score: 0,
         post_helper_types_found: 0,
+        semantic_result: None,
     };
 
     // Load the sample
@@ -192,10 +231,15 @@ fn test_sample(spec: &SampleSpec) -> TestResult {
     let mut engine = DeobfuscationEngine::new(config);
 
     match engine.process_assembly(assembly) {
-        Ok((output, _deob_result)) => {
+        Ok((output, deob_result)) => {
             result.success = true;
             result.methods_after = output.methods().iter().count();
             result.assembly_valid = true;
+
+            // Track warnings and errors from deobfuscation
+            let stats = deob_result.stats();
+            result.warning_count = stats.warnings;
+            result.error_count = stats.errors;
 
             // Re-detect on output
             let (post_score, post_findings) = detect_obfuscar(&output);
@@ -216,6 +260,23 @@ fn test_sample(spec: &SampleSpec) -> TestResult {
                 Err(e) => {
                     result.roundtrip_ok = false;
                     result.error = Some(format!("Roundtrip failed: {}", e));
+                }
+            }
+
+            // SEMANTIC PRESERVATION (if enabled and original is available)
+            if spec.check_semantic_preservation && !spec.is_original {
+                if let Some(orig) = original_asm {
+                    let level = if spec.expected_protections.has_null_params {
+                        VerificationLevel::Relaxed
+                    } else {
+                        VerificationLevel::Normal
+                    };
+                    result.semantic_result = Some(verify_semantic_preservation(
+                        orig,
+                        Arc::new(output),
+                        SEMANTIC_TEST_METHODS,
+                        level,
+                    ));
                 }
             }
         }
@@ -263,8 +324,8 @@ fn print_summary(results: &[TestResult]) {
 
         // Stats line
         eprintln!(
-            "       Methods: {} -> {}",
-            result.methods_before, result.methods_after,
+            "       Methods: {} -> {} (warnings={} errors={})",
+            result.methods_before, result.methods_after, result.warning_count, result.error_count,
         );
 
         // Post-deobfuscation line
@@ -275,6 +336,16 @@ fn print_summary(results: &[TestResult]) {
                 result.post_helper_types_found,
                 result.assembly_valid,
                 result.roundtrip_ok,
+            );
+        }
+
+        // Semantic preservation line
+        if let Some(ref sem) = result.semantic_result {
+            eprintln!(
+                "       Semantic: {}/{} preserved, similarity={:.0}%",
+                sem.methods_preserved,
+                sem.methods_checked,
+                sem.average_similarity * 100.0
             );
         }
 
@@ -293,6 +364,9 @@ fn print_summary(results: &[TestResult]) {
 fn test_all_obfuscar_samples() {
     let samples = all_samples();
 
+    // Load original.exe for semantic comparison
+    let original_asm = load_sample("original.exe").ok();
+
     let mut results = Vec::new();
     let mut skipped = 0;
 
@@ -304,7 +378,7 @@ fn test_all_obfuscar_samples() {
             continue;
         }
 
-        results.push(test_sample(sample));
+        results.push(test_sample(sample, original_asm.as_ref()));
     }
 
     if results.is_empty() {
@@ -380,6 +454,34 @@ fn test_all_obfuscar_samples() {
                 result.detection_score
             );
         }
+
+        // Semantic preservation assertions
+        if result.sample.check_semantic_preservation {
+            if let Some(ref sem) = result.semantic_result {
+                let preservation_ratio = if sem.methods_checked > 0 {
+                    sem.methods_preserved as f64 / sem.methods_checked as f64
+                } else {
+                    1.0
+                };
+                let threshold = if result.sample.expected_protections.has_null_params {
+                    0.50
+                } else {
+                    0.80
+                };
+                assert!(
+                    preservation_ratio >= threshold,
+                    "{}: Semantic preservation too low ({}/{} = {:.0}%, expected >= {:.0}%)",
+                    filename,
+                    sem.methods_preserved,
+                    sem.methods_checked,
+                    preservation_ratio * 100.0,
+                    threshold * 100.0
+                );
+            }
+        }
+
+        // Warning/error assertions via shared verifier
+        assert_deobfuscation_diagnostics(filename, result.warning_count, result.error_count);
     }
 }
 

@@ -373,7 +373,9 @@ mod tests {
     use std::collections::HashSet;
 
     use crate::{
-        analysis::{ConstValue, MethodRef, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
+        analysis::{
+            ConstValue, MethodRef, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId,
+        },
         deobfuscation::passes::NeutralizationPass,
         metadata::token::Token,
     };
@@ -385,9 +387,9 @@ mod tests {
         let method_token = Token::new(0x06000001);
         let field_token = Token::new(0x04000001);
 
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
 
         // Block 0:
         //   v0 = const 42
@@ -404,11 +406,14 @@ mod tests {
         // Create a call instruction referencing the method token
         let method_ref = MethodRef::new(method_token);
 
-        b0.add_instruction(SsaInstruction::synthetic(SsaOp::Call {
-            dest: Some(v1),
-            method: method_ref,
-            args: vec![],
-        }));
+        b0.add_instruction(
+            SsaInstruction::synthetic(SsaOp::Call {
+                dest: Some(v1),
+                method: method_ref,
+                args: vec![],
+            })
+            .with_result_type(SsaType::I32),
+        );
 
         b0.add_instruction(SsaInstruction::synthetic(SsaOp::Add {
             dest: v2,

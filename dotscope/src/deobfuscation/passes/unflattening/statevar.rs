@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn test_state_var_ref_ssa() {
-        let var_id = SsaVarId::new();
+        let var_id = SsaVarId::from_index(0);
         let var_ref = StateVarRef::ssa_var(var_id);
         assert_eq!(var_ref.as_ssa_var(), Some(var_id));
         assert!(var_ref.as_local().is_none());
@@ -434,8 +434,8 @@ mod tests {
 
     #[test]
     fn test_state_var_ref_array_element() {
-        let array_var = SsaVarId::new();
-        let index_var = SsaVarId::new();
+        let array_var = SsaVarId::from_index(0);
+        let index_var = SsaVarId::from_index(1);
         let var_ref = StateVarRef::array_element(array_var, IndexPattern::Variable(index_var));
 
         assert!(var_ref.is_array_element());
@@ -448,7 +448,7 @@ mod tests {
 
     #[test]
     fn test_index_pattern_variants() {
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
 
         let pattern1 = IndexPattern::Variable(var);
         assert!(matches!(pattern1, IndexPattern::Variable(_)));

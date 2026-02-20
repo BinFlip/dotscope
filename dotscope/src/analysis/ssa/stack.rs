@@ -225,9 +225,30 @@ pub struct StackSimulator {
     /// simulation variable.
     load_origins: HashMap<SsaVarId, VariableOrigin>,
 
+    /// Maps simulation variable IDs to their stack depth position at creation.
+    ///
+    /// Records the stack depth (slot index) when each variable was allocated
+    /// by `alloc_stack_var()`. Used during SSA rename to assign correct
+    /// stack-derived origins (`Local(num_locals + slot)`) instead of using
+    /// the variable's global unique ID.
+    var_stack_positions: HashMap<SsaVarId, usize>,
+
     /// Current instruction index within the block (for source tracking).
     current_instruction: usize,
+
+    /// Counter for simulation-phase variable IDs.
+    ///
+    /// These are temporary IDs that will be fully replaced during the rename phase.
+    /// They start from a high offset to avoid colliding with dense IDs (0, 1, 2, ...)
+    /// allocated by `SsaFunction::create_variable()` during rename.
+    next_sim_id: usize,
 }
+
+/// Starting offset for simulation-phase variable IDs.
+///
+/// Simulation IDs live in a separate range from production IDs (which start at 0)
+/// to avoid accidental collisions during the rename phase.
+const SIMULATION_ID_OFFSET: usize = usize::MAX / 2;
 
 impl StackSimulator {
     /// Creates a new stack simulator.
@@ -238,14 +259,18 @@ impl StackSimulator {
     /// * `num_locals` - Number of local variables
     #[must_use]
     pub fn new(num_args: usize, num_locals: usize) -> Self {
+        let mut next_sim_id = SIMULATION_ID_OFFSET;
+
         let mut args = Vec::with_capacity(num_args);
         for _ in 0..num_args {
-            args.push(VariableState::new(SsaVarId::new()));
+            args.push(VariableState::new(SsaVarId::from_index(next_sim_id)));
+            next_sim_id += 1;
         }
 
         let mut locals = Vec::with_capacity(num_locals);
         for _ in 0..num_locals {
-            locals.push(VariableState::new(SsaVarId::new()));
+            locals.push(VariableState::new(SsaVarId::from_index(next_sim_id)));
+            next_sim_id += 1;
         }
 
         Self {
@@ -256,8 +281,19 @@ impl StackSimulator {
             num_args,
             num_locals,
             load_origins: HashMap::new(),
+            var_stack_positions: HashMap::new(),
             current_instruction: 0,
+            next_sim_id,
         }
+    }
+
+    /// Allocates a simulation-phase variable ID.
+    ///
+    /// These IDs are temporary placeholders replaced during the SSA rename phase.
+    fn alloc_sim_id(&mut self) -> SsaVarId {
+        let id = SsaVarId::from_index(self.next_sim_id);
+        self.next_sim_id += 1;
+        id
     }
 
     /// Sets the current instruction index for source tracking.
@@ -369,6 +405,16 @@ impl StackSimulator {
         &self.load_origins
     }
 
+    /// Returns the stack position map for all simulation variables.
+    ///
+    /// Maps each simulation variable ID to the stack depth position it was
+    /// allocated at. Used during SSA rename to assign correct stack-derived
+    /// origins (`Local(num_locals + slot)`) for temporary stack values.
+    #[must_use]
+    pub fn var_stack_positions(&self) -> &HashMap<SsaVarId, usize> {
+        &self.var_stack_positions
+    }
+
     /// Returns a snapshot of the current stack contents (variable IDs only).
     ///
     /// The returned vector contains the variables currently on the stack,
@@ -394,11 +440,39 @@ impl StackSimulator {
     }
 
     /// Allocates a new stack slot variable with a unique ID.
+    ///
+    /// Stack slots are allocated as `Local(num_locals + depth)` where `depth`
+    /// is the current stack depth (i.e. the position the new value will occupy).
+    /// This ensures origins match the depth-based scheme used by
+    /// `SsaConverter::place_stack_phi_nodes()` which creates PHIs with
+    /// `Local(num_locals + slot)`.
+    ///
+    /// The converter calls [`total_stack_slots`](Self::total_stack_slots) after
+    /// simulation to update `SsaFunction::num_locals`.
     fn alloc_stack_var(&mut self) -> (SsaVarId, VariableOrigin) {
-        let var = SsaVarId::new();
-        let origin = VariableOrigin::Stack(self.next_stack_slot);
-        self.next_stack_slot += 1;
+        let var = self.alloc_sim_id();
+        let depth = self.stack.len();
+        #[allow(clippy::cast_possible_truncation)]
+        let local_idx = self.num_locals as u16 + depth as u16;
+        let origin = VariableOrigin::Local(local_idx);
+        // Track max depth for total_stack_slots()
+        let depth_count = (depth + 1) as u32;
+        if depth_count > self.next_stack_slot {
+            self.next_stack_slot = depth_count;
+        }
+        // Record position for use during rename (converter needs this to assign
+        // correct stack-derived origins instead of using SsaVarId::index())
+        self.var_stack_positions.insert(var, depth);
         (var, origin)
+    }
+
+    /// Returns the maximum stack depth observed during simulation.
+    ///
+    /// After simulation, `num_locals + total_stack_slots()` gives the total
+    /// number of locals (original + synthetic) in the function.
+    #[must_use]
+    pub fn total_stack_slots(&self) -> u32 {
+        self.next_stack_slot
     }
 
     /// Gets the current SSA variable for an argument.
@@ -419,16 +493,14 @@ impl StackSimulator {
 
     /// Simulates loading an argument onto the stack (ldarg).
     ///
-    /// This pushes the current SSA version of the argument onto the stack.
-    /// It does NOT create a new definition - `ldarg` only reads an existing
-    /// value that was defined by either the method entry or a prior `starg`.
+    /// Allocates a new stack variable and pushes it onto the stack. The new
+    /// variable has a Stack origin (from `alloc_stack_var`), NOT an Argument
+    /// origin. The connection to `Argument(index)` is recorded in `load_origins`
+    /// for the `all_preds_same_local_arg_origin` optimization, and lives in
+    /// the `arg_index` field of the generated `LoadArg` op.
     ///
-    /// Records the load origin so that during SSA rename, the variable can be
-    /// resolved to the correct reaching definition (from phi or version stack).
-    ///
-    /// Note: The pushed value is marked as `Defined` because the ldarg instruction
-    /// is the defining point for this stack slot, even though it loads from an
-    /// existing argument. This distinguishes it from inherited placeholders.
+    /// This produces a def so that `LoadArg` is visible to SSA analysis,
+    /// enabling correct data flow tracking across `rebuild_ssa`.
     ///
     /// # Arguments
     ///
@@ -436,10 +508,12 @@ impl StackSimulator {
     ///
     /// # Returns
     ///
-    /// The simulation result (no definition - just reading), or `None` if index is invalid.
+    /// The simulation result with the new stack variable as def, or `None` if index is invalid.
     pub fn simulate_ldarg(&mut self, index: usize) -> Option<SimulationResult> {
-        let var = self.get_arg_var(index)?;
-        // Record that this variable should be resolved to Argument(index) during rename
+        if index >= self.args.len() {
+            return None;
+        }
+        let (var, _stack_origin) = self.alloc_stack_var();
         let origin = VariableOrigin::Argument(u16::try_from(index).unwrap_or(0));
         self.load_origins.insert(var, origin);
         self.stack.push(StackSlot {
@@ -447,23 +521,21 @@ impl StackSimulator {
             source: StackSlotSource::Defined {
                 instruction_idx: self.current_instruction,
             },
-            address_target: None, // ldarg loads value, not address
+            address_target: None,
         });
-        Some(SimulationResult::empty())
+        Some(SimulationResult::def_only(var))
     }
 
     /// Simulates loading a local onto the stack (ldloc).
     ///
-    /// This pushes the current SSA version of the local onto the stack.
-    /// It does NOT create a new definition - `ldloc` only reads an existing
-    /// value that was defined by a prior `stloc`.
+    /// Allocates a new stack variable and pushes it onto the stack. The new
+    /// variable has a Stack origin (from `alloc_stack_var`), NOT a Local
+    /// origin. The connection to `Local(index)` is recorded in `load_origins`
+    /// for the `all_preds_same_local_arg_origin` optimization, and lives in
+    /// the `local_index` field of the generated `LoadLocal` op.
     ///
-    /// Records the load origin so that during SSA rename, the variable can be
-    /// resolved to the correct reaching definition (from phi or version stack).
-    ///
-    /// Note: The pushed value is marked as `Defined` because the ldloc instruction
-    /// is the defining point for this stack slot, even though it loads from an
-    /// existing local. This distinguishes it from inherited placeholders.
+    /// This produces a def so that `LoadLocal` is visible to SSA analysis,
+    /// enabling correct data flow tracking across `rebuild_ssa`.
     ///
     /// # Arguments
     ///
@@ -471,10 +543,12 @@ impl StackSimulator {
     ///
     /// # Returns
     ///
-    /// The simulation result (no definition - just reading), or `None` if index is invalid.
+    /// The simulation result with the new stack variable as def, or `None` if index is invalid.
     pub fn simulate_ldloc(&mut self, index: usize) -> Option<SimulationResult> {
-        let var = self.get_local_var(index)?;
-        // Record that this variable should be resolved to Local(index) during rename
+        if index >= self.locals.len() {
+            return None;
+        }
+        let (var, _stack_origin) = self.alloc_stack_var();
         let origin = VariableOrigin::Local(u16::try_from(index).unwrap_or(0));
         self.load_origins.insert(var, origin);
         self.stack.push(StackSlot {
@@ -482,9 +556,9 @@ impl StackSimulator {
             source: StackSlotSource::Defined {
                 instruction_idx: self.current_instruction,
             },
-            address_target: None, // ldloc loads value, not address
+            address_target: None,
         });
-        Some(SimulationResult::empty())
+        Some(SimulationResult::def_only(var))
     }
 
     /// Simulates storing to an argument (starg).
@@ -507,7 +581,7 @@ impl StackSimulator {
             return None;
         }
 
-        let new_var = SsaVarId::new();
+        let new_var = self.alloc_sim_id();
 
         let state = &mut self.args[index];
         state.version += 1;
@@ -536,7 +610,7 @@ impl StackSimulator {
             return None;
         }
 
-        let new_var = SsaVarId::new();
+        let new_var = self.alloc_sim_id();
         let state = &mut self.locals[index];
         state.version += 1;
         state.current_var = new_var;
@@ -1005,11 +1079,11 @@ mod tests {
 
         let result = sim.simulate_ldarg(0).unwrap();
         assert!(result.uses.is_empty());
-        assert_eq!(result.def, None); // No definition - just reading existing arg
+        assert!(result.def.is_some()); // ldarg now produces a new stack var def
         assert_eq!(sim.stack_depth(), 1);
 
         let result = sim.simulate_ldarg(1).unwrap();
-        assert_eq!(result.def, None); // No definition - just reading existing arg
+        assert!(result.def.is_some()); // ldarg now produces a new stack var def
         assert_eq!(sim.stack_depth(), 2);
     }
 
@@ -1019,24 +1093,24 @@ mod tests {
 
         let result = sim.simulate_ldloc(0).unwrap();
         assert!(result.uses.is_empty());
-        assert_eq!(result.def, None); // No definition - just reading existing local
+        assert!(result.def.is_some()); // ldloc now produces a new stack var def
         assert_eq!(sim.stack_depth(), 1);
     }
 
     #[test]
     fn test_simulate_starg() {
         let mut sim = StackSimulator::new(2, 0);
-        let arg0 = sim.get_arg_var(0).unwrap();
         let initial_arg1 = sim.get_arg_var(1).unwrap();
 
-        // Push a value first
-        sim.simulate_ldarg(0);
+        // Push a value first (ldarg now produces a new stack var)
+        let ldarg_result = sim.simulate_ldarg(0).unwrap();
+        let pushed_var = ldarg_result.def.unwrap();
         assert_eq!(sim.stack_depth(), 1);
 
         // Store to arg1
         let result = sim.simulate_starg(1).unwrap();
         assert_eq!(result.uses.len(), 1);
-        assert_eq!(result.uses[0], arg0); // The value we pushed
+        assert_eq!(result.uses[0], pushed_var); // The stack var from ldarg
         assert_eq!(sim.stack_depth(), 0);
 
         // arg1 should now have a new variable
@@ -1050,16 +1124,16 @@ mod tests {
     #[test]
     fn test_simulate_stloc() {
         let mut sim = StackSimulator::new(1, 1);
-        let arg0 = sim.get_arg_var(0).unwrap();
         let initial_local0 = sim.get_local_var(0).unwrap();
 
-        // Push a value first (ldarg.0)
-        sim.simulate_ldarg(0);
+        // Push a value first (ldarg now produces a new stack var)
+        let ldarg_result = sim.simulate_ldarg(0).unwrap();
+        let pushed_var = ldarg_result.def.unwrap();
 
         // Store to local0
         let result = sim.simulate_stloc(0).unwrap();
         assert_eq!(result.uses.len(), 1);
-        assert_eq!(result.uses[0], arg0);
+        assert_eq!(result.uses[0], pushed_var);
 
         // local0 should now have a new variable
         let new_var = sim.get_local_var(0).unwrap();
@@ -1072,19 +1146,19 @@ mod tests {
     #[test]
     fn test_simulate_binary_op() {
         let mut sim = StackSimulator::new(2, 0);
-        let arg0 = sim.get_arg_var(0).unwrap();
-        let arg1 = sim.get_arg_var(1).unwrap();
 
-        // ldarg.0, ldarg.1
-        sim.simulate_ldarg(0);
-        sim.simulate_ldarg(1);
+        // ldarg.0, ldarg.1 (now produce new stack vars)
+        let r0 = sim.simulate_ldarg(0).unwrap();
+        let r1 = sim.simulate_ldarg(1).unwrap();
+        let var0 = r0.def.unwrap();
+        let var1 = r1.def.unwrap();
         assert_eq!(sim.stack_depth(), 2);
 
         // add
         let result = sim.simulate_binary_op().unwrap();
         assert_eq!(result.uses.len(), 2);
-        assert_eq!(result.uses[0], arg0); // Deepest first
-        assert_eq!(result.uses[1], arg1);
+        assert_eq!(result.uses[0], var0); // Deepest first
+        assert_eq!(result.uses[1], var1);
         assert!(result.def.is_some());
         assert_eq!(sim.stack_depth(), 1);
     }
@@ -1092,14 +1166,14 @@ mod tests {
     #[test]
     fn test_simulate_unary_op() {
         let mut sim = StackSimulator::new(1, 0);
-        let arg0 = sim.get_arg_var(0).unwrap();
 
-        sim.simulate_ldarg(0);
+        let r = sim.simulate_ldarg(0).unwrap();
+        let pushed_var = r.def.unwrap();
         assert_eq!(sim.stack_depth(), 1);
 
         let result = sim.simulate_unary_op().unwrap();
         assert_eq!(result.uses.len(), 1);
-        assert_eq!(result.uses[0], arg0);
+        assert_eq!(result.uses[0], pushed_var);
         assert!(result.def.is_some());
         assert_eq!(sim.stack_depth(), 1);
     }
@@ -1120,19 +1194,19 @@ mod tests {
     #[test]
     fn test_simulate_pop_n() {
         let mut sim = StackSimulator::new(3, 0);
-        let arg1 = sim.get_arg_var(1).unwrap();
-        let arg2 = sim.get_arg_var(2).unwrap();
 
         sim.simulate_ldarg(0);
-        sim.simulate_ldarg(1);
-        sim.simulate_ldarg(2);
+        let r1 = sim.simulate_ldarg(1).unwrap();
+        let r2 = sim.simulate_ldarg(2).unwrap();
+        let var1 = r1.def.unwrap();
+        let var2 = r2.def.unwrap();
         assert_eq!(sim.stack_depth(), 3);
 
         // Pop 2
         let popped = sim.simulate_pop_n(2).unwrap();
         assert_eq!(popped.len(), 2);
-        assert_eq!(popped[0], arg1); // Deepest of the 2
-        assert_eq!(popped[1], arg2); // Top
+        assert_eq!(popped[0], var1); // Deepest of the 2
+        assert_eq!(popped[1], var2); // Top
         assert_eq!(sim.stack_depth(), 1);
     }
 
@@ -1220,7 +1294,7 @@ mod tests {
     fn test_set_arg_var() {
         let mut sim = StackSimulator::new(2, 0);
 
-        let v = SsaVarId::new();
+        let v = SsaVarId::from_index(0);
         assert!(sim.set_arg_var(0, v));
         assert_eq!(sim.get_arg_var(0), Some(v));
 
@@ -1231,7 +1305,7 @@ mod tests {
     fn test_set_local_var() {
         let mut sim = StackSimulator::new(0, 2);
 
-        let v = SsaVarId::new();
+        let v = SsaVarId::from_index(0);
         assert!(sim.set_local_var(0, v));
         assert_eq!(sim.get_local_var(0), Some(v));
 
@@ -1244,20 +1318,20 @@ mod tests {
         assert!(empty.uses.is_empty());
         assert!(empty.def.is_none());
 
-        let v5 = SsaVarId::new();
+        let v5 = SsaVarId::from_index(0);
         let def_only = SimulationResult::def_only(v5);
         assert!(def_only.uses.is_empty());
         assert_eq!(def_only.def, Some(v5));
 
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         let uses_only = SimulationResult::uses_only(vec![v1, v2]);
         assert_eq!(uses_only.uses.len(), 2);
         assert!(uses_only.def.is_none());
 
-        let u1 = SsaVarId::new();
-        let u2 = SsaVarId::new();
-        let v3 = SsaVarId::new();
+        let u1 = SsaVarId::from_index(3);
+        let u2 = SsaVarId::from_index(4);
+        let v3 = SsaVarId::from_index(5);
         let with_def = SimulationResult::with_def(vec![u1, u2], v3);
         assert_eq!(with_def.uses.len(), 2);
         assert_eq!(with_def.def, Some(v3));
@@ -1267,20 +1341,20 @@ mod tests {
     fn test_complex_sequence() {
         // Simulate: local0 = arg0 + arg1
         let mut sim = StackSimulator::new(2, 1);
-        let arg0 = sim.get_arg_var(0).unwrap();
-        let arg1 = sim.get_arg_var(1).unwrap();
 
-        // ldarg.0 - just pushes existing arg0 onto stack, no new definition
+        // ldarg.0 - now produces a new stack var def
         let r1 = sim.simulate_ldarg(0).unwrap();
-        assert_eq!(r1.def, None); // ldarg is not a definition
+        let var0 = r1.def.unwrap(); // ldarg now produces a def
+        assert!(r1.uses.is_empty());
 
-        // ldarg.1 - just pushes existing arg1 onto stack, no new definition
+        // ldarg.1 - now produces a new stack var def
         let r2 = sim.simulate_ldarg(1).unwrap();
-        assert_eq!(r2.def, None); // ldarg is not a definition
+        let var1 = r2.def.unwrap(); // ldarg now produces a def
+        assert!(r2.uses.is_empty());
 
         // add - pops two values, creates new definition for the result
         let r3 = sim.simulate_binary_op().unwrap();
-        assert_eq!(r3.uses, vec![arg0, arg1]);
+        assert_eq!(r3.uses, vec![var0, var1]);
         let add_result = r3.def.unwrap();
 
         // stloc.0 - pops result, creates new SSA version for local0

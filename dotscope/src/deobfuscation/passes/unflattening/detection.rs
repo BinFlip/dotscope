@@ -846,7 +846,7 @@ mod tests {
             dispatcher_block: 0,
             dispatcher: DispatcherInfo::Switch {
                 block: 0,
-                switch_var: SsaVarId::new(),
+                switch_var: SsaVarId::from_index(0),
                 cases: vec![1, 2, 3, 4, 5],
                 default: 6,
                 transform: StateTransform::Modulo(5),
@@ -875,7 +875,7 @@ mod tests {
         assert!(entry_with_state.has_known_state());
         assert_eq!(entry_with_state.initial_state, Some(100));
 
-        let var = SsaVarId::new();
+        let var = SsaVarId::from_index(0);
         let entry_with_condition = EntryPoint::new(2).with_condition(EntryCondition::Boolean {
             var,
             when_true: true,
@@ -889,7 +889,7 @@ mod tests {
             dispatcher_block: 1,
             dispatcher: DispatcherInfo::Switch {
                 block: 1,
-                switch_var: SsaVarId::new(),
+                switch_var: SsaVarId::from_index(0),
                 cases: vec![2, 3],
                 default: 4,
                 transform: StateTransform::Identity,

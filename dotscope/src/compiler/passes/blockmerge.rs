@@ -222,26 +222,31 @@ impl SsaPass for BlockMergingPass {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::sync::Arc;
+
     use crate::{
-        analysis::{SsaFunctionBuilder, SsaOp},
+        analysis::{CallGraph, SsaFunctionBuilder, SsaOp},
+        compiler::{CompilerContext, SsaPass},
+        metadata::token::Token,
         test::helpers::test_assembly_arc,
     };
 
     #[test]
     fn test_redirect_simple() {
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            // B0: entry, jump to B1 (trampoline)
-            f.block(0, |b| b.jump(1));
-            // B1: trampoline to B2
-            f.block(1, |b| b.jump(2));
-            // B2: actual code
-            f.block(2, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                // B0: entry, jump to B1 (trampoline)
+                f.block(0, |b| b.jump(1));
+                // B1: trampoline to B2
+                f.block(1, |b| b.jump(2));
+                // B2: actual code
+                f.block(2, |b| b.ret());
+            })
+            .unwrap();
 
         let pass = BlockMergingPass::new();
-        let ctx = crate::compiler::CompilerContext::new(std::sync::Arc::new(
-            crate::analysis::CallGraph::new(),
-        ));
+        let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
         let assembly = test_assembly_arc();
 
         let changed = pass
@@ -271,17 +276,17 @@ mod tests {
     #[test]
     fn test_chain_of_trampolines() {
         // B0 -> B1 -> B2 -> B3 (actual code)
-        let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.jump(1));
-            f.block(1, |b| b.jump(2));
-            f.block(2, |b| b.jump(3));
-            f.block(3, |b| b.ret());
-        });
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.jump(1));
+                f.block(1, |b| b.jump(2));
+                f.block(2, |b| b.jump(3));
+                f.block(3, |b| b.ret());
+            })
+            .unwrap();
 
         let pass = BlockMergingPass::new();
-        let ctx = crate::compiler::CompilerContext::new(std::sync::Arc::new(
-            crate::analysis::CallGraph::new(),
-        ));
+        let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
         let assembly = test_assembly_arc();
 
         let changed = pass

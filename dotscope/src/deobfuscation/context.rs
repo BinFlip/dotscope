@@ -255,9 +255,9 @@ mod tests {
         let ctx = AnalysisContext::new(call_graph);
 
         let method = Token::new(0x06000001);
-        let var1 = SsaVarId::new();
-        let var2 = SsaVarId::new();
-        let var3 = SsaVarId::new();
+        let var1 = SsaVarId::from_index(0);
+        let var2 = SsaVarId::from_index(1);
+        let var3 = SsaVarId::from_index(2);
 
         // Initially no known values
         assert!(!ctx.has_known_value(method, var1));
@@ -299,9 +299,9 @@ mod tests {
         let ctx = AnalysisContext::new(call_graph);
 
         let method = Token::new(0x06000001);
-        let v0 = SsaVarId::new();
-        let v1 = SsaVarId::new();
-        let v2 = SsaVarId::new();
+        let v0 = SsaVarId::from_index(0);
+        let v1 = SsaVarId::from_index(1);
+        let v2 = SsaVarId::from_index(2);
         ctx.add_known_value(method, v0, ConstValue::I32(1));
         ctx.add_known_value(method, v1, ConstValue::I32(2));
         ctx.add_known_value(method, v2, ConstValue::I32(3));
@@ -328,7 +328,7 @@ mod tests {
                 let method = if i % 2 == 0 { method1 } else { method2 };
                 thread::spawn(move || {
                     for j in 0..100 {
-                        let var = SsaVarId::new();
+                        let var = SsaVarId::from_index(0);
                         ctx.add_known_value(method, var, ConstValue::I32(j));
                         ctx.mark_dead(Token::new(0x06000000 + i * 1000 + j as u32));
                         ctx.add_entry_point(Token::new(0x06000000 + i * 1000 + j as u32));

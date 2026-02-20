@@ -92,14 +92,15 @@ pub use ssa::Z3Solver;
 pub use ssa::{
     analyze_alias, AbstractValue, AliasResult, ArrayIndex, BinaryOpInfo, BinaryOpKind, CmpKind,
     ComputedOp, ComputedValue, ConstEvaluator, ConstValue, Constraint, ControlFlow, DefSite,
-    DispatcherPattern, EvaluatorConfig, ExecutionTrace, FieldRef, FnPtrSig, MemoryDefSite,
-    MemoryLocation, MemoryOp, MemoryPhi, MemoryPhiOperand, MemorySsa, MemorySsaStats, MemoryState,
-    MemoryVersion, MethodPurity, MethodRef, PathConstraint, PatternDetector, PhiAnalyzer, PhiNode,
-    PhiOperand, ReturnInfo, SigRef, SimulationResult, SourceBlock, SsaBlock, SsaBlockBuilder,
-    SsaCfg, SsaConverter, SsaEvaluator, SsaExceptionHandler, SsaFunction, SsaFunctionBuilder,
-    SsaFunctionContext, SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable, StackSimulator,
-    SymbolicEvaluator, SymbolicExpr, SymbolicOp, TypeClass, TypeContext, TypeRef, UnaryOpInfo,
-    UnaryOpKind, UseSite, ValueResolver, VariableOrigin,
+    DispatcherPattern, EvaluatorConfig, ExecutionTrace, FieldRef, FnPtrSig, FunctionVarAllocator,
+    MemoryDefSite, MemoryLocation, MemoryOp, MemoryPhi, MemoryPhiOperand, MemorySsa,
+    MemorySsaStats, MemoryState, MemoryVersion, MethodPurity, MethodRef, PathConstraint,
+    PatternDetector, PhiAnalyzer, PhiNode, PhiOperand, ReplaceResult, ReturnInfo, SigRef,
+    SimulationResult, SourceBlock, SsaBlock, SsaBlockBuilder, SsaCfg, SsaConverter, SsaEvaluator,
+    SsaExceptionHandler, SsaFunction, SsaFunctionBuilder, SsaFunctionContext, SsaInstruction,
+    SsaOp, SsaType, SsaVarId, SsaVariable, StackSimulator, SymbolicEvaluator, SymbolicExpr,
+    SymbolicOp, TypeClass, TypeContext, TypeProvider, TypeRef, UnaryOpInfo, UnaryOpKind, UseSite,
+    ValueResolver, VariableOrigin,
 };
 pub use taint::{
     cff_taint_config, find_blocks_jumping_to, find_token_dependencies, PhiTaintMode, TaintAnalysis,
@@ -132,7 +133,13 @@ mod tests {
 
     /// Helper to build SSA from a CFG.
     fn build_ssa(cfg: &ControlFlowGraph<'_>, num_args: usize, num_locals: usize) -> SsaFunction {
-        SsaConverter::build(cfg, num_args, num_locals, None).expect("SSA construction failed")
+        SsaConverter::build(
+            cfg,
+            num_args,
+            num_locals,
+            &crate::test::TestTypeProvider::new(num_args, num_locals),
+        )
+        .expect("SSA construction failed")
     }
 
     /// Consolidated SSA validation - checks all standard SSA invariants.
@@ -273,7 +280,7 @@ mod tests {
         assert_eq!(ssa.num_args(), 2);
         assert_eq!(ssa.num_locals(), 0);
         assert_ssa_valid(&ssa, &cfg);
-        assert_eq!(ssa.total_phi_count(), 0);
+        assert_eq!(ssa.phi_count(), 0);
         assert!(
             ssa.variable_count() >= 2,
             "Should have at least 2 variables (args)"
@@ -304,7 +311,7 @@ mod tests {
         let ssa = build_ssa(&cfg, 0, 0);
         assert_eq!(ssa.block_count(), 1);
         assert_ssa_valid(&ssa, &cfg);
-        assert_eq!(ssa.total_phi_count(), 0);
+        assert_eq!(ssa.phi_count(), 0);
     }
 
     #[test]
@@ -340,7 +347,7 @@ mod tests {
         let ssa = build_ssa(&cfg, 1, 0);
         assert_eq!(ssa.block_count(), 3);
         assert_ssa_valid(&ssa, &cfg);
-        assert_eq!(ssa.total_phi_count(), 0); // No merge point
+        assert_eq!(ssa.phi_count(), 0); // No merge point
     }
 
     #[test]
@@ -415,7 +422,7 @@ mod tests {
         let ssa = build_ssa(&cfg, 2, 0);
         assert_eq!(ssa.block_count(), 5);
         assert_ssa_valid(&ssa, &cfg);
-        assert_eq!(ssa.total_phi_count(), 0); // All paths return without merge
+        assert_eq!(ssa.phi_count(), 0); // All paths return without merge
     }
 
     #[test]
@@ -757,7 +764,7 @@ mod tests {
 
         let ssa = build_ssa(&cfg, 2, 0);
         assert_ssa_valid(&ssa, &cfg);
-        assert_eq!(ssa.total_phi_count(), 0); // All paths return without merge
+        assert_eq!(ssa.phi_count(), 0); // All paths return without merge
     }
 
     #[test]
@@ -779,7 +786,7 @@ mod tests {
 
         let ssa = build_ssa(&cfg, 1, 1);
         assert_ssa_valid(&ssa, &cfg);
-        assert_eq!(ssa.total_phi_count(), 0);
+        assert_eq!(ssa.phi_count(), 0);
     }
 
     #[test]

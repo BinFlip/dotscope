@@ -188,26 +188,8 @@ impl<'a> PatternDetector<'a> {
     /// Gets the successor blocks of a given block.
     fn block_successors(&self, block_idx: usize) -> Option<Vec<usize>> {
         let block = self.ssa.block(block_idx)?;
-        let terminator = block.terminator()?;
-        let successors = match terminator.op() {
-            SsaOp::Jump { target } => vec![*target],
-            SsaOp::Branch {
-                true_target,
-                false_target,
-                ..
-            } => vec![*true_target, *false_target],
-            SsaOp::Switch {
-                targets, default, ..
-            } => {
-                let mut succs: Vec<_> = targets.clone();
-                succs.push(*default);
-                succs
-            }
-            SsaOp::Return { .. } | SsaOp::Throw { .. } => vec![],
-            _ => return None,
-        };
-
-        Some(successors)
+        block.terminator()?;
+        Some(block.successors())
     }
 
     /// Builds a symbolic expression for how the switch index is computed.
@@ -612,13 +594,17 @@ pub enum PredicateResolution {
 #[cfg(test)]
 mod tests {
     use super::*;
+
     use crate::analysis::SsaFunctionBuilder;
+    use crate::metadata::typesystem::PointerSize;
 
     #[test]
     fn test_pattern_detector_creation() {
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| b.ret());
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.ret());
+            })
+            .unwrap();
 
         let detector = PatternDetector::new(&ssa, PointerSize::Bit32);
         assert_eq!(detector.ssa().block_count(), 1);
@@ -626,12 +612,14 @@ mod tests {
 
     #[test]
     fn test_find_no_dispatchers_in_simple_function() {
-        let ssa = SsaFunctionBuilder::new(0, 0).build_with(|f| {
-            f.block(0, |b| {
-                let v = b.const_i32(42);
-                b.ret_val(v);
-            });
-        });
+        let ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let v = b.const_i32(42);
+                    b.ret_val(v);
+                });
+            })
+            .unwrap();
 
         let detector = PatternDetector::new(&ssa, PointerSize::Bit32);
         let dispatchers = detector.find_dispatchers();
@@ -643,7 +631,7 @@ mod tests {
         // Test the helper methods on DispatcherPattern
         let pattern = DispatcherPattern {
             block: 0,
-            switch_var: SsaVarId::new(),
+            switch_var: SsaVarId::from_index(0),
             targets: vec![1, 2, 3],
             default: 4,
             dispatch_expr: None,
@@ -659,7 +647,7 @@ mod tests {
 
     #[test]
     fn test_opaque_predicate_methods() {
-        let cond = SsaVarId::new();
+        let cond = SsaVarId::from_index(0);
         let pattern = OpaquePredicatePattern {
             block: 0,
             condition_var: cond,

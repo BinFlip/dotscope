@@ -43,8 +43,6 @@ mod tests;
 
 use std::collections::{HashMap, HashSet};
 
-use coalescing::LocalCoalescer;
-
 use crate::{
     analysis::{
         CmpKind, ConstValue, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId,
@@ -52,9 +50,10 @@ use crate::{
     },
     assembly::{Immediate, InstructionEncoder, Operand},
     cilassembly::CilAssembly,
+    compiler::codegen::coalescing::LocalCoalescer,
     metadata::{
         method::{ExceptionHandler, ExceptionHandlerFlags},
-        signatures::{CustomModifiers, SignatureLocalVariable},
+        signatures::{CustomModifiers, SignatureLocalVariable, TypeSignature},
         token::Token,
     },
     Error, Result,
@@ -327,21 +326,28 @@ impl SsaCodeGenerator {
         for idx in 0..num_locals {
             let local_type = if let Some(ssa_type) = self.local_types.get(&idx) {
                 ssa_type.to_type_signature()
+            } else if let Some(base) = self
+                .original_to_compacted
+                .iter()
+                .find(|(_, &new)| new == idx)
+                .and_then(|(&orig, _)| {
+                    ssa.original_local_types()
+                        .and_then(|types| types.get(orig as usize))
+                        .map(|v| v.base.clone())
+                })
+            {
+                base
             } else {
-                self.original_to_compacted
-                    .iter()
-                    .find(|(_, &new)| new == idx)
-                    .and_then(|(&orig, _)| {
-                        ssa.original_local_types()
-                            .and_then(|types| types.get(orig as usize))
-                            .map(|v| v.base.clone())
-                    })
-                    .ok_or_else(|| {
-                        Error::CodegenFailed(format!(
-                            "cannot determine type for local variable {idx}: \
-                             not in codegen local_types and no original type mapping found"
-                        ))
-                    })?
+                // Fallback: infer type from SSA variables mapped to this slot.
+                // This handles cases where get_storage returns a raw Local index
+                // for variables not tracked in local_types (e.g., x86-translated
+                // methods where synthetic locals bypass type registration).
+                self.infer_local_type_from_ssa(ssa, idx).ok_or_else(|| {
+                    Error::CodegenFailed(format!(
+                        "cannot determine type for local variable {idx}: \
+                         not in codegen local_types and no original type mapping found"
+                    ))
+                })?
             };
             locals.push(SignatureLocalVariable {
                 modifiers: CustomModifiers::default(),
@@ -351,6 +357,43 @@ impl SsaCodeGenerator {
             });
         }
         Ok(locals)
+    }
+
+    /// Infers the type for a local slot by examining SSA variables.
+    ///
+    /// Looks for SSA variables whose storage maps to the given local slot
+    /// (either through `var_storage` or through raw `Local(idx)` origin matching),
+    /// and returns the first non-unknown type found.
+    fn infer_local_type_from_ssa(
+        &self,
+        ssa: &SsaFunction,
+        local_idx: u16,
+    ) -> Option<TypeSignature> {
+        let target_storage = VarStorage::Local(local_idx);
+
+        // First check var_storage for variables explicitly mapped to this slot
+        for (&var_id, &storage) in &self.var_storage {
+            if storage == target_storage {
+                if let Some(var) = ssa.variable(var_id) {
+                    let var_type = var.var_type();
+                    if !var_type.is_unknown() {
+                        return Some(var_type.to_type_signature());
+                    }
+                }
+            }
+        }
+
+        // Then check for variables with Local origin matching this index
+        // (used when get_storage falls back to raw Local(idx))
+        for var in ssa.variables() {
+            if let VariableOrigin::Local(idx) = var.origin() {
+                if idx == local_idx && !var.var_type().is_unknown() {
+                    return Some(var.var_type().to_type_signature());
+                }
+            }
+        }
+
+        None
     }
 
     /// Remaps SSA exception handlers to bytecode offsets using block offset mapping.
@@ -563,7 +606,6 @@ impl SsaCodeGenerator {
             // We need max_index + 1 because local indices are 0-based
             self.used_locals.iter().max().copied().unwrap_or(0) + 1
         };
-
         Ok((bytecode, max_stack, num_locals))
     }
 
@@ -824,11 +866,8 @@ impl SsaCodeGenerator {
             }
         }
 
-        // Apply the coalesced allocation ONLY for Local-origin variables
-        // Stack/Phi variables will be allocated lazily during emit when actually needed.
-        // This ensures we don't allocate locals for dead phi results.
+        // Apply the coalesced allocation for Local-origin variables.
         for (var_id, local_slot) in &allocation.var_to_local {
-            // Only apply allocation for Local-origin variables
             if let Some(ssa_var) = ssa.variable(*var_id) {
                 if matches!(ssa_var.origin(), VariableOrigin::Local(_))
                     && !self.var_storage.contains_key(var_id)
@@ -840,13 +879,19 @@ impl SsaCodeGenerator {
             }
         }
 
-        // Set next_local to count of compacted Local-origin variables
+        self.original_to_compacted
+            .clone_from(&allocation.original_to_compacted);
+
+        // Set next_local to count of compacted original Local-origin variables.
+        // Phase 2/3 will bump this when using coalesced slots for other variables.
         #[allow(clippy::cast_possible_truncation)]
         {
             self.next_local = allocation.original_to_compacted.len() as u16;
         }
-        self.original_to_compacted
-            .clone_from(&allocation.original_to_compacted);
+
+        // Store coalescer slot assignments for use in Phase 2 and 3.
+        // When a coalesced slot is used, next_local is updated to avoid conflicts.
+        let coalesced_slots = allocation.var_to_local;
 
         // Phase 2: Pre-allocate ALL phi results to locals.
         // This ensures consistent stack behavior - phi results are always in locals,
@@ -873,9 +918,16 @@ impl SsaCodeGenerator {
                     continue;
                 }
 
-                // Allocate a local for this phi result
-                let local_idx = self.next_local;
-                self.next_local += 1;
+                // Use the coalescer's slot if available, otherwise allocate fresh
+                let local_idx = if let Some(&slot) = coalesced_slots.get(&phi_result) {
+                    // Bump next_local past any coalesced slot to avoid conflicts
+                    self.next_local = self.next_local.max(slot + 1);
+                    slot
+                } else {
+                    let idx = self.next_local;
+                    self.next_local += 1;
+                    idx
+                };
                 self.var_storage
                     .insert(phi_result, VarStorage::Local(local_idx));
 
@@ -910,10 +962,8 @@ impl SsaCodeGenerator {
             }
         }
 
-        // Phase 3: Pre-allocate Stack-origin variables that are actually used.
-        // These are typically orphan variables created during rebuild_ssa for
-        // variables that were referenced in instructions but didn't have proper
-        // Argument/Local origins. They need local slots during code generation.
+        // Phase 3: Pre-allocate Phi-origin variables (stack temps, pass-created
+        // synthetics) that are actually used.
         //
         // We also need to allocate storage for phi operands that belong to non-dead
         // phi nodes. Phi operand uses are NOT counted in global_use_counts, so a
@@ -949,9 +999,11 @@ impl SsaCodeGenerator {
                 continue;
             }
 
-            // Only handle Stack-origin variables
-            if !matches!(var.origin(), VariableOrigin::Stack(_)) {
-                continue;
+            // Only handle Phi-origin variables (stack temps, pass-created synthetics).
+            // Local and Argument origins are handled in Phase 1.
+            match var.origin() {
+                VariableOrigin::Phi => {}
+                _ => continue,
             }
 
             // Skip if it's a deferred constant
@@ -971,9 +1023,29 @@ impl SsaCodeGenerator {
                 continue;
             }
 
-            // Allocate a local for this Stack-origin variable
-            let local_idx = self.next_local;
-            self.next_local += 1;
+            // Skip variables with no definition AND unknown type. These are
+            // runtime-injected values (e.g., exception objects pushed onto the
+            // stack at handler entry blocks) that never need to be loaded from
+            // storage — the codegen handles them specially (e.g., clearing Pop
+            // operands). Variables with a known type but no definition may still
+            // need storage (e.g., after SSA rebuild renaming).
+            if var.var_type().is_unknown()
+                && ssa.get_definition(var_id).is_none()
+                && ssa.find_phi_defining(var_id).is_none()
+            {
+                continue;
+            }
+
+            // Use the coalescer's slot if available, otherwise allocate fresh
+            let local_idx = if let Some(&slot) = coalesced_slots.get(&var_id) {
+                // Bump next_local past any coalesced slot to avoid conflicts
+                self.next_local = self.next_local.max(slot + 1);
+                slot
+            } else {
+                let idx = self.next_local;
+                self.next_local += 1;
+                idx
+            };
             self.var_storage
                 .insert(var_id, VarStorage::Local(local_idx));
 
@@ -987,26 +1059,140 @@ impl SsaCodeGenerator {
             }
         }
 
+        // Compact local slots to eliminate gaps from coalescer assignments.
+        // The coalescer may assign non-contiguous slots because it allocates for
+        // ALL variables, but codegen skips some (deferred constants, stack locals).
+        // build_local_signatures needs contiguous 0..num_locals with types for each.
+        let mut used_slots: Vec<u16> = self
+            .var_storage
+            .values()
+            .filter_map(|s| match s {
+                VarStorage::Local(idx) => Some(*idx),
+                _ => None,
+            })
+            .collect();
+        used_slots.sort_unstable();
+        used_slots.dedup();
+
+        // Build remap: old slot → new contiguous slot
+        let remap: HashMap<u16, u16> = used_slots
+            .iter()
+            .enumerate()
+            .filter_map(|(new, &old)| {
+                #[allow(clippy::cast_possible_truncation)]
+                if old != new as u16 {
+                    Some((old, new as u16))
+                } else {
+                    None
+                }
+            })
+            .collect();
+
+        if !remap.is_empty() {
+            // Remap var_storage
+            for storage in self.var_storage.values_mut() {
+                if let VarStorage::Local(idx) = storage {
+                    if let Some(&new_idx) = remap.get(idx) {
+                        *idx = new_idx;
+                    }
+                }
+            }
+
+            // Remap local_types
+            let old_types = std::mem::take(&mut self.local_types);
+            for (old_idx, ty) in old_types {
+                let new_idx = remap.get(&old_idx).copied().unwrap_or(old_idx);
+                self.local_types.insert(new_idx, ty);
+            }
+
+            // Remap original_to_compacted
+            for val in self.original_to_compacted.values_mut() {
+                if let Some(&new_idx) = remap.get(val) {
+                    *val = new_idx;
+                }
+            }
+
+            #[allow(clippy::cast_possible_truncation)]
+            {
+                self.next_local = used_slots.len() as u16;
+            }
+        }
+
         Ok(())
     }
 
     /// Computes use counts for all variables in the SSA function.
     ///
-    /// This ONLY counts uses in instructions, not phi operands.
-    /// Phi operand liveness is determined separately when emitting phi copies,
-    /// based on whether the phi result itself is used.
+    /// Two-pass approach:
+    /// 1. Count uses in instructions
+    /// 2. For live phi nodes (result has instruction uses), count operand uses
+    ///
+    /// This ensures variables used only as phi operands get proper storage
+    /// allocation and correct emit handling (cross-block stores, etc.).
     fn compute_variable_use_counts(ssa: &SsaFunction) -> HashMap<SsaVarId, usize> {
         let mut use_counts: HashMap<SsaVarId, usize> = HashMap::new();
 
+        // Pass 1: Count instruction uses only
         for block in ssa.blocks() {
-            // NOTE: We intentionally DON'T count uses in phi operands here.
-            // Phi operands are only "live" if the phi result is used.
-            // This prevents allocating locals for dead phi chains.
-
-            // Count uses in instructions only
             for instr in block.instructions() {
                 for var in instr.op().uses() {
                     *use_counts.entry(var).or_insert(0) += 1;
+                }
+            }
+        }
+
+        // Pass 2: Transitively count phi operand uses. A phi node is "live" if its
+        // result has uses (instruction uses or as an operand of another live phi).
+        // We first collect all live phi results, then propagate through phi chains.
+        //
+        // This handles nested phi chains (e.g., nested if-else where an inner merge
+        // phi feeds an outer merge phi). Without this, variables only used through
+        // a chain of phi nodes would have use_count == 0, causing codegen to treat
+        // them as dead and lose their values.
+        let mut live_phis: HashSet<SsaVarId> = HashSet::new();
+
+        // Seed: phi results that already have instruction uses
+        for block in ssa.blocks() {
+            for phi in block.phi_nodes() {
+                if use_counts.get(&phi.result()).copied().unwrap_or(0) > 0 {
+                    live_phis.insert(phi.result());
+                }
+            }
+        }
+
+        // Propagate: phi operands that are themselves phi results become live
+        loop {
+            let mut new_live = Vec::new();
+            for block in ssa.blocks() {
+                for phi in block.phi_nodes() {
+                    if live_phis.contains(&phi.result()) {
+                        for operand in phi.operands() {
+                            let val = operand.value();
+                            if !live_phis.contains(&val) {
+                                // Check if this operand is itself a phi result
+                                // (it will be counted as live in the next iteration)
+                                new_live.push(val);
+                            }
+                        }
+                    }
+                }
+            }
+
+            if new_live.is_empty() {
+                break;
+            }
+            for v in new_live {
+                live_phis.insert(v);
+            }
+        }
+
+        // Now count: for each live phi, count its operands as used
+        for block in ssa.blocks() {
+            for phi in block.phi_nodes() {
+                if live_phis.contains(&phi.result()) {
+                    for operand in phi.operands() {
+                        *use_counts.entry(operand.value()).or_insert(0) += 1;
+                    }
                 }
             }
         }
@@ -1211,7 +1397,7 @@ impl SsaCodeGenerator {
                     // If not in the compacted mapping, fall through to allocate
                     // (this handles edge cases where a Local var wasn't seen during coalescing)
                 }
-                VariableOrigin::Stack(_) | VariableOrigin::Phi => {
+                VariableOrigin::Phi => {
                     // Fall through to allocate a new local
                 }
             }
@@ -1302,7 +1488,12 @@ impl SsaCodeGenerator {
 
     /// Recursive helper for type inference with cycle detection.
     ///
-    /// Traces through Copy chains and phi operand chains to find a known type.
+    /// Uses a priority chain:
+    /// 1. Variable's declared type (set during construction/rebuild)
+    /// 2. Defining instruction's result_type (from converter with TypeContext — most precise)
+    /// 3. Defining op's structural infer_result_type() (for Const/Conv/etc.)
+    /// 4. Copy/phi chain tracing
+    /// 5. Error if no type can be determined (no silent fallback)
     fn infer_variable_type_inner(
         ssa: &SsaFunction,
         var: SsaVarId,
@@ -1321,19 +1512,29 @@ impl SsaCodeGenerator {
             }
         }
 
-        // 2. Try defining instruction
-        if let Some(def_op) = ssa.get_definition(var) {
-            if let Some(inferred) = Self::infer_op_result_type(def_op) {
+        // 2. Try defining instruction (full SsaInstruction, not just SsaOp)
+        if let Some(def_instr) = ssa.get_definition_instruction(var) {
+            // 2a. Instruction-level result type (from converter — most precise,
+            //     resolved via TypeContext with full metadata)
+            if let Some(rt) = def_instr.result_type() {
+                if !rt.is_unknown() {
+                    return Ok(rt.clone());
+                }
+            }
+            // 2b. Op structural inference (for ops with embedded type info like
+            //     Const, Conv, LoadElement, LoadIndirect, etc.)
+            if let Some(inferred) = def_instr.op().infer_result_type() {
                 return Ok(inferred);
             }
-            // For Copy, trace to source variable
-            if let SsaOp::Copy { src, .. } = def_op {
+            // 2c. Copy chain tracing
+            if let SsaOp::Copy { src, .. } = def_instr.op() {
                 let src = *src;
                 return Self::infer_variable_type_inner(ssa, src, visited);
             }
             return Err(Error::CodegenFailed(format!(
                 "cannot determine type for variable {var:?}: defining op has no \
-                 type inference rule: {def_op:?}"
+                 type inference rule: {:?}",
+                def_instr.op()
             )));
         }
 
@@ -1349,106 +1550,10 @@ impl SsaCodeGenerator {
             )));
         }
 
-        // 4. No definition found — fall back to I32 (most common CIL stack type).
-        //    This handles: arguments/locals without TypeContext, orphan stack
-        //    variables from SSA rebuild, and other edge cases.
-        Ok(SsaType::I32)
-    }
-
-    /// Tries to infer the result type of an SSA operation.
-    fn infer_op_result_type(op: &SsaOp) -> Option<SsaType> {
-        match op {
-            // Constants - infer type from the constant value
-            SsaOp::Const { value, .. } => Some(match value {
-                ConstValue::I8(_) => SsaType::I8,
-                ConstValue::I16(_) => SsaType::I16,
-                ConstValue::I32(_) => SsaType::I32,
-                ConstValue::I64(_) => SsaType::I64,
-                ConstValue::U8(_) => SsaType::U8,
-                ConstValue::U16(_) => SsaType::U16,
-                ConstValue::U32(_) => SsaType::U32,
-                ConstValue::U64(_) => SsaType::U64,
-                ConstValue::NativeInt(_) => SsaType::NativeInt,
-                ConstValue::NativeUInt(_) => SsaType::NativeUInt,
-                ConstValue::F32(_) => SsaType::F32,
-                ConstValue::F64(_) => SsaType::F64,
-                ConstValue::String(_) | ConstValue::DecryptedString(_) => SsaType::String,
-                ConstValue::Null => SsaType::Null,
-                ConstValue::True | ConstValue::False => SsaType::Bool,
-                // RuntimeTypeHandle / RuntimeMethodHandle / RuntimeFieldHandle
-                ConstValue::Type(_) | ConstValue::MethodHandle(_) | ConstValue::FieldHandle(_) => {
-                    SsaType::Object
-                }
-            }),
-            // Type conversions have explicit target type
-            SsaOp::Conv { target, .. } => Some(target.clone()),
-            // Comparisons, arithmetic/bitwise ops, overflow-checked arithmetic,
-            // SizeOf, UnboxAny, field loads, LoadObj, calls, LoadArg/LoadLocal
-            // all produce int32 (or default to it when metadata is unavailable)
-            SsaOp::Ceq { .. }
-            | SsaOp::Clt { .. }
-            | SsaOp::Cgt { .. }
-            | SsaOp::Add { .. }
-            | SsaOp::Sub { .. }
-            | SsaOp::Mul { .. }
-            | SsaOp::Div { .. }
-            | SsaOp::Rem { .. }
-            | SsaOp::And { .. }
-            | SsaOp::Or { .. }
-            | SsaOp::Xor { .. }
-            | SsaOp::Shl { .. }
-            | SsaOp::Shr { .. }
-            | SsaOp::Neg { .. }
-            | SsaOp::Not { .. }
-            | SsaOp::AddOvf { .. }
-            | SsaOp::SubOvf { .. }
-            | SsaOp::MulOvf { .. }
-            | SsaOp::SizeOf { .. }
-            | SsaOp::UnboxAny { .. }
-            | SsaOp::LoadField { .. }
-            | SsaOp::LoadStaticField { .. }
-            | SsaOp::LoadObj { .. }
-            | SsaOp::Call { dest: Some(_), .. }
-            | SsaOp::CallVirt { dest: Some(_), .. }
-            | SsaOp::CallIndirect { dest: Some(_), .. }
-            | SsaOp::LoadArg { .. }
-            | SsaOp::LoadLocal { .. } => Some(SsaType::I32),
-            // Box, NewObj, NewArr, CastClass/IsInst produce object references
-            SsaOp::Box { .. }
-            | SsaOp::NewObj { .. }
-            | SsaOp::NewArr { .. }
-            | SsaOp::CastClass { .. }
-            | SsaOp::IsInst { .. } => Some(SsaType::Object),
-            // Array length and LocalAlloc return native int
-            SsaOp::ArrayLength { .. } | SsaOp::LocalAlloc { .. } => Some(SsaType::NativeInt),
-            // Ckfinite operates on F64 stack type
-            SsaOp::Ckfinite { .. } => Some(SsaType::F64),
-            // Function pointer loads produce native int
-            SsaOp::LoadFunctionPtr { .. } | SsaOp::LoadVirtFunctionPtr { .. } => {
-                Some(SsaType::NativeInt)
-            }
-            // Load element — type embedded in the op
-            SsaOp::LoadElement { elem_type, .. } => Some(elem_type.clone()),
-            // Load indirect — type embedded in the op
-            SsaOp::LoadIndirect { value_type, .. } => Some(value_type.clone()),
-            // Load token — determine handle type from token table
-            SsaOp::LoadToken { token, .. } => Some(match token.token().table() {
-                0x06 | 0x0A | 0x2B => SsaType::RuntimeMethodHandle,
-                0x04 => SsaType::RuntimeFieldHandle,
-                _ => SsaType::RuntimeTypeHandle,
-            }),
-            // Unbox and LoadElementAddr produce ByRef to value type (default to ByRef(I32))
-            SsaOp::Unbox { .. } | SsaOp::LoadElementAddr { .. } => {
-                Some(SsaType::ByRef(Box::new(SsaType::I32)))
-            }
-            // Field/arg/local address loads (need metadata, default to ByRef(I32))
-            SsaOp::LoadFieldAddr { .. }
-            | SsaOp::LoadStaticFieldAddr { .. }
-            | SsaOp::LoadArgAddr { .. }
-            | SsaOp::LoadLocalAddr { .. } => Some(SsaType::ByRef(Box::new(SsaType::I32))),
-            // Operations that don't produce values or have complex types
-            _ => None,
-        }
+        // 4. No definition found at all — error, not a silent fallback.
+        Err(Error::CodegenFailed(format!(
+            "cannot determine type for variable {var:?}: no definition found"
+        )))
     }
 
     /// Gets the storage for an SSA variable.
@@ -2799,8 +2904,13 @@ impl SsaCodeGenerator {
             }
 
             SsaOp::LoadLocal { dest, local_index } => {
-                self.used_locals.insert(*local_index);
-                emitter::emit_ldloc(encoder, *local_index)?;
+                let actual_index = self
+                    .original_to_compacted
+                    .get(local_index)
+                    .copied()
+                    .unwrap_or(*local_index);
+                self.used_locals.insert(actual_index);
+                emitter::emit_ldloc(encoder, actual_index)?;
                 let _ = dest;
             }
 
@@ -2810,8 +2920,13 @@ impl SsaCodeGenerator {
             }
 
             SsaOp::LoadLocalAddr { dest, local_index } => {
-                self.used_locals.insert(*local_index);
-                emitter::emit_ldloca(encoder, *local_index)?;
+                let actual_index = self
+                    .original_to_compacted
+                    .get(local_index)
+                    .copied()
+                    .unwrap_or(*local_index);
+                self.used_locals.insert(actual_index);
+                emitter::emit_ldloca(encoder, actual_index)?;
                 let _ = dest;
             }
 

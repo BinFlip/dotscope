@@ -74,7 +74,7 @@ use std::{
 use crate::{
     analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
     assembly::{opcodes, Operand},
-    compiler::{CompilerContext, EventKind, EventLog, SsaPass},
+    compiler::{CompilerContext, EventKind, EventLog, ModificationScope, SsaPass},
     deobfuscation::{
         detection::{DetectionEvidence, DetectionScore},
         findings::DeobfuscationFindings,
@@ -327,7 +327,7 @@ impl ConfuserExAntiDumpPass {
                         }
                         // Replace Marshal.Copy with no-op
                         else if Self::is_marshal_copy(&method_name) {
-                            let dummy_dest = dest.unwrap_or_else(SsaVarId::new);
+                            let dummy_dest = dest.unwrap_or(SsaVarId::PLACEHOLDER);
                             instr.set_op(SsaOp::Const {
                                 dest: dummy_dest,
                                 value: ConstValue::Null,
@@ -363,6 +363,10 @@ impl ConfuserExAntiDumpPass {
 impl SsaPass for ConfuserExAntiDumpPass {
     fn name(&self) -> &'static str {
         "ConfuserExAntiDump"
+    }
+
+    fn modification_scope(&self) -> ModificationScope {
+        ModificationScope::InstructionsOnly
     }
 
     fn should_run(&self, method_token: Token, _ctx: &CompilerContext) -> bool {
