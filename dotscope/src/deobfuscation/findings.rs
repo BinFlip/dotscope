@@ -9,6 +9,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use crate::{
     deobfuscation::{detection::DetectionScore, StateMachineProvider},
+    file::repair::RepairAction,
     metadata::token::Token,
 };
 
@@ -119,6 +120,11 @@ pub struct DeobfuscationFindings {
     /// Non-empty ENC table indices (ENCLog=0x1E, ENCMap=0x1F).
     pub enc_tables: boxcar::Vec<u8>,
 
+    // === PE Repair ===
+    /// PE repairs applied before loading (empty if file loaded normally).
+    /// Used by detectors as evidence of PE-level packer protections.
+    pub pe_repairs: Vec<RepairAction>,
+
     // === Cleanup Infrastructure ===
     /// PE sections containing encrypted/artifact data.
     pub artifact_sections: boxcar::Vec<String>,
@@ -152,6 +158,7 @@ impl Default for DeobfuscationFindings {
             invalid_metadata_entries: boxcar::Vec::new(),
             obfuscator_marker_value: None,
             enc_tables: boxcar::Vec::new(),
+            pe_repairs: Vec::new(),
             artifact_sections: boxcar::Vec::new(),
             protection_infrastructure_types: boxcar::Vec::new(),
             infrastructure_fields: boxcar::Vec::new(),

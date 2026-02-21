@@ -385,9 +385,6 @@ pub fn decrypt_resources(
     assembly: CilObject,
     events: &mut EventLog,
 ) -> Result<(CilObject, ResourceDecryptionResult)> {
-    // Keep original bytes for rebuilding
-    let pe_bytes = assembly.file().data().to_vec();
-
     // Wrap in Arc for emulation (emulation API requires Arc)
     let assembly_arc = Arc::new(assembly);
 
@@ -463,19 +460,17 @@ pub fn decrypt_resources(
         })
     };
 
-    // Drop the Arc - we'll return a new CilObject
-    drop(assembly_arc);
+    // Recover the CilObject from the Arc
+    let assembly = Arc::try_unwrap(assembly_arc)
+        .map_err(|_| Error::Deobfuscation("Assembly still shared after emulation".into()))?;
 
-    // Early exit: no resources to insert, just reload unchanged
+    // Early exit: no resources to insert, return original assembly unchanged
     if !result.has_resources() {
-        let new_assembly =
-            CilObject::from_mem_with_validation(pe_bytes, ValidationConfig::analysis())?;
-        return Ok((new_assembly, result));
+        return Ok((assembly, result));
     }
 
     // Create CilAssembly for modifications
-    let mut cil_assembly =
-        CilAssembly::from_bytes_with_validation(pe_bytes.clone(), ValidationConfig::analysis())?;
+    let mut cil_assembly = assembly.into_assembly();
 
     // Remove existing ManifestResource rows with matching names to avoid duplicates.
     // We replace ANY existing resource with the same name (embedded or external)

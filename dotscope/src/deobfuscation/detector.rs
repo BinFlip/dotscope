@@ -136,19 +136,14 @@ impl ObfuscatorDetector {
         &self,
         assembly: &CilObject,
     ) -> (Option<Arc<dyn Obfuscator>>, DeobfuscationFindings) {
-        let all_detected = self.registry.detect(assembly);
+        // Take ownership of the winning entry (avoids cloning boxcar::Vec
+        // fields which may not preserve entries through clone)
+        let (primary_obfuscator, mut findings) =
+            match self.registry.detect(assembly).into_iter().next() {
+                Some((obfuscator, _, findings)) => (Some(obfuscator), findings),
+                None => (None, DeobfuscationFindings::default()),
+            };
 
-        let primary_obfuscator = all_detected
-            .first()
-            .and_then(|(id, _, _)| self.registry.get(id).cloned());
-
-        // Extract the winning findings, or create empty ones
-        let mut findings = all_detected
-            .first()
-            .map(|(_, _, f)| f.clone())
-            .unwrap_or_default();
-
-        // Populate obfuscator name from the winning obfuscator
         if let Some(obfuscator) = &primary_obfuscator {
             findings.obfuscator_name = Some(obfuscator.name());
         }

@@ -35,7 +35,7 @@ use crate::{
         token::Token,
         validation::ValidationConfig,
     },
-    CilObject, Error, Result,
+    CilObject, Error, File, Result,
 };
 
 /// Main deobfuscation engine.
@@ -437,7 +437,7 @@ impl DeobfuscationEngine {
 
     /// Entry point: Process assembly from file path.
     ///
-    /// Convenience wrapper that loads with lenient validation then
+    /// Loads the PE file with transparent repair and then
     /// delegates to [`process_assembly`](Self::process_assembly).
     ///
     /// # Arguments
@@ -455,17 +455,14 @@ impl DeobfuscationEngine {
         &mut self,
         path: P,
     ) -> Result<(CilObject, DeobfuscationResult)> {
-        let assembly = CilObject::from_path_with_validation(
-            path,
-            ValidationConfig::analysis(), // lenient
-        )?;
-        self.process_assembly(assembly)
+        let file = File::from_path(path)?;
+        self.process_dotscope_file(file)
     }
 
     /// Entry point: Process assembly from memory buffer.
     ///
-    /// Convenience wrapper that loads with lenient validation then
-    /// delegates to [`process_assembly`](Self::process_assembly).
+    /// Loads the PE with transparent repair, then delegates to
+    /// [`process_assembly`](Self::process_assembly).
     ///
     /// # Arguments
     ///
@@ -479,10 +476,21 @@ impl DeobfuscationEngine {
     ///
     /// Returns an error if loading fails or deobfuscation fails.
     pub fn process_bytes(&mut self, bytes: Vec<u8>) -> Result<(CilObject, DeobfuscationResult)> {
-        let assembly = CilObject::from_mem_with_validation(
-            bytes,
-            ValidationConfig::analysis(), // lenient
-        )?;
+        let file = File::from_mem(bytes)?;
+        self.process_dotscope_file(file)
+    }
+
+    /// Internal: loads a dotscope `File` into a `CilObject` and processes it.
+    fn process_dotscope_file(&mut self, file: File) -> Result<(CilObject, DeobfuscationResult)> {
+        if !file.repairs().is_empty() {
+            info!(
+                "PE repair applied {} fix(es) during loading",
+                file.repairs().len()
+            );
+        }
+
+        let assembly =
+            CilObject::from_dotscope_file_with_validation(file, ValidationConfig::analysis())?;
         self.process_assembly(assembly)
     }
 

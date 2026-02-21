@@ -209,7 +209,7 @@ impl fmt::Debug for DetectionScore {
 
 impl PartialEq for DetectionScore {
     fn eq(&self, other: &Self) -> bool {
-        self.score() == other.score()
+        self.score() == other.score() && self.evidence.count() == other.evidence.count()
     }
 }
 
@@ -223,7 +223,9 @@ impl PartialOrd for DetectionScore {
 
 impl Ord for DetectionScore {
     fn cmp(&self, other: &Self) -> Ordering {
-        self.score().cmp(&other.score())
+        self.score()
+            .cmp(&other.score())
+            .then_with(|| self.evidence.count().cmp(&other.evidence.count()))
     }
 }
 

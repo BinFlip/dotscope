@@ -679,6 +679,16 @@ impl Clone for Error {
     }
 }
 
+impl From<cowfile::Error> for Error {
+    fn from(err: cowfile::Error) -> Self {
+        match err {
+            cowfile::Error::Io(io_err) => Error::Io(io_err),
+            cowfile::Error::OutOfBounds { .. } => Error::Other(err.to_string()),
+            cowfile::Error::LockPoisoned(msg) => Error::LockError(msg),
+        }
+    }
+}
+
 #[cfg(feature = "emulation")]
 impl From<EmulationError> for Error {
     fn from(err: EmulationError) -> Self {
