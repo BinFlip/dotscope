@@ -64,6 +64,11 @@ pub struct CompilerContext {
     /// Methods that were inlined at least once during the inlining pass.
     pub inlined_methods: DashSet<Token>,
 
+    /// Metadata tokens neutralized by SSA passes (Call/CallVirt targets that were
+    /// NOP'd or replaced). Used by cleanup to cascade-remove orphaned MemberRef,
+    /// TypeRef, and AssemblyRef entries that are no longer referenced.
+    pub neutralized_tokens: DashSet<Token>,
+
     /// Known constant values for SSA variables, per method.
     known_values: DashMap<Token, DashMap<SsaVarId, ConstValue>>,
 
@@ -92,6 +97,7 @@ impl CompilerContext {
             entry_points: DashSet::new(),
             no_inline: DashSet::new(),
             inlined_methods: DashSet::new(),
+            neutralized_tokens: DashSet::new(),
             known_values: DashMap::new(),
             known_ranges: DashMap::new(),
             local_remappings: DashMap::new(),
@@ -105,8 +111,6 @@ impl CompilerContext {
         self.start_time.elapsed()
     }
 
-    // ── Dead method tracking ────────────────────────────────────────────
-
     /// Checks if a method is marked as dead (has no live callers).
     #[must_use]
     pub fn is_dead(&self, token: Token) -> bool {
@@ -117,8 +121,6 @@ impl CompilerContext {
     pub fn mark_dead(&self, token: Token) {
         self.dead_methods.insert(token);
     }
-
-    // ── Entry point tracking ────────────────────────────────────────────
 
     /// Checks if a method is an entry point.
     #[must_use]
@@ -131,8 +133,6 @@ impl CompilerContext {
         self.entry_points.insert(token);
     }
 
-    // ── Inlined method tracking ─────────────────────────────────────────
-
     /// Marks a method as having been inlined at least once.
     pub fn mark_inlined(&self, token: Token) {
         self.inlined_methods.insert(token);
@@ -143,8 +143,6 @@ impl CompilerContext {
     pub fn was_inlined(&self, token: Token) -> bool {
         self.inlined_methods.contains(&token)
     }
-
-    // ── Summary access ──────────────────────────────────────────────────
 
     /// Executes a closure with a reference to the method summary.
     pub fn with_summary<R, F>(&self, token: Token, f: F) -> Option<R>
@@ -193,8 +191,6 @@ impl CompilerContext {
     pub fn set_summary(&self, summary: MethodSummary) {
         self.summaries.insert(summary.token, summary);
     }
-
-    // ── Call site access ────────────────────────────────────────────────
 
     /// Executes a closure with a reference to the call sites for a callee.
     pub fn with_call_sites<R, F>(&self, callee: Token, f: F) -> Option<R>
@@ -246,8 +242,6 @@ impl CompilerContext {
         self.with_summary(method, |s| s.returns_constant().cloned())
             .flatten()
     }
-
-    // ── SSA function access ─────────────────────────────────────────────
 
     /// Executes a closure with a reference to the SSA function.
     pub fn with_ssa<R, F>(&self, token: Token, f: F) -> Option<R>
@@ -305,8 +299,6 @@ impl CompilerContext {
     pub fn method_count(&self) -> usize {
         self.ssa_functions.len()
     }
-
-    // ── Known values ────────────────────────────────────────────────────
 
     /// Executes a closure with a reference to a known constant value.
     pub fn with_known_value<R, F>(&self, method: Token, var: SsaVarId, f: F) -> Option<R>
@@ -371,8 +363,6 @@ impl CompilerContext {
             .map_or(0, |inner| inner.len())
     }
 
-    // ── Known ranges ────────────────────────────────────────────────────
-
     /// Records a known value range for an SSA variable.
     pub fn add_known_range(&self, method: Token, var: SsaVarId, range: ValueRange) {
         self.known_ranges
@@ -415,8 +405,6 @@ impl CompilerContext {
     pub fn clear_known_ranges(&self, method: Token) {
         self.known_ranges.remove(&method);
     }
-
-    // ── Canonicalization ────────────────────────────────────────────────
 
     /// Canonicalizes all SSA functions in preparation for code generation.
     pub fn canonicalize_all_ssa(&self) {

@@ -86,6 +86,10 @@ pub struct CleanupRequest {
     /// used by anti-tamper, `libc.so.6` used by DotNetHook).
     modulerefs: BTreeSet<Token>,
 
+    /// Metadata tokens orphaned by SSA body rewriting (not entity deletion).
+    /// These become additional cascade candidates for MemberRef/TypeRef/AssemblyRef removal.
+    rewrite_orphaned_tokens: HashSet<Token>,
+
     /// PE sections to exclude from output.
     ///
     /// Section names (e.g., ".confuser", ".packed") that should not be
@@ -116,6 +120,7 @@ impl Default for CleanupRequest {
             attributes: BTreeSet::new(),
             assemblyrefs: BTreeSet::new(),
             modulerefs: BTreeSet::new(),
+            rewrite_orphaned_tokens: HashSet::new(),
             excluded_sections: HashSet::new(),
             remove_orphans: true,
             remove_empty_types: true,
@@ -138,16 +143,9 @@ impl CleanupRequest {
     #[must_use]
     pub fn with_settings(remove_orphans: bool, remove_empty_types: bool) -> Self {
         Self {
-            types: BTreeSet::new(),
-            methods: BTreeSet::new(),
-            methodspecs: BTreeSet::new(),
-            fields: BTreeSet::new(),
-            attributes: BTreeSet::new(),
-            assemblyrefs: BTreeSet::new(),
-            modulerefs: BTreeSet::new(),
-            excluded_sections: HashSet::new(),
             remove_orphans,
             remove_empty_types,
+            ..Self::default()
         }
     }
 
@@ -325,6 +323,21 @@ impl CleanupRequest {
         self.modulerefs.len()
     }
 
+    /// Adds metadata tokens orphaned by SSA body rewriting as cascade candidates.
+    pub fn add_rewrite_orphaned_tokens(
+        &mut self,
+        tokens: impl IntoIterator<Item = Token>,
+    ) -> &mut Self {
+        self.rewrite_orphaned_tokens.extend(tokens);
+        self
+    }
+
+    /// Returns the set of rewrite-orphaned tokens.
+    #[must_use]
+    pub fn rewrite_orphaned_tokens(&self) -> &HashSet<Token> {
+        &self.rewrite_orphaned_tokens
+    }
+
     /// Excludes a PE section from output.
     ///
     /// The section name should include the dot prefix (e.g., ".confuser").
@@ -369,7 +382,7 @@ impl CleanupRequest {
         self.remove_empty_types
     }
 
-    /// Returns true if this request has no deletions specified.
+    /// Returns true if this request has no deletions or modifications specified.
     #[must_use]
     pub fn is_empty(&self) -> bool {
         self.types.is_empty()
@@ -379,6 +392,8 @@ impl CleanupRequest {
             && self.attributes.is_empty()
             && self.assemblyrefs.is_empty()
             && self.modulerefs.is_empty()
+            && self.excluded_sections.is_empty()
+            && self.rewrite_orphaned_tokens.is_empty()
     }
 
     /// Returns true if this request has any deletions specified.
@@ -425,6 +440,8 @@ impl CleanupRequest {
         self.attributes.extend(other.attributes.iter().copied());
         self.assemblyrefs.extend(other.assemblyrefs.iter().copied());
         self.modulerefs.extend(other.modulerefs.iter().copied());
+        self.rewrite_orphaned_tokens
+            .extend(other.rewrite_orphaned_tokens.iter().copied());
         self.excluded_sections
             .extend(other.excluded_sections.iter().cloned());
         self

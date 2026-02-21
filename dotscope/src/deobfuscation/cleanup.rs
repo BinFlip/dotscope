@@ -41,7 +41,7 @@ use crate::{
     compiler::EventKind,
     deobfuscation::context::AnalysisContext,
     metadata::{
-        tables::{FieldRaw, MethodDefRaw, TypeDefRaw},
+        tables::{FieldRaw, MethodDefRaw, ParamRaw, TypeDefRaw},
         token::Token,
         validation::ValidationConfig,
     },
@@ -83,6 +83,18 @@ pub fn execute_cleanup(
             if !is_entry_point(&assembly, token, aggressive) {
                 request.add_method(token);
             }
+        }
+    }
+
+    // Add tokens neutralized by SSA passes as cascade candidates.
+    // These are MemberRef tokens from Call/CallVirt instructions that passes
+    // NOP'd (e.g., AntiDebug removing DateTime calls, CalltoCalli removing
+    // reflection trampolines). If they're no longer referenced by any surviving
+    // method body, the cascade will remove them and their parent TypeRef/AssemblyRef.
+    if ctx.config.cleanup.remove_orphan_metadata {
+        let neutralized: Vec<Token> = ctx.neutralized_tokens.iter().map(|t| *t).collect();
+        if !neutralized.is_empty() {
+            request.add_rewrite_orphaned_tokens(neutralized);
         }
     }
 
@@ -270,6 +282,12 @@ fn is_obfuscated_name(name: &str) -> bool {
         return false;
     }
 
+    // ASCII spaces in identifiers are a strong obfuscation signal (BitMono FullRenamer).
+    // Valid .NET identifiers never contain spaces.
+    if name.contains(' ') {
+        return true;
+    }
+
     for c in name.chars() {
         match c {
             '\u{200B}'..='\u{200F}'
@@ -299,8 +317,17 @@ fn is_special_name(name: &str) -> bool {
         return true;
     }
 
+    // Angle-bracket-wrapped names are CLR-internal (e.g. "<Generic Parameter>").
+    // Check this before the space filter since some legitimate CLR names contain spaces.
     if name.starts_with('<') && name.ends_with('>') {
         return true;
+    }
+
+    // Names containing spaces cannot be legitimate property/event accessors.
+    // This prevents BitMono FullRenamer names like "get_Syntax get_AllowedCaller..."
+    // from being incorrectly protected by the prefix checks below.
+    if name.contains(' ') {
+        return false;
     }
 
     if name.starts_with("get_")
@@ -320,6 +347,7 @@ struct SimpleNameGenerator {
     types: usize,
     methods: usize,
     fields: usize,
+    params: usize,
 }
 
 impl SimpleNameGenerator {
@@ -343,6 +371,12 @@ impl SimpleNameGenerator {
     pub fn next_field_name(&mut self) -> String {
         let name = format!("f_{}", Self::index_to_name_lower(self.fields));
         self.fields += 1;
+        name
+    }
+
+    pub fn next_param_name(&mut self) -> String {
+        let name = format!("p_{}", Self::index_to_name_lower(self.params));
+        self.params += 1;
         name
     }
 
@@ -459,6 +493,26 @@ fn rename_obfuscated_names(cil_assembly: &mut CilAssembly) -> usize {
         }
     }
 
+    // Collect obfuscated parameter names from Param
+    if let Some(param_table) = tables.table::<ParamRaw>() {
+        for rid in 1..=param_table.row_count {
+            if let Some(param) = param_table.get(rid) {
+                let name_index = param.name;
+                if name_index > 0 {
+                    if let Ok(name) = strings.get(name_index as usize) {
+                        if is_obfuscated_name(name)
+                            && !is_special_name(name)
+                            && !names_to_rename.iter().any(|(idx, _)| *idx == name_index)
+                        {
+                            let new_name = name_generator.next_param_name();
+                            names_to_rename.push((name_index, new_name));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     // Apply the renames to the string heap
     for (string_index, new_name) in &names_to_rename {
         if cil_assembly.string_update(*string_index, new_name).is_ok() {
@@ -509,11 +563,80 @@ mod tests {
     }
 
     #[test]
+    fn test_is_obfuscated_name_spaces() {
+        // BitMono FullRenamer produces space-containing names from word pools
+        assert!(is_obfuscated_name(
+            "Translate Start <FixedUpdate>b__4_0.get_Syntax"
+        ));
+        assert!(is_obfuscated_name(
+            "get_Syntax get_AllowedCaller get_RebindActionMap"
+        ));
+        assert!(is_obfuscated_name("A B"));
+        // Single words without spaces are not obfuscated
+        assert!(!is_obfuscated_name("ValidName"));
+        assert!(!is_obfuscated_name("get_Value"));
+    }
+
+    #[test]
     fn test_is_special_name() {
         assert!(is_special_name(".ctor"));
         assert!(is_special_name(".cctor"));
         assert!(is_special_name("<Module>"));
         assert!(is_special_name("get_Value"));
         assert!(!is_special_name("MyMethod"));
+    }
+
+    #[test]
+    fn test_is_special_name_rejects_spaces() {
+        // Space-containing names with get_/set_ prefixes should NOT be treated as special
+        assert!(!is_special_name("get_Syntax get_AllowedCaller"));
+        assert!(!is_special_name("set_Value some_other_word"));
+        assert!(!is_special_name(".ctor with spaces"));
+        assert!(!is_special_name("<Module> extra"));
+        // But angle-bracket-wrapped CLR names with spaces are legitimate
+        assert!(is_special_name("<Generic Parameter>"));
+        assert!(is_special_name("<Generic Method Parameter>"));
+        // Legitimate special names still work
+        assert!(is_special_name("get_Value"));
+        assert!(is_special_name("set_Item"));
+        assert!(is_special_name("add_Click"));
+        assert!(is_special_name("remove_Changed"));
+    }
+
+    /// Regression test: renaming obfuscated names must preserve TypeRef substring
+    /// references in the string heap. The .NET string heap uses substring sharing
+    /// (e.g., "Console" as a suffix of "writeToConsole"), and the generator must
+    /// correctly remap these after heap modifications.
+    #[test]
+    fn test_rename_preserves_typeref_substring_references() {
+        use crate::{cilassembly::CilAssembly, metadata::validation::ValidationConfig, CilObject};
+
+        let path = "tests/samples/packers/bitmono/bitmono_renamer.exe";
+        if !std::path::Path::new(path).exists() {
+            eprintln!("Skipping: sample not found");
+            return;
+        }
+
+        let assembly =
+            CilObject::from_path_with_validation(path, ValidationConfig::analysis()).unwrap();
+        let bytes = assembly.file().data().to_vec();
+        let mut cil_assembly = CilAssembly::from_bytes(bytes).unwrap();
+
+        let count = super::rename_obfuscated_names(&mut cil_assembly);
+        assert!(count > 0, "Expected at least one rename");
+
+        // Generate and validate with production strictness — this catches broken
+        // TypeRef string offsets that would result in "Out of Bounds" errors.
+        let output = cil_assembly
+            .into_cilobject_with(
+                ValidationConfig::production(),
+                crate::cilassembly::GeneratorConfig::default(),
+            )
+            .expect("Generation with renames should produce valid assembly");
+
+        // Double-check: reload from bytes with production validation
+        let output_bytes = output.file().data();
+        CilObject::from_mem_with_validation(output_bytes.to_vec(), ValidationConfig::production())
+            .expect("Roundtrip after rename should pass production validation");
     }
 }
