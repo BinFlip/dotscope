@@ -28,11 +28,18 @@
 //! These functions are called from [`super::orphans`] to determine which
 //! metadata entries can be removed without breaking the assembly.
 
-use std::collections::HashSet;
+use std::collections::{BTreeSet, HashSet};
 
 use crate::{
-    assembly::{decode_blocks, Operand},
-    cilassembly::{modifications::TableModifications, operation::Operation, CilAssembly},
+    assembly::{decode_blocks, BasicBlock, Operand},
+    cilassembly::{
+        cleanup::utils::{
+            extract_local_var_sig_rid, remove_candidates_not_alive, with_method_body,
+        },
+        modifications::TableModifications,
+        operation::Operation,
+        CilAssembly,
+    },
     metadata::{
         method::MethodBody,
         signatures::{
@@ -40,19 +47,168 @@ use crate::{
             parse_property_signature, parse_type_spec_signature, CustomModifier,
             SignatureLocalVariable, SignatureParameter, TypeSignature,
         },
-        streams::{Blob, TablesHeader},
+        streams::Blob,
         tables::{
             CustomAttributeRaw, FieldRaw, GenericParamConstraintRaw, InterfaceImplRaw,
             MemberRefRaw, MethodDefRaw, MethodSpecRaw, PropertyRaw, StandAloneSigRaw,
-            TableDataOwned, TableId, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+            TableDataOwned, TableId, TypeDefRaw, TypeSpecRaw,
         },
         token::Token,
     },
 };
 
-/// Placeholder RVA threshold - RVAs at or above this value are placeholder RVAs
-/// that point to regenerated method bodies stored in AssemblyChanges.
-const PLACEHOLDER_RVA_THRESHOLD: u32 = 0xF000_0000;
+/// Pre-deletion reference data for cascade-based cleanup.
+///
+/// Collected **before** entities are deleted, this tracks what tokens the
+/// entities being deleted currently reference. After deletion, only entries
+/// that appear in this set AND are no longer referenced by surviving entities
+/// are cascade-removed.
+///
+/// This approach is fundamentally safer than garbage-collection-style orphan
+/// removal because it never removes pre-existing orphans (which may be used
+/// via reflection or dynamic code generation).
+pub struct PreDeletionRefs {
+    /// Token operands found in method bodies of entities being deleted.
+    pub(super) il_tokens: HashSet<Token>,
+    /// TypeRef RIDs referenced by signatures and extends clauses of entities being deleted.
+    pub(super) typeref_rids: HashSet<u32>,
+    /// StandAloneSig RIDs referenced by method bodies of methods being deleted.
+    pub(super) standalonesig_rids: BTreeSet<u32>,
+}
+
+impl PreDeletionRefs {
+    /// Returns the set of IL token operands found in method bodies of entities being deleted.
+    #[must_use]
+    pub fn il_tokens(&self) -> &HashSet<Token> {
+        &self.il_tokens
+    }
+
+    /// Returns the set of TypeRef RIDs referenced by signatures and extends clauses.
+    #[must_use]
+    pub fn typeref_rids(&self) -> &HashSet<u32> {
+        &self.typeref_rids
+    }
+
+    /// Returns the set of StandAloneSig RIDs referenced by method bodies.
+    #[must_use]
+    pub fn standalonesig_rids(&self) -> &BTreeSet<u32> {
+        &self.standalonesig_rids
+    }
+}
+
+/// Collects all token references from entities that are about to be deleted.
+///
+/// Must be called **before** the entities are actually deleted, while their
+/// method bodies, signatures, and metadata are still accessible.
+///
+/// # Arguments
+///
+/// * `assembly` - The assembly to scan
+/// * `methods` - Method tokens that will be deleted
+/// * `fields` - Field tokens that will be deleted
+/// * `types` - Type tokens that will be deleted
+///
+/// # Returns
+///
+/// A [`PreDeletionRefs`] containing all tokens referenced by the entities.
+pub fn collect_pre_deletion_references(
+    assembly: &CilAssembly,
+    methods: &BTreeSet<Token>,
+    fields: &BTreeSet<Token>,
+    types: &BTreeSet<Token>,
+) -> PreDeletionRefs {
+    let mut il_tokens = HashSet::new();
+    let mut typeref_rids = HashSet::new();
+    let mut standalonesig_rids = BTreeSet::new();
+
+    {
+        let view = assembly.view();
+        let Some(tables) = view.tables() else {
+            return PreDeletionRefs {
+                il_tokens,
+                typeref_rids,
+                standalonesig_rids,
+            };
+        };
+
+        let blob_heap = view.blobs();
+
+        // Scan method bodies and signatures of methods being deleted
+        if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
+            for methoddef in methoddef_table {
+                let method_token = Token::from_parts(TableId::MethodDef, methoddef.rid);
+                if !methods.contains(&method_token) {
+                    continue;
+                }
+
+                // Get effective RVA (may be updated with placeholder if regenerated)
+                let effective_rva =
+                    get_effective_method_rva(assembly, methoddef.rid, methoddef.rva);
+                if effective_rva == 0 {
+                    continue;
+                }
+
+                // Scan method body IL for token operands and collect LocalVarSigTok
+                with_method_body(assembly, effective_rva, &mut |data, base_rva| {
+                    scan_method_body_bytes(data, base_rva, &mut il_tokens);
+                    if let Some(sig_rid) = extract_local_var_sig_rid(data) {
+                        standalonesig_rids.insert(sig_rid);
+                    }
+                });
+
+                // Scan method signature for TypeRef references
+                if let Some(blob) = &blob_heap {
+                    scan_method_signature_blob(blob, methoddef.signature, &mut typeref_rids);
+                }
+            }
+        }
+
+        // Scan field signatures of fields being deleted
+        if let Some(field_table) = tables.table::<FieldRaw>() {
+            if let Some(blob) = &blob_heap {
+                for field in field_table {
+                    let field_token = Token::from_parts(TableId::Field, field.rid);
+                    if !fields.contains(&field_token) {
+                        continue;
+                    }
+                    scan_field_signature_blob(blob, field.signature, &mut typeref_rids);
+                }
+            }
+        }
+
+        // Scan extends clause of types being deleted
+        if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
+            for type_token in types {
+                if let Some(typedef) = typedef_table.get(type_token.row()) {
+                    if typedef.extends.token.is_table(TableId::TypeRef) {
+                        typeref_rids.insert(typedef.extends.token.row());
+                    }
+                }
+            }
+        }
+
+        // Scan CustomAttribute constructors whose parent is being deleted
+        if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
+            for attr in attr_table {
+                let parent_token = attr.parent.token;
+                let parent_deleted = types.contains(&parent_token)
+                    || methods.contains(&parent_token)
+                    || fields.contains(&parent_token);
+                if !parent_deleted {
+                    continue;
+                }
+                // The constructor may be a MemberRef or MethodDef
+                il_tokens.insert(attr.constructor.token);
+            }
+        }
+    }
+
+    PreDeletionRefs {
+        il_tokens,
+        typeref_rids,
+        standalonesig_rids,
+    }
+}
 
 /// Gets the effective RVA for a MethodDef row, checking for updates.
 ///
@@ -124,15 +280,40 @@ fn scan_method_body_bytes(data: &[u8], base_rva: usize, referenced: &mut HashSet
         return;
     }
 
-    // Decode basic blocks and collect tokens from instructions
+    let code_data = &data[code_start..code_end];
     let code_rva = base_rva + body.size_header;
-    if let Ok(blocks) = decode_blocks(&data[code_start..code_end], 0, code_rva, None) {
-        for block in &blocks {
+
+    // Helper: extract token operands from decoded blocks
+    let collect = |blocks: &[BasicBlock], out: &mut HashSet<Token>| {
+        for block in blocks {
             for instr in &block.instructions {
                 if let Operand::Token(token) = instr.operand {
-                    referenced.insert(token);
+                    out.insert(token);
                 }
             }
+        }
+    };
+
+    // Decode main code flow
+    if let Ok(blocks) = decode_blocks(code_data, 0, code_rva, None) {
+        collect(&blocks, referenced);
+    }
+
+    // Decode exception handler regions — these are not reachable via normal
+    // control flow so decode_blocks(offset=0) never visits them.
+    for handler in &body.exception_handlers {
+        let h_offset = handler.handler_offset as usize;
+        let h_length = handler.handler_length as usize;
+        if h_offset < code_data.len() {
+            let h_rva = code_rva + h_offset;
+            if let Ok(blocks) = decode_blocks(code_data, h_offset, h_rva, Some(h_length)) {
+                collect(&blocks, referenced);
+            }
+        }
+
+        // Catch clause class token (TypeDef/TypeRef/TypeSpec of the caught exception)
+        if let Some(class_token) = handler.get_class_token() {
+            referenced.insert(Token::new(class_token));
         }
     }
 }
@@ -142,57 +323,34 @@ fn scan_method_body_bytes(data: &[u8], base_rva: usize, referenced: &mut HashSet
 /// Scans all method bodies (original and regenerated) and extracts the
 /// LocalVarSigTok from fat headers. Returns the set of StandAloneSig RIDs
 /// that are actually used by method bodies.
-fn collect_referenced_standalonesig_rids(assembly: &CilAssembly) -> HashSet<u32> {
+pub(super) fn collect_referenced_standalonesig_rids(assembly: &CilAssembly) -> HashSet<u32> {
     let mut referenced = HashSet::new();
 
-    let view = assembly.view();
-    let Some(tables) = view.tables() else {
-        return referenced;
+    // Collect (rid, rva) pairs while holding view borrow
+    let method_rvas: Vec<u32> = {
+        let view = assembly.view();
+        let Some(tables) = view.tables() else {
+            return referenced;
+        };
+
+        let Some(methoddef_table) = tables.table::<MethodDefRaw>() else {
+            return referenced;
+        };
+
+        methoddef_table
+            .into_iter()
+            .filter(|m| !assembly.changes().is_row_deleted(TableId::MethodDef, m.rid))
+            .map(|m| get_effective_method_rva(assembly, m.rid, m.rva))
+            .filter(|&rva| rva != 0)
+            .collect()
     };
 
-    let Some(methoddef_table) = tables.table::<MethodDefRaw>() else {
-        return referenced;
-    };
-
-    let file = view.file();
-    let original_data = file.data();
-
-    for methoddef in methoddef_table {
-        let effective_rva = get_effective_method_rva(assembly, methoddef.rid, methoddef.rva);
-
-        if effective_rva == 0 {
-            continue;
-        }
-
-        // Parse method body to get LocalVarSigTok
-        if effective_rva >= PLACEHOLDER_RVA_THRESHOLD {
-            // Regenerated method body
-            if let Some(body_bytes) = assembly.changes().get_method_body(effective_rva) {
-                if let Ok(body) = MethodBody::from(body_bytes.as_slice()) {
-                    if body.local_var_sig_token != 0 {
-                        let sig_token = Token::new(body.local_var_sig_token);
-                        if sig_token.is_table(TableId::StandAloneSig) {
-                            referenced.insert(sig_token.row());
-                        }
-                    }
-                }
+    for effective_rva in method_rvas {
+        with_method_body(assembly, effective_rva, &mut |data, _| {
+            if let Some(sig_rid) = extract_local_var_sig_rid(data) {
+                referenced.insert(sig_rid);
             }
-        } else {
-            // Original method body
-            let Ok(offset) = file.rva_to_offset(effective_rva as usize) else {
-                continue;
-            };
-            if offset < original_data.len() {
-                if let Ok(body) = MethodBody::from(&original_data[offset..]) {
-                    if body.local_var_sig_token != 0 {
-                        let sig_token = Token::new(body.local_var_sig_token);
-                        if sig_token.is_table(TableId::StandAloneSig) {
-                            referenced.insert(sig_token.row());
-                        }
-                    }
-                }
-            }
-        }
+        });
     }
 
     referenced
@@ -210,52 +368,71 @@ fn collect_referenced_standalonesig_rids(assembly: &CilAssembly) -> HashSet<u32>
 pub fn scan_method_body_tokens(assembly: &CilAssembly) -> HashSet<Token> {
     let mut referenced = HashSet::new();
 
-    let view = assembly.view();
-    let Some(tables) = view.tables() else {
-        return referenced;
+    // Collect (rid, effective_rva) pairs while holding view borrow
+    let method_rvas: Vec<u32> = {
+        let view = assembly.view();
+        let Some(tables) = view.tables() else {
+            return referenced;
+        };
+
+        let Some(methoddef_table) = tables.table::<MethodDefRaw>() else {
+            return referenced;
+        };
+
+        methoddef_table
+            .into_iter()
+            .filter(|m| !assembly.changes().is_row_deleted(TableId::MethodDef, m.rid))
+            .map(|m| get_effective_method_rva(assembly, m.rid, m.rva))
+            .filter(|&rva| rva != 0)
+            .collect()
     };
 
-    let Some(methoddef_table) = tables.table::<MethodDefRaw>() else {
-        return referenced;
-    };
-
-    let file = view.file();
-    let original_data = file.data();
-
-    for methoddef in methoddef_table {
-        // Get the effective RVA (may be updated with placeholder if regenerated)
-        let effective_rva = get_effective_method_rva(assembly, methoddef.rid, methoddef.rva);
-
-        // Skip methods without RVA (abstract, extern, or deleted)
-        if effective_rva == 0 {
-            continue;
-        }
-
-        // Check if this method has a regenerated body (placeholder RVA)
-        if effective_rva >= PLACEHOLDER_RVA_THRESHOLD {
-            // Get regenerated method body from AssemblyChanges
-            if let Some(body_bytes) = assembly.changes().get_method_body(effective_rva) {
-                scan_method_body_bytes(body_bytes, 0, &mut referenced);
-            }
-        } else {
-            // Original method body - read from file
-            let Ok(offset) = file.rva_to_offset(effective_rva as usize) else {
-                continue;
-            };
-
-            if offset >= original_data.len() {
-                continue;
-            }
-
-            scan_method_body_bytes(
-                &original_data[offset..],
-                effective_rva as usize,
-                &mut referenced,
-            );
-        }
+    for effective_rva in method_rvas {
+        with_method_body(assembly, effective_rva, &mut |data, base_rva| {
+            scan_method_body_bytes(data, base_rva, &mut referenced);
+        });
     }
 
     referenced
+}
+
+/// Collects TypeRef RIDs referenced by the signatures of the given MemberRefs.
+///
+/// When MemberRefs are cascade-deleted, their `.class` TypeRefs become cascade
+/// candidates. But TypeRefs referenced only through their **signatures** (parameter
+/// types, return types) are not captured by the `.class` cascade. This function
+/// fills that gap by scanning the signatures of deleted MemberRefs and returning
+/// any TypeRef RIDs found within.
+pub fn collect_typerefs_from_deleted_memberref_sigs(
+    assembly: &CilAssembly,
+    memberref_rids: &HashSet<u32>,
+) -> HashSet<u32> {
+    let mut result = HashSet::new();
+
+    if memberref_rids.is_empty() {
+        return result;
+    }
+
+    let view = assembly.view();
+    let Some(tables) = view.tables() else {
+        return result;
+    };
+    let Some(blob_heap) = view.blobs() else {
+        return result;
+    };
+    let Some(memberref_table) = tables.table::<MemberRefRaw>() else {
+        return result;
+    };
+
+    for &rid in memberref_rids {
+        if let Some(memberref) = memberref_table.get(rid) {
+            if !scan_method_signature_blob(blob_heap, memberref.signature, &mut result) {
+                scan_field_signature_blob(blob_heap, memberref.signature, &mut result);
+            }
+        }
+    }
+
+    result
 }
 
 /// Scans metadata tables to collect TypeRef RIDs that are referenced.
@@ -274,18 +451,30 @@ pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32> {
         return referenced_rids;
     };
 
-    // TypeDef.extends - base class references
+    // TypeDef.extends - base class references (skip deleted types)
     if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
         for typedef in typedef_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::TypeDef, typedef.rid)
+            {
+                continue;
+            }
             if typedef.extends.token.is_table(TableId::TypeRef) {
                 referenced_rids.insert(typedef.extends.token.row());
             }
         }
     }
 
-    // InterfaceImpl.interface
+    // InterfaceImpl.interface (skip deleted rows)
     if let Some(interfaceimpl_table) = tables.table::<InterfaceImplRaw>() {
         for impl_ in interfaceimpl_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::InterfaceImpl, impl_.rid)
+            {
+                continue;
+            }
             if impl_.interface.token.is_table(TableId::TypeRef) {
                 referenced_rids.insert(impl_.interface.token.row());
             }
@@ -295,7 +484,6 @@ pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32> {
     // MemberRef.class - declaring type of member references (skip deleted rows)
     if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
         for memberref in memberref_table {
-            // Skip MemberRefs that have been deleted in earlier cleanup phases
             if assembly
                 .changes()
                 .is_row_deleted(TableId::MemberRef, memberref.rid)
@@ -308,22 +496,33 @@ pub fn scan_typeref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32> {
         }
     }
 
-    // GenericParamConstraint - type constraints
+    // GenericParamConstraint - type constraints (skip deleted rows)
     if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
         for constraint in constraint_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::GenericParamConstraint, constraint.rid)
+            {
+                continue;
+            }
             if constraint.constraint.token.is_table(TableId::TypeRef) {
                 referenced_rids.insert(constraint.constraint.token.row());
             }
         }
     }
 
-    // CustomAttribute.constructor - when it's a MemberRef on a TypeRef
+    // CustomAttribute.constructor - when it's a MemberRef on a TypeRef (skip deleted rows)
     if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
         if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
             for attr in attr_table {
+                if assembly
+                    .changes()
+                    .is_row_deleted(TableId::CustomAttribute, attr.rid)
+                {
+                    continue;
+                }
                 if attr.constructor.token.is_table(TableId::MemberRef) {
                     let memberref_rid = attr.constructor.token.row();
-                    // Skip if the MemberRef has been deleted
                     if assembly
                         .changes()
                         .is_row_deleted(TableId::MemberRef, memberref_rid)
@@ -356,18 +555,30 @@ pub fn scan_memberref_metadata_refs(assembly: &CilAssembly) -> HashSet<u32> {
         return referenced_rids;
     };
 
-    // CustomAttribute.constructor
+    // CustomAttribute.constructor (skip deleted rows)
     if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
         for attr in attr_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::CustomAttribute, attr.rid)
+            {
+                continue;
+            }
             if attr.constructor.token.is_table(TableId::MemberRef) {
                 referenced_rids.insert(attr.constructor.token.row());
             }
         }
     }
 
-    // MethodSpec.method
+    // MethodSpec.method (skip deleted rows)
     if let Some(methodspec_table) = tables.table::<MethodSpecRaw>() {
         for spec in methodspec_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::MethodSpec, spec.rid)
+            {
+                continue;
+            }
             if spec.method.token.is_table(TableId::MemberRef) {
                 referenced_rids.insert(spec.method.token.row());
             }
@@ -392,36 +603,60 @@ pub fn scan_typespec_metadata_refs(assembly: &CilAssembly) -> HashSet<u32> {
         return referenced_rids;
     };
 
-    // MemberRef.class
+    // MemberRef.class (skip deleted rows)
     if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
         for memberref in memberref_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::MemberRef, memberref.rid)
+            {
+                continue;
+            }
             if memberref.class.token.is_table(TableId::TypeSpec) {
                 referenced_rids.insert(memberref.class.token.row());
             }
         }
     }
 
-    // InterfaceImpl.interface
+    // InterfaceImpl.interface (skip deleted rows)
     if let Some(interfaceimpl_table) = tables.table::<InterfaceImplRaw>() {
         for impl_ in interfaceimpl_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::InterfaceImpl, impl_.rid)
+            {
+                continue;
+            }
             if impl_.interface.token.is_table(TableId::TypeSpec) {
                 referenced_rids.insert(impl_.interface.token.row());
             }
         }
     }
 
-    // GenericParamConstraint.constraint
+    // GenericParamConstraint.constraint (skip deleted rows)
     if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
         for constraint in constraint_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::GenericParamConstraint, constraint.rid)
+            {
+                continue;
+            }
             if constraint.constraint.token.is_table(TableId::TypeSpec) {
                 referenced_rids.insert(constraint.constraint.token.row());
             }
         }
     }
 
-    // TypeDef.extends
+    // TypeDef.extends (skip deleted rows)
     if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
         for typedef in typedef_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::TypeDef, typedef.rid)
+            {
+                continue;
+            }
             if typedef.extends.token.is_table(TableId::TypeSpec) {
                 referenced_rids.insert(typedef.extends.token.row());
             }
@@ -567,24 +802,32 @@ pub fn scan_signature_typeref_refs(assembly: &CilAssembly) -> HashSet<u32> {
         return referenced_rids;
     };
 
-    // MethodDef signatures
+    // MethodDef signatures (skip deleted rows)
     if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
         for methoddef in methoddef_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::MethodDef, methoddef.rid)
+            {
+                continue;
+            }
             scan_method_signature_blob(blob_heap, methoddef.signature, &mut referenced_rids);
         }
     }
 
-    // Field signatures
+    // Field signatures (skip deleted rows)
     if let Some(field_table) = tables.table::<FieldRaw>() {
         for field in field_table {
+            if assembly.changes().is_row_deleted(TableId::Field, field.rid) {
+                continue;
+            }
             scan_field_signature_blob(blob_heap, field.signature, &mut referenced_rids);
         }
     }
 
-    // MemberRef signatures - skip deleted rows
+    // MemberRef signatures (skip deleted rows)
     if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
         for memberref in memberref_table {
-            // Skip MemberRefs that have been deleted in earlier cleanup phases
             if assembly
                 .changes()
                 .is_row_deleted(TableId::MemberRef, memberref.rid)
@@ -611,16 +854,28 @@ pub fn scan_signature_typeref_refs(assembly: &CilAssembly) -> HashSet<u32> {
         }
     }
 
-    // TypeSpec signatures
+    // TypeSpec signatures (skip deleted rows)
     if let Some(typespec_table) = tables.table::<TypeSpecRaw>() {
         for typespec in typespec_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::TypeSpec, typespec.rid)
+            {
+                continue;
+            }
             scan_typespec_signature_blob(blob_heap, typespec.signature, &mut referenced_rids);
         }
     }
 
-    // Property signatures
+    // Property signatures (skip deleted rows)
     if let Some(property_table) = tables.table::<PropertyRaw>() {
         for property in property_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::Property, property.rid)
+            {
+                continue;
+            }
             scan_property_signature_blob(blob_heap, property.signature, &mut referenced_rids);
         }
     }
@@ -733,25 +988,36 @@ fn scan_property_signature_blob(
     }
 }
 
-/// Removes TypeRef entries that are not referenced by any code or metadata.
+/// Removes TypeRef entries that are cascade candidates and no longer referenced.
 ///
-/// Scans method bodies, metadata tables, and signature blobs to find referenced
-/// TypeRefs, then removes any TypeRef that is not in the referenced set.
-pub fn remove_unreferenced_typerefs(assembly: &mut CilAssembly) -> usize {
-    // Collect all referenced TypeRef RIDs
+/// Only removes TypeRefs that are in the `candidates` set AND are not referenced
+/// by any surviving code or metadata. This is the cascade-safe version that
+/// preserves pre-existing orphans.
+///
+/// # Returns
+///
+/// A tuple of (count_removed, set_of_deleted_rids).
+pub fn remove_unreferenced_typerefs(
+    assembly: &mut CilAssembly,
+    candidates: &BTreeSet<u32>,
+    body_tokens: &HashSet<Token>,
+) -> (usize, HashSet<u32>) {
+    if candidates.is_empty() {
+        return (0, HashSet::new());
+    }
+
+    // Collect all referenced TypeRef RIDs (live set from surviving entities)
     let mut referenced_rids = HashSet::new();
 
     // From method bodies (IL token operands)
-    let body_tokens = scan_method_body_tokens(assembly);
-    for token in &body_tokens {
+    for token in body_tokens {
         if token.is_table(TableId::TypeRef) {
             referenced_rids.insert(token.row());
         }
     }
 
-    // From metadata tables (extends, interfaces, constraints, etc.)
-    let metadata_refs = scan_typeref_metadata_refs(assembly);
-    referenced_rids.extend(metadata_refs);
+    // From metadata tables (computed at this point, after prior cascade removals)
+    referenced_rids.extend(scan_typeref_metadata_refs(assembly));
 
     // From signature blobs (method sigs, field sigs, local var sigs, etc.)
     let signature_refs = scan_signature_typeref_refs(assembly);
@@ -769,6 +1035,12 @@ pub fn remove_unreferenced_typerefs(assembly: &mut CilAssembly) -> usize {
         if let Some(tables) = view.tables() {
             if let Some(memberref_table) = tables.table::<MemberRefRaw>() {
                 for memberref in memberref_table {
+                    if assembly
+                        .changes()
+                        .is_row_deleted(TableId::MemberRef, memberref.rid)
+                    {
+                        continue;
+                    }
                     if memberref_body_rids.contains(&memberref.rid)
                         && memberref.class.token.is_table(TableId::TypeRef)
                     {
@@ -779,46 +1051,38 @@ pub fn remove_unreferenced_typerefs(assembly: &mut CilAssembly) -> usize {
         }
     }
 
-    // Get total TypeRef count
-    let typeref_count = {
-        let view = assembly.view();
-        view.tables()
-            .and_then(TablesHeader::table::<TypeRefRaw>)
-            .map_or(0, |t| t.row_count)
-    };
-
-    // Remove unreferenced TypeRefs (in reverse order)
-    let mut removed = 0;
-    for rid in (1..=typeref_count).rev() {
-        if !referenced_rids.contains(&rid)
-            && assembly.table_row_remove(TableId::TypeRef, rid).is_ok()
-        {
-            removed += 1;
-        }
-    }
-
-    removed
+    remove_candidates_not_alive(assembly, TableId::TypeRef, candidates, &referenced_rids)
 }
 
-/// Removes MemberRef entries that are not referenced by any code or metadata.
+/// Removes MemberRef entries that are cascade candidates and no longer referenced.
 ///
-/// Scans method bodies and metadata tables to find referenced MemberRefs,
-/// then removes any MemberRef that is not in the referenced set.
-pub fn remove_unreferenced_memberrefs(assembly: &mut CilAssembly) -> usize {
-    // Collect all referenced MemberRef RIDs
+/// Only removes MemberRefs that are in the `candidates` set AND are not referenced
+/// by any surviving code or metadata.
+///
+/// # Returns
+///
+/// A tuple of (count_removed, set_of_deleted_rids).
+pub fn remove_unreferenced_memberrefs(
+    assembly: &mut CilAssembly,
+    candidates: &BTreeSet<u32>,
+    body_tokens: &HashSet<Token>,
+) -> (usize, HashSet<u32>) {
+    if candidates.is_empty() {
+        return (0, HashSet::new());
+    }
+
+    // Collect all referenced MemberRef RIDs (live set)
     let mut referenced_rids = HashSet::new();
 
     // From method bodies
-    let body_tokens = scan_method_body_tokens(assembly);
-    for token in &body_tokens {
+    for token in body_tokens {
         if token.is_table(TableId::MemberRef) {
             referenced_rids.insert(token.row());
         }
     }
 
-    // From metadata tables
-    let metadata_refs = scan_memberref_metadata_refs(assembly);
-    referenced_rids.extend(metadata_refs);
+    // From metadata tables (computed at this point, reflecting current deletion state)
+    referenced_rids.extend(scan_memberref_metadata_refs(assembly));
 
     // Also include MemberRefs referenced through MethodSpecs in method bodies
     let methodspec_body_rids: HashSet<u32> = body_tokens
@@ -832,6 +1096,12 @@ pub fn remove_unreferenced_memberrefs(assembly: &mut CilAssembly) -> usize {
         if let Some(tables) = view.tables() {
             if let Some(methodspec_table) = tables.table::<MethodSpecRaw>() {
                 for spec in methodspec_table {
+                    if assembly
+                        .changes()
+                        .is_row_deleted(TableId::MethodSpec, spec.rid)
+                    {
+                        continue;
+                    }
                     if methodspec_body_rids.contains(&spec.rid)
                         && spec.method.token.is_table(TableId::MemberRef)
                     {
@@ -842,81 +1112,58 @@ pub fn remove_unreferenced_memberrefs(assembly: &mut CilAssembly) -> usize {
         }
     }
 
-    // Get total MemberRef count
-    let memberref_count = {
-        let view = assembly.view();
-        view.tables()
-            .and_then(TablesHeader::table::<MemberRefRaw>)
-            .map_or(0, |t| t.row_count)
-    };
-
-    // Remove unreferenced MemberRefs (in reverse order)
-    let mut removed = 0;
-    for rid in (1..=memberref_count).rev() {
-        if !referenced_rids.contains(&rid)
-            && assembly.table_row_remove(TableId::MemberRef, rid).is_ok()
-        {
-            removed += 1;
-        }
-    }
-
-    removed
+    remove_candidates_not_alive(assembly, TableId::MemberRef, candidates, &referenced_rids)
 }
 
-/// Removes TypeSpec entries that are not referenced by any code or metadata.
+/// Removes TypeSpec entries that are cascade candidates and no longer referenced.
 ///
-/// Scans method bodies and metadata tables to find referenced TypeSpecs,
-/// then removes any TypeSpec that is not in the referenced set.
-pub fn remove_unreferenced_typespecs(assembly: &mut CilAssembly) -> usize {
-    // Collect all referenced TypeSpec RIDs
+/// Only removes TypeSpecs that are in the `candidates` set AND are not referenced
+/// by any surviving code or metadata.
+///
+/// # Returns
+///
+/// A tuple of (count_removed, set_of_deleted_rids).
+pub fn remove_unreferenced_typespecs(
+    assembly: &mut CilAssembly,
+    candidates: &BTreeSet<u32>,
+    body_tokens: &HashSet<Token>,
+) -> (usize, HashSet<u32>) {
+    if candidates.is_empty() {
+        return (0, HashSet::new());
+    }
+
+    // Collect all referenced TypeSpec RIDs (live set)
     let mut referenced_rids = HashSet::new();
 
     // From method bodies
-    let body_tokens = scan_method_body_tokens(assembly);
-    for token in &body_tokens {
+    for token in body_tokens {
         if token.is_table(TableId::TypeSpec) {
             referenced_rids.insert(token.row());
         }
     }
 
-    // From metadata tables
-    let metadata_refs = scan_typespec_metadata_refs(assembly);
-    referenced_rids.extend(metadata_refs);
+    // From metadata tables (computed at this point, after prior cascade removals)
+    referenced_rids.extend(scan_typespec_metadata_refs(assembly));
 
-    // Get total TypeSpec count
-    let typespec_count = {
-        let view = assembly.view();
-        view.tables()
-            .and_then(TablesHeader::table::<TypeSpecRaw>)
-            .map_or(0, |t| t.row_count)
-    };
-
-    // Remove unreferenced TypeSpecs (in reverse order)
-    let mut removed = 0;
-    for rid in (1..=typespec_count).rev() {
-        if !referenced_rids.contains(&rid)
-            && assembly.table_row_remove(TableId::TypeSpec, rid).is_ok()
-        {
-            removed += 1;
-        }
-    }
-
-    removed
+    remove_candidates_not_alive(assembly, TableId::TypeSpec, candidates, &referenced_rids)
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::metadata::{tables::TableId, token::Token};
+    use crate::{
+        cilassembly::cleanup::utils::PLACEHOLDER_RVA_THRESHOLD,
+        metadata::{tables::TableId, token::Token},
+    };
 
     #[test]
     fn test_placeholder_rva_detection() {
         // Placeholder RVAs start at 0xF000_0000
-        const { assert!(0xF000_0000 >= super::PLACEHOLDER_RVA_THRESHOLD) };
-        const { assert!(0xF000_0001 >= super::PLACEHOLDER_RVA_THRESHOLD) };
+        const { assert!(0xF000_0000 >= PLACEHOLDER_RVA_THRESHOLD) };
+        const { assert!(0xF000_0001 >= PLACEHOLDER_RVA_THRESHOLD) };
 
         // Normal RVAs are below the threshold
-        const { assert!(0x2000 < super::PLACEHOLDER_RVA_THRESHOLD) };
-        const { assert!(0x0000_FFFF < super::PLACEHOLDER_RVA_THRESHOLD) };
+        const { assert!(0x2000 < PLACEHOLDER_RVA_THRESHOLD) };
+        const { assert!(0x0000_FFFF < PLACEHOLDER_RVA_THRESHOLD) };
     }
 
     #[test]

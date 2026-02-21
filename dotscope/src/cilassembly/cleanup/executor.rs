@@ -16,14 +16,15 @@ use crate::{
     cilassembly::{
         cleanup::{
             compaction::mark_unreferenced_heap_entries,
-            orphans::{remove_all_orphans, OrphanContext},
-            references::scan_method_body_tokens,
+            orphans::{self, DeletionContext},
+            references::{collect_pre_deletion_references, scan_method_body_tokens},
+            utils::{list_range, try_remove},
             CleanupRequest, CleanupStats,
         },
         CilAssembly,
     },
     metadata::{
-        tables::{FieldRaw, MethodDefRaw, TableId, TypeDefRaw},
+        tables::{CustomAttributeRaw, FieldRaw, MethodDefRaw, TableId, TypeDefRaw},
         token::Token,
     },
     Result,
@@ -67,7 +68,8 @@ use crate::{
 /// request.add_type(protection_type_token);
 ///
 /// let stats = execute_cleanup(&mut assembly, &request)?;
-/// println!("Removed {} types, {} methods", stats.types_removed, stats.methods_removed);
+/// println!("Removed {} types, {} methods",
+///     stats.get(TableId::TypeDef), stats.get(TableId::MethodDef));
 /// ```
 pub fn execute_cleanup(
     assembly: &mut CilAssembly,
@@ -89,96 +91,129 @@ pub fn execute_cleanup(
     let mut all_fields: BTreeSet<Token> = request.fields().copied().collect();
     all_fields.extend(type_fields);
 
+    let all_types: BTreeSet<Token> = request.types().copied().collect();
+
+    // Phase 1.5: Pre-deletion reference scan
+    // Collect all tokens referenced by entities about to be deleted.
+    // This must happen BEFORE deletion while method bodies and metadata
+    // are still accessible. Used for cascade-based reference cleanup.
+    let mut pre_refs =
+        collect_pre_deletion_references(assembly, &all_methods, &all_fields, &all_types);
+
+    // Merge rewrite-orphaned tokens (from SSA passes that neutralized calls)
+    // into cascade candidates, so the existing cascade logic handles
+    // MemberRef → TypeRef → AssemblyRef removal.
+    pre_refs
+        .il_tokens
+        .extend(request.rewrite_orphaned_tokens().iter().copied());
+
+    // Capture constructor tokens of explicitly-deleted CustomAttributes as
+    // cascade candidates. These attributes may have Module as parent (not a
+    // deleted type), so collect_pre_deletion_references won't capture them.
+    {
+        let view = assembly.view();
+        if let Some(tables) = view.tables() {
+            if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
+                for attr_token in request.attributes() {
+                    if let Some(attr) = attr_table.get(attr_token.row()) {
+                        pre_refs.il_tokens.insert(attr.constructor.token);
+                    }
+                }
+            }
+        }
+    }
+
     // Phase 2: Apply deletions in correct order
-    // Track what was actually removed for orphan context
+    // Track what was actually removed for deletion context
     let mut removed_types: HashSet<Token> = HashSet::new();
     let mut removed_methods: HashSet<Token> = HashSet::new();
     let mut removed_fields: HashSet<Token> = HashSet::new();
 
     // 2a: Remove methods (in descending RID order to avoid shifting issues)
     for method_token in all_methods.iter().rev() {
-        if assembly
-            .table_row_remove(TableId::MethodDef, method_token.row())
-            .is_ok()
-        {
+        if try_remove(assembly, TableId::MethodDef, method_token.row()) {
             removed_methods.insert(*method_token);
-            stats.methods_removed += 1;
+            stats.add(TableId::MethodDef, 1);
         }
     }
 
     // 2b: Remove MethodSpecs (in descending RID order)
     for spec_token in request.methodspecs() {
-        if assembly
-            .table_row_remove(TableId::MethodSpec, spec_token.row())
-            .is_ok()
-        {
-            stats.methodspecs_removed += 1;
+        if try_remove(assembly, TableId::MethodSpec, spec_token.row()) {
+            stats.add(TableId::MethodSpec, 1);
         }
     }
 
     // 2c: Remove fields (in descending RID order)
     for field_token in all_fields.iter().rev() {
-        if assembly
-            .table_row_remove(TableId::Field, field_token.row())
-            .is_ok()
-        {
+        if try_remove(assembly, TableId::Field, field_token.row()) {
             removed_fields.insert(*field_token);
-            stats.fields_removed += 1;
+            stats.add(TableId::Field, 1);
         }
     }
 
     // 2d: Remove types (in descending RID order)
     for type_token in request.types() {
-        if assembly
-            .table_row_remove(TableId::TypeDef, type_token.row())
-            .is_ok()
-        {
+        if try_remove(assembly, TableId::TypeDef, type_token.row()) {
             removed_types.insert(*type_token);
-            stats.types_removed += 1;
+            stats.add(TableId::TypeDef, 1);
         }
     }
 
     // 2e: Remove explicit attributes (in descending RID order)
     for attr_token in request.attributes() {
-        if assembly
-            .table_row_remove(TableId::CustomAttribute, attr_token.row())
-            .is_ok()
-        {
-            stats.attributes_removed += 1;
+        if try_remove(assembly, TableId::CustomAttribute, attr_token.row()) {
+            stats.add(TableId::CustomAttribute, 1);
         }
     }
 
     // 2f: Remove AssemblyRefs (in descending RID order)
     for asmref_token in request.assemblyrefs() {
-        if assembly
-            .table_row_remove(TableId::AssemblyRef, asmref_token.row())
-            .is_ok()
-        {
-            stats.assemblyrefs_removed += 1;
+        if try_remove(assembly, TableId::AssemblyRef, asmref_token.row()) {
+            stats.add(TableId::AssemblyRef, 1);
         }
     }
 
     // 2g: Remove ModuleRefs (in descending RID order)
     for modref_token in request.modulerefs() {
-        if assembly
-            .table_row_remove(TableId::ModuleRef, modref_token.row())
-            .is_ok()
-        {
-            stats.modulerefs_removed += 1;
+        if try_remove(assembly, TableId::ModuleRef, modref_token.row()) {
+            stats.add(TableId::ModuleRef, 1);
         }
     }
 
-    // Phase 3: Remove orphaned metadata (if enabled)
-    if request.remove_orphans() {
-        let ctx = OrphanContext::new(&removed_types, &removed_methods, &removed_fields);
-        let orphan_stats = remove_all_orphans(assembly, &ctx);
-        stats.merge(&orphan_stats);
+    // Cache body tokens once — used by both Phase 3 and Phase 4.
+    // Since Phase 3 only removes empty types (which by definition have NO methods),
+    // the body token set is identical between the two calls.
+    let body_tokens = scan_method_body_tokens(assembly);
+
+    // Phase 3: Remove empty types (if enabled)
+    // This MUST run before cascade reference cleanup (Phase 4) so that
+    // TypeRef/AssemblyRef entries referenced only by empty types (e.g.,
+    // System.ValueType for empty structs) are properly cascade-removed.
+    if request.remove_empty_types() {
+        let (empty_removed, empty_type_tokens) = remove_empty_types(assembly, &body_tokens);
+        stats.add(TableId::TypeDef, empty_removed);
+
+        if !empty_type_tokens.is_empty() {
+            // Track empty type deletions for deletion context
+            removed_types.extend(empty_type_tokens.iter().copied());
+
+            let empty_methods = HashSet::new();
+            let empty_fields = HashSet::new();
+            let empty_ctx = DeletionContext::new(&empty_type_tokens, &empty_methods, &empty_fields);
+            let type_dep_stats = orphans::remove_type_dependents(assembly, &empty_ctx);
+            stats.merge(&type_dep_stats);
+        }
     }
 
-    // Phase 4: Remove empty types (if enabled)
-    if request.remove_empty_types() {
-        let empty_removed = remove_empty_types(assembly);
-        stats.types_removed += empty_removed;
+    // Phase 4: Remove dependent metadata and cascade references (if enabled)
+    if request.remove_orphans() {
+        let ctx = DeletionContext::new(&removed_types, &removed_methods, &removed_fields);
+        let orphan_stats = orphans::remove_parent_child_dependents(assembly, &ctx, &pre_refs);
+        stats.merge(&orphan_stats);
+
+        let cascade_stats = orphans::cascade_reference_cleanup(assembly, &pre_refs, &body_tokens);
+        stats.merge(&cascade_stats);
     }
 
     // Phase 5: Compact heaps (mark unreferenced entries for removal)
@@ -224,9 +259,8 @@ fn expand_type_members(
         return (methods, fields);
     };
 
-    let methoddef_table = tables.table::<MethodDefRaw>();
-    let field_table = tables.table::<FieldRaw>();
-
+    let methoddef_count = tables.table::<MethodDefRaw>().map_or(0, |t| t.row_count);
+    let field_count = tables.table::<FieldRaw>().map_or(0, |t| t.row_count);
     let type_count = typedef_table.row_count;
 
     for type_token in request.types() {
@@ -237,35 +271,21 @@ fn expand_type_members(
         };
 
         // Get method range for this type
-        if let Some(methoddef_table) = &methoddef_table {
-            let method_start = typedef.method_list;
-            let method_end = if type_rid < type_count {
-                typedef_table
-                    .get(type_rid + 1)
-                    .map_or(methoddef_table.row_count + 1, |t| t.method_list)
-            } else {
-                methoddef_table.row_count + 1
-            };
-
-            for method_rid in method_start..method_end {
-                methods.insert(Token::from_parts(TableId::MethodDef, method_rid));
-            }
+        let method_range = list_range(type_rid, type_count, methoddef_count, |rid| {
+            typedef_table.get(rid).map(|t| t.method_list)
+        });
+        // Override start with actual typedef's method_list
+        for method_rid in typedef.method_list..method_range.end {
+            methods.insert(Token::from_parts(TableId::MethodDef, method_rid));
         }
 
         // Get field range for this type
-        if let Some(field_table) = &field_table {
-            let field_start = typedef.field_list;
-            let field_end = if type_rid < type_count {
-                typedef_table
-                    .get(type_rid + 1)
-                    .map_or(field_table.row_count + 1, |t| t.field_list)
-            } else {
-                field_table.row_count + 1
-            };
-
-            for field_rid in field_start..field_end {
-                fields.insert(Token::from_parts(TableId::Field, field_rid));
-            }
+        let field_range = list_range(type_rid, type_count, field_count, |rid| {
+            typedef_table.get(rid).map(|t| t.field_list)
+        });
+        // Override start with actual typedef's field_list
+        for field_rid in typedef.field_list..field_range.end {
+            fields.insert(Token::from_parts(TableId::Field, field_rid));
         }
     }
 
@@ -275,19 +295,24 @@ fn expand_type_members(
 /// Removes types that have no remaining methods or fields.
 ///
 /// After cleanup, some types may become empty shells with no members.
-/// This function identifies and removes such types.
+/// This function identifies and removes such types, returning both the
+/// count and the set of removed type tokens for cascading cleanup.
 ///
 /// # Arguments
 ///
 /// * `assembly` - The assembly to modify
+/// * `body_tokens` - Pre-computed set of tokens referenced from method bodies
 ///
 /// # Returns
 ///
-/// The number of empty types removed.
-fn remove_empty_types(assembly: &mut CilAssembly) -> usize {
+/// A tuple of (count of empty types removed, set of removed type tokens).
+fn remove_empty_types(
+    assembly: &mut CilAssembly,
+    body_tokens: &HashSet<Token>,
+) -> (usize, HashSet<Token>) {
     // Collect all TypeDef RIDs referenced in method bodies — these must not be removed
     // even if they have no methods/fields (e.g., value types used with newarr/box/unbox).
-    let referenced_typedefs: HashSet<u32> = scan_method_body_tokens(assembly)
+    let referenced_typedefs: HashSet<u32> = body_tokens
         .iter()
         .filter(|t| t.is_table(TableId::TypeDef))
         .map(|t| t.row())
@@ -297,11 +322,11 @@ fn remove_empty_types(assembly: &mut CilAssembly) -> usize {
     let empty_types: Vec<u32> = {
         let view = assembly.view();
         let Some(tables) = view.tables() else {
-            return 0;
+            return (0, HashSet::new());
         };
 
         let Some(typedef_table) = tables.table::<TypeDefRaw>() else {
-            return 0;
+            return (0, HashSet::new());
         };
 
         let methoddef_count = tables.table::<MethodDefRaw>().map_or(0, |t| t.row_count);
@@ -327,26 +352,16 @@ fn remove_empty_types(assembly: &mut CilAssembly) -> usize {
             }
 
             // Calculate method count for this type
-            let method_start = typedef.method_list;
-            let method_end = if type_rid < type_count {
-                typedef_table
-                    .get(type_rid + 1)
-                    .map_or(methoddef_count + 1, |t| t.method_list)
-            } else {
-                methoddef_count + 1
-            };
-            let method_count = method_end.saturating_sub(method_start);
+            let method_range = list_range(type_rid, type_count, methoddef_count, |rid| {
+                typedef_table.get(rid).map(|t| t.method_list)
+            });
+            let method_count = method_range.end.saturating_sub(typedef.method_list);
 
             // Calculate field count for this type
-            let field_start = typedef.field_list;
-            let field_end = if type_rid < type_count {
-                typedef_table
-                    .get(type_rid + 1)
-                    .map_or(field_count + 1, |t| t.field_list)
-            } else {
-                field_count + 1
-            };
-            let field_count_type = field_end.saturating_sub(field_start);
+            let field_range = list_range(type_rid, type_count, field_count, |rid| {
+                typedef_table.get(rid).map(|t| t.field_list)
+            });
+            let field_count_type = field_range.end.saturating_sub(typedef.field_list);
 
             // Type is empty if it has no methods and no fields
             if method_count == 0 && field_count_type == 0 {
@@ -359,13 +374,15 @@ fn remove_empty_types(assembly: &mut CilAssembly) -> usize {
 
     // Remove empty types (in reverse RID order)
     let mut removed = 0;
+    let mut removed_tokens = HashSet::new();
     for rid in empty_types.into_iter().rev() {
-        if assembly.table_row_remove(TableId::TypeDef, rid).is_ok() {
+        if try_remove(assembly, TableId::TypeDef, rid) {
             removed += 1;
+            removed_tokens.insert(Token::from_parts(TableId::TypeDef, rid));
         }
     }
 
-    removed
+    (removed, removed_tokens)
 }
 
 #[cfg(test)]

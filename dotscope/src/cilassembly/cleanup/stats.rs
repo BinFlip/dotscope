@@ -3,7 +3,9 @@
 //! Provides [`CleanupStats`] to track what was removed during cleanup,
 //! useful for reporting and debugging.
 
-use std::fmt;
+use std::{collections::HashMap, fmt};
+
+use crate::metadata::tables::TableId;
 
 /// Statistics from a cleanup operation.
 ///
@@ -11,60 +13,8 @@ use std::fmt;
 /// visibility into what the cleanup process accomplished.
 #[derive(Debug, Clone, Default)]
 pub struct CleanupStats {
-    /// Number of types (TypeDef) removed.
-    pub types_removed: usize,
-    /// Number of methods (MethodDef) removed.
-    pub methods_removed: usize,
-    /// Number of MethodSpecs removed.
-    pub methodspecs_removed: usize,
-    /// Number of fields removed.
-    pub fields_removed: usize,
-    /// Number of custom attributes removed.
-    pub attributes_removed: usize,
-    /// Number of parameters (Param) removed.
-    pub params_removed: usize,
-    /// Number of StandAloneSig entries removed.
-    pub standalonesigs_removed: usize,
-    /// Number of GenericParam entries removed.
-    pub genericparams_removed: usize,
-    /// Number of GenericParamConstraint entries removed.
-    pub genericparam_constraints_removed: usize,
-    /// Number of InterfaceImpl entries removed.
-    pub interfaceimpls_removed: usize,
-    /// Number of MethodImpl entries removed.
-    pub methodimpls_removed: usize,
-    /// Number of MethodSemantics entries removed.
-    pub methodsemantics_removed: usize,
-    /// Number of NestedClass entries removed.
-    pub nestedclasses_removed: usize,
-    /// Number of ClassLayout entries removed.
-    pub classlayouts_removed: usize,
-    /// Number of FieldRVA entries removed.
-    pub fieldrvas_removed: usize,
-    /// Number of FieldLayout entries removed.
-    pub fieldlayouts_removed: usize,
-    /// Number of FieldMarshal entries removed.
-    pub fieldmarshals_removed: usize,
-    /// Number of Constant entries removed.
-    pub constants_removed: usize,
-    /// Number of DeclSecurity entries removed.
-    pub declsecurities_removed: usize,
-    /// Number of ImplMap entries removed.
-    pub implmaps_removed: usize,
-    /// Number of EventMap entries removed.
-    pub eventmaps_removed: usize,
-    /// Number of PropertyMap entries removed.
-    pub propertymaps_removed: usize,
-    /// Number of AssemblyRef entries removed.
-    pub assemblyrefs_removed: usize,
-    /// Number of ModuleRef entries removed.
-    pub modulerefs_removed: usize,
-    /// Number of TypeRef entries removed (orphaned).
-    pub typerefs_removed: usize,
-    /// Number of MemberRef entries removed (orphaned).
-    pub memberrefs_removed: usize,
-    /// Number of TypeSpec entries removed (orphaned).
-    pub typespecs_removed: usize,
+    /// Per-table removal counts keyed by `TableId`.
+    removals: HashMap<TableId, usize>,
     /// Number of PE sections excluded.
     pub sections_excluded: usize,
     /// Number of unreferenced string heap entries marked for removal.
@@ -84,39 +34,26 @@ impl CleanupStats {
         Self::default()
     }
 
+    /// Returns the removal count for a specific table.
+    #[must_use]
+    pub fn get(&self, table: TableId) -> usize {
+        self.removals.get(&table).copied().unwrap_or(0)
+    }
+
+    /// Adds `count` to the removal counter for the given table.
+    pub fn add(&mut self, table: TableId, count: usize) {
+        if count > 0 {
+            *self.removals.entry(table).or_insert(0) += count;
+        }
+    }
+
     /// Returns the total number of metadata entries removed.
     ///
     /// This includes all table entries: types, methods, fields, attributes,
     /// parameters, signatures, and all orphaned metadata entries.
     #[must_use]
     pub fn total_removed(&self) -> usize {
-        self.types_removed
-            + self.methods_removed
-            + self.methodspecs_removed
-            + self.fields_removed
-            + self.attributes_removed
-            + self.params_removed
-            + self.standalonesigs_removed
-            + self.genericparams_removed
-            + self.genericparam_constraints_removed
-            + self.interfaceimpls_removed
-            + self.methodimpls_removed
-            + self.methodsemantics_removed
-            + self.nestedclasses_removed
-            + self.classlayouts_removed
-            + self.fieldrvas_removed
-            + self.fieldlayouts_removed
-            + self.fieldmarshals_removed
-            + self.constants_removed
-            + self.declsecurities_removed
-            + self.implmaps_removed
-            + self.eventmaps_removed
-            + self.propertymaps_removed
-            + self.assemblyrefs_removed
-            + self.modulerefs_removed
-            + self.typerefs_removed
-            + self.memberrefs_removed
-            + self.typespecs_removed
+        self.removals.values().sum()
     }
 
     /// Returns true if any items were removed or sections excluded.
@@ -141,7 +78,7 @@ impl CleanupStats {
     /// as opposed to orphaned entries that were removed as a consequence.
     #[must_use]
     pub fn primary_removed(&self) -> usize {
-        self.types_removed + self.methods_removed + self.fields_removed
+        self.get(TableId::TypeDef) + self.get(TableId::MethodDef) + self.get(TableId::Field)
     }
 
     /// Returns the count of orphaned metadata entries removed.
@@ -150,7 +87,7 @@ impl CleanupStats {
     /// primary deletions were applied (e.g., parameters of deleted methods).
     #[must_use]
     pub fn orphans_removed(&self) -> usize {
-        self.total_removed() - self.primary_removed() - self.attributes_removed
+        self.total_removed() - self.primary_removed() - self.get(TableId::CustomAttribute)
     }
 
     /// Merges stats from another cleanup operation into this one.
@@ -158,33 +95,9 @@ impl CleanupStats {
     /// All counters from `other` are added to the corresponding counters
     /// in `self`. This is useful when combining stats from multiple passes.
     pub fn merge(&mut self, other: &CleanupStats) {
-        self.types_removed += other.types_removed;
-        self.methods_removed += other.methods_removed;
-        self.methodspecs_removed += other.methodspecs_removed;
-        self.fields_removed += other.fields_removed;
-        self.attributes_removed += other.attributes_removed;
-        self.params_removed += other.params_removed;
-        self.standalonesigs_removed += other.standalonesigs_removed;
-        self.genericparams_removed += other.genericparams_removed;
-        self.genericparam_constraints_removed += other.genericparam_constraints_removed;
-        self.interfaceimpls_removed += other.interfaceimpls_removed;
-        self.methodimpls_removed += other.methodimpls_removed;
-        self.methodsemantics_removed += other.methodsemantics_removed;
-        self.nestedclasses_removed += other.nestedclasses_removed;
-        self.classlayouts_removed += other.classlayouts_removed;
-        self.fieldrvas_removed += other.fieldrvas_removed;
-        self.fieldlayouts_removed += other.fieldlayouts_removed;
-        self.fieldmarshals_removed += other.fieldmarshals_removed;
-        self.constants_removed += other.constants_removed;
-        self.declsecurities_removed += other.declsecurities_removed;
-        self.implmaps_removed += other.implmaps_removed;
-        self.eventmaps_removed += other.eventmaps_removed;
-        self.propertymaps_removed += other.propertymaps_removed;
-        self.assemblyrefs_removed += other.assemblyrefs_removed;
-        self.modulerefs_removed += other.modulerefs_removed;
-        self.typerefs_removed += other.typerefs_removed;
-        self.memberrefs_removed += other.memberrefs_removed;
-        self.typespecs_removed += other.typespecs_removed;
+        for (&table, &count) in &other.removals {
+            self.add(table, count);
+        }
         self.sections_excluded += other.sections_excluded;
         self.strings_compacted += other.strings_compacted;
         self.blobs_compacted += other.blobs_compacted;
@@ -200,17 +113,21 @@ impl fmt::Display for CleanupStats {
 
         let mut parts = Vec::new();
 
-        if self.types_removed > 0 {
-            parts.push(format!("{} types", self.types_removed));
+        let types = self.get(TableId::TypeDef);
+        if types > 0 {
+            parts.push(format!("{types} types"));
         }
-        if self.methods_removed > 0 {
-            parts.push(format!("{} methods", self.methods_removed));
+        let methods = self.get(TableId::MethodDef);
+        if methods > 0 {
+            parts.push(format!("{methods} methods"));
         }
-        if self.fields_removed > 0 {
-            parts.push(format!("{} fields", self.fields_removed));
+        let fields = self.get(TableId::Field);
+        if fields > 0 {
+            parts.push(format!("{fields} fields"));
         }
-        if self.attributes_removed > 0 {
-            parts.push(format!("{} attributes", self.attributes_removed));
+        let attributes = self.get(TableId::CustomAttribute);
+        if attributes > 0 {
+            parts.push(format!("{attributes} attributes"));
         }
 
         let orphans = self.orphans_removed();
@@ -233,7 +150,7 @@ impl fmt::Display for CleanupStats {
 
 #[cfg(test)]
 mod tests {
-    use crate::cilassembly::cleanup::CleanupStats;
+    use crate::{cilassembly::cleanup::CleanupStats, metadata::tables::TableId};
 
     #[test]
     fn test_stats_default() {
@@ -245,9 +162,9 @@ mod tests {
     #[test]
     fn test_stats_counting() {
         let mut stats = CleanupStats::new();
-        stats.types_removed = 5;
-        stats.methods_removed = 10;
-        stats.params_removed = 20;
+        stats.add(TableId::TypeDef, 5);
+        stats.add(TableId::MethodDef, 10);
+        stats.add(TableId::Param, 20);
 
         assert_eq!(stats.primary_removed(), 15);
         assert_eq!(stats.orphans_removed(), 20);
@@ -258,23 +175,23 @@ mod tests {
     #[test]
     fn test_stats_merge() {
         let mut stats1 = CleanupStats::new();
-        stats1.types_removed = 5;
+        stats1.add(TableId::TypeDef, 5);
 
         let mut stats2 = CleanupStats::new();
-        stats2.methods_removed = 10;
+        stats2.add(TableId::MethodDef, 10);
 
         stats1.merge(&stats2);
 
-        assert_eq!(stats1.types_removed, 5);
-        assert_eq!(stats1.methods_removed, 10);
+        assert_eq!(stats1.get(TableId::TypeDef), 5);
+        assert_eq!(stats1.get(TableId::MethodDef), 10);
     }
 
     #[test]
     fn test_stats_display() {
         let mut stats = CleanupStats::new();
-        stats.types_removed = 3;
-        stats.methods_removed = 7;
-        stats.params_removed = 15;
+        stats.add(TableId::TypeDef, 3);
+        stats.add(TableId::MethodDef, 7);
+        stats.add(TableId::Param, 15);
 
         let display = stats.to_string();
         assert!(display.contains("3 types"));
@@ -286,5 +203,27 @@ mod tests {
     fn test_stats_display_empty() {
         let stats = CleanupStats::new();
         assert_eq!(stats.to_string(), "No changes");
+    }
+
+    #[test]
+    fn test_stats_get_missing_table() {
+        let stats = CleanupStats::new();
+        assert_eq!(stats.get(TableId::TypeDef), 0);
+    }
+
+    #[test]
+    fn test_stats_add_zero() {
+        let mut stats = CleanupStats::new();
+        stats.add(TableId::TypeDef, 0);
+        assert_eq!(stats.get(TableId::TypeDef), 0);
+        assert!(stats.removals.is_empty());
+    }
+
+    #[test]
+    fn test_stats_add_increments() {
+        let mut stats = CleanupStats::new();
+        stats.add(TableId::TypeDef, 3);
+        stats.add(TableId::TypeDef, 2);
+        assert_eq!(stats.get(TableId::TypeDef), 5);
     }
 }

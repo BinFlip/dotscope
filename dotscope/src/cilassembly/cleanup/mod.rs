@@ -1,7 +1,7 @@
 //! Assembly cleanup infrastructure for removing unused metadata.
 //!
 //! This module provides generic cleanup capabilities for [`CilAssembly`](crate::CilAssembly),
-//! enabling removal of metadata entries and their cascading orphans. This is useful for:
+//! enabling removal of metadata entries and their cascading dependents. This is useful for:
 //!
 //! - **Deobfuscation**: Removing protection infrastructure (types, methods, fields)
 //! - **Dead code elimination**: Removing unused types and methods
@@ -9,21 +9,33 @@
 //!
 //! # Architecture
 //!
-//! The cleanup system has two main components:
+//! The cleanup system uses a **cascade-from-deleted** approach rather than
+//! garbage-collection-style orphan removal:
 //!
-//! ## 1. Change-Driven Cleanup
+//! ## 1. Pre-deletion Reference Collection
 //!
-//! When you explicitly delete types/methods/fields, the cleanup executor:
-//! - Removes the specified items
-//! - Finds and removes orphaned metadata that only referenced deleted items
-//! - Preserves pre-existing orphans (may be used via reflection)
+//! Before deleting entities, the executor scans their method bodies, signatures,
+//! and extends clauses to record what tokens they reference. This captures the
+//! "blast radius" of the deletion.
 //!
-//! ## 2. General Optimization (during PE generation)
+//! ## 2. Explicit Deletions + Parent-Child Cascade
+//!
+//! After applying explicit deletions, dependent metadata (Params, ClassLayout,
+//! FieldRVA, NestedClass, CustomAttributes, etc.) is automatically removed.
+//!
+//! ## 3. Reference Cascade
+//!
+//! TypeRef, MemberRef, TypeSpec, ModuleRef, and AssemblyRef entries are only
+//! removed if they were referenced by a deleted entity AND are no longer
+//! referenced by any surviving entity. This is fundamentally safer than
+//! removing all unreferenced entries, because it preserves pre-existing
+//! orphans that may be used via reflection or dynamic code generation.
+//!
+//! ## 4. General Optimization (during PE generation)
 //!
 //! The PE generator automatically:
 //! - Compacts heaps (only emits referenced entries)
 //! - Deduplicates StandAloneSig entries
-//! - Removes truly unreferenced entries
 //!
 //! # Usage
 //!
@@ -54,13 +66,17 @@
 //! - NestedClass entries
 //! - InterfaceImpl entries
 //! - ClassLayout entries
+//! - EventMap entries and their Event rows
+//! - PropertyMap entries and their Property rows
+//! - DeclSecurity entries
+//! - MethodImpl entries
+//! - MethodSemantics entries (for deleted events/properties)
 //! - GenericParam entries (and their constraints)
 //! - CustomAttributes targeting the type
-//! - PropertyMap/EventMap entries
 //!
 //! When a **method** is deleted:
 //! - All its parameters (Param)
-//! - Its StandAloneSig (local variables)
+//! - Its StandAloneSig (local variables, cascade-from-deleted)
 //! - MethodSemantics entries
 //! - MethodImpl entries
 //! - GenericParam entries (and their constraints)
@@ -74,6 +90,11 @@
 //! - FieldMarshal entries
 //! - Constant entries
 //! - CustomAttributes targeting the field
+//!
+//! When an **AssemblyRef** or **File** is cascade-deleted:
+//! - ExportedType entries referencing the deleted scope
+//! - ManifestResource entries referencing the deleted scope
+//! - File entries no longer referenced by surviving ExportedType/ManifestResource
 
 mod compaction;
 mod executor;
@@ -81,8 +102,10 @@ mod orphans;
 mod references;
 mod request;
 mod stats;
+mod utils;
 
 pub(crate) use compaction::mark_unreferenced_heap_entries;
 pub use executor::execute_cleanup;
+pub(crate) use references::PreDeletionRefs;
 pub use request::CleanupRequest;
 pub use stats::CleanupStats;
