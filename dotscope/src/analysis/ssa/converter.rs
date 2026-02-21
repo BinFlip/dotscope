@@ -750,8 +750,9 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
                 // Apply stack effects of each instruction
                 for instr in &cfg_block.instructions {
-                    // For CALL/CALLVIRT/NEWOBJ, resolve actual argument counts from signatures
-                    // since static stack_behavior metadata is often incorrect
+                    // For CALL/CALLVIRT/NEWOBJ/CALLI, resolve actual argument counts from
+                    // signatures since static stack_behavior metadata is often incorrect
+                    // (CALLI has VarPop/VarPush so net_effect=0 without resolution)
                     let net_effect = match instr.opcode {
                         opcodes::CALL | opcodes::CALLVIRT | opcodes::NEWOBJ => assembly
                             .and_then(|asm| Self::extract_token(&instr.operand).map(|t| (asm, t)))
@@ -769,6 +770,25 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                                         } else {
                                             usize::from(has_return)
                                         };
+                                        #[allow(
+                                            clippy::cast_possible_truncation,
+                                            clippy::cast_possible_wrap
+                                        )]
+                                        ((pushes as i32 - pops as i32)
+                                            .clamp(i32::from(i8::MIN), i32::from(i8::MAX))
+                                            as i8)
+                                    },
+                                )
+                            })
+                            .unwrap_or(instr.stack_behavior.net_effect),
+                        opcodes::CALLI => assembly
+                            .and_then(|asm| Self::extract_token(&instr.operand).map(|t| (asm, t)))
+                            .and_then(|(asm, token)| {
+                                Self::resolve_calli_info(asm, token).map(
+                                    |(param_count, has_this, has_return)| {
+                                        // calli pops: param_count + has_this + 1 (function pointer)
+                                        let pops = param_count + usize::from(has_this) + 1;
+                                        let pushes = usize::from(has_return);
                                         #[allow(
                                             clippy::cast_possible_truncation,
                                             clippy::cast_possible_wrap
