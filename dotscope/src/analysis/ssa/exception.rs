@@ -66,6 +66,15 @@ pub struct SsaExceptionHandler {
     pub filter_start_block: Option<usize>,
 }
 
+/// Finds the next surviving block index at or after `start` in the remap table.
+///
+/// Used for exclusive end-block boundaries (`try_end_block`, `handler_end_block`).
+/// When an end-boundary block is removed during canonicalization, we need to find the
+/// next block that survived to preserve the boundary semantics.
+fn find_next_surviving(block_remap: &[Option<usize>], start: usize) -> Option<usize> {
+    block_remap[start..].iter().find_map(|entry| *entry)
+}
+
 impl SsaExceptionHandler {
     /// Creates a new SSA exception handler from the original exception handler.
     #[must_use]
@@ -165,21 +174,32 @@ impl SsaExceptionHandler {
     /// // If try_start_block was Some(1), it becomes None (block removed)
     /// ```
     pub fn remap_block_indices(&mut self, block_remap: &[Option<usize>]) {
+        // Start blocks: must map exactly (protected, so should always survive)
         self.try_start_block = self
             .try_start_block
             .and_then(|idx| block_remap.get(idx).copied().flatten());
 
-        self.try_end_block = self
-            .try_end_block
-            .and_then(|idx| block_remap.get(idx).copied().flatten());
+        // End blocks (exclusive boundaries): if removed, use next surviving block
+        self.try_end_block = self.try_end_block.and_then(|idx| {
+            block_remap
+                .get(idx)
+                .copied()
+                .flatten()
+                .or_else(|| find_next_surviving(block_remap, idx))
+        });
 
         self.handler_start_block = self
             .handler_start_block
             .and_then(|idx| block_remap.get(idx).copied().flatten());
 
-        self.handler_end_block = self
-            .handler_end_block
-            .and_then(|idx| block_remap.get(idx).copied().flatten());
+        // End block (exclusive boundary): if removed, use next surviving block
+        self.handler_end_block = self.handler_end_block.and_then(|idx| {
+            block_remap
+                .get(idx)
+                .copied()
+                .flatten()
+                .or_else(|| find_next_surviving(block_remap, idx))
+        });
 
         self.filter_start_block = self
             .filter_start_block
@@ -271,5 +291,57 @@ mod tests {
         assert_eq!(handler.try_start_block, Some(0));
         assert_eq!(handler.filter_start_block, Some(2));
         assert_eq!(handler.handler_start_block, Some(3));
+    }
+
+    #[test]
+    fn test_remap_end_block_finds_next_surviving() {
+        let mut handler = SsaExceptionHandler {
+            flags: ExceptionHandlerFlags::EXCEPTION,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 10,
+            handler_length: 5,
+            class_token_or_filter: 0x01000001,
+            try_start_block: Some(0),
+            try_end_block: Some(2), // Block 2 is removed
+            handler_start_block: Some(3),
+            handler_end_block: Some(5), // Block 5 is removed
+            filter_start_block: None,
+        };
+
+        // Blocks 2 and 5 removed; next surviving after 2 is block 3 (new idx 1),
+        // next surviving after 5 is block 6 (new idx 3)
+        let block_remap = vec![Some(0), None, None, Some(1), None, None, Some(3)];
+
+        handler.remap_block_indices(&block_remap);
+
+        assert_eq!(handler.try_start_block, Some(0));
+        assert_eq!(handler.try_end_block, Some(1)); // Found next surviving (block 3 -> 1)
+        assert_eq!(handler.handler_start_block, Some(1));
+        assert_eq!(handler.handler_end_block, Some(3)); // Found next surviving (block 6 -> 3)
+    }
+
+    #[test]
+    fn test_remap_end_block_none_when_no_surviving() {
+        let mut handler = SsaExceptionHandler {
+            flags: ExceptionHandlerFlags::EXCEPTION,
+            try_offset: 0,
+            try_length: 10,
+            handler_offset: 10,
+            handler_length: 5,
+            class_token_or_filter: 0x01000001,
+            try_start_block: Some(0),
+            try_end_block: Some(1),
+            handler_start_block: Some(2),
+            handler_end_block: Some(3), // Last block, removed, no surviving after it
+            filter_start_block: None,
+        };
+
+        // Block 3 removed, nothing after it
+        let block_remap = vec![Some(0), Some(1), Some(2), None];
+
+        handler.remap_block_indices(&block_remap);
+
+        assert_eq!(handler.handler_end_block, None); // No surviving block after 3
     }
 }

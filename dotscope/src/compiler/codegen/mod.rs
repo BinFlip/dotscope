@@ -301,7 +301,7 @@ impl SsaCodeGenerator {
 
         // Remap exception handlers using block offset mapping
         #[allow(clippy::cast_possible_truncation)]
-        let exception_handlers = self.remap_exception_handlers(ssa, bytecode.len() as u32);
+        let exception_handlers = self.remap_exception_handlers(ssa, bytecode.len() as u32)?;
 
         Ok(CompilationResult {
             bytecode,
@@ -397,66 +397,98 @@ impl SsaCodeGenerator {
     }
 
     /// Remaps SSA exception handlers to bytecode offsets using block offset mapping.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if any exception handler has out-of-bounds offsets after remapping.
     fn remap_exception_handlers(
         &self,
         ssa: &SsaFunction,
         bytecode_len: u32,
-    ) -> Vec<ExceptionHandler> {
+    ) -> Result<Vec<ExceptionHandler>> {
         if !ssa.has_exception_handlers() {
-            return Vec::new();
+            return Ok(Vec::new());
         }
 
-        ssa.exception_handlers()
-            .iter()
-            .filter_map(|eh| {
-                let try_offset = eh
-                    .try_start_block
-                    .and_then(|b| self.block_offsets.get(&b).copied())
-                    .unwrap_or(eh.try_offset);
+        let mut handlers = Vec::new();
 
-                let handler_offset = eh
-                    .handler_start_block
-                    .and_then(|b| self.block_offsets.get(&b).copied())
-                    .unwrap_or(eh.handler_offset);
+        for eh in ssa.exception_handlers() {
+            let try_offset = eh
+                .try_start_block
+                .and_then(|b| self.block_offsets.get(&b).copied())
+                .unwrap_or(eh.try_offset);
 
-                let try_end = eh
-                    .try_end_block
-                    .and_then(|b| self.block_offsets.get(&b).copied())
-                    .unwrap_or(eh.try_offset + eh.try_length);
+            let handler_offset = eh
+                .handler_start_block
+                .and_then(|b| self.block_offsets.get(&b).copied())
+                .unwrap_or(eh.handler_offset);
 
-                let handler_end = eh
-                    .handler_end_block
-                    .and_then(|b| self.block_offsets.get(&b).copied())
-                    .unwrap_or(eh.handler_offset + eh.handler_length);
-
-                let filter_offset = if eh.flags == ExceptionHandlerFlags::FILTER {
-                    eh.filter_start_block
-                        .and_then(|b| self.block_offsets.get(&b).copied())
-                        .unwrap_or(eh.class_token_or_filter)
-                } else {
-                    eh.class_token_or_filter
-                };
-
-                // Validate offsets are within bytecode bounds
-                if try_offset >= bytecode_len
-                    || handler_offset >= bytecode_len
-                    || try_end > bytecode_len
-                    || handler_end > bytecode_len
-                {
-                    return None;
-                }
-
-                Some(ExceptionHandler {
-                    flags: eh.flags,
-                    try_offset,
-                    try_length: try_end.saturating_sub(try_offset),
-                    handler_offset,
-                    handler_length: handler_end.saturating_sub(handler_offset),
-                    handler: None,
-                    filter_offset,
+            let try_end = eh
+                .try_end_block
+                .and_then(|b| self.block_offsets.get(&b).copied())
+                .or_else(|| {
+                    // If try_start has a valid mapping but try_end doesn't,
+                    // the try region extends to the handler start
+                    if eh.try_start_block.is_some() {
+                        Some(handler_offset)
+                    } else {
+                        None
+                    }
                 })
-            })
-            .collect()
+                .unwrap_or(eh.try_offset + eh.try_length);
+
+            let handler_end = eh
+                .handler_end_block
+                .and_then(|b| self.block_offsets.get(&b).copied())
+                .or_else(|| {
+                    // If handler_start has a valid mapping but handler_end doesn't,
+                    // the handler extends to the end of bytecode
+                    if eh.handler_start_block.is_some() {
+                        Some(bytecode_len)
+                    } else {
+                        None
+                    }
+                })
+                .unwrap_or(eh.handler_offset + eh.handler_length);
+
+            let filter_offset = if eh.flags == ExceptionHandlerFlags::FILTER {
+                eh.filter_start_block
+                    .and_then(|b| self.block_offsets.get(&b).copied())
+                    .unwrap_or(eh.class_token_or_filter)
+            } else {
+                eh.class_token_or_filter
+            };
+
+            // Validate offsets are within bytecode bounds
+            if try_offset >= bytecode_len
+                || handler_offset >= bytecode_len
+                || try_end > bytecode_len
+                || handler_end > bytecode_len
+            {
+                log::warn!(
+                    "Exception handler dropped: offsets out of bounds \
+                     (try={try_offset}..{try_end}, handler={handler_offset}..{handler_end}, \
+                     bytecode_len={bytecode_len})"
+                );
+                return Err(Error::CodegenFailed(format!(
+                    "Exception handler offsets out of bounds \
+                     (try={try_offset}..{try_end}, handler={handler_offset}..{handler_end}, \
+                     bytecode_len={bytecode_len})"
+                )));
+            }
+
+            handlers.push(ExceptionHandler {
+                flags: eh.flags,
+                try_offset,
+                try_length: try_end.saturating_sub(try_offset),
+                handler_offset,
+                handler_length: handler_end.saturating_sub(handler_offset),
+                handler: None,
+                filter_offset,
+            });
+        }
+
+        Ok(handlers)
     }
 
     /// Returns the types of any temporary locals allocated during code generation.

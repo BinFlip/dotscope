@@ -75,6 +75,9 @@ impl SsaFunction {
 
         // Protect exception handler entry blocks
         for handler in &self.exception_handlers {
+            if let Some(try_block) = handler.try_start_block {
+                protected_blocks.insert(try_block);
+            }
             if let Some(handler_block) = handler.handler_start_block {
                 protected_blocks.insert(handler_block);
             }
