@@ -171,6 +171,24 @@ pub mod constants {
 
     /// Mask to extract the offset/ID value from resource entry fields.
     pub const IMAGE_RESOURCE_MASK: u32 = 0x7FFF_FFFF;
+
+    /// Valid PE signature ("PE\0\0").
+    pub const PE_SIGNATURE: u32 = 0x0000_4550;
+
+    /// PE32 optional header magic.
+    pub const PE32_MAGIC: u16 = 0x10B;
+
+    /// PE32+ optional header magic.
+    pub const PE32PLUS_MAGIC: u16 = 0x20B;
+
+    /// Standard number of data directory entries per PE specification.
+    pub const STANDARD_DATA_DIRECTORY_COUNT: u32 = 0x10;
+
+    /// CLR runtime header data directory index (14th entry).
+    pub const CLR_DIRECTORY_INDEX: usize = 14;
+
+    /// Standard CLR major runtime version.
+    pub const CLR_MAJOR_RUNTIME_VERSION: u16 = 2;
 }
 
 use constants::{IMAGE_RESOURCE_DIRECTORY_SIZE, RESOURCE_DATA_ENTRY_SIZE, RESOURCE_ENTRY_SIZE};

@@ -9,30 +9,25 @@
 //! The module is built around several key components that work together to provide
 //! comprehensive PE file analysis capabilities:
 //!
-//! - **File abstraction layer** - Unified interface for PE file access
-//! - **Backend system** - Pluggable data sources (disk files, memory buffers)
+//! - **File abstraction layer** - Unified interface for PE file access backed by CowFile
 //! - **PE format parsing** - Complete PE/COFF structure analysis
 //! - **Address translation** - RVA to file offset conversion
 //! - **Data directory access** - Direct access to PE data directories
+//! - **Transparent PE repair** - Automatic fix of corrupted PE headers during loading
 //!
 //! # Key Components
 //!
 //! ## Core Types
 //! - [`crate::file::File`] - Main PE file abstraction with .NET-specific functionality
-//! - [`crate::file::Backend`] - Trait for different data sources (disk files, memory buffers)
 //!
-//! ## Parsing Infrastructure  
+//! ## Parsing Infrastructure
 //! - [`crate::file::parser::Parser`] - High-level parsing interface for metadata extraction
 //! - [`crate::file::io`] - Low-level I/O utilities for reading PE structures
 //!
-//! ## Backend Implementations
-//! - [`crate::file::physical::Physical`] - Memory-mapped file backend for disk access
-//! - [`crate::file::memory::Memory`] - In-memory buffer backend for dynamic analysis
-//!
 //! # Data Sources
 //!
-//! The module supports multiple data sources through the [`crate::file::Backend`] trait:
-//! - **Physical files** - Memory-mapped files for efficient disk access
+//! The module supports multiple data sources via `CowFile` (copy-on-write):
+//! - **Physical files** - Memory-mapped files for zero-copy disk access
 //! - **Memory buffers** - In-memory PE data for dynamic analysis
 //!
 //! # PE Format Support
@@ -125,78 +120,23 @@
 
 pub mod parser;
 pub mod pe;
-
-mod memory;
-mod physical;
+pub mod repair;
 
 use std::path::Path;
 
+use cowfile::CowFile;
+
 use crate::{
+    file::{
+        pe::constants::COR20_HEADER_SIZE,
+        repair::{repair_pe_cow, RepairAction},
+    },
     utils::align_to,
     Error::{self, Goblin, LayoutFailed, Other},
     Result,
 };
 use goblin::pe::PE;
-use memory::Memory;
-use pe::{constants::COR20_HEADER_SIZE, DataDirectory, DataDirectoryType, Pe};
-use physical::Physical;
-
-/// Backend trait for file data sources.
-///
-/// This trait abstracts over the source of PE data, allowing for both in-memory and on-disk
-/// representations. All implementations must be thread-safe.
-///
-/// The trait provides a common interface for accessing PE file data regardless of whether
-/// it's loaded from a file on disk or from a memory buffer. This enables flexible handling
-/// of different data sources while maintaining performance.
-pub trait Backend: Send + Sync {
-    /// Returns a slice of the data at the given offset and length.
-    ///
-    /// This method provides bounds-checked access to the underlying data.
-    /// It's used internally by the `File` struct to safely read portions
-    /// of the PE file data.
-    ///
-    /// # Arguments
-    ///
-    /// * `offset` - The starting offset within the data.
-    /// * `len` - The length of the slice in bytes.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if the requested range is out of bounds.
-    fn data_slice(&self, offset: usize, len: usize) -> Result<&[u8]>;
-
-    /// Returns the entire data buffer.
-    ///
-    /// This provides access to the complete PE file data as a single slice.
-    /// For file-based backends, this typically maps the entire file into memory.
-    /// For memory-based backends, this returns the underlying buffer.
-    fn data(&self) -> &[u8];
-
-    /// Returns the total length of the data buffer.
-    ///
-    /// This is equivalent to `self.data().len()` but may be more efficient
-    /// for some backend implementations.
-    fn len(&self) -> usize;
-
-    /// Consumes the backend and returns the underlying data as an owned Vec<u8>.
-    ///
-    /// For memory-backed backends, this transfers ownership without copying.
-    /// For file-backed backends (mmap), this makes a complete copy of the data.
-    ///
-    /// # Examples
-    ///
-    /// ```rust,ignore
-    /// // Memory backend - no copy, ownership transfer
-    /// let backend = Memory::new(vec![1, 2, 3]);
-    /// let data = backend.into_data(); // Moves the Vec, no allocation
-    ///
-    /// // Physical backend - copies the mmap'd data
-    /// let backend = Physical::new(Path::new("file.dll"))?;
-    /// let data = backend.into_data(); // Allocates and copies
-    /// ```
-    fn into_data(self: Box<Self>) -> Vec<u8>;
-}
+use pe::{DataDirectory, DataDirectoryType, Pe};
 
 /// Represents a loaded PE file.
 ///
@@ -267,10 +207,12 @@ pub trait Backend: Send + Sync {
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct File {
-    /// The underlying data source (memory or file).
-    data: Box<dyn Backend>,
+    /// The underlying data via CowFile (mmap or Vec).
+    data: CowFile,
     /// The parsed PE structure as owned data.
     pe: Pe,
+    /// PE repairs applied during loading (empty if none needed).
+    repairs: Vec<RepairAction>,
 }
 
 impl File {
@@ -313,9 +255,8 @@ impl File {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_path(path: impl AsRef<Path>) -> Result<File> {
-        let input = Physical::new(path.as_ref())?;
-
-        Self::load(input)
+        let cowfile = CowFile::from_path(path)?;
+        Self::load(cowfile)
     }
 
     /// Loads a PE file from a memory buffer.
@@ -359,9 +300,8 @@ impl File {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_mem(data: Vec<u8>) -> Result<File> {
-        let input = Memory::new(data);
-
-        Self::load(input)
+        let cowfile = CowFile::from_vec(data);
+        Self::load(cowfile)
     }
 
     /// Creates a File from an opened std::fs::File.
@@ -388,9 +328,8 @@ impl File {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn from_std_file(file: std::fs::File) -> Result<File> {
-        let input = Physical::from_std_file(file)?;
-
-        Self::load(input)
+        let cowfile = CowFile::from_std_file(file)?;
+        Self::load(cowfile)
     }
 
     /// Creates a File from any type implementing Read.
@@ -425,17 +364,22 @@ impl File {
         Self::from_mem(data)
     }
 
-    /// Internal loader for any backend.
+    /// Internal loader with transparent PE repair.
+    ///
+    /// Attempts to parse the PE file. If parsing fails, applies known PE
+    /// repairs (BitMono, BitDotNet, etc.) via the CowFile overlay, consolidates
+    /// the overlay into the base, and retries.
     ///
     /// # Arguments
     ///
-    /// * `data` - The backend providing the PE data.
+    /// * `cowfile` - The CowFile providing the PE data.
     ///
     /// # Errors
     ///
-    /// Returns an error if the data is empty or not a valid PE format.
-    fn load<T: Backend + 'static>(data: T) -> Result<File> {
-        if data.len() == 0 {
+    /// Returns an error if the data is empty or not a valid PE format
+    /// (even after repair attempts).
+    fn load(mut cowfile: CowFile) -> Result<File> {
+        if cowfile.len() == 0 {
             return Err(Error::NotSupported);
         }
 
@@ -443,16 +387,21 @@ impl File {
         //       To support MONO, we'll need to parse the ELF file here, and extract the PE structure that this `File`
         //       is then pointing to
 
-        let goblin_pe = match PE::parse(data.data()) {
-            Ok(pe) => pe,
-            Err(error) => return Err(Goblin(error)),
-        };
+        // Always attempt PE repair proactively. Some obfuscators (e.g., BitMono's
+        // BitDecompiler) corrupt CLR headers that goblin's PE::parse() does not
+        // validate, so we must repair before parsing — not just on failure.
+        let repair_result = repair_pe_cow(&cowfile);
+        if !repair_result.repairs.is_empty() {
+            cowfile.consolidate()?;
+        }
 
-        let owned_pe = Pe::from_goblin_pe(&goblin_pe)?;
+        let goblin_pe = PE::parse(cowfile.base_data()).map_err(Goblin)?;
+        let pe = Pe::from_goblin_pe(&goblin_pe)?;
 
         Ok(File {
-            data: Box::new(data),
-            pe: owned_pe,
+            data: cowfile,
+            pe,
+            repairs: repair_result.repairs,
         })
     }
 
@@ -470,7 +419,7 @@ impl File {
     /// ```
     #[must_use]
     pub fn len(&self) -> usize {
-        self.data.len()
+        self.data.len() as usize
     }
 
     /// Returns `true` if the file has a length of zero.
@@ -819,7 +768,7 @@ impl File {
     /// ```
     #[must_use]
     pub fn data(&self) -> &[u8] {
-        self.data.data()
+        self.data.base_data()
     }
 
     /// Returns a slice of the file data at the given offset and length.
@@ -856,7 +805,12 @@ impl File {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn data_slice(&self, offset: usize, len: usize) -> Result<&[u8]> {
-        self.data.data_slice(offset, len)
+        let base = self.data.base_data();
+        let end = offset.checked_add(len).ok_or(out_of_bounds_error!())?;
+        if end > base.len() {
+            return Err(out_of_bounds_error!());
+        }
+        Ok(&base[offset..end])
     }
 
     /// Converts a virtual address (VA) to a file offset.
@@ -1363,7 +1317,22 @@ impl File {
     /// ```
     #[must_use]
     pub fn into_data(self) -> Vec<u8> {
-        self.data.into_data()
+        self.data.into_vec().expect("CowFile lock poisoned")
+    }
+
+    /// Returns any PE repairs that were applied during loading.
+    ///
+    /// If the PE file was corrupted (e.g., by BitMono or BitDotNet packers),
+    /// the repair actions describe what was fixed.
+    #[must_use]
+    pub fn repairs(&self) -> &[RepairAction] {
+        &self.repairs
+    }
+
+    /// Access the underlying CowFile for overlay modifications.
+    #[must_use]
+    pub fn cowfile(&self) -> &CowFile {
+        &self.data
     }
 }
 
@@ -1371,8 +1340,7 @@ impl File {
 mod tests {
     use std::{env, fs, path::PathBuf};
 
-    use super::*;
-    use crate::test::factories::general::file::verify_file;
+    use crate::{file::pe::DataDirectoryType, test::factories::general::file::verify_file, File};
 
     /// Tests loading a PE file from disk.
     #[test]

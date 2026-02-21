@@ -231,6 +231,13 @@ fn detect_native_helpers(
             continue;
         }
 
+        // Skip GUID-named methods — these are BitMono UnmanagedString fake
+        // native methods, not ConfuserEx x86 helpers. ConfuserEx uses short
+        // numeric or compiler-generated names, never GUIDs.
+        if is_guid_format_name(&method.name) {
+            continue;
+        }
+
         // Check signature: static int32(int32)
         let sig = &method.signature;
         let is_int32_to_int32 = sig.return_type.base == TypeSignature::I4
@@ -929,6 +936,29 @@ fn is_field_only_accessed_by_infrastructure(
 
     // Field is infrastructure-only if it's accessed AND only by infrastructure
     accessed_by_any && !accessed_by_non_infra
+}
+
+/// Checks if a name matches GUID format (xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx).
+///
+/// BitMono's UnmanagedString protection creates fake native methods with GUID names.
+/// ConfuserEx never uses GUID-format names for its x86 helpers.
+fn is_guid_format_name(name: &str) -> bool {
+    if name.len() != 36 {
+        return false;
+    }
+    let bytes = name.as_bytes();
+    // Check dash positions: 8, 13, 18, 23
+    if bytes[8] != b'-' || bytes[13] != b'-' || bytes[18] != b'-' || bytes[23] != b'-' {
+        return false;
+    }
+    // Check all other characters are hex digits
+    bytes.iter().enumerate().all(|(i, &b)| {
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            true
+        } else {
+            b.is_ascii_hexdigit()
+        }
+    })
 }
 
 #[cfg(test)]

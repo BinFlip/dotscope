@@ -530,14 +530,21 @@ impl CilObject {
         file: File,
         validation_config: ValidationConfig,
     ) -> Result<Self> {
-        // Validate CLR header presence
         if !file.is_clr() {
             return Err(Error::NotSupported);
         }
 
-        // Extract data and use existing from_mem path
-        let data = file.into_data();
-        Self::from_mem_with_validation(data, validation_config)
+        let assembly_view =
+            CilAssemblyView::from_dotscope_file_with_validation(file, validation_config)?;
+
+        let lenient = validation_config.lenient;
+        let data = CilObjectData::from_assembly_view(&assembly_view, None, lenient)?;
+        let object = CilObject {
+            assembly_view,
+            data,
+        };
+        object.validate(validation_config)?;
+        Ok(object)
     }
 
     /// Creates a CilObject from an opened std::fs::File.
