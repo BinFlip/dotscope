@@ -391,13 +391,16 @@ impl MethodBody {
                         if method_data_section_flags.contains(SectionFlags::FAT_FORMAT) {
                             let method_data_section_size =
                                 read_le::<u32>(&data[cursor + 1..])? & 0x00FF_FFFF;
-                            if method_data_section_size < 4
-                                || data.len() < (cursor + method_data_section_size as usize)
-                            {
+
+                            // ECMA-335 says DataSize includes the 4-byte section header,
+                            // but some tools emit DataSize without the header. Using
+                            // DataSize/24 handles both cases via integer division
+                            // (matches Mono runtime behavior in metadata.c:parse_section_data).
+                            let handler_count = method_data_section_size / 24;
+                            let needed = 4 + handler_count as usize * 24;
+                            if handler_count == 0 || data.len() < cursor + needed {
                                 break;
                             }
-
-                            let handler_count = (method_data_section_size - 4) / 24;
                             if handler_count as usize > MAX_EXCEPTION_HANDLERS {
                                 return Err(malformed_error!(
                                     "Method has too many exception handlers: {} (max: {})",
@@ -434,13 +437,17 @@ impl MethodBody {
                         } else {
                             let method_data_section_size =
                                 u32::from(read_le::<u8>(&data[cursor + 1..])?);
-                            if method_data_section_size < 4
-                                || data.len() < (cursor + method_data_section_size as usize)
-                            {
+
+                            // ECMA-335 says DataSize includes the 4-byte section header,
+                            // but some tools (e.g. AsmResolver used by BitMono) emit
+                            // DataSize without the header. Using DataSize/12 handles both
+                            // cases via integer division (matches Mono runtime behavior
+                            // in metadata.c:parse_section_data).
+                            let handler_count = method_data_section_size / 12;
+                            let needed = 4 + handler_count as usize * 12;
+                            if handler_count == 0 || data.len() < cursor + needed {
                                 break;
                             }
-
-                            let handler_count = (method_data_section_size - 4) / 12;
                             if handler_count as usize > MAX_EXCEPTION_HANDLERS {
                                 return Err(malformed_error!(
                                     "Method has too many exception handlers: {} (max: {})",
