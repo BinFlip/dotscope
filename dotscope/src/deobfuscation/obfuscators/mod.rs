@@ -27,16 +27,18 @@
 //! registry.register(Arc::new(ConfuserExObfuscator::new()));
 //! ```
 
+mod bitmono;
 mod confuserex;
 mod obfuscar;
 mod registry;
 pub(crate) mod utils;
 
+pub use bitmono::{detect_bitmono, BitMonoFindings, BitMonoObfuscator};
 pub use confuserex::{
     create_anti_tamper_stub_hook, create_lzma_hook, detect_confuserex, find_encrypted_methods,
-    ConfuserExObfuscator,
+    ConfuserExFindings, ConfuserExObfuscator, NativeHelperInfo,
 };
-pub use obfuscar::{detect_obfuscar, ObfuscarObfuscator};
+pub use obfuscar::{detect_obfuscar, ObfuscarFindings, ObfuscarObfuscator};
 pub use registry::{ObfuscatorInfo, ObfuscatorRegistry};
 
 use crate::{
@@ -48,6 +50,25 @@ use crate::{
     },
     CilObject, Result,
 };
+
+/// Execution phase for an SSA pass.
+///
+/// Determines when in the deobfuscation pipeline a pass runs.
+/// The engine groups passes by phase and executes them in order:
+/// `Structure` → `Value` → `Simplify` → `Inline` → `Normalize`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PassPhase {
+    /// Structural transformations (e.g., control flow unflattening).
+    Structure,
+    /// Value-level transformations (e.g., constant decryption, string decryption).
+    Value,
+    /// Simplification passes (e.g., proxy resolution, anti-debug neutralization).
+    Simplify,
+    /// Inlining passes (e.g., delegate inlining).
+    Inline,
+    /// Normalization passes (e.g., nop removal, dead code elimination).
+    Normalize,
+}
 
 /// Trait for handling a specific obfuscator.
 ///
@@ -89,12 +110,12 @@ pub trait Obfuscator: Send + Sync {
     ///
     /// This ID is used for registration and lookup. It should be lowercase,
     /// alphanumeric, and use underscores for separation.
-    fn id(&self) -> String;
+    fn id(&self) -> &str;
 
     /// Human-readable name (e.g., "ConfuserEx", "Dotfuscator Pro").
     ///
     /// This name is used for display purposes in logs and reports.
-    fn name(&self) -> String;
+    fn name(&self) -> &str;
 
     /// Scan assembly and return detection score.
     ///
@@ -110,19 +131,16 @@ pub trait Obfuscator: Send + Sync {
     /// A [`DetectionScore`] indicating confidence level and evidence.
     fn detect(&self, assembly: &CilObject, findings: &mut DeobfuscationFindings) -> DetectionScore;
 
-    /// Return passes specific to this obfuscator.
+    /// Return passes specific to this obfuscator, tagged with their execution phase.
     ///
-    /// These passes run in the devirtualization phase of the pipeline.
-    /// Use this for:
-    /// - VM deobfuscation
-    /// - Method body decryption
-    /// - Obfuscator-specific string decryption
-    /// - Proxy call resolution
+    /// Each pass is paired with a [`PassPhase`] that determines when it runs in the
+    /// pipeline. The engine groups passes by phase and executes them in order:
+    /// `Structure` → `Value` → `Simplify` → `Inline` → `Normalize`.
     ///
     /// # Returns
     ///
-    /// A vector of SSA passes to run for this obfuscator. Default is empty.
-    fn passes(&self, _findings: &DeobfuscationFindings) -> Vec<Box<dyn SsaPass>> {
+    /// A vector of `(PassPhase, Box<dyn SsaPass>)` pairs. Default is empty.
+    fn passes(&self, _findings: &DeobfuscationFindings) -> Vec<(PassPhase, Box<dyn SsaPass>)> {
         Vec::new()
     }
 
@@ -295,5 +313,18 @@ pub trait Obfuscator: Send + Sync {
     /// A human-readable description string.
     fn description(&self) -> &'static str {
         "No description available"
+    }
+
+    /// Minimum detection score for this obfuscator to be considered detected.
+    ///
+    /// The effective threshold used by the registry is
+    /// `max(global_threshold, obfuscator.detection_threshold())`.
+    /// Override this for obfuscators that require a higher confidence bar.
+    ///
+    /// # Returns
+    ///
+    /// The minimum score (default: 20).
+    fn detection_threshold(&self) -> usize {
+        20
     }
 }

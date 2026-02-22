@@ -72,34 +72,36 @@ use crate::{
 /// # Returns
 ///
 /// A tuple of `(DetectionScore, DeobfuscationFindings)`.
-pub fn detect_confuserex(assembly: &CilObject) -> (DetectionScore, DeobfuscationFindings) {
+pub fn detect_confuserex(
+    assembly: &CilObject,
+    findings: &mut DeobfuscationFindings,
+) -> DetectionScore {
     let score = DetectionScore::new();
-    let mut findings = DeobfuscationFindings::new();
 
     // Metadata protection: invalid indices, ENC tables, SuppressIldasm, markers
-    metadata::detect(assembly, &score, &mut findings);
+    metadata::detect(assembly, &score, findings);
 
     // Constants encryption: decryptor methods, CFG mode, state machine semantics
-    constants::detect(assembly, &score, &mut findings);
+    constants::detect(assembly, &score, findings);
 
     // Native x86 helpers: methods called by decryptors with Native impl flag
     // Must run AFTER string detection since we need decryptor_methods
-    detect_native_helpers(assembly, &score, &mut findings);
+    detect_native_helpers(assembly, &score, findings);
 
     // Anti-tamper: VirtualProtect + GetHINSTANCE patterns, encrypted method bodies
-    antitamper::detect(assembly, &score, &mut findings);
+    antitamper::detect(assembly, &score, findings);
 
     // Anti-debug: debugger checks + FailFast patterns
-    antidebug::detect(assembly, &score, &mut findings);
+    antidebug::detect(assembly, &score, findings);
 
     // Anti-dump: VirtualProtect + GetHINSTANCE + get_Module + Marshal.Copy patterns
-    antidump::detect(assembly, &score, &mut findings);
+    antidump::detect(assembly, &score, findings);
 
     // Resources: AssemblyResolve/ResourceResolve handler patterns
-    resources::detect(assembly, &score, &mut findings);
+    resources::detect(assembly, &score, findings);
 
     // ReferenceProxy: indirect call forwarding methods
-    referenceproxy::detect(assembly, &score, &mut findings);
+    referenceproxy::detect(assembly, &score, findings);
 
     // Note: Control flow flattening (CFF) detection is handled by the
     // UnflatteningPass using SSA-based structural analysis (see
@@ -108,20 +110,20 @@ pub fn detect_confuserex(assembly: &CilObject) -> (DetectionScore, Deobfuscation
     // state variable identification rather than hardcoded constants.
 
     // Artifact sections: encrypted data sections for removal during cleanup
-    detect_artifact_sections(assembly, &score, &mut findings);
+    detect_artifact_sections(assembly, &score, findings);
 
     // Constant data infrastructure: fields with FieldRVA used by decryptors
-    detect_constant_data_infrastructure(assembly, &score, &mut findings);
+    detect_constant_data_infrastructure(assembly, &score, findings);
 
     // Protection infrastructure types: types containing only protection methods
     // This must run AFTER all protection method detection is complete
-    detect_protection_infrastructure_types(assembly, &score, &mut findings);
+    detect_protection_infrastructure_types(assembly, &score, findings);
 
     // Infrastructure fields: static fields in <Module> only used by infrastructure code
     // This must run AFTER all protection method/type detection is complete
-    detect_infrastructure_fields(assembly, &score, &mut findings);
+    detect_infrastructure_fields(assembly, &score, findings);
 
-    (score, findings)
+    score
 }
 
 /// Detects native x86 helper methods used by ConfuserEx.
@@ -266,8 +268,9 @@ fn detect_native_helpers(
             locations.push(*key);
         }
 
+        let cx = findings.init_confuserex();
         for (_, info) in native_helpers {
-            findings.native_helpers.push(info);
+            cx.native_helpers.push(info);
         }
 
         // Add detection evidence
@@ -329,7 +332,10 @@ fn detect_artifact_sections(
     // Store findings
     let section_list: Vec<String> = artifact_section_names.iter().cloned().collect();
     for name in &section_list {
-        findings.artifact_sections.push(name.clone());
+        findings
+            .init_confuserex()
+            .artifact_sections
+            .push(name.clone());
     }
 
     // Add evidence if artifact sections were found
@@ -430,10 +436,14 @@ fn detect_constant_data_infrastructure(
     // Strategy 2: Find fields with FieldRVA that belong to known obfuscator types
     // This catches any data fields we might have missed in the pattern scan
     let obfuscator_type_rids: HashSet<u32> = findings
-        .obfuscator_type_tokens
-        .iter()
-        .map(|(_, t)| t.row())
-        .collect();
+        .confuserex()
+        .map(|cx| {
+            cx.obfuscator_type_tokens
+                .iter()
+                .map(|(_, t)| t.row())
+                .collect()
+        })
+        .unwrap_or_default();
 
     if let Some(tables) = assembly.tables() {
         // Get FieldRVA table to find fields with initialization data
@@ -582,9 +592,9 @@ fn detect_protection_infrastructure_types(
 
     // Types already marked for removal (don't double-process)
     let already_marked: HashSet<u32> = findings
-        .obfuscator_type_tokens
-        .iter()
-        .map(|(_, t)| t.row())
+        .confuserex()
+        .into_iter()
+        .flat_map(|cx| cx.obfuscator_type_tokens.iter().map(|(_, t)| t.row()))
         .chain(findings.constant_data_types.iter().map(|(_, t)| t.row()))
         .collect();
 
@@ -724,7 +734,12 @@ fn detect_infrastructure_fields(
         .protection_infrastructure_types
         .iter()
         .map(|(_, t)| *t)
-        .chain(findings.obfuscator_type_tokens.iter().map(|(_, t)| *t))
+        .chain(
+            findings
+                .confuserex()
+                .into_iter()
+                .flat_map(|cx| cx.obfuscator_type_tokens.iter().map(|(_, t)| *t)),
+        )
         .collect();
 
     // Get fields from <Module> (TypeDef RID 1)
@@ -964,18 +979,21 @@ fn is_guid_format_name(name: &str) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        deobfuscation::obfuscators::confuserex::detection::detect_confuserex, CilObject,
-        ValidationConfig,
+        deobfuscation::{
+            findings::DeobfuscationFindings, obfuscators::confuserex::detection::detect_confuserex,
+        },
+        CilObject, ValidationConfig,
     };
 
     #[test]
     fn test_detect_suppress_ildasm_original() -> crate::Result<()> {
         // Original assembly should NOT have SuppressIldasm
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/original.exe",
+            "tests/samples/packers/confuserex/1.6.0/original.exe",
             ValidationConfig::analysis(),
         )?;
-        let (_, findings) = detect_confuserex(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let _ = detect_confuserex(&assembly, &mut findings);
         assert!(
             !findings.has_suppress_ildasm(),
             "Original should not have SuppressIldasm"
@@ -988,10 +1006,11 @@ mod tests {
     fn test_detect_suppress_ildasm_minimal() -> crate::Result<()> {
         // Minimal protection may or may not have SuppressIldasm depending on config
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_minimal.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_minimal.exe",
             ValidationConfig::analysis(),
         )?;
-        let (_, findings) = detect_confuserex(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let _ = detect_confuserex(&assembly, &mut findings);
         // Just verify we don't crash - minimal may or may not have this
         println!(
             "Minimal: suppress_ildasm={}, token={:?}",
@@ -1005,10 +1024,11 @@ mod tests {
     fn test_detect_suppress_ildasm_maximum() -> crate::Result<()> {
         // Maximum protection should have SuppressIldasm
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_maximum.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe",
             ValidationConfig::analysis(),
         )?;
-        let (score, findings) = detect_confuserex(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let score = detect_confuserex(&assembly, &mut findings);
         println!(
             "Maximum: suppress_ildasm={}, token={:?}, score={}",
             findings.has_suppress_ildasm(),
@@ -1028,10 +1048,11 @@ mod tests {
     fn test_detect_decryptor_methods() -> crate::Result<()> {
         // Maximum protection should have decryptor methods (constants protection)
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_maximum.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe",
             ValidationConfig::analysis(),
         )?;
-        let (_, findings) = detect_confuserex(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let _ = detect_confuserex(&assembly, &mut findings);
         println!(
             "Decryptor methods count: {}",
             findings.decryptor_methods.count()
@@ -1044,10 +1065,11 @@ mod tests {
     fn test_detect_anti_debug() -> crate::Result<()> {
         // Normal protection includes anti-debug
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_normal.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe",
             ValidationConfig::analysis(),
         )?;
-        let (_, findings) = detect_confuserex(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let _ = detect_confuserex(&assembly, &mut findings);
         println!(
             "Anti-debug methods count: {}",
             findings.anti_debug_methods.count()
@@ -1067,14 +1089,18 @@ mod tests {
     fn test_detect_antitamper() -> crate::Result<()> {
         // Maximum protection should have anti-tamper
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_maximum.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe",
             ValidationConfig::analysis(),
         )?;
-        let (score, findings) = detect_confuserex(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let score = detect_confuserex(&assembly, &mut findings);
+        let cx_encrypted = findings
+            .confuserex()
+            .map_or(0, |cx| cx.encrypted_method_count);
         println!(
             "Anti-tamper methods: {}, encrypted methods: {}, score: {}",
             findings.anti_tamper_methods.count(),
-            findings.encrypted_method_count,
+            cx_encrypted,
             score.score()
         );
         assert!(
@@ -1082,7 +1108,7 @@ mod tests {
             "Maximum protection should have anti-tamper methods"
         );
         assert!(
-            findings.encrypted_method_count > 0,
+            cx_encrypted > 0,
             "Maximum protection should have encrypted method bodies"
         );
         assert!(
@@ -1096,10 +1122,11 @@ mod tests {
     fn test_detect_original_no_protections() -> crate::Result<()> {
         // Original unobfuscated assembly should have no protections detected
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/original.exe",
+            "tests/samples/packers/confuserex/1.6.0/original.exe",
             ValidationConfig::analysis(),
         )?;
-        let (score, findings) = detect_confuserex(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let score = detect_confuserex(&assembly, &mut findings);
 
         assert_eq!(
             score.score(),
@@ -1127,10 +1154,11 @@ mod tests {
         // Types 2,3,4,5,9,10,11,12 are nested directly in <Module>
         // Types 6,7,8 are nested within type 5
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_maximum.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe",
             ValidationConfig::analysis(),
         )?;
-        let (score, findings) = detect_confuserex(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let score = detect_confuserex(&assembly, &mut findings);
 
         // Should detect nested internal infrastructure types
         assert!(

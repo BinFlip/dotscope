@@ -303,7 +303,7 @@ mod tests {
     // ========================================================================
     // ConfuserEx x86 native stub tests
     //
-    // Bytecodes extracted from test samples in tests/samples/packers/confuserex/.
+    // Bytecodes extracted from test samples in tests/samples/packers/confuserex/1.6.0/.
     // All stubs use DynCipher calling convention: body starts after 20-byte
     // prologue. These bytes are the body only (without prologue).
     // ========================================================================

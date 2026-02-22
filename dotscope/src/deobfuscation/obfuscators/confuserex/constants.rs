@@ -740,7 +740,7 @@ pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut Deobf
 
             // Create the state machine provider
             let provider = ConfuserExStateMachine::new(semantics, cfg_mode_methods.iter().copied());
-            findings.statemachine_provider = Some(Arc::new(provider));
+            findings.init_confuserex().statemachine_provider = Some(Arc::new(provider));
 
             let cfg_confidence = (method_count * 15).min(25);
             score.add(DetectionEvidence::BytecodePattern {
@@ -843,7 +843,7 @@ fn try_detect_cfgctx_from_type(
     for method in &cil_type.query_methods() {
         if method.is_ctor() && ctor_token.is_none() {
             // Found constructor - extract multiplier using SSA dataflow analysis
-            if let Some(ssa) = method.ssa(assembly) {
+            if let Ok(ssa) = method.ssa(assembly) {
                 if let Some(mult) = extract_multiplier_from_ssa(&ssa) {
                     multiplier = Some(mult);
                     ctor_token = Some(method.token);
@@ -855,7 +855,7 @@ fn try_detect_cfgctx_from_type(
             let sig = &method.signature;
             if sig.params.len() == 2 && method.name != ".ctor" {
                 // Use SSA to look for characteristic patterns (switch, field stores/loads)
-                if let Some(ssa) = method.ssa(assembly) {
+                if let Ok(ssa) = method.ssa(assembly) {
                     let mut has_switch = false;
                     let mut has_stfld = false;
                     let mut has_ldfld = false;
@@ -982,7 +982,7 @@ fn extract_slot_operations(
     let method = assembly.method(&next_method)?;
 
     // Build SSA for the method - this gives us proper data flow analysis
-    let ssa = method.ssa(assembly)?;
+    let ssa = method.ssa(assembly).ok()?;
 
     let mut ops_found: Vec<(usize, StateSlotOperation)> = Vec::new();
 
@@ -1338,7 +1338,7 @@ fn find_call_sites(assembly: &CilObject, decryptor_tokens: &[Token]) -> Vec<Dete
         }
 
         // Build SSA for the method
-        let Some(ssa) = method.ssa(assembly) else {
+        let Ok(ssa) = method.ssa(assembly) else {
             continue;
         };
 
@@ -1599,7 +1599,7 @@ mod tests {
     #[test]
     fn test_mkaring_constants_detection() {
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_constants.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_constants.exe",
             ValidationConfig::analysis(),
         )
         .expect("Failed to load mkaring_constants.exe");
@@ -1657,7 +1657,7 @@ mod tests {
     #[test]
     fn test_mkaring_constants_dyncyph_detection() {
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_constants_dyncyph.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_constants_dyncyph.exe",
             ValidationConfig::analysis(),
         )
         .expect("Failed to load mkaring_constants_dyncyph.exe");
@@ -1721,7 +1721,7 @@ mod tests {
     #[test]
     fn test_mkaring_constants_cfg_detection() {
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_constants_cfg.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_constants_cfg.exe",
             ValidationConfig::analysis(),
         )
         .expect("Failed to load mkaring_constants_cfg.exe");
@@ -1837,7 +1837,7 @@ mod tests {
     #[ignore] // Sample needs to be generated using ConfuserEx on Windows
     fn test_mkaring_constants_x86_detection() {
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_constants_x86.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_constants_x86.exe",
             ValidationConfig::analysis(),
         )
         .expect("Failed to load mkaring_constants_x86.exe");
@@ -1916,7 +1916,7 @@ mod tests {
     #[test]
     fn test_call_sites_mkaring_constants() {
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_constants.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_constants.exe",
             ValidationConfig::analysis(),
         )
         .expect("Failed to load mkaring_constants.exe");
@@ -1968,7 +1968,7 @@ mod tests {
     #[test]
     fn test_call_sites_mkaring_constants_dyncyph() {
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_constants_dyncyph.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_constants_dyncyph.exe",
             ValidationConfig::analysis(),
         )
         .expect("Failed to load mkaring_constants_dyncyph.exe");
@@ -2011,7 +2011,7 @@ mod tests {
     #[test]
     fn test_call_sites_mkaring_constants_cfg() {
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_constants_cfg.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_constants_cfg.exe",
             ValidationConfig::analysis(),
         )
         .expect("Failed to load mkaring_constants_cfg.exe");
@@ -2056,7 +2056,7 @@ mod tests {
     #[ignore] // Sample needs to be generated using ConfuserEx on Windows
     fn test_call_sites_mkaring_constants_x86() {
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_constants_x86.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_constants_x86.exe",
             ValidationConfig::analysis(),
         )
         .expect("Failed to load mkaring_constants_x86.exe");

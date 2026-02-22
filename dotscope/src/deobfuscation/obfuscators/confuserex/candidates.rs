@@ -406,8 +406,8 @@ mod tests {
     use super::*;
     use crate::ValidationConfig;
 
-    const MAXIMUM_PATH: &str = "tests/samples/packers/confuserex/mkaring_maximum.exe";
-    const ORIGINAL_PATH: &str = "tests/samples/packers/confuserex/original.exe";
+    const MAXIMUM_PATH: &str = "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe";
+    const ORIGINAL_PATH: &str = "tests/samples/packers/confuserex/1.6.0/original.exe";
 
     #[test]
     fn test_module_cctor() {

@@ -21,12 +21,12 @@ use common::verification::{
     SemanticVerificationResult, VerificationLevel,
 };
 use dotscope::{
-    deobfuscation::{detect_confuserex, DeobfuscationEngine, EngineConfig},
+    deobfuscation::{detect_confuserex, DeobfuscationEngine, DeobfuscationFindings, EngineConfig},
     metadata::validation::ValidationConfig,
     CilObject,
 };
 
-const SAMPLES_DIR: &str = "tests/samples/packers/confuserex";
+const SAMPLES_DIR: &str = "tests/samples/packers/confuserex/1.6.0";
 
 /// Methods to test for semantic preservation (compared against original.exe).
 const SEMANTIC_TEST_METHODS: &[&str] = &[
@@ -476,19 +476,24 @@ fn test_sample_comprehensive(
             result.verification.decryptors_detected = findings.decryptor_methods.count();
             result.verification.anti_debug_detected = findings.anti_debug_methods.count();
             result.verification.anti_tamper_detected = findings.anti_tamper_methods.count();
-            result.verification.encrypted_methods_detected = findings.encrypted_method_count;
+            result.verification.encrypted_methods_detected = findings
+                .confuserex()
+                .map_or(0, |cx| cx.encrypted_method_count);
             result.verification.resources_detected = findings.resource_handler_methods.count();
             result.verification.proxy_methods_detected = findings.proxy_methods.count();
 
             // REMOVAL: re-detect on output
             result.verification.has_valid_entry_point = output.cor20header().entry_point_token != 0;
-            let (_, findings_after) = detect_confuserex(&output);
+            let mut findings_after = DeobfuscationFindings::new();
+            let _ = detect_confuserex(&output, &mut findings_after);
             result.verification.markers_remaining = findings_after.has_marker_attributes();
             result.verification.suppress_ildasm_remaining = findings_after.has_suppress_ildasm();
             result.verification.decryptors_remaining = findings_after.decryptor_methods.count();
             result.verification.anti_debug_remaining = findings_after.anti_debug_methods.count();
             result.verification.anti_tamper_remaining = findings_after.anti_tamper_methods.count();
-            result.verification.encrypted_methods_remaining = findings_after.encrypted_method_count;
+            result.verification.encrypted_methods_remaining = findings_after
+                .confuserex()
+                .map_or(0, |cx| cx.encrypted_method_count);
             result.verification.resources_remaining =
                 findings_after.resource_handler_methods.count();
             result.verification.proxy_methods_remaining = findings_after.proxy_methods.count();

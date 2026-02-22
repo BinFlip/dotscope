@@ -949,7 +949,7 @@ mod tests {
     fn test_bitdotnet_sample() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/samples/packers/bitmono/bitmono_bitdotnet.exe"
+            "/tests/samples/packers/bitmono/0.39.0/bitmono_bitdotnet.exe"
         );
         let mut bytes = std::fs::read(path).expect("Failed to read BitDotNet sample");
 
@@ -995,7 +995,7 @@ mod tests {
     fn test_bitdecompiler_sample() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/samples/packers/bitmono/bitmono_bitdecompiler.exe"
+            "/tests/samples/packers/bitmono/0.39.0/bitmono_bitdecompiler.exe"
         );
         let mut bytes = std::fs::read(path).expect("Failed to read BitDecompiler sample");
 
@@ -1017,7 +1017,7 @@ mod tests {
     fn test_packer_sample() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/samples/packers/bitmono/bitmono_packer.exe"
+            "/tests/samples/packers/bitmono/0.39.0/bitmono_packer.exe"
         );
         let mut bytes = std::fs::read(path).expect("Failed to read Packer sample");
 
@@ -1051,7 +1051,7 @@ mod tests {
     fn test_pe_combined_sample() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/samples/packers/bitmono/bitmono_pe_combined.exe"
+            "/tests/samples/packers/bitmono/0.39.0/bitmono_pe_combined.exe"
         );
         let mut bytes = std::fs::read(path).expect("Failed to read pe_combined sample");
 
@@ -1074,7 +1074,7 @@ mod tests {
     fn test_maximum_sample() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/samples/packers/bitmono/bitmono_maximum.exe"
+            "/tests/samples/packers/bitmono/0.39.0/bitmono_maximum.exe"
         );
         let mut bytes = std::fs::read(path).expect("Failed to read maximum sample");
 
@@ -1106,7 +1106,7 @@ mod tests {
     fn test_original_sample_no_repairs() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/samples/packers/bitmono/original.exe"
+            "/tests/samples/packers/bitmono/0.39.0/original.exe"
         );
         let mut bytes = std::fs::read(path).expect("Failed to read original sample");
 
@@ -1122,7 +1122,7 @@ mod tests {
     fn test_repaired_bitdotnet_loads_as_pe() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/samples/packers/bitmono/bitmono_bitdotnet.exe"
+            "/tests/samples/packers/bitmono/0.39.0/bitmono_bitdotnet.exe"
         );
         let mut bytes = std::fs::read(path).expect("Failed to read BitDotNet sample");
 
@@ -1141,7 +1141,7 @@ mod tests {
     fn test_repaired_bitdecompiler_loads_as_pe() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/samples/packers/bitmono/bitmono_bitdecompiler.exe"
+            "/tests/samples/packers/bitmono/0.39.0/bitmono_bitdecompiler.exe"
         );
         let mut bytes = std::fs::read(path).expect("Failed to read BitDecompiler sample");
 
@@ -1159,7 +1159,7 @@ mod tests {
     fn test_repaired_packer_loads_as_pe() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/samples/packers/bitmono/bitmono_packer.exe"
+            "/tests/samples/packers/bitmono/0.39.0/bitmono_packer.exe"
         );
         let mut bytes = std::fs::read(path).expect("Failed to read Packer sample");
 
@@ -1177,7 +1177,7 @@ mod tests {
     fn test_repaired_maximum_loads_as_pe() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/samples/packers/bitmono/bitmono_maximum.exe"
+            "/tests/samples/packers/bitmono/0.39.0/bitmono_maximum.exe"
         );
         let mut bytes = std::fs::read(path).expect("Failed to read Maximum sample");
 
@@ -1264,7 +1264,7 @@ mod tests {
     fn test_cow_bitdotnet_sample() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/samples/packers/bitmono/bitmono_bitdotnet.exe"
+            "/tests/samples/packers/bitmono/0.39.0/bitmono_bitdotnet.exe"
         );
         let bytes = std::fs::read(path).expect("Failed to read BitDotNet sample");
         let mut cowfile = CowFile::from_vec(bytes);
@@ -1288,7 +1288,7 @@ mod tests {
     fn test_cow_maximum_sample() {
         let path = concat!(
             env!("CARGO_MANIFEST_DIR"),
-            "/tests/samples/packers/bitmono/bitmono_maximum.exe"
+            "/tests/samples/packers/bitmono/0.39.0/bitmono_maximum.exe"
         );
         let bytes = std::fs::read(path).expect("Failed to read maximum sample");
         let mut cowfile = CowFile::from_vec(bytes);

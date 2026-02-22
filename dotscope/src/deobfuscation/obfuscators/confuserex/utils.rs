@@ -3,67 +3,14 @@
 //! This module consolidates constants and helpers that were previously duplicated
 //! across multiple ConfuserEx sub-modules (antitamper, antidebug, antidump, candidates).
 
-use std::collections::HashMap;
-
 use crate::{
-    metadata::{
-        imports::ImportType,
-        method::MethodBody,
-        signatures::{parse_field_signature, TypeSignature},
-        tables::{ClassLayoutRaw, FieldRaw, MethodDefRaw},
-        token::Token,
-    },
+    metadata::{method::MethodBody, tables::MethodDefRaw, token::Token},
     CilObject,
 };
 
 /// Maximum bytes to read when extracting a method body from memory.
 /// This is generous - most methods are under 1KB.
 pub(super) const MAX_METHOD_BODY_SIZE: usize = 65536;
-
-/// Builds a map from MethodDef token to P/Invoke import name.
-///
-/// This is necessary because ConfuserEx renames P/Invoke methods while keeping
-/// the actual import name (in the ImplMap table) intact. For example, a method
-/// named "VirtualProtect" might be renamed to invisible Unicode characters,
-/// but the ImplMap entry still records "VirtualProtect" as the import name.
-///
-/// Returns a map from MethodDef token to the actual import name.
-pub(super) fn build_pinvoke_import_map(assembly: &CilObject) -> HashMap<Token, String> {
-    let mut map = HashMap::new();
-
-    // Iterate over all P/Invoke imports in the imports container
-    for import_entry in assembly.imports().cil() {
-        let import = import_entry.value();
-
-        // Only process method imports (P/Invoke)
-        if let ImportType::Method(method) = &import.import {
-            // The import.name is the actual import name from ImplMap (e.g., "VirtualProtect")
-            // The method.token is the MethodDef token
-            map.insert(method.token, import.name.clone());
-        }
-    }
-
-    map
-}
-
-/// Resolves a call target token to a method name.
-///
-/// For MethodDef tokens that are P/Invoke methods, returns the actual import name
-/// from the ImplMap table (not the potentially obfuscated method name).
-/// For other tokens, delegates to `CilObject::resolve_method_name()`.
-pub(super) fn resolve_call_target(
-    assembly: &CilObject,
-    token: Token,
-    import_map: &HashMap<Token, String>,
-) -> Option<String> {
-    // For MethodDef, check P/Invoke import map first
-    if token.table() == 0x06 {
-        if let Some(import_name) = import_map.get(&token) {
-            return Some(import_name.clone());
-        }
-    }
-    assembly.resolve_method_name(token)
-}
 
 /// Helper function to get the full type name from a call operand token.
 /// Used by SSA passes for pattern matching.
@@ -155,41 +102,4 @@ pub(super) fn extract_method_body_at_rva(memory: &[u8], rva: u32) -> Option<Vec<
     body.write_to(&mut output, il_code).ok()?;
 
     Some(output)
-}
-
-/// Gets the size of field data based on ClassLayout table.
-///
-/// For FieldRVA entries, the field must be a value type with explicit size
-/// defined in ClassLayout. This function looks up that size.
-pub(super) fn get_field_data_size(assembly: &CilObject, field_rid: u32) -> Option<usize> {
-    let tables = assembly.tables()?;
-    let blobs = assembly.blob()?;
-
-    // Get the Field row
-    let field_table = tables.table::<FieldRaw>()?;
-    let field_row = field_table.get(field_rid)?;
-
-    // Parse field signature to get the value type token
-    let sig_data = blobs.get(field_row.signature as usize).ok()?;
-    let field_sig = parse_field_signature(sig_data).ok()?;
-
-    // For value types, look up ClassLayout
-    match &field_sig.base {
-        TypeSignature::ValueType(token) => {
-            // Only TypeDef tokens have ClassLayout entries
-            if token.table() != 0x02 {
-                return None;
-            }
-            let type_rid = token.row();
-
-            let class_layout_table = tables.table::<ClassLayoutRaw>()?;
-            for layout in class_layout_table {
-                if layout.parent == type_rid {
-                    return Some(layout.class_size as usize);
-                }
-            }
-            None
-        }
-        _ => None,
-    }
 }

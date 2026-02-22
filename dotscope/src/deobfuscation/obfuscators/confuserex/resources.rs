@@ -624,8 +624,8 @@ mod tests {
         CilObject, ValidationConfig,
     };
 
-    const MAXIMUM_PATH: &str = "tests/samples/packers/confuserex/mkaring_maximum.exe";
-    const RESOURCES_PATH: &str = "tests/samples/packers/confuserex/mkaring_resources.exe";
+    const MAXIMUM_PATH: &str = "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe";
+    const RESOURCES_PATH: &str = "tests/samples/packers/confuserex/1.6.0/mkaring_resources.exe";
 
     #[test]
     fn test_find_resource_candidates() {

@@ -583,7 +583,7 @@ fn resolve_call_result(
     let method = assembly.method(&method_token)?;
 
     // Build SSA for the callee
-    let callee_ssa = method.ssa(assembly)?;
+    let callee_ssa = method.ssa(assembly).ok()?;
 
     // Create evaluator for the callee
     let mut eval = SsaEvaluator::new(&callee_ssa, pointer_size);

@@ -223,17 +223,21 @@ fn is_strong_proxy(instructions: &[&Instruction]) -> bool {
 #[cfg(test)]
 mod tests {
     use crate::{
-        deobfuscation::obfuscators::confuserex::{detection::detect_confuserex, referenceproxy},
+        deobfuscation::{
+            findings::DeobfuscationFindings,
+            obfuscators::confuserex::{detection::detect_confuserex, referenceproxy},
+        },
         CilObject, ValidationConfig,
     };
 
     #[test]
     fn test_no_proxy_in_original() -> crate::Result<()> {
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/original.exe",
+            "tests/samples/packers/confuserex/1.6.0/original.exe",
             ValidationConfig::analysis(),
         )?;
-        let (score, mut findings) = detect_confuserex(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let score = detect_confuserex(&assembly, &mut findings);
         referenceproxy::detect(&assembly, &score, &mut findings);
 
         // Original should have very few or no proxy methods
@@ -245,10 +249,11 @@ mod tests {
     #[test]
     fn test_proxy_in_normal() -> crate::Result<()> {
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_normal.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe",
             ValidationConfig::analysis(),
         )?;
-        let (score, mut findings) = detect_confuserex(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let score = detect_confuserex(&assembly, &mut findings);
         referenceproxy::detect(&assembly, &score, &mut findings);
 
         println!("Normal proxy count: {}", findings.proxy_methods.count());

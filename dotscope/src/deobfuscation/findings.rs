@@ -4,45 +4,80 @@
 //! obfuscator modules during detection, read by engine phases (deobfuscation,
 //! pass selection, context setup, cleanup), and returned in
 //! [`DeobfuscationResult`](crate::deobfuscation::DeobfuscationResult) for consumer access.
+//!
+//! # Architecture
+//!
+//! Fields are split into two categories:
+//! - **Shared fields**: generic protection concepts applicable across obfuscators
+//!   (decryptors, anti-debug, proxy methods, marker attributes, etc.)
+//! - **Obfuscator-specific data**: held in an [`ObfuscatorData`] enum whose
+//!   variants wrap per-obfuscator sub-structs ([`BitMonoFindings`],
+//!   [`ConfuserExFindings`], [`ObfuscarFindings`]).
+//!
+//! Aggregation methods on `DeobfuscationFindings` delegate to the active
+//! variant through the [`ObfuscatorFindingsProvider`] trait.
 
-use std::{collections::HashSet, sync::Arc};
+use std::{collections::HashSet, fmt};
 
+// Re-export sub-struct types so existing `use crate::deobfuscation::findings::*` paths work.
+pub use crate::deobfuscation::obfuscators::{
+    BitMonoFindings, ConfuserExFindings, NativeHelperInfo, ObfuscarFindings,
+};
 use crate::{
-    deobfuscation::{detection::DetectionScore, StateMachineProvider},
-    file::repair::RepairAction,
-    metadata::token::Token,
+    deobfuscation::detection::DetectionScore, file::repair::RepairAction, metadata::token::Token,
 };
 
-/// Information about a detected native x86 helper method.
-///
-/// These are native methods (with `MethodImplCodeType::NATIVE`) called by
-/// decryptor methods for key transformation. They need to be converted to
-/// CIL before emulation can proceed.
-#[derive(Debug, Clone)]
-pub struct NativeHelperInfo {
-    /// Metadata token of the native method.
-    pub token: Token,
-    /// RVA of the native code.
-    pub rva: u32,
-    /// Tokens of methods that call this native method.
-    pub callers: Vec<Token>,
-}
-
-impl NativeHelperInfo {
-    /// Creates a new native helper info.
-    #[must_use]
-    pub fn new(token: Token, rva: u32) -> Self {
-        Self {
-            token,
-            rva,
-            callers: Vec::new(),
-        }
+/// Cross-cutting queries that aggregation methods on `DeobfuscationFindings`
+/// delegate to each obfuscator's sub-struct.
+pub trait ObfuscatorFindingsProvider {
+    /// Additional type tokens that should be removed during cleanup.
+    fn removable_type_tokens(&self) -> Vec<Token> {
+        vec![]
     }
 
-    /// Adds a caller to this native helper.
-    pub fn add_caller(&mut self, caller: Token) {
-        if !self.callers.contains(&caller) {
-            self.callers.push(caller);
+    /// Whether this obfuscator contributes invalid metadata markers.
+    fn has_invalid_metadata(&self) -> bool {
+        false
+    }
+
+    /// Whether this obfuscator has ENC table artifacts.
+    fn has_enc_tables(&self) -> bool {
+        false
+    }
+
+    /// Whether this obfuscator has additional protection-specific artifacts.
+    fn has_protections(&self) -> bool {
+        false
+    }
+}
+
+/// Holds the active obfuscator's specific findings.
+#[derive(Debug, Clone)]
+pub enum ObfuscatorData {
+    /// No obfuscator-specific data.
+    None,
+    /// ConfuserEx-specific findings.
+    ConfuserEx(ConfuserExFindings),
+    /// BitMono-specific findings.
+    BitMono(BitMonoFindings),
+    /// Obfuscar-specific findings.
+    Obfuscar(ObfuscarFindings),
+}
+
+impl Default for ObfuscatorData {
+    fn default() -> Self {
+        Self::None
+    }
+}
+
+impl ObfuscatorData {
+    /// Returns a reference to the provider trait object for the active variant.
+    fn provider(&self) -> Option<&dyn ObfuscatorFindingsProvider> {
+        match self {
+            Self::None => None,
+            Self::ConfuserEx(f) => Some(f),
+            Self::BitMono(f) => Some(f),
+            Self::Obfuscar(f) => Some(f),
         }
     }
 }
@@ -55,7 +90,8 @@ impl NativeHelperInfo {
 /// `DeobfuscationResult` for consumer access.
 ///
 /// Each token collection uses `boxcar::Vec` for lock-free parallel writes
-/// during detection.
+/// during detection. Obfuscator-specific fields are held in the
+/// [`obfuscator`](Self::obfuscator) enum variant.
 #[derive(Debug, Clone)]
 pub struct DeobfuscationFindings {
     // === Detection Summary ===
@@ -75,20 +111,10 @@ pub struct DeobfuscationFindings {
     pub constant_data_fields: boxcar::Vec<Token>,
     /// Backing value types for constant data fields.
     pub constant_data_types: boxcar::Vec<Token>,
-    /// State machine provider for order-dependent decryption (CFG mode).
-    pub statemachine_provider: Option<Arc<dyn StateMachineProvider>>,
-
-    // === Native Code ===
-    /// Native x86 helper methods used by decryptors.
-    pub native_helpers: boxcar::Vec<NativeHelperInfo>,
 
     // === Anti-Tamper ===
     /// Anti-tamper initialization method tokens.
     pub anti_tamper_methods: boxcar::Vec<Token>,
-    /// Number of encrypted method bodies detected.
-    pub encrypted_method_count: usize,
-    /// Method tokens decrypted during anti-tamper processing.
-    pub decrypted_method_tokens: boxcar::Vec<Token>,
 
     // === Anti-Debug ===
     /// Anti-debug method tokens.
@@ -107,31 +133,26 @@ pub struct DeobfuscationFindings {
     pub resource_handler_methods: boxcar::Vec<Token>,
 
     // === Metadata Artifacts ===
-    /// Marker attribute tokens (ConfusedByAttribute, ConfuserVersionAttribute).
+    /// Marker attribute tokens (ConfusedByAttribute, ConfuserVersionAttribute, AntiDe4dot).
     pub marker_attribute_tokens: boxcar::Vec<Token>,
-    /// Obfuscator-added type tokens (marker types like ConfusedByAttribute).
-    pub obfuscator_type_tokens: boxcar::Vec<Token>,
     /// SuppressIldasm attribute token (if present).
     pub suppress_ildasm_token: Option<Token>,
     /// TypeRef tokens with out-of-bounds ResolutionScope (invalid metadata).
     pub invalid_metadata_entries: boxcar::Vec<Token>,
-    /// Obfuscator-specific marker value found in metadata (e.g., 0x7fff7fff).
-    pub obfuscator_marker_value: Option<u32>,
-    /// Non-empty ENC table indices (ENCLog=0x1E, ENCMap=0x1F).
-    pub enc_tables: boxcar::Vec<u8>,
 
     // === PE Repair ===
     /// PE repairs applied before loading (empty if file loaded normally).
-    /// Used by detectors as evidence of PE-level packer protections.
     pub pe_repairs: Vec<RepairAction>,
 
     // === Cleanup Infrastructure ===
-    /// PE sections containing encrypted/artifact data.
-    pub artifact_sections: boxcar::Vec<String>,
     /// Protection infrastructure types (all methods are protection code).
     pub protection_infrastructure_types: boxcar::Vec<Token>,
     /// Infrastructure fields (only used by protection code).
     pub infrastructure_fields: boxcar::Vec<Token>,
+
+    // === Obfuscator-Specific ===
+    /// Holds the active obfuscator's specific findings.
+    pub obfuscator: ObfuscatorData,
 }
 
 impl Default for DeobfuscationFindings {
@@ -143,25 +164,18 @@ impl Default for DeobfuscationFindings {
             decryptor_methods: boxcar::Vec::new(),
             constant_data_fields: boxcar::Vec::new(),
             constant_data_types: boxcar::Vec::new(),
-            statemachine_provider: None,
-            native_helpers: boxcar::Vec::new(),
             anti_tamper_methods: boxcar::Vec::new(),
-            encrypted_method_count: 0,
-            decrypted_method_tokens: boxcar::Vec::new(),
             anti_debug_methods: boxcar::Vec::new(),
             anti_dump_methods: boxcar::Vec::new(),
             proxy_methods: boxcar::Vec::new(),
             resource_handler_methods: boxcar::Vec::new(),
             marker_attribute_tokens: boxcar::Vec::new(),
-            obfuscator_type_tokens: boxcar::Vec::new(),
             suppress_ildasm_token: None,
             invalid_metadata_entries: boxcar::Vec::new(),
-            obfuscator_marker_value: None,
-            enc_tables: boxcar::Vec::new(),
             pe_repairs: Vec::new(),
-            artifact_sections: boxcar::Vec::new(),
             protection_infrastructure_types: boxcar::Vec::new(),
             infrastructure_fields: boxcar::Vec::new(),
+            obfuscator: ObfuscatorData::None,
         }
     }
 }
@@ -171,6 +185,85 @@ impl DeobfuscationFindings {
     #[must_use]
     pub fn new() -> Self {
         Self::default()
+    }
+
+    /// Returns a reference to the BitMono-specific findings, if active.
+    #[must_use]
+    pub fn bitmono(&self) -> Option<&BitMonoFindings> {
+        match &self.obfuscator {
+            ObfuscatorData::BitMono(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the BitMono-specific findings, if active.
+    pub fn bitmono_mut(&mut self) -> Option<&mut BitMonoFindings> {
+        match &mut self.obfuscator {
+            ObfuscatorData::BitMono(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// Initializes the BitMono variant (if not already active) and returns a
+    /// mutable reference to it.
+    pub fn init_bitmono(&mut self) -> &mut BitMonoFindings {
+        if !matches!(self.obfuscator, ObfuscatorData::BitMono(_)) {
+            self.obfuscator = ObfuscatorData::BitMono(BitMonoFindings::default());
+        }
+        match &mut self.obfuscator {
+            ObfuscatorData::BitMono(f) => f,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Returns a reference to the ConfuserEx-specific findings, if active.
+    #[must_use]
+    pub fn confuserex(&self) -> Option<&ConfuserExFindings> {
+        match &self.obfuscator {
+            ObfuscatorData::ConfuserEx(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// Returns a mutable reference to the ConfuserEx-specific findings, if active.
+    pub fn confuserex_mut(&mut self) -> Option<&mut ConfuserExFindings> {
+        match &mut self.obfuscator {
+            ObfuscatorData::ConfuserEx(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// Initializes the ConfuserEx variant (if not already active) and returns a
+    /// mutable reference to it.
+    pub fn init_confuserex(&mut self) -> &mut ConfuserExFindings {
+        if !matches!(self.obfuscator, ObfuscatorData::ConfuserEx(_)) {
+            self.obfuscator = ObfuscatorData::ConfuserEx(ConfuserExFindings::default());
+        }
+        match &mut self.obfuscator {
+            ObfuscatorData::ConfuserEx(f) => f,
+            _ => unreachable!(),
+        }
+    }
+
+    /// Returns a reference to the Obfuscar-specific findings, if active.
+    #[must_use]
+    pub fn obfuscar(&self) -> Option<&ObfuscarFindings> {
+        match &self.obfuscator {
+            ObfuscatorData::Obfuscar(f) => Some(f),
+            _ => None,
+        }
+    }
+
+    /// Initializes the Obfuscar variant (if not already active) and returns a
+    /// mutable reference to it.
+    pub fn init_obfuscar(&mut self) -> &mut ObfuscarFindings {
+        if !matches!(self.obfuscator, ObfuscatorData::Obfuscar(_)) {
+            self.obfuscator = ObfuscatorData::Obfuscar(ObfuscarFindings::default());
+        }
+        match &mut self.obfuscator {
+            ObfuscatorData::Obfuscar(f) => f,
+            _ => unreachable!(),
+        }
     }
 
     /// Returns the detection confidence score.
@@ -210,6 +303,10 @@ impl DeobfuscationFindings {
             || self.has_suppress_ildasm()
             || self.protection_infrastructure_types.count() > 0
             || self.infrastructure_fields.count() > 0
+            || self
+                .obfuscator
+                .provider()
+                .is_some_and(|p| p.has_protections())
     }
 
     /// Returns true if marker attributes were detected.
@@ -227,7 +324,11 @@ impl DeobfuscationFindings {
     /// Returns true if any invalid metadata was detected.
     #[must_use]
     pub fn has_invalid_metadata(&self) -> bool {
-        self.invalid_metadata_entries.count() > 0 || self.obfuscator_marker_value.is_some()
+        self.invalid_metadata_entries.count() > 0
+            || self
+                .obfuscator
+                .provider()
+                .is_some_and(|p| p.has_invalid_metadata())
     }
 
     /// Returns the total count of invalid metadata entries.
@@ -239,13 +340,16 @@ impl DeobfuscationFindings {
     /// Returns true if the obfuscator-specific marker was found.
     #[must_use]
     pub fn has_obfuscator_marker(&self) -> bool {
-        self.obfuscator_marker_value.is_some()
+        self.confuserex()
+            .is_some_and(|cx| cx.obfuscator_marker_value.is_some())
     }
 
     /// Returns true if ENC tables are present.
     #[must_use]
     pub fn has_enc_tables(&self) -> bool {
-        self.enc_tables.count() > 0
+        self.obfuscator
+            .provider()
+            .is_some_and(|p| p.has_enc_tables())
     }
 
     /// Returns true if string/constant decryption is needed.
@@ -262,12 +366,14 @@ impl DeobfuscationFindings {
 
     /// Returns true if anti-tamper decryption is needed.
     ///
-    /// This requires both:
-    /// - Anti-tamper initialization methods detected (VirtualProtect + GetHINSTANCE)
-    /// - Encrypted method bodies present (methods with RVA but no parseable body)
+    /// Requires both anti-tamper initialization methods AND encrypted method
+    /// bodies present (ConfuserEx-specific).
     #[must_use]
     pub fn needs_anti_tamper_decryption(&self) -> bool {
-        self.anti_tamper_methods.count() > 0 && self.encrypted_method_count > 0
+        self.anti_tamper_methods.count() > 0
+            && self
+                .confuserex()
+                .is_some_and(|cx| cx.encrypted_method_count > 0)
     }
 
     /// Returns true if anti-debug patching is needed.
@@ -324,10 +430,24 @@ impl DeobfuscationFindings {
         self.proxy_methods.count() > 0
     }
 
+    /// Returns true if CFG mode was detected.
+    #[must_use]
+    pub fn uses_cfg_mode(&self) -> bool {
+        self.confuserex().is_some_and(|cx| cx.uses_cfg_mode())
+    }
+
+    /// Returns true if a specific method uses CFG mode.
+    #[must_use]
+    pub fn is_cfg_mode_method(&self, token: Token) -> bool {
+        self.confuserex()
+            .is_some_and(|cx| cx.is_cfg_mode_method(token))
+    }
+
     /// Returns true if native x86 method conversion is needed.
     #[must_use]
     pub fn needs_native_conversion(&self) -> bool {
-        !self.native_helpers.is_empty()
+        self.confuserex()
+            .is_some_and(|cx| cx.needs_native_conversion())
     }
 
     /// Returns all protection method tokens as a collected set.
@@ -372,31 +492,118 @@ impl DeobfuscationFindings {
     #[must_use]
     pub fn all_removable_type_tokens(&self) -> HashSet<Token> {
         let mut tokens = HashSet::new();
-        for (_, token) in &self.obfuscator_type_tokens {
-            tokens.insert(*token);
-        }
         for (_, token) in &self.constant_data_types {
             tokens.insert(*token);
         }
         for (_, token) in &self.protection_infrastructure_types {
             tokens.insert(*token);
         }
+        if let Some(provider) = self.obfuscator.provider() {
+            tokens.extend(provider.removable_type_tokens());
+        }
         tokens
     }
+}
 
-    /// Returns true if CFG mode was detected.
-    #[must_use]
-    pub fn uses_cfg_mode(&self) -> bool {
-        self.statemachine_provider
-            .as_ref()
-            .is_some_and(|p| !p.methods().is_empty())
-    }
+impl fmt::Display for DeobfuscationFindings {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Detection summary
+        if let Some(name) = &self.obfuscator_name {
+            writeln!(
+                f,
+                "  Obfuscator:  {} (score: {})",
+                name,
+                self.detection.score()
+            )?;
+        } else {
+            writeln!(f, "  Obfuscator:  none detected")?;
+            return Ok(());
+        }
 
-    /// Returns true if a specific method uses CFG mode.
-    #[must_use]
-    pub fn is_cfg_mode_method(&self, token: Token) -> bool {
-        self.statemachine_provider
-            .as_ref()
-            .is_some_and(|p| p.applies_to_method(token))
+        if !self.has_any_protection() {
+            return Ok(());
+        }
+
+        // Shared protections
+        writeln!(f)?;
+        writeln!(f, "  Detected protections:")?;
+
+        let decryptor_count = self.decryptor_methods.count();
+        if decryptor_count > 0 {
+            writeln!(f, "    Decryptors:        {} methods", decryptor_count)?;
+        }
+
+        let anti_tamper_count = self.anti_tamper_methods.count();
+        if anti_tamper_count > 0 {
+            let encrypted = self.confuserex().map_or(0, |cx| cx.encrypted_method_count);
+            if encrypted > 0 {
+                writeln!(
+                    f,
+                    "    Anti-tamper:       {} methods ({} encrypted bodies)",
+                    anti_tamper_count, encrypted
+                )?;
+            } else {
+                writeln!(f, "    Anti-tamper:       {} methods", anti_tamper_count)?;
+            }
+        }
+
+        let anti_debug_count = self.anti_debug_methods.count();
+        if anti_debug_count > 0 {
+            writeln!(f, "    Anti-debug:        {} methods", anti_debug_count)?;
+        }
+
+        let anti_dump_count = self.anti_dump_methods.count();
+        if anti_dump_count > 0 {
+            writeln!(f, "    Anti-dump:         {} methods", anti_dump_count)?;
+        }
+
+        let proxy_count = self.proxy_methods.count();
+        if proxy_count > 0 {
+            writeln!(f, "    Proxy methods:     {} methods", proxy_count)?;
+        }
+
+        let resource_count = self.resource_handler_methods.count();
+        if resource_count > 0 {
+            writeln!(f, "    Resources:         {} handlers", resource_count)?;
+        }
+
+        // Metadata artifacts
+        if self.has_marker_attributes() {
+            writeln!(f, "    Marker attributes: yes")?;
+        }
+
+        if self.has_suppress_ildasm() {
+            writeln!(f, "    SuppressIldasm:    yes")?;
+        }
+
+        let invalid_count = self.invalid_metadata_entries.count();
+        if invalid_count > 0 {
+            writeln!(f, "    Invalid metadata:  {} entries", invalid_count)?;
+        }
+
+        // Obfuscator-specific section
+        match &self.obfuscator {
+            ObfuscatorData::BitMono(bm) if bm.has_protections() => {
+                writeln!(f)?;
+                writeln!(f, "  BitMono-specific:")?;
+                write!(f, "{bm}")?;
+            }
+            ObfuscatorData::ConfuserEx(cx) => {
+                let has_any = cx.native_helpers.count() > 0
+                    || cx.encrypted_method_count > 0
+                    || cx.uses_cfg_mode()
+                    || cx.obfuscator_marker_value.is_some()
+                    || cx.enc_tables.count() > 0
+                    || cx.artifact_sections.count() > 0;
+                if has_any {
+                    writeln!(f)?;
+                    writeln!(f, "  ConfuserEx-specific:")?;
+                    write!(f, "{cx}")?;
+                }
+            }
+            _ => {}
+        }
+
+        Ok(())
     }
 }

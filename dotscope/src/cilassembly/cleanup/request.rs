@@ -428,6 +428,41 @@ impl CleanupRequest {
             || self.modulerefs.contains(&token)
     }
 
+    /// Adds methods from a `boxcar::Vec<Token>`.
+    ///
+    /// Convenience helper for the common pattern of iterating a boxcar detection
+    /// collection and inserting each token into the methods set.
+    pub fn add_methods_from(&mut self, tokens: &boxcar::Vec<Token>) -> &mut Self {
+        for (_, token) in tokens {
+            self.methods.insert(*token);
+        }
+        self
+    }
+
+    /// Adds types from a `boxcar::Vec<Token>`.
+    pub fn add_types_from(&mut self, tokens: &boxcar::Vec<Token>) -> &mut Self {
+        for (_, token) in tokens {
+            self.types.insert(*token);
+        }
+        self
+    }
+
+    /// Adds fields from a `boxcar::Vec<Token>`.
+    pub fn add_fields_from(&mut self, tokens: &boxcar::Vec<Token>) -> &mut Self {
+        for (_, token) in tokens {
+            self.fields.insert(*token);
+        }
+        self
+    }
+
+    /// Adds attributes from a `boxcar::Vec<Token>`.
+    pub fn add_attributes_from(&mut self, tokens: &boxcar::Vec<Token>) -> &mut Self {
+        for (_, token) in tokens {
+            self.attributes.insert(*token);
+        }
+        self
+    }
+
     /// Merges another cleanup request into this one.
     ///
     /// All tokens from `other` are added to this request.

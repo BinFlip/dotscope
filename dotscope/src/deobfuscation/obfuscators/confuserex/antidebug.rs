@@ -673,7 +673,7 @@ mod tests {
         CilObject, ValidationConfig,
     };
 
-    const SAMPLES_DIR: &str = "tests/samples/packers/confuserex";
+    const SAMPLES_DIR: &str = "tests/samples/packers/confuserex/1.6.0";
 
     #[test]
     fn test_is_debugger_check() {

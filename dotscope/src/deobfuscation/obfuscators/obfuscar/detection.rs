@@ -29,24 +29,27 @@ use crate::{
 ///
 /// # Returns
 ///
-/// A tuple of (`DetectionScore`, `DeobfuscationFindings`). The score indicates
-/// detection confidence (>= 50 means Obfuscar detected). The findings contain
-/// tokens for infrastructure types, decryptor methods, fields, and the
+/// A `DetectionScore` indicating detection confidence (>= 50 means Obfuscar
+/// detected). The `findings` are populated in-place with tokens for
+/// infrastructure types, decryptor methods, fields, and the
 /// `SuppressIldasmAttribute` — used downstream by the deobfuscation pipeline.
-pub fn detect_obfuscar(assembly: &CilObject) -> (DetectionScore, DeobfuscationFindings) {
+pub fn detect_obfuscar(
+    assembly: &CilObject,
+    findings: &mut DeobfuscationFindings,
+) -> DetectionScore {
     let score = DetectionScore::new();
-    let mut findings = DeobfuscationFindings::new();
+    findings.init_obfuscar();
 
     // Check for SuppressIldasmAttribute on the module (shared utility, confidence: 10)
-    utils::check_suppress_ildasm(assembly, &score, &mut findings, 10);
+    utils::check_suppress_ildasm(assembly, &score, findings, 10);
 
     // Check for <PrivateImplementationDetails>{GUID} helper type with string hiding structure
-    detect_string_hiding_infrastructure(assembly, &score, &mut findings);
+    detect_string_hiding_infrastructure(assembly, &score, findings);
 
     // Check for null/empty parameter names (weak signal)
     check_null_parameter_names(assembly, &score);
 
-    (score, findings)
+    score
 }
 
 /// Detects Obfuscar's `<PrivateImplementationDetails>{GUID}` helper type.

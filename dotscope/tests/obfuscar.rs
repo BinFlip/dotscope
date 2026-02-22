@@ -21,12 +21,12 @@ use common::verification::{
     VerificationLevel,
 };
 use dotscope::{
-    deobfuscation::{detect_obfuscar, DeobfuscationEngine, EngineConfig},
+    deobfuscation::{detect_obfuscar, DeobfuscationEngine, DeobfuscationFindings, EngineConfig},
     metadata::validation::ValidationConfig,
     CilObject,
 };
 
-const SAMPLES_DIR: &str = "tests/samples/packers/obfuscar";
+const SAMPLES_DIR: &str = "tests/samples/packers/obfuscar/2.2.50";
 
 /// Methods to test for semantic preservation (compared against original.exe).
 const SEMANTIC_TEST_METHODS: &[&str] = &[
@@ -211,7 +211,8 @@ fn test_sample(spec: &SampleSpec, original_asm: Option<&CilObject>) -> TestResul
     result.methods_before = assembly.methods().iter().count();
 
     // Run detection
-    let (score, findings) = detect_obfuscar(&assembly);
+    let mut findings = DeobfuscationFindings::new();
+    let score = detect_obfuscar(&assembly, &mut findings);
     result.detection_score = score.score();
     result.suppress_ildasm_found = findings.suppress_ildasm_token.is_some();
     result.helper_types_found = findings.protection_infrastructure_types.count();
@@ -242,7 +243,8 @@ fn test_sample(spec: &SampleSpec, original_asm: Option<&CilObject>) -> TestResul
             result.error_count = stats.errors;
 
             // Re-detect on output
-            let (post_score, post_findings) = detect_obfuscar(&output);
+            let mut post_findings = DeobfuscationFindings::new();
+            let post_score = detect_obfuscar(&output, &mut post_findings);
             result.post_detection_score = post_score.score();
             result.post_helper_types_found = post_findings.protection_infrastructure_types.count();
 
@@ -488,7 +490,7 @@ fn test_all_obfuscar_samples() {
 /// Test that the Obfuscar detection doesn't false-positive on ConfuserEx samples.
 #[test]
 fn test_obfuscar_no_false_positives_on_confuserex() {
-    let confuserex_path = "tests/samples/packers/confuserex/original.exe";
+    let confuserex_path = "tests/samples/packers/confuserex/1.6.0/original.exe";
     if !std::path::Path::new(confuserex_path).exists() {
         eprintln!("Skipping: ConfuserEx sample not found");
         return;
@@ -498,7 +500,8 @@ fn test_obfuscar_no_false_positives_on_confuserex() {
         CilObject::from_path_with_validation(confuserex_path, ValidationConfig::analysis())
             .expect("Failed to load ConfuserEx original");
 
-    let (score, _findings) = detect_obfuscar(&assembly);
+    let mut _findings = DeobfuscationFindings::new();
+    let score = detect_obfuscar(&assembly, &mut _findings);
 
     assert!(
         score.score() < 50,
@@ -527,7 +530,8 @@ fn test_obfuscar_detection_scoring() {
         let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
             .unwrap_or_else(|e| panic!("Failed to load {}: {}", filename, e));
 
-        let (score, findings) = detect_obfuscar(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let score = detect_obfuscar(&assembly, &mut findings);
 
         eprintln!(
             "{}: score={}, evidence={}, helper_types={}, decryptors={}",
@@ -560,7 +564,8 @@ fn test_obfuscar_rename_only_below_threshold() {
     let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
         .expect("Failed to load rename-only sample");
 
-    let (score, findings) = detect_obfuscar(&assembly);
+    let mut findings = DeobfuscationFindings::new();
+    let score = detect_obfuscar(&assembly, &mut findings);
 
     eprintln!(
         "rename_only: score={}, evidence={}",

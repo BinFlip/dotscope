@@ -414,15 +414,13 @@ fn display_ssa_method(
     // Use method.ssa() which properly sets up TypeContext with the assembly
     // for correct method signature resolution in call instructions
     match method.ssa(assembly) {
-        Some(ssa) => {
+        Ok(ssa) => {
             println!("\n--- SSA Form ---");
             display_ssa(&ssa);
         }
-        None => {
+        Err(e) => {
             println!("\n--- SSA Form ---");
-            println!(
-                "Failed to build SSA: Method has no decoded blocks or CFG construction failed"
-            );
+            println!("Failed to build SSA: {e}");
         }
     }
 
@@ -453,9 +451,7 @@ fn display_ssa_deobfuscated(
     println!("{}", "=".repeat(80));
 
     // Show original SSA first
-    let original_ssa = method
-        .ssa(&assembly)
-        .ok_or("Method has no decoded blocks or SSA construction failed")?;
+    let original_ssa = method.ssa(&assembly)?;
 
     println!("\n--- Original SSA Form ---");
     display_ssa(&original_ssa);

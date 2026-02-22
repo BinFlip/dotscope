@@ -122,14 +122,21 @@ fn run_single(path: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
         eprintln!("deobfuscate: {input_name} -> {output_name}");
         eprintln!();
 
-        if let Some(obf) = &report.obfuscator {
-            eprintln!("  Obfuscator:  {} (score: {})", obf, report.score);
+        if opts.detailed {
+            // Detailed mode: per-token breakdown
+            if let Some(obf) = &report.obfuscator {
+                eprintln!("  Obfuscator:  {} (score: {})", obf, report.score);
+            } else {
+                eprintln!("  Obfuscator:  none detected");
+            }
+            display_size(report.input_size, report.output_size);
+            display_detection(&report.detection, true);
         } else {
-            eprintln!("  Obfuscator:  none detected");
+            // Summary mode: use Display impl
+            eprint!("{}", result.findings);
+            display_size(report.input_size, report.output_size);
         }
 
-        display_size(report.input_size, report.output_size);
-        display_detection(&report.detection, opts.detailed);
         display_stats(&report);
 
         eprintln!();
@@ -363,13 +370,17 @@ fn build_detection_report(findings: &DeobfuscationFindings) -> DetectionReport {
         .collect();
 
     let native_helpers: Vec<NativeHelperEntry> = findings
-        .native_helpers
-        .iter()
-        .map(|(_, h): (usize, &NativeHelperInfo)| NativeHelperEntry {
-            token: format!("{}", h.token),
-            rva: format!("0x{:08X}", h.rva),
+        .confuserex()
+        .map(|cx| {
+            cx.native_helpers
+                .iter()
+                .map(|(_, h): (usize, &NativeHelperInfo)| NativeHelperEntry {
+                    token: format!("{}", h.token),
+                    rva: format!("0x{:08X}", h.rva),
+                })
+                .collect()
         })
-        .collect();
+        .unwrap_or_default();
 
     let marker_attributes: Vec<String> = findings
         .marker_attribute_tokens
@@ -388,7 +399,9 @@ fn build_detection_report(findings: &DeobfuscationFindings) -> DetectionReport {
     DetectionReport {
         decryptors,
         anti_tamper,
-        encrypted_method_count: findings.encrypted_method_count,
+        encrypted_method_count: findings
+            .confuserex()
+            .map_or(0, |cx| cx.encrypted_method_count),
         anti_debug,
         anti_dump,
         proxy_methods,
