@@ -29,7 +29,7 @@ rustdoc-args = ["--cfg", "docsrs"]
 thiserror = "2.0.18"
 uguid = "2.2.1"
 widestring = "1.2.1"
-strum = { version = "0.27.2", features = ["derive"]}
+strum = { version = "0.28.0", features = ["derive"]}
 cowfile = "0.2.1"
 memmap2 = "0.9.10"
 tempfile = "3.25.0"
@@ -94,7 +94,8 @@ z3 = ["dep:z3"]
 # Deobfuscation framework: transformation passes, obfuscator detection, assembly rewriting.
 # Automatically enables compiler, x86, and emulation features.
 # Optionally enhanced by the `z3` feature for symbolic constraint solving.
-deobfuscation = ["compiler", "x86", "emulation", "dep:sha1"]
+# String decryption for BitMono requires `legacy-crypto` (PBKDF2-HMAC-SHA1).
+deobfuscation = ["compiler", "x86", "emulation"]
 
 # Skip expensive validation tests that use ProjectLoader with dependency resolution.
 # These tests are slow on CI runners with limited cores/IO. Use this feature on slow runners (e.g., macOS/Windows CI).

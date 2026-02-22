@@ -34,6 +34,19 @@
 //! - [`CallResolver`](crate::analysis::CallResolver) - Virtual call resolution via Class Hierarchy Analysis
 //! - [`CallSite`](crate::analysis::CallSite) / [`CallTarget`](crate::analysis::CallTarget) - Call site and target information
 //!
+//! ## Native Code Analysis (x86)
+//!
+//! Feature-gated behind `#[cfg(feature = "x86")]`, this provides x86 native code analysis for
+//! mixed-mode .NET assemblies that contain native method bodies (e.g., from obfuscators that
+//! convert CIL to native code):
+//!
+//! - [`X86Function`](crate::analysis::X86Function) - Decoded x86 function with basic blocks and control flow
+//! - [`X86DecodedInstruction`](crate::analysis::X86DecodedInstruction) - Decoded x86 instruction with operands
+//! - [`X86ToSsaTranslator`](crate::analysis::X86ToSsaTranslator) - Translates x86 native code to SSA form
+//! - Prologue/epilogue detection, traversal-based decoding, and native body size estimation
+//!
+//! Enable with `features = ["x86"]` in your `Cargo.toml`.
+//!
 //! # Usage Example
 //!
 //! ```rust,ignore

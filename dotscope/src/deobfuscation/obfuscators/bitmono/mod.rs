@@ -53,6 +53,7 @@ mod detection;
 mod dotnethook;
 mod findings;
 mod junkprefix;
+#[cfg(feature = "legacy-crypto")]
 mod strings;
 mod unmanagedstring;
 
@@ -221,6 +222,7 @@ impl Obfuscator for BitMonoObfuscator {
         let do_junk = bm.needs_junk_prefix_removal();
         let do_antidecompiler = bm.needs_anti_decompiler_fix();
         let do_malformed_eh = bm.needs_malformed_eh_cleanup();
+        #[cfg(feature = "legacy-crypto")]
         let do_strings = findings.needs_string_decryption();
         let mut current = assembly;
 
@@ -235,6 +237,8 @@ impl Obfuscator for BitMonoObfuscator {
 
         // Phase 5: StringsEncryption preparation (byte-level: tags infra fields, stubs decryptor)
         // Actual decryption happens in the StringDecryptionPass SSA pass (after CallToCalli).
+        // Requires legacy-crypto for PBKDF2-HMAC-SHA1 key derivation.
+        #[cfg(feature = "legacy-crypto")]
         if do_strings {
             current = strings::prepare_string_decryption(current, findings, events)?;
         }
@@ -302,6 +306,8 @@ impl Obfuscator for BitMonoObfuscator {
         // String decryption — finds call <decrypt> (now restored by CallToCalli).
         // Runs in Simplify (not Value) because it depends on CallToCalli reversal
         // having already restored `call <decrypt>` from `calli` instructions.
+        // Requires legacy-crypto for PBKDF2-HMAC-SHA1 key derivation.
+        #[cfg(feature = "legacy-crypto")]
         if findings.needs_string_decryption() {
             passes.push((
                 PassPhase::Simplify,

@@ -145,11 +145,9 @@ jobs:
         |----------|-------|
         | Linux (x86_64) | \`dotscope-${VERSION}-x86_64-unknown-linux-gnu.zip\` |
         | macOS (Apple Silicon) | \`dotscope-${VERSION}-aarch64-apple-darwin.zip\` |
-        | macOS (Intel) | \`dotscope-${VERSION}-x86_64-apple-darwin.zip\` |
         | Windows (x86_64) | \`dotscope-${VERSION}-x86_64-pc-windows-msvc.zip\` |
 
-        > **Note:** The CLI requires [Z3](https://github.com/Z3Prover/z3) to be installed as a runtime dependency.
-        > Install via: \`apt install libz3-dev\` (Linux), \`brew install z3\` (macOS), or download from [Z3 releases](https://github.com/Z3Prover/z3/releases) (Windows — the Windows zip already includes \`libz3.dll\`).
+        > **Note:** Z3 is an optional compile-time dependency used only for the \`z3\` feature (CFF reconstruction). The pre-built CLI binaries do **not** require Z3 at runtime.
         BODY
 
         gh release create "$VERSION" \
@@ -176,10 +174,6 @@ jobs:
             os: macos-latest
             target: aarch64-apple-darwin
             artifact: dotscope
-          - name: macos-x86_64
-            os: macos-13
-            target: x86_64-apple-darwin
-            artifact: dotscope
           - name: windows-x86_64
             os: windows-latest
             target: x86_64-pc-windows-msvc
@@ -193,31 +187,6 @@ jobs:
       uses: dtolnay/rust-toolchain@stable
       with:
         targets: ${{ matrix.target }}
-
-    - name: Install Z3 (Linux)
-      if: runner.os == 'Linux'
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libz3-dev
-
-    - name: Install Z3 (macOS)
-      if: runner.os == 'macOS'
-      run: brew install z3
-
-    - name: Install Z3 (Windows)
-      if: runner.os == 'Windows'
-      run: |
-        $z3Version = "4.13.4"
-        $z3Url = "https://github.com/Z3Prover/z3/releases/download/z3-$z3Version/z3-$z3Version-x64-win.zip"
-        $z3Zip = "$env:RUNNER_TEMP\z3.zip"
-        $z3Dir = "$env:RUNNER_TEMP\z3"
-        Invoke-WebRequest -Uri $z3Url -OutFile $z3Zip
-        Expand-Archive -Path $z3Zip -DestinationPath $z3Dir
-        $z3Root = Get-ChildItem -Path $z3Dir -Directory | Select-Object -First 1
-        echo "Z3_SYS_Z3_HEADER=$(Join-Path $z3Root.FullName 'include\z3.h')" >> $env:GITHUB_ENV
-        echo "Z3_LIBRARY_PATH_OVERRIDE=$(Join-Path $z3Root.FullName 'bin')" >> $env:GITHUB_ENV
-        echo "$(Join-Path $z3Root.FullName 'bin')" >> $env:GITHUB_PATH
-      shell: pwsh
 
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2
@@ -238,10 +207,7 @@ jobs:
       if: runner.os == 'Windows'
       run: |
         cd target/${{ matrix.target }}/release
-        $z3Dir = "$env:RUNNER_TEMP\z3"
-        $z3Root = Get-ChildItem -Path $z3Dir -Directory | Select-Object -First 1
-        Copy-Item (Join-Path $z3Root.FullName 'bin\libz3.dll') .
-        Compress-Archive -Path ${{ matrix.artifact }}, libz3.dll -DestinationPath "${{ github.workspace }}\dotscope-v${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip"
+        Compress-Archive -Path ${{ matrix.artifact }} -DestinationPath "${{ github.workspace }}\dotscope-v${{ needs.create-release.outputs.version }}-${{ matrix.target }}.zip"
       shell: pwsh
 
     - name: Upload release asset
@@ -262,11 +228,6 @@ jobs:
 
     - name: Install Rust toolchain
       uses: dtolnay/rust-toolchain@stable
-
-    - name: Install Z3
-      run: |
-        sudo apt-get update
-        sudo apt-get install -y libz3-dev
 
     - name: Setup Rust cache
       uses: Swatinem/rust-cache@v2

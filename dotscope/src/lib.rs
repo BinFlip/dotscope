@@ -39,7 +39,8 @@
 //! - **Metadata Layer**: ECMA-335 metadata parsing and type system representation
 //! - **Assembly Layer**: CIL instruction processing with complete disassembly and assembly capabilities
 //! - **Analysis Layer**: SSA form, control flow graphs, data flow analysis, and call graphs
-//! - **Deobfuscation Layer**: Pass-based optimization pipeline with obfuscator-specific handling
+//! - **Compiler Layer**: SSA optimization passes, code generation (SSA → CIL), and pass scheduling
+//! - **Deobfuscation Layer**: Detection engine and obfuscator-specific handling (passes live in compiler)
 //! - **Emulation Layer**: CIL bytecode interpreter with BCL stubs for runtime value computation
 //! - **Validation Layer**: Configurable validation and integrity checking
 //!
@@ -49,7 +50,8 @@
 //! - [`crate::metadata`] - Complete ECMA-335 metadata parsing and type system
 //! - [`crate::assembly`] - Complete CIL instruction processing: disassembly, analysis, and assembly
 //! - [`crate::analysis`] - Program analysis with SSA, CFG, data flow, and call graphs
-//! - [`crate::deobfuscation`] - Deobfuscation engine with 20 optimization passes
+//! - [`crate::compiler`] - SSA optimization passes, code generation, and pass scheduling
+//! - [`crate::deobfuscation`] - Deobfuscation engine with detection and obfuscator-specific handling
 //! - [`crate::emulation`] - CIL bytecode emulation with BCL method stubs
 //! - [`crate::prelude`] - Convenient re-exports of commonly used types
 //! - [`crate::Error`] and [`crate::Result`] - Comprehensive error handling
