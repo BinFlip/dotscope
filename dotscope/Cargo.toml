@@ -94,7 +94,7 @@ z3 = ["dep:z3"]
 # Deobfuscation framework: transformation passes, obfuscator detection, assembly rewriting.
 # Automatically enables compiler, x86, and emulation features.
 # Optionally enhanced by the `z3` feature for symbolic constraint solving.
-deobfuscation = ["compiler", "x86", "emulation"]
+deobfuscation = ["compiler", "x86", "emulation", "dep:sha1"]
 
 # Skip expensive validation tests that use ProjectLoader with dependency resolution.
 # These tests are slow on CI runners with limited cores/IO. Use this feature on slow runners (e.g., macOS/Windows CI).

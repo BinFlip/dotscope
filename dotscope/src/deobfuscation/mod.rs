@@ -211,11 +211,14 @@ pub use decryptors::{CacheKey, DecryptedCall, DecryptorContext, FailedCall, Fail
 pub use detection::{DetectionEvidence, DetectionScore};
 pub use detector::{DetectorBuilder, ObfuscatorDetector};
 pub use engine::DeobfuscationEngine;
-pub use findings::{DeobfuscationFindings, NativeHelperInfo};
+pub use findings::{
+    BitMonoFindings, ConfuserExFindings, DeobfuscationFindings, NativeHelperInfo, ObfuscarFindings,
+    ObfuscatorData,
+};
 pub use obfuscators::{
-    create_anti_tamper_stub_hook, create_lzma_hook, detect_confuserex, detect_obfuscar,
-    find_encrypted_methods, ConfuserExObfuscator, ObfuscarObfuscator, Obfuscator, ObfuscatorInfo,
-    ObfuscatorRegistry,
+    create_anti_tamper_stub_hook, create_lzma_hook, detect_bitmono, detect_confuserex,
+    detect_obfuscar, find_encrypted_methods, BitMonoObfuscator, ConfuserExObfuscator,
+    ObfuscarObfuscator, Obfuscator, ObfuscatorInfo, ObfuscatorRegistry, PassPhase,
 };
 pub use passes::{
     CffReconstructionPass, ConversionStats, DecryptionPass, NativeMethodConversionPass,
@@ -237,7 +240,7 @@ mod tests {
 
     #[test]
     fn test_process_file_api() -> crate::Result<()> {
-        let path = "tests/samples/packers/confuserex/original.exe";
+        let path = "tests/samples/packers/confuserex/1.6.0/original.exe";
 
         let mut engine = DeobfuscationEngine::new(EngineConfig::default());
         let (deobfuscated, result) = engine.process_file(path)?;
@@ -251,7 +254,7 @@ mod tests {
 
     #[test]
     fn test_process_assembly_api() -> crate::Result<()> {
-        let path = "tests/samples/packers/confuserex/original.exe";
+        let path = "tests/samples/packers/confuserex/1.6.0/original.exe";
 
         let assembly = CilObject::from_path_with_validation(path, ValidationConfig::analysis())?;
 
@@ -266,7 +269,7 @@ mod tests {
 
     #[test]
     fn test_process_bytes_api() -> crate::Result<()> {
-        let path = "tests/samples/packers/confuserex/original.exe";
+        let path = "tests/samples/packers/confuserex/1.6.0/original.exe";
         let bytes = std::fs::read(path)?;
 
         let mut engine = DeobfuscationEngine::new(EngineConfig::default());

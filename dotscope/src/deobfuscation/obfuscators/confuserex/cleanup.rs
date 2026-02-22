@@ -26,7 +26,9 @@ use crate::{
     assembly::Operand,
     cilassembly::CleanupRequest,
     deobfuscation::{
-        cleanup::is_entry_point, context::AnalysisContext, findings::DeobfuscationFindings,
+        cleanup::{add_safe_methods, is_entry_point},
+        context::AnalysisContext,
+        findings::DeobfuscationFindings,
     },
     metadata::{method::Method, signatures::TypeSignature, tables::TableId, token::Token},
     prelude::{CilTypeRef, FlowType},
@@ -62,33 +64,30 @@ fn build_cleanup_request(
 
     // 2. Collect protection methods
     if ctx.config.cleanup.remove_protection_methods {
-        // Anti-tamper methods
-        for (_, token) in &findings.anti_tamper_methods {
-            if !is_entry_point(assembly, *token, aggressive) {
-                request.add_method(*token);
-            }
-        }
-
-        // Anti-debug methods
-        for (_, token) in &findings.anti_debug_methods {
-            if !is_entry_point(assembly, *token, aggressive) {
-                request.add_method(*token);
-            }
-        }
-
-        // Anti-dump methods
-        for (_, token) in &findings.anti_dump_methods {
-            if !is_entry_point(assembly, *token, aggressive) {
-                request.add_method(*token);
-            }
-        }
-
-        // Resource handler methods
-        for (_, token) in &findings.resource_handler_methods {
-            if !is_entry_point(assembly, *token, aggressive) {
-                request.add_method(*token);
-            }
-        }
+        add_safe_methods(
+            &mut request,
+            assembly,
+            &findings.anti_tamper_methods,
+            aggressive,
+        );
+        add_safe_methods(
+            &mut request,
+            assembly,
+            &findings.anti_debug_methods,
+            aggressive,
+        );
+        add_safe_methods(
+            &mut request,
+            assembly,
+            &findings.anti_dump_methods,
+            aggressive,
+        );
+        add_safe_methods(
+            &mut request,
+            assembly,
+            &findings.resource_handler_methods,
+            aggressive,
+        );
 
         // Decryptor methods from detection - only remove if fully decrypted
         // (all call sites transformed). Check against decryptor context rather than
@@ -101,55 +100,48 @@ fn build_cleanup_request(
         }
 
         // Native x86 helper methods (converted to CIL, but still infrastructure)
-        for (_, native_helper) in &findings.native_helpers {
-            if !is_entry_point(assembly, native_helper.token, aggressive) {
-                request.add_method(native_helper.token);
+        if let Some(cx) = findings.confuserex() {
+            for (_, native_helper) in &cx.native_helpers {
+                if !is_entry_point(assembly, native_helper.token, aggressive) {
+                    request.add_method(native_helper.token);
+                }
             }
         }
 
         // Proxy methods (ReferenceProxy call forwarders)
-        for (_, token) in &findings.proxy_methods {
-            if !is_entry_point(assembly, *token, aggressive) {
-                request.add_method(*token);
-            }
-        }
+        add_safe_methods(&mut request, assembly, &findings.proxy_methods, aggressive);
     }
 
     // 3. Collect obfuscator infrastructure types
-    for (_, type_token) in &findings.obfuscator_type_tokens {
-        request.add_type(*type_token);
+    if let Some(cx) = findings.confuserex() {
+        request.add_types_from(&cx.obfuscator_type_tokens);
     }
 
     // 4. Collect constant data backing types (ConfuserEx encrypted data)
-    for (_, type_token) in &findings.constant_data_types {
-        request.add_type(*type_token);
-    }
+    request.add_types_from(&findings.constant_data_types);
 
     // 5. Collect constant data fields for FieldRVA cleanup
-    for (_, field_token) in &findings.constant_data_fields {
-        request.add_field(*field_token);
-    }
+    request.add_fields_from(&findings.constant_data_fields);
 
     // 5b. Collect infrastructure fields (byte[], Assembly fields in <Module>)
     // These are static fields only used by protection infrastructure
     if ctx.config.cleanup.remove_protection_methods {
-        for (_, field_token) in &findings.infrastructure_fields {
-            request.add_field(*field_token);
-        }
+        request.add_fields_from(&findings.infrastructure_fields);
     }
 
     // 6. Collect protection infrastructure types (types nested in <Module> that are internal)
     // These are support types (LZMA decoder, delegates, etc.) no longer needed after deobfuscation
     if ctx.config.cleanup.remove_protection_methods {
-        for (_, type_token) in &findings.protection_infrastructure_types {
-            request.add_type(*type_token);
-        }
+        request.add_types_from(&findings.protection_infrastructure_types);
     }
 
     // 7. Collect state machine infrastructure (CFGCtx type and methods)
     // When CFG mode is used, the state machine struct and its methods become dead
     // after decryption completes since all usages are replaced with constants.
-    if let Some(ref provider) = findings.statemachine_provider {
+    if let Some(ref provider) = findings
+        .confuserex()
+        .and_then(|cx| cx.statemachine_provider.as_ref())
+    {
         let semantics = provider.semantics();
 
         // Add the state machine type (CFGCtx struct)
@@ -200,17 +192,18 @@ pub fn build_request(
     ctx: &AnalysisContext,
     findings: &DeobfuscationFindings,
 ) -> Option<CleanupRequest> {
-    let cleanup_config = &ctx.config.cleanup;
-    if !cleanup_config.any_enabled() {
+    if !ctx.config.cleanup.any_enabled() {
         return None;
     }
 
     let mut request = build_cleanup_request(findings, assembly, ctx);
 
     // Add excluded sections from findings
-    if cleanup_config.remove_artifact_sections {
-        for (_, section_name) in &findings.artifact_sections {
-            request.exclude_section(section_name.clone());
+    if ctx.config.cleanup.remove_artifact_sections {
+        if let Some(cx) = findings.confuserex() {
+            for (_, section_name) in &cx.artifact_sections {
+                request.exclude_section(section_name.clone());
+            }
         }
     }
 
@@ -645,7 +638,7 @@ mod tests {
     ///    - Protection infrastructure (types, methods reduced)
     #[test]
     fn test_cleanup_full_pipeline() {
-        let sample_path = "tests/samples/packers/confuserex/mkaring_normal.exe";
+        let sample_path = "tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe";
 
         // Skip if sample doesn't exist
         if !std::path::Path::new(sample_path).exists() {

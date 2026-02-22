@@ -9,7 +9,9 @@
 use crate::{
     cilassembly::CleanupRequest,
     deobfuscation::{
-        cleanup::is_entry_point, context::AnalysisContext, findings::DeobfuscationFindings,
+        cleanup::{add_safe_methods, create_cleanup_request, is_entry_point},
+        context::AnalysisContext,
+        findings::DeobfuscationFindings,
     },
     CilObject,
 };
@@ -29,48 +31,13 @@ pub fn build_request(
     ctx: &AnalysisContext,
     findings: &DeobfuscationFindings,
 ) -> Option<CleanupRequest> {
-    let cleanup_config = &ctx.config.cleanup;
-    if !cleanup_config.any_enabled() {
-        return None;
-    }
+    let mut request = create_cleanup_request(ctx)?;
 
-    let request = build_cleanup_request(findings, assembly, ctx);
-
-    if request.has_deletions() {
-        Some(request)
-    } else {
-        None
-    }
-}
-
-/// Collects tokens to remove from Obfuscar findings into a [`CleanupRequest`].
-///
-/// Processes findings in order:
-/// 1. **Infrastructure types** — `<PrivateImplementationDetails>{GUID}` helper type(s)
-///    and nested types (if `remove_protection_methods` enabled)
-/// 2. **SuppressIldasmAttribute** — the custom attribute token (always removed if present)
-/// 3. **Decryptor methods** — registered decryptors from `ctx.decryptors` and accessor
-///    methods from findings (if `remove_decryptors`/`remove_protection_methods` enabled)
-/// 4. **Infrastructure fields** — encrypted data fields "3", "4", "5" in the helper type
-///    (if `remove_protection_methods` enabled)
-///
-/// Entry point methods are never removed regardless of cleanup settings.
-fn build_cleanup_request(
-    findings: &DeobfuscationFindings,
-    assembly: &CilObject,
-    ctx: &AnalysisContext,
-) -> CleanupRequest {
-    let mut request = CleanupRequest::with_settings(
-        ctx.config.cleanup.remove_orphan_metadata,
-        ctx.config.cleanup.remove_empty_types,
-    );
     let aggressive = ctx.config.cleanup.remove_unused_methods;
 
     // 1. Remove protection infrastructure types (<PrivateImplementationDetails>{GUID})
     if ctx.config.cleanup.remove_protection_methods {
-        for (_, type_token) in &findings.protection_infrastructure_types {
-            request.add_type(*type_token);
-        }
+        request.add_types_from(&findings.protection_infrastructure_types);
     }
 
     // 2. Remove SuppressIldasmAttribute
@@ -89,19 +56,22 @@ fn build_cleanup_request(
 
     // Also remove decryptor methods from detection findings
     if ctx.config.cleanup.remove_protection_methods {
-        for (_, token) in &findings.decryptor_methods {
-            if !is_entry_point(assembly, *token, aggressive) {
-                request.add_method(*token);
-            }
-        }
+        add_safe_methods(
+            &mut request,
+            assembly,
+            &findings.decryptor_methods,
+            aggressive,
+        );
     }
 
     // 4. Remove infrastructure fields (fields 3, 4, 5 in helper type)
     if ctx.config.cleanup.remove_protection_methods {
-        for (_, field_token) in &findings.infrastructure_fields {
-            request.add_field(*field_token);
-        }
+        request.add_fields_from(&findings.infrastructure_fields);
     }
 
-    request
+    if request.has_deletions() {
+        Some(request)
+    } else {
+        None
+    }
 }

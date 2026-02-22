@@ -2308,7 +2308,7 @@ fn test_ssa_nested_exception_handlers() -> Result<()> {
 #[test]
 fn test_ssa_pipeline_preserves_exception_handlers() {
     // Load the TestApp which has DecryptSecret method with try/catch
-    let assembly = CilObject::from_path("tests/samples/packers/confuserex/original.exe")
+    let assembly = CilObject::from_path("tests/samples/packers/confuserex/1.6.0/original.exe")
         .expect("Should load TestApp.exe");
 
     // Find a method with exception handlers
@@ -2411,7 +2411,7 @@ fn test_ssa_pipeline_preserves_exception_handlers() {
 #[test]
 fn test_decrypt_secret_handler_content() {
     // Load the TestApp which has DecryptSecret method with try/catch
-    let assembly = CilObject::from_path("tests/samples/packers/confuserex/original.exe")
+    let assembly = CilObject::from_path("tests/samples/packers/confuserex/1.6.0/original.exe")
         .expect("Should load TestApp.exe");
 
     for entry in assembly.methods().iter() {
@@ -2436,7 +2436,7 @@ fn test_decrypt_secret_handler_content() {
             }
 
             // Show SSA blocks
-            if let Some(ssa) = method.ssa(&assembly) {
+            if let Ok(ssa) = method.ssa(&assembly) {
                 println!("\nSSA Blocks:");
                 for (idx, block) in ssa.iter_blocks() {
                     println!("  Block {} ({} phis):", idx, block.phi_count());
@@ -2491,7 +2491,7 @@ fn test_decrypt_secret_handler_content() {
 #[test]
 fn test_try_region_block_decoding() {
     let assembly = CilObject::from_path_with_validation(
-        "tests/samples/packers/confuserex/mkaring_resources.exe",
+        "tests/samples/packers/confuserex/1.6.0/mkaring_resources.exe",
         ValidationConfig::analysis(),
     )
     .expect("Failed to open resources sample");

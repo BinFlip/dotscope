@@ -39,7 +39,10 @@ use std::collections::HashSet;
 use crate::{
     cilassembly::{CilAssembly, CleanupRequest, GeneratorConfig},
     compiler::EventKind,
-    deobfuscation::context::AnalysisContext,
+    deobfuscation::{
+        context::AnalysisContext,
+        obfuscators::utils::{is_obfuscated_name, is_special_name},
+    },
     metadata::{
         tables::{FieldRaw, MethodDefRaw, ParamRaw, TypeDefRaw},
         token::Token,
@@ -234,6 +237,41 @@ fn sweep_empty_module_cctor(
     }
 }
 
+/// Creates a standard cleanup request from the analysis context configuration.
+///
+/// Returns `None` if cleanup is disabled. Otherwise returns a `CleanupRequest`
+/// with orphan removal and empty type settings from the config.
+pub(crate) fn create_cleanup_request(ctx: &AnalysisContext) -> Option<CleanupRequest> {
+    let cleanup_config = &ctx.config.cleanup;
+    if !cleanup_config.any_enabled() {
+        return None;
+    }
+
+    Some(CleanupRequest::with_settings(
+        cleanup_config.remove_orphan_metadata,
+        cleanup_config.remove_empty_types,
+    ))
+}
+
+/// Adds methods from a `boxcar::Vec<Token>` to the cleanup request, skipping
+/// entry point methods that should be protected.
+///
+/// This is the standard pattern for adding protection methods to cleanup: iterate
+/// the token collection, check each against `is_entry_point()`, and only add
+/// non-entry-point methods.
+pub(crate) fn add_safe_methods(
+    request: &mut CleanupRequest,
+    assembly: &CilObject,
+    tokens: &boxcar::Vec<Token>,
+    aggressive: bool,
+) {
+    for (_, token) in tokens {
+        if !is_entry_point(assembly, *token, aggressive) {
+            request.add_method(*token);
+        }
+    }
+}
+
 /// Checks if a method is an entry point that should not be removed.
 pub(crate) fn is_entry_point(assembly: &CilObject, method_token: Token, aggressive: bool) -> bool {
     // Check if it's the assembly entry point
@@ -270,71 +308,6 @@ pub(crate) fn is_entry_point(assembly: &CilObject, method_token: Token, aggressi
 
     // Instance constructors in public types could be called externally
     if method.is_ctor() && method.is_public() {
-        return true;
-    }
-
-    false
-}
-
-/// Checks if a name appears to be obfuscated.
-fn is_obfuscated_name(name: &str) -> bool {
-    if name.is_empty() {
-        return false;
-    }
-
-    // ASCII spaces in identifiers are a strong obfuscation signal (BitMono FullRenamer).
-    // Valid .NET identifiers never contain spaces.
-    if name.contains(' ') {
-        return true;
-    }
-
-    for c in name.chars() {
-        match c {
-            '\u{200B}'..='\u{200F}'
-            | '\u{202A}'..='\u{202E}'
-            | '\u{2060}'..='\u{206F}'
-            | '\u{FEFF}'
-            | '\u{E000}'..='\u{F8FF}' => return true,
-            c if !c.is_ascii() => {
-                if !c.is_alphabetic() {
-                    return true;
-                }
-            }
-            _ => {}
-        }
-    }
-
-    false
-}
-
-/// Checks if a name is a special .NET name that should not be renamed.
-fn is_special_name(name: &str) -> bool {
-    if name == ".ctor" || name == ".cctor" {
-        return true;
-    }
-
-    if name == "<Module>" || name == "<PrivateImplementationDetails>" {
-        return true;
-    }
-
-    // Angle-bracket-wrapped names are CLR-internal (e.g. "<Generic Parameter>").
-    // Check this before the space filter since some legitimate CLR names contain spaces.
-    if name.starts_with('<') && name.ends_with('>') {
-        return true;
-    }
-
-    // Names containing spaces cannot be legitimate property/event accessors.
-    // This prevents BitMono FullRenamer names like "get_Syntax get_AllowedCaller..."
-    // from being incorrectly protected by the prefix checks below.
-    if name.contains(' ') {
-        return false;
-    }
-
-    if name.starts_with("get_")
-        || name.starts_with("set_")
-        || name.starts_with("add_")
-        || name.starts_with("remove_")
-    {
         return true;
     }
 
@@ -527,7 +500,10 @@ fn rename_obfuscated_names(cil_assembly: &mut CilAssembly) -> usize {
 mod tests {
     use crate::{
         cilassembly::CleanupRequest,
-        deobfuscation::cleanup::{is_obfuscated_name, is_special_name, SimpleNameGenerator},
+        deobfuscation::{
+            cleanup::SimpleNameGenerator,
+            obfuscators::utils::{is_obfuscated_name, is_special_name},
+        },
         metadata::token::Token,
     };
 
@@ -611,7 +587,7 @@ mod tests {
     fn test_rename_preserves_typeref_substring_references() {
         use crate::{cilassembly::CilAssembly, metadata::validation::ValidationConfig, CilObject};
 
-        let path = "tests/samples/packers/bitmono/bitmono_renamer.exe";
+        let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
         if !std::path::Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;

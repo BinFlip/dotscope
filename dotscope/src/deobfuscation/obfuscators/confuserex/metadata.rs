@@ -180,14 +180,14 @@ fn check_invalid_metadata(
 
     // Store in findings
     if marker_count > 0 {
-        findings.obfuscator_marker_value = Some(CONFUSEREX_MARKER);
+        findings.init_confuserex().obfuscator_marker_value = Some(CONFUSEREX_MARKER);
     }
     if has_enc_tables {
         if tables.table::<EncLogRaw>().is_some_and(|t| t.row_count > 0) {
-            findings.enc_tables.push(0x1E);
+            findings.init_confuserex().enc_tables.push(0x1E);
         }
         if tables.table::<EncMapRaw>().is_some_and(|t| t.row_count > 0) {
-            findings.enc_tables.push(0x1F);
+            findings.init_confuserex().enc_tables.push(0x1F);
         }
     }
 
@@ -307,13 +307,10 @@ fn check_confuser_attributes(
 
                 // Track the TypeDef if it's a local type (for removal)
                 if let Some(token) = typedef_token {
+                    let cx = findings.init_confuserex();
                     // Avoid duplicates - only add if not already tracked
-                    if !findings
-                        .obfuscator_type_tokens
-                        .iter()
-                        .any(|(_, t)| *t == token)
-                    {
-                        findings.obfuscator_type_tokens.push(token);
+                    if !cx.obfuscator_type_tokens.iter().any(|(_, t)| *t == token) {
+                        cx.obfuscator_type_tokens.push(token);
                     }
                 }
 
@@ -600,11 +597,14 @@ pub fn remove_suppress_ildasm(assembly: &CilObject, token: Token) -> Result<CilO
 #[cfg(test)]
 mod tests {
     use crate::{
-        deobfuscation::obfuscators::confuserex::{
-            detection::detect_confuserex,
-            metadata::{
-                fix_invalid_metadata, remove_confuser_attributes, remove_suppress_ildasm,
-                CONFUSEREX_MARKER, CONFUSEREX_MARKER_SHORT,
+        deobfuscation::{
+            findings::DeobfuscationFindings,
+            obfuscators::confuserex::{
+                detection::detect_confuserex,
+                metadata::{
+                    fix_invalid_metadata, remove_confuser_attributes, remove_suppress_ildasm,
+                    CONFUSEREX_MARKER, CONFUSEREX_MARKER_SHORT,
+                },
             },
         },
         metadata::{
@@ -677,7 +677,7 @@ mod tests {
     fn test_fix_invalid_metadata_passthrough() -> crate::Result<()> {
         // Original assembly should pass through unchanged (no fixes needed)
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/original.exe",
+            "tests/samples/packers/confuserex/1.6.0/original.exe",
             ValidationConfig::analysis(),
         )?;
 
@@ -753,7 +753,7 @@ mod tests {
     fn test_fix_invalid_metadata_confuserex_normal() -> crate::Result<()> {
         // Normal protection sample - has SuppressIldasm which indicates invalid metadata protection
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_normal.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe",
             ValidationConfig::analysis(),
         )?;
 
@@ -886,7 +886,7 @@ mod tests {
     fn test_fix_invalid_metadata_confuserex_maximum() -> crate::Result<()> {
         // Maximum protection sample
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_maximum.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe",
             ValidationConfig::analysis(),
         )?;
 
@@ -1016,7 +1016,8 @@ mod tests {
         }
 
         // Verify re-detection shows no invalid metadata
-        let (_, new_findings) = detect_confuserex(&fixed);
+        let mut new_findings = DeobfuscationFindings::new();
+        let _ = detect_confuserex(&fixed, &mut new_findings);
         assert!(
             !new_findings.has_invalid_metadata(),
             "Re-detection should show no invalid metadata after fix"
@@ -1035,12 +1036,13 @@ mod tests {
         // Maximum protection also has SuppressIldasm but its method bodies are
         // encrypted by anti-tamper, which would need decryption first.
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_normal.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe",
             ValidationConfig::analysis(),
         )?;
 
         // Detect to find the token
-        let (_, findings) = detect_confuserex(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let _ = detect_confuserex(&assembly, &mut findings);
         assert!(
             findings.has_suppress_ildasm(),
             "Normal protection should have SuppressIldasm"
@@ -1087,7 +1089,8 @@ mod tests {
         );
 
         // Verify re-detection shows no SuppressIldasm
-        let (_, new_findings) = detect_confuserex(&fixed);
+        let mut new_findings = DeobfuscationFindings::new();
+        let _ = detect_confuserex(&fixed, &mut new_findings);
         assert!(
             !new_findings.has_suppress_ildasm(),
             "SuppressIldasm should be removed after fix"
@@ -1104,7 +1107,7 @@ mod tests {
     fn test_remove_suppress_ildasm_invalid_token() {
         // Test with invalid token table type
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_maximum.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe",
             ValidationConfig::analysis(),
         )
         .unwrap();
@@ -1140,7 +1143,7 @@ mod tests {
     fn test_remove_suppress_ildasm_nonexistent_row() {
         // Test with a CustomAttribute token that doesn't exist
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_maximum.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe",
             ValidationConfig::analysis(),
         )
         .unwrap();
@@ -1156,12 +1159,13 @@ mod tests {
     fn test_remove_confuser_attributes() -> crate::Result<()> {
         // Minimal protection has ConfusedByAttribute
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/mkaring_minimal.exe",
+            "tests/samples/packers/confuserex/1.6.0/mkaring_minimal.exe",
             ValidationConfig::analysis(),
         )?;
 
         // Detect to find marker attribute tokens
-        let (_, findings) = detect_confuserex(&assembly);
+        let mut findings = DeobfuscationFindings::new();
+        let _ = detect_confuserex(&assembly, &mut findings);
         assert!(
             findings.has_marker_attributes(),
             "Minimal protection should have ConfuserEx marker attributes"
@@ -1213,7 +1217,8 @@ mod tests {
         );
 
         // Verify re-detection shows no marker attributes
-        let (_, new_findings) = detect_confuserex(&fixed);
+        let mut new_findings = DeobfuscationFindings::new();
+        let _ = detect_confuserex(&fixed, &mut new_findings);
         assert!(
             !new_findings.has_marker_attributes(),
             "ConfuserEx marker attributes should be removed after fix"
@@ -1231,7 +1236,7 @@ mod tests {
     fn test_remove_confuser_attributes_empty_list() -> crate::Result<()> {
         // Test that an empty token list passes through unchanged
         let assembly = CilObject::from_path_with_validation(
-            "tests/samples/packers/confuserex/original.exe",
+            "tests/samples/packers/confuserex/1.6.0/original.exe",
             ValidationConfig::analysis(),
         )?;
 

@@ -22,7 +22,7 @@ pub struct EngineConfig {
     /// Maximum iterations per phase before moving on (default: 10).
     pub max_phase_iterations: usize,
 
-    /// Detection threshold for obfuscator identification (0-100, default: 50).
+    /// Detection threshold for obfuscator identification (0-100, default: 20).
     pub detection_threshold: u32,
 
     /// Target specific obfuscator (bypasses detection).
@@ -208,7 +208,7 @@ impl Default for EngineConfig {
             max_iterations: 20,
             stable_iterations: 2,
             max_phase_iterations: 10,
-            detection_threshold: 50,
+            detection_threshold: 20,
             target_obfuscator: None,
             emulation_max_instructions: 1_000_000,
             emulation_timeout: Duration::from_secs(5),

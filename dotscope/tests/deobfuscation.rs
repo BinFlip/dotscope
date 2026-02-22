@@ -3877,7 +3877,7 @@ fn test_aggressive_inlining_original_exe() {
     use std::path::Path;
 
     // First verify original.exe has the expected methods
-    let assembly = CilObject::from_path("tests/samples/packers/confuserex/original.exe")
+    let assembly = CilObject::from_path("tests/samples/packers/confuserex/1.6.0/original.exe")
         .expect("Failed to load original.exe");
 
     let methods_before: Vec<_> = assembly
@@ -3912,7 +3912,7 @@ fn test_aggressive_inlining_original_exe() {
     );
 
     let mut engine = DeobfuscationEngine::new(config);
-    let result = engine.process_file(Path::new("tests/samples/packers/confuserex/original.exe"));
+    let result = engine.process_file(Path::new("tests/samples/packers/confuserex/1.6.0/original.exe"));
     assert!(result.is_ok(), "Deobfuscation should succeed");
 
     let (_deobfuscated, result) = result.unwrap();
@@ -3933,7 +3933,7 @@ fn test_aggressive_inlining_original_exe() {
     );
 
     // Count methods before and after to verify unused method removal
-    let original = CilObject::from_path("tests/samples/packers/confuserex/original.exe")
+    let original = CilObject::from_path("tests/samples/packers/confuserex/1.6.0/original.exe")
         .expect("Failed to load original.exe for comparison");
     let method_count_before = original.methods().len();
     let method_count_after = _deobfuscated.methods().len();

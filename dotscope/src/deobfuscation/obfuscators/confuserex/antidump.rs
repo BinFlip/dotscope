@@ -78,7 +78,10 @@ use crate::{
     deobfuscation::{
         detection::{DetectionEvidence, DetectionScore},
         findings::DeobfuscationFindings,
-        obfuscators::confuserex::utils,
+        obfuscators::{
+            confuserex::utils,
+            utils::{build_pinvoke_import_map, resolve_call_target},
+        },
     },
     metadata::token::Token,
     CilObject, Result,
@@ -155,7 +158,7 @@ pub fn add_antidump_evidence(result: &AntiDumpDetectionResult, score: &Detection
 fn find_antidump_methods(assembly: &CilObject) -> Vec<AntiDumpMethodInfo> {
     let mut found = Vec::new();
 
-    let import_map = utils::build_pinvoke_import_map(assembly);
+    let import_map = build_pinvoke_import_map(assembly);
 
     for method in &assembly.query_methods().has_body() {
         let Some(cfg) = method.cfg() else {
@@ -175,9 +178,7 @@ fn find_antidump_methods(assembly: &CilObject) -> Vec<AntiDumpMethodInfo> {
             for instr in &block.instructions {
                 if instr.opcode == opcodes::CALL || instr.opcode == opcodes::CALLVIRT {
                     if let Operand::Token(token) = &instr.operand {
-                        if let Some(name) =
-                            utils::resolve_call_target(assembly, *token, &import_map)
-                        {
+                        if let Some(name) = resolve_call_target(assembly, *token, &import_map) {
                             match name.as_str() {
                                 "VirtualProtect" => calls_virtualprotect = true,
                                 "GetHINSTANCE" => calls_gethinstance = true,
@@ -426,7 +427,7 @@ mod tests {
         ValidationConfig,
     };
 
-    const SAMPLES_DIR: &str = "tests/samples/packers/confuserex";
+    const SAMPLES_DIR: &str = "tests/samples/packers/confuserex/1.6.0";
 
     #[test]
     fn test_original_no_antidump() -> crate::Result<()> {

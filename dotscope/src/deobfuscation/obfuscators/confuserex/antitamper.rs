@@ -183,14 +183,17 @@ use std::sync::Arc;
 
 use crate::{
     assembly::{opcodes, Operand},
-    cilassembly::{CilAssembly, GeneratorConfig},
+    cilassembly::GeneratorConfig,
     compiler::{EventKind, EventLog},
     deobfuscation::{
         detection::{DetectionEvidence, DetectionScore},
         findings::DeobfuscationFindings,
-        obfuscators::confuserex::{
-            candidates::{find_candidates, ProtectionType},
-            utils,
+        obfuscators::{
+            confuserex::{
+                candidates::{find_candidates, ProtectionType},
+                utils,
+            },
+            utils::{build_pinvoke_import_map, get_field_data_size, resolve_call_target},
         },
     },
     emulation::{EmulationOutcome, ProcessBuilder, TracingConfig},
@@ -308,7 +311,7 @@ pub fn detect(assembly: &CilObject, score: &DetectionScore, findings: &mut Deobf
     for method_info in &result.methods {
         findings.anti_tamper_methods.push(method_info.token);
     }
-    findings.encrypted_method_count = result.encrypted_method_count;
+    findings.init_confuserex().encrypted_method_count = result.encrypted_method_count;
 
     // Add detection evidence
     add_evidence(&result, score);
@@ -415,7 +418,7 @@ fn find_antitamper_pinvokes(assembly: &CilObject) -> Vec<Token> {
     ];
 
     // Build a map from MethodDef token to import name
-    let import_map = utils::build_pinvoke_import_map(assembly);
+    let import_map = build_pinvoke_import_map(assembly);
 
     for method in &assembly.query_methods().native() {
         // Look up the actual import name (not the potentially obfuscated method name)
@@ -441,7 +444,7 @@ fn find_antitamper_methods(assembly: &CilObject) -> Vec<AntiTamperMethodInfo> {
     let mut found = Vec::new();
 
     // Build import map once for all method analysis
-    let import_map = utils::build_pinvoke_import_map(assembly);
+    let import_map = build_pinvoke_import_map(assembly);
 
     for method in &assembly.query_methods().has_body() {
         let Some(cfg) = method.cfg() else {
@@ -465,9 +468,7 @@ fn find_antitamper_methods(assembly: &CilObject) -> Vec<AntiTamperMethodInfo> {
             for instr in &block.instructions {
                 if instr.opcode == opcodes::CALL || instr.opcode == opcodes::CALLVIRT {
                     if let Operand::Token(token) = &instr.operand {
-                        if let Some(name) =
-                            utils::resolve_call_target(assembly, *token, &import_map)
-                        {
+                        if let Some(name) = resolve_call_target(assembly, *token, &import_map) {
                             match name.as_str() {
                                 "VirtualProtect" => calls_virtualprotect = true,
                                 "GetHINSTANCE" => calls_gethinstance = true,
@@ -675,7 +676,7 @@ fn extract_decrypted_field_data(assembly: &CilObject, virtual_image: &[u8]) -> E
         }
 
         // Get field size from ClassLayout table
-        let Some(field_size) = utils::get_field_data_size(assembly, row.field) else {
+        let Some(field_size) = get_field_data_size(assembly, row.field) else {
             failed_count += 1;
             continue;
         };
@@ -792,13 +793,17 @@ pub fn decrypt_bodies(
             .message(format!("Decrypted method body 0x{:08x}", token.value()));
     }
 
-    // Step 4: Create CilAssembly from original PE bytes
-    let mut cil_assembly = CilAssembly::from_bytes_with_validation(
-        assembly_arc.file().data().to_vec(),
-        ValidationConfig::analysis(),
-    )?;
+    // Step 4: Extract decrypted FieldRVA data before consuming the Arc
+    // Anti-tamper also encrypts the Constants section which contains FieldRVA data
+    let extracted_fields =
+        extract_decrypted_field_data(&assembly_arc, &emulation_result.virtual_image);
 
-    // Step 5: Store each body and update MethodDef RVAs
+    // Step 5: Recover the CilObject from the Arc and convert to CilAssembly
+    let assembly = Arc::try_unwrap(assembly_arc)
+        .map_err(|_| Error::Deobfuscation("Assembly still shared after emulation".into()))?;
+    let mut cil_assembly = assembly.into_assembly();
+
+    // Step 5a: Store each body and update MethodDef RVAs
     for (method_token, body_bytes) in extracted.bodies {
         // Store the method body - returns a placeholder RVA
         let placeholder_rva = cil_assembly.store_method_body(body_bytes);
@@ -834,11 +839,6 @@ pub fn decrypt_bodies(
             TableDataOwned::MethodDef(updated_row),
         )?;
     }
-
-    // Step 5b: Extract and store decrypted FieldRVA data
-    // Anti-tamper also encrypts the Constants section which contains FieldRVA data
-    let extracted_fields =
-        extract_decrypted_field_data(&assembly_arc, &emulation_result.virtual_image);
 
     let field_count = extracted_fields.fields.len();
     if extracted_fields.failed_count > 0 {
@@ -1001,7 +1001,7 @@ mod tests {
 
     use crate::deobfuscation::obfuscators::confuserex::utils::find_encrypted_methods;
 
-    const SAMPLES_DIR: &str = "tests/samples/packers/confuserex";
+    const SAMPLES_DIR: &str = "tests/samples/packers/confuserex/1.6.0";
 
     /// Test that the original (unprotected) sample has no anti-tamper.
     #[test]

@@ -124,7 +124,9 @@ use crate::{
         typesystem::{CilModifier, CilTypeRc, CilTypeRef, TypeRegistry, TypeResolver},
     },
     utils::VisitedMap,
-    CilObject, Result,
+    CilObject,
+    Error::SsaError,
+    Result,
 };
 
 /// A map that holds the mapping of Token to parsed `Method`.
@@ -1401,9 +1403,13 @@ impl Method {
     ///
     /// # Returns
     ///
-    /// An [`SsaFunction`] representing this method in SSA form, or `None` if:
-    /// - The method has no control flow graph
-    /// - SSA construction fails
+    /// An [`SsaFunction`] representing this method in SSA form.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if:
+    /// - The method has no basic blocks or control flow graph
+    /// - SSA construction fails (e.g., unresolvable `calli` signature)
     ///
     /// # Examples
     ///
@@ -1414,19 +1420,31 @@ impl Method {
     /// let assembly = CilObject::from_path(Path::new("tests/samples/WindowsBase.dll"))?;
     /// for entry in assembly.methods().iter().take(5) {
     ///     let method = entry.value();
-    ///     if let Some(ssa) = method.ssa(&assembly) {
-    ///         println!("Method {} has {} SSA blocks",
-    ///                  method.name, ssa.block_count());
+    ///     match method.ssa(&assembly) {
+    ///         Ok(ssa) => println!("Method {} has {} SSA blocks",
+    ///                             method.name, ssa.block_count()),
+    ///         Err(e) => eprintln!("SSA construction failed for {}: {}", method.name, e),
     ///     }
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    #[must_use]
-    pub fn ssa(&self, assembly: &CilObject) -> Option<SsaFunction> {
-        let blocks = self.blocks.get()?;
+    pub fn ssa(&self, assembly: &CilObject) -> Result<SsaFunction> {
+        let blocks = self.blocks.get().ok_or_else(|| {
+            SsaError(format!(
+                "Method {} (0x{:08X}) has no basic blocks",
+                self.name,
+                self.token.value()
+            ))
+        })?;
 
         // Get CFG from method
-        let cfg = self.cfg()?;
+        let cfg = self.cfg().ok_or_else(|| {
+            SsaError(format!(
+                "Method {} (0x{:08X}) has no control flow graph",
+                self.name,
+                self.token.value()
+            ))
+        })?;
 
         // Compute argument and local counts
         let num_args = self.signature.params.len() + usize::from(self.signature.has_this);
@@ -1436,7 +1454,7 @@ impl Method {
         let type_context = TypeContext::new(self, assembly);
 
         // Build SSA from CFG with type context (also sets original local types)
-        let mut ssa = SsaConverter::build(&cfg, num_args, num_locals, &type_context).ok()?;
+        let mut ssa = SsaConverter::build(&cfg, num_args, num_locals, &type_context)?;
 
         // Populate exception handlers from method body
         if let Some(body) = self.body.get() {
@@ -1512,7 +1530,7 @@ impl Method {
             }
         }
 
-        Some(ssa)
+        Ok(ssa)
     }
 
     /// Finds the block index that starts at or contains the given offset.

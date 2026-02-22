@@ -8,8 +8,12 @@ use std::{collections::HashMap, sync::Arc};
 use crate::{
     compiler::SsaPass,
     deobfuscation::{
-        detection::DetectionScore, findings::DeobfuscationFindings, obfuscators::Obfuscator,
-        ConfuserExObfuscator, ObfuscarObfuscator,
+        detection::DetectionScore,
+        findings::DeobfuscationFindings,
+        obfuscators::{
+            bitmono::BitMonoObfuscator, confuserex::ConfuserExObfuscator,
+            obfuscar::ObfuscarObfuscator, Obfuscator, PassPhase,
+        },
     },
     CilObject,
 };
@@ -34,7 +38,7 @@ use crate::{
 pub struct ObfuscatorRegistry {
     /// Registered obfuscators.
     obfuscators: HashMap<String, Arc<dyn Obfuscator>>,
-    /// Detection threshold (default: 50).
+    /// Detection threshold (default: 20).
     threshold: usize,
 }
 
@@ -49,20 +53,23 @@ impl ObfuscatorRegistry {
     ///
     /// # Returns
     ///
-    /// A new `ObfuscatorRegistry` with built-in obfuscators and a default threshold of 50.
+    /// A new `ObfuscatorRegistry` with built-in obfuscators and a default threshold of 20.
     #[must_use]
     pub fn new() -> Self {
         let mut obfuscators = HashMap::new();
 
         let confuser: Arc<dyn Obfuscator> = Arc::new(ConfuserExObfuscator::new());
-        obfuscators.insert(confuser.name(), confuser);
+        obfuscators.insert(confuser.name().to_string(), confuser);
 
         let obfuscar: Arc<dyn Obfuscator> = Arc::new(ObfuscarObfuscator::new());
-        obfuscators.insert(obfuscar.name(), obfuscar);
+        obfuscators.insert(obfuscar.name().to_string(), obfuscar);
+
+        let bitmono: Arc<dyn Obfuscator> = Arc::new(BitMonoObfuscator::new());
+        obfuscators.insert(bitmono.name().to_string(), bitmono);
 
         Self {
             obfuscators,
-            threshold: 50,
+            threshold: 20,
         }
     }
 
@@ -73,12 +80,12 @@ impl ObfuscatorRegistry {
     ///
     /// # Returns
     ///
-    /// A new empty `ObfuscatorRegistry` with a default threshold of 50.
+    /// A new empty `ObfuscatorRegistry` with a default threshold of 20.
     #[must_use]
     pub fn empty() -> Self {
         Self {
             obfuscators: HashMap::new(),
-            threshold: 50,
+            threshold: 20,
         }
     }
 
@@ -111,7 +118,8 @@ impl ObfuscatorRegistry {
     ///
     /// * `obfuscator` - The obfuscator implementation to register.
     pub fn register(&mut self, obfuscator: Arc<dyn Obfuscator>) {
-        self.obfuscators.insert(obfuscator.id().clone(), obfuscator);
+        self.obfuscators
+            .insert(obfuscator.id().to_string(), obfuscator);
     }
 
     /// Unregisters an obfuscator by its ID.
@@ -209,18 +217,26 @@ impl ObfuscatorRegistry {
     pub fn detect(
         &self,
         assembly: &CilObject,
-    ) -> Vec<(String, DetectionScore, DeobfuscationFindings)> {
-        let mut results: Vec<(String, DetectionScore, DeobfuscationFindings)> = self
+    ) -> Vec<(Arc<dyn Obfuscator>, DetectionScore, DeobfuscationFindings)> {
+        // Read PE repairs from the assembly's file — transparent repair stores them there
+        let pe_repairs = assembly.file().repairs().to_vec();
+
+        let mut results: Vec<(Arc<dyn Obfuscator>, DetectionScore, DeobfuscationFindings)> = self
             .obfuscators
-            .iter()
-            .map(|(id, obfuscator)| {
+            .values()
+            .map(|obfuscator| {
                 let mut findings = DeobfuscationFindings::new();
+                // Make PE repairs available during detection (BitMono uses them for scoring)
+                findings.pe_repairs = pe_repairs.clone();
                 let score = obfuscator.detect(assembly, &mut findings);
                 // Store the score in findings so consumers have a single source of truth
                 findings.detection = score.clone();
-                (id.clone(), score, findings)
+                (Arc::clone(obfuscator), score, findings)
             })
-            .filter(|(_, score, _)| score.score() >= self.threshold)
+            .filter(|(obfuscator, score, _)| {
+                let effective_threshold = self.threshold.max(obfuscator.detection_threshold());
+                score.score() >= effective_threshold
+            })
             .collect();
 
         results.sort_by(|a, b| b.1.cmp(&a.1));
@@ -237,10 +253,10 @@ impl ObfuscatorRegistry {
     ///
     /// The obfuscator with the highest score if any scored above threshold, `None` otherwise.
     pub fn detect_best(&self, assembly: &CilObject) -> Option<Arc<dyn Obfuscator>> {
-        let results = self.detect(assembly);
-        results
-            .first()
-            .and_then(|(id, _, _)| self.obfuscators.get(id).cloned())
+        self.detect(assembly)
+            .into_iter()
+            .next()
+            .map(|(obfuscator, _, _)| obfuscator)
     }
 
     /// Returns all passes from all detected obfuscators.
@@ -256,14 +272,15 @@ impl ObfuscatorRegistry {
     /// # Returns
     ///
     /// A vector of SSA passes from all detected obfuscators.
-    pub fn get_passes_for_detected(&self, assembly: &CilObject) -> Vec<Box<dyn SsaPass>> {
+    pub fn get_passes_for_detected(
+        &self,
+        assembly: &CilObject,
+    ) -> Vec<(PassPhase, Box<dyn SsaPass>)> {
         let detected = self.detect(assembly);
         let mut passes = Vec::new();
 
-        for (id, _, findings) in &detected {
-            if let Some(obfuscator) = self.obfuscators.get(id) {
-                passes.extend(obfuscator.passes(findings));
-            }
+        for (obfuscator, _, findings) in &detected {
+            passes.extend(obfuscator.passes(findings));
         }
 
         passes
@@ -279,8 +296,8 @@ impl ObfuscatorRegistry {
         self.obfuscators
             .values()
             .map(|o| ObfuscatorInfo {
-                id: o.id().clone(),
-                name: o.name().clone(),
+                id: o.id().to_string(),
+                name: o.name().to_string(),
                 description: o.description().to_string(),
                 versions: o
                     .supported_versions()
@@ -324,12 +341,12 @@ mod tests {
     }
 
     impl Obfuscator for TestObfuscator {
-        fn id(&self) -> String {
-            self.id.clone()
+        fn id(&self) -> &str {
+            &self.id
         }
 
-        fn name(&self) -> String {
-            self.id.clone()
+        fn name(&self) -> &str {
+            &self.id
         }
 
         fn detect(
@@ -356,7 +373,7 @@ mod tests {
     #[test]
     fn test_registry_threshold_setting() {
         let mut registry = ObfuscatorRegistry::empty();
-        assert_eq!(registry.threshold, 50); // default
+        assert_eq!(registry.threshold, 20); // default
 
         registry.set_threshold(30);
         assert_eq!(registry.threshold, 30);
@@ -379,8 +396,8 @@ mod tests {
 
         let ids: Vec<_> = registry.iter().map(|o| o.id()).collect();
         assert_eq!(ids.len(), 2);
-        assert!(ids.contains(&"a".to_string()));
-        assert!(ids.contains(&"b".to_string()));
+        assert!(ids.contains(&"a"));
+        assert!(ids.contains(&"b"));
     }
 
     #[test]

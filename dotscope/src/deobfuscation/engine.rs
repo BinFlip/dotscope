@@ -26,7 +26,7 @@ use crate::{
         context::AnalysisContext,
         detector::ObfuscatorDetector,
         findings::DeobfuscationFindings,
-        obfuscators::Obfuscator,
+        obfuscators::{utils::validate_cleanup_request, Obfuscator, PassPhase},
         passes::{CffReconstructionPass, DecryptionPass, NeutralizationPass, UnflattenConfig},
         result::DeobfuscationResult,
     },
@@ -326,17 +326,24 @@ impl DeobfuscationEngine {
         // This registers decryptors and other state needed by SSA passes
         if let Some(obfuscator) = obfuscator {
             obfuscator.initialize_context(&ctx, &assembly_arc, findings);
-
-            // Add obfuscator-specific SSA passes to the simplification phase
-            // These run after value recovery (decryption) to clean up obfuscator artifacts
-            let obfuscator_passes = obfuscator.passes(findings);
-            if !obfuscator_passes.is_empty() {
-                self.scheduler.simplify.extend(obfuscator_passes);
-            }
         }
 
-        // Create deob passes that share state with the AnalysisContext
+        // Create built-in deob passes first (clears structure/value vectors)
         self.create_deob_passes(&ctx);
+
+        // Add obfuscator-specific SSA passes AFTER built-in passes so they
+        // aren't wiped by create_deob_passes() clearing structure/value.
+        if let Some(obfuscator) = obfuscator {
+            for (phase, pass) in obfuscator.passes(findings) {
+                match phase {
+                    PassPhase::Structure => self.scheduler.structure.push(pass),
+                    PassPhase::Value => self.scheduler.value.push(pass),
+                    PassPhase::Simplify => self.scheduler.simplify.push(pass),
+                    PassPhase::Inline => self.scheduler.inline.push(pass),
+                    PassPhase::Normalize => self.scheduler.normalize.push(pass),
+                }
+            }
+        }
 
         // Populate no_inline from dispatchers and registered decryptors
         for token in ctx.dispatchers.iter() {
@@ -372,15 +379,21 @@ impl DeobfuscationEngine {
         // This removes instructions that reference protection infrastructure
         let cleanup_request = if let Some(obfuscator) = obfuscator {
             if let Some(request) = obfuscator.cleanup_request(&assembly_arc, &ctx, findings)? {
+                // Validate the cleanup request for safety
+                validate_cleanup_request(
+                    &request,
+                    &assembly_arc,
+                    ctx.config.cleanup.remove_unused_methods,
+                );
                 let removed_tokens = request.all_tokens();
                 let mut neutralized = false;
 
                 if !removed_tokens.is_empty() {
                     let pass = NeutralizationPass::new(&removed_tokens);
 
-                    // Neutralize module .cctor if it exists
+                    // Neutralize module .cctor if it exists.
                     // The .cctor may contain both protection initialization AND legitimate code,
-                    // so we neutralize (partial removal) rather than delete
+                    // so we neutralize (partial removal) rather than delete.
                     if let Some(cctor_token) = assembly_arc.types().module_cctor() {
                         if let Some(mut ssa) = ctx.ssa_functions.get_mut(&cctor_token) {
                             if pass.run_on_method(&mut ssa, cctor_token, &ctx, &assembly_arc)? {
@@ -727,6 +740,13 @@ impl DeobfuscationEngine {
                 ))
             })?;
 
+            // Verify exception handlers were preserved
+            if ssa.has_exception_handlers() && result.exception_handlers.is_empty() {
+                return Err(Error::Deobfuscation(format!(
+                    "Method {method_token}: all exception handlers lost during code generation"
+                )));
+            }
+
             let (method_body, _local_sig_token) = MethodBodyBuilder::from_compilation(
                 result.bytecode,
                 result.max_stack,
@@ -807,7 +827,7 @@ impl DeobfuscationEngine {
         Self::identify_entry_points(assembly, &ctx);
 
         // Build SSA for all methods
-        Self::build_ssa_functions(assembly, &ctx);
+        Self::build_ssa_functions(assembly, &ctx)?;
         info!("Built SSA for {} methods", ctx.ssa_functions.len());
 
         Ok(ctx)
@@ -892,7 +912,7 @@ impl DeobfuscationEngine {
     /// preserved from the original method body.
     ///
     /// Methods are processed in parallel using rayon for faster SSA construction.
-    fn build_ssa_functions(assembly: &CilObject, ctx: &AnalysisContext) {
+    fn build_ssa_functions(assembly: &CilObject, ctx: &AnalysisContext) -> Result<()> {
         // Collect method tokens that have CFGs
         let method_tokens: Vec<Token> = assembly
             .methods()
@@ -901,17 +921,34 @@ impl DeobfuscationEngine {
             .map(|entry| *entry.key())
             .collect();
 
-        // Build SSA in parallel
-        method_tokens.par_iter().for_each(|&method_token| {
-            // Get method from assembly (safe since methods is thread-safe)
-            let Some(method) = assembly.method(&method_token) else {
-                return;
-            };
+        // Build SSA in parallel, collecting errors
+        let errors: Vec<(Token, Error)> = method_tokens
+            .par_iter()
+            .filter_map(|&method_token| {
+                let method = assembly.method(&method_token)?;
+                match method.ssa(assembly) {
+                    Ok(ssa) => {
+                        ctx.set_ssa(method_token, ssa);
+                        None
+                    }
+                    Err(e) => Some((method_token, e)),
+                }
+            })
+            .collect();
 
-            if let Some(ssa) = method.ssa(assembly) {
-                ctx.set_ssa(method_token, ssa);
-            }
-        });
+        if !errors.is_empty() {
+            let messages: Vec<String> = errors
+                .iter()
+                .map(|(token, e)| format!("  0x{:08X}: {e}", token.value()))
+                .collect();
+            return Err(Error::SsaError(format!(
+                "SSA construction failed for {} method(s):\n{}",
+                errors.len(),
+                messages.join("\n")
+            )));
+        }
+
+        Ok(())
     }
 
     /// Runs interprocedural analysis on all methods.
@@ -1278,9 +1315,9 @@ mod tests {
         let obj = SsaVarId::from_index(1);
         block.add_instruction(
             SsaInstruction::synthetic(SsaOp::LoadField {
-            dest,
-            object: obj,
-            field: FieldRef::new(Token::new(0x04000001)),
+                dest,
+                object: obj,
+                field: FieldRef::new(Token::new(0x04000001)),
             })
             .with_result_type(SsaType::I32),
         );
@@ -1302,9 +1339,9 @@ mod tests {
         let dest = SsaVarId::from_index(0);
         block.add_instruction(
             SsaInstruction::synthetic(SsaOp::Call {
-            dest: Some(dest),
-            method: MethodRef::new(Token::new(0x06000001)),
-            args: vec![],
+                dest: Some(dest),
+                method: MethodRef::new(Token::new(0x06000001)),
+                args: vec![],
             })
             .with_result_type(SsaType::I32),
         );

@@ -29,7 +29,7 @@
 //!
 //! # Test Samples
 //!
-//! Test samples in `tests/samples/packers/obfuscar/` are generated with different
+//! Test samples in `tests/samples/packers/obfuscar/2.2.50/` are generated with different
 //! Obfuscar configurations:
 //!
 //! | Sample | Configuration |
@@ -43,8 +43,10 @@
 
 mod cleanup;
 mod detection;
+mod findings;
 
 pub use detection::detect_obfuscar;
+pub use findings::ObfuscarFindings;
 
 use crate::{
     cilassembly::CleanupRequest,
@@ -149,21 +151,16 @@ impl ObfuscarObfuscator {
 }
 
 impl Obfuscator for ObfuscarObfuscator {
-    fn id(&self) -> String {
-        "obfuscar".to_string()
+    fn id(&self) -> &str {
+        "obfuscar"
     }
 
-    fn name(&self) -> String {
-        "Obfuscar".to_string()
+    fn name(&self) -> &str {
+        "Obfuscar"
     }
 
     fn detect(&self, assembly: &CilObject, findings: &mut DeobfuscationFindings) -> DetectionScore {
-        let (score, detected) = detection::detect_obfuscar(assembly);
-
-        // Copy detected findings into the framework-level findings
-        *findings = detected;
-
-        score
+        detection::detect_obfuscar(assembly, findings)
     }
 
     fn deobfuscate(
@@ -276,7 +273,7 @@ mod tests {
 
     #[test]
     fn test_detect_original_not_obfuscar() -> Result<()> {
-        let path = "tests/samples/packers/confuserex/original.exe";
+        let path = "tests/samples/packers/confuserex/1.6.0/original.exe";
 
         // Skip if sample doesn't exist
         if !std::path::Path::new(path).exists() {
@@ -304,8 +301,8 @@ mod tests {
         let obfuscator = ObfuscarObfuscator::new();
 
         let samples = [
-            "tests/samples/packers/obfuscar/obfuscar_default.exe",
-            "tests/samples/packers/obfuscar/obfuscar_strings_only.exe",
+            "tests/samples/packers/obfuscar/2.2.50/obfuscar_default.exe",
+            "tests/samples/packers/obfuscar/2.2.50/obfuscar_strings_only.exe",
         ];
 
         for path in samples {
@@ -337,7 +334,7 @@ mod tests {
 
     #[test]
     fn test_deobfuscate_with_findings() -> Result<()> {
-        let path = "tests/samples/packers/obfuscar/obfuscar_default.exe";
+        let path = "tests/samples/packers/obfuscar/2.2.50/obfuscar_default.exe";
 
         if !std::path::Path::new(path).exists() {
             eprintln!("Skipping test: sample not found at {path}");

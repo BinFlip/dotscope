@@ -10,7 +10,7 @@ use crate::{
     deobfuscation::{
         detection::DetectionScore,
         findings::DeobfuscationFindings,
-        obfuscators::{Obfuscator, ObfuscatorRegistry},
+        obfuscators::{Obfuscator, ObfuscatorRegistry, PassPhase},
     },
     CilObject,
 };
@@ -145,7 +145,7 @@ impl ObfuscatorDetector {
             };
 
         if let Some(obfuscator) = &primary_obfuscator {
-            findings.obfuscator_name = Some(obfuscator.name());
+            findings.obfuscator_name = Some(obfuscator.name().to_string());
         }
 
         (primary_obfuscator, findings)
@@ -173,7 +173,7 @@ impl ObfuscatorDetector {
     /// # Returns
     ///
     /// A vector of SSA passes provided by obfuscators that detected their patterns.
-    pub fn get_passes(&self, assembly: &CilObject) -> Vec<Box<dyn SsaPass>> {
+    pub fn get_passes(&self, assembly: &CilObject) -> Vec<(PassPhase, Box<dyn SsaPass>)> {
         self.registry.get_passes_for_detected(assembly)
     }
 

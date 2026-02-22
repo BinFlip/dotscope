@@ -1428,7 +1428,7 @@ mod tests {
     /// which has ConfuserEx constants protection enabled.
     #[test]
     fn test_constants_decryption_integration() {
-        const CONSTANTS_PATH: &str = "tests/samples/packers/confuserex/mkaring_constants.exe";
+        const CONSTANTS_PATH: &str = "tests/samples/packers/confuserex/1.6.0/mkaring_constants.exe";
 
         // Run full deobfuscation pipeline (ConfuserEx is auto-registered)
         let mut engine = DeobfuscationEngine::new(EngineConfig::default());
