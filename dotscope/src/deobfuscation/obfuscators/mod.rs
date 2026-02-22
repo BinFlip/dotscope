@@ -15,6 +15,7 @@
 //!
 //! - [`ConfuserExObfuscator`] - ConfuserEx open-source obfuscator
 //! - [`ObfuscarObfuscator`] - Obfuscar open-source obfuscator
+//! - [`BitMonoObfuscator`] - BitMono open-source obfuscator
 //!
 //! # Example
 //!

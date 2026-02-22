@@ -84,6 +84,12 @@
 //! - [`crate::deobfuscation::ObfuscatorRegistry`] - Manages registered obfuscators
 //! - [`crate::deobfuscation::DetectionScore`] / [`crate::deobfuscation::DeobfuscationFindings`] - Confidence-based detection with findings
 //!
+//! ### Built-in Obfuscators
+//!
+//! - [`ConfuserExObfuscator`](crate::deobfuscation::ConfuserExObfuscator) — ConfuserEx (all standard protections)
+//! - [`ObfuscarObfuscator`](crate::deobfuscation::ObfuscarObfuscator) — Obfuscar (string encryption, renaming)
+//! - [`BitMonoObfuscator`](crate::deobfuscation::BitMonoObfuscator) — BitMono (16 protections including PE repair)
+//!
 //! ## Pass System
 //!
 //! SSA-based transformation passes ([`crate::compiler::SsaPass`]):
