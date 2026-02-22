@@ -138,7 +138,7 @@ fn build_cleanup_request(
     // 7. Collect state machine infrastructure (CFGCtx type and methods)
     // When CFG mode is used, the state machine struct and its methods become dead
     // after decryption completes since all usages are replaced with constants.
-    if let Some(ref provider) = findings
+    if let Some(provider) = findings
         .confuserex()
         .and_then(|cx| cx.statemachine_provider.as_ref())
     {

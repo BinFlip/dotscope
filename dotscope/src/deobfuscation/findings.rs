@@ -52,9 +52,10 @@ pub trait ObfuscatorFindingsProvider {
 }
 
 /// Holds the active obfuscator's specific findings.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub enum ObfuscatorData {
     /// No obfuscator-specific data.
+    #[default]
     None,
     /// ConfuserEx-specific findings.
     ConfuserEx(ConfuserExFindings),
@@ -62,12 +63,6 @@ pub enum ObfuscatorData {
     BitMono(BitMonoFindings),
     /// Obfuscar-specific findings.
     Obfuscar(ObfuscarFindings),
-}
-
-impl Default for ObfuscatorData {
-    fn default() -> Self {
-        Self::None
-    }
 }
 
 impl ObfuscatorData {
@@ -258,7 +253,7 @@ impl DeobfuscationFindings {
     /// mutable reference to it.
     pub fn init_obfuscar(&mut self) -> &mut ObfuscarFindings {
         if !matches!(self.obfuscator, ObfuscatorData::Obfuscar(_)) {
-            self.obfuscator = ObfuscatorData::Obfuscar(ObfuscarFindings::default());
+            self.obfuscator = ObfuscatorData::Obfuscar(ObfuscarFindings);
         }
         match &mut self.obfuscator {
             ObfuscatorData::Obfuscar(f) => f,

@@ -207,7 +207,7 @@ use pe::{DataDirectory, DataDirectoryType, Pe};
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct File {
-    /// The underlying data via CowFile (mmap or Vec).
+    /// The underlying data via CowFile (mmap or CoW mmap), committed and read-only.
     data: CowFile,
     /// The parsed PE structure as owned data.
     pe: Pe,
@@ -255,7 +255,7 @@ impl File {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from_path(path: impl AsRef<Path>) -> Result<File> {
-        let cowfile = CowFile::from_path(path)?;
+        let cowfile = CowFile::open(path)?;
         Self::load(cowfile)
     }
 
@@ -328,7 +328,7 @@ impl File {
     /// # Ok::<(), Box<dyn std::error::Error>>(())
     /// ```
     pub fn from_std_file(file: std::fs::File) -> Result<File> {
-        let cowfile = CowFile::from_std_file(file)?;
+        let cowfile = CowFile::from_file(file)?;
         Self::load(cowfile)
     }
 
@@ -367,8 +367,8 @@ impl File {
     /// Internal loader with transparent PE repair.
     ///
     /// Attempts to parse the PE file. If parsing fails, applies known PE
-    /// repairs (BitMono, BitDotNet, etc.) via the CowFile overlay, consolidates
-    /// the overlay into the base, and retries.
+    /// repairs (BitMono, BitDotNet, etc.) via the CowFile pending log, commits
+    /// the pending writes to the buffer, and retries.
     ///
     /// # Arguments
     ///
@@ -379,7 +379,7 @@ impl File {
     /// Returns an error if the data is empty or not a valid PE format
     /// (even after repair attempts).
     fn load(mut cowfile: CowFile) -> Result<File> {
-        if cowfile.len() == 0 {
+        if cowfile.is_empty() {
             return Err(Error::NotSupported);
         }
 
@@ -392,10 +392,10 @@ impl File {
         // validate, so we must repair before parsing — not just on failure.
         let repair_result = repair_pe_cow(&cowfile);
         if !repair_result.repairs.is_empty() {
-            cowfile.consolidate()?;
+            cowfile.commit()?;
         }
 
-        let goblin_pe = PE::parse(cowfile.base_data()).map_err(Goblin)?;
+        let goblin_pe = PE::parse(cowfile.data()).map_err(Goblin)?;
         let pe = Pe::from_goblin_pe(&goblin_pe)?;
 
         Ok(File {
@@ -419,7 +419,7 @@ impl File {
     /// ```
     #[must_use]
     pub fn len(&self) -> usize {
-        self.data.len() as usize
+        self.data.len()
     }
 
     /// Returns `true` if the file has a length of zero.
@@ -768,7 +768,7 @@ impl File {
     /// ```
     #[must_use]
     pub fn data(&self) -> &[u8] {
-        self.data.base_data()
+        self.data.data()
     }
 
     /// Returns a slice of the file data at the given offset and length.
@@ -805,7 +805,7 @@ impl File {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn data_slice(&self, offset: usize, len: usize) -> Result<&[u8]> {
-        let base = self.data.base_data();
+        let base = self.data.data();
         let end = offset.checked_add(len).ok_or(out_of_bounds_error!())?;
         if end > base.len() {
             return Err(out_of_bounds_error!());
@@ -1299,6 +1299,10 @@ impl File {
     /// For files loaded via `from_mem()`, this transfers ownership without copying.
     /// For files loaded via `from_file()`, this makes a complete copy of the memory-mapped data.
     ///
+    /// # Errors
+    ///
+    /// Returns an error if the internal lock was poisoned by a panicking thread.
+    ///
     /// # Examples
     ///
     /// ```rust,no_run
@@ -1308,16 +1312,15 @@ impl File {
     /// // From memory - no copy
     /// let original_data = vec![/* PE bytes */];
     /// let file = File::from_mem(original_data)?;
-    /// let recovered_data = file.into_data();
+    /// let recovered_data = file.into_data()?;
     ///
     /// // From file - copies the data
     /// let file = File::from_path(Path::new("assembly.dll"))?;
-    /// let data_copy = file.into_data();
+    /// let data_copy = file.into_data()?;
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    #[must_use]
-    pub fn into_data(self) -> Vec<u8> {
-        self.data.into_vec().expect("CowFile lock poisoned")
+    pub fn into_data(self) -> Result<Vec<u8>> {
+        Ok(self.data.into_vec()?)
     }
 
     /// Returns any PE repairs that were applied during loading.
@@ -1327,12 +1330,6 @@ impl File {
     #[must_use]
     pub fn repairs(&self) -> &[RepairAction] {
         &self.repairs
-    }
-
-    /// Access the underlying CowFile for overlay modifications.
-    #[must_use]
-    pub fn cowfile(&self) -> &CowFile {
-        &self.data
     }
 }
 

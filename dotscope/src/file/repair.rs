@@ -147,7 +147,7 @@ pub fn repair_pe_cow(cowfile: &CowFile) -> RepairResult {
     if cowfile.len() < 64 {
         return result;
     }
-    let base = cowfile.base_data();
+    let base = cowfile.data();
     if base[0] != b'M' || base[1] != b'Z' {
         return result;
     }
@@ -166,7 +166,7 @@ pub fn repair_pe_cow(cowfile: &CowFile) -> RepairResult {
 }
 
 fn repair_pe_signature_cow(cowfile: &CowFile, pe_off: usize, result: &mut RepairResult) {
-    let Some(signature) = cowfile.read_le::<u32>(pe_off as u64).ok() else {
+    let Some(signature) = cowfile.read_le::<u32>(pe_off).ok() else {
         return;
     };
     if signature != BITDOTNET_PE_SIGNATURE {
@@ -176,7 +176,7 @@ fn repair_pe_signature_cow(cowfile: &CowFile, pe_off: usize, result: &mut Repair
         "PE signature repair: 0x{:08X} → 0x{:08X} at offset 0x{:X}",
         signature, PE_SIGNATURE, pe_off
     );
-    let _ = cowfile.write_le::<u32>(pe_off as u64, PE_SIGNATURE);
+    let _ = cowfile.write_le::<u32>(pe_off, PE_SIGNATURE);
     result.repairs.push(RepairAction::PeSignature {
         original: signature,
         restored: PE_SIGNATURE,
@@ -185,7 +185,7 @@ fn repair_pe_signature_cow(cowfile: &CowFile, pe_off: usize, result: &mut Repair
 
 fn repair_pe_optional_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut RepairResult) {
     let optional_header_offset = pe_off + 24;
-    let Some(magic) = cowfile.read_le::<u16>(optional_header_offset as u64).ok() else {
+    let Some(magic) = cowfile.read_le::<u16>(optional_header_offset).ok() else {
         return;
     };
     let num_rva_sizes_offset = match magic {
@@ -194,14 +194,13 @@ fn repair_pe_optional_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut 
         _ => return,
     };
 
-    if let Some(num_rva_sizes) = cowfile.read_le::<u32>(num_rva_sizes_offset as u64).ok() {
+    if let Ok(num_rva_sizes) = cowfile.read_le::<u32>(num_rva_sizes_offset) {
         if num_rva_sizes == BITMONO_INFLATED_DATA_DIRECTORY_COUNT {
             debug!(
                 "Data directory count repair: 0x{:X} → 0x{:X}",
                 num_rva_sizes, STANDARD_DATA_DIRECTORY_COUNT
             );
-            let _ =
-                cowfile.write_le::<u32>(num_rva_sizes_offset as u64, STANDARD_DATA_DIRECTORY_COUNT);
+            let _ = cowfile.write_le::<u32>(num_rva_sizes_offset, STANDARD_DATA_DIRECTORY_COUNT);
             result.repairs.push(RepairAction::DataDirectoryCount {
                 original: num_rva_sizes,
                 restored: STANDARD_DATA_DIRECTORY_COUNT,
@@ -211,15 +210,15 @@ fn repair_pe_optional_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut 
 
     let data_dir_start = num_rva_sizes_offset + 4;
     let clr_dir_offset = data_dir_start + CLR_DIRECTORY_INDEX * 8;
-    let clr_rva = cowfile.read_le::<u32>(clr_dir_offset as u64).ok();
-    let clr_size = cowfile.read_le::<u32>((clr_dir_offset + 4) as u64).ok();
+    let clr_rva = cowfile.read_le::<u32>(clr_dir_offset).ok();
+    let clr_size = cowfile.read_le::<u32>(clr_dir_offset + 4).ok();
     if clr_rva.is_some_and(|r| r != 0) && clr_size == Some(0) {
         let rva = clr_rva.unwrap();
         debug!(
             ".NET directory size repair: 0 → {} (RVA=0x{:X})",
             COR20_HEADER_SIZE, rva
         );
-        let _ = cowfile.write_le::<u32>((clr_dir_offset + 4) as u64, COR20_HEADER_SIZE);
+        let _ = cowfile.write_le::<u32>(clr_dir_offset + 4, COR20_HEADER_SIZE);
         result.repairs.push(RepairAction::DotNetDirectorySize {
             original: 0,
             restored: COR20_HEADER_SIZE,
@@ -229,7 +228,7 @@ fn repair_pe_optional_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut 
 
 fn repair_clr_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut RepairResult) {
     let optional_header_offset = pe_off + 24;
-    let Some(magic) = cowfile.read_le::<u16>(optional_header_offset as u64).ok() else {
+    let Some(magic) = cowfile.read_le::<u16>(optional_header_offset).ok() else {
         return;
     };
     let num_rva_sizes_offset = match magic {
@@ -239,42 +238,42 @@ fn repair_clr_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut RepairRe
     };
     let data_dir_start = num_rva_sizes_offset + 4;
     let clr_dir_offset = data_dir_start + CLR_DIRECTORY_INDEX * 8;
-    let Some(clr_rva) = cowfile.read_le::<u32>(clr_dir_offset as u64).ok() else {
+    let Some(clr_rva) = cowfile.read_le::<u32>(clr_dir_offset).ok() else {
         return;
     };
     if clr_rva == 0 {
         return;
     }
 
-    let base = cowfile.base_data();
+    let base = cowfile.data();
     let Some(clr_file_offset) = rva_to_file_offset(base, pe_off, clr_rva) else {
         return;
     };
     let clr_offset = clr_file_offset as usize;
 
-    if let Some(0) = cowfile.read_le::<u32>(clr_offset as u64).ok() {
+    if let Ok(0) = cowfile.read_le::<u32>(clr_offset) {
         debug!("CLR header size repair: 0 → {}", COR20_HEADER_SIZE);
-        let _ = cowfile.write_le::<u32>(clr_offset as u64, COR20_HEADER_SIZE);
+        let _ = cowfile.write_le::<u32>(clr_offset, COR20_HEADER_SIZE);
         result.repairs.push(RepairAction::ClrHeaderSize {
             original: 0,
             restored: COR20_HEADER_SIZE,
         });
     }
 
-    if let Some(0) = cowfile.read_le::<u16>((clr_offset + 4) as u64).ok() {
+    if let Ok(0) = cowfile.read_le::<u16>(clr_offset + 4) {
         debug!(
             "CLR runtime version repair: 0 → {}",
             CLR_MAJOR_RUNTIME_VERSION
         );
-        let _ = cowfile.write_le::<u16>((clr_offset + 4) as u64, CLR_MAJOR_RUNTIME_VERSION);
+        let _ = cowfile.write_le::<u16>(clr_offset + 4, CLR_MAJOR_RUNTIME_VERSION);
         result.repairs.push(RepairAction::ClrHeaderVersion {
             original_major: 0,
             restored_major: CLR_MAJOR_RUNTIME_VERSION,
         });
     }
 
-    let metadata_rva = cowfile.read_le::<u32>((clr_offset + 8) as u64).ok();
-    let metadata_size = cowfile.read_le::<u32>((clr_offset + 12) as u64).ok();
+    let metadata_rva = cowfile.read_le::<u32>(clr_offset + 8).ok();
+    let metadata_size = cowfile.read_le::<u32>(clr_offset + 12).ok();
 
     if metadata_rva == Some(0) || metadata_size == Some(0) {
         if let Some((found_rva, found_size)) = find_metadata_by_bsjb_scan(base, pe_off) {
@@ -282,8 +281,8 @@ fn repair_clr_header_cow(cowfile: &CowFile, pe_off: usize, result: &mut RepairRe
                 "CLR metadata repair via BSJB scan: RVA=0x{:X}, size=0x{:X}",
                 found_rva, found_size
             );
-            let _ = cowfile.write_le::<u32>((clr_offset + 8) as u64, found_rva);
-            let _ = cowfile.write_le::<u32>((clr_offset + 12) as u64, found_size);
+            let _ = cowfile.write_le::<u32>(clr_offset + 8, found_rva);
+            let _ = cowfile.write_le::<u32>(clr_offset + 12, found_size);
             result.repairs.push(RepairAction::ClrMetadataRva {
                 restored_rva: found_rva,
                 restored_size: found_size,
@@ -1275,8 +1274,8 @@ mod tests {
             "BitDotNet sample should need repairs"
         );
 
-        cowfile.consolidate().unwrap();
-        let pe = goblin::pe::PE::parse(cowfile.base_data());
+        cowfile.commit().unwrap();
+        let pe = goblin::pe::PE::parse(cowfile.data());
         assert!(
             pe.is_ok(),
             "Repaired BitDotNet PE should parse: {:?}",
@@ -1299,8 +1298,8 @@ mod tests {
             "Maximum sample should have at least 3 repairs"
         );
 
-        cowfile.consolidate().unwrap();
-        let pe = goblin::pe::PE::parse(cowfile.base_data());
+        cowfile.commit().unwrap();
+        let pe = goblin::pe::PE::parse(cowfile.data());
         assert!(
             pe.is_ok(),
             "Repaired Maximum PE should parse: {:?}",
