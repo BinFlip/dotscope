@@ -644,7 +644,7 @@ impl Obfuscator for ConfuserExObfuscator {
         }
 
         // Register state machine provider if CFG mode detected
-        if let Some(ref provider) = findings
+        if let Some(provider) = findings
             .confuserex()
             .and_then(|cx| cx.statemachine_provider.as_ref())
         {

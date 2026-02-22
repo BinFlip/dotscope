@@ -3912,7 +3912,9 @@ fn test_aggressive_inlining_original_exe() {
     );
 
     let mut engine = DeobfuscationEngine::new(config);
-    let result = engine.process_file(Path::new("tests/samples/packers/confuserex/1.6.0/original.exe"));
+    let result = engine.process_file(Path::new(
+        "tests/samples/packers/confuserex/1.6.0/original.exe",
+    ));
     assert!(result.is_ok(), "Deobfuscation should succeed");
 
     let (_deobfuscated, result) = result.unwrap();

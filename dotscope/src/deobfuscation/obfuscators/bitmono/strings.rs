@@ -95,9 +95,7 @@ pub fn prepare_string_decryption(
 
     // Collect call sites to identify infrastructure fields.
     // When DotNetHook was active, also search for calli patterns (DotNetHook + CallToCalli combo).
-    let search_calli = findings
-        .bitmono()
-        .map_or(false, |bm| bm.dotnethook_count > 0);
+    let search_calli = findings.bitmono().is_some_and(|bm| bm.dotnethook_count > 0);
     let call_sites = collect_call_sites(&assembly, &decryptor_tokens, search_calli)?;
 
     // Tag infrastructure fields (encrypted data, salt, key)

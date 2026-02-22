@@ -30,7 +30,7 @@ thiserror = "2.0.18"
 uguid = "2.2.1"
 widestring = "1.2.1"
 strum = { version = "0.27.2", features = ["derive"]}
-cowfile = "0.1.0"
+cowfile = "0.2.1"
 memmap2 = "0.9.10"
 tempfile = "3.25.0"
 goblin = "0.10.5"
