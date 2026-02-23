@@ -370,9 +370,9 @@ dependencies = [
 
 [[package]]
 name = "cowfile"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f047d5563cde091aac67e605d14cc6404449e58e3e73a24d80fe20b44a630dfa"
+checksum = "a9369326db705701044d8bc98a7ebd4e4bb6a25a7f18e652725c1c4873b74ad6"
 dependencies = [
  "memmap2",
  "thiserror",
@@ -2211,9 +2211,9 @@ checksum = "13c2bddecc57b384dee18652358fb23172facb8a2c51ccc10d74c157bdea3292"
 
 [[package]]
 name = "syn"
-version = "2.0.116"
+version = "2.0.117"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "3df424c70518695237746f84cede799c9c58fcb37450d7b23716568cc8bc69cb"
+checksum = "e665b8803e7b1d2a727f4023456bbbbe74da67099c585258af0ad9c5013b9b99"
 dependencies = [
  "proc-macro2",
  "quote",
