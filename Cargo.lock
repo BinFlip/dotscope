@@ -370,9 +370,9 @@ dependencies = [
 
 [[package]]
 name = "cowfile"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f047d5563cde091aac67e605d14cc6404449e58e3e73a24d80fe20b44a630dfa"
+checksum = "a9369326db705701044d8bc98a7ebd4e4bb6a25a7f18e652725c1c4873b74ad6"
 dependencies = [
  "memmap2",
  "thiserror",
@@ -2994,9 +2994,9 @@ dependencies = [
 
 [[package]]
 name = "z3-sys"
-version = "0.10.5"
+version = "0.10.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1fab6d04d653bbb73381bc6c906c5545d522ac29def4571fadc720c39ab162f6"
+checksum = "7242a9063a67fadfe5b9d2956aa6c493c5159f2e22d69645876ed1bba6204643"
 dependencies = [
  "bindgen",
  "pkg-config",
