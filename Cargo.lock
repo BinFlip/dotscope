@@ -194,9 +194,9 @@ checksum = "36f64beae40a84da1b4b26ff2761a5b895c12adc41dc25aaee1c4f2bbfe97a6e"
 
 [[package]]
 name = "bumpalo"
-version = "3.20.0"
+version = "3.20.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c81d250916401487680ed13b8b675660281dcfc3ab0121fe44c94bcab9eae2fb"
+checksum = "5d20789868f4b01b2f2caec9f5c4e0213b41e3e5702a50157d699ae31ced2fcb"
 
 [[package]]
 name = "bytemuck"
@@ -370,9 +370,9 @@ dependencies = [
 
 [[package]]
 name = "cowfile"
-version = "0.1.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f047d5563cde091aac67e605d14cc6404449e58e3e73a24d80fe20b44a630dfa"
+checksum = "a9369326db705701044d8bc98a7ebd4e4bb6a25a7f18e652725c1c4873b74ad6"
 dependencies = [
  "memmap2",
  "thiserror",
