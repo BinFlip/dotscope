@@ -29,8 +29,8 @@ pub fn raw_heap_validator_file_factory() -> Result<Vec<TestAssembly>> {
     // 1. REQUIRED: Clean assembly - should pass all validation
     assemblies.push(TestAssembly::new(&clean_testfile, true));
 
-    // 2. UserString heap with invalid UTF-16
-    assemblies.push(create_assembly_with_invalid_utf16_userstring()?);
+    // 2. UserString heap with non-UTF-16 data (spec-legal per ECMA-335 II.24.2.4)
+    assemblies.push(create_assembly_with_non_utf16_userstring()?);
 
     // 3. String heap with invalid UTF-8 (temporarily disabled - heap replacement approach fails)
     // The current heap replacement approach doesn't work because the strings iterator
@@ -57,21 +57,23 @@ pub fn raw_heap_validator_file_factory() -> Result<Vec<TestAssembly>> {
     Ok(assemblies)
 }
 
-/// Creates a test assembly with invalid UTF-16 in the userstring heap.
+/// Creates a test assembly with non-UTF-16 data in the userstring heap.
 ///
-/// Creates a userstring heap with invalid UTF-16 sequences using heap replacement.
+/// Per ECMA-335 II.24.2.4, the UserString heap can contain arbitrary binary data.
+/// This test verifies that non-UTF-16 sequences (such as unpaired surrogates) are
+/// accepted by the validator.
 ///
 /// Originally from: `src/metadata/validation/validators/raw/structure/heap.rs`
-pub fn create_assembly_with_invalid_utf16_userstring() -> Result<TestAssembly> {
-    create_test_assembly_with_error(get_testfile_wb, "Malformed", |assembly| {
-        // Create a userstring heap with invalid UTF-16 sequences
-        // Structure: null byte + length prefix + invalid UTF-16 data + terminator
+pub fn create_assembly_with_non_utf16_userstring() -> Result<TestAssembly> {
+    create_passing_test_assembly(get_testfile_wb, |assembly| {
+        // Create a userstring heap with non-UTF-16 sequences (spec-legal)
+        // Structure: null byte + length prefix + data with unpaired surrogate + terminator
         let mut userstring_heap = vec![0]; // Required null byte at index 0
 
-        // Create a userstring entry with unpaired surrogate
+        // Create a userstring entry with unpaired surrogate (valid per ECMA-335)
         // Length: 5 bytes (2 bytes high surrogate + 2 bytes regular char + 1 terminator)
         userstring_heap.push(0x05); // Length prefix
-        userstring_heap.extend_from_slice(&[0x00, 0xD8]); // Unpaired high surrogate (invalid UTF-16)
+        userstring_heap.extend_from_slice(&[0x00, 0xD8]); // Unpaired high surrogate
         userstring_heap.extend_from_slice(&[0x41, 0x00]); // Valid 'A' character
         userstring_heap.push(0x01); // Terminator byte
 

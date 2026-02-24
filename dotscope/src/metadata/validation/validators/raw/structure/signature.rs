@@ -255,11 +255,13 @@ impl RawSignatureValidator {
     ) -> Result<()> {
         match expected_kind {
             SignatureKind::Method | SignatureKind::MemberRef => {
-                // Method calling conventions (ECMA-335 II.23.2.1)
-                // 0x00 = DEFAULT, 0x01 = C, 0x02 = STDCALL, 0x03 = THISCALL, 0x04 = FASTCALL, 0x05 = VARARG
-                // Can also have HASTHIS (0x20) and EXPLICIT_THIS (0x40) flags
+                // Method calling conventions (ECMA-335 II.23.2.1, coreclr corhdr.h)
+                // 0x00 = DEFAULT, 0x01 = C, 0x02 = STDCALL, 0x03 = THISCALL,
+                // 0x04 = FASTCALL, 0x05 = VARARG, 0x09 = UNMANAGED,
+                // 0x0A = GENERICINST, 0x0B = NATIVEVARARG, 0x0C = ASYNC
+                // 0x0D = MAX (invalid). Can also have HASTHIS (0x20) and EXPLICIT_THIS (0x40) flags.
                 let base_convention = calling_convention & 0x0F;
-                if base_convention > 0x05 {
+                if (0x06..=0x08).contains(&base_convention) || base_convention >= 0x0D {
                     return Err(Error::ValidationRawFailed {
                         validator: "RawSignatureValidator".to_string(),
                         message: format!("Invalid method calling convention 0x{calling_convention:02X} in signature blob {blob_index}"),

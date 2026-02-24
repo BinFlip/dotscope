@@ -168,6 +168,8 @@ pub mod CALLING_CONVENTION {
     pub const FASTCALL: u8 = 0x04;
     /// Variable argument calling convention
     pub const VARARG: u8 = 0x05;
+    /// Unmanaged calling convention (C# 9+ function pointers with unmanaged convention)
+    pub const UNMANAGED: u8 = 0x09;
 
     /// Mask for extracting the calling convention kind from the convention byte
     pub const KIND_MASK: u8 = 0x0F;
