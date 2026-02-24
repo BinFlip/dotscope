@@ -47,23 +47,36 @@ impl MetadataLoader for ModuleLoader {
     /// ## Arguments
     /// * `context` - The loader context containing metadata tables and storage
     ///
-    /// ## Errors
-    ///
-    /// - No Module table is present in the metadata
-    /// - The Module table is empty (should always have one row)
-    /// - String or GUID heap entries cannot be resolved
-    /// - Module has already been set (duplicate loading attempt)
+    /// ## Returns
+    /// * `Ok(())` - Module successfully loaded, or skipped in lenient mode
+    /// * `Err(`[`crate::Error`]`)` - Malformed data in strict mode, or duplicate module
     fn load(&self, context: &LoaderContext) -> Result<()> {
         let (Some(tables_header), Some(strings), Some(guids)) =
             (context.meta, context.strings, context.guids)
         else {
-            return Err(malformed_error!("No module has been found"));
+            return context.handle_error(
+                Err(malformed_error!(
+                    "Module table requires metadata tables, string heap, and GUID heap"
+                )),
+                DiagnosticCategory::Table,
+                || "module".to_string(),
+            );
         };
         let Some(table) = tables_header.table::<ModuleRaw>() else {
-            return Err(malformed_error!("No module has been found"));
+            return context.handle_error(
+                Err(malformed_error!("Module table is required but not present")),
+                DiagnosticCategory::Table,
+                || "module".to_string(),
+            );
         };
         let Some(row) = table.get(1) else {
-            return Err(malformed_error!("No module has been found"));
+            return context.handle_error(
+                Err(malformed_error!(
+                    "Module table is present but contains no rows"
+                )),
+                DiagnosticCategory::Table,
+                || "module".to_string(),
+            );
         };
 
         let token_msg = || format!("module 0x{:08x}", row.token.value());
@@ -74,7 +87,7 @@ impl MetadataLoader for ModuleLoader {
             token_msg,
         )?
         else {
-            return Err(malformed_error!("No module has been found"));
+            return Ok(());
         };
 
         context.handle_error(

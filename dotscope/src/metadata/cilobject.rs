@@ -352,7 +352,8 @@ impl CilObject {
         validation_config: ValidationConfig,
     ) -> Result<Self> {
         debug!("Loading assembly: {}", path.as_ref().display());
-        let assembly_view = CilAssemblyView::from_path(path)?;
+        let assembly_view =
+            CilAssemblyView::from_path_with_validation(path, validation_config)?;
         let lenient = validation_config.lenient;
         let data = CilObjectData::from_assembly_view(&assembly_view, None, lenient)?;
 
@@ -453,7 +454,8 @@ impl CilObject {
         validation_config: ValidationConfig,
     ) -> Result<Self> {
         debug!("Loading assembly from memory buffer ({} bytes)", data.len());
-        let assembly_view = CilAssemblyView::from_mem(data)?;
+        let assembly_view =
+            CilAssemblyView::from_mem_with_validation(data, validation_config)?;
         let lenient = validation_config.lenient;
         let object_data = CilObjectData::from_assembly_view(&assembly_view, None, lenient)?;
 
