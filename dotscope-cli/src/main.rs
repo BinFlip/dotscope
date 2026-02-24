@@ -68,11 +68,12 @@ fn main() -> anyhow::Result<()> {
             method.as_deref(),
             r#type.as_deref(),
             commands::disasm::DisasmOptions {
-                bytes: *bytes,
-                tokens: *tokens,
-                offsets: !*no_offsets,
+                show_bytes: *bytes,
+                show_tokens: *tokens,
+                show_offsets: !*no_offsets,
                 no_header: *no_header,
                 raw: *raw,
+                ..Default::default()
             },
             *deobfuscate,
         ),

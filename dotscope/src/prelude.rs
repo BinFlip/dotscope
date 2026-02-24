@@ -595,6 +595,12 @@ pub use crate::assembly::{
 // The unified containers provide a single interface for both CIL and native imports/exports,
 // while individual containers allow focused analysis of specific import/export types.
 
+/// VTableFixup context for mixed-mode and COM interop assemblies.
+///
+/// Pre-parsed VTableFixup directory data including method-to-slot mappings and
+/// native PE export correlations. Used for analyzing managed method exports.
+pub use crate::metadata::vtfixup::{VtFixupContext, VtFixupEntry};
+
 /// Import and export analysis.
 ///
 /// Tools for analyzing assembly dependencies, exported types, and import relationships

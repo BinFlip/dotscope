@@ -214,3 +214,5 @@ pub mod token;
 pub mod typesystem;
 /// Metadata validation utilities
 pub mod validation;
+/// VTable fixup directory parsing for mixed-mode and COM interop assemblies
+pub mod vtfixup;

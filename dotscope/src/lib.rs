@@ -256,6 +256,32 @@ pub(crate) mod utils;
 #[cfg(test)]
 pub(crate) mod test;
 
+/// ILDasm-compatible CIL disassembly formatter.
+///
+/// Produces text output matching the style of Microsoft's ILDasm tool. The formatter
+/// supports configurable output including instruction bytes, metadata tokens, and
+/// IL offset labels.
+///
+/// # Key Components
+///
+/// - [`formatting::IlFormatter`] - Main entry point for formatting assemblies, types, and methods
+/// - [`formatting::FormatterOptions`] - Configuration options controlling output detail level
+///
+/// # Usage
+///
+/// ```rust,no_run
+/// use dotscope::formatting::{IlFormatter, FormatterOptions};
+/// use dotscope::CilObject;
+///
+/// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
+/// let formatter = IlFormatter::new(FormatterOptions::default());
+///
+/// let mut output = Vec::new();
+/// formatter.format_assembly(&mut output, &assembly)?;
+/// # Ok::<(), dotscope::Error>(())
+/// ```
+pub mod formatting;
+
 /// Convenient re-exports of the most commonly used types and traits.
 ///
 /// This module provides a curated selection of the most frequently used types
