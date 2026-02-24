@@ -70,7 +70,7 @@ fn print_type_registry_analysis(assembly: &CilObject) {
         type_categories.total_types += 1;
 
         // Categorize by visibility
-        match type_def.flags & 0x07 {
+        match type_def.flags.bits() & 0x07 {
             // TypeAttributes.VisibilityMask
             0 => type_categories.not_public += 1, // NotPublic
             1 => type_categories.public += 1,     // Public
@@ -84,7 +84,7 @@ fn print_type_registry_analysis(assembly: &CilObject) {
         }
 
         // Categorize by layout
-        match type_def.flags & 0x18 {
+        match type_def.flags.bits() & 0x18 {
             // TypeAttributes.LayoutMask
             0x00 => type_categories.auto_layout += 1, // AutoLayout
             0x08 => type_categories.sequential_layout += 1, // SequentialLayout
@@ -93,7 +93,7 @@ fn print_type_registry_analysis(assembly: &CilObject) {
         }
 
         // Categorize by semantics
-        match type_def.flags & 0x20 {
+        match type_def.flags.bits() & 0x20 {
             // TypeAttributes.ClassSemanticsMask
             0x00 => type_categories.class_types += 1, // Class
             0x20 => type_categories.interface_types += 1, // Interface
@@ -101,15 +101,15 @@ fn print_type_registry_analysis(assembly: &CilObject) {
         }
 
         // Check for special types
-        if type_def.flags & 0x80 != 0 {
+        if type_def.flags.bits() & 0x80 != 0 {
             // Abstract
             type_categories.abstract_types += 1;
         }
-        if type_def.flags & 0x100 != 0 {
+        if type_def.flags.bits() & 0x100 != 0 {
             // Sealed
             type_categories.sealed_types += 1;
         }
-        if type_def.flags & 0x400 != 0 {
+        if type_def.flags.bits() & 0x400 != 0 {
             // Serializable
             type_categories.serializable_types += 1;
         }
@@ -244,7 +244,7 @@ fn print_inheritance_analysis(assembly: &CilObject) {
 
         // Check for interface implementations
         // Note: This would require analyzing the InterfaceImpl table in a real implementation
-        if type_def.flags & 0x20 == 0 {
+        if type_def.flags.bits() & 0x20 == 0 {
             // Not an interface itself
             // This is a placeholder - real implementation would check InterfaceImpl table
             inheritance_stats.types_implementing_interfaces += 1;
@@ -282,7 +282,7 @@ fn print_interface_analysis(assembly: &CilObject) {
     let mut interface_names = Vec::new();
 
     for type_def in types.all_types().iter().take(100) {
-        if type_def.flags & 0x20 != 0 {
+        if type_def.flags.bits() & 0x20 != 0 {
             // Interface flag
             interface_stats.interface_count += 1;
             interface_names.push(format!("{}.{}", type_def.namespace, type_def.name));

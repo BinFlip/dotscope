@@ -293,55 +293,179 @@ macro_rules! for_each_read {
     };
 }
 
-/// Implements operator traits for a newtype wrapper around a primitive.
+/// Generates a newtype wrapper for metadata flag/attribute types.
 ///
-/// Given a newtype `$name` wrapping an inner type `$inner`, this macro implements:
-/// - [`std::ops::Deref`] — enables transparent access to inner type methods (e.g., `.to_le_bytes()`)
-/// - [`std::cmp::PartialEq<$inner>`] — enables `field == 0x8004`
-/// - [`std::cmp::PartialOrd<$inner>`] — enables `field > 0x0001`
-/// - [`std::ops::BitAnd<$inner>`] — enables `field & 0x2000 != 0`
-/// - [`std::fmt::UpperHex`] / [`std::fmt::LowerHex`] — enables `format!("0x{:08X}", field)`
+/// This macro creates a strongly-typed flags struct with a comprehensive set of trait
+/// implementations for bitwise operations, formatting, conversion, and comparison.
+/// It replaces the previous patterns of `pub mod Name { pub const X: u32 }` const
+/// modules and `bitflags!` macro invocations with a single unified pattern that
+/// provides type safety and consistent API across all metadata flag types.
+///
+/// # Generated API
+///
+/// For a declaration `metadata_flags! { pub struct Foo(u32); }`, the macro generates:
+///
+/// ## Derives and Traits
+/// - `Clone`, `Copy`, `PartialEq`, `Eq`, `Hash` (derived)
+/// - `Debug` — formats as `Foo(0xVALUE)`
+/// - `UpperHex`, `LowerHex` — delegates to inner type
+/// - `BitOr<Self>`, `BitAnd<Self>`, `BitOrAssign`, `BitAndAssign`, `Not`
+/// - `From<inner>` — construct from raw value
+///
+/// ## Methods
+/// - `pub const fn new(v: inner) -> Self` — construct from raw value (const)
+/// - `pub const fn bits(self) -> inner` — extract raw value
+/// - `pub const fn contains(self, other: Self) -> bool` — test if all bits in `other` are set
+/// - `pub const fn is_empty(self) -> bool` — test if no bits are set
+///
+/// ## Constants
+/// - `pub const ZERO: Self = Self(0)` — the zero/empty value
 ///
 /// # Usage
 ///
 /// ```rust,ignore
-/// #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-/// pub struct Machine(pub u16);
+/// metadata_flags! {
+///     /// ECMA-335 §II.23.1.15 TypeDef attribute flags.
+///     pub struct TypeAttributes(u32);
+/// }
 ///
-/// newtype_ops!(Machine, u16);
+/// impl TypeAttributes {
+///     pub const PUBLIC: Self = Self(0x0000_0001);
+///     pub const SEALED: Self = Self(0x0000_0100);
+///     // ...
+/// }
 /// ```
-macro_rules! newtype_ops {
-    ($name:ident, $inner:ty) => {
-        impl std::ops::Deref for $name {
-            type Target = $inner;
-            fn deref(&self) -> &$inner {
-                &self.0
+///
+/// # Design Rationale
+///
+/// Unlike `bitflags!`, this macro intentionally keeps the `impl` block separate so that
+/// each flag constant can retain its full doc comment describing ECMA-335 semantics.
+/// The macro only generates the boilerplate traits; domain-specific constants, keyword
+/// methods, predicates, and `Display` impls are written manually in the `impl` block.
+macro_rules! metadata_flags {
+    (
+        $(#[$outer:meta])*
+        $vis:vis struct $Name:ident($inner:ty);
+    ) => {
+        $(#[$outer])*
+        #[derive(Clone, Copy, PartialEq, Eq, Hash)]
+        $vis struct $Name($inner);
+
+        impl $Name {
+            /// The zero (empty) value with no flags set.
+            pub const ZERO: Self = Self(0);
+
+            /// Constructs a new flags value from a raw integer.
+            #[inline]
+            #[must_use]
+            pub const fn new(v: $inner) -> Self {
+                Self(v)
+            }
+
+            /// Returns the raw integer value of the flags.
+            #[inline]
+            #[must_use]
+            pub const fn bits(self) -> $inner {
+                self.0
+            }
+
+            /// Returns `true` if all bits in `other` are set in `self`.
+            #[inline]
+            #[must_use]
+            pub const fn contains(self, other: Self) -> bool {
+                (self.0 & other.0) == other.0
+            }
+
+            /// Returns `true` if no flags are set.
+            #[inline]
+            #[must_use]
+            pub const fn is_empty(self) -> bool {
+                self.0 == 0
             }
         }
-        impl PartialEq<$inner> for $name {
-            fn eq(&self, other: &$inner) -> bool {
-                self.0 == *other
+
+        impl std::fmt::Debug for $Name {
+            fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                write!(f, "{}(0x{:X})", stringify!($Name), self.0)
             }
         }
-        impl PartialOrd<$inner> for $name {
-            fn partial_cmp(&self, other: &$inner) -> Option<std::cmp::Ordering> {
-                self.0.partial_cmp(other)
-            }
-        }
-        impl std::ops::BitAnd<$inner> for $name {
-            type Output = $inner;
-            fn bitand(self, rhs: $inner) -> $inner {
-                self.0 & rhs
-            }
-        }
-        impl std::fmt::UpperHex for $name {
+
+        impl std::fmt::UpperHex for $Name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 std::fmt::UpperHex::fmt(&self.0, f)
             }
         }
-        impl std::fmt::LowerHex for $name {
+
+        impl std::fmt::LowerHex for $Name {
             fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
                 std::fmt::LowerHex::fmt(&self.0, f)
+            }
+        }
+
+        impl std::ops::BitOr for $Name {
+            type Output = Self;
+            #[inline]
+            fn bitor(self, rhs: Self) -> Self {
+                Self(self.0 | rhs.0)
+            }
+        }
+
+        impl std::ops::BitAnd for $Name {
+            type Output = Self;
+            #[inline]
+            fn bitand(self, rhs: Self) -> Self {
+                Self(self.0 & rhs.0)
+            }
+        }
+
+        impl std::ops::BitOrAssign for $Name {
+            #[inline]
+            fn bitor_assign(&mut self, rhs: Self) {
+                self.0 |= rhs.0;
+            }
+        }
+
+        impl std::ops::BitAndAssign for $Name {
+            #[inline]
+            fn bitand_assign(&mut self, rhs: Self) {
+                self.0 &= rhs.0;
+            }
+        }
+
+        impl std::ops::Not for $Name {
+            type Output = Self;
+            #[inline]
+            fn not(self) -> Self {
+                Self(!self.0)
+            }
+        }
+
+        impl From<$inner> for $Name {
+            #[inline]
+            fn from(v: $inner) -> Self {
+                Self(v)
+            }
+        }
+
+        impl std::ops::Deref for $Name {
+            type Target = $inner;
+            #[inline]
+            fn deref(&self) -> &$inner {
+                &self.0
+            }
+        }
+
+        impl PartialEq<$inner> for $Name {
+            #[inline]
+            fn eq(&self, other: &$inner) -> bool {
+                self.0 == *other
+            }
+        }
+
+        impl PartialOrd<$inner> for $Name {
+            #[inline]
+            fn partial_cmp(&self, other: &$inner) -> Option<std::cmp::Ordering> {
+                self.0.partial_cmp(other)
             }
         }
     };

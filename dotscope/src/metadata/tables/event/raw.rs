@@ -23,7 +23,9 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     metadata::{
         streams::Strings,
-        tables::{CodedIndex, CodedIndexType, Event, EventRc, TableInfoRef, TableRow},
+        tables::{
+            CodedIndex, CodedIndexType, Event, EventAttributes, EventRc, TableInfoRef, TableRow,
+        },
         token::Token,
         typesystem::TypeRegistry,
     },
@@ -111,7 +113,7 @@ impl EventRaw {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
-            flags: self.flags,
+            flags: EventAttributes::new(self.flags),
             name: strings.get(self.name as usize)?.to_string(),
             event_type: match types.get(&self.event_type.token) {
                 Some(parent) => parent.into(),

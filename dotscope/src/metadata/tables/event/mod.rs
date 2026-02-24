@@ -110,27 +110,30 @@ pub type EventList = Arc<boxcar::Vec<EventRc>>;
 /// Multiple references can safely point to the same event data across threads.
 pub type EventRc = Arc<Event>;
 
-#[allow(non_snake_case)]
-/// Event flags bit field constants
-///
-/// Defines event-level attributes that control event behavior and special naming conventions.
-/// These flags are stored in the Event table's `EventFlags` field and indicate whether the
-/// event has special meaning or requires special handling by the runtime.
-///
-/// # Reference
-/// - [ECMA-335 II.23.1.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `EventAttributes` enumeration
-pub mod EventAttributes {
-    /// Event has a special name
+metadata_flags! {
+    /// Event attribute flags as defined in ECMA-335 (§II.23.1.4).
+    ///
+    /// Strongly-typed wrapper around the 2-byte `Event.EventFlags` bitmask that controls
+    /// event behavior and special naming conventions. These flags indicate whether the
+    /// event has special meaning or requires special handling by the runtime.
+    ///
+    /// ## Reference
+    /// - [ECMA-335 II.23.1.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `EventAttributes` enumeration
+    pub struct EventAttributes(u32);
+}
+
+impl EventAttributes {
+    /// Event has a special name.
     ///
     /// Indicates that the event's name is special and should be treated accordingly
     /// by development tools. This is typically used for events that follow specific
     /// naming conventions or have special significance in the type system.
-    pub const SPECIAL_NAME: u32 = 0x0200;
+    pub const SPECIAL_NAME: Self = Self(0x0200);
 
-    /// Runtime provides special behavior based on the event name
+    /// Runtime provides special behavior based on the event name.
     ///
     /// The Common Language Infrastructure provides special behavior for this event,
     /// depending upon the name of the event. This flag indicates that the runtime
     /// will recognize and handle this event in a special way.
-    pub const RTSPECIAL_NAME: u32 = 0x0400;
+    pub const RTSPECIAL_NAME: Self = Self(0x0400);
 }

@@ -121,7 +121,9 @@ use crate::{
         streams::Blob,
         tables::{GenericParamList, MetadataTable, MethodSpecList, ParamList, StandAloneSigRaw},
         token::Token,
-        typesystem::{CilModifier, CilTypeRc, CilTypeRef, TypeRegistry, TypeResolver},
+        typesystem::{
+            CilModifier, CilTypeRc, CilTypeRef, CilTypeReference, TypeRegistry, TypeResolver,
+        },
     },
     utils::VisitedMap,
     CilObject,
@@ -511,9 +513,10 @@ pub struct Method {
     pub body: OnceLock<MethodBody>,
     /// The local variables
     pub local_vars: Arc<boxcar::Vec<LocalVariable>>,
-    /// Overridden method if this is an override
-    /// (from `MethodImpl` table where `MethodBody` points to this method)
-    pub overrides: OnceLock<MethodRef>,
+    /// Overridden method declarations for `.override` directive emission
+    /// (from `MethodImpl` table where `MethodBody` points to this method).
+    /// A method can implement multiple interface methods via separate MethodImpl rows.
+    pub overrides: Arc<boxcar::Vec<CilTypeReference>>,
     /// Implemented interface methods
     /// (from `MethodImpl` table entries for this type)
     pub interface_impls: MethodRefList,

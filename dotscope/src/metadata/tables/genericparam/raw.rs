@@ -28,7 +28,8 @@ use crate::{
     metadata::{
         streams::Strings,
         tables::{
-            CodedIndex, CodedIndexType, GenericParam, GenericParamRc, TableInfoRef, TableRow,
+            CodedIndex, CodedIndexType, GenericParam, GenericParamAttributes, GenericParamRc,
+            TableInfoRef, TableRow,
         },
         token::Token,
         typesystem::CilTypeReference,
@@ -164,7 +165,7 @@ impl GenericParamRaw {
             token: self.token,
             offset: self.offset,
             number: self.number,
-            flags: self.flags,
+            flags: GenericParamAttributes::new(self.flags),
             owner,
             constraints: Arc::new(boxcar::Vec::new()),
             name: strings.get(self.name as usize)?.to_string(),

@@ -8,7 +8,7 @@
 use crate::{
     cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
-        tables::{CodedIndex, ImplMapRaw, TableDataOwned, TableId},
+        tables::{CodedIndex, ImplMapRaw, PInvokeAttributes, TableDataOwned, TableId},
         token::Token,
     },
     Error, Result,
@@ -108,7 +108,7 @@ use crate::{
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct ImplMapBuilder {
-    mapping_flags: Option<u32>,
+    mapping_flags: Option<PInvokeAttributes>,
     member_forwarded: Option<CodedIndex>,
     import_name: Option<String>,
     import_scope: Option<u32>,
@@ -163,7 +163,7 @@ impl ImplMapBuilder {
     ///     );
     /// ```
     #[must_use]
-    pub fn mapping_flags(mut self, flags: u32) -> Self {
+    pub fn mapping_flags(mut self, flags: PInvokeAttributes) -> Self {
         self.mapping_flags = Some(flags);
         self
     }
@@ -318,7 +318,7 @@ impl ImplMapBuilder {
             rid: 0,
             token: Token::new(0),
             offset: 0,
-            mapping_flags: self.mapping_flags.unwrap_or(0),
+            mapping_flags: self.mapping_flags.unwrap_or(PInvokeAttributes::ZERO).bits(),
             member_forwarded,
             import_name: import_name_index,
             import_scope,

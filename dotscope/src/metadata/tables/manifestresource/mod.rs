@@ -37,7 +37,6 @@
 //! - ECMA-335, Partition II, §22.24: `ManifestResource` table specification
 //! - ECMA-335, Partition II, §23.2.7: Implementation coded index encoding
 //! - ECMA-335, Partition II, §6.2.2: Resources and resource management
-use bitflags::bitflags;
 use crossbeam_skiplist::SkipMap;
 use std::sync::Arc;
 
@@ -73,24 +72,25 @@ pub type ManifestResourceList = Arc<boxcar::Vec<ManifestResourceRc>>;
 /// without duplication, supporting concurrent access patterns in resource processing.
 pub type ManifestResourceRc = Arc<ManifestResource>;
 
-bitflags! {
+metadata_flags! {
     /// Resource visibility and access control attributes for ManifestResource entries.
     ///
     /// These flags control the visibility and accessibility of resources within
     /// and across assembly boundaries, providing security and encapsulation for
     /// resource access in .NET applications.
-    #[derive(PartialEq, Debug)]
-    pub struct ManifestResourceAttributes : u32 {
-        /// Resource is exported and accessible from external assemblies.
-        ///
-        /// Public resources can be accessed by other assemblies and runtime systems,
-        /// enabling cross-assembly resource sharing and component integration.
-        const PUBLIC = 0x0001;
+    pub struct ManifestResourceAttributes(u32);
+}
 
-        /// Resource is private and restricted to the declaring assembly.
-        ///
-        /// Private resources are only accessible within the declaring assembly,
-        /// providing encapsulation and preventing external access to sensitive data.
-        const PRIVATE = 0x0002;
-    }
+impl ManifestResourceAttributes {
+    /// Resource is exported and accessible from external assemblies.
+    ///
+    /// Public resources can be accessed by other assemblies and runtime systems,
+    /// enabling cross-assembly resource sharing and component integration.
+    pub const PUBLIC: Self = Self(0x0001);
+
+    /// Resource is private and restricted to the declaring assembly.
+    ///
+    /// Private resources are only accessible within the declaring assembly,
+    /// providing encapsulation and preventing external access to sensitive data.
+    pub const PRIVATE: Self = Self(0x0002);
 }

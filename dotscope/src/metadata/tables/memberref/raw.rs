@@ -21,8 +21,8 @@ use crate::{
         },
         streams::{Blob, Strings},
         tables::{
-            CodedIndex, CodedIndexType, MemberRef, MemberRefRc, MemberRefSignature, Param, ParamRc,
-            TableInfoRef, TableRow,
+            CodedIndex, CodedIndexType, MemberRef, MemberRefRc, MemberRefSignature, Param,
+            ParamAttributes, ParamRc, TableInfoRef, TableRow,
         },
         token::Token,
         typesystem::{CilTypeReference, TypeRegistry},
@@ -128,7 +128,7 @@ impl MemberRefRaw {
             rid: 0,               // No actual row ID for MemberRef params
             token: Token::new(0), // Placeholder token
             offset: 0,
-            flags: 0,
+            flags: ParamAttributes::ZERO,
             sequence: 0, // Return parameter
             name: None,  // MemberRef parameters don't have names from metadata
             default: OnceLock::new(),
@@ -146,7 +146,7 @@ impl MemberRefRaw {
                 rid: 0,               // No actual row ID for MemberRef params
                 token: Token::new(0), // Placeholder token
                 offset: 0,
-                flags: 0,
+                flags: ParamAttributes::ZERO,
                 #[allow(clippy::cast_possible_truncation)]
                 sequence: (index + 1) as u32, // Parameter sequence starts at 1
                 name: None, // MemberRef parameters don't have names from metadata

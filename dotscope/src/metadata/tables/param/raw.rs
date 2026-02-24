@@ -8,7 +8,7 @@ use std::sync::{atomic::AtomicBool, Arc, OnceLock};
 use crate::{
     metadata::{
         streams::Strings,
-        tables::{Param, ParamRc, TableInfoRef, TableRow},
+        tables::{Param, ParamAttributes, ParamRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -145,7 +145,7 @@ impl ParamRaw {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
-            flags: self.flags,
+            flags: ParamAttributes::new(self.flags),
             sequence: self.sequence,
             name: if self.name != 0 {
                 Some(strings.get(self.name as usize)?.to_string())

@@ -71,12 +71,9 @@ use rayon::prelude::*;
 use std::collections::HashSet;
 
 use crate::{
-    metadata::{
-        tables::TypeAttributes,
-        validation::{
-            context::{OwnedValidationContext, ValidationContext},
-            traits::OwnedValidator,
-        },
+    metadata::validation::{
+        context::{OwnedValidationContext, ValidationContext},
+        traits::OwnedValidator,
     },
     Error, Result,
 };
@@ -153,11 +150,11 @@ impl OwnedTypeOwnershipValidator {
 
                         // Validate basic nested type structure - be more lenient with visibility
                         // Some legitimate nested types may have visibility 0x00 (NotPublic) which is valid
-                        let nested_visibility = nested_type.flags & TypeAttributes::VISIBILITY_MASK;
+                        let nested_visibility = nested_type.flags.visibility();
 
                         // Only reject clearly invalid visibility combinations
                         // Allow NotPublic (0) as it can be valid for nested types in some contexts
-                        if nested_visibility > 7 {
+                        if nested_visibility.bits() > 7 {
                             // Beyond valid visibility range
                             return Err(Error::ValidationOwnedFailed {
                                 validator: self.name().to_string(),
@@ -230,7 +227,7 @@ impl OwnedTypeOwnershipValidator {
                 }
 
                 // Validate basic field accessibility flags
-                let field_visibility = field_ref.flags & 0x0007; // FieldAttributes visibility mask
+                let field_visibility = field_ref.flags.access().bits();
                 if field_visibility > 6 {
                     // Invalid visibility value
                     return Err(Error::ValidationOwnedFailed {

@@ -415,10 +415,10 @@ impl RawGenericConstraintValidator {
 
         if let Some(generic_param_table) = tables.table::<GenericParamRaw>() {
             for generic_param in generic_param_table {
-                let flags = generic_param.flags;
+                let flags = GenericParamAttributes::new(generic_param.flags);
 
-                if (flags & GenericParamAttributes::COVARIANT) != 0
-                    && (flags & GenericParamAttributes::CONTRAVARIANT) != 0
+                if flags.contains(GenericParamAttributes::COVARIANT)
+                    && flags.contains(GenericParamAttributes::CONTRAVARIANT)
                 {
                     return Err(malformed_error!(
                         "GenericParam RID {} has both covariant and contravariant flags set",
@@ -426,16 +426,16 @@ impl RawGenericConstraintValidator {
                     ));
                 }
 
-                if (flags & GenericParamAttributes::RESERVED_MASK) != 0 {
+                if (flags & GenericParamAttributes::RESERVED_MASK) != GenericParamAttributes::ZERO {
                     return Err(malformed_error!(
                         "GenericParam RID {} has reserved flag bits set: 0x{:04X}",
                         generic_param.rid,
-                        flags & GenericParamAttributes::RESERVED_MASK
+                        (flags & GenericParamAttributes::RESERVED_MASK).bits()
                     ));
                 }
 
-                if (flags & GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT) != 0
-                    && (flags & GenericParamAttributes::NOT_NULLABLE_VALUE_TYPE_CONSTRAINT) != 0
+                if flags.contains(GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT)
+                    && flags.contains(GenericParamAttributes::NOT_NULLABLE_VALUE_TYPE_CONSTRAINT)
                 {
                     return Err(malformed_error!(
                         "GenericParam RID {} has conflicting reference type and value type constraints",

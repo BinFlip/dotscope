@@ -338,7 +338,7 @@ impl MethodDefRaw {
             rva: if self.rva == 0 { None } else { Some(self.rva) },
             body: OnceLock::new(),
             local_vars: Arc::new(boxcar::Vec::new()),
-            overrides: OnceLock::new(),
+            overrides: Arc::new(boxcar::Vec::new()),
             interface_impls: Arc::new(boxcar::Vec::new()),
             security: OnceLock::new(),
             blocks: OnceLock::new(),

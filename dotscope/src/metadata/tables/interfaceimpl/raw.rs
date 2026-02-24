@@ -17,11 +17,11 @@ use std::sync::Arc;
 use crate::{
     metadata::{
         tables::{
-            CodedIndex, CodedIndexType, InterfaceImpl, InterfaceImplRc, TableId, TableInfoRef,
-            TableRow,
+            CodedIndex, CodedIndexType, InterfaceEntry, InterfaceImpl, InterfaceImplRc, TableId,
+            TableInfoRef, TableRow,
         },
         token::Token,
-        typesystem::TypeRegistry,
+        typesystem::{CilTypeRef, TypeRegistry},
     },
     Result,
 };
@@ -109,7 +109,10 @@ impl InterfaceImplRaw {
 
         match types.get(&Token::new(self.class | 0x0200_0000)) {
             Some(class) => {
-                class.interfaces.push(interface.into());
+                class.interfaces.push(InterfaceEntry {
+                    interface: CilTypeRef::new(&interface),
+                    custom_attributes: Arc::new(boxcar::Vec::new()),
+                });
                 Ok(())
             }
             None => Err(malformed_error!(

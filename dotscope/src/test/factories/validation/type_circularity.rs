@@ -78,7 +78,7 @@ pub fn create_assembly_with_inheritance_circularity() -> Result<TestAssembly> {
             rid: class_a_token.row(),
             token: class_a_token,
             offset: 0,
-            flags: TypeAttributes::PUBLIC | TypeAttributes::CLASS,
+            flags: (TypeAttributes::PUBLIC | TypeAttributes::CLASS).bits(),
             type_name: class_a_name_index.placeholder(),
             type_namespace: test_namespace_index.placeholder(),
             extends: CodedIndex::new(
@@ -94,7 +94,7 @@ pub fn create_assembly_with_inheritance_circularity() -> Result<TestAssembly> {
             rid: class_b_token.row(),
             token: class_b_token,
             offset: 0,
-            flags: TypeAttributes::PUBLIC | TypeAttributes::CLASS,
+            flags: (TypeAttributes::PUBLIC | TypeAttributes::CLASS).bits(),
             type_name: class_b_name_index.placeholder(),
             type_namespace: test_namespace_index.placeholder(),
             extends: CodedIndex::new(

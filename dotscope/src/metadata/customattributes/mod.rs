@@ -41,7 +41,7 @@
 //! let result = parse_custom_attribute_data(blob_data, &constructor_method.params)?;
 //!
 //! match result {
-//!     CustomAttributeValue { fixed_args, named_args } => {
+//!     CustomAttributeValue { fixed_args, named_args, .. } => {
 //!         println!("Found {} fixed arguments and {} named arguments",
 //!                  fixed_args.len(), named_args.len());
 //!         
@@ -130,7 +130,7 @@ mod tests {
         parse_custom_attribute_data_with_registry, CustomAttributeArgument,
         CustomAttributeNamedArgument, CustomAttributeValue,
     };
-    use crate::metadata::typesystem::CilFlavor;
+    use crate::metadata::typesystem::{CilFlavor, CilTypeReference};
     use crate::test::factories::metadata::customattributes::{
         create_constructor_with_params_and_registry, create_empty_method,
         create_method_with_params, get_test_type_registry,
@@ -167,6 +167,8 @@ mod tests {
         let original = CustomAttributeValue {
             fixed_args: vec![],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode
@@ -189,6 +191,8 @@ mod tests {
                 CustomAttributeArgument::Bool(false),
             ],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode
@@ -228,6 +232,8 @@ mod tests {
                 CustomAttributeArgument::U8(18446744073709551615),
             ],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode
@@ -268,6 +274,8 @@ mod tests {
                 CustomAttributeArgument::R8(std::f64::consts::E),
             ],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode
@@ -302,6 +310,8 @@ mod tests {
                 CustomAttributeArgument::Char('Z'), // Use BMP character instead of emoji
             ],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode
@@ -338,6 +348,8 @@ mod tests {
                 CustomAttributeArgument::String("Unicode: 你好世界 🌍".to_string()),
             ],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode
@@ -378,6 +390,8 @@ mod tests {
                 ),
             ],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode
@@ -425,6 +439,8 @@ mod tests {
                 CustomAttributeArgument::Array(vec![]), // Empty array
             ],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Note: Array arguments in fixed args require complex type setup
@@ -462,6 +478,8 @@ mod tests {
                 ),
             ],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode
@@ -527,6 +545,8 @@ mod tests {
                     value: CustomAttributeArgument::Bool(true),
                 },
             ],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode
@@ -583,6 +603,8 @@ mod tests {
                 arg_type: "String".to_string(),
                 value: CustomAttributeArgument::String("Extra Data".to_string()),
             }],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode
@@ -631,6 +653,8 @@ mod tests {
                 CustomAttributeArgument::R8(f64::NEG_INFINITY),
             ],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode
@@ -707,6 +731,8 @@ mod tests {
                 arg_type: "String".to_string(),
                 value: CustomAttributeArgument::String(large_string.clone()),
             }],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode

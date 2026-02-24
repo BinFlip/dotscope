@@ -149,7 +149,9 @@ impl CustomAttribute {
     /// custom attribute collection. Multiple threads can safely call this method concurrently
     /// on different custom attributes.
     pub fn apply(&self) -> Result<()> {
-        let attribute_value = Arc::new(self.value.clone());
+        let mut value = self.value.clone();
+        value.constructor = self.constructor.clone();
+        let attribute_value = Arc::new(value);
 
         match &self.parent {
             CilTypeReference::TypeDef(entry)

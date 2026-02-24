@@ -48,6 +48,7 @@ use crate::{
         streams::Strings,
         tables::{
             CodedIndex, CodedIndexType, ExportedType, ExportedTypeRc, TableInfoRef, TableRow,
+            TypeAttributes,
         },
         token::Token,
         typesystem::CilTypeReference,
@@ -189,7 +190,7 @@ impl ExportedTypeRaw {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
-            flags: self.flags,
+            flags: TypeAttributes::new(self.flags),
             type_def_id: self.type_def_id | 0x0200_0000,
             name: string.get(self.name as usize)?.to_string(),
             namespace: if self.namespace == 0 {

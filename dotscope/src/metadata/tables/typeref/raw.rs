@@ -25,7 +25,7 @@ use std::sync::Arc;
 use crate::{
     metadata::{
         streams::Strings,
-        tables::{CodedIndex, CodedIndexType, TableInfoRef, TableRow},
+        tables::{CodedIndex, CodedIndexType, TableInfoRef, TableRow, TypeAttributes},
         token::Token,
         typesystem::{CilType, CilTypeRc, CilTypeReference},
     },
@@ -153,7 +153,7 @@ impl TypeRefRaw {
             strings.get(self.type_name as usize)?.to_string(),
             resolution_scope,
             None,
-            0,
+            TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
             None,

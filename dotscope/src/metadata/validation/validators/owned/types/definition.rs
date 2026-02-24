@@ -217,7 +217,7 @@ impl OwnedTypeDefinitionValidator {
             let flags = type_entry.flags;
 
             // Validate visibility attributes
-            let visibility = flags & TypeAttributes::VISIBILITY_MASK;
+            let visibility = flags.visibility();
             if !Self::is_valid_visibility_attribute(visibility) {
                 return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
@@ -229,7 +229,7 @@ impl OwnedTypeDefinitionValidator {
             }
 
             // Validate layout attributes
-            let layout = flags & TypeAttributes::LAYOUT_MASK;
+            let layout = flags.layout();
             if !Self::is_valid_layout_attribute(layout) {
                 return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
@@ -253,7 +253,7 @@ impl OwnedTypeDefinitionValidator {
             }
 
             // Validate string format attributes
-            let string_format = flags & TypeAttributes::STRING_FORMAT_MASK;
+            let string_format = flags.string_format();
             if !Self::is_valid_string_format_attribute(string_format) {
                 return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
@@ -265,16 +265,16 @@ impl OwnedTypeDefinitionValidator {
             }
 
             // Validate mutually exclusive flags (but allow static classes: abstract + sealed)
-            if flags & TypeAttributes::ABSTRACT != 0 && flags & 0x0000_0100 != 0 {
+            if flags.is_abstract() && flags.is_sealed() {
                 // SEALED - this is valid for static classes in C#
                 // Static classes are marked as both abstract and sealed by the compiler
                 // We allow this legitimate pattern
             }
 
             // Validate interface constraints
-            if flags & TypeAttributes::INTERFACE != 0 {
+            if flags.is_interface() {
                 // Interfaces must be abstract
-                if flags & TypeAttributes::ABSTRACT == 0 {
+                if !flags.is_abstract() {
                     return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: {
@@ -285,8 +285,7 @@ impl OwnedTypeDefinitionValidator {
                 }
 
                 // Interfaces cannot be sealed
-                if flags & 0x0000_0100 != 0 {
-                    // SEALED
+                if flags.is_sealed() {
                     return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: {
@@ -311,7 +310,7 @@ impl OwnedTypeDefinitionValidator {
             let flags = type_entry.flags;
 
             // Validate interface flavor consistency
-            if *flavor == CilFlavor::Interface && flags & TypeAttributes::INTERFACE == 0 {
+            if *flavor == CilFlavor::Interface && !flags.is_interface() {
                 return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: {
@@ -325,7 +324,7 @@ impl OwnedTypeDefinitionValidator {
 
             // Validate that interfaces don't have conflicting flavors
             // GenericInstance is also valid for interface types (e.g., IList<T> instantiations)
-            if flags & TypeAttributes::INTERFACE != 0
+            if flags.is_interface()
                 && !matches!(flavor, CilFlavor::Interface | CilFlavor::GenericInstance)
             {
                 return Err(Error::ValidationOwnedFailed {
@@ -374,16 +373,14 @@ impl OwnedTypeDefinitionValidator {
             let flags = type_entry.flags;
 
             // Validate BeforeFieldInit usage
-            if flags & 0x0010_0000 != 0 {
-                // BEFORE_FIELD_INIT
+            if flags.contains(TypeAttributes::BEFORE_FIELD_INIT) {
                 // This flag can appear on interfaces in legitimate .NET assemblies
                 // especially for compiler-generated or system interfaces
                 // We allow this pattern
             }
 
             // Validate SpecialName usage
-            if flags & 0x0000_0400 != 0 {
-                // SPECIAL_NAME
+            if flags.contains(TypeAttributes::SPECIAL_NAME) {
                 // Special names should follow specific patterns
                 if !type_entry.name.starts_with('<')
                     && !type_entry.name.contains('$')
@@ -403,11 +400,9 @@ impl OwnedTypeDefinitionValidator {
             }
 
             // Validate RTSpecialName usage
-            if flags & 0x0000_0800 != 0 {
-                // RT_SPECIAL_NAME
+            if flags.contains(TypeAttributes::RT_SPECIAL_NAME) {
                 // RTSpecialName requires SpecialName
-                if flags & 0x0000_0400 == 0 {
-                    // SPECIAL_NAME
+                if !flags.contains(TypeAttributes::SPECIAL_NAME) {
                     return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: {
@@ -419,8 +414,7 @@ impl OwnedTypeDefinitionValidator {
             }
 
             // Validate Import flag usage
-            if flags & 0x0000_1000 != 0 {
-                // IMPORT
+            if flags.contains(TypeAttributes::IMPORT) {
                 // Import types can be classes or interfaces in legitimate .NET assemblies
                 // The IMPORT flag indicates the type is imported from another module
                 // This is valid for various types, not just interfaces
@@ -431,7 +425,7 @@ impl OwnedTypeDefinitionValidator {
     }
 
     /// Checks if a visibility attribute is valid.
-    fn is_valid_visibility_attribute(visibility: u32) -> bool {
+    fn is_valid_visibility_attribute(visibility: TypeAttributes) -> bool {
         matches!(
             visibility,
             TypeAttributes::NOT_PUBLIC
@@ -446,7 +440,7 @@ impl OwnedTypeDefinitionValidator {
     }
 
     /// Checks if a layout attribute is valid.
-    fn is_valid_layout_attribute(layout: u32) -> bool {
+    fn is_valid_layout_attribute(layout: TypeAttributes) -> bool {
         matches!(
             layout,
             TypeAttributes::AUTO_LAYOUT
@@ -456,7 +450,7 @@ impl OwnedTypeDefinitionValidator {
     }
 
     /// Checks if a class semantics attribute is valid.
-    fn is_valid_class_semantics_attribute(class_semantics: u32) -> bool {
+    fn is_valid_class_semantics_attribute(class_semantics: TypeAttributes) -> bool {
         matches!(
             class_semantics,
             TypeAttributes::CLASS | TypeAttributes::INTERFACE
@@ -464,7 +458,7 @@ impl OwnedTypeDefinitionValidator {
     }
 
     /// Checks if a string format attribute is valid.
-    fn is_valid_string_format_attribute(string_format: u32) -> bool {
+    fn is_valid_string_format_attribute(string_format: TypeAttributes) -> bool {
         matches!(
             string_format,
             TypeAttributes::ANSI_CLASS | TypeAttributes::UNICODE_CLASS | TypeAttributes::AUTO_CLASS

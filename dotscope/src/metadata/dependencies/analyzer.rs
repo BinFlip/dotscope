@@ -15,7 +15,7 @@ use crate::{
         },
         identity::{AssemblyIdentity, AssemblyVersion, Identity, ProcessorArchitecture},
         loader::LoaderContext,
-        tables::{AssemblyRefRaw, File, FileRaw, ModuleRef, ModuleRefRaw},
+        tables::{AssemblyRefRaw, File, FileAttributes, FileRaw, ModuleRef, ModuleRefRaw},
     },
     Error, Result,
 };
@@ -672,16 +672,12 @@ impl DependencyAnalyzer {
     /// # Returns
     /// Classification enum indicating the file type and tracking recommendation
     fn classify_file_ref(file_ref: &File) -> FileRefType {
-        // Check file attributes from the File table
-        const CONTAINS_META_DATA: u32 = 0x0000;
-        const CONTAINS_NO_META_DATA: u32 = 0x0001;
-
         let name = &file_ref.name;
         let flags = file_ref.flags;
         let path = std::path::Path::new(name);
 
         // Check for executable modules (.netmodule files)
-        if flags == CONTAINS_META_DATA && name.ends_with(".netmodule") {
+        if flags == FileAttributes::CONTAINS_META_DATA && name.ends_with(".netmodule") {
             return FileRefType::IntraAssemblyModule;
         }
 
@@ -690,7 +686,7 @@ impl DependencyAnalyzer {
         };
 
         // Check for resource files
-        if flags == CONTAINS_NO_META_DATA
+        if flags == FileAttributes::CONTAINS_NO_META_DATA
             && (extension.eq_ignore_ascii_case("resources")
                 || extension.eq_ignore_ascii_case("resx"))
         {
@@ -986,7 +982,7 @@ mod tests {
     fn test_classify_file_ref_intra_assembly_module() {
         let mut file = create_test_file("Module.netmodule");
         let file_mut = Arc::get_mut(&mut file).unwrap();
-        file_mut.flags = 0x0000; // CONTAINS_META_DATA
+        file_mut.flags = FileAttributes::CONTAINS_META_DATA;
 
         let classification = DependencyAnalyzer::classify_file_ref(&file);
         assert_eq!(classification, FileRefType::IntraAssemblyModule);
@@ -996,14 +992,14 @@ mod tests {
     fn test_classify_file_ref_resource_file() {
         let mut resources_file = create_test_file("Strings.resources");
         let file_mut = Arc::get_mut(&mut resources_file).unwrap();
-        file_mut.flags = 0x0001; // CONTAINS_NO_META_DATA
+        file_mut.flags = FileAttributes::CONTAINS_NO_META_DATA;
 
         let classification = DependencyAnalyzer::classify_file_ref(&resources_file);
         assert_eq!(classification, FileRefType::ResourceFile);
 
         let mut resx_file = create_test_file("Form.resx");
         let file_mut = Arc::get_mut(&mut resx_file).unwrap();
-        file_mut.flags = 0x0001; // CONTAINS_NO_META_DATA
+        file_mut.flags = FileAttributes::CONTAINS_NO_META_DATA;
 
         let classification = DependencyAnalyzer::classify_file_ref(&resx_file);
         assert_eq!(classification, FileRefType::ResourceFile);

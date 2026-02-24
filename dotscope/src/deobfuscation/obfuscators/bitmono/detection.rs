@@ -698,8 +698,7 @@ fn detect_antidecompiler(
         // AntiDecompiler sets Sealed (0x100) | ExplicitLayout (0x10) on nested <Module> types
         // Normal nested types of <Module> wouldn't have ExplicitLayout unless they're
         // legitimate value types (which are rare in <Module>)
-        let has_explicit_layout =
-            (nested.flags & TypeAttributes::LAYOUT_MASK) == TypeAttributes::EXPLICIT_LAYOUT;
+        let has_explicit_layout = nested.flags.layout() == TypeAttributes::EXPLICIT_LAYOUT;
         if nested.is_sealed() && has_explicit_layout && nested.name != "<Module>" {
             // Skip compiler-generated data holder types (FieldRVA backing types).
             // StringsEncryption creates nested types with names like "<>" or "__Static"

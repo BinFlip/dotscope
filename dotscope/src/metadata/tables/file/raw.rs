@@ -29,7 +29,7 @@ use std::sync::Arc;
 use crate::{
     metadata::{
         streams::{Blob, Strings},
-        tables::{AssemblyRefHash, File, FileRc, TableInfoRef, TableRow},
+        tables::{AssemblyRefHash, File, FileAttributes, FileRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -141,7 +141,7 @@ impl FileRaw {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
-            flags: self.flags,
+            flags: FileAttributes::new(self.flags),
             name: strings.get(self.name as usize)?.to_string(),
             hash_value: AssemblyRefHash::new(blob.get(self.hash_value as usize)?)?,
             custom_attributes: Arc::new(boxcar::Vec::new()),

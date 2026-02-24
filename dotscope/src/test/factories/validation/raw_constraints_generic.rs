@@ -6,8 +6,8 @@
 use crate::{
     metadata::{
         tables::{
-            CodedIndex, CodedIndexType, GenericParamBuilder, GenericParamConstraintRaw,
-            TableDataOwned, TableId, TypeDefBuilder,
+            CodedIndex, CodedIndexType, GenericParamAttributes, GenericParamBuilder,
+            GenericParamConstraintRaw, TableDataOwned, TableId, TypeAttributes, TypeDefBuilder,
         },
         token::Token,
     },
@@ -61,7 +61,7 @@ pub fn create_assembly_with_null_constraint_owner() -> Result<TestAssembly> {
         let typedef_token = TypeDefBuilder::new()
             .name("GenericType")
             .namespace("Test")
-            .flags(0x00100000)
+            .flags(TypeAttributes::BEFORE_FIELD_INIT)
             .build(assembly)?;
 
         let owner = CodedIndex::new(
@@ -72,7 +72,7 @@ pub fn create_assembly_with_null_constraint_owner() -> Result<TestAssembly> {
 
         let _generic_param_token = GenericParamBuilder::new()
             .number(0)
-            .flags(0x0000)
+            .flags(GenericParamAttributes::ZERO)
             .owner(owner)
             .name("T")
             .build(assembly)?;
@@ -109,7 +109,7 @@ pub fn create_assembly_with_constraint_owner_exceeding_bounds() -> Result<TestAs
         let typedef_token = TypeDefBuilder::new()
             .name("GenericType")
             .namespace("Test")
-            .flags(0x00100000)
+            .flags(TypeAttributes::BEFORE_FIELD_INIT)
             .build(assembly)?;
 
         let owner = CodedIndex::new(
@@ -120,7 +120,7 @@ pub fn create_assembly_with_constraint_owner_exceeding_bounds() -> Result<TestAs
 
         let _generic_param_token = GenericParamBuilder::new()
             .number(0)
-            .flags(0x0000)
+            .flags(GenericParamAttributes::ZERO)
             .owner(owner)
             .name("T")
             .build(assembly)?;
@@ -156,7 +156,7 @@ pub fn create_assembly_with_invalid_parameter_flags() -> Result<TestAssembly> {
         let typedef_builder = TypeDefBuilder::new()
             .name("GenericType")
             .namespace("Test")
-            .flags(0x00100000);
+            .flags(TypeAttributes::BEFORE_FIELD_INIT);
 
         let typedef_token = typedef_builder.build(assembly)?;
 
@@ -168,7 +168,7 @@ pub fn create_assembly_with_invalid_parameter_flags() -> Result<TestAssembly> {
 
         GenericParamBuilder::new()
             .number(0)
-            .flags(0x0003)
+            .flags(GenericParamAttributes::new(0x0003))
             .owner(owner)
             .name("T")
             .build(assembly)?;

@@ -13,6 +13,7 @@ use crate::{
             TableId,
         },
         token::Token,
+        typesystem::CilTypeReference,
     },
     test::{create_test_assembly, get_testfile_mscorlib, TestAssembly},
     Error, Result,
@@ -123,6 +124,8 @@ pub fn create_assembly_with_conflicting_security_attributes() -> Result<TestAsse
                 "SecurityCritical".to_string(),
             )],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let critical_blob = encode_custom_attribute_value(&critical_attr_value).map_err(|e| {
@@ -157,6 +160,8 @@ pub fn create_assembly_with_conflicting_security_attributes() -> Result<TestAsse
                 "SecurityTransparent".to_string(),
             )],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let transparent_blob =
@@ -210,6 +215,8 @@ pub fn create_assembly_with_security_transparency_violations() -> Result<TestAss
                 "SecurityCritical".to_string(),
             )],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let critical_blob = encode_custom_attribute_value(&critical_attr_value).map_err(|e| {
@@ -244,6 +251,8 @@ pub fn create_assembly_with_security_transparency_violations() -> Result<TestAss
                 "SecurityTransparent".to_string(),
             )],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let transparent_blob =

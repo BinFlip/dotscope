@@ -29,7 +29,9 @@
 use std::sync::atomic::AtomicU32;
 
 use crate::metadata::{
-    customattributes::CustomAttributeValueList, identity::Identity, tables::AssemblyRefHash,
+    customattributes::CustomAttributeValueList,
+    identity::Identity,
+    tables::{AssemblyFlags, AssemblyRefHash},
     token::Token,
 };
 
@@ -126,7 +128,7 @@ pub struct AssemblyRef {
     ///
     /// Bitmask specifying assembly attributes using [`crate::metadata::tables::AssemblyFlags`]
     /// constants. Controls behavior like public key format and retargetability.
-    pub flags: u32,
+    pub flags: AssemblyFlags,
 
     /// Strong name identity information
     ///

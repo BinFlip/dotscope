@@ -108,6 +108,13 @@ impl MethodImpl {
             }
         }
 
+        // Store the declaration on the body method for .override emission
+        if let CilTypeReference::MethodDef(body_ref) = &self.method_body {
+            if let Some(body_method) = body_ref.upgrade() {
+                body_method.overrides.push(self.method_declaration.clone());
+            }
+        }
+
         Ok(())
     }
 }

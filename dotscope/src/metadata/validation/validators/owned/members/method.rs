@@ -447,9 +447,7 @@ impl OwnedMethodValidator {
                 && !method
                     .flags_modifiers
                     .contains(MethodModifiers::SPECIAL_NAME)
-                && !method
-                    .impl_code_type
-                    .intersects(MethodImplCodeType::RUNTIME)
+                && !method.impl_code_type.contains(MethodImplCodeType::RUNTIME)
                 && !method
                     .impl_options
                     .contains(MethodImplOptions::INTERNAL_CALL)
@@ -526,9 +524,7 @@ impl OwnedMethodValidator {
                             });
                         }
 
-                        if method
-                            .impl_code_type
-                            .intersects(MethodImplCodeType::RUNTIME)
+                        if method.impl_code_type.contains(MethodImplCodeType::RUNTIME)
                             && method.rva.is_some()
                         {
                             return Err(Error::ValidationOwnedFailed {
@@ -544,9 +540,7 @@ impl OwnedMethodValidator {
                             && !method
                                 .flags_modifiers
                                 .contains(MethodModifiers::PINVOKE_IMPL)
-                            && !method
-                                .impl_code_type
-                                .intersects(MethodImplCodeType::RUNTIME)
+                            && !method.impl_code_type.contains(MethodImplCodeType::RUNTIME)
                             && !method
                                 .impl_options
                                 .contains(MethodImplOptions::INTERNAL_CALL)

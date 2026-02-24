@@ -7,7 +7,7 @@ use std::sync::{Arc, OnceLock};
 
 use crate::{
     metadata::{
-        tables::{ExportedType, ExportedTypeRc},
+        tables::{ExportedType, ExportedTypeRc, TypeAttributes},
         token::Token,
         typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeReference},
     },
@@ -21,7 +21,7 @@ pub struct CilTypeBuilder {
     name: String,
     external: Option<CilTypeReference>,
     flavor: Option<CilFlavor>,
-    flags: u32,
+    flags: TypeAttributes,
 }
 
 impl CilTypeBuilder {
@@ -32,7 +32,7 @@ impl CilTypeBuilder {
             name: "TestType".to_string(),
             external: None,
             flavor: Some(CilFlavor::Class),
-            flags: 0,
+            flags: TypeAttributes::ZERO,
         }
     }
 
@@ -130,7 +130,7 @@ pub fn create_exportedtype(dummy_type: CilTypeRc) -> ExportedTypeRc {
         rid: 1,
         token: Token::new(0x27000001),
         offset: 0,
-        flags: 0,
+        flags: TypeAttributes::ZERO,
         type_def_id: dummy_type.token.0,
         name: "ExportedType".to_string(),
         namespace: Some("Test.Namespace".to_string()),

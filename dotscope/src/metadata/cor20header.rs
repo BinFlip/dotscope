@@ -47,20 +47,17 @@
 //! ## Runtime Flag Analysis
 //!
 //! ```rust,no_run
-//! use dotscope::metadata::cor20header::Cor20Header;
+//! use dotscope::metadata::cor20header::{Cor20Flags, Cor20Header};
 //!
 //! let header_bytes: &[u8] = &[/* CLI header data */];
 //! let header = Cor20Header::read(&header_bytes)?;
 //!
-//! // Check common runtime flags
-//! const COMIMAGE_FLAGS_ILONLY: u32 = 0x00000001;
-//! const COMIMAGE_FLAGS_32BITREQUIRED: u32 = 0x00000002;
-//!
-//! if header.flags & COMIMAGE_FLAGS_ILONLY != 0 {
+//! // Check common runtime flags using typed constants
+//! if header.flags.contains(Cor20Flags::IL_ONLY) {
 //!     println!("Assembly contains only managed code");
 //! }
 //!
-//! if header.flags & COMIMAGE_FLAGS_32BITREQUIRED != 0 {
+//! if header.flags.contains(Cor20Flags::REQUIRED_32BIT) {
 //!     println!("Assembly requires 32-bit runtime");
 //! }
 //! # Ok::<(), dotscope::Error>(())
@@ -92,29 +89,49 @@ use crate::{file::parser::Parser, Result};
 use std::fmt;
 use std::io::Write;
 
-/// COR20 runtime flags wrapper with human-readable Display.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct Cor20Flags(pub u32);
+metadata_flags! {
+    /// COR20 runtime flags controlling .NET assembly behavior.
+    ///
+    /// These flags are stored in the CLI header (`IMAGE_COR20_HEADER`) and inform
+    /// the runtime about assembly characteristics such as IL-only code, strong
+    /// name signing, and platform preferences.
+    pub struct Cor20Flags(u32);
+}
+
+impl Cor20Flags {
+    /// Assembly contains only IL code (no native code).
+    pub const IL_ONLY: Self = Self(0x0001);
+    /// Assembly requires a 32-bit process.
+    pub const REQUIRED_32BIT: Self = Self(0x0002);
+    /// Assembly has a valid strong name signature.
+    pub const STRONG_NAME_SIGNED: Self = Self(0x0004);
+    /// Assembly has a native code entry point.
+    pub const NATIVE_ENTRY_POINT: Self = Self(0x0008);
+    /// Runtime should track debug data.
+    pub const TRACK_DEBUG_DATA: Self = Self(0x0010);
+    /// Assembly prefers 32-bit process but can run in 64-bit.
+    pub const PREFERRED_32BIT: Self = Self(0x0001_0000);
+}
 
 impl fmt::Display for Cor20Flags {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut parts = Vec::new();
-        if self.0 & 0x0001 != 0 {
+        if self.contains(Self::IL_ONLY) {
             parts.push("ILOnly");
         }
-        if self.0 & 0x0002 != 0 {
+        if self.contains(Self::REQUIRED_32BIT) {
             parts.push("32BitRequired");
         }
-        if self.0 & 0x0004 != 0 {
+        if self.contains(Self::STRONG_NAME_SIGNED) {
             parts.push("StrongNameSigned");
         }
-        if self.0 & 0x0008 != 0 {
+        if self.contains(Self::NATIVE_ENTRY_POINT) {
             parts.push("NativeEntryPoint");
         }
-        if self.0 & 0x0010 != 0 {
+        if self.contains(Self::TRACK_DEBUG_DATA) {
             parts.push("TrackDebugData");
         }
-        if self.0 & 0x0001_0000 != 0 {
+        if self.contains(Self::PREFERRED_32BIT) {
             parts.push("32BitPreferred");
         }
         if parts.is_empty() {
@@ -124,14 +141,6 @@ impl fmt::Display for Cor20Flags {
         }
     }
 }
-
-impl From<u32> for Cor20Flags {
-    fn from(v: u32) -> Self {
-        Self(v)
-    }
-}
-
-newtype_ops!(Cor20Flags, u32);
 
 /// The CLI (Common Language Infrastructure) header for .NET assemblies.
 ///
@@ -168,8 +177,7 @@ newtype_ops!(Cor20Flags, u32);
 /// }
 ///
 /// // Check if assembly is IL-only
-/// const COMIMAGE_FLAGS_ILONLY: u32 = 0x00000001;
-/// if header.flags & COMIMAGE_FLAGS_ILONLY != 0 {
+/// if header.flags.contains(dotscope::metadata::cor20header::Cor20Flags::IL_ONLY) {
 ///     println!("Assembly contains only managed code");
 /// }
 ///
@@ -396,7 +404,7 @@ impl Cor20Header {
             minor_runtime_version,
             meta_data_rva,
             meta_data_size,
-            flags: Cor20Flags(flags),
+            flags: Cor20Flags::new(flags),
             entry_point_token,
             resource_rva,
             resource_size,
@@ -453,7 +461,7 @@ impl Cor20Header {
         writer.write_all(&self.meta_data_rva.to_le_bytes())?;
         writer.write_all(&self.meta_data_size.to_le_bytes())?;
         // Flags and entry point
-        writer.write_all(&self.flags.to_le_bytes())?;
+        writer.write_all(&self.flags.bits().to_le_bytes())?;
         writer.write_all(&self.entry_point_token.to_le_bytes())?;
         // Resources directory
         writer.write_all(&self.resource_rva.to_le_bytes())?;
@@ -514,7 +522,7 @@ mod tests {
         assert_eq!(parsed_header.minor_runtime_version, 3);
         assert_eq!(parsed_header.meta_data_rva, 0x04000000);
         assert_eq!(parsed_header.meta_data_size, 0x05000000);
-        assert_eq!(parsed_header.flags, 0);
+        assert_eq!(parsed_header.flags, Cor20Flags::ZERO);
         assert_eq!(parsed_header.entry_point_token, 0x07000000);
         assert_eq!(parsed_header.resource_rva, 0);
         assert_eq!(parsed_header.resource_size, 0);

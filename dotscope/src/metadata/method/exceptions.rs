@@ -161,11 +161,9 @@
 //! [`ExceptionHandler`] instances are immutable and safe to share across threads.
 //! Exception type references use reference-counted smart pointers for efficient sharing.
 
-use bitflags::bitflags;
-
 use crate::{metadata::typesystem::CilTypeRc, Result};
 
-bitflags! {
+metadata_flags! {
     /// Exception handler type flags defining the kind of exception handling clause.
     ///
     /// These flags determine how the exception handler processes exceptions and controls
@@ -200,107 +198,108 @@ bitflags! {
     ///
     /// The flags are stored as a 16-bit or 32-bit value in the exception handler
     /// table, depending on whether the small or fat format is used.
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
-    pub struct ExceptionHandlerFlags: u16 {
-        /// A typed exception clause that catches specific exception types.
-        ///
-        /// The handler catches exceptions that are assignment-compatible with the
-        /// exception type specified by the `class_token` field. This includes the
-        /// exact type and all derived types.
-        ///
-        /// # Usage
-        ///
-        /// ```csharp
-        /// try {
-        ///     // Protected code
-        /// }
-        /// catch (ArgumentException ex) {
-        ///     // Handler code - class_token points to ArgumentException
-        /// }
-        /// ```
-        ///
-        /// # Implementation Notes
-        ///
-        /// - The `class_token` field contains the metadata token of the exception type
-        /// - Type matching follows .NET inheritance rules (catches derived types)
-        /// - Most common exception handler type in .NET assemblies
-        const EXCEPTION = 0x0000;
+    pub struct ExceptionHandlerFlags(u16);
+}
 
-        /// An exception filter and handler clause with custom filter logic.
-        ///
-        /// The filter expression is executed first to determine whether this handler
-        /// should process the exception. The filter can examine the exception object
-        /// and execution context to make complex decisions.
-        ///
-        /// # Usage
-        ///
-        /// ```csharp
-        /// try {
-        ///     // Protected code
-        /// }
-        /// catch (Exception ex) when (ex.Message.Contains("specific")) {
-        ///     // Handler code - filter_offset points to filter expression
-        /// }
-        /// ```
-        ///
-        /// # Implementation Notes
-        ///
-        /// - The `filter_offset` field points to the filter expression code
-        /// - Filter must leave a boolean value on the evaluation stack
-        /// - Provides fine-grained control over exception handling logic
-        /// - Less common than typed exception handlers
-        const FILTER = 0x0001;
+impl ExceptionHandlerFlags {
+    /// A typed exception clause that catches specific exception types.
+    ///
+    /// The handler catches exceptions that are assignment-compatible with the
+    /// exception type specified by the `class_token` field. This includes the
+    /// exact type and all derived types.
+    ///
+    /// # Usage
+    ///
+    /// ```csharp
+    /// try {
+    ///     // Protected code
+    /// }
+    /// catch (ArgumentException ex) {
+    ///     // Handler code - class_token points to ArgumentException
+    /// }
+    /// ```
+    ///
+    /// # Implementation Notes
+    ///
+    /// - The `class_token` field contains the metadata token of the exception type
+    /// - Type matching follows .NET inheritance rules (catches derived types)
+    /// - Most common exception handler type in .NET assemblies
+    pub const EXCEPTION: Self = Self(0x0000);
 
-        /// A finally clause that executes regardless of exception occurrence.
-        ///
-        /// Finally blocks provide guaranteed cleanup code execution during both
-        /// normal control flow and exception unwinding. The runtime ensures
-        /// finally blocks execute even when exceptions are thrown.
-        ///
-        /// # Usage
-        ///
-        /// ```csharp
-        /// try {
-        ///     // Protected code
-        /// }
-        /// finally {
-        ///     // Cleanup code - always executes
-        /// }
-        /// ```
-        ///
-        /// # Implementation Notes
-        ///
-        /// - Executes during normal method exit and exception unwinding
-        /// - Cannot catch exceptions, only perform cleanup
-        /// - Essential for resource management (using statements compile to finally)
-        /// - The `class_token`/`filter_offset` field is unused for finally handlers
-        const FINALLY = 0x0002;
+    /// An exception filter and handler clause with custom filter logic.
+    ///
+    /// The filter expression is executed first to determine whether this handler
+    /// should process the exception. The filter can examine the exception object
+    /// and execution context to make complex decisions.
+    ///
+    /// # Usage
+    ///
+    /// ```csharp
+    /// try {
+    ///     // Protected code
+    /// }
+    /// catch (Exception ex) when (ex.Message.Contains("specific")) {
+    ///     // Handler code - filter_offset points to filter expression
+    /// }
+    /// ```
+    ///
+    /// # Implementation Notes
+    ///
+    /// - The `filter_offset` field points to the filter expression code
+    /// - Filter must leave a boolean value on the evaluation stack
+    /// - Provides fine-grained control over exception handling logic
+    /// - Less common than typed exception handlers
+    pub const FILTER: Self = Self(0x0001);
 
-        /// A fault clause that executes only when exceptions are thrown.
-        ///
-        /// Fault handlers are similar to finally blocks but only execute during
-        /// exception unwinding, not during normal control flow. They provide
-        /// exception-specific cleanup without catching the exception.
-        ///
-        /// # Usage
-        ///
-        /// ```csharp
-        /// try {
-        ///     // Protected code
-        /// }
-        /// fault {
-        ///     // Cleanup code - executes only on exceptions
-        /// }
-        /// ```
-        ///
-        /// # Implementation Notes
-        ///
-        /// - Only executes during exception unwinding, not normal exit
-        /// - Cannot catch exceptions, only perform fault-specific cleanup
-        /// - Less common than finally handlers in typical .NET code
-        /// - The `class_token`/`filter_offset` field is unused for fault handlers
-        const FAULT = 0x0004;
-    }
+    /// A finally clause that executes regardless of exception occurrence.
+    ///
+    /// Finally blocks provide guaranteed cleanup code execution during both
+    /// normal control flow and exception unwinding. The runtime ensures
+    /// finally blocks execute even when exceptions are thrown.
+    ///
+    /// # Usage
+    ///
+    /// ```csharp
+    /// try {
+    ///     // Protected code
+    /// }
+    /// finally {
+    ///     // Cleanup code - always executes
+    /// }
+    /// ```
+    ///
+    /// # Implementation Notes
+    ///
+    /// - Executes during normal method exit and exception unwinding
+    /// - Cannot catch exceptions, only perform cleanup
+    /// - Essential for resource management (using statements compile to finally)
+    /// - The `class_token`/`filter_offset` field is unused for finally handlers
+    pub const FINALLY: Self = Self(0x0002);
+
+    /// A fault clause that executes only when exceptions are thrown.
+    ///
+    /// Fault handlers are similar to finally blocks but only execute during
+    /// exception unwinding, not during normal control flow. They provide
+    /// exception-specific cleanup without catching the exception.
+    ///
+    /// # Usage
+    ///
+    /// ```csharp
+    /// try {
+    ///     // Protected code
+    /// }
+    /// fault {
+    ///     // Cleanup code - executes only on exceptions
+    /// }
+    /// ```
+    ///
+    /// # Implementation Notes
+    ///
+    /// - Only executes during exception unwinding, not normal exit
+    /// - Cannot catch exceptions, only perform fault-specific cleanup
+    /// - Less common than finally handlers in typical .NET code
+    /// - The `class_token`/`filter_offset` field is unused for fault handlers
+    pub const FAULT: Self = Self(0x0004);
 }
 
 /// Represents a single exception handler within a .NET method body.

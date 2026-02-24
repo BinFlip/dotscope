@@ -1063,7 +1063,7 @@ mod tests {
         metadata::{
             identity::AssemblyIdentity,
             signatures::{SignatureMethod, SignatureParameter, TypeSignature},
-            tables::GenericParam,
+            tables::{GenericParam, GenericParamAttributes},
             token::Token,
             typesystem::{CilFlavor, CilPrimitiveKind, TypeRegistry, TypeSource},
         },
@@ -1210,7 +1210,7 @@ mod tests {
         let generic_param = Arc::new(GenericParam {
             token: Token::new(0x2A000001),
             number: 0,
-            flags: 0,
+            flags: GenericParamAttributes::ZERO,
             owner: OnceLock::new(),
             name: "T".to_string(),
             constraints: Arc::new(boxcar::Vec::new()),
@@ -1518,7 +1518,7 @@ mod tests {
         let key_param = Arc::new(GenericParam {
             token: Token::new(0x2A000002),
             number: 0,
-            flags: 0,
+            flags: GenericParamAttributes::ZERO,
             owner: OnceLock::new(),
             name: "TKey".to_string(),
             constraints: Arc::new(boxcar::Vec::new()),
@@ -1530,7 +1530,7 @@ mod tests {
         let value_param = Arc::new(GenericParam {
             token: Token::new(0x2A000003),
             number: 1,
-            flags: 0,
+            flags: GenericParamAttributes::ZERO,
             owner: OnceLock::new(),
             name: "TValue".to_string(),
             constraints: Arc::new(boxcar::Vec::new()),

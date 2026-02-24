@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use crate::metadata::{
     marshalling::{MarshallingInfo, NativeType},
     signatures::{SignatureField, TypeSignature},
-    tables::{Field, FieldAttributes, FieldRc},
+    tables::{Field, FieldAttributes, FieldRc, TypeAttributes},
     token::Token,
     typesystem::{CilFlavor, CilPrimitive, CilTypeRc},
 };
@@ -77,7 +77,7 @@ pub struct FieldBuilder {
     rid: u32,
     name: String,
     field_type: Option<CilTypeRc>,
-    flags: u32,
+    flags: FieldAttributes,
     layout: FieldLayout,
     marshalling: FieldMarshalling,
     constant: Option<FieldConstant>,
@@ -123,7 +123,7 @@ impl FieldBuilder {
         self
     }
 
-    pub fn with_flags(mut self, flags: u32) -> Self {
+    pub fn with_flags(mut self, flags: FieldAttributes) -> Self {
         self.flags = flags;
         self
     }
@@ -214,7 +214,7 @@ impl FieldBuilder {
             "Int32".to_string(),
             None,
             None,
-            0,
+            TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
             Some(CilFlavor::I4),
@@ -230,7 +230,7 @@ impl FieldBuilder {
             "String".to_string(),
             None,
             None,
-            0,
+            TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
             Some(CilFlavor::String),
@@ -246,7 +246,7 @@ impl FieldBuilder {
             "Boolean".to_string(),
             None,
             None,
-            0,
+            TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
             Some(CilFlavor::Boolean),
@@ -254,7 +254,7 @@ impl FieldBuilder {
         Self::new(name, bool_type)
     }
 
-    /// Create a simple float32 field  
+    /// Create a simple float32 field
     pub fn simple_r4_field(name: &str) -> Self {
         let r4_type = Arc::new(crate::metadata::typesystem::CilType::new(
             Token::new(0x02000004),
@@ -262,7 +262,7 @@ impl FieldBuilder {
             "Single".to_string(),
             None,
             None,
-            0,
+            TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
             Some(CilFlavor::R4),
@@ -278,7 +278,7 @@ impl FieldBuilder {
             "Object".to_string(),
             None,
             None,
-            0,
+            TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
             Some(CilFlavor::Object),
@@ -418,7 +418,7 @@ impl Default for FieldBuilder {
             "Int32".to_string(),
             None,
             None,
-            0,
+            TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
             Some(CilFlavor::I4),

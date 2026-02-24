@@ -183,13 +183,13 @@ impl AssemblyRefRaw {
             minor_version: self.minor_version,
             build_number: self.build_number,
             revision_number: self.revision_number,
-            flags: self.flags,
+            flags: AssemblyFlags::new(self.flags),
             identifier: if self.public_key_or_token == 0 {
                 None
             } else {
                 Some(Identity::from(
                     blob.get(self.public_key_or_token as usize)?,
-                    self.flags & AssemblyFlags::PUBLIC_KEY > 0,
+                    self.flags & AssemblyFlags::PUBLIC_KEY.bits() > 0,
                 )?)
             },
             hash: if self.hash_value == 0 {

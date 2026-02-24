@@ -112,8 +112,8 @@ impl ExtractedAssembly {
 pub struct ExtractedResource {
     /// Resource name (e.g., "MyApp.Resources.strings.resources").
     pub name: String,
-    /// Resource visibility flags (as raw bits).
-    pub flags: u32,
+    /// Resource visibility flags.
+    pub flags: ManifestResourceAttributes,
     /// Raw resource data bytes.
     pub data: Vec<u8>,
 }
@@ -128,7 +128,7 @@ impl ExtractedResource {
     /// Returns true if the resource is public.
     #[must_use]
     pub fn is_public(&self) -> bool {
-        (self.flags & ManifestResourceAttributes::PUBLIC.bits()) != 0
+        self.flags.contains(ManifestResourceAttributes::PUBLIC)
     }
 }
 
@@ -339,7 +339,7 @@ fn extract_resources_from_assembly(data: &[u8]) -> Vec<ExtractedResource> {
                 if let Some(resource_data) = resources.get_data(manifest) {
                     extracted.push(ExtractedResource {
                         name: manifest.name.clone(),
-                        flags: manifest.flags.bits(),
+                        flags: manifest.flags,
                         data: resource_data.to_vec(),
                     });
                 }

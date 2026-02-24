@@ -48,7 +48,7 @@
 //! - [`crate::metadata::token`] - References metadata tokens in operands
 
 use crate::metadata::token::Token;
-use std::fmt::{self, UpperHex};
+use std::fmt::{self, Display, UpperHex};
 
 /// Types of operands for CIL instructions.
 ///
@@ -184,6 +184,23 @@ pub enum Immediate {
     Float32(f32),
     /// 64-bit floating point immediate value
     Float64(f64),
+}
+
+impl Display for Immediate {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            Immediate::Int8(v) => write!(f, "{v}"),
+            Immediate::UInt8(v) => write!(f, "{v}"),
+            Immediate::Int16(v) => write!(f, "{v}"),
+            Immediate::UInt16(v) => write!(f, "{v}"),
+            Immediate::Int32(v) => write!(f, "{v}"),
+            Immediate::UInt32(v) => write!(f, "{v}"),
+            Immediate::Int64(v) => write!(f, "{v}"),
+            Immediate::UInt64(v) => write!(f, "{v}"),
+            Immediate::Float32(v) => write!(f, "{v}"),
+            Immediate::Float64(v) => write!(f, "{v}"),
+        }
+    }
 }
 
 impl UpperHex for Immediate {

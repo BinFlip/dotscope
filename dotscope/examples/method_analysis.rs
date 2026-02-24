@@ -309,7 +309,7 @@ fn print_method_parameters(method: &Method) {
                 param.name.as_ref().unwrap_or(&"<unnamed>".to_string())
             );
             println!("     Sequence: {}", param.sequence);
-            println!("     Flags: {:08b}", param.flags);
+            println!("     Flags: 0x{:04X}", param.flags);
             if let Some(default_value) = param.default.get() {
                 println!("     Default Value: {default_value:?}");
             }
@@ -388,7 +388,7 @@ fn print_generic_information(method: &Method) {
             println!("   Generic Parameter [{i}]:");
             println!("     Name: {}", generic_param.name);
             println!("     Number: {}", generic_param.number);
-            println!("     Flags: {:08b}", generic_param.flags);
+            println!("     Flags: 0x{:04X}", generic_param.flags);
             if let Some(_owner) = generic_param.owner.get() {
                 println!("     Owner: <Referenced Type>");
             }
@@ -789,9 +789,9 @@ fn print_additional_metadata(method: &Method) {
     println!("   Method Implementation:");
     println!("     Is IL Code: {}", method.is_code_il());
 
-    if method.overrides.get().is_some() {
+    if method.overrides.count() > 0 {
         println!("   Method Overrides:");
-        println!("     Has overridden method");
+        println!("     Override count: {}", method.overrides.count());
     }
 
     let interface_impl_count = method.interface_impls.iter().count();

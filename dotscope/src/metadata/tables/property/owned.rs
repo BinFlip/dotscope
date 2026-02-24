@@ -7,7 +7,7 @@ use std::sync::OnceLock;
 
 use crate::metadata::{
     customattributes::CustomAttributeValueList, method::MethodRef, signatures::SignatureProperty,
-    token::Token, typesystem::CilPrimitive,
+    tables::PropertyAttributes, token::Token, typesystem::CilPrimitive,
 };
 
 /// Owned representation of a Property table entry with complete metadata context.
@@ -58,7 +58,7 @@ pub struct Property {
     /// A 2-byte bitmask of `PropertyAttributes` (§II.23.1.14) that controls various
     /// aspects of the property including special naming, default values, and runtime
     /// behavior. See [`super::PropertyAttributes`] for flag definitions.
-    pub flags: u32,
+    pub flags: PropertyAttributes,
 
     /// The resolved name of this property.
     ///

@@ -97,7 +97,7 @@ pub use super::GenericParamAttributes;
 pub struct GenericParamBuilder {
     name: Option<String>,
     number: Option<u32>,
-    flags: Option<u32>,
+    flags: Option<GenericParamAttributes>,
     owner: Option<CodedIndex>,
 }
 
@@ -186,13 +186,13 @@ impl GenericParamBuilder {
     ///
     /// # Arguments
     ///
-    /// * `flags` - GenericParamAttributes bitmask specifying constraints and variance
+    /// * `flags` - GenericParamAttributes specifying constraints and variance
     ///
     /// # Returns
     ///
     /// Self for method chaining.
     #[must_use]
-    pub fn flags(mut self, flags: u32) -> Self {
+    pub fn flags(mut self, flags: GenericParamAttributes) -> Self {
         self.flags = Some(flags);
         self
     }
@@ -257,7 +257,7 @@ impl GenericParamBuilder {
             Error::ModificationInvalid("GenericParam owner is required".to_string())
         })?;
 
-        let flags = self.flags.unwrap_or(0);
+        let flags = self.flags.unwrap_or(GenericParamAttributes::ZERO);
 
         let valid_owner_tables = CodedIndexType::TypeOrMethodDef.tables();
         if !valid_owner_tables.contains(&owner.tag) {
@@ -275,9 +275,10 @@ impl GenericParamBuilder {
 
         let valid_flags_mask =
             GenericParamAttributes::VARIANCE_MASK | GenericParamAttributes::SPECIAL_CONSTRAINT_MASK;
-        if flags & !valid_flags_mask != 0 {
+        if (flags & !valid_flags_mask) != GenericParamAttributes::ZERO {
             return Err(Error::ModificationInvalid(format!(
-                "Invalid GenericParam flags: 0x{flags:04X}. Unsupported flags detected"
+                "Invalid GenericParam flags: 0x{:04X}. Unsupported flags detected",
+                flags.bits()
             )));
         }
 
@@ -291,7 +292,7 @@ impl GenericParamBuilder {
             token,
             offset: 0, // Will be set during binary generation
             number,
-            flags,
+            flags: flags.bits(),
             owner,
             name: name_index,
         };
@@ -342,8 +343,9 @@ mod tests {
 
             let generic_type =
                 CodedIndex::new(TableId::TypeDef, 1, CodedIndexType::TypeOrMethodDef);
-            let constraint_flags = GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT
-                | GenericParamAttributes::DEFAULT_CONSTRUCTOR_CONSTRAINT;
+            let constraint_flags: GenericParamAttributes =
+                GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT
+                    | GenericParamAttributes::DEFAULT_CONSTRUCTOR_CONSTRAINT;
 
             let ref_ = GenericParamBuilder::new()
                 .name("TEntity")
@@ -507,7 +509,7 @@ mod tests {
             let result = GenericParamBuilder::new()
                 .name("T")
                 .number(0)
-                .flags(0xFFFF) // Invalid flags
+                .flags(GenericParamAttributes::new(0xFFFF)) // Invalid flags
                 .owner(generic_type)
                 .build(&mut assembly);
 

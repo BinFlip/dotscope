@@ -242,10 +242,12 @@ impl CustomAttributeRaw {
             }
         }
 
-        let value = if self.value == 0 {
+        let mut value = if self.value == 0 {
             CustomAttributeValue {
                 fixed_args: vec![],
                 named_args: vec![],
+                constructor: CilTypeReference::None,
+                blob_index: 0,
             }
         } else {
             match &constructor_ref {
@@ -265,6 +267,8 @@ impl CustomAttributeRaw {
                     None => CustomAttributeValue {
                         fixed_args: vec![],
                         named_args: vec![],
+                        constructor: CilTypeReference::None,
+                        blob_index: 0,
                     },
                 },
                 CilTypeReference::MemberRef(member_ref) => match &member_ref.signature {
@@ -283,14 +287,21 @@ impl CustomAttributeRaw {
                     MemberRefSignature::Field(_) => CustomAttributeValue {
                         fixed_args: vec![],
                         named_args: vec![],
+                        constructor: CilTypeReference::None,
+                        blob_index: 0,
                     },
                 },
                 _ => CustomAttributeValue {
                     fixed_args: vec![],
                     named_args: vec![],
+                    constructor: CilTypeReference::None,
+                    blob_index: 0,
                 },
             }
         };
+
+        value.constructor = constructor_ref.clone();
+        value.blob_index = self.value as usize;
 
         Ok(Arc::new(CustomAttribute {
             rid: self.rid,

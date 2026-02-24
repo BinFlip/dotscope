@@ -8,7 +8,7 @@
 use crate::{
     cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
-        tables::{CodedIndex, CodedIndexType, EventRaw, TableDataOwned, TableId},
+        tables::{CodedIndex, CodedIndexType, EventAttributes, EventRaw, TableDataOwned, TableId},
         token::Token,
     },
     Error, Result,
@@ -68,7 +68,7 @@ use crate::{
 /// ```
 pub struct EventBuilder {
     name: Option<String>,
-    flags: Option<u32>,
+    flags: Option<EventAttributes>,
     event_type: Option<CodedIndex>,
 }
 
@@ -128,7 +128,7 @@ impl EventBuilder {
     ///
     /// Self for method chaining.
     #[must_use]
-    pub fn flags(mut self, flags: u32) -> Self {
+    pub fn flags(mut self, flags: EventAttributes) -> Self {
         self.flags = Some(flags);
         self
     }
@@ -211,7 +211,7 @@ impl EventBuilder {
             rid,
             token,
             offset: 0, // Will be set during binary generation
-            flags,
+            flags: flags.bits(),
             name: name_index,
             event_type,
         };
@@ -241,7 +241,7 @@ mod tests {
 
             let ref_ = EventBuilder::new()
                 .name("TestEvent")
-                .flags(0)
+                .flags(EventAttributes::ZERO)
                 .event_type(event_handler_type)
                 .build(&mut assembly)
                 .unwrap();
@@ -307,7 +307,7 @@ mod tests {
                 CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef);
 
             let result = EventBuilder::new()
-                .flags(0)
+                .flags(EventAttributes::ZERO)
                 .event_type(event_handler_type)
                 .build(&mut assembly);
 
@@ -343,7 +343,7 @@ mod tests {
 
             let result = EventBuilder::new()
                 .name("TestEvent")
-                .flags(0)
+                .flags(EventAttributes::ZERO)
                 .build(&mut assembly);
 
             // Should fail because event_type is required
@@ -362,7 +362,7 @@ mod tests {
 
             let result = EventBuilder::new()
                 .name("TestEvent")
-                .flags(0)
+                .flags(EventAttributes::ZERO)
                 .event_type(wrong_type)
                 .build(&mut assembly);
 
@@ -387,7 +387,7 @@ mod tests {
             // Create multiple events
             let ref1 = EventBuilder::new()
                 .name("Event1")
-                .flags(0)
+                .flags(EventAttributes::ZERO)
                 .event_type(event_handler_type1)
                 .build(&mut assembly)
                 .unwrap();

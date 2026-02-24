@@ -103,7 +103,7 @@ use crate::{
 /// - **TypeRef**: External types reference assemblies via AssemblyRef
 /// - **MemberRef**: External members reference assemblies via AssemblyRef
 /// - **Module**: Assembly references support multi-module scenarios
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct AssemblyRefBuilder {
     /// The name of the referenced assembly
     name: Option<String>,
@@ -116,13 +116,19 @@ pub struct AssemblyRefBuilder {
     /// Revision number
     revision_number: u32,
     /// Assembly flags
-    flags: u32,
+    flags: AssemblyFlags,
     /// Public key or public key token data
     public_key_or_token: Option<Vec<u8>>,
     /// Culture name for localized assemblies
     culture: Option<String>,
     /// Hash value for integrity verification
     hash_value: Option<Vec<u8>>,
+}
+
+impl Default for AssemblyRefBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl AssemblyRefBuilder {
@@ -145,7 +151,7 @@ impl AssemblyRefBuilder {
             minor_version: 0,
             build_number: 0,
             revision_number: 0,
-            flags: 0,
+            flags: AssemblyFlags::ZERO,
             public_key_or_token: None,
             culture: None,
             hash_value: None,
@@ -220,7 +226,7 @@ impl AssemblyRefBuilder {
     ///     .flags(AssemblyFlags::RETARGETABLE);
     /// ```
     #[must_use]
-    pub fn flags(mut self, flags: u32) -> Self {
+    pub fn flags(mut self, flags: AssemblyFlags) -> Self {
         self.flags = flags;
         self
     }
@@ -405,7 +411,7 @@ impl AssemblyRefBuilder {
             if data.is_empty() {
                 0
             } else {
-                if (self.flags & AssemblyFlags::PUBLIC_KEY) == 0 && data.len() != 8 {
+                if !self.flags.contains(AssemblyFlags::PUBLIC_KEY) && data.len() != 8 {
                     return Err(Error::ModificationInvalid(
                         "Public key token must be exactly 8 bytes".to_string(),
                     ));
@@ -434,7 +440,7 @@ impl AssemblyRefBuilder {
             minor_version: self.minor_version,
             build_number: self.build_number,
             revision_number: self.revision_number,
-            flags: self.flags,
+            flags: self.flags.bits(),
             public_key_or_token: public_key_or_token_index,
             name: name_index,
             culture: culture_index,
@@ -479,7 +485,7 @@ mod tests {
         assert_eq!(builder.minor_version, 0);
         assert_eq!(builder.build_number, 0);
         assert_eq!(builder.revision_number, 0);
-        assert_eq!(builder.flags, 0);
+        assert_eq!(builder.flags, AssemblyFlags::ZERO);
         Ok(())
     }
 
@@ -682,7 +688,7 @@ mod tests {
             .name("FluentAssembly")
             .version(3, 1, 4, 1)
             .culture("de-DE")
-            .flags(0x0001)
+            .flags(AssemblyFlags::PUBLIC_KEY)
             .build(&mut assembly)?;
 
         assert_eq!(ref_.kind(), ChangeRefKind::TableRow(TableId::AssemblyRef));

@@ -85,8 +85,8 @@
 use crate::{
     metadata::{
         method::{Method, MethodAccessFlags, MethodModifiers},
-        tables::TypeAttributes,
-        typesystem::{CilFlavor, CilType, CilTypeRc, CilTypeRefList},
+        tables::{InterfaceEntryList, TypeAttributes},
+        typesystem::{CilFlavor, CilType, CilTypeRc},
         validation::{
             context::{MethodTypeMapping, OwnedValidationContext, ValidationContext},
             traits::OwnedValidator,
@@ -96,7 +96,7 @@ use crate::{
 };
 use rayon::prelude::*;
 use rustc_hash::FxHashSet;
-use std::{mem, sync::Arc};
+use std::{collections::HashSet, mem, sync::Arc};
 
 /// Foundation validator for inheritance hierarchies, circular dependencies, interface implementation, and method inheritance.
 ///
@@ -227,8 +227,8 @@ impl OwnedInheritanceValidator {
             self.check_inheritance_cycles(&base_type, visited, visiting, context, depth + 1)?;
         }
 
-        for (_, interface_ref) in type_entry.interfaces.iter() {
-            if let Some(interface_type) = interface_ref.upgrade() {
+        for (_, entry) in type_entry.interfaces.iter() {
+            if let Some(interface_type) = entry.interface.upgrade() {
                 self.check_inheritance_cycles(
                     &interface_type,
                     visited,
@@ -252,7 +252,7 @@ impl OwnedInheritanceValidator {
     fn validate_base_type_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
         for type_entry in context.target_assembly_types() {
             if let Some(base_type) = type_entry.base() {
-                if base_type.flags & TypeAttributes::SEALED != 0 {
+                if base_type.flags.is_sealed() {
                     let derived_fullname = type_entry.fullname();
                     let base_fullname = base_type.fullname();
                     let is_self_reference = derived_fullname == base_fullname;
@@ -281,7 +281,7 @@ impl OwnedInheritanceValidator {
                     }
                 }
 
-                if base_type.flags & TypeAttributes::INTERFACE != 0 {
+                if base_type.flags.is_interface() {
                     let derived_fullname = type_entry.fullname();
                     let base_fullname = base_type.fullname();
                     let is_array_relationship = type_entry.is_array_of(&base_fullname);
@@ -291,7 +291,7 @@ impl OwnedInheritanceValidator {
                         && base_fullname.contains('`')
                         && derived_fullname.split('`').next() == base_fullname.split('`').next();
 
-                    if type_entry.flags & TypeAttributes::INTERFACE == 0
+                    if !type_entry.flags.is_interface()
                         && !is_array_relationship
                         && !is_pointer_relationship
                         && !is_self_reference
@@ -308,8 +308,8 @@ impl OwnedInheritanceValidator {
                     }
                 }
 
-                let derived_visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
-                let base_visibility = base_type.flags & TypeAttributes::VISIBILITY_MASK;
+                let derived_visibility = type_entry.flags.visibility();
+                let base_visibility = base_type.flags.visibility();
 
                 let base_fullname = base_type.fullname();
                 let is_system_type = base_fullname.starts_with("System.");
@@ -367,13 +367,12 @@ impl OwnedInheritanceValidator {
             .target_assembly_types()
             .par_iter()
             .try_for_each(|type_entry| -> Result<()> {
-                for (_, interface_ref) in type_entry.interfaces.iter() {
-                    if let Some(interface_type) = interface_ref.upgrade() {
+                for (_, entry) in type_entry.interfaces.iter() {
+                    if let Some(interface_type) = entry.interface.upgrade() {
                         let is_system_interface = interface_type.fullname().starts_with("System.");
                         // Check if it's an interface by flag OR by flavor (for generic instances)
                         // OR by naming convention (interfaces starting with 'I' followed by uppercase)
-                        let is_interface_by_flag =
-                            interface_type.flags & TypeAttributes::INTERFACE != 0;
+                        let is_interface_by_flag = interface_type.flags.is_interface();
                         let is_interface_by_flavor =
                             matches!(*interface_type.flavor(), CilFlavor::Interface);
                         let is_generic_instance =
@@ -395,9 +394,8 @@ impl OwnedInheritanceValidator {
                             });
                         }
 
-                        let type_visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
-                        let interface_visibility =
-                            interface_type.flags & TypeAttributes::VISIBILITY_MASK;
+                        let type_visibility = type_entry.flags.visibility();
+                        let interface_visibility = interface_type.flags.visibility();
 
                         let is_system_interface = interface_type.fullname().starts_with("System.");
                         if !is_system_interface
@@ -439,7 +437,7 @@ impl OwnedInheritanceValidator {
             .try_for_each(|type_entry| -> Result<()> {
                 let flags = type_entry.flags;
 
-                if flags & TypeAttributes::ABSTRACT == 0 && flags & TypeAttributes::INTERFACE != 0 {
+                if !flags.is_abstract() && flags.is_interface() {
                     return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!("Interface '{}' must be abstract", type_entry.name),
@@ -509,7 +507,10 @@ impl OwnedInheritanceValidator {
     /// Implements the complete .NET accessibility matrix for type inheritance
     /// according to ECMA-335 specifications. Each derived type visibility level
     /// defines which base type visibility levels can be inherited from.
-    fn is_accessible_inheritance(derived_visibility: u32, base_visibility: u32) -> bool {
+    fn is_accessible_inheritance(
+        derived_visibility: TypeAttributes,
+        base_visibility: TypeAttributes,
+    ) -> bool {
         match derived_visibility {
             TypeAttributes::PUBLIC => {
                 // Public types can only inherit from public base types
@@ -599,8 +600,8 @@ impl OwnedInheritanceValidator {
     /// according to ECMA-335 specifications. Each type visibility level defines
     /// which interface visibility levels can be implemented.
     fn is_accessible_interface_implementation(
-        type_visibility: u32,
-        interface_visibility: u32,
+        type_visibility: TypeAttributes,
+        interface_visibility: TypeAttributes,
     ) -> bool {
         match type_visibility {
             TypeAttributes::PUBLIC => {
@@ -687,11 +688,11 @@ impl OwnedInheritanceValidator {
     }
 
     /// Validates that multiple interface implementations are compatible.
-    fn validate_interface_compatibility(interfaces: &CilTypeRefList) {
-        let mut interface_names = std::collections::HashSet::new();
+    fn validate_interface_compatibility(interfaces: &InterfaceEntryList) {
+        let mut interface_names = HashSet::new();
 
-        for (_, interface_ref) in interfaces.iter() {
-            if let Some(interface_type) = interface_ref.upgrade() {
+        for (_, entry) in interfaces.iter() {
+            if let Some(interface_type) = entry.interface.upgrade() {
                 let interface_name = interface_type.fullname();
 
                 // Check for duplicate interface implementations
@@ -778,7 +779,7 @@ impl OwnedInheritanceValidator {
         base_type: &CilTypeRc,
         method_mapping: &MethodTypeMapping,
     ) -> Result<()> {
-        if base_type.flags & TypeAttributes::INTERFACE != 0 {
+        if base_type.flags.is_interface() {
             return Ok(());
         }
 
@@ -795,7 +796,7 @@ impl OwnedInheritanceValidator {
                     )?;
                 }
 
-                if method.is_abstract() && derived_type.flags & TypeAttributes::ABSTRACT == 0 {
+                if method.is_abstract() && !derived_type.flags.is_abstract() {
                     return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
@@ -844,7 +845,7 @@ impl OwnedInheritanceValidator {
         base_type: &CilTypeRc,
         method_mapping: &MethodTypeMapping,
     ) -> Result<()> {
-        if base_type.flags & TypeAttributes::INTERFACE != 0 {
+        if base_type.flags.is_interface() {
             return Ok(());
         }
 

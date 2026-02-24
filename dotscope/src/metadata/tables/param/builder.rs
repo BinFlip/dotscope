@@ -8,7 +8,7 @@
 use crate::{
     cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
-        tables::{ParamRaw, TableDataOwned, TableId},
+        tables::{ParamAttributes, ParamRaw, TableDataOwned, TableId},
         token::Token,
     },
     Error, Result,
@@ -39,20 +39,20 @@ use crate::{
 /// // Create a method parameter
 /// let param = ParamBuilder::new()
 ///     .name("value")
-///     .flags(0x0001) // IN parameter
+///     .flags(ParamAttributes::IN)
 ///     .sequence(1)   // First parameter
 ///     .build(&mut assembly)?;
 ///
 /// // Create a return type parameter (no name, sequence 0)
 /// let return_param = ParamBuilder::new()
-///     .flags(0x0000) // No special flags
+///     .flags(ParamAttributes::ZERO)
 ///     .sequence(0)   // Return type
 ///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct ParamBuilder {
     name: Option<String>,
-    flags: Option<u32>,
+    flags: Option<ParamAttributes>,
     sequence: Option<u32>,
 }
 
@@ -113,7 +113,7 @@ impl ParamBuilder {
     ///
     /// Self for method chaining.
     #[must_use]
-    pub fn flags(mut self, flags: u32) -> Self {
+    pub fn flags(mut self, flags: ParamAttributes) -> Self {
         self.flags = Some(flags);
         self
     }
@@ -183,7 +183,7 @@ impl ParamBuilder {
             rid,
             token,
             offset: 0, // Will be set during binary generation
-            flags,
+            flags: flags.bits(),
             sequence,
             name: name_index,
         };
@@ -227,7 +227,7 @@ mod tests {
 
             // Create a return type parameter (no name, sequence 0)
             let ref_ = ParamBuilder::new()
-                .flags(0) // No special flags for return type
+                .flags(ParamAttributes::ZERO) // No special flags for return type
                 .sequence(0) // Return type
                 .build(&mut assembly)
                 .unwrap();
@@ -329,7 +329,7 @@ mod tests {
                 .unwrap();
 
             let ref3 = ParamBuilder::new()
-                .flags(0)
+                .flags(ParamAttributes::ZERO)
                 .sequence(0) // Return type
                 .build(&mut assembly)
                 .unwrap();

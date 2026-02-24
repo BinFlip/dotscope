@@ -79,6 +79,7 @@ use std::collections::HashSet;
 use crate::{
     metadata::{
         customattributes::{CustomAttributeArgument, CustomAttributeValue},
+        typesystem::CilTypeReference,
         validation::{
             context::{OwnedValidationContext, ValidationContext},
             traits::OwnedValidator,
@@ -502,6 +503,8 @@ impl OwnedAttributeValidator {
                         let temp_attr = CustomAttributeValue {
                             fixed_args: vec![element.clone()],
                             named_args: vec![],
+                            constructor: CilTypeReference::None,
+                            blob_index: 0,
                         };
                         if self.has_deep_array_nesting(&temp_attr, depth + 1) {
                             return true;

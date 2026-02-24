@@ -38,6 +38,7 @@
 //! use dotscope::metadata::customattributes::{
 //!     CustomAttributeValue, CustomAttributeArgument, encode_custom_attribute_value
 //! };
+//! use dotscope::metadata::typesystem::CilTypeReference;
 //!
 //! let custom_attr = CustomAttributeValue {
 //!     fixed_args: vec![
@@ -45,6 +46,8 @@
 //!         CustomAttributeArgument::Bool(true),
 //!     ],
 //!     named_args: vec![],
+//!     constructor: CilTypeReference::None,
+//!     blob_index: 0,
 //! };
 //!
 //! let encoded_blob = encode_custom_attribute_value(&custom_attr)?;
@@ -139,10 +142,13 @@ use crate::{
 /// use dotscope::metadata::customattributes::{
 ///     CustomAttributeValue, CustomAttributeArgument, encode_custom_attribute_value,
 /// };
+/// use dotscope::metadata::typesystem::CilTypeReference;
 ///
 /// let custom_attr = CustomAttributeValue {
 ///     fixed_args: vec![CustomAttributeArgument::String("Test".to_string())],
 ///     named_args: vec![],
+///     constructor: CilTypeReference::None,
+///     blob_index: 0,
 /// };
 ///
 /// let blob = encode_custom_attribute_value(&custom_attr)?;
@@ -497,12 +503,15 @@ fn write_string(buffer: &mut Vec<u8>, value: &str) -> Result<()> {
 mod tests {
     use super::*;
     use crate::metadata::customattributes::{CustomAttributeNamedArgument, CustomAttributeValue};
+    use crate::metadata::typesystem::CilTypeReference;
 
     #[test]
     fn test_encode_simple_custom_attribute() {
         let custom_attr = CustomAttributeValue {
             fixed_args: vec![CustomAttributeArgument::String("Test".to_string())],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let result = encode_custom_attribute_value(&custom_attr);
@@ -673,6 +682,8 @@ mod tests {
                 arg_type: "String".to_string(),
                 value: CustomAttributeArgument::String("TestName".to_string()),
             }],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let result = encode_custom_attribute_value(&custom_attr);
@@ -702,6 +713,8 @@ mod tests {
                 arg_type: "I4".to_string(),
                 value: CustomAttributeArgument::I4(42),
             }],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let encoded = encode_custom_attribute_value(&custom_attr).unwrap();
@@ -732,6 +745,8 @@ mod tests {
         let custom_attr = CustomAttributeValue {
             fixed_args: vec![CustomAttributeArgument::Type("System.String".to_string())],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let encoded = encode_custom_attribute_value(&custom_attr).unwrap();

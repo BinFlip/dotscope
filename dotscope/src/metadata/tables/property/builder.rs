@@ -8,7 +8,7 @@
 use crate::{
     cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
-        tables::{PropertyRaw, TableDataOwned, TableId},
+        tables::{PropertyAttributes, PropertyRaw, TableDataOwned, TableId},
         token::Token,
     },
     Error, Result,
@@ -52,21 +52,21 @@ use crate::{
 /// // Create a public instance property
 /// let property = PropertyBuilder::new()
 ///     .name("Value")
-///     .flags(0x0000) // No special flags
+///     .flags(PropertyAttributes::ZERO)
 ///     .signature(string_property_sig)
 ///     .build(&mut assembly)?;
 ///
 /// // Create a property with special naming
 /// let special_property = PropertyBuilder::new()
 ///     .name("Item") // Indexer property
-///     .flags(0x0200) // SpecialName
+///     .flags(PropertyAttributes::SPECIAL_NAME)
 ///     .signature(string_property_sig)
 ///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct PropertyBuilder {
     name: Option<String>,
-    flags: Option<u32>,
+    flags: Option<PropertyAttributes>,
     signature: Option<Vec<u8>>,
 }
 
@@ -127,7 +127,7 @@ impl PropertyBuilder {
     ///
     /// Self for method chaining.
     #[must_use]
-    pub fn flags(mut self, flags: u32) -> Self {
+    pub fn flags(mut self, flags: PropertyAttributes) -> Self {
         self.flags = Some(flags);
         self
     }
@@ -206,7 +206,7 @@ impl PropertyBuilder {
             rid,
             token,
             offset: 0, // Will be set during binary generation
-            flags,
+            flags: flags.bits(),
             name: name_index,
             signature: signature_index,
         };
@@ -238,7 +238,7 @@ mod tests {
 
             let ref_ = PropertyBuilder::new()
                 .name("TestProperty")
-                .flags(0)
+                .flags(PropertyAttributes::ZERO)
                 .signature(string_property_sig)
                 .build(&mut assembly)
                 .unwrap();
@@ -323,7 +323,7 @@ mod tests {
             let mut assembly = CilAssembly::new(view);
 
             let result = PropertyBuilder::new()
-                .flags(0)
+                .flags(PropertyAttributes::ZERO)
                 .signature(&[0x08, 0x08])
                 .build(&mut assembly);
 
@@ -356,7 +356,7 @@ mod tests {
 
             let result = PropertyBuilder::new()
                 .name("TestProperty")
-                .flags(0)
+                .flags(PropertyAttributes::ZERO)
                 .build(&mut assembly);
 
             // Should fail because signature is required
@@ -376,7 +376,7 @@ mod tests {
             // Create multiple properties
             let ref1 = PropertyBuilder::new()
                 .name("Property1")
-                .flags(0)
+                .flags(PropertyAttributes::ZERO)
                 .signature(string_sig)
                 .build(&mut assembly)
                 .unwrap();

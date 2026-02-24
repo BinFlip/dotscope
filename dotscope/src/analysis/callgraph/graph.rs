@@ -344,9 +344,9 @@ impl CallGraph {
         node.is_external = method.is_pinvoke() || method.is_internal_call();
         node.is_constructor = method.is_constructor();
 
-        // Get override information if available
-        if let Some(overrides) = method.overrides.get() {
-            node.overrides = overrides.token();
+        // Get override information if available (use first entry)
+        if let Some((_, first_override)) = method.overrides.iter().next() {
+            node.overrides = first_override.token();
         }
 
         node

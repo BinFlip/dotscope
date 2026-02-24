@@ -23,7 +23,9 @@
 //! See ECMA-335, Partition II, §22.19 for the File table specification.
 
 use crate::metadata::{
-    customattributes::CustomAttributeValueList, tables::AssemblyRefHash, token::Token,
+    customattributes::CustomAttributeValueList,
+    tables::{AssemblyRefHash, FileAttributes},
+    token::Token,
 };
 
 /// Represents a file definition with resolved references and owned data.
@@ -94,7 +96,7 @@ pub struct File {
     /// - **`CONTAINS_NO_META_DATA` (0x0001)**: Resource file without metadata
     ///
     /// [`FileAttributes`]: crate::metadata::tables::file::FileAttributes
-    pub flags: u32,
+    pub flags: FileAttributes,
 
     /// The name of the file.
     ///

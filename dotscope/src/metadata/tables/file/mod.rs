@@ -100,38 +100,32 @@ pub type FileList = Arc<boxcar::Vec<FileRc>>;
 /// of file metadata across multiple data structures and threads.
 pub type FileRc = Arc<File>;
 
-#[allow(non_snake_case)]
-/// File attribute flags for the `FileAttributes` field.
-///
-/// These constants define the possible values for the `Flags` field in File table entries,
-/// indicating the type and characteristics of files in multi-file assemblies.
-///
-/// # Usage
-/// ```rust,ignore
-/// use dotscope::metadata::tables::file::FileAttributes;
-///
-/// // Check if a file contains metadata
-/// // if file.flags & FileAttributes::CONTAINS_META_DATA != 0 {
-/// //     println!("File contains .NET metadata");
-/// // }
-/// ```
-///
-/// # ECMA-335 Reference
-/// See ECMA-335, Partition II, §22.19 for File table flag specifications.
-pub mod FileAttributes {
+metadata_flags! {
+    /// File attribute flags for the `File.Flags` field (ECMA-335 §II.22.19).
+    ///
+    /// Strongly-typed wrapper around the 4-byte `File.Flags` bitmask that indicates
+    /// the type and characteristics of files in multi-file assemblies, particularly
+    /// whether the file contains .NET metadata or is a resource file.
+    ///
+    /// ## ECMA-335 Reference
+    /// See ECMA-335, Partition II, §22.19 for File table flag specifications.
+    pub struct FileAttributes(u32);
+}
+
+impl FileAttributes {
     /// File contains .NET metadata.
     ///
     /// This flag indicates the file is an executable module (.netmodule or .exe/.dll)
     /// that contains .NET metadata and can define types, methods, and other constructs.
     /// Files with this flag are processed by the CLR loader.
-    pub const CONTAINS_META_DATA: u32 = 0x0000;
+    pub const CONTAINS_META_DATA: Self = Self(0x0000);
 
     /// File contains no .NET metadata.
     ///
     /// This flag indicates the file is a resource file or other non-metadata file
     /// such as images, configuration data, or unmanaged libraries. These files
     /// are not processed by the CLR metadata loader.
-    pub const CONTAINS_NO_META_DATA: u32 = 0x0001;
+    pub const CONTAINS_NO_META_DATA: Self = Self(0x0001);
 }
 
 /// Import container implementation for File entries.

@@ -9,7 +9,7 @@ use crate::{
     metadata::{
         signatures::parse_property_signature,
         streams::{Blob, Strings},
-        tables::{Property, PropertyRc, TableInfoRef, TableRow},
+        tables::{Property, PropertyAttributes, PropertyRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -117,7 +117,7 @@ impl PropertyRaw {
     pub fn to_owned(&self, strings: &Strings, blob: &Blob) -> Result<PropertyRc> {
         Ok(Arc::new(Property {
             token: self.token,
-            flags: self.flags,
+            flags: PropertyAttributes::new(self.flags),
             name: strings.get(self.name as usize)?.to_string(),
             signature: parse_property_signature(blob.get(self.signature as usize)?)?,
             default: OnceLock::new(),

@@ -172,7 +172,7 @@ impl ManifestResourceRaw {
             offset: self.offset,
             data_offset,
             data_size,
-            flags: ManifestResourceAttributes::from_bits_truncate(self.flags),
+            flags: ManifestResourceAttributes::new(self.flags),
             name: strings.get(self.name as usize)?.to_string(),
             source,
         }))

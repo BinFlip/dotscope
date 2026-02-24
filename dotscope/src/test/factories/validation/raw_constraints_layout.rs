@@ -6,7 +6,8 @@
 use crate::{
     metadata::{
         tables::{
-            ClassLayoutRaw, FieldBuilder, FieldLayoutRaw, TableDataOwned, TableId, TypeDefBuilder,
+            ClassLayoutRaw, FieldAttributes, FieldBuilder, FieldLayoutRaw, TableDataOwned, TableId,
+            TypeAttributes, TypeDefBuilder,
         },
         token::Token,
     },
@@ -63,13 +64,17 @@ pub fn create_assembly_with_overlapping_fields() -> Result<TestAssembly> {
         let _typedef_token = TypeDefBuilder::new()
             .name("OverlappingFieldsType")
             .namespace("Test")
-            .flags(0x00100108) // Explicit layout
+            .flags(
+                TypeAttributes::BEFORE_FIELD_INIT
+                    | TypeAttributes::SEALED
+                    | TypeAttributes::SEQUENTIAL_LAYOUT,
+            ) // Explicit layout
             .build(assembly)?;
 
         // Create a single field
         let field_token = FieldBuilder::new()
             .name("TestField")
-            .flags(0x0001)
+            .flags(FieldAttributes::PRIVATE)
             .signature(&[0x06, 0x08])
             .build(assembly)?;
 
@@ -102,7 +107,7 @@ pub fn create_assembly_with_invalid_packing_size() -> Result<TestAssembly> {
         let typedef_token = TypeDefBuilder::new()
             .name("InvalidPackingType")
             .namespace("Test")
-            .flags(0x00100000)
+            .flags(TypeAttributes::BEFORE_FIELD_INIT)
             .build(assembly)?;
 
         // Create class layout with invalid packing size directly
@@ -133,7 +138,7 @@ pub fn create_assembly_with_excessive_class_size() -> Result<TestAssembly> {
         let typedef_token = TypeDefBuilder::new()
             .name("ExcessiveSizeType")
             .namespace("Test")
-            .flags(0x00100000)
+            .flags(TypeAttributes::BEFORE_FIELD_INIT)
             .build(assembly)?;
 
         // Create class layout with excessive size directly
@@ -164,12 +169,16 @@ pub fn create_assembly_with_invalid_field_offset() -> Result<TestAssembly> {
         let _typedef_token = TypeDefBuilder::new()
             .name("InvalidOffsetType")
             .namespace("Test")
-            .flags(0x00100108) // Explicit layout
+            .flags(
+                TypeAttributes::BEFORE_FIELD_INIT
+                    | TypeAttributes::SEALED
+                    | TypeAttributes::SEQUENTIAL_LAYOUT,
+            ) // Explicit layout
             .build(assembly)?;
 
         let field_token = FieldBuilder::new()
             .name("InvalidField")
-            .flags(0x0001)
+            .flags(FieldAttributes::PRIVATE)
             .signature(&[0x06, 0x08])
             .build(assembly)?;
 
@@ -200,7 +209,11 @@ pub fn create_assembly_with_null_field_reference() -> Result<TestAssembly> {
         let _typedef_token = TypeDefBuilder::new()
             .name("NullFieldRefType")
             .namespace("Test")
-            .flags(0x00100108) // Explicit layout
+            .flags(
+                TypeAttributes::BEFORE_FIELD_INIT
+                    | TypeAttributes::SEALED
+                    | TypeAttributes::SEQUENTIAL_LAYOUT,
+            ) // Explicit layout
             .build(assembly)?;
 
         // Create field layout with null field reference directly
@@ -230,12 +243,16 @@ pub fn create_assembly_with_boundary_field_offset() -> Result<TestAssembly> {
         let _typedef_token = TypeDefBuilder::new()
             .name("BoundaryOffsetType")
             .namespace("Test")
-            .flags(0x00100108) // Explicit layout
+            .flags(
+                TypeAttributes::BEFORE_FIELD_INIT
+                    | TypeAttributes::SEALED
+                    | TypeAttributes::SEQUENTIAL_LAYOUT,
+            ) // Explicit layout
             .build(assembly)?;
 
         let field_token = FieldBuilder::new()
             .name("BoundaryField")
-            .flags(0x0001)
+            .flags(FieldAttributes::PRIVATE)
             .signature(&[0x06, 0x08])
             .build(assembly)?;
 

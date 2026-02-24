@@ -13,6 +13,7 @@ use crate::{
         customattributes::CustomAttributeValueList,
         marshalling::MarshallingInfo,
         signatures::SignatureParameter,
+        tables::ParamAttributes,
         token::Token,
         typesystem::{CilPrimitive, CilTypeRef, CilTypeRefList, TypeRegistry, TypeResolver},
     },
@@ -66,7 +67,7 @@ pub struct Param {
     /// Defines parameter characteristics including direction (in/out), optional status,
     /// default values, and marshalling information. See [`crate::metadata::tables::ParamAttributes`]
     /// for available flags.
-    pub flags: u32,
+    pub flags: ParamAttributes,
 
     /// Sequence number defining parameter order.
     ///

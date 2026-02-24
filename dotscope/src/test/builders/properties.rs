@@ -8,7 +8,7 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     metadata::{
         signatures::{SignatureProperty, TypeSignature},
-        tables::{Property, PropertyRc},
+        tables::{Property, PropertyAttributes, PropertyRc},
         token::Token,
         typesystem::CilPrimitive,
     },
@@ -72,7 +72,7 @@ pub struct PropertyBuilder {
     rid: u32,
     name: String,
     signature: SignatureProperty,
-    flags: u32,
+    flags: PropertyAttributes,
     default_value: Option<PropertyConstant>,
 }
 
@@ -87,7 +87,7 @@ impl PropertyBuilder {
                 params: Vec::new(),
                 base: return_type,
             },
-            flags: 0,
+            flags: PropertyAttributes::ZERO,
             default_value: None,
         }
     }
@@ -97,7 +97,7 @@ impl PropertyBuilder {
         self
     }
 
-    pub fn with_flags(mut self, flags: u32) -> Self {
+    pub fn with_flags(mut self, flags: PropertyAttributes) -> Self {
         self.flags = flags;
         self
     }

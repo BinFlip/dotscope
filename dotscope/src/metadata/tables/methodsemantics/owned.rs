@@ -54,7 +54,7 @@ pub struct MethodSemantics {
     /// - `ADD_ON` (0x0008) - Event add method
     /// - `REMOVE_ON` (0x0010) - Event remove method
     /// - `FIRE` (0x0020) - Event fire method
-    pub semantics: u32,
+    pub semantics: MethodSemanticsAttributes,
 
     /// Resolved reference to the associated method.
     ///

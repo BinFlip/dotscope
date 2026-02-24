@@ -25,9 +25,7 @@ use std::sync::{Arc, OnceLock};
 use crate::{
     metadata::{
         streams::{Blob, Strings},
-        tables::{
-            Assembly, AssemblyFlagsValue, AssemblyRc, HashAlgorithmId, TableInfoRef, TableRow,
-        },
+        tables::{Assembly, AssemblyFlags, AssemblyRc, HashAlgorithmId, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -144,12 +142,12 @@ impl AssemblyRaw {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
-            hash_alg_id: HashAlgorithmId(self.hash_alg_id),
+            hash_alg_id: HashAlgorithmId::new(self.hash_alg_id),
             major_version: self.major_version,
             minor_version: self.minor_version,
             build_number: self.build_number,
             revision_number: self.revision_number,
-            flags: AssemblyFlagsValue(self.flags),
+            flags: AssemblyFlags::new(self.flags),
             public_key: if self.public_key == 0 {
                 None
             } else {

@@ -232,61 +232,65 @@ impl MethodSemanticsRaw {
 
         let association = get_ref(&self.association);
         match association {
-            CilTypeReference::Property(property) => match self.semantics {
-                MethodSemanticsAttributes::SETTER => {
-                    property
-                        .fn_setter
-                        .set(method.value().clone().into())
-                        .map_err(|_| malformed_error!("Property `setter` already set"))?;
-                    Ok(())
+            CilTypeReference::Property(property) => {
+                match MethodSemanticsAttributes::new(self.semantics) {
+                    MethodSemanticsAttributes::SETTER => {
+                        property
+                            .fn_setter
+                            .set(method.value().clone().into())
+                            .map_err(|_| malformed_error!("Property `setter` already set"))?;
+                        Ok(())
+                    }
+                    MethodSemanticsAttributes::GETTER => {
+                        property
+                            .fn_getter
+                            .set(method.value().clone().into())
+                            .map_err(|_| malformed_error!("Property `getter` already set"))?;
+                        Ok(())
+                    }
+                    MethodSemanticsAttributes::OTHER => {
+                        property
+                            .fn_other
+                            .set(method.value().clone().into())
+                            .map_err(|_| malformed_error!("Property `other` method already set"))?;
+                        Ok(())
+                    }
+                    _ => Err(malformed_error!("Invalid property semantics")),
                 }
-                MethodSemanticsAttributes::GETTER => {
-                    property
-                        .fn_getter
-                        .set(method.value().clone().into())
-                        .map_err(|_| malformed_error!("Property `getter` already set"))?;
-                    Ok(())
+            }
+            CilTypeReference::Event(event) => {
+                match MethodSemanticsAttributes::new(self.semantics) {
+                    MethodSemanticsAttributes::ADD_ON => {
+                        event
+                            .fn_on_add
+                            .set(method.value().clone().into())
+                            .map_err(|_| malformed_error!("Event `add` method already set"))?;
+                        Ok(())
+                    }
+                    MethodSemanticsAttributes::REMOVE_ON => {
+                        event
+                            .fn_on_remove
+                            .set(method.value().clone().into())
+                            .map_err(|_| malformed_error!("Event `remove` method already set"))?;
+                        Ok(())
+                    }
+                    MethodSemanticsAttributes::FIRE => {
+                        event
+                            .fn_on_raise
+                            .set(method.value().clone().into())
+                            .map_err(|_| malformed_error!("Event `raise` method already set"))?;
+                        Ok(())
+                    }
+                    MethodSemanticsAttributes::OTHER => {
+                        event
+                            .fn_on_other
+                            .set(method.value().clone().into())
+                            .map_err(|_| malformed_error!("Event `other` method already set"))?;
+                        Ok(())
+                    }
+                    _ => Err(malformed_error!("Invalid event semantics")),
                 }
-                MethodSemanticsAttributes::OTHER => {
-                    property
-                        .fn_other
-                        .set(method.value().clone().into())
-                        .map_err(|_| malformed_error!("Property `other` method already set"))?;
-                    Ok(())
-                }
-                _ => Err(malformed_error!("Invalid property semantics")),
-            },
-            CilTypeReference::Event(event) => match self.semantics {
-                MethodSemanticsAttributes::ADD_ON => {
-                    event
-                        .fn_on_add
-                        .set(method.value().clone().into())
-                        .map_err(|_| malformed_error!("Event `add` method already set"))?;
-                    Ok(())
-                }
-                MethodSemanticsAttributes::REMOVE_ON => {
-                    event
-                        .fn_on_remove
-                        .set(method.value().clone().into())
-                        .map_err(|_| malformed_error!("Event `remove` method already set"))?;
-                    Ok(())
-                }
-                MethodSemanticsAttributes::FIRE => {
-                    event
-                        .fn_on_raise
-                        .set(method.value().clone().into())
-                        .map_err(|_| malformed_error!("Event `raise` method already set"))?;
-                    Ok(())
-                }
-                MethodSemanticsAttributes::OTHER => {
-                    event
-                        .fn_on_other
-                        .set(method.value().clone().into())
-                        .map_err(|_| malformed_error!("Event `other` method already set"))?;
-                    Ok(())
-                }
-                _ => Err(malformed_error!("Invalid event semantics")),
-            },
+            }
             _ => Err(malformed_error!(
                 "Invalid association token - {}",
                 self.association.token.value()
@@ -342,7 +346,7 @@ impl MethodSemanticsRaw {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
-            semantics: self.semantics,
+            semantics: MethodSemanticsAttributes::new(self.semantics),
             method,
             association,
         }))

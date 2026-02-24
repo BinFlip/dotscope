@@ -141,7 +141,7 @@ pub struct ManifestResourceBuilder {
     /// The name of the resource
     name: Option<String>,
     /// Resource visibility and access flags
-    flags: u32,
+    flags: ManifestResourceAttributes,
     /// Offset for embedded resources
     offset: u32,
     /// Implementation target capturing the row index and target table type.
@@ -176,7 +176,7 @@ impl ManifestResourceBuilder {
     pub fn new() -> Self {
         Self {
             name: None,
-            flags: ManifestResourceAttributes::PUBLIC.bits(),
+            flags: ManifestResourceAttributes::PUBLIC,
             offset: 0,
             implementation: None, // Default to embedded (null implementation)
             resource_data: None,
@@ -206,14 +206,14 @@ impl ManifestResourceBuilder {
         self
     }
 
-    /// Sets resource attributes using a bitmask.
+    /// Sets resource attributes.
     ///
     /// Resource attributes control visibility and accessibility of the resource.
     /// Use the `ManifestResourceAttributes` constants for standard values.
     ///
     /// # Arguments
     ///
-    /// * `flags` - Resource attributes bitmask
+    /// * `flags` - Resource attributes
     ///
     /// # Examples
     ///
@@ -221,10 +221,10 @@ impl ManifestResourceBuilder {
     /// # use dotscope::prelude::*;
     /// # use dotscope::metadata::tables::ManifestResourceAttributes;
     /// let builder = ManifestResourceBuilder::new()
-    ///     .flags(ManifestResourceAttributes::PRIVATE.bits());
+    ///     .flags(ManifestResourceAttributes::PRIVATE);
     /// ```
     #[must_use]
-    pub fn flags(mut self, flags: u32) -> Self {
+    pub fn flags(mut self, flags: ManifestResourceAttributes) -> Self {
         self.flags = flags;
         self
     }
@@ -244,8 +244,8 @@ impl ManifestResourceBuilder {
     /// ```
     #[must_use]
     pub fn public(mut self) -> Self {
-        self.flags |= ManifestResourceAttributes::PUBLIC.bits();
-        self.flags &= !ManifestResourceAttributes::PRIVATE.bits();
+        self.flags |= ManifestResourceAttributes::PUBLIC;
+        self.flags &= !ManifestResourceAttributes::PRIVATE;
         self
     }
 
@@ -264,8 +264,8 @@ impl ManifestResourceBuilder {
     /// ```
     #[must_use]
     pub fn private(mut self) -> Self {
-        self.flags |= ManifestResourceAttributes::PRIVATE.bits();
-        self.flags &= !ManifestResourceAttributes::PUBLIC.bits();
+        self.flags |= ManifestResourceAttributes::PRIVATE;
+        self.flags &= !ManifestResourceAttributes::PUBLIC;
         self
     }
 
@@ -695,7 +695,7 @@ impl ManifestResourceBuilder {
             token: Token::new(0),
             offset: 0,
             offset_field: final_offset,
-            flags: self.flags,
+            flags: self.flags.bits(),
             name: name_index,
             implementation,
         };
@@ -737,7 +737,7 @@ mod tests {
     fn test_manifest_resource_builder_default() -> Result<()> {
         let builder = ManifestResourceBuilder::default();
         assert!(builder.name.is_none());
-        assert_eq!(builder.flags, ManifestResourceAttributes::PUBLIC.bits());
+        assert_eq!(builder.flags, ManifestResourceAttributes::PUBLIC);
         assert_eq!(builder.offset, 0);
         assert!(builder.resource_data.is_none());
         assert!(builder.resource_encoder.is_none());
@@ -827,7 +827,7 @@ mod tests {
 
         let resource_ref = ManifestResourceBuilder::new()
             .name("CustomResource")
-            .flags(ManifestResourceAttributes::PRIVATE.bits())
+            .flags(ManifestResourceAttributes::PRIVATE)
             .build(&mut assembly)?;
 
         assert_eq!(

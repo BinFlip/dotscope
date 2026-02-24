@@ -125,7 +125,7 @@ use crate::{
         },
         streams::Blob,
         tables::ParamRc,
-        typesystem::{CilFlavor, CilTypeRef, TypeRegistry},
+        typesystem::{CilFlavor, CilTypeRef, CilTypeReference, TypeRegistry},
     },
     utils::EnumUtils,
     Error::DepthLimitExceeded,
@@ -226,6 +226,8 @@ pub fn parse_custom_attribute_blob(
         return Ok(CustomAttributeValue {
             fixed_args: vec![],
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         });
     }
 
@@ -524,6 +526,8 @@ impl<'a> CustomAttributeParser<'a> {
         Ok(CustomAttributeValue {
             fixed_args,
             named_args,
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         })
     }
 
@@ -1381,7 +1385,7 @@ mod tests {
     use super::*;
     use crate::metadata::{
         identity::AssemblyIdentity,
-        tables::Param,
+        tables::{Param, ParamAttributes},
         token::Token,
         typesystem::{CilFlavor, CilPrimitiveKind, CilTypeRef, TypeBuilder, TypeRegistry},
     };
@@ -1761,7 +1765,7 @@ mod tests {
             rid: 1,
             token: Token::new(0x08000001),
             offset: 0,
-            flags: 0,
+            flags: ParamAttributes::ZERO,
             sequence: 1,
             name: Some("arrayParam".to_string()),
             default: OnceLock::new(),

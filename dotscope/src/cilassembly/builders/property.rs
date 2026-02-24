@@ -11,7 +11,10 @@ use crate::{
             encode_field_signature, encode_property_signature, SignatureField, SignatureParameter,
             SignatureProperty, TypeSignature,
         },
-        tables::{FieldBuilder, PropertyBuilder as PropertyTableBuilder},
+        tables::{
+            FieldAttributes, FieldBuilder, PropertyAttributes,
+            PropertyBuilder as PropertyTableBuilder,
+        },
     },
     Error, Result,
 };
@@ -38,7 +41,7 @@ pub enum PropertyImplementation {
         /// Name of the backing field (auto-generated if None)
         backing_field_name: Option<String>,
         /// Backing field attributes
-        backing_field_attributes: u32,
+        backing_field_attributes: FieldAttributes,
     },
     /// Computed property with custom getter/setter logic
     Computed {
@@ -134,7 +137,7 @@ pub struct PropertyBuilder {
     property_type: TypeSignature,
 
     /// Property attributes
-    attributes: u32,
+    attributes: PropertyAttributes,
 
     /// What accessors to generate
     accessors: PropertyAccessors,
@@ -173,13 +176,13 @@ impl PropertyBuilder {
         Self {
             name: name.to_string(),
             property_type,
-            attributes: 0x0000, // Default property attributes
+            attributes: PropertyAttributes::ZERO, // Default property attributes
             accessors: PropertyAccessors::GetterAndSetter,
             getter_attributes: 0x0006, // PUBLIC
             setter_attributes: 0x0006, // PUBLIC
             implementation: PropertyImplementation::Auto {
                 backing_field_name: None,
-                backing_field_attributes: 0x0001, // PRIVATE
+                backing_field_attributes: FieldAttributes::PRIVATE,
             },
             is_indexed: false,
             parameters: Vec::new(),
@@ -202,7 +205,7 @@ impl PropertyBuilder {
     pub fn auto_property(mut self) -> Self {
         self.implementation = PropertyImplementation::Auto {
             backing_field_name: None,
-            backing_field_attributes: 0x0001, // PRIVATE
+            backing_field_attributes: FieldAttributes::PRIVATE,
         };
         self
     }
@@ -288,7 +291,7 @@ impl PropertyBuilder {
             ..
         } = &mut self.implementation
         {
-            *backing_field_attributes = 0x0001; // PRIVATE
+            *backing_field_attributes = FieldAttributes::PRIVATE;
         }
         self
     }
@@ -310,7 +313,7 @@ impl PropertyBuilder {
             ..
         } = &mut self.implementation
         {
-            *backing_field_attributes = 0x0006; // PUBLIC
+            *backing_field_attributes = FieldAttributes::PUBLIC;
         }
         self
     }
@@ -570,10 +573,10 @@ impl PropertyBuilder {
     /// use dotscope::prelude::*;
     ///
     /// let builder = PropertyBuilder::new("Value", TypeSignature::I4)
-    ///     .attributes(0x0200); // SPECIAL_NAME
+    ///     .attributes(PropertyAttributes::SPECIAL_NAME);
     /// ```
     #[must_use]
-    pub fn attributes(mut self, attributes: u32) -> Self {
+    pub fn attributes(mut self, attributes: PropertyAttributes) -> Self {
         self.attributes = attributes;
         self
     }

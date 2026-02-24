@@ -681,6 +681,37 @@ pub enum CilTypeReference {
     None,
 }
 
+impl std::fmt::Debug for CilTypeReference {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CilTypeReference::TypeRef(_) => write!(f, "CilTypeReference::TypeRef(...)"),
+            CilTypeReference::TypeDef(_) => write!(f, "CilTypeReference::TypeDef(...)"),
+            CilTypeReference::TypeSpec(_) => write!(f, "CilTypeReference::TypeSpec(...)"),
+            CilTypeReference::Field(_) => write!(f, "CilTypeReference::Field(...)"),
+            CilTypeReference::Param(_) => write!(f, "CilTypeReference::Param(...)"),
+            CilTypeReference::Property(_) => write!(f, "CilTypeReference::Property(...)"),
+            CilTypeReference::MethodDef(_) => write!(f, "CilTypeReference::MethodDef(...)"),
+            CilTypeReference::InterfaceImpl(_) => write!(f, "CilTypeReference::InterfaceImpl(...)"),
+            CilTypeReference::MemberRef(_) => write!(f, "CilTypeReference::MemberRef(...)"),
+            CilTypeReference::Module(_) => write!(f, "CilTypeReference::Module(...)"),
+            CilTypeReference::DeclSecurity(_) => write!(f, "CilTypeReference::DeclSecurity(...)"),
+            CilTypeReference::Event(_) => write!(f, "CilTypeReference::Event(...)"),
+            CilTypeReference::StandAloneSig(_) => write!(f, "CilTypeReference::StandAloneSig(...)"),
+            CilTypeReference::ModuleRef(_) => write!(f, "CilTypeReference::ModuleRef(...)"),
+            CilTypeReference::Assembly(_) => write!(f, "CilTypeReference::Assembly(...)"),
+            CilTypeReference::AssemblyRef(_) => write!(f, "CilTypeReference::AssemblyRef(...)"),
+            CilTypeReference::File(_) => write!(f, "CilTypeReference::File(...)"),
+            CilTypeReference::ExportedType(_) => write!(f, "CilTypeReference::ExportedType(...)"),
+            CilTypeReference::GenericParam(_) => write!(f, "CilTypeReference::GenericParam(...)"),
+            CilTypeReference::GenericParamConstraint(_) => {
+                write!(f, "CilTypeReference::GenericParamConstraint(...)")
+            }
+            CilTypeReference::MethodSpec(_) => write!(f, "CilTypeReference::MethodSpec(...)"),
+            CilTypeReference::None => write!(f, "CilTypeReference::None"),
+        }
+    }
+}
+
 impl CilTypeReference {
     /// Returns the metadata token for this reference, if available.
     ///

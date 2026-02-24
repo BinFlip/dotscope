@@ -141,8 +141,8 @@ impl OwnedDependencyValidator {
             }
 
             // Validate interface dependencies
-            for (_, interface_ref) in type_entry.interfaces.iter() {
-                if let Some(interface_type) = interface_ref.upgrade() {
+            for (_, entry) in type_entry.interfaces.iter() {
+                if let Some(interface_type) = entry.interface.upgrade() {
                     if interface_type.name.is_empty() {
                         return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
@@ -247,8 +247,8 @@ impl OwnedDependencyValidator {
                 dependencies.push(base_type.token);
             }
 
-            for (_, interface_ref) in type_entry.interfaces.iter() {
-                if let Some(interface_type) = interface_ref.upgrade() {
+            for (_, entry) in type_entry.interfaces.iter() {
+                if let Some(interface_type) = entry.interface.upgrade() {
                     dependencies.push(interface_type.token);
                 }
             }
@@ -358,8 +358,8 @@ impl OwnedDependencyValidator {
             }
 
             // Validate interface implementation ordering
-            for (_, interface_ref) in type_entry.interfaces.iter() {
-                if let Some(interface_type) = interface_ref.upgrade() {
+            for (_, entry) in type_entry.interfaces.iter() {
+                if let Some(interface_type) = entry.interface.upgrade() {
                     // Check for self-referential interface implementation
                     // Only flag if both types are from the same assembly
                     if interface_type.token == type_entry.token {

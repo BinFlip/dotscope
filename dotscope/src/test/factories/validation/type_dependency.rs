@@ -86,7 +86,7 @@ pub fn create_assembly_with_unresolved_base_type() -> Result<TestAssembly> {
             let base_typedef_token = TypeDefBuilder::new()
                 .name("BaseClass")
                 .namespace("Test")
-                .flags(0x00100000) // Public class
+                .flags(TypeAttributes::BEFORE_FIELD_INIT) // Public class
                 .build(assembly)?;
 
             // Get the actual RID from the resolved token
@@ -98,7 +98,7 @@ pub fn create_assembly_with_unresolved_base_type() -> Result<TestAssembly> {
             let _derived_typedef_token = TypeDefBuilder::new()
                 .name("DerivedClass")
                 .namespace("Test")
-                .flags(0x00100000) // Public class
+                .flags(TypeAttributes::BEFORE_FIELD_INIT) // Public class
                 .extends(CodedIndex::new(
                     TableId::TypeDef,
                     base_rid,
@@ -109,7 +109,7 @@ pub fn create_assembly_with_unresolved_base_type() -> Result<TestAssembly> {
             // Corrupt the base type by setting its name to an empty string (index 0)
             // This simulates an unresolved base type dependency
             let corrupted_base_type = TypeDefRaw {
-                flags: 0x00100000,
+                flags: TypeAttributes::BEFORE_FIELD_INIT.bits(),
                 type_name: 0,      // Empty name - this will trigger the validation error
                 type_namespace: 1, // Valid namespace
                 extends: CodedIndex::new(TableId::TypeDef, 0, CodedIndexType::TypeDefOrRef),
@@ -144,7 +144,7 @@ pub fn create_assembly_with_broken_interface_reference() -> Result<TestAssembly>
             let interface_typedef_token = TypeDefBuilder::new()
                 .name("ITestInterface")
                 .namespace("Test")
-                .flags(0x00100000 | 0x00000020) // Public + Interface
+                .flags(TypeAttributes::BEFORE_FIELD_INIT | TypeAttributes::INTERFACE) // Public + Interface
                 .build(assembly)?;
 
             // Get the actual RID from the resolved token
@@ -157,7 +157,7 @@ pub fn create_assembly_with_broken_interface_reference() -> Result<TestAssembly>
             let implementing_typedef_token = TypeDefBuilder::new()
                 .name("TestClass")
                 .namespace("Test")
-                .flags(0x00100000) // Public class
+                .flags(TypeAttributes::BEFORE_FIELD_INIT) // Public class
                 .build(assembly)?;
 
             // Get the actual RID from the resolved token
@@ -187,7 +187,7 @@ pub fn create_assembly_with_broken_interface_reference() -> Result<TestAssembly>
             // Corrupt the interface type by setting its name to empty (index 0)
             // This will cause the interface dependency to appear unresolved
             let corrupted_interface_type = TypeDefRaw {
-                flags: 0x00100000 | 0x00000020, // Public + Interface
+                flags: (TypeAttributes::BEFORE_FIELD_INIT | TypeAttributes::INTERFACE).bits(), // Public + Interface
                 type_name: 0,      // Empty name - this will trigger the validation error
                 type_namespace: 1, // Valid namespace
                 extends: CodedIndex::new(TableId::TypeDef, 0, CodedIndexType::TypeDefOrRef),
@@ -222,14 +222,14 @@ pub fn create_assembly_with_missing_parameter_type() -> Result<TestAssembly> {
             let _typedef_token = TypeDefBuilder::new()
                 .name("TestClass")
                 .namespace("Test")
-                .flags(0x00100000) // Public class
+                .flags(TypeAttributes::BEFORE_FIELD_INIT) // Public class
                 .build(assembly)?;
 
             // Create a parameter type that we'll corrupt later
             let param_typedef_token = TypeDefBuilder::new()
                 .name("ParamType")
                 .namespace("Test")
-                .flags(0x00100000) // Public class
+                .flags(TypeAttributes::BEFORE_FIELD_INIT) // Public class
                 .build(assembly)?;
 
             // Get the actual RID from the resolved token
@@ -268,7 +268,7 @@ pub fn create_assembly_with_missing_parameter_type() -> Result<TestAssembly> {
             // Corrupt the parameter type by setting its name to empty (index 0)
             // This simulates an unresolved parameter type dependency
             let corrupted_param_type = TypeDefRaw {
-                flags: 0x00100000,
+                flags: TypeAttributes::BEFORE_FIELD_INIT.bits(),
                 type_name: 0,      // Empty name - this will trigger the validation error
                 type_namespace: 1, // Valid namespace
                 extends: CodedIndex::new(TableId::TypeDef, 0, CodedIndexType::TypeDefOrRef),
@@ -303,7 +303,7 @@ pub fn create_assembly_with_unresolved_nested_type() -> Result<TestAssembly> {
             let containing_typedef_token = TypeDefBuilder::new()
                 .name("ContainingClass")
                 .namespace("Test")
-                .flags(0x00100000) // Public class
+                .flags(TypeAttributes::BEFORE_FIELD_INIT) // Public class
                 .build(assembly)?;
 
             // Get the actual RID from the resolved token
@@ -316,7 +316,7 @@ pub fn create_assembly_with_unresolved_nested_type() -> Result<TestAssembly> {
             let nested_typedef_token = TypeDefBuilder::new()
                 .name("NestedClass")
                 .namespace("Test")
-                .flags(0x00100000 | 0x00000008) // Public + Nested
+                .flags(TypeAttributes::BEFORE_FIELD_INIT | TypeAttributes::SEQUENTIAL_LAYOUT) // Public + Nested
                 .build(assembly)?;
 
             // Get the actual RID from the resolved token
@@ -328,7 +328,8 @@ pub fn create_assembly_with_unresolved_nested_type() -> Result<TestAssembly> {
             // Create the corrupted nested type with empty name to trigger validation error
             // This simulates a nested type that cannot be resolved during validation
             let corrupted_nested_type = TypeDefRaw {
-                flags: 0x00100000 | 0x00000008, // Public + Nested
+                flags: (TypeAttributes::BEFORE_FIELD_INIT | TypeAttributes::SEQUENTIAL_LAYOUT)
+                    .bits(), // Public + Nested
                 type_name: 0, // Empty name at index 0 - this should trigger validation error
                 type_namespace: 1, // Valid namespace
                 extends: CodedIndex::new(TableId::TypeDef, 0, CodedIndexType::TypeDefOrRef),

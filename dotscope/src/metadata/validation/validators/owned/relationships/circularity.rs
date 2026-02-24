@@ -339,8 +339,8 @@ impl OwnedCircularityValidator {
             }
 
             // Add interface references (interface implementation cycles are problematic)
-            for (_, interface_ref) in type_entry.interfaces.iter() {
-                if let Some(interface_type) = interface_ref.upgrade() {
+            for (_, entry) in type_entry.interfaces.iter() {
+                if let Some(interface_type) = entry.interface.upgrade() {
                     let interface_ptr = Arc::as_ptr(&interface_type) as usize;
                     // Exclude System interfaces which are common base interfaces
                     if !interface_type.fullname().starts_with("System.") {

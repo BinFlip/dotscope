@@ -77,28 +77,35 @@ pub type PropertyList = Arc<boxcar::Vec<PropertyRc>>;
 /// instances across threads while providing automatic memory management.
 pub type PropertyRc = Arc<Property>;
 
-#[allow(non_snake_case)]
-/// Property attribute flags as defined in ECMA-335.
-///
-/// These constants define the various attributes that can be applied to properties
-/// in .NET metadata, controlling their behavior and characteristics.
-pub mod PropertyAttributes {
+metadata_flags! {
+    /// Property attribute flags as defined in ECMA-335 (§II.23.1.14).
+    ///
+    /// Strongly-typed wrapper around the 2-byte `Property.Flags` bitmask that controls
+    /// various aspects of property behavior including special naming, default values,
+    /// and runtime behavior characteristics.
+    ///
+    /// ## Reference
+    /// - [ECMA-335 II.23.1.14](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `PropertyAttributes` specification
+    pub struct PropertyAttributes(u32);
+}
+
+impl PropertyAttributes {
     /// Property has special naming conventions.
     ///
     /// Indicates that the property name follows special naming conventions
     /// and should be treated accordingly by tools and runtime systems.
-    pub const SPECIAL_NAME: u32 = 0x0200;
+    pub const SPECIAL_NAME: Self = Self(0x0200);
 
     /// Runtime should check name encoding.
     ///
     /// Instructs the runtime (metadata internal APIs) to verify that the
     /// property name encoding follows the expected format and conventions.
-    pub const RT_SPECIAL_NAME: u32 = 0x0400;
+    pub const RT_SPECIAL_NAME: Self = Self(0x0400);
 
     /// Property has a default value.
     ///
     /// Indicates that this property has an associated default value defined
     /// in the Constant table, providing fallback behavior when no explicit
     /// value is set.
-    pub const HAS_DEFAULT: u32 = 0x1000;
+    pub const HAS_DEFAULT: Self = Self(0x1000);
 }

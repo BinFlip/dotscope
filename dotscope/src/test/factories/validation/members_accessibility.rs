@@ -65,7 +65,7 @@ pub fn create_assembly_with_sealed_interface() -> Result<TestAssembly> {
             rid: next_rid,
             token: Token::new(0x02000000 + next_rid),
             offset: 0,
-            flags: TypeAttributes::INTERFACE | 0x0100, // Interface + Sealed - invalid combination
+            flags: (TypeAttributes::INTERFACE | TypeAttributes::SEALED).bits(), // Interface + Sealed - invalid combination
             type_name: name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
@@ -102,7 +102,7 @@ pub fn create_assembly_with_interface_instance_field() -> Result<TestAssembly> {
             rid: interface_rid,
             token: Token::new(0x02000000 + interface_rid),
             offset: 0,
-            flags: TypeAttributes::INTERFACE | TypeAttributes::PUBLIC,
+            flags: (TypeAttributes::INTERFACE | TypeAttributes::PUBLIC).bits(),
             type_name: interface_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
@@ -115,7 +115,7 @@ pub fn create_assembly_with_interface_instance_field() -> Result<TestAssembly> {
             rid: field_rid,
             token: Token::new(0x04000000 + field_rid),
             offset: 0,
-            flags: FieldAttributes::PUBLIC, // Missing STATIC flag - invalid in interface
+            flags: FieldAttributes::PUBLIC.bits(), // Missing STATIC flag - invalid in interface
             name: field_name_index.placeholder(),
             signature: signature_index.placeholder(),
         };
@@ -174,7 +174,7 @@ pub fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
             rid: type_rid,
             token: Token::new(0x02000000 + type_rid),
             offset: 0,
-            flags: TypeAttributes::PUBLIC,
+            flags: TypeAttributes::PUBLIC.bits(),
             type_name: type_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
@@ -220,7 +220,7 @@ pub fn create_assembly_with_literal_non_static_field() -> Result<TestAssembly> {
         let signature_bytes = vec![0x06, 0x08]; // FIELD signature marker + ELEMENT_TYPE_I4
         let field_token = FieldBuilder::new()
             .name("LiteralInstanceField")
-            .flags(FieldAttributes::PUBLIC | 0x0040) // LITERAL without STATIC - invalid
+            .flags(FieldAttributes::PUBLIC | FieldAttributes::LITERAL) // LITERAL without STATIC - invalid
             .signature(&signature_bytes)
             .build(assembly)?;
 
@@ -255,7 +255,7 @@ pub fn create_assembly_with_nested_accessibility_violation() -> Result<TestAssem
             rid: container_rid,
             token: Token::new(0x02000000 + container_rid),
             offset: 0,
-            flags: TypeAttributes::NOT_PUBLIC, // Not public container
+            flags: TypeAttributes::NOT_PUBLIC.bits(), // Not public container
             type_name: container_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
@@ -273,7 +273,7 @@ pub fn create_assembly_with_nested_accessibility_violation() -> Result<TestAssem
             rid: nested_rid,
             token: Token::new(0x02000000 + nested_rid),
             offset: 0,
-            flags: TypeAttributes::PUBLIC, // Using top-level PUBLIC instead of NESTED_PUBLIC - should trigger validation failure
+            flags: TypeAttributes::PUBLIC.bits(), // Using top-level PUBLIC instead of NESTED_PUBLIC - should trigger validation failure
             type_name: nested_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),

@@ -7,7 +7,7 @@
 use crate::{
     cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
-        tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeDefRaw},
+        tables::{CodedIndex, CodedIndexType, TableDataOwned, TableId, TypeAttributes, TypeDefRaw},
         token::Token,
     },
     Result,
@@ -33,7 +33,7 @@ use crate::{
 ///     .name("MyClass")
 ///     .namespace("MyNamespace")
 ///     .extends(CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef)) // System.Object
-///     .flags(0x00100001) // Public | Class
+///     .flags(TypeAttributes::PUBLIC | TypeAttributes::CLASS)
 ///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
@@ -41,7 +41,7 @@ pub struct TypeDefBuilder {
     name: Option<String>,
     namespace: Option<String>,
     extends: Option<CodedIndex>,
-    flags: Option<u32>,
+    flags: Option<TypeAttributes>,
     field_list: Option<u32>,
     method_list: Option<u32>,
 }
@@ -119,13 +119,13 @@ impl TypeDefBuilder {
     ///
     /// # Arguments
     ///
-    /// * `flags` - Type attributes bitmask controlling visibility, layout, and semantics
+    /// * `flags` - Type attributes controlling visibility, layout, and semantics
     ///
     /// # Returns
     ///
     /// Self for method chaining.
     #[must_use]
-    pub fn flags(mut self, flags: u32) -> Self {
+    pub fn flags(mut self, flags: TypeAttributes) -> Self {
         self.flags = Some(flags);
         self
     }
@@ -169,7 +169,7 @@ impl TypeDefBuilder {
     /// Self for method chaining.
     #[must_use]
     pub fn public_class(mut self) -> Self {
-        self.flags = Some(0x0010_0001); // Public | Class
+        self.flags = Some(TypeAttributes::PUBLIC | TypeAttributes::BEFORE_FIELD_INIT);
         self
     }
 
@@ -182,7 +182,12 @@ impl TypeDefBuilder {
     /// Self for method chaining.
     #[must_use]
     pub fn public_interface(mut self) -> Self {
-        self.flags = Some(0x0010_0161); // Public | Interface | Abstract
+        self.flags = Some(
+            TypeAttributes::PUBLIC
+                | TypeAttributes::INTERFACE
+                | TypeAttributes::ABSTRACT
+                | TypeAttributes::BEFORE_FIELD_INIT,
+        );
         self
     }
 
@@ -195,7 +200,9 @@ impl TypeDefBuilder {
     /// Self for method chaining.
     #[must_use]
     pub fn public_value_type(mut self) -> Self {
-        self.flags = Some(0x0010_0101); // Public | Sealed
+        self.flags = Some(
+            TypeAttributes::PUBLIC | TypeAttributes::SEALED | TypeAttributes::BEFORE_FIELD_INIT,
+        );
         self
     }
 
@@ -246,7 +253,10 @@ impl TypeDefBuilder {
             rid,
             token: Token::new(rid | 0x0200_0000), // TypeDef table token prefix
             offset: 0,                            // Will be set during binary generation
-            flags: self.flags.unwrap_or(0x0010_0001), // Default to public class
+            flags: self
+                .flags
+                .unwrap_or(TypeAttributes::PUBLIC | TypeAttributes::BEFORE_FIELD_INIT)
+                .bits(), // Default to public class
             type_name: name_index,
             type_namespace: namespace_index,
             extends: self

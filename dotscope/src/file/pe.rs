@@ -43,87 +43,112 @@ use std::collections::HashMap;
 use std::fmt;
 use std::io::Write;
 
-/// PE machine type wrapper with human-readable Display.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Machine(pub u16);
+metadata_flags! {
+    /// PE machine type identifier.
+    ///
+    /// Identifies the target CPU architecture for the PE file.
+    /// Stored in the COFF header's Machine field.
+    pub struct Machine(u16);
+}
+
+impl Machine {
+    /// Intel 386 or later processors (x86).
+    pub const I386: Self = Self(0x014C);
+    /// AMD64 / Intel EM64T (x86-64).
+    pub const AMD64: Self = Self(0x8664);
+    /// ARM little endian.
+    pub const ARM: Self = Self(0x01C0);
+    /// ARM64 / AArch64 little endian.
+    pub const ARM64: Self = Self(0xAA64);
+    /// ARMv7 (or higher) Thumb mode only.
+    pub const ARMV7: Self = Self(0x01C4);
+}
 
 impl fmt::Display for Machine {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            0x014C => write!(f, "i386"),
-            0x8664 => write!(f, "AMD64"),
-            0x01C0 => write!(f, "ARM"),
-            0xAA64 => write!(f, "ARM64"),
-            0x01C4 => write!(f, "ARMv7"),
-            other => write!(f, "0x{other:04X}"),
+        match *self {
+            Self::I386 => write!(f, "i386"),
+            Self::AMD64 => write!(f, "AMD64"),
+            Self::ARM => write!(f, "ARM"),
+            Self::ARM64 => write!(f, "ARM64"),
+            Self::ARMV7 => write!(f, "ARMv7"),
+            _ => write!(f, "0x{:04X}", self.bits()),
         }
     }
 }
 
-impl From<u16> for Machine {
-    fn from(v: u16) -> Self {
-        Self(v)
-    }
+metadata_flags! {
+    /// PE subsystem identifier.
+    ///
+    /// Specifies the subsystem required to run the PE image.
+    /// Stored in the optional header's Subsystem field.
+    pub struct Subsystem(u16);
 }
 
-/// PE subsystem wrapper with human-readable Display.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct Subsystem(pub u16);
+impl Subsystem {
+    /// Image doesn't require a subsystem (device drivers and native system processes).
+    pub const NATIVE: Self = Self(1);
+    /// Image runs in the Windows graphical user interface (GUI) subsystem.
+    pub const WINDOWS_GUI: Self = Self(2);
+    /// Image runs in the Windows character-mode user interface (CUI) subsystem.
+    pub const WINDOWS_CUI: Self = Self(3);
+    /// Image runs in the Windows CE graphical subsystem.
+    pub const WINDOWS_CE_GUI: Self = Self(9);
+}
 
 impl fmt::Display for Subsystem {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        match self.0 {
-            1 => write!(f, "Native"),
-            2 => write!(f, "Windows GUI"),
-            3 => write!(f, "Windows CUI"),
-            9 => write!(f, "Windows CE GUI"),
-            other => write!(f, "0x{other:04X}"),
+        match *self {
+            Self::NATIVE => write!(f, "Native"),
+            Self::WINDOWS_GUI => write!(f, "Windows GUI"),
+            Self::WINDOWS_CUI => write!(f, "Windows CUI"),
+            Self::WINDOWS_CE_GUI => write!(f, "Windows CE GUI"),
+            _ => write!(f, "0x{:04X}", self.bits()),
         }
     }
 }
 
-impl From<u16> for Subsystem {
-    fn from(v: u16) -> Self {
-        Self(v)
-    }
+metadata_flags! {
+    /// PE COFF characteristics bitfield.
+    ///
+    /// Flags indicating attributes of the PE file such as whether it is
+    /// an executable, a DLL, or supports large addresses.
+    pub struct PeCharacteristics(u16);
 }
 
-/// PE COFF characteristics bitfield wrapper with Display.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PeCharacteristics(pub u16);
+impl PeCharacteristics {
+    /// Image is an executable (no unresolved external references).
+    pub const EXECUTABLE: Self = Self(0x0002);
+    /// Application can handle addresses larger than 2 GB.
+    pub const LARGE_ADDRESS_AWARE: Self = Self(0x0020);
+    /// Machine is based on a 32-bit word architecture.
+    pub const BIT32: Self = Self(0x0100);
+    /// Image is a dynamic-link library (DLL).
+    pub const DLL: Self = Self(0x2000);
+}
 
 impl fmt::Display for PeCharacteristics {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         let mut parts = Vec::new();
-        if self.0 & 0x0002 != 0 {
+        if self.contains(Self::EXECUTABLE) {
             parts.push("Executable");
         }
-        if self.0 & 0x0020 != 0 {
+        if self.contains(Self::LARGE_ADDRESS_AWARE) {
             parts.push("LargeAddressAware");
         }
-        if self.0 & 0x0100 != 0 {
+        if self.contains(Self::BIT32) {
             parts.push("32Bit");
         }
-        if self.0 & 0x2000 != 0 {
+        if self.contains(Self::DLL) {
             parts.push("DLL");
         }
         if parts.is_empty() {
-            write!(f, "0x{:04X}", self.0)
+            write!(f, "0x{:04X}", self.bits())
         } else {
             write!(f, "{}", parts.join(", "))
         }
     }
 }
-
-impl From<u16> for PeCharacteristics {
-    fn from(v: u16) -> Self {
-        Self(v)
-    }
-}
-
-newtype_ops!(Machine, u16);
-newtype_ops!(Subsystem, u16);
-newtype_ops!(PeCharacteristics, u16);
 
 /// PE file format constants
 pub mod constants {
@@ -1079,13 +1104,13 @@ impl CoffHeader {
 
     fn from_goblin(goblin_coff: &goblin::pe::header::CoffHeader) -> Self {
         Self {
-            machine: Machine(goblin_coff.machine),
+            machine: Machine::new(goblin_coff.machine),
             number_of_sections: goblin_coff.number_of_sections,
             time_date_stamp: goblin_coff.time_date_stamp,
             pointer_to_symbol_table: goblin_coff.pointer_to_symbol_table,
             number_of_symbols: goblin_coff.number_of_symbol_table,
             size_of_optional_header: goblin_coff.size_of_optional_header,
-            characteristics: PeCharacteristics(goblin_coff.characteristics),
+            characteristics: PeCharacteristics::new(goblin_coff.characteristics),
         }
     }
 
@@ -1291,7 +1316,7 @@ impl WindowsFields {
             size_of_image: goblin_wf.size_of_image,
             size_of_headers: goblin_wf.size_of_headers,
             checksum: goblin_wf.check_sum,
-            subsystem: Subsystem(goblin_wf.subsystem),
+            subsystem: Subsystem::new(goblin_wf.subsystem),
             dll_characteristics: goblin_wf.dll_characteristics,
             size_of_stack_reserve: goblin_wf.size_of_stack_reserve,
             size_of_stack_commit: goblin_wf.size_of_stack_commit,

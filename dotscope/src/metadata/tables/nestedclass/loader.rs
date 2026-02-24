@@ -81,7 +81,16 @@ impl MetadataLoader for NestedClassLoader {
             context.handle_error(owned.apply(), DiagnosticCategory::Type, token_msg)?;
             context.nested_class.insert(row.token, owned);
             Ok(())
-        })
+        })?;
+
+        // Rebuild the fullname index now that enclosing type relationships are established.
+        // `set_enclosing_type()` invalidates the cached fullname on each nested type, so
+        // the next `fullname()` call will include the parent prefix (e.g. `Outer/Inner`).
+        // The `types_by_fullname` index was populated at insert time with the old (bare)
+        // names and must be rebuilt to reflect the correct hierarchical names.
+        context.types.build_fullnames();
+
+        Ok(())
     }
 
     /// Returns the table identifier for `NestedClass`.

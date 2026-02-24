@@ -14,7 +14,7 @@ use crate::{
         findings::DeobfuscationFindings,
         obfuscators::utils,
     },
-    metadata::{signatures::TypeSignature, token::Token},
+    metadata::{signatures::TypeSignature, tables::TypeAttributes, token::Token},
     CilObject,
 };
 
@@ -189,8 +189,8 @@ fn detect_string_hiding_infrastructure(
                         findings.infrastructure_fields.push(field.token);
                     }
 
-                    // ExplicitLayout flag is 0x10 in TypeAttributes
-                    if nested_type.flags & 0x10 != 0 {
+                    // ExplicitLayout flag in TypeAttributes
+                    if nested_type.flags.layout() == TypeAttributes::EXPLICIT_LAYOUT {
                         score.add(DetectionEvidence::StructuralPattern {
                             description: "Nested ExplicitLayout struct (FieldRVA data source)"
                                 .to_string(),
