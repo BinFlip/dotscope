@@ -14,7 +14,7 @@ use crate::metadata::{
         VersionRequirement,
     },
     identity::{AssemblyIdentity, AssemblyVersion},
-    tables::{AssemblyRef, AssemblyRefHash, File, ModuleRef},
+    tables::{AssemblyFlags, AssemblyRef, AssemblyRefHash, File, FileAttributes, ModuleRef},
     token::Token,
 };
 
@@ -60,7 +60,7 @@ pub fn create_test_assembly_ref_with_culture(
         minor_version: minor,
         build_number: build,
         revision_number: revision,
-        flags: 0,
+        flags: AssemblyFlags::ZERO,
         culture,
         identifier: None,
         offset: 0,
@@ -89,7 +89,7 @@ pub fn create_test_module_ref(name: &str) -> Arc<ModuleRef> {
 /// Create a test File with all required fields.
 pub fn create_test_file(name: &str) -> Arc<File> {
     Arc::new(File {
-        flags: 0,
+        flags: FileAttributes::ZERO,
         name: name.to_string(),
         hash_value: AssemblyRefHash::new(&[0x01, 0x02, 0x03, 0x04]).unwrap(),
         offset: 0,

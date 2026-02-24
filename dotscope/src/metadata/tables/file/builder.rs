@@ -100,14 +100,20 @@ use crate::{
 /// - **ManifestResource**: Resources can reference files
 /// - **ExportedType**: Types can be forwarded to files
 /// - **Assembly Loading**: Runtime uses file information for loading
-#[derive(Debug, Clone, Default)]
+#[derive(Debug, Clone)]
 pub struct FileBuilder {
     /// The name of the file
     name: Option<String>,
     /// File attribute flags
-    flags: u32,
+    flags: FileAttributes,
     /// Hash value for integrity verification
     hash_value: Option<Vec<u8>>,
+}
+
+impl Default for FileBuilder {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl FileBuilder {
@@ -171,7 +177,7 @@ impl FileBuilder {
     ///     .flags(FileAttributes::CONTAINS_NO_META_DATA);
     /// ```
     #[must_use]
-    pub fn flags(mut self, flags: u32) -> Self {
+    pub fn flags(mut self, flags: FileAttributes) -> Self {
         self.flags = flags;
         self
     }
@@ -304,7 +310,7 @@ impl FileBuilder {
             rid: 0,
             token: Token::new(0),
             offset: 0,
-            flags: self.flags,
+            flags: self.flags.bits(),
             name: name_index,
             hash_value: hash_value_index,
         };

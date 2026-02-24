@@ -13,6 +13,7 @@ use crate::metadata::{
     customattributes::CustomAttributeValueList,
     marshalling::MarshallingInfo,
     signatures::SignatureField,
+    tables::FieldAttributes,
     token::Token,
     typesystem::{CilPrimitive, CilTypeRef},
 };
@@ -52,26 +53,11 @@ pub struct Field {
 
     /// Field attributes and flags.
     ///
-    /// A 2-byte bitmask of type `FieldAttributes` as defined in ECMA-335, §II.23.1.5.
-    /// This includes accessibility modifiers, static/instance designation, and
-    /// special flags like `HasDefault`, `HasFieldRVA`, and `HasFieldMarshal`.
-    ///
-    /// Common flag values:
-    /// - `0x0001`: `CompilerControlled`
-    /// - `0x0002`: `Private`  
-    /// - `0x0003`: `FamANDAssem`
-    /// - `0x0004`: `Assembly`
-    /// - `0x0005`: `Family`
-    /// - `0x0006`: `FamORAssem`
-    /// - `0x0007`: `Public`
-    /// - `0x0010`: `Static`
-    /// - `0x0020`: `Literal`
-    /// - `0x0040`: `NotSerialized`
-    /// - `0x0080`: `HasFieldRVA`
-    /// - `0x1000`: `HasDefault`
-    /// - `0x2000`: `HasFieldMarshal`
-    // ToDo: Make this a proper bitfield for cleaner access
-    pub flags: u32,
+    /// A strongly-typed [`FieldAttributes`] wrapper around the 2-byte bitmask
+    /// as defined in ECMA-335, §II.23.1.5. This includes accessibility modifiers,
+    /// static/instance designation, and special flags like `HasDefault`,
+    /// `HasFieldRVA`, and `HasFieldMarshal`.
+    pub flags: FieldAttributes,
 
     /// The name of the field.
     ///

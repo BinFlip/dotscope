@@ -2,7 +2,7 @@ use uguid::Guid;
 
 use crate::metadata::{
     cilobject::CilObject,
-    cor20header::Cor20Header,
+    cor20header::{Cor20Flags, Cor20Header},
     imports::{ImportContainer, Imports},
     method::MethodMap,
     resources::{Resource, ResourceType, Resources},
@@ -51,7 +51,10 @@ pub fn verify_cor20(cor20: &Cor20Header) {
     assert_eq!(cor20.minor_runtime_version, 5);
     assert_eq!(cor20.meta_data_rva, 0x12E868);
     assert_eq!(cor20.meta_data_size, 0xABB24);
-    assert_eq!(cor20.flags, 0xC);
+    assert_eq!(
+        cor20.flags,
+        Cor20Flags::STRONG_NAME_SIGNED | Cor20Flags::NATIVE_ENTRY_POINT
+    );
     assert_eq!(cor20.entry_point_token, 0);
     assert_eq!(cor20.resource_rva, 0x3CEF0);
     assert_eq!(cor20.resource_size, 0x10780);

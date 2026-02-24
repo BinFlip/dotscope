@@ -23,11 +23,15 @@
 //! # ECMA-335 Reference
 //! See ECMA-335, Partition II, §22.20 for the `GenericParam` table specification.
 
-use std::sync::{Arc, OnceLock};
+use std::{
+    fmt,
+    sync::{Arc, OnceLock},
+};
 
 use crate::{
     metadata::{
         customattributes::CustomAttributeValueList,
+        tables::GenericParamAttributes,
         token::Token,
         typesystem::{CilTypeRefList, CilTypeReference},
     },
@@ -119,7 +123,7 @@ pub struct GenericParam {
     /// - **Special flags**: Additional constraint information
     ///
     /// [`GenericParamAttributes`]: crate::metadata::tables::genericparam::GenericParamAttributes
-    pub flags: u32,
+    pub flags: GenericParamAttributes,
 
     /// Reference to the owner of this generic parameter.
     ///
@@ -229,6 +233,55 @@ impl GenericParam {
                 _ => Err(malformed_error!("Invalid owner type reference")),
             },
             None => Err(malformed_error!("No owner type reference")),
+        }
+    }
+}
+
+impl fmt::Display for GenericParam {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        // Variance prefix
+        let vk = self.flags.variance_keyword();
+        if !vk.is_empty() {
+            write!(f, "{vk}")?;
+        }
+
+        // Flag constraints
+        let mut constraints = Vec::new();
+        if self
+            .flags
+            .contains(GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT)
+        {
+            constraints.push("class".to_string());
+        }
+        if self
+            .flags
+            .contains(GenericParamAttributes::NOT_NULLABLE_VALUE_TYPE_CONSTRAINT)
+        {
+            constraints.push("valuetype".to_string());
+        }
+        if self
+            .flags
+            .contains(GenericParamAttributes::DEFAULT_CONSTRUCTOR_CONSTRAINT)
+        {
+            constraints.push(".ctor".to_string());
+        }
+
+        // Type/interface constraints
+        for (_, constraint_ref) in self.constraints.iter() {
+            if let Some(constraint_type) = constraint_ref.upgrade() {
+                constraints.push(constraint_type.fullname());
+            }
+        }
+
+        if !constraints.is_empty() {
+            write!(f, "({}) ", constraints.join(", "))?;
+        }
+
+        // Use ILAsm positional notation: !N for type params, !!N for method params
+        match self.owner.get() {
+            Some(CilTypeReference::TypeDef(_)) => write!(f, "!{}", self.number),
+            Some(CilTypeReference::MethodDef(_)) => write!(f, "!!{}", self.number),
+            _ => write!(f, "!{}", self.number),
         }
     }
 }

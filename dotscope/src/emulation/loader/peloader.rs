@@ -707,7 +707,7 @@ impl PeLoader {
             let characteristics = section.characteristics;
 
             // Determine protection
-            let mut protection = MemoryProtection::empty();
+            let mut protection = MemoryProtection::ZERO;
             if characteristics & 0x2000_0000 != 0 {
                 // IMAGE_SCN_MEM_EXECUTE
                 protection |= MemoryProtection::EXECUTE;

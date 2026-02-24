@@ -2175,7 +2175,7 @@ impl EmulationController {
             .map(|t| {
                 t.fields
                     .iter()
-                    .filter(|(_, f)| f.flags & 0x0010 == 0) // Not static
+                    .filter(|(_, f)| !f.flags.is_static())
                     .map(|(_, f)| (f.token, CilFlavor::from(&f.signature.base)))
                     .collect()
             })
@@ -2350,7 +2350,7 @@ impl EmulationController {
             .map(|t| {
                 t.fields
                     .iter()
-                    .filter(|(_, f)| f.flags & 0x0010 == 0) // Not static
+                    .filter(|(_, f)| !f.flags.is_static())
                     .map(|(_, f)| (f.token, CilFlavor::from(&f.signature.base)))
                     .collect()
             })

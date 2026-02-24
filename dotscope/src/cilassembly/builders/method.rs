@@ -224,7 +224,7 @@ impl MethodBuilder {
         Self {
             name: name.to_string(),
             access_flags: MethodAccessFlags::PRIVATE, // Default to private
-            modifiers: MethodModifiers::empty(),
+            modifiers: MethodModifiers::ZERO,
             impl_flags: MethodImplCodeType::IL,
             return_type: TypeSignature::Void,
             parameters: Vec::new(),

@@ -243,12 +243,12 @@ impl OwnedSignatureValidator {
                 }
 
                 // Validate generic parameter flags are reasonable
-                if generic_param.flags > 0x001F {
+                if generic_param.flags.bits() > 0x001F {
                     return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
                             "Method '{}' generic parameter '{}' has invalid flags: 0x{:04X}",
-                            method.name, generic_param.name, generic_param.flags
+                            method.name, generic_param.name, generic_param.flags.bits()
                         ),
 
                     });

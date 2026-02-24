@@ -94,47 +94,53 @@ pub type ParamList = Arc<boxcar::Vec<ParamRc>>;
 /// while maintaining memory safety through automatic reference counting.
 pub type ParamRc = Arc<Param>;
 
-#[allow(non_snake_case)]
-/// Parameter attribute flags for the Param table.
-///
-/// This module defines all possible flags that can be set in the `Flags` field
-/// of Param entries according to ECMA-335 §II.23.1.13. These flags control
-/// parameter behavior, direction, and characteristics.
-pub mod ParamAttributes {
+metadata_flags! {
+    /// Parameter attribute flags for the Param table (ECMA-335 §II.23.1.13).
+    ///
+    /// Strongly-typed wrapper around the 2-byte `Param.Flags` bitmask that controls
+    /// parameter behavior, direction, and characteristics including input/output
+    /// direction, optional status, default values, and marshalling information.
+    ///
+    /// ## Reference
+    /// - [ECMA-335 II.23.1.13](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `ParamAttributes` specification
+    pub struct ParamAttributes(u32);
+}
+
+impl ParamAttributes {
     /// Parameter is an input parameter (passed to the method).
     ///
     /// This flag indicates that the parameter is used to pass data into the method.
     /// Most parameters are input parameters by default.
-    pub const IN: u32 = 0x0001;
+    pub const IN: Self = Self(0x0001);
 
     /// Parameter is an output parameter (data flows out of the method).
     ///
     /// This flag indicates that the parameter is used to return data from the method.
     /// Often used with reference or pointer types for multiple return values.
-    pub const OUT: u32 = 0x0002;
+    pub const OUT: Self = Self(0x0002);
 
     /// Parameter is optional and may be omitted in calls.
     ///
     /// This flag indicates that the parameter is optional and can be omitted
     /// when calling the method. Used primarily for COM interop scenarios.
-    pub const OPTIONAL: u32 = 0x0010;
+    pub const OPTIONAL: Self = Self(0x0010);
 
     /// Parameter has a default value defined.
     ///
     /// This flag indicates that the parameter has a default value specified
     /// in the Constant table. When set, there should be a corresponding
     /// Constant entry for this parameter.
-    pub const HAS_DEFAULT: u32 = 0x1000;
+    pub const HAS_DEFAULT: Self = Self(0x1000);
 
     /// Parameter has marshalling information defined.
     ///
     /// This flag indicates that the parameter has custom marshalling information
     /// defined in the `FieldMarshal` table for interop scenarios.
-    pub const HAS_FIELD_MARSHAL: u32 = 0x2000;
+    pub const HAS_FIELD_MARSHAL: Self = Self(0x2000);
 
     /// Reserved bits that shall be zero in conforming implementations.
     ///
     /// These bits are reserved by the ECMA-335 specification and should
     /// not be set in valid metadata.
-    pub const UNUSED: u32 = 0xcfe0;
+    pub const UNUSED: Self = Self(0xcfe0);
 }

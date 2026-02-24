@@ -53,7 +53,7 @@ fn extend_crafted_2() -> Result<()> {
     // Add a new Field using the FieldBuilder
     let field_token = FieldBuilder::new()
         .name(test_string)
-        .flags(0x0001) // Private field
+        .flags(FieldAttributes::new(0x0001)) // Private field
         .signature(&test_blob)
         .build(&mut assembly)?;
 
@@ -83,7 +83,7 @@ fn extend_crafted_2() -> Result<()> {
 
     let param_token = ParamBuilder::new()
         .name(param_name_string)
-        .flags(0x0000) // No special flags
+        .flags(ParamAttributes::new(0x0000)) // No special flags
         .sequence(1) // First parameter
         .build(&mut assembly)?;
 

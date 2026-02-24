@@ -7,7 +7,7 @@ use std::sync::Arc;
 
 use crate::metadata::{
     customattributes::CustomAttributeValue,
-    tables::{AssemblyRefHash, File, FileRc, ModuleRef, ModuleRefRc},
+    tables::{AssemblyRefHash, File, FileAttributes, FileRc, ModuleRef, ModuleRefRc},
     token::Token,
 };
 
@@ -60,7 +60,7 @@ impl Default for ModuleRefBuilder {
 pub struct FileBuilder {
     rid: u32,
     name: String,
-    flags: u32,
+    flags: FileAttributes,
     hash_value: Option<AssemblyRefHash>,
 }
 
@@ -69,7 +69,7 @@ impl FileBuilder {
         Self {
             rid: 1,
             name: "TestFile.dll".to_string(),
-            flags: 0,
+            flags: FileAttributes::ZERO,
             hash_value: None,
         }
     }

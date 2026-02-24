@@ -8,7 +8,7 @@
 use crate::{
     cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
-        tables::{FieldRaw, TableDataOwned, TableId},
+        tables::{FieldAttributes, FieldRaw, TableDataOwned, TableId},
         token::Token,
     },
     Error, Result,
@@ -36,14 +36,14 @@ use crate::{
 /// // Create a private instance field
 /// let my_field = FieldBuilder::new()
 ///     .name("myField")
-///     .flags(0x0001) // Private
+///     .flags(FieldAttributes::PRIVATE)
 ///     .signature(string_signature)
 ///     .build(&mut assembly)?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub struct FieldBuilder {
     name: Option<String>,
-    flags: Option<u32>,
+    flags: Option<FieldAttributes>,
     signature: Option<Vec<u8>>,
 }
 
@@ -86,34 +86,18 @@ impl FieldBuilder {
     /// Sets the field flags (attributes).
     ///
     /// Field flags control accessibility, storage type, and special behaviors.
-    /// Common flag values:
-    /// - `0x0001`: CompilerControlled
-    /// - `0x0002`: Private
-    /// - `0x0003`: FamANDAssem (Family AND Assembly)
-    /// - `0x0004`: Assembly
-    /// - `0x0005`: Family (Protected)
-    /// - `0x0006`: FamORAssem (Family OR Assembly)
-    /// - `0x0007`: Public
-    /// - `0x0010`: Static
-    /// - `0x0020`: InitOnly (Readonly)
-    /// - `0x0040`: Literal (Const)
-    /// - `0x0080`: NotSerialized
-    /// - `0x0100`: SpecialName
-    /// - `0x0200`: PinvokeImpl
-    /// - `0x0400`: RTSpecialName
-    /// - `0x0800`: HasFieldMarshal
-    /// - `0x1000`: HasDefault
-    /// - `0x2000`: HasFieldRVA
+    /// Use [`FieldAttributes`] constants such as `FieldAttributes::PRIVATE`,
+    /// `FieldAttributes::STATIC`, `FieldAttributes::LITERAL`, etc.
     ///
     /// # Arguments
     ///
-    /// * `flags` - The field attribute flags bitmask
+    /// * `flags` - The field attribute flags
     ///
     /// # Returns
     ///
     /// Self for method chaining.
     #[must_use]
-    pub fn flags(mut self, flags: u32) -> Self {
+    pub fn flags(mut self, flags: FieldAttributes) -> Self {
         self.flags = Some(flags);
         self
     }
@@ -193,7 +177,7 @@ impl FieldBuilder {
             rid,
             token,
             offset: 0, // Will be set during binary generation
-            flags,
+            flags: flags.bits(),
             name: name_index,
             signature: signature_index,
         };
@@ -209,7 +193,6 @@ mod tests {
     use crate::{
         cilassembly::{ChangeRefKind, CilAssembly},
         metadata::cilassemblyview::CilAssemblyView,
-        prelude::FieldAttributes,
     };
     use std::path::PathBuf;
 

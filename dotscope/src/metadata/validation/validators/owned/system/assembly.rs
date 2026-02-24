@@ -79,6 +79,7 @@
 use crate::{
     metadata::{
         identity::Identity,
+        tables::HashAlgorithmId,
         validation::{
             context::{OwnedValidationContext, ValidationContext},
             traits::OwnedValidator,
@@ -666,12 +667,13 @@ impl OwnedAssemblyValidator {
             }
 
             // Validate flags are reasonable
-            if assembly_ref.flags > 0x0001 {
+            if assembly_ref.flags.bits() > 0x0001 {
                 return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly reference '{}' has unknown flags: 0x{:08X}",
-                        assembly_ref.name, assembly_ref.flags
+                        assembly_ref.name,
+                        assembly_ref.flags.bits()
                     ),
                 });
             }
@@ -705,21 +707,22 @@ impl OwnedAssemblyValidator {
         // Validate basic assembly structure
         if let Some(assembly) = context.object().assembly() {
             // Check that assembly has reasonable flags
-            if assembly.flags > 0x0001 {
+            if assembly.flags.bits() > 0x0001 {
                 return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(
                         "Assembly '{}' has unknown flags: 0x{:08X}",
-                        assembly.name, assembly.flags
+                        assembly.name,
+                        assembly.flags.bits()
                     ),
                 });
             }
 
             // Validate hash algorithm is reasonable
-            if assembly.hash_alg_id != 0
-                && assembly.hash_alg_id != 0x8003
-                && assembly.hash_alg_id != 0x8004
-                && assembly.hash_alg_id != 0x800C
+            if assembly.hash_alg_id != HashAlgorithmId::NONE
+                && assembly.hash_alg_id != HashAlgorithmId::MD5
+                && assembly.hash_alg_id != HashAlgorithmId::SHA1
+                && assembly.hash_alg_id != HashAlgorithmId::SHA256
             {
                 return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),

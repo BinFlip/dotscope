@@ -147,7 +147,7 @@ impl OwnedAccessibilityValidator {
     /// - Interfaces are marked as sealed (invalid combination)
     fn validate_type_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
         for type_entry in context.all_types() {
-            let visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
+            let visibility = type_entry.flags.visibility();
 
             match visibility {
                 TypeAttributes::NOT_PUBLIC
@@ -171,15 +171,21 @@ impl OwnedAccessibilityValidator {
                 }
             }
 
-            // Validate that types which ARE nested have proper nested visibility
-            // Check if this type has an enclosing type (i.e., this type IS nested)
-            if type_entry.enclosing_type.get().is_some() {
+            // Validate that types which ARE nested have proper nested visibility.
+            // Only check TypeDef entries (0x02) — TypeRef entries lack flags metadata.
+            if type_entry.token.table() == 0x02 && type_entry.enclosing_type.get().is_some() {
                 // This is a nested type - it must use nested visibility flags (0x02-0x07)
                 // It cannot use top-level visibility (NOT_PUBLIC=0x00, PUBLIC=0x01)
                 // and cannot use values beyond NESTED_FAM_OR_ASSEM (>0x07)
-                if !(TypeAttributes::NESTED_PUBLIC..=TypeAttributes::NESTED_FAM_OR_ASSEM)
-                    .contains(&visibility)
-                {
+                if !matches!(
+                    visibility,
+                    TypeAttributes::NESTED_PUBLIC
+                        | TypeAttributes::NESTED_PRIVATE
+                        | TypeAttributes::NESTED_FAMILY
+                        | TypeAttributes::NESTED_ASSEMBLY
+                        | TypeAttributes::NESTED_FAM_AND_ASSEM
+                        | TypeAttributes::NESTED_FAM_OR_ASSEM
+                ) {
                     return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
                         message: format!(
@@ -191,10 +197,7 @@ impl OwnedAccessibilityValidator {
                 }
             }
 
-            if type_entry.flags & TypeAttributes::INTERFACE != 0
-                && type_entry.flags & TypeAttributes::SEALED != 0
-            {
-                // SEALED flag
+            if type_entry.flags.is_interface() && type_entry.flags.is_sealed() {
                 return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!("Interface '{}' cannot be sealed", type_entry.name),
@@ -227,7 +230,7 @@ impl OwnedAccessibilityValidator {
     /// - Literal fields are not marked as static (ECMA-335 requirement)
     fn validate_member_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
         for type_entry in context.all_types() {
-            let type_visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
+            let type_visibility = type_entry.flags.visibility();
 
             for (_, method_ref) in type_entry.methods.iter() {
                 if let Some(method) = method_ref.upgrade() {
@@ -244,7 +247,7 @@ impl OwnedAccessibilityValidator {
             }
 
             for (_, field) in type_entry.fields.iter() {
-                let field_access = field.flags & FieldAttributes::FIELD_ACCESS_MASK;
+                let field_access = field.flags.access();
 
                 if field_access == FieldAttributes::PUBLIC
                     && type_visibility == TypeAttributes::NOT_PUBLIC
@@ -253,7 +256,7 @@ impl OwnedAccessibilityValidator {
                     // but worth noting for consistency
                 }
 
-                if field.flags & 0x0040 != 0 && field.flags & FieldAttributes::STATIC == 0 {
+                if field.flags.is_literal() && !field.flags.is_static() {
                     // LITERAL flag but not static
                     let field_name = &field.name;
                     let type_name = &type_entry.name;
@@ -293,11 +296,10 @@ impl OwnedAccessibilityValidator {
     /// - Interfaces contain non-constant fields
     fn validate_interface_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
         for type_entry in context.all_types() {
-            for (_, interface_ref) in type_entry.interfaces.iter() {
-                let type_visibility = type_entry.flags & TypeAttributes::VISIBILITY_MASK;
-                if let Some(interface_type) = interface_ref.upgrade() {
-                    let interface_visibility =
-                        interface_type.flags & TypeAttributes::VISIBILITY_MASK;
+            for (_, entry) in type_entry.interfaces.iter() {
+                let type_visibility = type_entry.flags.visibility();
+                if let Some(interface_type) = entry.interface.upgrade() {
+                    let interface_visibility = interface_type.flags.visibility();
 
                     if interface_visibility == TypeAttributes::PUBLIC
                         && type_visibility == TypeAttributes::NOT_PUBLIC
@@ -317,9 +319,9 @@ impl OwnedAccessibilityValidator {
                 }
             }
 
-            if type_entry.flags & TypeAttributes::INTERFACE != 0 {
+            if type_entry.flags.is_interface() {
                 for (_, field) in type_entry.fields.iter() {
-                    if field.flags & FieldAttributes::STATIC == 0 {
+                    if !field.flags.is_static() {
                         return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
                             message: format!(
@@ -329,7 +331,7 @@ impl OwnedAccessibilityValidator {
                         });
                     }
 
-                    if field.flags & 0x0040 == 0 {
+                    if !field.flags.is_literal() {
                         // Not LITERAL
                         return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
@@ -371,21 +373,15 @@ impl OwnedAccessibilityValidator {
             // base type references and check accessibility consistency
 
             // Basic validation: sealed types cannot be abstract (except for static classes)
-            if type_entry.flags & 0x0000_0100 != 0 {
-                // SEALED flag
-                if type_entry.flags & 0x0000_0080 != 0 {
-                    // ABSTRACT flag - this is valid for static classes in C#
-                    // Static classes are marked as both abstract and sealed by the compiler
-                    // We allow this legitimate pattern
-                }
+            if type_entry.flags.is_sealed() && type_entry.flags.is_abstract() {
+                // ABSTRACT flag - this is valid for static classes in C#
+                // Static classes are marked as both abstract and sealed by the compiler
+                // We allow this legitimate pattern
             }
 
             // Abstract types can be interfaces - interfaces are inherently abstract
-            if type_entry.flags & 0x0000_0080 != 0 {
-                // ABSTRACT flag
-                if type_entry.flags & TypeAttributes::INTERFACE != 0 {
-                    // Interfaces can be marked as abstract - this is standard behavior
-                }
+            if type_entry.flags.is_abstract() && type_entry.flags.is_interface() {
+                // Interfaces can be marked as abstract - this is standard behavior
             }
         }
     }

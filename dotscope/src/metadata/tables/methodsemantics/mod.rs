@@ -84,51 +84,58 @@ pub type MethodSemanticsList = Arc<boxcar::Vec<MethodSemanticsRc>>;
 /// while maintaining memory safety through automatic reference counting.
 pub type MethodSemanticsRc = Arc<MethodSemantics>;
 
-#[allow(non_snake_case)]
-/// Constants defining method semantic relationship types for the `MethodSemantics` table.
-///
-/// These flags specify the role a method plays in relation to a property or event,
-/// as defined in ECMA-335 §II.23.1.12. Multiple flags can be combined using bitwise OR.
-///
-/// ## Property Semantics
-/// - [`MethodSemanticsAttributes::SETTER`] - Method is a property setter (write access)
-/// - [`MethodSemanticsAttributes::GETTER`] - Method is a property getter (read access)  
-/// - [`MethodSemanticsAttributes::OTHER`] - Method provides other property-related functionality
-///
-/// ## Event Semantics  
-/// - [`MethodSemanticsAttributes::ADD_ON`] - Method adds event handlers (subscribe)
-/// - [`MethodSemanticsAttributes::REMOVE_ON`] - Method removes event handlers (unsubscribe)
-/// - [`MethodSemanticsAttributes::FIRE`] - Method fires/raises the event
-/// - [`MethodSemanticsAttributes::OTHER`] - Method provides other event-related functionality
-pub mod MethodSemanticsAttributes {
+metadata_flags! {
+    /// Method semantic relationship type flags for the `MethodSemantics` table (ECMA-335 §II.23.1.12).
+    ///
+    /// Strongly-typed wrapper around the 2-byte `MethodSemantics.Semantics` bitmask that specifies
+    /// the role a method plays in relation to a property or event. Multiple flags can be combined
+    /// using bitwise OR.
+    ///
+    /// ## Property Semantics
+    /// - [`MethodSemanticsAttributes::SETTER`] - Method is a property setter (write access)
+    /// - [`MethodSemanticsAttributes::GETTER`] - Method is a property getter (read access)
+    /// - [`MethodSemanticsAttributes::OTHER`] - Method provides other property-related functionality
+    ///
+    /// ## Event Semantics
+    /// - [`MethodSemanticsAttributes::ADD_ON`] - Method adds event handlers (subscribe)
+    /// - [`MethodSemanticsAttributes::REMOVE_ON`] - Method removes event handlers (unsubscribe)
+    /// - [`MethodSemanticsAttributes::FIRE`] - Method fires/raises the event
+    /// - [`MethodSemanticsAttributes::OTHER`] - Method provides other event-related functionality
+    ///
+    /// ## Reference
+    /// - [ECMA-335 II.23.1.12](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - `MethodSemanticsAttributes` enumeration
+    pub struct MethodSemanticsAttributes(u32);
+}
+
+impl MethodSemanticsAttributes {
     /// Setter method for property (0x0001).
     ///
     /// Indicates the method provides write access to a property value.
-    pub const SETTER: u32 = 0x0001;
+    pub const SETTER: Self = Self(0x0001);
 
     /// Getter method for property (0x0002).
     ///
     /// Indicates the method provides read access to a property value.
-    pub const GETTER: u32 = 0x0002;
+    pub const GETTER: Self = Self(0x0002);
 
     /// Other method for property or event (0x0004).
     ///
     /// Indicates the method provides additional functionality related to
     /// the associated property or event beyond the standard operations.
-    pub const OTHER: u32 = 0x0004;
+    pub const OTHER: Self = Self(0x0004);
 
     /// `AddOn` method for event (0x0008).
     ///
     /// Indicates the method adds event handlers (subscription functionality).
-    pub const ADD_ON: u32 = 0x0008;
+    pub const ADD_ON: Self = Self(0x0008);
 
     /// `RemoveOn` method for event (0x0010).
     ///
     /// Indicates the method removes event handlers (unsubscription functionality).
-    pub const REMOVE_ON: u32 = 0x0010;
+    pub const REMOVE_ON: Self = Self(0x0010);
 
     /// Fire method for event (0x0020).
     ///
     /// Indicates the method fires or raises the event, invoking all registered handlers.
-    pub const FIRE: u32 = 0x0020;
+    pub const FIRE: Self = Self(0x0020);
 }

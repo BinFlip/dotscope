@@ -19,7 +19,7 @@ use crate::{
     metadata::{
         signatures::parse_field_signature,
         streams::{Blob, Strings},
-        tables::{Field, FieldRc, TableInfoRef, TableRow},
+        tables::{Field, FieldAttributes, FieldRc, TableInfoRef, TableRow},
         token::Token,
     },
     Result,
@@ -116,7 +116,7 @@ impl FieldRaw {
             rid: self.rid,
             token: self.token,
             offset: self.offset,
-            flags: self.flags,
+            flags: FieldAttributes::new(self.flags),
             name: strings.get(self.name as usize)?.to_string(),
             signature: parse_field_signature(blob.get(self.signature as usize)?)?,
             default: OnceLock::new(),

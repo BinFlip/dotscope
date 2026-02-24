@@ -103,10 +103,10 @@ pub struct EnumBuilder {
     namespace: Option<String>,
 
     /// Enum visibility attributes
-    visibility: u32,
+    visibility: TypeAttributes,
 
     /// Additional enum attributes
-    attributes: u32,
+    attributes: TypeAttributes,
 
     /// Underlying type for enum values (default is i32)
     underlying_type: TypeSignature,

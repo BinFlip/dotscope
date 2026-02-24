@@ -163,8 +163,8 @@ impl OwnedTypeDependencyValidator {
             }
 
             // Validate interface dependencies
-            for (_, interface_ref) in type_rc.interfaces.iter() {
-                if let Some(interface_type) = interface_ref.upgrade() {
+            for (_, entry) in type_rc.interfaces.iter() {
+                if let Some(interface_type) = entry.interface.upgrade() {
                     if interface_type.name.is_empty() {
                         return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
@@ -348,8 +348,8 @@ impl OwnedTypeDependencyValidator {
             }
 
             // Add interface dependencies
-            for (_, interface_ref) in type_rc.interfaces.iter() {
-                if let Some(interface_type) = interface_ref.upgrade() {
+            for (_, entry) in type_rc.interfaces.iter() {
+                if let Some(interface_type) = entry.interface.upgrade() {
                     dependencies.push(Arc::as_ptr(&interface_type) as usize);
                 }
             }

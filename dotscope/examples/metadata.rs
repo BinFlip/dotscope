@@ -408,16 +408,16 @@ fn print_dependency_analysis(assembly: &CilObject) {
 
             // Decode assembly flags for better readability
             let mut flag_descriptions = Vec::new();
-            if assembly_ref.flags & 0x0001 > 0 {
+            if assembly_ref.flags.bits() & 0x0001 != 0 {
                 flag_descriptions.push("PublicKey");
             }
-            if assembly_ref.flags & 0x0100 > 0 {
+            if assembly_ref.flags.bits() & 0x0100 != 0 {
                 flag_descriptions.push("Retargetable");
             }
-            if assembly_ref.flags & 0x4000 > 0 {
+            if assembly_ref.flags.bits() & 0x4000 != 0 {
                 flag_descriptions.push("DisableJITOptimizer");
             }
-            if assembly_ref.flags & 0x8000 > 0 {
+            if assembly_ref.flags.bits() & 0x8000 != 0 {
                 flag_descriptions.push("EnableJITTracking");
             }
             let flags_str = if flag_descriptions.is_empty() {

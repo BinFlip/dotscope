@@ -6,7 +6,7 @@
 use std::sync::{atomic::AtomicU32, Arc};
 
 use crate::metadata::{
-    tables::{AssemblyRef, AssemblyRefHash, AssemblyRefRc},
+    tables::{AssemblyFlags, AssemblyRef, AssemblyRefHash, AssemblyRefRc},
     token::Token,
 };
 
@@ -19,7 +19,7 @@ pub struct AssemblyRefBuilder {
     minor_version: u32,
     build_number: u32,
     revision_number: u32,
-    flags: u32,
+    flags: AssemblyFlags,
     hash: Option<AssemblyRefHash>,
 }
 
@@ -33,7 +33,7 @@ impl AssemblyRefBuilder {
             minor_version: 0,
             build_number: 0,
             revision_number: 0,
-            flags: 0,
+            flags: AssemblyFlags::ZERO,
             hash: None,
         }
     }

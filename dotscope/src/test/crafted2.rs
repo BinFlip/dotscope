@@ -491,7 +491,10 @@ public struct BufferStruct
 */
 
 use crate::{
-    metadata::marshalling::{parse_marshalling_descriptor, NativeType},
+    metadata::{
+        cor20header::Cor20Flags,
+        marshalling::{parse_marshalling_descriptor, NativeType},
+    },
     prelude::{
         ArgumentValue, AssemblyRaw, AssemblyRefRaw, CilFlavor, ClassLayoutRaw, CodedIndex,
         CodedIndexType, ConstantRaw, CustomAttributeRaw, DeclSecurityRaw, EventMapRaw, EventRaw,
@@ -544,7 +547,7 @@ fn verify_cor20(asm: &CilObject) {
     assert_eq!(cor20.minor_runtime_version, 5);
     assert_eq!(cor20.meta_data_rva, 0x26DC);
     assert_eq!(cor20.meta_data_size, 0x2BA4);
-    assert_eq!(cor20.flags, 0x1);
+    assert_eq!(cor20.flags, Cor20Flags::IL_ONLY);
     assert_eq!(cor20.entry_point_token, 0x06000039);
     assert_eq!(cor20.resource_rva, 0);
     assert_eq!(cor20.resource_size, 0);
@@ -1831,8 +1834,8 @@ fn test_interface_implementations(asm: &CilObject) {
     let base_interface_ref = derived_interface
         .interfaces
         .iter()
-        .find(|(_, iface)| {
-            if let Some(iface_type) = iface.upgrade() {
+        .find(|(_, entry)| {
+            if let Some(iface_type) = entry.interface.upgrade() {
                 iface_type.name == "IBaseInterface"
             } else {
                 false
@@ -1842,6 +1845,7 @@ fn test_interface_implementations(asm: &CilObject) {
 
     let base_type = base_interface_ref
         .1
+        .interface
         .upgrade()
         .expect("IBaseInterface reference should be valid");
     println!(

@@ -335,7 +335,7 @@ impl MethodBody {
         }
 
         let first_byte = read_le::<u8>(data)?;
-        match MethodBodyFlags::from_bits_truncate(u16::from(first_byte & 0b_00000011_u8)) {
+        match MethodBodyFlags::new(u16::from(first_byte & 0b_00000011_u8)) {
             MethodBodyFlags::TINY_FORMAT => {
                 let size_code = (first_byte >> 2) as usize;
                 if size_code + 1 > data.len() {
@@ -367,8 +367,7 @@ impl MethodBody {
                 }
 
                 let local_var_sig_token = read_le::<u32>(&data[8..])?;
-                let flags_header =
-                    MethodBodyFlags::from_bits_truncate(first_duo & 0b_0000111111111111_u16);
+                let flags_header = MethodBodyFlags::new(first_duo & 0b_0000111111111111_u16);
                 let max_stack = read_le::<u16>(&data[2..])? as usize;
 
                 let is_init_local = flags_header.contains(MethodBodyFlags::INIT_LOCALS);
@@ -383,7 +382,7 @@ impl MethodBody {
 
                     while data.len() > (cursor + 4) {
                         let method_data_section_flags =
-                            SectionFlags::from_bits_truncate(read_le::<u8>(&data[cursor..])?);
+                            SectionFlags::new(read_le::<u8>(&data[cursor..])?);
                         if !method_data_section_flags.contains(SectionFlags::EHTABLE) {
                             break;
                         }
@@ -421,8 +420,7 @@ impl MethodBody {
                                     ));
                                 }
                                 #[allow(clippy::cast_possible_truncation)]
-                                let flags =
-                                    ExceptionHandlerFlags::from_bits_truncate(flags_u32 as u16);
+                                let flags = ExceptionHandlerFlags::new(flags_u32 as u16);
 
                                 exception_handlers.push(ExceptionHandler {
                                     flags,
@@ -459,9 +457,7 @@ impl MethodBody {
                             cursor += 4;
                             for _ in 0..handler_count {
                                 exception_handlers.push(ExceptionHandler {
-                                    flags: ExceptionHandlerFlags::from_bits_truncate(read_le_at::<
-                                        u16,
-                                    >(
+                                    flags: ExceptionHandlerFlags::new(read_le_at::<u16>(
                                         data,
                                         &mut cursor,
                                     )?),

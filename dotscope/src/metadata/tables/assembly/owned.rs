@@ -9,7 +9,7 @@ use std::sync::OnceLock;
 use crate::metadata::{
     customattributes::CustomAttributeValueList,
     security::Security,
-    tables::{AssemblyFlagsValue, HashAlgorithmId},
+    tables::{AssemblyFlags, HashAlgorithmId},
     token::Token,
 };
 
@@ -90,7 +90,7 @@ pub struct Assembly {
     /// Common flags:
     /// - `0x0001`: Contains full public key (not just token)
     /// - `0x0100`: Retargetable at runtime
-    pub flags: AssemblyFlagsValue,
+    pub flags: AssemblyFlags,
 
     /// Strong name public key data
     ///

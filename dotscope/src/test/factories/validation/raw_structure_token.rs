@@ -5,9 +5,9 @@
 
 use crate::{
     metadata::tables::{
-        CodedIndex, CodedIndexType, CustomAttributeBuilder, FieldBuilder, GenericParamBuilder,
-        InterfaceImplBuilder, MemberRefBuilder, MethodSpecBuilder, NestedClassBuilder, TableId,
-        TypeDefBuilder,
+        CodedIndex, CodedIndexType, CustomAttributeBuilder, FieldAttributes, FieldBuilder,
+        GenericParamAttributes, GenericParamBuilder, InterfaceImplBuilder, MemberRefBuilder,
+        MethodSpecBuilder, NestedClassBuilder, TableId, TypeAttributes, TypeDefBuilder,
     },
     test::{
         create_passing_test_assembly, create_test_assembly_with_error, get_testfile_wb,
@@ -54,7 +54,7 @@ pub fn create_assembly_with_invalid_typedef_extends() -> Result<TestAssembly> {
         TypeDefBuilder::new()
             .name("InvalidType")
             .namespace("Test")
-            .flags(0x00100000)
+            .flags(TypeAttributes::BEFORE_FIELD_INIT)
             .extends(invalid_extends)
             .build(assembly)?;
 
@@ -71,7 +71,7 @@ pub fn create_assembly_with_oversized_table() -> Result<TestAssembly> {
             TypeDefBuilder::new()
                 .name(format!("TestType{i}"))
                 .namespace("Overflow")
-                .flags(0x00100001)
+                .flags(TypeAttributes::BEFORE_FIELD_INIT | TypeAttributes::PUBLIC)
                 .build(assembly)?;
         }
 
@@ -90,7 +90,7 @@ pub fn create_assembly_with_invalid_coded_index() -> Result<TestAssembly> {
         TypeDefBuilder::new()
             .name("InvalidCodedIndexType")
             .namespace("Test")
-            .flags(0x00100000)
+            .flags(TypeAttributes::BEFORE_FIELD_INIT)
             .extends(invalid_extends) // This should point to non-existent TypeRef
             .build(assembly)?;
 
@@ -107,14 +107,14 @@ pub fn create_assembly_with_missing_reference() -> Result<TestAssembly> {
 
         FieldBuilder::new()
             .name("InvalidField")
-            .flags(0x0001)
+            .flags(FieldAttributes::PRIVATE)
             .signature(&field_signature)
             .build(assembly)?;
 
         TypeDefBuilder::new()
             .name("InvalidFieldList")
             .namespace("Test")
-            .flags(0x00100000)
+            .flags(TypeAttributes::BEFORE_FIELD_INIT)
             .build(assembly)?;
 
         Ok(())
@@ -149,7 +149,7 @@ pub fn create_assembly_with_rid_bounds_violation() -> Result<TestAssembly> {
             TypeDefBuilder::new()
                 .name(format!("TestType{i}"))
                 .namespace("RidBoundsTest")
-                .flags(0x00100001)
+                .flags(TypeAttributes::BEFORE_FIELD_INIT | TypeAttributes::PUBLIC)
                 .build(assembly)?;
         }
 
@@ -165,7 +165,7 @@ pub fn create_assembly_with_invalid_customattribute() -> Result<TestAssembly> {
         let typedef_token = TypeDefBuilder::new()
             .name("TestType")
             .namespace("Test")
-            .flags(0x00100000)
+            .flags(TypeAttributes::BEFORE_FIELD_INIT)
             .build(assembly)?;
 
         let invalid_constructor = CodedIndex::new(
@@ -199,7 +199,7 @@ pub fn create_assembly_with_invalid_genericparam() -> Result<TestAssembly> {
 
         GenericParamBuilder::new()
             .number(0)
-            .flags(0)
+            .flags(GenericParamAttributes::ZERO)
             .owner(invalid_owner)
             .name("T")
             .build(assembly)?;
@@ -216,7 +216,7 @@ pub fn create_assembly_with_invalid_interfaceimpl() -> Result<TestAssembly> {
         let typedef_token = TypeDefBuilder::new()
             .name("TestInterface")
             .namespace("Test")
-            .flags(0x000000A0)
+            .flags(TypeAttributes::ABSTRACT | TypeAttributes::INTERFACE)
             .build(assembly)?;
 
         let invalid_interface =
@@ -258,13 +258,13 @@ pub fn create_assembly_for_cross_table_validation() -> Result<TestAssembly> {
         let interface_type = TypeDefBuilder::new()
             .name("ICrossTableInterface")
             .namespace("CrossTableTest")
-            .flags(0x000000A1) // Interface | Abstract | Public
+            .flags(TypeAttributes::ABSTRACT | TypeAttributes::INTERFACE | TypeAttributes::PUBLIC) // Interface | Abstract | Public
             .build(assembly)?;
 
         let nested_type = TypeDefBuilder::new()
             .name("NestedType")
             .namespace("CrossTableTest")
-            .flags(0x00100002) // NestedPublic
+            .flags(TypeAttributes::BEFORE_FIELD_INIT | TypeAttributes::NESTED_PUBLIC) // NestedPublic
             .build(assembly)?;
 
         NestedClassBuilder::new()

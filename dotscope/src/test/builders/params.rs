@@ -65,7 +65,7 @@ pub struct ParamBuilder {
     rid: u32,
     sequence: u32,
     name: Option<String>,
-    flags: u32,
+    flags: ParamAttributes,
     direction: ParamDirection,
     default_value: Option<ParamDefault>,
     marshal_info: Option<MarshallingInfo>,
@@ -80,7 +80,7 @@ impl ParamBuilder {
             rid: sequence,
             sequence,
             name,
-            flags: 0,
+            flags: ParamAttributes::ZERO,
             direction: ParamDirection::In,
             default_value: None,
             marshal_info: None,
@@ -134,7 +134,7 @@ impl ParamBuilder {
         self
     }
 
-    pub fn with_flags(mut self, flags: u32) -> Self {
+    pub fn with_flags(mut self, flags: ParamAttributes) -> Self {
         self.flags = flags;
         self
     }

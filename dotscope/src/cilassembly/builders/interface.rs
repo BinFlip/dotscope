@@ -129,10 +129,10 @@ pub struct InterfaceBuilder {
     namespace: Option<String>,
 
     /// Interface visibility attributes
-    visibility: u32,
+    visibility: TypeAttributes,
 
     /// Additional interface attributes
-    attributes: u32,
+    attributes: TypeAttributes,
 
     /// Method signatures in this interface
     methods: Vec<InterfaceMethodDefinition>,

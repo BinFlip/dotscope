@@ -23,7 +23,7 @@ use crate::{
         streams::Strings,
         tables::{
             CodedIndex, CodedIndexType, FieldMap, FieldPtrMap, MetadataTable, MethodPtrMap,
-            TableId, TableInfoRef, TableRow,
+            TableId, TableInfoRef, TableRow, TypeAttributes,
         },
         token::Token,
         typesystem::{CilType, CilTypeRc, CilTypeRef, CilTypeReference},
@@ -304,7 +304,7 @@ impl TypeDefRaw {
             strings.get(self.type_name as usize)?.to_string(),
             external_reference,
             base_type,
-            self.flags,
+            TypeAttributes::new(self.flags),
             type_fields,
             type_methods,
             None,

@@ -8,8 +8,8 @@
 use std::sync::OnceLock;
 
 use crate::metadata::{
-    customattributes::CustomAttributeValueList, method::MethodRef, token::Token,
-    typesystem::CilTypeRef,
+    customattributes::CustomAttributeValueList, method::MethodRef, tables::EventAttributes,
+    token::Token, typesystem::CilTypeRef,
 };
 
 /// Represents a .NET CIL event with fully resolved metadata and owned data
@@ -56,12 +56,12 @@ pub struct Event {
     /// Used for debugging and low-level metadata analysis.
     pub offset: usize,
 
-    /// Event flags bitmask controlling event behavior
+    /// Event flags bitmask controlling event behavior.
     ///
     /// Specifies event attributes using [`crate::metadata::tables::event::EventAttributes`]
     /// constants. Controls special naming and runtime behavior.
     /// See [ECMA-335 II.23.1.4] for flag definitions.
-    pub flags: u32,
+    pub flags: EventAttributes,
 
     /// Event name identifier
     ///

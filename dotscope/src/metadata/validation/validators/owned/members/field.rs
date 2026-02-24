@@ -203,7 +203,7 @@ impl OwnedFieldValidator {
     fn validate_field_accessibility(&self, context: &OwnedValidationContext) -> Result<()> {
         for type_entry in context.all_types() {
             for (_, field) in type_entry.fields.iter() {
-                let access_level = field.flags & FieldAttributes::FIELD_ACCESS_MASK;
+                let access_level = field.flags.access();
 
                 match access_level {
                     FieldAttributes::COMPILER_CONTROLLED
@@ -227,14 +227,12 @@ impl OwnedFieldValidator {
                     }
                 }
 
-                if field.flags & FieldAttributes::STATIC != 0
-                    && field.flags & FieldAttributes::INIT_ONLY != 0
-                {
+                if field.flags.is_static() && field.flags.is_init_only() {
                     // This is actually valid - static readonly fields are allowed
                     // No error here
                 }
 
-                if field.flags & 0x0040 != 0 && field.flags & FieldAttributes::STATIC == 0 {
+                if field.flags.is_literal() && !field.flags.is_static() {
                     let field_name = &field.name;
                     return Err(Error::ValidationOwnedFailed {
                         validator: self.name().to_string(),
@@ -270,14 +268,13 @@ impl OwnedFieldValidator {
         for type_entry in context.all_types() {
             for (_, field) in type_entry.fields.iter() {
                 // Check HasDefault flag consistency
-                if field.flags & 0x1000 != 0 { // HAS_DEFAULT flag
-                     // Field claims to have default value - this is generally valid
-                     // The actual default value validation would require accessing the Constant table
+                if field.flags.has_default() {
+                    // Field claims to have default value - this is generally valid
+                    // The actual default value validation would require accessing the Constant table
                 }
 
                 // Check HasFieldRVA flag consistency
-                if field.flags & 0x0080 != 0 {
-                    // HAS_FIELD_RVA flag
+                if field.flags.has_field_rva() {
                     // Field should have RVA - typically for static fields with initial data
                     // However, in legitimate .NET assemblies, instance fields can also have this flag
                     // for specific purposes (synchronization objects, fixed buffers, etc.)
@@ -285,24 +282,22 @@ impl OwnedFieldValidator {
                 }
 
                 // Check HasFieldMarshal flag
-                if field.flags & 0x2000 != 0 { // HAS_FIELD_MARSHAL flag
-                     // Field has marshalling information - this is valid for P/Invoke scenarios
-                     // No specific validation needed here
+                if field.flags.has_field_marshal() {
+                    // Field has marshalling information - this is valid for P/Invoke scenarios
+                    // No specific validation needed here
                 }
 
                 // Check NotSerialized flag
-                if field.flags & 0x0040 != 0 { // NOT_SERIALIZED flag (different from LITERAL)
-                     // Field is marked as not serialized - this is valid
-                     // No specific validation needed
+                if field.flags.is_not_serialized() {
+                    // Field is marked as not serialized - this is valid
+                    // No specific validation needed
                 }
 
                 // Check RTSpecialName flag (if present)
-                if field.flags & 0x0400 != 0 {
-                    // RT_SPECIAL_NAME flag
+                if field.flags.is_rt_special_name() {
                     // Field has special meaning to runtime
                     // Often paired with SpecialName
-                    if field.flags & 0x0200 == 0 {
-                        // SPECIAL_NAME flag
+                    if !field.flags.is_special_name() {
                         let field_name = &field.name;
                         return Err(Error::ValidationOwnedFailed {
                             validator: self.name().to_string(),
@@ -342,7 +337,7 @@ impl OwnedFieldValidator {
         for type_entry in context.all_types() {
             for (_, field) in type_entry.fields.iter() {
                 if field.name.starts_with('<') && field.name.ends_with(">k__BackingField") {
-                    let access_level = field.flags & FieldAttributes::FIELD_ACCESS_MASK;
+                    let access_level = field.flags.access();
                     if access_level != FieldAttributes::PRIVATE {
                         let field_name = &field.name;
                         return Err(Error::ValidationOwnedFailed {
@@ -354,9 +349,9 @@ impl OwnedFieldValidator {
 
                 if field.name.starts_with('<')
                     && field.name.contains("Event")
-                    && field.flags & FieldAttributes::STATIC == 0
+                    && !field.flags.is_static()
                 {
-                    let access_level = field.flags & FieldAttributes::FIELD_ACCESS_MASK;
+                    let access_level = field.flags.access();
                     if access_level == FieldAttributes::PUBLIC {}
                 }
 

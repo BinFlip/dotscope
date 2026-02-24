@@ -187,8 +187,8 @@ use crate::{
         streams::{Blob, Guid, Strings, TablesHeader, UserStrings},
         tables::{
             member_ref_name_by_token, method_spec_name_by_token, AssemblyOsRc, AssemblyProcessorRc,
-            AssemblyRc, AssemblyRefMap, DeclSecurityMap, MemberRefMap, MemberRefRc, MethodSpecMap,
-            MethodSpecRc, ModuleRc, ModuleRefMap,
+            AssemblyRc, AssemblyRefMap, DeclSecurityMap, FileMap, MemberRefMap, MemberRefRc,
+            MethodSpecMap, MethodSpecRc, ModuleRc, ModuleRefMap,
         },
         token::Token,
         typesystem::TypeRegistry,
@@ -1140,6 +1140,20 @@ impl CilObject {
     /// ```
     pub fn refs_members(&self) -> &MemberRefMap {
         &self.data.refs_member
+    }
+
+    /// Returns all file references for multi-file assemblies.
+    ///
+    /// File references correspond to entries in the `File` metadata table and
+    /// describe additional files that belong to this assembly (netmodules,
+    /// resource files). Each entry contains the file name, hash value, and
+    /// flags indicating whether the file contains metadata.
+    ///
+    /// # Returns
+    ///
+    /// Reference to the `FileMap` containing all file references.
+    pub fn refs_file(&self) -> &FileMap {
+        &self.data.refs_file
     }
 
     /// Returns all security declarations and permission sets defined in this assembly.

@@ -176,7 +176,8 @@ impl MethodImplRaw {
             Some(cil_type) => {
                 cil_type.overwrites.push(interface_implementation.clone());
 
-                match self.method_declaration.tag {
+                // Resolve the declaration reference for .override emission and interface_impls tracking
+                let decl_ref = match self.method_declaration.tag {
                     TableId::MethodDef => match methods.get(&self.method_declaration.token) {
                         Some(parent) => {
                             if let CilTypeReference::MethodDef(method_ref) =
@@ -184,6 +185,7 @@ impl MethodImplRaw {
                             {
                                 parent.value().interface_impls.push(method_ref.clone());
                             }
+                            Some(CilTypeReference::MethodDef(parent.value().clone().into()))
                         }
                         None => {
                             return Err(malformed_error!(
@@ -193,11 +195,7 @@ impl MethodImplRaw {
                         }
                     },
                     TableId::MemberRef => match memberrefs.get(&self.method_declaration.token) {
-                        Some(_parent) => {
-                            // ToDo: Handle MemberRef interface declarations
-                            // MemberRef declarations need special handling for cross-assembly references
-                            // For now, we only track bidirectional relationships for MethodDef declarations
-                        }
+                        Some(parent) => Some(CilTypeReference::MemberRef(parent.value().clone())),
                         None => {
                             return Err(malformed_error!(
                                 "Failed to resolve memberref method_declaration token - {}",
@@ -210,6 +208,15 @@ impl MethodImplRaw {
                             "Invalid method_declaration token - {}",
                             self.method_declaration.token.value()
                         ))
+                    }
+                };
+
+                // Store the declaration on the body method for .override emission
+                if let Some(decl) = decl_ref {
+                    if let CilTypeReference::MethodDef(body_ref) = &interface_implementation {
+                        if let Some(body_method) = body_ref.upgrade() {
+                            body_method.overrides.push(decl);
+                        }
                     }
                 }
 

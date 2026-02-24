@@ -45,9 +45,10 @@ impl EnumUtils {
     /// `true` if the type is an enum, `false` otherwise
     pub fn is_enum_type(type_ref: &CilTypeRc, registry: Option<&Arc<TypeRegistry>>) -> bool {
         // Check for value__ field (required for enums per ECMA-335)
-        let has_value_field = type_ref.fields.iter().any(|(_, field)| {
-            field.name == "value__" && (field.flags & 0x10) == 0 // Not static
-        });
+        let has_value_field = type_ref
+            .fields
+            .iter()
+            .any(|(_, field)| field.name == "value__" && !field.flags.is_static());
 
         if !has_value_field {
             return false;
@@ -97,7 +98,7 @@ impl EnumUtils {
     /// Size in bytes (1, 2, 4, or 8), or 0 if cannot be determined
     pub fn get_enum_underlying_type_size(type_ref: &CilTypeRc) -> usize {
         for (_, field) in type_ref.fields.iter() {
-            if field.flags & 0x10 != 0 {
+            if field.flags.is_static() {
                 // Skip static fields
                 continue;
             }

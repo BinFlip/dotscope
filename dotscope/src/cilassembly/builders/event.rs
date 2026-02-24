@@ -9,7 +9,8 @@ use crate::{
     metadata::{
         signatures::{encode_field_signature, SignatureField, TypeSignature},
         tables::{
-            CodedIndex, CodedIndexType, EventBuilder as EventTableBuilder, FieldBuilder, TableId,
+            CodedIndex, CodedIndexType, EventAttributes, EventBuilder as EventTableBuilder,
+            FieldAttributes, FieldBuilder, TableId,
         },
         token::Token,
     },
@@ -25,7 +26,7 @@ pub enum EventImplementation {
         /// Name of the backing delegate field (auto-generated if None)
         backing_field_name: Option<String>,
         /// Backing delegate field attributes
-        backing_field_attributes: u32,
+        backing_field_attributes: FieldAttributes,
     },
     /// Custom event with user-provided add/remove logic
     Custom {
@@ -117,7 +118,7 @@ pub struct EventBuilder {
     event_type_index: Option<CodedIndex>,
 
     /// Event attributes
-    attributes: u32,
+    attributes: EventAttributes,
 
     /// Add method visibility (separate from event attributes)
     add_attributes: u32,
@@ -148,12 +149,12 @@ impl EventBuilder {
             name: name.to_string(),
             event_type,
             event_type_index: None,
-            attributes: 0x0000,        // Default event attributes
-            add_attributes: 0x0006,    // PUBLIC
-            remove_attributes: 0x0006, // PUBLIC
+            attributes: EventAttributes::ZERO, // Default event attributes
+            add_attributes: 0x0006,            // PUBLIC
+            remove_attributes: 0x0006,         // PUBLIC
             implementation: EventImplementation::Auto {
                 backing_field_name: None,
-                backing_field_attributes: 0x0001, // PRIVATE
+                backing_field_attributes: FieldAttributes::PRIVATE,
             },
         }
     }
@@ -174,7 +175,7 @@ impl EventBuilder {
     pub fn auto_event(mut self) -> Self {
         self.implementation = EventImplementation::Auto {
             backing_field_name: None,
-            backing_field_attributes: 0x0001, // PRIVATE
+            backing_field_attributes: FieldAttributes::PRIVATE,
         };
         self
     }
@@ -261,7 +262,7 @@ impl EventBuilder {
             ..
         } = &mut self.implementation
         {
-            *backing_field_attributes = 0x0001; // PRIVATE
+            *backing_field_attributes = FieldAttributes::PRIVATE;
         }
         self
     }
@@ -283,7 +284,7 @@ impl EventBuilder {
             ..
         } = &mut self.implementation
         {
-            *backing_field_attributes = 0x0004; // FAMILY (protected)
+            *backing_field_attributes = FieldAttributes::FAMILY;
         }
         self
     }
@@ -448,10 +449,10 @@ impl EventBuilder {
     /// use dotscope::prelude::*;
     ///
     /// let builder = EventBuilder::new("OnClick", TypeSignature::Object)
-    ///     .attributes(0x0200); // SPECIAL_NAME
+    ///     .attributes(EventAttributes::SPECIAL_NAME);
     /// ```
     #[must_use]
-    pub fn attributes(mut self, attributes: u32) -> Self {
+    pub fn attributes(mut self, attributes: EventAttributes) -> Self {
         self.attributes = attributes;
         self
     }

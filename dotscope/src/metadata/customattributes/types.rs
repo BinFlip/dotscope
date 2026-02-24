@@ -50,6 +50,7 @@
 //! use dotscope::metadata::customattributes::{
 //!     CustomAttributeValue, CustomAttributeArgument, CustomAttributeNamedArgument
 //! };
+//! use dotscope::metadata::typesystem::CilTypeReference;
 //!
 //! // Example: Create a custom attribute value programmatically
 //! let custom_attr = CustomAttributeValue {
@@ -65,6 +66,8 @@
 //!             value: CustomAttributeArgument::String("Value".to_string()),
 //!         }
 //!     ],
+//!     constructor: CilTypeReference::None,
+//!     blob_index: 0,
 //! };
 //!
 //! println!("Custom attribute has {} fixed args", custom_attr.fixed_args.len());
@@ -129,7 +132,9 @@
 //! - **Memory Efficiency**: Reference counting and concurrent collections minimize overhead
 //! - **.NET Compatibility**: Direct mapping to runtime `CorSerializationType` enumeration
 
-use std::sync::Arc;
+use std::{fmt, sync::Arc};
+
+use crate::metadata::typesystem::CilTypeReference;
 
 /// A reference-counted pointer to a [`CustomAttributeValue`] for efficient sharing.
 ///
@@ -159,6 +164,7 @@ pub type CustomAttributeValueList = Arc<boxcar::Vec<CustomAttributeValueRc>>;
 ///
 /// ```rust,no_run
 /// use dotscope::metadata::customattributes::{CustomAttributeValue, CustomAttributeArgument};
+/// use dotscope::metadata::typesystem::CilTypeReference;
 ///
 /// let custom_attr = CustomAttributeValue {
 ///     fixed_args: vec![
@@ -166,6 +172,8 @@ pub type CustomAttributeValueList = Arc<boxcar::Vec<CustomAttributeValueRc>>;
 ///         CustomAttributeArgument::Bool(true),
 ///     ],
 ///     named_args: vec![], // No named arguments in this example
+///     constructor: CilTypeReference::None,
+///     blob_index: 0,
 /// };
 ///
 /// // Access constructor arguments
@@ -185,6 +193,10 @@ pub struct CustomAttributeValue {
     pub fixed_args: Vec<CustomAttributeArgument>,
     /// Named arguments (fields and properties) with embedded type tags
     pub named_args: Vec<CustomAttributeNamedArgument>,
+    /// Resolved constructor method reference (MethodDef or MemberRef)
+    pub constructor: CilTypeReference,
+    /// Blob heap index for on-demand raw byte access during formatting
+    pub blob_index: usize,
 }
 
 /// Represents a single custom attribute argument value with full .NET type support.
@@ -266,6 +278,43 @@ pub enum CustomAttributeArgument {
     Array(Vec<CustomAttributeArgument>),
     /// Enum value (base type + value)
     Enum(String, Box<CustomAttributeArgument>),
+}
+
+impl fmt::Display for CustomAttributeArgument {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            CustomAttributeArgument::Void => write!(f, "void"),
+            CustomAttributeArgument::Bool(v) => write!(f, "bool({v})"),
+            CustomAttributeArgument::Char(v) => write!(f, "char(0x{:04X})", *v as u32),
+            CustomAttributeArgument::I1(v) => write!(f, "int8({v})"),
+            CustomAttributeArgument::U1(v) => write!(f, "uint8({v})"),
+            CustomAttributeArgument::I2(v) => write!(f, "int16({v})"),
+            CustomAttributeArgument::U2(v) => write!(f, "uint16({v})"),
+            CustomAttributeArgument::I4(v) => write!(f, "int32({v})"),
+            CustomAttributeArgument::U4(v) => write!(f, "uint32({v})"),
+            CustomAttributeArgument::I8(v) => write!(f, "int64({v})"),
+            CustomAttributeArgument::U8(v) => write!(f, "uint64({v})"),
+            CustomAttributeArgument::R4(v) => write!(f, "float32({v})"),
+            CustomAttributeArgument::R8(v) => write!(f, "float64({v})"),
+            CustomAttributeArgument::I(v) => write!(f, "int({v})"),
+            CustomAttributeArgument::U(v) => write!(f, "uint({v})"),
+            CustomAttributeArgument::String(s) => write!(f, "\"{s}\""),
+            CustomAttributeArgument::Type(s) => write!(f, "type({s})"),
+            CustomAttributeArgument::Array(items) => {
+                write!(f, "[")?;
+                for (i, item) in items.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{item}")?;
+                }
+                write!(f, "]")
+            }
+            CustomAttributeArgument::Enum(name, val) => {
+                write!(f, "enum {name}({val})")
+            }
+        }
+    }
 }
 
 /// Represents a named argument (field or property assignment) in a custom attribute.

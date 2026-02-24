@@ -26,8 +26,6 @@
 
 use std::sync::{Arc, RwLock};
 
-use bitflags::bitflags;
-
 use crate::emulation::{
     engine::EmulationError,
     memory::page::{Page, PAGE_SIZE},
@@ -77,7 +75,7 @@ impl std::fmt::Display for ThreadId {
     }
 }
 
-bitflags! {
+metadata_flags! {
     /// Memory protection flags for address space regions.
     ///
     /// These flags control what operations are permitted on a memory region.
@@ -89,23 +87,24 @@ bitflags! {
     /// - [`READ_WRITE`](Self::READ_WRITE) - Data sections (`.data`, `.bss`)
     /// - [`READ_EXECUTE`](Self::READ_EXECUTE) - Code sections (`.text`)
     /// - [`READ`](Self::READ) - Read-only sections (`.rdata`)
-    #[derive(Clone, Copy, Debug, PartialEq, Eq)]
-    pub struct MemoryProtection: u32 {
-        /// Region is readable.
-        const READ = 0x01;
-        /// Region is writable.
-        const WRITE = 0x02;
-        /// Region is executable.
-        const EXECUTE = 0x04;
-        /// Region is a guard page (triggers exception on access).
-        const GUARD = 0x100;
-        /// Read and write access (common for data sections).
-        const READ_WRITE = Self::READ.bits() | Self::WRITE.bits();
-        /// Read, write, and execute access.
-        const READ_WRITE_EXECUTE = Self::READ.bits() | Self::WRITE.bits() | Self::EXECUTE.bits();
-        /// Read and execute access (common for code sections).
-        const READ_EXECUTE = Self::READ.bits() | Self::EXECUTE.bits();
-    }
+    pub struct MemoryProtection(u32);
+}
+
+impl MemoryProtection {
+    /// Region is readable.
+    pub const READ: Self = Self(0x01);
+    /// Region is writable.
+    pub const WRITE: Self = Self(0x02);
+    /// Region is executable.
+    pub const EXECUTE: Self = Self(0x04);
+    /// Region is a guard page (triggers exception on access).
+    pub const GUARD: Self = Self(0x100);
+    /// Read and write access (common for data sections).
+    pub const READ_WRITE: Self = Self(Self::READ.0 | Self::WRITE.0);
+    /// Read, write, and execute access.
+    pub const READ_WRITE_EXECUTE: Self = Self(Self::READ.0 | Self::WRITE.0 | Self::EXECUTE.0);
+    /// Read and execute access (common for code sections).
+    pub const READ_EXECUTE: Self = Self(Self::READ.0 | Self::EXECUTE.0);
 }
 
 impl Default for MemoryProtection {
@@ -137,7 +136,7 @@ impl MemoryProtection {
     #[must_use]
     pub fn from_windows(page_protect: u32) -> Self {
         match page_protect & 0xFF {
-            Self::PAGE_NOACCESS => Self::empty(),
+            Self::PAGE_NOACCESS => Self::ZERO,
             Self::PAGE_READONLY => Self::READ,
             Self::PAGE_EXECUTE => Self::EXECUTE,
             Self::PAGE_EXECUTE_READ => Self::READ_EXECUTE,
@@ -218,7 +217,7 @@ impl SectionInfo {
         characteristics: u32,
     ) -> Self {
         // Derive protection from PE characteristics
-        let mut protection = MemoryProtection::empty();
+        let mut protection = MemoryProtection::ZERO;
 
         // IMAGE_SCN_MEM_READ = 0x40000000
         if characteristics & 0x4000_0000 != 0 {

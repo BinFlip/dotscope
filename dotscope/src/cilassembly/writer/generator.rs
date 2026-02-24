@@ -51,8 +51,11 @@ use crate::{
         CilAssembly, Operation, TableModifications,
     },
     dispatch_table_type,
-    file::pe::{relocate_resource_section, DataDirectoryType, DosHeader, SectionTable},
+    file::pe::{
+        relocate_resource_section, DataDirectoryType, DosHeader, PeCharacteristics, SectionTable,
+    },
     metadata::{
+        cor20header::Cor20Flags,
         exports::NativeExports,
         imports::NativeImports,
         method::MethodImplCodeType,
@@ -887,8 +890,11 @@ impl<'a> PeGenerator<'a> {
         final_imports.set_pe_format(ctx.is_pe32_plus);
 
         // Determine entry point function based on PE characteristics
-        // IMAGE_FILE_DLL = 0x2000
-        let is_dll = view.file().header().characteristics & 0x2000 != 0;
+        let is_dll = view
+            .file()
+            .header()
+            .characteristics
+            .contains(PeCharacteristics::DLL);
         let entry_fn = if is_dll { "_CorDllMain" } else { "_CorExeMain" };
 
         // Add mscoree.dll first (required for .NET)
@@ -918,9 +924,8 @@ impl<'a> PeGenerator<'a> {
     ///
     /// `true` if the assembly contains only managed IL code, `false` if it has native code.
     fn is_il_only(&self) -> bool {
-        const COMIMAGE_FLAGS_ILONLY: u32 = 0x0000_0001;
         let cor20 = self.assembly.view().cor20header();
-        (cor20.flags & COMIMAGE_FLAGS_ILONLY) != 0
+        cor20.flags.contains(Cor20Flags::IL_ONLY)
     }
 
     /// Checks if this is a DLL (not an EXE).
@@ -931,9 +936,12 @@ impl<'a> PeGenerator<'a> {
     ///
     /// `true` if the assembly is a DLL, `false` if it's an EXE.
     fn is_dll(&self) -> bool {
-        const IMAGE_FILE_DLL: u16 = 0x2000;
-        let characteristics = self.assembly.view().file().header().characteristics;
-        (characteristics & IMAGE_FILE_DLL) != 0
+        self.assembly
+            .view()
+            .file()
+            .header()
+            .characteristics
+            .contains(PeCharacteristics::DLL)
     }
 
     /// Checks if this assembly needs native import table entries.

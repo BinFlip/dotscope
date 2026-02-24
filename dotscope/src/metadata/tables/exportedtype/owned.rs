@@ -28,7 +28,8 @@ use std::sync::OnceLock;
 
 use crate::{
     metadata::{
-        customattributes::CustomAttributeValueList, token::Token, typesystem::CilTypeReference,
+        customattributes::CustomAttributeValueList, tables::TypeAttributes, token::Token,
+        typesystem::CilTypeReference,
     },
     Result,
 };
@@ -62,12 +63,12 @@ pub struct ExportedType {
     /// Used for debugging and low-level metadata analysis.
     pub offset: usize,
 
-    /// Type attributes bitmask defining visibility and characteristics
+    /// Type attributes defining visibility and characteristics
     ///
-    /// 4-byte bitmask using [`crate::metadata::tables::TypeAttributes`] constants
-    /// that control type visibility, inheritance, and runtime behavior.
+    /// Strongly-typed wrapper around the 4-byte bitmask using [`crate::metadata::tables::TypeAttributes`]
+    /// constants that control type visibility, inheritance, and runtime behavior.
     /// See [ECMA-335 II.23.1.15] for attribute definitions.
-    pub flags: u32,
+    pub flags: TypeAttributes,
 
     /// Optional `TypeDef` identifier for resolution optimization
     ///

@@ -74,7 +74,7 @@
 
 use crate::{
     metadata::{
-        tables::{GenericParamAttributes, TypeAttributes},
+        tables::GenericParamAttributes,
         typesystem::{CilFlavor, CilType},
         validation::{
             context::{OwnedValidationContext, ValidationContext},
@@ -250,7 +250,7 @@ impl OwnedTypeConstraintValidator {
             CilFlavor::Class => {
                 // Classes are valid constraints
                 // Check if class is sealed (which is allowed but restricts inheritance)
-                if constraint_type.flags & 0x0000_0100 != 0 {
+                if constraint_type.flags.is_sealed() {
                     // SEALED flag - this is fine for constraints
                 }
                 Ok(())
@@ -310,13 +310,13 @@ impl OwnedTypeConstraintValidator {
     /// Returns error if attribute consistency violations are detected.
     fn validate_generic_parameter_attributes(
         &self,
-        attributes: u32,
+        attributes: GenericParamAttributes,
         param_name: &str,
         type_name: &str,
     ) -> Result<()> {
         // Validate variance attributes
-        if (attributes & GenericParamAttributes::COVARIANT != 0)
-            && (attributes & GenericParamAttributes::CONTRAVARIANT != 0)
+        if attributes.contains(GenericParamAttributes::COVARIANT)
+            && attributes.contains(GenericParamAttributes::CONTRAVARIANT)
         {
             return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
@@ -328,8 +328,8 @@ impl OwnedTypeConstraintValidator {
         }
 
         // Validate special constraint combinations
-        if (attributes & GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT != 0)
-            && (attributes & GenericParamAttributes::NOT_NULLABLE_VALUE_TYPE_CONSTRAINT != 0)
+        if attributes.contains(GenericParamAttributes::REFERENCE_TYPE_CONSTRAINT)
+            && attributes.contains(GenericParamAttributes::NOT_NULLABLE_VALUE_TYPE_CONSTRAINT)
         {
             return Err(Error::ValidationOwnedFailed {
                 validator: self.name().to_string(),
@@ -368,8 +368,8 @@ impl OwnedTypeConstraintValidator {
             }
 
             // Check interface implementation constraint satisfaction
-            for (_, interface_ref) in type_entry.interfaces.iter() {
-                if let Some(interface_type) = interface_ref.upgrade() {
+            for (_, entry) in type_entry.interfaces.iter() {
+                if let Some(interface_type) = entry.interface.upgrade() {
                     self.validate_interface_constraint_satisfaction(type_entry, &interface_type)?;
                 }
             }
@@ -427,7 +427,7 @@ impl OwnedTypeConstraintValidator {
         }
 
         // Validate that the interface is actually an interface
-        if interface_type.flags & TypeAttributes::INTERFACE == 0 {
+        if !interface_type.flags.is_interface() {
             // Allow for external interfaces that might not have correct flags
             let is_likely_interface =
                 interface_fullname.contains(".I") || interface_fullname.starts_with('I');

@@ -9,8 +9,8 @@ use crate::{
     metadata::{
         signatures::{encode_field_signature, SignatureField, TypeSignature},
         tables::{
-            CodedIndex, CodedIndexType, FieldBuilder, InterfaceImplBuilder, TypeAttributes,
-            TypeDefBuilder,
+            CodedIndex, CodedIndexType, FieldAttributes, FieldBuilder, InterfaceImplBuilder,
+            TypeAttributes, TypeDefBuilder,
         },
         token::Token,
     },
@@ -25,7 +25,7 @@ use super::method::MethodBuilder;
 struct FieldDefinition {
     name: String,
     field_type: TypeSignature,
-    attributes: u32,
+    attributes: FieldAttributes,
 }
 
 /// Property definition for the class builder.
@@ -131,7 +131,7 @@ pub struct ClassBuilder {
     namespace: Option<String>,
 
     /// Type attributes
-    flags: u32,
+    flags: TypeAttributes,
 
     /// Base class token (defaults to System.Object)
     extends: Option<CodedIndex>,
@@ -174,7 +174,7 @@ impl ClassBuilder {
         Self {
             name: name.to_string(),
             namespace: None,
-            flags: 0x0010_0001, // CLASS | AUTO_LAYOUT | ANSI_CLASS
+            flags: TypeAttributes::PUBLIC | TypeAttributes::BEFORE_FIELD_INIT,
             extends: None,
             implements: Vec::new(),
             fields: Vec::new(),
@@ -216,7 +216,7 @@ impl ClassBuilder {
     /// ```
     #[must_use]
     pub fn public(mut self) -> Self {
-        self.flags = (self.flags & !0x0000_0007) | 0x0000_0001; // Clear visibility bits, set PUBLIC
+        self.flags = (self.flags & !TypeAttributes::VISIBILITY_MASK) | TypeAttributes::PUBLIC;
         self
     }
 
@@ -231,7 +231,7 @@ impl ClassBuilder {
     /// ```
     #[must_use]
     pub fn internal(mut self) -> Self {
-        self.flags &= !0x0000_0007; // Clear visibility bits, set NOT_PUBLIC (0)
+        self.flags &= !TypeAttributes::VISIBILITY_MASK; // Clear visibility bits, set NOT_PUBLIC (0)
         self
     }
 
@@ -330,7 +330,7 @@ impl ClassBuilder {
         self.fields.push(FieldDefinition {
             name: name.to_string(),
             field_type,
-            attributes: 0x0001, // PRIVATE
+            attributes: FieldAttributes::PRIVATE,
         });
         self
     }
@@ -357,7 +357,7 @@ impl ClassBuilder {
         self.fields.push(FieldDefinition {
             name: name.to_string(),
             field_type,
-            attributes: 0x0006, // PUBLIC
+            attributes: FieldAttributes::PUBLIC,
         });
         self
     }
@@ -383,7 +383,7 @@ impl ClassBuilder {
         self.fields.push(FieldDefinition {
             name: name.to_string(),
             field_type,
-            attributes: 0x0001 | 0x0010, // PRIVATE | STATIC
+            attributes: FieldAttributes::PRIVATE | FieldAttributes::STATIC,
         });
         self
     }
@@ -465,7 +465,7 @@ impl ClassBuilder {
         self.fields.push(FieldDefinition {
             name: backing_field_name,
             field_type: property_type,
-            attributes: 0x0001, // PRIVATE | COMPILER_CONTROLLED (0x0000)
+            attributes: FieldAttributes::PRIVATE,
         });
 
         self
@@ -503,7 +503,7 @@ impl ClassBuilder {
         self.fields.push(FieldDefinition {
             name: backing_field_name,
             field_type: property_type,
-            attributes: 0x0001 | 0x0020, // PRIVATE | INIT_ONLY
+            attributes: FieldAttributes::PRIVATE | FieldAttributes::INIT_ONLY,
         });
 
         self
@@ -551,8 +551,8 @@ impl ClassBuilder {
     /// - Both sealed and abstract flags are set (mutually exclusive per ECMA-335)
     pub fn build(self, assembly: &mut CilAssembly) -> Result<ChangeRefRc> {
         // Validate that sealed and abstract are not both set (mutually exclusive)
-        if (self.flags & TypeAttributes::SEALED) != 0
-            && (self.flags & TypeAttributes::ABSTRACT) != 0
+        if self.flags.contains(TypeAttributes::SEALED)
+            && self.flags.contains(TypeAttributes::ABSTRACT)
         {
             return Err(Error::ModificationInvalid(
                 "Class cannot be both sealed and abstract (mutually exclusive flags per ECMA-335)"

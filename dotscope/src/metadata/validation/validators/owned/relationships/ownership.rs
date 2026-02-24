@@ -74,7 +74,7 @@ use std::{collections::HashSet, sync::Arc};
 
 use crate::{
     metadata::{
-        tables::TypeAttributes,
+        tables::{FieldAttributes, TypeAttributes},
         typesystem::CilType,
         validation::{
             context::{OwnedValidationContext, ValidationContext},
@@ -248,11 +248,11 @@ impl OwnedOwnershipValidator {
     fn validate_method_accessibility(
         &self,
         type_name: &str,
-        type_flags: u32,
+        type_flags: TypeAttributes,
         method_name: &str,
         method_flags: u32,
     ) -> Result<()> {
-        let type_visibility = type_flags & TypeAttributes::VISIBILITY_MASK;
+        let type_visibility = type_flags.visibility();
         let method_visibility = method_flags & 0x0007; // MethodAttributes visibility mask
 
         // Methods in non-public types cannot have effective public visibility
@@ -322,11 +322,11 @@ impl OwnedOwnershipValidator {
     fn validate_field_accessibility_ownership(
         &self,
         type_name: &str,
-        _type_flags: u32,
+        _type_flags: TypeAttributes,
         field_name: &str,
-        field_flags: u32,
+        field_flags: FieldAttributes,
     ) -> Result<()> {
-        let field_visibility = field_flags & 0x0007; // FieldAttributes visibility mask
+        let field_visibility = field_flags.access().bits();
 
         // Validate that field visibility is within valid range
         if field_visibility > 6 {
@@ -335,7 +335,6 @@ impl OwnedOwnershipValidator {
                 message: format!(
                     "Field '{field_name}' in type '{type_name}' has invalid visibility value: 0x{field_visibility:02X}"
                 ),
-
             });
         }
 
@@ -456,12 +455,12 @@ impl OwnedOwnershipValidator {
     fn validate_nested_type_accessibility_ownership(
         &self,
         container_name: &str,
-        container_flags: u32,
+        container_flags: TypeAttributes,
         nested_name: &str,
-        nested_flags: u32,
+        nested_flags: TypeAttributes,
     ) -> Result<()> {
-        let _ = container_flags & TypeAttributes::VISIBILITY_MASK;
-        let nested_visibility = nested_flags & TypeAttributes::VISIBILITY_MASK;
+        let _ = container_flags.visibility();
+        let nested_visibility = nested_flags.visibility();
 
         // Nested types must use nested visibility flags
         if !matches!(
@@ -474,7 +473,7 @@ impl OwnedOwnershipValidator {
                 | TypeAttributes::NESTED_FAM_OR_ASSEM
         ) {
             // Allow NotPublic (0) for some legitimate cases
-            if nested_visibility != 0 && nested_visibility <= 7 {
+            if nested_visibility != TypeAttributes::NOT_PUBLIC && nested_visibility.bits() <= 7 {
                 return Err(Error::ValidationOwnedFailed {
                     validator: self.name().to_string(),
                     message: format!(

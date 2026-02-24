@@ -6,7 +6,8 @@
 use crate::{
     metadata::tables::{
         CodedIndex, CodedIndexType, GenericParamAttributes, GenericParamBuilder,
-        GenericParamConstraintBuilder, InterfaceImplBuilder, TableId, TypeDefBuilder,
+        GenericParamConstraintBuilder, InterfaceImplBuilder, TableId, TypeAttributes,
+        TypeDefBuilder,
     },
     test::{create_test_assembly_with_error, get_testfile_mscorlib, TestAssembly},
     Error, Result,
@@ -67,7 +68,7 @@ fn create_assembly_with_conflicting_variance() -> Result<TestAssembly> {
             let typedef_token = TypeDefBuilder::new()
                 .name("ConflictingVarianceType`1")
                 .namespace("Test")
-                .flags(0x00000000) // Class, NotPublic
+                .flags(TypeAttributes::NOT_PUBLIC) // Class, NotPublic
                 .build(assembly)?;
 
             // Create GenericParam with conflicting variance flags (COVARIANT | CONTRAVARIANT)
@@ -110,7 +111,7 @@ fn create_assembly_with_conflicting_constraints() -> Result<TestAssembly> {
             let typedef_token = TypeDefBuilder::new()
                 .name("ConflictingConstraintsType`1")
                 .namespace("Test")
-                .flags(0x00000000) // Class, NotPublic
+                .flags(TypeAttributes::NOT_PUBLIC) // Class, NotPublic
                 .build(assembly)?;
 
             // Create GenericParam with conflicting constraint flags (class + struct)
@@ -153,7 +154,7 @@ fn create_assembly_with_broken_constraint_reference() -> Result<TestAssembly> {
             let typedef_token = TypeDefBuilder::new()
                 .name("BrokenConstraintType`1")
                 .namespace("Test")
-                .flags(0x00000000) // Class, NotPublic
+                .flags(TypeAttributes::NOT_PUBLIC) // Class, NotPublic
                 .build(assembly)?;
 
             // Create a GenericParam
@@ -168,7 +169,7 @@ fn create_assembly_with_broken_constraint_reference() -> Result<TestAssembly> {
 
             let generic_param_token = GenericParamBuilder::new()
                 .number(0)
-                .flags(0)
+                .flags(GenericParamAttributes::ZERO)
                 .owner(owner)
                 .name("T")
                 .build(assembly)?;
@@ -208,14 +209,14 @@ fn create_assembly_with_empty_constraint_name() -> Result<TestAssembly> {
             let typedef_token = TypeDefBuilder::new()
                 .name("EmptyConstraintType`1")
                 .namespace("Test")
-                .flags(0x00000000) // Class, NotPublic
+                .flags(TypeAttributes::NOT_PUBLIC) // Class, NotPublic
                 .build(assembly)?;
 
             // Create a constraint type with empty name (simulating unresolved type)
             let constraint_typedef_token = TypeDefBuilder::new()
                 .name("") // Empty name - this should trigger the validation error
                 .namespace("Test")
-                .flags(0x00000000)
+                .flags(TypeAttributes::NOT_PUBLIC)
                 .build(assembly)?;
 
             // Create a GenericParam
@@ -230,7 +231,7 @@ fn create_assembly_with_empty_constraint_name() -> Result<TestAssembly> {
 
             let generic_param_token = GenericParamBuilder::new()
                 .number(0)
-                .flags(0)
+                .flags(GenericParamAttributes::ZERO)
                 .owner(owner)
                 .name("T")
                 .build(assembly)?;
@@ -274,14 +275,14 @@ fn create_assembly_with_fake_interface_implementation() -> Result<TestAssembly> 
             let fake_interface_token = TypeDefBuilder::new()
                 .name("NotAnInterface") // Name doesn't suggest interface
                 .namespace("Test")
-                .flags(0x00000000) // Class, NotPublic - NOT an interface (missing INTERFACE flag)
+                .flags(TypeAttributes::NOT_PUBLIC) // Class, NotPublic - NOT an interface (missing INTERFACE flag)
                 .build(assembly)?;
 
             // Create a class that "implements" the non-interface
             let implementing_class_token = TypeDefBuilder::new()
                 .name("ImplementingClass")
                 .namespace("Test")
-                .flags(0x00000000) // Class, NotPublic
+                .flags(TypeAttributes::NOT_PUBLIC) // Class, NotPublic
                 .build(assembly)?;
 
             // Create InterfaceImpl that makes the class "implement" the non-interface

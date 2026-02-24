@@ -65,7 +65,7 @@ pub fn fix_antidecompiler(
             .ok_or_else(|| Error::Deobfuscation(format!("TypeDef row {} not found", rid)))?;
 
         // Clear Sealed flag and reset layout from ExplicitLayout to AutoLayout
-        let mut new_flags = existing_row.flags;
+        let mut new_flags = TypeAttributes::new(existing_row.flags);
         new_flags &= !TypeAttributes::SEALED;
         new_flags = (new_flags & !TypeAttributes::LAYOUT_MASK) | TypeAttributes::AUTO_LAYOUT;
 
@@ -73,7 +73,7 @@ pub fn fix_antidecompiler(
             rid: existing_row.rid,
             token: existing_row.token,
             offset: existing_row.offset,
-            flags: new_flags,
+            flags: new_flags.bits(),
             type_name: existing_row.type_name,
             type_namespace: existing_row.type_namespace,
             extends: existing_row.extends,
@@ -222,7 +222,7 @@ mod tests {
     #[test]
     fn test_flag_clearing() {
         // Simulate AntiDecompiler flags: Sealed (0x100) | ExplicitLayout (0x10) | NestedPrivate (0x03)
-        let flags: u32 = TypeAttributes::SEALED
+        let flags = TypeAttributes::SEALED
             | TypeAttributes::EXPLICIT_LAYOUT
             | TypeAttributes::NESTED_PRIVATE;
 
@@ -231,18 +231,17 @@ mod tests {
         new_flags &= !TypeAttributes::SEALED;
         new_flags = (new_flags & !TypeAttributes::LAYOUT_MASK) | TypeAttributes::AUTO_LAYOUT;
 
-        assert_eq!(
-            new_flags & TypeAttributes::SEALED,
-            0,
+        assert!(
+            !new_flags.contains(TypeAttributes::SEALED),
             "Sealed should be cleared"
         );
         assert_eq!(
-            new_flags & TypeAttributes::LAYOUT_MASK,
+            new_flags.layout(),
             TypeAttributes::AUTO_LAYOUT,
             "Layout should be AutoLayout"
         );
         assert_eq!(
-            new_flags & TypeAttributes::VISIBILITY_MASK,
+            new_flags.visibility(),
             TypeAttributes::NESTED_PRIVATE,
             "Visibility should be preserved"
         );

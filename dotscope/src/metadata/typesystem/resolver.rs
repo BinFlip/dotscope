@@ -940,7 +940,7 @@ mod tests {
             signatures::{
                 SignatureArray, SignatureMethod, SignaturePointer, SignatureSzArray, TypeSignature,
             },
-            tables::GenericParam,
+            tables::{GenericParam, GenericParamAttributes},
             typesystem::ArrayDimensions,
         },
         Error,
@@ -1209,7 +1209,7 @@ mod tests {
         let type_param = Arc::new(GenericParam {
             token: Token::new(0x2A000001),
             number: 0,
-            flags: 0,
+            flags: GenericParamAttributes::ZERO,
             owner: OnceLock::new(),
             name: "T".to_string(),
             constraints: Arc::new(boxcar::Vec::new()),

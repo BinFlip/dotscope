@@ -189,8 +189,10 @@
 //! - **Partition II, Section 23.1.16**: Security action values
 //! - **Partition I, Section 10**: Security model overview
 
-use bitflags::bitflags;
-use std::{fmt, sync::Arc};
+use std::{
+    fmt::{self, Display},
+    sync::Arc,
+};
 
 use crate::metadata::security::PermissionSet;
 
@@ -638,6 +640,31 @@ pub enum SecurityAction {
     PermitOnly = 0x0011,
     /// Unknown security action.
     Unknown(u16),
+}
+
+impl Display for SecurityAction {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            SecurityAction::Deny => write!(f, "deny"),
+            SecurityAction::Demand => write!(f, "demand"),
+            SecurityAction::Assert => write!(f, "assert"),
+            SecurityAction::NonCasDemand => write!(f, "noncasdemand"),
+            SecurityAction::LinkDemand => write!(f, "linkcheck"),
+            SecurityAction::InheritanceDemand => write!(f, "inheritcheck"),
+            SecurityAction::RequestMinimum => write!(f, "reqmin"),
+            SecurityAction::RequestOptional => write!(f, "reqopt"),
+            SecurityAction::RequestRefuse => write!(f, "reqrefuse"),
+            SecurityAction::PrejitGrant => write!(f, "prejitgrant"),
+            SecurityAction::PrejitDeny => write!(f, "prejitdeny"),
+            SecurityAction::NonCasLinkDemand => write!(f, "noncaslinkdemand"),
+            SecurityAction::NonCasInheritance => write!(f, "noncasinheritance"),
+            SecurityAction::LinkDemandChoice => write!(f, "linkdemandchoice"),
+            SecurityAction::InheritanceDemandChoice => write!(f, "inheritancedemandchoice"),
+            SecurityAction::DemandChoice => write!(f, "demandchoice"),
+            SecurityAction::PermitOnly => write!(f, "permitonly"),
+            SecurityAction::Unknown(v) => write!(f, "unknown(0x{v:04X})"),
+        }
+    }
 }
 
 impl From<SecurityAction> for u16 {
@@ -1306,8 +1333,7 @@ pub enum PermissionSetFormat {
     Unknown,
 }
 
-bitflags! {
-    #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+metadata_flags! {
     /// SecurityPermissionFlags - Controls access to security-sensitive operations.
     ///
     /// These flags correspond to the SecurityPermissionFlag enumeration in .NET and determine
@@ -1331,61 +1357,88 @@ bitflags! {
     /// Note: All flag values are positive and fit within the positive range of `i32`, so
     /// there's no practical difference in the flag operations themselves. The choice of `i32`
     /// over `u32` is purely for .NET interoperability.
-    pub struct SecurityPermissionFlags: i32 {
-        /// Enables code execution. Required for any code to run.
-        /// This is the most basic permission required in the runtime.
-        const SECURITY_FLAG_EXECUTION = 0x0000_0008;
-        /// Enables bypassing of code verification by the runtime.
-        /// This allows potentially unsafe code to execute without verification checks.
-        /// This is a highly sensitive permission that can compromise system security.
-        const SECURITY_FLAG_SKIP_VERIFICATION = 0x0000_0004;
-        /// Enables the code to assert that it is authorized to access resources.
-        /// Assertion allows code to claim it has permission even when its callers don't.
-        /// This can create security holes if misused, as it bypasses stack walks.
-        const SECURITY_FLAG_ASSERTION = 0x0000_0001;
-        /// Enables the execution of unsafe or unverified code.
-        /// Required for code using the 'unsafe' keyword in C# or other unverifiable code.
-        /// This allows memory manipulation that could potentially cause security issues.
-        const SECURITY_FLAG_UNSAFE_CODE = 0x0000_0020;
-        /// Enables creation and control of application domains.
-        /// This permission is needed to create, unload, or set the security policy of AppDomains.
-        /// It provides significant control over application isolation boundaries.
-        const SECURITY_FLAG_CONTROL_APPDOMAINS = 0x0000_1000;
-        /// Enables modification of security policy.
-        /// This allows code to change the security policy for the application domain.
-        /// This is a highly powerful permission that can completely change security behavior.
-        const SECURITY_FLAG_CONTROL_POLICY = 0x0000_0800;
-        /// Enables serialization and deserialization operations.
-        /// Required for object serialization functionality, which can reconstruct objects
-        /// and potentially execute code during deserialization.
-        const SECURITY_FLAG_SERIALIZATION = 0x0000_0080;
-        /// Enables control over threads, including creating threads and setting thread properties.
-        /// This permission allows manipulation of thread state, apartment state, and interruption.
-        const SECURITY_FLAG_CONTROL_THREAD = 0x0000_0200;
-        /// Enables access and manipulation of evidence objects used in security decisions.
-        /// This allows code to create or manipulate evidence, which is used to determine
-        /// what permissions should be granted to assemblies.
-        const SECURITY_FLAG_CONTROL_EVIDENCE = 0x0000_0040;
-        /// Enables control over security principal objects.
-        /// This allows code to manipulate the current principal, which affects role-based security.
-        const SECURITY_FLAG_CONTROL_PRINCIPAL = 0x0000_0400;
-        /// Enables access to security infrastructure functionality.
-        /// This allows code to interact with lower-level security mechanisms.
-        const SECURITY_FLAG_INFRASTRUCTURE = 0x0000_2000;
-        /// Enables the use of code binding redirects.
-        /// This allows code to modify assembly binding behavior at runtime.
-        const SECURITY_FLAG_BINDING = 0x0000_0100;
-        /// Enables access to .NET remoting functionality.
-        /// This allows code to configure remoting channels, serialization formats,
-        /// and other remoting infrastructure.
-        const SECURITY_FLAG_REMOTING = 0x0000_4000;
-        /// Enables the ability to manipulate the application domain's behavior.
-        /// This allows control over application domain properties and settings.
-        const SECURITY_FLAG_CONTROL_DOMAIN = 0x0000_8000;
-        /// Enables the use of reflection to discover private members.
-        /// This allows code to access non-public members of types through reflection.
-        const SECURITY_FLAG_REFLECTION = 0x0001_0000;
+    pub struct SecurityPermissionFlags(i32);
+}
+
+impl SecurityPermissionFlags {
+    /// All known security permission flags combined.
+    pub const ALL: Self = Self(
+        Self::SECURITY_FLAG_EXECUTION.0
+            | Self::SECURITY_FLAG_SKIP_VERIFICATION.0
+            | Self::SECURITY_FLAG_ASSERTION.0
+            | Self::SECURITY_FLAG_UNSAFE_CODE.0
+            | Self::SECURITY_FLAG_CONTROL_APPDOMAINS.0
+            | Self::SECURITY_FLAG_CONTROL_POLICY.0
+            | Self::SECURITY_FLAG_SERIALIZATION.0
+            | Self::SECURITY_FLAG_CONTROL_THREAD.0
+            | Self::SECURITY_FLAG_CONTROL_EVIDENCE.0
+            | Self::SECURITY_FLAG_CONTROL_PRINCIPAL.0
+            | Self::SECURITY_FLAG_INFRASTRUCTURE.0
+            | Self::SECURITY_FLAG_BINDING.0
+            | Self::SECURITY_FLAG_REMOTING.0
+            | Self::SECURITY_FLAG_CONTROL_DOMAIN.0
+            | Self::SECURITY_FLAG_REFLECTION.0,
+    );
+
+    /// Returns `true` if all known security permission flags are set.
+    #[must_use]
+    pub const fn is_all(self) -> bool {
+        (self.0 & Self::ALL.0) == Self::ALL.0
     }
+
+    /// Enables code execution. Required for any code to run.
+    /// This is the most basic permission required in the runtime.
+    pub const SECURITY_FLAG_EXECUTION: Self = Self(0x0000_0008);
+    /// Enables bypassing of code verification by the runtime.
+    /// This allows potentially unsafe code to execute without verification checks.
+    /// This is a highly sensitive permission that can compromise system security.
+    pub const SECURITY_FLAG_SKIP_VERIFICATION: Self = Self(0x0000_0004);
+    /// Enables the code to assert that it is authorized to access resources.
+    /// Assertion allows code to claim it has permission even when its callers don't.
+    /// This can create security holes if misused, as it bypasses stack walks.
+    pub const SECURITY_FLAG_ASSERTION: Self = Self(0x0000_0001);
+    /// Enables the execution of unsafe or unverified code.
+    /// Required for code using the 'unsafe' keyword in C# or other unverifiable code.
+    /// This allows memory manipulation that could potentially cause security issues.
+    pub const SECURITY_FLAG_UNSAFE_CODE: Self = Self(0x0000_0020);
+    /// Enables creation and control of application domains.
+    /// This permission is needed to create, unload, or set the security policy of AppDomains.
+    /// It provides significant control over application isolation boundaries.
+    pub const SECURITY_FLAG_CONTROL_APPDOMAINS: Self = Self(0x0000_1000);
+    /// Enables modification of security policy.
+    /// This allows code to change the security policy for the application domain.
+    /// This is a highly powerful permission that can completely change security behavior.
+    pub const SECURITY_FLAG_CONTROL_POLICY: Self = Self(0x0000_0800);
+    /// Enables serialization and deserialization operations.
+    /// Required for object serialization functionality, which can reconstruct objects
+    /// and potentially execute code during deserialization.
+    pub const SECURITY_FLAG_SERIALIZATION: Self = Self(0x0000_0080);
+    /// Enables control over threads, including creating threads and setting thread properties.
+    /// This permission allows manipulation of thread state, apartment state, and interruption.
+    pub const SECURITY_FLAG_CONTROL_THREAD: Self = Self(0x0000_0200);
+    /// Enables access and manipulation of evidence objects used in security decisions.
+    /// This allows code to create or manipulate evidence, which is used to determine
+    /// what permissions should be granted to assemblies.
+    pub const SECURITY_FLAG_CONTROL_EVIDENCE: Self = Self(0x0000_0040);
+    /// Enables control over security principal objects.
+    /// This allows code to manipulate the current principal, which affects role-based security.
+    pub const SECURITY_FLAG_CONTROL_PRINCIPAL: Self = Self(0x0000_0400);
+    /// Enables access to security infrastructure functionality.
+    /// This allows code to interact with lower-level security mechanisms.
+    pub const SECURITY_FLAG_INFRASTRUCTURE: Self = Self(0x0000_2000);
+    /// Enables the use of code binding redirects.
+    /// This allows code to modify assembly binding behavior at runtime.
+    pub const SECURITY_FLAG_BINDING: Self = Self(0x0000_0100);
+    /// Enables access to .NET remoting functionality.
+    /// This allows code to configure remoting channels, serialization formats,
+    /// and other remoting infrastructure.
+    pub const SECURITY_FLAG_REMOTING: Self = Self(0x0000_4000);
+    /// Enables the ability to manipulate the application domain's behavior.
+    /// This allows control over application domain properties and settings.
+    pub const SECURITY_FLAG_CONTROL_DOMAIN: Self = Self(0x0000_8000);
+    /// Enables the use of reflection to discover private members.
+    /// This allows code to access non-public members of types through reflection.
+    pub const SECURITY_FLAG_REFLECTION: Self = Self(0x0001_0000);
 }
 
 #[cfg(test)]

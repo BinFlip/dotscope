@@ -65,6 +65,7 @@
 //!
 //! ```rust,no_run
 //! use dotscope::metadata::typesystem::{TypeRegistry, CilType, TypeSource};
+//! use dotscope::metadata::tables::TypeAttributes;
 //! use dotscope::metadata::identity::AssemblyIdentity;
 //! use dotscope::metadata::token::Token;
 //! use std::sync::Arc;
@@ -80,7 +81,7 @@
 //!     "MyClass".to_string(),
 //!     None, // No external reference
 //!     None, // No base type yet
-//!     0x00100001, // Public class
+//!     TypeAttributes::new(0x00100001), // Public class
 //!     Arc::new(boxcar::Vec::new()), // Empty fields
 //!     Arc::new(boxcar::Vec::new()), // Empty methods
 //!     None, // Flavor will be computed
@@ -117,7 +118,9 @@ use crate::{
     metadata::{
         identity::AssemblyIdentity,
         signatures::{SignatureMethodSpec, TypeSignature},
-        tables::{AssemblyRefRc, FileRc, MethodSpec, ModuleRc, ModuleRefRc, TableId},
+        tables::{
+            AssemblyRefRc, FileRc, MethodSpec, ModuleRc, ModuleRefRc, TableId, TypeAttributes,
+        },
         token::Token,
         typesystem::{
             CilFlavor, CilPrimitive, CilPrimitiveKind, CilType, CilTypeRc, CilTypeRef,
@@ -150,7 +153,7 @@ pub struct CompleteTypeSpec {
     /// Base type for derived types
     pub base_type: Option<CilTypeRc>,
     /// TypeAttributes flags (optional, inherited from base type for generic instances)
-    pub flags: Option<u32>,
+    pub flags: Option<TypeAttributes>,
 }
 
 impl CompleteTypeSpec {
@@ -689,7 +692,7 @@ impl TypeRegistry {
                 primitive.name().to_string(),
                 None,
                 None,
-                0,
+                TypeAttributes::ZERO,
                 Arc::new(boxcar::Vec::new()),
                 Arc::new(boxcar::Vec::new()),
                 Some(flavor),
@@ -823,7 +826,7 @@ impl TypeRegistry {
             String::new(),
             None,
             None,
-            0,
+            TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
             None,
@@ -849,7 +852,7 @@ impl TypeRegistry {
             String::new(),
             None,
             None,
-            0,
+            TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
             Some(flavor),
@@ -1418,7 +1421,7 @@ impl TypeRegistry {
             return Ok(existing.value().clone());
         }
 
-        let flags = spec.flags.unwrap_or(0);
+        let flags = spec.flags.unwrap_or(TypeAttributes::ZERO);
         let new_type = Arc::new(CilType::new(
             token,
             spec.namespace.clone(),
@@ -1809,7 +1812,9 @@ mod tests {
     use uguid::guid;
 
     use super::*;
-    use crate::metadata::tables::{AssemblyRef, AssemblyRefHash, File, Module, ModuleRef};
+    use crate::metadata::tables::{
+        AssemblyFlags, AssemblyRef, AssemblyRefHash, File, FileAttributes, Module, ModuleRef,
+    };
 
     #[test]
     fn test_registry_primitives() {
@@ -2001,7 +2006,7 @@ mod tests {
             "MyClass".to_string(),
             None,
             None,
-            0,
+            TypeAttributes::ZERO,
             Arc::new(boxcar::Vec::new()),
             Arc::new(boxcar::Vec::new()),
             Some(CilFlavor::Class),
@@ -2047,7 +2052,7 @@ mod tests {
 
         let assembly_ref = Arc::new(AssemblyRef {
             token: Token::new(0x23000001),
-            flags: 0,
+            flags: AssemblyFlags::ZERO,
             name: "ReferenceAssembly".to_string(),
             culture: Some("".to_string()),
             rid: 0,
@@ -2067,7 +2072,7 @@ mod tests {
 
         let file = Arc::new(File {
             token: Token::new(0x26000001),
-            flags: 0,
+            flags: FileAttributes::ZERO,
             name: "ExternalFile.dll".to_string(),
             rid: 0,
             offset: 0,

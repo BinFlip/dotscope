@@ -4,10 +4,38 @@
 //! entries with all type references resolved and data owned. Unlike [`crate::metadata::tables::interfaceimpl::raw::InterfaceImplRaw`], this
 //! structure contains resolved type references for both implementing classes and implemented interfaces.
 
+use std::sync::Arc;
+
 use crate::{
-    metadata::{customattributes::CustomAttributeValueList, token::Token, typesystem::CilTypeRc},
+    metadata::{
+        customattributes::CustomAttributeValueList,
+        token::Token,
+        typesystem::{CilTypeRc, CilTypeRef},
+    },
     Result,
 };
+
+/// Representation of an interface implementation on a type.
+///
+/// This struct captures the essential data from an `InterfaceImpl` table entry
+/// for storage on [`crate::metadata::typesystem::CilType::interfaces`]. It uses a weak reference
+/// ([`CilTypeRef`]) to the interface type to avoid reference cycles (since the owning
+/// `CilType` is itself held by strong `Arc` references), and carries any custom
+/// attributes applied to the implementation relationship.
+pub struct InterfaceEntry {
+    /// Weak reference to the interface type being implemented.
+    pub interface: CilTypeRef,
+
+    /// Custom attributes applied to this interface implementation relationship.
+    ///
+    /// These are distinct from custom attributes on the interface type itself.
+    /// For example, `[Nullable]` on `class Foo : IList<string?>` is an attribute
+    /// on the *implementation*, not on `IList<T>`.
+    pub custom_attributes: CustomAttributeValueList,
+}
+
+/// Thread-safe list for storing [`InterfaceEntry`] instances on a type.
+pub type InterfaceEntryList = Arc<boxcar::Vec<InterfaceEntry>>;
 
 /// Owned `InterfaceImpl` table entry with resolved type references and owned data.
 ///
@@ -70,7 +98,10 @@ impl InterfaceImpl {
     ///
     /// This function never returns an error; it always returns `Ok(())`.
     pub fn apply(&self) -> Result<()> {
-        self.class.interfaces.push(self.interface.clone().into());
+        self.class.interfaces.push(InterfaceEntry {
+            interface: CilTypeRef::new(&self.interface),
+            custom_attributes: self.custom_attributes.clone(),
+        });
         Ok(())
     }
 }

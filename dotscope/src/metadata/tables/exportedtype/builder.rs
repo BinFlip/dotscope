@@ -140,7 +140,7 @@ pub struct ExportedTypeBuilder {
     /// The namespace of the exported type
     namespace: Option<String>,
     /// Type visibility and attribute flags
-    flags: u32,
+    flags: TypeAttributes,
     /// Optional TypeDef ID hint for resolution optimization
     type_def_id: u32,
     /// Implementation target capturing the row index and target table type.
@@ -230,7 +230,7 @@ impl ExportedTypeBuilder {
     ///
     /// # Arguments
     ///
-    /// * `flags` - Type attributes bitmask
+    /// * `flags` - Type attributes
     ///
     /// # Examples
     ///
@@ -241,7 +241,7 @@ impl ExportedTypeBuilder {
     ///     .flags(TypeAttributes::PUBLIC);
     /// ```
     #[must_use]
-    pub fn flags(mut self, flags: u32) -> Self {
+    pub fn flags(mut self, flags: TypeAttributes) -> Self {
         self.flags = flags;
         self
     }
@@ -505,7 +505,7 @@ impl ExportedTypeBuilder {
             rid: 0,
             token: Token::new(0),
             offset: 0,
-            flags: self.flags,
+            flags: self.flags.bits(),
             type_def_id: self.type_def_id,
             name: name_index,
             namespace: namespace_index,

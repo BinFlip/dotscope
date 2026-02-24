@@ -58,7 +58,7 @@ pub fn create_assembly_with_circular_inheritance() -> Result<TestAssembly> {
             rid: type_a_rid,
             token: Token::new(0x02000000 + type_a_rid),
             offset: 0,
-            flags: TypeAttributes::PUBLIC,
+            flags: TypeAttributes::PUBLIC.bits(),
             type_name: type_a_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeDef, type_b_rid, CodedIndexType::TypeDefOrRef), // A extends B
@@ -71,7 +71,7 @@ pub fn create_assembly_with_circular_inheritance() -> Result<TestAssembly> {
             rid: type_b_rid,
             token: Token::new(0x02000000 + type_b_rid),
             offset: 0,
-            flags: TypeAttributes::PUBLIC,
+            flags: TypeAttributes::PUBLIC.bits(),
             type_name: type_b_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeDef, type_a_rid, CodedIndexType::TypeDefOrRef), // B extends A - circular!
@@ -101,7 +101,7 @@ pub fn create_assembly_with_self_referential_type() -> Result<TestAssembly> {
             rid: type_rid,
             token: Token::new(0x02000000 + type_rid),
             offset: 0,
-            flags: TypeAttributes::PUBLIC,
+            flags: TypeAttributes::PUBLIC.bits(),
             type_name: type_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeDef, type_rid, CodedIndexType::TypeDefOrRef), // Extends itself!
@@ -134,7 +134,8 @@ pub fn create_assembly_with_circular_interface_implementation() -> Result<TestAs
             rid: interface_i1_rid,
             token: Token::new(0x02000000 + interface_i1_rid),
             offset: 0,
-            flags: TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT | TypeAttributes::PUBLIC,
+            flags: (TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT | TypeAttributes::PUBLIC)
+                .bits(),
             type_name: interface_i1_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(
@@ -151,7 +152,8 @@ pub fn create_assembly_with_circular_interface_implementation() -> Result<TestAs
             rid: interface_i2_rid,
             token: Token::new(0x02000000 + interface_i2_rid),
             offset: 0,
-            flags: TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT | TypeAttributes::PUBLIC,
+            flags: (TypeAttributes::INTERFACE | TypeAttributes::ABSTRACT | TypeAttributes::PUBLIC)
+                .bits(),
             type_name: interface_i2_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(

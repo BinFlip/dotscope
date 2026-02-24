@@ -8,7 +8,10 @@
 use crate::{
     cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
-        tables::{CodedIndex, CodedIndexType, MethodSemanticsRaw, TableDataOwned, TableId},
+        tables::{
+            CodedIndex, CodedIndexType, MethodSemanticsAttributes, MethodSemanticsRaw,
+            TableDataOwned, TableId,
+        },
         token::Token,
     },
     Error, Result,
@@ -118,7 +121,7 @@ pub struct MethodSemanticsBuilder {
     ///
     /// Defines the method's semantic role using MethodSemanticsAttributes constants.
     /// Can combine multiple semantic types using bitwise OR operations.
-    semantics: Option<u32>,
+    semantics: Option<MethodSemanticsAttributes>,
 
     /// Method that implements the semantic behavior.
     ///
@@ -185,7 +188,7 @@ impl MethodSemanticsBuilder {
     ///     .semantics(MethodSemanticsAttributes::GETTER | MethodSemanticsAttributes::OTHER);
     /// ```
     #[must_use]
-    pub fn semantics(mut self, semantics: u32) -> Self {
+    pub fn semantics(mut self, semantics: MethodSemanticsAttributes) -> Self {
         self.semantics = Some(semantics);
         self
     }
@@ -339,7 +342,7 @@ impl MethodSemanticsBuilder {
             rid: 0,
             token: Token::new(0),
             offset: 0,
-            semantics,
+            semantics: semantics.bits(),
             method,
             association,
         };

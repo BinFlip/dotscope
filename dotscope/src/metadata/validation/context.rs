@@ -721,8 +721,8 @@ impl OwnedValidationContext<'_> {
                 let type_ptr = Arc::as_ptr(type_entry) as usize;
                 let mut implemented_interfaces = Vec::new();
 
-                for (_, interface_ref) in type_entry.interfaces.iter() {
-                    if let Some(interface_type) = interface_ref.upgrade() {
+                for (_, entry) in type_entry.interfaces.iter() {
+                    if let Some(interface_type) = entry.interface.upgrade() {
                         let interface_ptr = Arc::as_ptr(&interface_type) as usize;
                         implemented_interfaces.push(interface_ptr);
                     }

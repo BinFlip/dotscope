@@ -508,7 +508,7 @@ impl AssemblyDependencyGraph {
     /// use std::sync::Arc;
     /// use dotscope::metadata::dependencies::{AssemblyDependencyGraph, AssemblyDependency, DependencyType, VersionRequirement, DependencyResolutionState};
     /// use dotscope::metadata::identity::{AssemblyIdentity, AssemblyVersion};
-    /// use dotscope::metadata::tables::AssemblyRef;
+    /// use dotscope::metadata::tables::{AssemblyFlags, AssemblyRef};
     ///
     /// let graph = AssemblyDependencyGraph::new();
     /// let source = AssemblyIdentity::new("MyApp".to_string(), AssemblyVersion::new(1, 0, 0, 0), None, None, None);
@@ -524,7 +524,7 @@ impl AssemblyDependencyGraph {
     ///     minor_version: 0,
     ///     build_number: 0,
     ///     revision_number: 0,
-    ///     flags: 0,
+    ///     flags: AssemblyFlags::ZERO,
     ///     identifier: None,
     ///     hash: None,
     ///     os_platform_id: std::sync::atomic::AtomicU32::new(0),

@@ -706,10 +706,12 @@ impl Imports {
                 }
                 CilTypeReference::File(file) => ImportSourceId::File(file.token),
                 CilTypeReference::TypeRef(type_ref) => {
-                    // For TypeRef, we just add the nested type and don't track it as an import
+                    // For TypeRef, add to the parent's nested_types and establish
+                    // the enclosing_type link so fullname() produces nested paths.
                     if let Some(nested_types) = type_ref.nested_types() {
                         nested_types.push(cil_type.clone().into());
                     }
+                    let _ = cil_type.set_enclosing_type(type_ref);
                     return Ok(());
                 }
                 _ => return Err(malformed_error!("Invalid source id for Import")),

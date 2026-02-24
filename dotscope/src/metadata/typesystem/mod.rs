@@ -47,7 +47,7 @@ mod resolver;
 
 use std::{
     collections::HashSet,
-    sync::{Arc, OnceLock},
+    sync::{Arc, OnceLock, RwLock},
 };
 
 pub use base::{
@@ -68,8 +68,8 @@ use crate::{
         query::MethodQuery,
         security::Security,
         tables::{
-            EventList, FieldList, GenericParamList, MethodSpec, MethodSpecList, PropertyList,
-            TableId, TypeAttributes,
+            EventList, FieldAttributes, FieldList, GenericParamList, InterfaceEntryList,
+            MethodSpec, MethodSpecList, PropertyList, TableId, TypeAttributes,
         },
         token::Token,
     },
@@ -123,8 +123,8 @@ pub struct CilType {
     external: OnceLock<CilTypeReference>,
     /// Base type reference - the type this type inherits from (for classes) or extends (for interfaces)
     base: OnceLock<CilTypeRef>,
-    /// Type attributes flags - 4-byte bitmask from `TypeAttributes` (ECMA-335 §II.23.1.15)
-    pub flags: u32,
+    /// Type attributes flags (ECMA-335 §II.23.1.15).
+    pub flags: TypeAttributes,
     /// All fields defined in this type
     pub fields: FieldList,
     /// All methods defined in this type (constructors, instance methods, static methods)
@@ -134,7 +134,7 @@ pub struct CilType {
     /// All events defined in this type
     pub events: EventList,
     /// All interfaces this type implements (from `InterfaceImpl` table)
-    pub interfaces: CilTypeRefList,
+    pub interfaces: InterfaceEntryList,
     /// All method overwrites this type implements (explicit interface implementations)
     pub overwrites: Arc<boxcar::Vec<CilTypeReference>>,
     /// Nested types contained within this type (inner classes, delegates, etc.)
@@ -157,8 +157,8 @@ pub struct CilType {
     pub security: OnceLock<Security>,
     /// Enclosing type for nested types - used for reverse lookup to build hierarchical names
     pub enclosing_type: OnceLock<CilTypeRef>,
-    /// Cached full name to avoid expensive recomputation
-    fullname: OnceLock<String>,
+    /// Cached full name to avoid expensive recomputation.
+    fullname: RwLock<Option<String>>,
     // vtable
     // security
     // default_constructor: Option<MethodRef>
@@ -195,6 +195,7 @@ impl CilType {
     ///
     /// ```rust,no_run
     /// use dotscope::metadata::{
+    ///     tables::TypeAttributes,
     ///     typesystem::{CilType, CilFlavor},
     ///     token::Token,
     /// };
@@ -206,7 +207,7 @@ impl CilType {
     ///     "MyClass".to_string(),
     ///     None, // Not an external type
     ///     None, // No base type specified yet
-    ///     0x00100001, // TypeAttributes flags
+    ///     TypeAttributes::new(0x00100001), // TypeAttributes flags
     ///     Arc::new(boxcar::Vec::new()), // Empty fields list
     ///     Arc::new(boxcar::Vec::new()), // Empty methods list
     ///     Some(CilFlavor::Class), // Explicit class flavor
@@ -219,7 +220,7 @@ impl CilType {
         name: String,
         external: Option<CilTypeReference>,
         base: Option<CilTypeRef>,
-        flags: u32,
+        flags: TypeAttributes,
         fields: FieldList,
         methods: MethodRefList,
         flavor: Option<CilFlavor>,
@@ -263,7 +264,7 @@ impl CilType {
             modifiers: Arc::new(boxcar::Vec::new()),
             security: OnceLock::new(),
             enclosing_type: OnceLock::new(),
-            fullname: OnceLock::new(),
+            fullname: RwLock::new(None),
         }
     }
 
@@ -414,7 +415,14 @@ impl CilType {
     /// enclosing type will return an error.
     pub fn set_enclosing_type(&self, enclosing_type: &CilTypeRef) -> Result<()> {
         match self.enclosing_type.set(enclosing_type.clone()) {
-            Ok(()) => Ok(()),
+            Ok(()) => {
+                // Invalidate the cached fullname so it will be recomputed
+                // with the enclosing type prefix on next access.
+                if let Ok(mut guard) = self.fullname.write() {
+                    *guard = None;
+                }
+                Ok(())
+            }
             Err(_) => {
                 // Check if the existing enclosing type is equivalent
                 if let Some(existing) = self.enclosing_type.get() {
@@ -581,7 +589,7 @@ impl CilType {
     /// The computed `CilFlavor` representing this type's classification.
     fn compute_flavor(&self) -> CilFlavor {
         // 1. ECMA-335 definitive classification - Interface flag takes precedence
-        if self.flags & TypeAttributes::INTERFACE != 0 {
+        if self.flags.is_interface() {
             return CilFlavor::Interface;
         }
 
@@ -757,8 +765,8 @@ impl CilType {
         // ECMA-335 attribute-based classification
 
         // Sealed + Abstract is impossible, but if both are set, interface wins
-        let is_sealed = self.flags & TypeAttributes::SEALED != 0;
-        let is_abstract = self.flags & TypeAttributes::ABSTRACT != 0;
+        let is_sealed = self.flags.is_sealed();
+        let is_abstract = self.flags.is_abstract();
 
         // Value type indicators:
         // 1. Sealed with no methods often indicates value type (struct/enum)
@@ -767,7 +775,7 @@ impl CilType {
         }
 
         // 2. Types with sequential or explicit layout are often value types
-        let layout = self.flags & TypeAttributes::LAYOUT_MASK;
+        let layout = self.flags.layout();
         if (layout == TypeAttributes::SEQUENTIAL_LAYOUT
             || layout == TypeAttributes::EXPLICIT_LAYOUT)
             && is_sealed
@@ -811,20 +819,20 @@ impl CilType {
         // 2. Have a single instance field named "value__"
         // 3. May have static fields for enum values
 
-        if self.flags & TypeAttributes::SEALED == 0 {
+        if !self.flags.is_sealed() {
             return false;
         }
 
         let instance_fields = self
             .fields
             .iter()
-            .filter(|(_, field)| field.flags & 0x10 == 0) // Not static
+            .filter(|(_, field)| !field.flags.is_static())
             .count();
 
         let has_value_field = self
             .fields
             .iter()
-            .any(|(_, field)| field.name == "value__" && field.flags & 0x10 == 0);
+            .any(|(_, field)| field.name == "value__" && !field.flags.is_static());
 
         // Classic enum pattern: single instance field named "value__"
         instance_fields == 1 && has_value_field
@@ -846,7 +854,7 @@ impl CilType {
         // 2. Have Invoke, BeginInvoke, EndInvoke methods
         // 3. Have specific constructor signatures
 
-        if self.flags & TypeAttributes::SEALED == 0 {
+        if !self.flags.is_sealed() {
             return false;
         }
 
@@ -870,8 +878,7 @@ impl CilType {
     /// }
     /// ```
     pub fn is_public(&self) -> bool {
-        let vis = self.flags & TypeAttributes::VISIBILITY_MASK;
-        vis == TypeAttributes::PUBLIC || vis == TypeAttributes::NESTED_PUBLIC
+        self.flags.is_public()
     }
 
     /// Returns true if this type has internal/assembly-only visibility.
@@ -880,7 +887,7 @@ impl CilType {
     /// - Top-level types with `NotPublic` visibility (internal to assembly)
     /// - Nested types with `NestedAssembly` visibility
     pub fn is_internal(&self) -> bool {
-        let vis = self.flags & TypeAttributes::VISIBILITY_MASK;
+        let vis = self.flags.visibility();
         vis == TypeAttributes::NOT_PUBLIC || vis == TypeAttributes::NESTED_ASSEMBLY
     }
 
@@ -909,13 +916,13 @@ impl CilType {
     /// Returns true if this type is sealed (cannot be inherited from).
     #[must_use]
     pub fn is_sealed(&self) -> bool {
-        self.flags & TypeAttributes::SEALED != 0
+        self.flags.is_sealed()
     }
 
     /// Returns true if this type is abstract (cannot be instantiated directly).
     #[must_use]
     pub fn is_abstract(&self) -> bool {
-        self.flags & TypeAttributes::ABSTRACT != 0
+        self.flags.is_abstract()
     }
 
     /// Returns true if this type is an enum (inherits from `System.Enum`).
@@ -955,7 +962,7 @@ impl CilType {
     ///
     /// Useful for detecting obfuscation infrastructure types that are intentionally hidden.
     pub fn is_nested_internal(&self) -> bool {
-        let vis = self.flags & TypeAttributes::VISIBILITY_MASK;
+        let vis = self.flags.visibility();
         vis == TypeAttributes::NESTED_PRIVATE
             || vis == TypeAttributes::NESTED_ASSEMBLY
             || vis == TypeAttributes::NESTED_FAM_AND_ASSEM
@@ -976,9 +983,9 @@ impl CilType {
     /// Iterates through all fields declared by this type and checks if any
     /// have `Public` accessibility (flag value 0x06).
     pub fn has_public_fields(&self) -> bool {
-        self.fields.iter().any(|(_, field)| {
-            (field.flags & 0x07) == 0x06 // FieldAttributes.Public
-        })
+        self.fields
+            .iter()
+            .any(|(_, field)| field.flags.access() == FieldAttributes::PUBLIC)
     }
 
     /// Finds the first method with the given name declared by this type.
@@ -1018,12 +1025,16 @@ impl CilType {
     /// # Caching
     /// The result is cached after first computation for performance.
     pub fn fullname(&self) -> String {
-        if let Some(cached) = self.fullname.get() {
-            return cached.clone();
+        if let Ok(guard) = self.fullname.read() {
+            if let Some(cached) = guard.as_ref() {
+                return cached.clone();
+            }
         }
 
         let fullname = self.compute_fullname();
-        let _ = self.fullname.set(fullname.clone());
+        if let Ok(mut guard) = self.fullname.write() {
+            *guard = Some(fullname.clone());
+        }
         fullname
     }
 
@@ -1031,11 +1042,18 @@ impl CilType {
     ///
     /// This is the core implementation separated from caching logic for clarity.
     fn compute_fullname(&self) -> String {
-        let path_components = self.collect_type_path();
+        let (path_components, outermost_namespace) = self.collect_type_path();
 
         if path_components.len() > 1 {
-            // This is a nested type - use "/" separators like .NET runtime
-            self.format_nested_fullname(&path_components)
+            // This is a nested type - use "/" separators like .NET runtime.
+            // The namespace comes from the outermost enclosing type, not self,
+            // because nested types in ECMA-335 typically have an empty namespace field.
+            let nested_path = path_components.join("/");
+            if outermost_namespace.is_empty() {
+                nested_path
+            } else {
+                format!("{outermost_namespace}.{nested_path}")
+            }
         } else {
             // This is a top-level type - use traditional "." separator
             self.format_toplevel_fullname()
@@ -1044,12 +1062,15 @@ impl CilType {
 
     /// Collects the type path from innermost (self) to outermost enclosing type.
     ///
-    /// Returns components in outermost-to-innermost order (reversed during collection).
-    fn collect_type_path(&self) -> Vec<String> {
+    /// Returns the path components in outermost-to-innermost order and the
+    /// outermost enclosing type's namespace (which is the namespace that applies
+    /// to the entire nested type chain in ECMA-335 metadata).
+    fn collect_type_path(&self) -> (Vec<String>, String) {
         let mut path_components = Vec::new();
 
         path_components.push(self.safe_type_name());
 
+        let mut outermost_namespace = self.namespace.clone();
         let mut visited_tokens = HashSet::new();
         visited_tokens.insert(self.token);
 
@@ -1060,13 +1081,14 @@ impl CilType {
             }
             visited_tokens.insert(enclosing.token);
 
+            outermost_namespace = enclosing.namespace.clone();
             path_components.push(Self::safe_name_for(&enclosing.name, enclosing.token));
             current_type = enclosing.enclosing_type();
         }
 
         // Reverse to get outermost-to-innermost order
         path_components.reverse();
-        path_components
+        (path_components, outermost_namespace)
     }
 
     /// Returns a safe type name, using a placeholder for empty names.
@@ -1080,16 +1102,6 @@ impl CilType {
             format!("<unnamed_{:08X}>", token.value())
         } else {
             name.to_string()
-        }
-    }
-
-    /// Formats the full name for a nested type using "/" separators.
-    fn format_nested_fullname(&self, path_components: &[String]) -> String {
-        let nested_path = path_components.join("/");
-        if self.namespace.is_empty() {
-            nested_path
-        } else {
-            format!("{}.{}", self.namespace, nested_path)
         }
     }
 
@@ -1207,8 +1219,8 @@ impl CilType {
 
     /// Check if this type implements the specified interface
     fn implements_interface(&self, interface: &CilType) -> bool {
-        for (_, interface_impl) in self.interfaces.iter() {
-            if let Some(impl_type) = interface_impl.upgrade() {
+        for (_, entry) in self.interfaces.iter() {
+            if let Some(impl_type) = entry.interface.upgrade() {
                 if impl_type.token == interface.token
                     || (impl_type.namespace == interface.namespace
                         && impl_type.name == interface.name)

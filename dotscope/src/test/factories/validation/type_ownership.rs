@@ -57,7 +57,7 @@ pub fn create_assembly_with_invalid_nested_visibility() -> Result<TestAssembly> 
             rid: container_rid,
             token: Token::new(0x02000000 + container_rid),
             offset: 0,
-            flags: TypeAttributes::PUBLIC, // Public container
+            flags: TypeAttributes::PUBLIC.bits(), // Public container
             type_name: container_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
@@ -79,7 +79,7 @@ pub fn create_assembly_with_invalid_nested_visibility() -> Result<TestAssembly> 
             rid: nested_rid,
             token: Token::new(0x02000000 + nested_rid),
             offset: 0,
-            flags: 0x00000008, // Invalid visibility value (8 is beyond valid range 0-7)
+            flags: 0x00000008, // Invalid visibility value (8 is beyond valid range 0-7) - raw u32 intentional
             type_name: nested_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
@@ -127,7 +127,7 @@ pub fn create_assembly_with_empty_nested_name() -> Result<TestAssembly> {
             rid: container_rid,
             token: Token::new(0x02000000 + container_rid),
             offset: 0,
-            flags: TypeAttributes::PUBLIC,
+            flags: TypeAttributes::PUBLIC.bits(),
             type_name: container_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
@@ -149,7 +149,7 @@ pub fn create_assembly_with_empty_nested_name() -> Result<TestAssembly> {
             rid: nested_rid,
             token: Token::new(0x02000000 + nested_rid),
             offset: 0,
-            flags: TypeAttributes::NESTED_PUBLIC,
+            flags: TypeAttributes::NESTED_PUBLIC.bits(),
             type_name: empty_name_index.placeholder(), // Empty name - this should trigger validation failure
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
@@ -197,7 +197,7 @@ pub fn create_assembly_with_empty_method_name() -> Result<TestAssembly> {
             rid: type_rid,
             token: Token::new(0x02000000 + type_rid),
             offset: 0,
-            flags: TypeAttributes::PUBLIC,
+            flags: TypeAttributes::PUBLIC.bits(),
             type_name: type_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
@@ -250,7 +250,7 @@ pub fn create_assembly_with_empty_field_name() -> Result<TestAssembly> {
             rid: type_rid,
             token: Token::new(0x02000000 + type_rid),
             offset: 0,
-            flags: TypeAttributes::PUBLIC,
+            flags: TypeAttributes::PUBLIC.bits(),
             type_name: type_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),
@@ -300,7 +300,7 @@ pub fn create_assembly_with_invalid_field_visibility() -> Result<TestAssembly> {
             rid: type_rid,
             token: Token::new(0x02000000 + type_rid),
             offset: 0,
-            flags: TypeAttributes::PUBLIC,
+            flags: TypeAttributes::PUBLIC.bits(),
             type_name: type_name_index.placeholder(),
             type_namespace: 0,
             extends: CodedIndex::new(TableId::TypeRef, 1, CodedIndexType::TypeDefOrRef),

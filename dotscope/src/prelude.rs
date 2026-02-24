@@ -302,7 +302,7 @@ pub use crate::metadata::typesystem::{
 /// Core assembly metadata including version info, culture, public keys, and module definitions.
 /// These types provide the foundation for assembly identity and module organization.
 pub use crate::metadata::tables::{
-    Assembly, AssemblyFlagsValue, AssemblyRc, AssemblyRef, AssemblyRefRc, HashAlgorithmId, Module,
+    Assembly, AssemblyFlags, AssemblyRc, AssemblyRef, AssemblyRefRc, HashAlgorithmId, Module,
     ModuleRc, ModuleRef, ModuleRefRc,
 };
 
@@ -342,7 +342,9 @@ pub use crate::metadata::tables::{
 ///
 /// Interface implementation tracking and cross-assembly member references.
 /// Critical for understanding type relationships and external dependencies.
-pub use crate::metadata::tables::{InterfaceImpl, InterfaceImplRc, MemberRef, MemberRefRc};
+pub use crate::metadata::tables::{
+    InterfaceEntry, InterfaceEntryList, InterfaceImpl, InterfaceImplRc, MemberRef, MemberRefRc,
+};
 
 /// Generic types and constraints.
 ///
@@ -376,7 +378,7 @@ pub use crate::metadata::security::{
 /// File references and manifest resources embedded in or referenced by the assembly.
 /// Essential for analyzing resource dependencies and multi-file assemblies.
 pub use crate::metadata::tables::{
-    File as MetadataFile, FileRc, ManifestResource, ManifestResourceRc,
+    File as MetadataFile, FileRc, ManifestResource, ManifestResourceAttributes, ManifestResourceRc,
 };
 
 /// Resource parsing with owned and zero-copy semantics.
@@ -557,8 +559,9 @@ pub use crate::metadata::tables::MemberRefSignature;
 /// attributes, and instruction-level access for CIL analysis and manipulation.
 pub use crate::metadata::method::{
     ExceptionHandler, ExceptionHandlerFlags, InstructionIterator, Method, MethodBody,
-    MethodImplCodeType, MethodImplManagement, MethodImplOptions, MethodList, MethodMap,
-    MethodModifiers, MethodRc, MethodRef, MethodRefList,
+    MethodBodyFlags, MethodImplCodeType, MethodImplManagement, MethodImplOptions, MethodList,
+    MethodMap, MethodModifiers, MethodRc, MethodRef, MethodRefList, MethodVtableFlags,
+    SectionFlags,
 };
 
 // ================================================================================================

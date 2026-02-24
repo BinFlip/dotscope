@@ -11,6 +11,7 @@ use crate::{
         },
         tables::{CodedIndex, CodedIndexType, CustomAttributeRaw, TableDataOwned, TableId},
         token::Token,
+        typesystem::CilTypeReference,
     },
     test::{create_test_assembly, get_testfile_mscorlib, TestAssembly},
     Error, Result,
@@ -79,6 +80,8 @@ pub fn create_assembly_with_excessive_fixed_args() -> Result<TestAssembly> {
         let custom_attr_value = CustomAttributeValue {
             fixed_args,
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         // Encode the custom attribute value to blob
@@ -135,6 +138,8 @@ pub fn create_assembly_with_excessive_named_args() -> Result<TestAssembly> {
         let custom_attr_value = CustomAttributeValue {
             fixed_args: vec![],
             named_args,
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let blob_data = encode_custom_attribute_value(&custom_attr_value)
@@ -194,6 +199,8 @@ pub fn create_assembly_with_duplicate_named_args() -> Result<TestAssembly> {
         let custom_attr_value = CustomAttributeValue {
             fixed_args: vec![],
             named_args,
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let blob_data = encode_custom_attribute_value(&custom_attr_value)
@@ -245,6 +252,8 @@ pub fn create_assembly_with_empty_named_arg_name() -> Result<TestAssembly> {
         let custom_attr_value = CustomAttributeValue {
             fixed_args: vec![],
             named_args,
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let blob_data = encode_custom_attribute_value(&custom_attr_value)
@@ -293,6 +302,8 @@ pub fn create_assembly_with_null_character_string() -> Result<TestAssembly> {
         let custom_attr_value = CustomAttributeValue {
             fixed_args,
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let blob_data = encode_custom_attribute_value(&custom_attr_value)
@@ -340,6 +351,8 @@ pub fn create_assembly_with_excessive_string_length() -> Result<TestAssembly> {
         let custom_attr_value = CustomAttributeValue {
             fixed_args,
             named_args: vec![],
+            constructor: CilTypeReference::None,
+            blob_index: 0,
         };
 
         let blob_data = encode_custom_attribute_value(&custom_attr_value)

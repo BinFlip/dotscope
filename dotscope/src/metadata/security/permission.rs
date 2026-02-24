@@ -839,9 +839,9 @@ impl Permission {
 
         if let Some(arg) = self.get_argument("Flags") {
             if let ArgumentValue::Int32(flags) = &arg.value {
-                return Some(SecurityPermissionFlags::from_bits_truncate(*flags));
+                return Some(SecurityPermissionFlags::new(*flags));
             } else if let ArgumentValue::Enum(_, flags) = &arg.value {
-                return Some(SecurityPermissionFlags::from_bits_truncate(*flags));
+                return Some(SecurityPermissionFlags::new(*flags));
             } else if let ArgumentValue::String(flags_str) = &arg.value {
                 // Handle string representations of security flags
                 return Some(Self::parse_flags_from_string(flags_str));
@@ -921,7 +921,7 @@ impl Permission {
         /// 2. This function is not called in hot paths
         /// 3. Linear search has good cache locality for small arrays
         const FLAG_MAPPINGS: &[(&str, SecurityPermissionFlags)] = &[
-            ("NoFlags", SecurityPermissionFlags::empty()),
+            ("NoFlags", SecurityPermissionFlags::ZERO),
             (
                 "Execution",
                 SecurityPermissionFlags::SECURITY_FLAG_EXECUTION,
@@ -998,11 +998,11 @@ impl Permission {
             ),
         ];
 
-        let mut flags = SecurityPermissionFlags::empty();
+        let mut flags = SecurityPermissionFlags::ZERO;
 
         // Handle special "AllFlags" case
         if flags_str == "AllFlags" {
-            return SecurityPermissionFlags::all();
+            return SecurityPermissionFlags::ALL;
         }
 
         // Parse comma-separated flag names
