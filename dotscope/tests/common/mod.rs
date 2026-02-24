@@ -1,3 +1,4 @@
+pub mod compatibility;
 pub mod verification;
 
 use dotscope::{

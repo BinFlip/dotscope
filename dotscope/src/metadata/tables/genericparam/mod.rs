@@ -147,7 +147,7 @@ impl GenericParamAttributes {
     ///
     /// Use this mask with bitwise AND to extract the constraint bits from the flags.
     /// The result can then be compared with specific constraint constants.
-    pub const SPECIAL_CONSTRAINT_MASK: Self = Self(0x001C);
+    pub const SPECIAL_CONSTRAINT_MASK: Self = Self(0x003C);
 
     /// The generic parameter has a reference type constraint.
     ///
@@ -167,11 +167,17 @@ impl GenericParamAttributes {
     /// Corresponds to `where T : new()` constraint in C#.
     pub const DEFAULT_CONSTRUCTOR_CONSTRAINT: Self = Self(0x0010);
 
+    /// The generic parameter allows `ByRefLike` type arguments.
+    ///
+    /// This constraint permits ref struct types as type arguments.
+    /// Corresponds to `where T : allows ref struct` constraint in C# 13+ / .NET 9+.
+    pub const ALLOW_BY_REF_LIKE: Self = Self(0x0020);
+
     /// Mask for reserved bits that should not be set.
     ///
     /// Reserved bits in the flags field that are not currently defined by the ECMA-335
     /// specification. These bits should be zero in valid metadata.
-    pub const RESERVED_MASK: Self = Self(0xFFE0);
+    pub const RESERVED_MASK: Self = Self(0xFFC0);
 
     /// Extract the variance bits from the flags.
     ///
@@ -210,21 +216,25 @@ impl GenericParamAttributes {
 
     /// Returns the ILAsm constraint keywords for this parameter as a space-separated string.
     ///
-    /// Possible keywords: `"class"`, `"valuetype"`, `".ctor"`, or combinations thereof.
-    /// Returns `""` if no constraint flags are set.
+    /// Possible keywords: `"class"`, `"valuetype"`, `".ctor"`, `"allow(byreflike)"`,
+    /// or combinations thereof. Returns an empty string if no constraint flags are set.
     #[must_use]
-    pub fn constraint_keywords(self) -> &'static str {
-        let has_class = self.contains(Self::REFERENCE_TYPE_CONSTRAINT);
-        let has_valuetype = self.contains(Self::NOT_NULLABLE_VALUE_TYPE_CONSTRAINT);
-        let has_ctor = self.contains(Self::DEFAULT_CONSTRUCTOR_CONSTRAINT);
+    pub fn constraint_keywords(self) -> String {
+        let mut parts = Vec::new();
 
-        match (has_class, has_valuetype, has_ctor) {
-            (true, false, true) => "class .ctor",
-            (true, false, false) => "class",
-            (false, true, true) => "valuetype .ctor",
-            (false, true, false) => "valuetype",
-            (false, false, true) => ".ctor",
-            _ => "",
+        if self.contains(Self::REFERENCE_TYPE_CONSTRAINT) {
+            parts.push("class");
         }
+        if self.contains(Self::NOT_NULLABLE_VALUE_TYPE_CONSTRAINT) {
+            parts.push("valuetype");
+        }
+        if self.contains(Self::DEFAULT_CONSTRUCTOR_CONSTRAINT) {
+            parts.push(".ctor");
+        }
+        if self.contains(Self::ALLOW_BY_REF_LIKE) {
+            parts.push("allow(byreflike)");
+        }
+
+        parts.join(" ")
     }
 }

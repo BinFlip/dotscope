@@ -53,7 +53,7 @@ pub fn verify_cor20(cor20: &Cor20Header) {
     assert_eq!(cor20.meta_data_size, 0xABB24);
     assert_eq!(
         cor20.flags,
-        Cor20Flags::STRONG_NAME_SIGNED | Cor20Flags::NATIVE_ENTRY_POINT
+        Cor20Flags::IL_LIBRARY | Cor20Flags::STRONG_NAME_SIGNED
     );
     assert_eq!(cor20.entry_point_token, 0);
     assert_eq!(cor20.resource_rva, 0x3CEF0);

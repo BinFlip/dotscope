@@ -517,10 +517,11 @@ impl RawHeapValidator {
         Ok(())
     }
 
-    /// Validates the actual content of the user string heap for UTF-16 compliance and length prefixes.
+    /// Validates the structural integrity of user string heap entries.
     ///
-    /// Performs deep content validation of user string heap entries according to ECMA-335 requirements.
-    /// Each user string must have valid UTF-16 encoding and proper length prefixing.
+    /// Per ECMA-335 II.24.2.4, the UserString heap can contain arbitrary binary data.
+    /// This method validates structural properties (length bounds) but does not reject
+    /// non-UTF-16 sequences, as those are spec-legal.
     ///
     /// # Arguments
     ///
@@ -528,14 +529,13 @@ impl RawHeapValidator {
     ///
     /// # Returns
     ///
-    /// * `Ok(())` - All user string entries are valid UTF-16 and properly formatted
-    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Invalid user string content found
+    /// * `Ok(())` - All user string entries have valid structural formatting
+    /// * `Err(`[`crate::Error::ValidationRawFailed`]`)` - Invalid user string structure found
     ///
     /// # Errors
     ///
     /// Returns [`crate::Error::ValidationRawFailed`] if:
-    /// - User string contains invalid UTF-16 encoding
-    /// - User string length prefix is malformed
+    /// - User string has excessive length
     /// - User string heap iteration fails due to corruption
     fn validate_userstring_heap_content(assembly_view: &CilAssemblyView) -> Result<()> {
         if let Some(userstrings) = assembly_view.userstrings() {
@@ -550,12 +550,10 @@ impl RawHeapValidator {
                     ));
                 }
 
-                if String::from_utf16(utf16_chars).is_err() {
-                    return Err(malformed_error!(
-                        "UserString heap contains invalid UTF-16 sequence at offset {}",
-                        offset
-                    ));
-                }
+                // Per ECMA-335 II.24.2.4, the UserString heap can contain arbitrary
+                // binary data. The terminal byte indicates whether non-ASCII characters
+                // are present. We only validate structural integrity (length), not
+                // UTF-16 well-formedness.
             }
         }
 

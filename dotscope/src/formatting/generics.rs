@@ -62,6 +62,12 @@ fn format_generic_params(params: &GenericParamList, asm: &CilObject) -> String {
         {
             result.push_str(".ctor ");
         }
+        if param
+            .flags
+            .contains(GenericParamAttributes::ALLOW_BY_REF_LIKE)
+        {
+            result.push_str("allow(byreflike) ");
+        }
 
         // Type/interface constraints — all inside a single set of parentheses,
         // comma-separated per the ILAsm grammar: (IFoo, IBar, IBaz)

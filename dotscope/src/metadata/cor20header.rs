@@ -103,14 +103,16 @@ impl Cor20Flags {
     pub const IL_ONLY: Self = Self(0x0001);
     /// Assembly requires a 32-bit process.
     pub const REQUIRED_32BIT: Self = Self(0x0002);
+    /// Assembly is an IL library (runtime extension flag).
+    pub const IL_LIBRARY: Self = Self(0x0004);
     /// Assembly has a valid strong name signature.
-    pub const STRONG_NAME_SIGNED: Self = Self(0x0004);
+    pub const STRONG_NAME_SIGNED: Self = Self(0x0008);
     /// Assembly has a native code entry point.
-    pub const NATIVE_ENTRY_POINT: Self = Self(0x0008);
+    pub const NATIVE_ENTRY_POINT: Self = Self(0x0010);
     /// Runtime should track debug data.
-    pub const TRACK_DEBUG_DATA: Self = Self(0x0010);
+    pub const TRACK_DEBUG_DATA: Self = Self(0x0001_0000);
     /// Assembly prefers 32-bit process but can run in 64-bit.
-    pub const PREFERRED_32BIT: Self = Self(0x0001_0000);
+    pub const PREFERRED_32BIT: Self = Self(0x0002_0000);
 }
 
 impl fmt::Display for Cor20Flags {
@@ -121,6 +123,9 @@ impl fmt::Display for Cor20Flags {
         }
         if self.contains(Self::REQUIRED_32BIT) {
             parts.push("32BitRequired");
+        }
+        if self.contains(Self::IL_LIBRARY) {
+            parts.push("ILLibrary");
         }
         if self.contains(Self::STRONG_NAME_SIGNED) {
             parts.push("StrongNameSigned");
@@ -284,7 +289,7 @@ impl Cor20Header {
     ///
     /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn read(data: &[u8]) -> Result<Cor20Header> {
-        const VALID_FLAGS: u32 = 0x0000_001F; // Based on ECMA-335 defined flags
+        const VALID_FLAGS: u32 = 0x0003_001F; // IL_ONLY | REQUIRED_32BIT | IL_LIBRARY | STRONG_NAME_SIGNED | NATIVE_ENTRY_POINT | TRACK_DEBUG_DATA | PREFERRED_32BIT
 
         if data.len() < 72 {
             return Err(out_of_bounds_error!());
@@ -302,7 +307,7 @@ impl Cor20Header {
 
         let major_runtime_version = parser.read_le::<u16>()?;
         let minor_runtime_version = parser.read_le::<u16>()?;
-        if major_runtime_version == 0 || major_runtime_version > 10 {
+        if major_runtime_version == 0 || major_runtime_version > 15 {
             return Err(malformed_error!(
                 "Cor20Header: invalid major runtime version: {} [ECMA-335 §II.25.3.3]",
                 major_runtime_version
