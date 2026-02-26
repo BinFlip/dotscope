@@ -160,7 +160,7 @@ pub fn fix_malformed_exception_handlers(
         }
 
         let body_data = &file.data()[offset..offset + available];
-        let Ok(mut body) = MethodBody::from_lenient(body_data) else {
+        let Ok((mut body, _)) = MethodBody::from_lenient(body_data) else {
             continue;
         };
 

@@ -52,7 +52,6 @@ mod cleanup;
 mod detection;
 mod dotnethook;
 mod findings;
-mod junkprefix;
 #[cfg(feature = "legacy-crypto")]
 mod strings;
 mod unmanagedstring;
@@ -111,7 +110,8 @@ pub(super) fn read_method_body(file_data: &[u8], file_offset: usize) -> Option<(
     // For fat headers with MoreSects flag, include exception handler sections
     let body_end = if (header_byte & 0x03) == 0x03 && (header_byte & 0x08) != 0 {
         let sections_start = (body_start + header_size + code_size + 3) & !3;
-        find_method_body_end(file_data, sections_start, body_start)
+        let end = find_method_body_end(file_data, sections_start, body_start);
+        end.min(file_data.len())
     } else {
         body_start + total_body_size
     };
@@ -219,7 +219,6 @@ impl Obfuscator for BitMonoObfuscator {
         };
         let do_dotnethook = bm.needs_dotnethook_reversal();
         let do_unmanaged = bm.needs_unmanaged_string_reversal();
-        let do_junk = bm.needs_junk_prefix_removal();
         let do_antidecompiler = bm.needs_anti_decompiler_fix();
         let do_malformed_eh = bm.needs_malformed_eh_cleanup();
         #[cfg(feature = "legacy-crypto")]
@@ -229,6 +228,11 @@ impl Obfuscator for BitMonoObfuscator {
         // Byte-level phases — these modify raw method bodies and metadata
         // before SSA construction. CallToCalli and AntiDebug are handled
         // by SSA passes returned from `passes()` instead.
+        //
+        // BitMethodDotnet junk prefix removal is handled generically by
+        // BlockMergingPass at the SSA level: the `br.s +N` at method start
+        // creates an entry block trampoline that BlockMergingPass detects
+        // and inlines, triggering code regeneration without the junk bytes.
 
         // Phase 4: DotNetHook reversal (byte-level: patches VirtualProtect hooks)
         if do_dotnethook {
@@ -250,17 +254,12 @@ impl Obfuscator for BitMonoObfuscator {
                 unmanagedstring::prepare_unmanaged_string_reversal(current, findings, events)?;
         }
 
-        // Phase 7: BitMethodDotnet junk prefix removal (byte-level)
-        if do_junk {
-            current = junkprefix::remove_junk_prefixes(current, findings, events)?;
-        }
-
-        // Phase 8: AntiDecompiler attribute fix (byte-level: metadata repair)
+        // Phase 7: AntiDecompiler attribute fix (byte-level: metadata repair)
         if do_antidecompiler {
             current = antidecompiler::fix_antidecompiler(current, findings, events)?;
         }
 
-        // Phase 9: Malformed exception handler cleanup (byte-level)
+        // Phase 8: Malformed exception handler cleanup (byte-level)
         if do_malformed_eh {
             current = antidecompiler::fix_malformed_exception_handlers(current, findings, events)?;
         }

@@ -44,7 +44,7 @@ use crate::{
         obfuscators::utils::{is_obfuscated_name, is_special_name},
     },
     metadata::{
-        tables::{FieldRaw, MethodDefRaw, ParamRaw, TypeDefRaw},
+        tables::{FieldRaw, MethodDefRaw, ParamRaw, TableId, TypeDefRaw},
         token::Token,
         validation::ValidationConfig,
     },
@@ -131,12 +131,16 @@ pub fn execute_cleanup(
             .message(format!("Removing artifact section: {section_name}"));
     }
 
-    // Create CilAssembly and add cleanup request
-    let bytes = assembly.file().data().to_vec();
-    let mut cil_assembly = CilAssembly::from_bytes(bytes)?;
-
-    // Log individual removals
+    // Log individual removals before consuming the assembly
     log_cleanup_request(&request, &assembly, ctx);
+
+    // Convert directly — no reparsing needed
+    let mut cil_assembly = assembly.into_assembly();
+
+    // Repair metadata anomalies injected by obfuscators.
+    // ECMA-335 §22.2: Assembly table shall contain zero or one row.
+    // Some obfuscators inject duplicate rows to confuse tooling.
+    repair_duplicate_assembly_rows(&mut cil_assembly, ctx);
 
     // Clone excluded sections before moving request
     let excluded_sections: HashSet<String> = request.excluded_sections().clone();
@@ -205,6 +209,35 @@ fn log_cleanup_request(request: &CleanupRequest, assembly: &CilObject, ctx: &Ana
                 attr_token.value()
             ));
     }
+}
+
+/// Repairs duplicate Assembly table rows injected by obfuscators.
+///
+/// ECMA-335 §22.2 requires the Assembly table to contain at most 1 row.
+/// Some obfuscators inject extra rows to confuse decompilers and analysis tools.
+/// This removes any rows beyond the first, keeping the original assembly identity.
+fn repair_duplicate_assembly_rows(cil_assembly: &mut CilAssembly, ctx: &AnalysisContext) {
+    let row_count = cil_assembly.original_table_row_count(TableId::Assembly);
+    if row_count <= 1 {
+        return;
+    }
+
+    // Remove duplicate rows (keep RID 1, remove RID 2..N)
+    let duplicates = row_count - 1;
+    for rid in (2..=row_count).rev() {
+        if let Err(e) = cil_assembly.table_row_remove(TableId::Assembly, rid) {
+            log::warn!("Failed to remove duplicate Assembly row {rid}: {e}");
+        }
+    }
+
+    log::info!(
+        "Repaired Assembly table: removed {duplicates} duplicate row(s) (ECMA-335 §22.2 violation)"
+    );
+    ctx.events
+        .record(EventKind::ArtifactRemoved)
+        .message(format!(
+            "Repaired Assembly table: removed {duplicates} duplicate row(s)"
+        ));
 }
 
 /// Detects and marks an empty module `.cctor` for removal.

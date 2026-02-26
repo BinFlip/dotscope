@@ -947,6 +947,19 @@ impl InstructionEncoder {
         Ok(())
     }
 
+    /// Marks the current position as unreachable.
+    ///
+    /// After calling this, the encoder treats the current code position as unreachable
+    /// (no execution path reaches here). This is used for exception handler entry blocks
+    /// which are only entered via CLR exception dispatch, never via fallthrough.
+    ///
+    /// When `define_label` is called while unreachable, it resets the stack depth to
+    /// the expected depth (from branches or `set_label_stack_depth`) rather than
+    /// validating against the current depth.
+    pub fn mark_unreachable(&mut self) {
+        self.unreachable = true;
+    }
+
     /// Returns the current bytecode position (length of emitted bytecode so far).
     ///
     /// This can be used to track instruction offsets during code generation,

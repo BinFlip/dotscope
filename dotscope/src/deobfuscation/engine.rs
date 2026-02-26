@@ -733,18 +733,28 @@ impl DeobfuscationEngine {
                 continue;
             };
 
-            // Generate CIL bytecode from SSA and build method body
-            let result = codegen.compile(&ssa, &mut cil_assembly).map_err(|e| {
-                Error::Deobfuscation(format!(
-                    "Code generation failed for method {method_token}: {e}"
-                ))
-            })?;
+            // Generate CIL bytecode from SSA and build method body.
+            // If codegen fails for a single method (e.g., EH offset issues
+            // after optimization), skip rewriting it and keep the original IL.
+            let result = match codegen.compile(&ssa, &mut cil_assembly) {
+                Ok(result) => result,
+                Err(e) => {
+                    log::warn!(
+                        "Code generation failed for method {method_token}, \
+                         keeping original IL: {e}"
+                    );
+                    continue;
+                }
+            };
 
-            // Verify exception handlers were preserved
+            // Warn if exception handlers were lost during code generation.
+            // This can happen legitimately when optimization eliminates the
+            // guarded try region, making handlers unreachable (e.g., dead code
+            // removal, or fake handlers inserted by obfuscators).
             if ssa.has_exception_handlers() && result.exception_handlers.is_empty() {
-                return Err(Error::Deobfuscation(format!(
+                log::debug!(
                     "Method {method_token}: all exception handlers lost during code generation"
-                )));
+                );
             }
 
             let (method_body, _local_sig_token) = MethodBodyBuilder::from_compilation(

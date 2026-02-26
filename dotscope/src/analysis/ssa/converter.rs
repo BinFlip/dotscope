@@ -447,7 +447,11 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             | SsaOp::CopyObj { .. }
             | SsaOp::Nop
             | SsaOp::Break
-            | SsaOp::Constrained { .. } => SsaType::Unknown,
+            | SsaOp::Constrained { .. }
+            | SsaOp::Volatile
+            | SsaOp::Unaligned { .. }
+            | SsaOp::TailPrefix
+            | SsaOp::Readonly => SsaType::Unknown,
         }
     }
 
@@ -1569,6 +1573,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             let origin = VariableOrigin::Argument(idx);
             let group = self.arg_group(idx);
             let var_type = self.type_for_origin(origin);
+            self.function.register_origin_type(origin, var_type.clone());
             let initial_var = self
                 .function
                 .create_variable(origin, 0, DefSite::entry(), var_type);
@@ -1581,6 +1586,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             let origin = VariableOrigin::Local(idx);
             let group = self.local_group(idx);
             let var_type = self.type_for_origin(origin);
+            self.function.register_origin_type(origin, var_type.clone());
             let initial_var = self
                 .function
                 .create_variable(origin, 0, DefSite::entry(), var_type);

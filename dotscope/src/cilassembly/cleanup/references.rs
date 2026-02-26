@@ -318,6 +318,47 @@ fn scan_method_body_bytes(data: &[u8], base_rva: usize, referenced: &mut HashSet
     }
 }
 
+/// Parses a local variable signature blob and collects all embedded TypeDef
+/// and TypeRef tokens. These tokens appear in `Class`/`ValueType` type
+/// signatures within the local variable declarations.
+///
+/// This is used to protect types referenced by local variable signatures
+/// from being inadvertently removed during cleanup.
+fn collect_type_tokens_from_local_sig(blob_data: &[u8], referenced: &mut HashSet<Token>) {
+    let Ok(sig) = parse_local_var_signature(blob_data) else {
+        return;
+    };
+
+    for local in &sig.locals {
+        collect_all_type_tokens(&local.base, referenced);
+    }
+}
+
+/// Recursively collects TypeDef and TypeRef tokens from a type signature.
+fn collect_all_type_tokens(sig: &TypeSignature, out: &mut HashSet<Token>) {
+    match sig {
+        TypeSignature::Class(token) | TypeSignature::ValueType(token) => {
+            let table = token.table();
+            if table == 0x01 || table == 0x02 {
+                out.insert(*token);
+            }
+        }
+        TypeSignature::GenericInst(base, args) => {
+            collect_all_type_tokens(base, out);
+            for arg in args {
+                collect_all_type_tokens(arg, out);
+            }
+        }
+        TypeSignature::SzArray(arr) => collect_all_type_tokens(&arr.base, out),
+        TypeSignature::Array(arr) => collect_all_type_tokens(&arr.base, out),
+        TypeSignature::Ptr(ptr) => collect_all_type_tokens(&ptr.base, out),
+        TypeSignature::ByRef(inner) | TypeSignature::Pinned(inner) => {
+            collect_all_type_tokens(inner, out);
+        }
+        _ => {}
+    }
+}
+
 /// Collects StandAloneSig RIDs referenced by method body headers.
 ///
 /// Scans all method bodies (original and regenerated) and extracts the
@@ -387,10 +428,38 @@ pub fn scan_method_body_tokens(assembly: &CilAssembly) -> HashSet<Token> {
             .collect()
     };
 
-    for effective_rva in method_rvas {
+    // First pass: scan IL bytecode for token operands and collect local_var_sig RIDs.
+    let mut local_sig_rids: HashSet<u32> = HashSet::new();
+    for &effective_rva in &method_rvas {
         with_method_body(assembly, effective_rva, &mut |data, base_rva| {
             scan_method_body_bytes(data, base_rva, &mut referenced);
+            // Also collect StandAloneSig RIDs from method body headers so we can
+            // scan their blobs for embedded TypeDef/TypeRef tokens below.
+            if let Ok(body) = MethodBody::from(data) {
+                if body.local_var_sig_token != 0 {
+                    local_sig_rids.insert(body.local_var_sig_token & 0x00FF_FFFF);
+                }
+            }
         });
+    }
+
+    // Second pass: scan StandAloneSig blobs referenced by surviving methods
+    // for TypeDef/TypeRef tokens embedded in local variable type signatures.
+    // Without this, types referenced only through local variable signatures
+    // (not via IL operands) would be unprotected from cleanup removal.
+    {
+        let view = assembly.view();
+        if let (Some(tables), Some(blob_heap)) = (view.tables(), view.blobs()) {
+            if let Some(sig_table) = tables.table::<StandAloneSigRaw>() {
+                for &rid in &local_sig_rids {
+                    if let Some(sig_row) = sig_table.get(rid) {
+                        if let Ok(blob_data) = blob_heap.get(sig_row.signature as usize) {
+                            collect_type_tokens_from_local_sig(blob_data, &mut referenced);
+                        }
+                    }
+                }
+            }
+        }
     }
 
     referenced

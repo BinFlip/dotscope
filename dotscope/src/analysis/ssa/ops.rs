@@ -795,6 +795,18 @@ pub enum SsaOp {
     /// Constrained virtual call prefix (affects next callvirt)
     Constrained { constraint_type: TypeRef },
 
+    /// Volatile prefix (next memory access must not be reordered/cached)
+    Volatile,
+
+    /// Unaligned prefix (next memory access may be unaligned)
+    Unaligned { alignment: u8 },
+
+    /// Tail call prefix (next call is a tail call)
+    TailPrefix,
+
+    /// Readonly prefix (next ldelema returns a controlled-mutability managed pointer)
+    Readonly,
+
     /// Phi node: merges values from different predecessors.
     ///
     /// This is placed at the beginning of blocks with multiple predecessors.
@@ -885,7 +897,11 @@ impl SsaOp {
             | Self::StoreObj { .. }
             | Self::Nop
             | Self::Break
-            | Self::Constrained { .. } => None,
+            | Self::Constrained { .. }
+            | Self::Volatile
+            | Self::Unaligned { .. }
+            | Self::TailPrefix
+            | Self::Readonly => None,
         }
     }
 
@@ -981,7 +997,11 @@ impl SsaOp {
             | Self::StoreObj { .. }
             | Self::Nop
             | Self::Break
-            | Self::Constrained { .. } => false,
+            | Self::Constrained { .. }
+            | Self::Volatile
+            | Self::Unaligned { .. }
+            | Self::TailPrefix
+            | Self::Readonly => false,
         }
     }
 
@@ -1104,7 +1124,11 @@ impl SsaOp {
             | Self::Leave { .. }
             | Self::Nop
             | Self::Break
-            | Self::Constrained { .. } => vec![],
+            | Self::Constrained { .. }
+            | Self::Volatile
+            | Self::Unaligned { .. }
+            | Self::TailPrefix
+            | Self::Readonly => vec![],
         }
     }
 
@@ -1406,7 +1430,11 @@ impl SsaOp {
             | Self::LoadFunctionPtr { .. }
             | Self::Nop
             | Self::Break
-            | Self::Constrained { .. } => {}
+            | Self::Constrained { .. }
+            | Self::Volatile
+            | Self::Unaligned { .. }
+            | Self::TailPrefix
+            | Self::Readonly => {}
         }
 
         count
@@ -2181,6 +2209,10 @@ impl SsaOp {
             },
 
             Self::Constrained { constraint_type } => Self::Constrained { constraint_type },
+            Self::Volatile => Self::Volatile,
+            Self::Unaligned { alignment } => Self::Unaligned { alignment },
+            Self::TailPrefix => Self::TailPrefix,
+            Self::Readonly => Self::Readonly,
         }
     }
 
@@ -2479,6 +2511,10 @@ impl SsaOp {
             | Self::Nop
             | Self::Break
             | Self::Constrained { .. }
+            | Self::Volatile
+            | Self::Unaligned { .. }
+            | Self::TailPrefix
+            | Self::Readonly
             | Self::Phi { .. } => (0, 0),
 
             // Pop 1, push 0 (1, 0)
@@ -2981,6 +3017,10 @@ impl fmt::Display for SsaOp {
             Self::Constrained { constraint_type } => {
                 write!(f, "constrained. {constraint_type}")
             }
+            Self::Volatile => write!(f, "volatile."),
+            Self::Unaligned { alignment } => write!(f, "unaligned. {alignment}"),
+            Self::TailPrefix => write!(f, "tail."),
+            Self::Readonly => write!(f, "readonly."),
             Self::Ckfinite { dest, operand } => write!(f, "{dest} = ckfinite {operand}"),
             Self::Nop => write!(f, "nop"),
             Self::Break => write!(f, "break"),
