@@ -459,17 +459,25 @@ impl SsaCodeGenerator {
                 eh.class_token_or_filter
             };
 
-            // Validate offsets are within bytecode bounds
+            // Drop handlers with empty try or handler regions. This happens
+            // legitimately when optimization eliminates the guarded code — the
+            // handler becomes unreachable and can be safely removed.
+            if try_offset >= try_end || handler_offset >= handler_end {
+                log::debug!(
+                    "Dropping exception handler with empty region \
+                     (try={try_offset}..{try_end}, handler={handler_offset}..{handler_end})"
+                );
+                continue;
+            }
+
+            // Validate offsets are within bytecode bounds. After the EH-aware
+            // block linearizer, try blocks should always precede their handlers
+            // and offsets should be in-bounds.
             if try_offset >= bytecode_len
                 || handler_offset >= bytecode_len
                 || try_end > bytecode_len
                 || handler_end > bytecode_len
             {
-                log::warn!(
-                    "Exception handler dropped: offsets out of bounds \
-                     (try={try_offset}..{try_end}, handler={handler_offset}..{handler_end}, \
-                     bytecode_len={bytecode_len})"
-                );
                 return Err(Error::CodegenFailed(format!(
                     "Exception handler offsets out of bounds \
                      (try={try_offset}..{try_end}, handler={handler_offset}..{handler_end}, \
@@ -779,12 +787,24 @@ impl SsaCodeGenerator {
             return Vec::new();
         }
 
-        // Collect exception handler blocks - these need special placement
-        let handler_blocks: HashSet<usize> = ssa
-            .exception_handlers()
-            .iter()
-            .filter_map(|h| h.handler_start_block)
-            .collect();
+        // Build EH ordering constraints: try blocks must be placed before their
+        // handler blocks in the layout. Without this, the linearizer can place a
+        // handler block before its try block, producing inverted byte offsets
+        // (e.g. try=93..60) that violate ECMA-335 EH semantics.
+        //
+        // For each handler_start_block, collect all try_start_blocks that must
+        // precede it (a handler block may serve multiple EH regions).
+        let mut handler_requires_try: HashMap<usize, Vec<usize>> = HashMap::new();
+        for eh in ssa.exception_handlers() {
+            if let (Some(try_block), Some(handler_block)) =
+                (eh.try_start_block, eh.handler_start_block)
+            {
+                handler_requires_try
+                    .entry(handler_block)
+                    .or_default()
+                    .push(try_block);
+            }
+        }
 
         // Collect Leave targets - these are merge points that should come after handlers
         let leave_targets: HashSet<usize> = ssa
@@ -801,6 +821,22 @@ impl SsaCodeGenerator {
 
         let mut layout = Vec::with_capacity(blocks_to_include.len());
         let mut visited = HashSet::with_capacity(blocks_to_include.len());
+
+        // Ensures a block and any prerequisite try blocks are added to the
+        // worklist. If the block is a handler, its try blocks are pushed after
+        // it (LIFO: they'll be popped and processed first), enforcing the
+        // ECMA-335 EH ordering constraint.
+        let enqueue_with_eh_deps =
+            |block_id: usize, worklist: &mut Vec<usize>, visited: &HashSet<usize>| {
+                worklist.push(block_id);
+                if let Some(required_try_blocks) = handler_requires_try.get(&block_id) {
+                    for &try_block in required_try_blocks {
+                        if blocks_to_include.contains(&try_block) && !visited.contains(&try_block) {
+                            worklist.push(try_block);
+                        }
+                    }
+                }
+            };
 
         // Start with block 0 if it's in the set, otherwise pick the first available
         let start = if blocks_to_include.contains(&0) {
@@ -825,40 +861,45 @@ impl SsaCodeGenerator {
                 // Try to follow the preferred successor
                 if let Some(succ) = preferred_successor(ssa, block_id, &leave_targets) {
                     if blocks_to_include.contains(&succ) && !visited.contains(&succ) {
-                        worklist.push(succ);
+                        enqueue_with_eh_deps(succ, &mut worklist, &visited);
                     }
                 }
             }
 
             // If worklist is empty but we haven't visited all blocks,
-            // prioritize handler blocks, then leave targets, then others
+            // prioritize: try blocks, handler blocks, leave targets, then others.
+            // Try blocks must precede their handlers (ECMA-335 EH offset ordering).
             if layout.len() < blocks_to_include.len() {
-                // First, try to add unvisited handler blocks
-                if let Some(&block_id) = blocks_to_include
-                    .iter()
-                    .filter(|&&b| !visited.contains(&b) && handler_blocks.contains(&b))
-                    .min()
+                let next_unvisited = |pred: &dyn Fn(usize) -> bool| -> Option<usize> {
+                    blocks_to_include
+                        .iter()
+                        .filter(|&&b| !visited.contains(&b) && pred(b))
+                        .min()
+                        .copied()
+                };
+
+                // First, try blocks (must precede their handlers)
+                if let Some(block_id) =
+                    next_unvisited(&|b| handler_requires_try.values().flatten().any(|&t| t == b))
                 {
                     worklist.push(block_id);
                     continue;
                 }
 
-                // Then, add leave targets (merge points)
-                if let Some(&block_id) = blocks_to_include
-                    .iter()
-                    .filter(|&&b| !visited.contains(&b) && leave_targets.contains(&b))
-                    .min()
-                {
+                // Then, handler blocks (with EH dep enforcement)
+                if let Some(block_id) = next_unvisited(&|b| handler_requires_try.contains_key(&b)) {
+                    enqueue_with_eh_deps(block_id, &mut worklist, &visited);
+                    continue;
+                }
+
+                // Then, leave targets (merge points — after handlers)
+                if let Some(block_id) = next_unvisited(&|b| leave_targets.contains(&b)) {
                     worklist.push(block_id);
                     continue;
                 }
 
-                // Finally, add any remaining blocks
-                if let Some(&block_id) = blocks_to_include
-                    .iter()
-                    .filter(|&&b| !visited.contains(&b))
-                    .min()
-                {
+                // Finally, any remaining blocks
+                if let Some(block_id) = next_unvisited(&|_| true) {
                     worklist.push(block_id);
                 }
             }
@@ -1833,12 +1874,21 @@ impl SsaCodeGenerator {
         block_idx: usize,
         next_block_idx: Option<usize>,
     ) -> Result<()> {
+        // Exception handler entry blocks (catch, filter, finally, fault) are only
+        // entered via CLR exception dispatch — never via fallthrough from the previous
+        // block in the layout. Mark the encoder as unreachable before defining the label
+        // so that define_label resets the stack depth to the expected handler entry depth
+        // (e.g., 1 for catch/filter) rather than conflicting with the previous block's
+        // fallthrough depth.
+        let is_handler_entry = ssa.exception_handlers().iter().any(|h| {
+            h.handler_start_block == Some(block_idx) || h.filter_start_block == Some(block_idx)
+        });
+        if is_handler_entry {
+            encoder.mark_unreachable();
+        }
+
         // Define the block label - the encoder validates stack depth consistency
         // across all control flow paths reaching this label.
-        //
-        // NOTE: Stack depth mismatches here indicate bugs in the codegen's stack
-        // management. These will be addressed in Phase 2 (phi elimination) and
-        // Phase 3 (stack optimization) of the codegen improvements.
         let label = self
             .block_labels
             .get(&block_idx)
@@ -1919,15 +1969,26 @@ impl SsaCodeGenerator {
                 }
             }
 
-            // Only clear operands for Pop instructions that consume external values
+            // Clear operands for Pop instructions that consume the exception object,
+            // and track whether any such Pop exists.
+            let mut has_exception_pop = false;
             for (idx, op) in ops.iter().enumerate() {
                 if let SsaOp::Pop { value } = op {
                     if !defined_in_block.contains(value) {
                         // This Pop consumes a value not defined in this block
                         // (the exception object), so clear its operands
                         operands_cache[idx].clear();
+                        has_exception_pop = true;
                     }
                 }
+            }
+
+            // If no Pop instruction consumes the exception object, it remains on
+            // the CIL evaluation stack. This happens when dead code elimination
+            // removes an unused exception object store. Emit an explicit pop to
+            // discard the exception object and maintain stack balance.
+            if !has_exception_pop {
+                encoder.emit_instruction("pop", None)?;
             }
         }
 
@@ -3089,6 +3150,25 @@ impl SsaCodeGenerator {
                     "constrained.",
                     Some(Operand::Token(constraint_type.token())),
                 )?;
+            }
+
+            SsaOp::Volatile => {
+                encoder.emit_instruction("volatile.", None)?;
+            }
+
+            SsaOp::Unaligned { alignment } => {
+                encoder.emit_instruction(
+                    "unaligned.",
+                    Some(Operand::Immediate(Immediate::UInt8(*alignment))),
+                )?;
+            }
+
+            SsaOp::TailPrefix => {
+                encoder.emit_instruction("tail.", None)?;
+            }
+
+            SsaOp::Readonly => {
+                encoder.emit_instruction("readonly.", None)?;
             }
 
             SsaOp::Phi { .. } => {

@@ -23,8 +23,9 @@ use crate::metadata::{
     cilobject::CilObject,
     method::Method,
     signatures::{
-        CustomModifiers, SignatureArray, SignatureLocalVariable, SignatureMethod,
-        SignatureMethodSpec, SignatureParameter, SignaturePointer, SignatureSzArray, TypeSignature,
+        parse_local_var_signature, CustomModifiers, SignatureArray, SignatureLocalVariable,
+        SignatureMethod, SignatureMethodSpec, SignatureParameter, SignaturePointer,
+        SignatureSzArray, TypeSignature,
     },
     tables::{MemberRefSignature, StandAloneSigRaw, StandAloneSignature},
     token::Token,
@@ -880,11 +881,13 @@ impl SsaType {
             }
 
             // TypeSpec - generic instantiation or complex type
-            0x1B => {
-                let Some(typespec) = assembly.types().get(&token) else {
+            // 0xF0 - artificial types created by TypeResolver for constructed types
+            //         (generic instances, arrays, pointers, etc.)
+            0x1B | 0xF0 => {
+                let Some(cil_type) = assembly.types().get(&token) else {
                     return Self::Unknown;
                 };
-                Self::from_cil_flavor(typespec.flavor(), token)
+                Self::from_cil_flavor(cil_type.flavor(), token)
             }
 
             // Unknown table
@@ -1067,10 +1070,21 @@ impl<'a> TypeContext<'a> {
     }
 
     /// Returns the type of a local variable by index.
+    ///
+    /// Prefers raw blob signatures from `local_type_signatures()` to avoid the
+    /// lossy round-trip through `to_signature_local()` → `type_ref_to_signature()`,
+    /// which produces artificial 0xF0 tokens for constructed types (generic
+    /// instances, arrays, pointers).
     #[must_use]
     pub fn local_type(&self, idx: u16) -> SsaType {
-        self.method
-            .get_local_type_signatures()
+        // Prefer raw blob signatures which preserve original metadata tokens.
+        // Fall back to Method::get_local_type_signatures() only when the raw
+        // blob path is unavailable (e.g., missing body or local_var_sig_token).
+        let signatures = self
+            .local_type_signatures()
+            .or_else(|| self.method.get_local_type_signatures());
+
+        signatures
             .and_then(|types| types.into_iter().nth(idx as usize))
             .map_or(SsaType::Unknown, |sig| {
                 let ty = SsaType::from_type_signature(&sig.base, self.assembly);
@@ -1327,11 +1341,23 @@ impl<'a> TypeContext<'a> {
 
     /// Returns the original local variable type signatures for code generation.
     ///
-    /// This provides the full `SignatureLocalVariable` information (including
-    /// pinned and custom modifiers) needed when regenerating CIL code.
+    /// This reads the raw `StandAloneSig` blob directly from metadata, bypassing
+    /// the resolved `CilType` weak references. This ensures we always get the original
+    /// `TypeSignature` tokens (TypeDef/TypeRef/TypeSpec) that can be correctly encoded
+    /// back to metadata, rather than artificial tokens created by the `TypeResolver`.
     #[must_use]
     pub fn local_type_signatures(&self) -> Option<Vec<SignatureLocalVariable>> {
-        self.method.get_local_type_signatures()
+        let body = self.method.body.get()?;
+        if body.local_var_sig_token == 0 {
+            return None;
+        }
+        let tables = self.assembly.tables()?;
+        let table = tables.table::<StandAloneSigRaw>()?;
+        let raw = table.get(body.local_var_sig_token & 0x00FF_FFFF)?;
+        let blob = self.assembly.blob()?;
+        let sig_data = blob.get(raw.signature as usize).ok()?;
+        let locals_sig = parse_local_var_signature(sig_data).ok()?;
+        Some(locals_sig.locals)
     }
 }
 

@@ -4,6 +4,16 @@
 //! only a single unconditional jump instruction. By redirecting predecessors to
 //! jump directly to the target, we simplify the control flow graph.
 //!
+//! # Entry Block Handling
+//!
+//! The entry block (B0) is handled specially because it has no predecessors to
+//! redirect. When B0 is a trampoline, the target block is inlined into B0
+//! (if safe) or the method is marked for code regeneration. This generically
+//! handles anti-disassembly patterns where obfuscators inject junk bytes after
+//! an unconditional branch at method start (e.g., `br.s +N` followed by garbage).
+//! The SSA builder never decodes the unreachable junk, so regenerating the IL
+//! from SSA produces clean output.
+//!
 //! # Example
 //!
 //! Before:
@@ -25,6 +35,7 @@
 //! 2. For each trampoline, find its ultimate target (following jump chains)
 //! 3. Update all predecessor blocks to jump directly to the target
 //! 4. Clear the trampoline block (it becomes unreachable)
+//! 5. If the entry block is a trampoline, inline target or mark for regeneration
 //!
 //! The pass runs iteratively until no more trampolines are found.
 
@@ -182,6 +193,78 @@ impl BlockMergingPass {
 
         redirected + cleared
     }
+
+    /// Simplifies an entry block that is just a trampoline (unconditional jump).
+    ///
+    /// Non-entry trampolines are handled by `run_iteration` which redirects
+    /// predecessors and clears the block. The entry block (B0) has no
+    /// predecessors, so that approach doesn't work — there's nothing to
+    /// redirect.
+    ///
+    /// Instead, when B0 is a trampoline to B_target:
+    ///
+    /// - If B_target has exactly one predecessor (B0) and no phi nodes, we
+    ///   inline B_target's instructions into B0 and clear B_target.
+    /// - Otherwise, we just mark the method as modified so codegen regenerates
+    ///   clean IL without the original junk bytes (e.g., anti-disassembly
+    ///   garbage injected by obfuscators like BitMono's junk prefix).
+    fn simplify_entry_trampoline(
+        ssa: &mut SsaFunction,
+        method_token: Token,
+        changes: &mut EventLog,
+    ) {
+        // Check if B0 is a trampoline
+        let target = match ssa.block(0).and_then(|b| b.is_trampoline()) {
+            Some(t) => t,
+            None => return,
+        };
+
+        let preds = ssa.block_predecessors(target);
+        let target_has_phis = ssa
+            .block(target)
+            .map_or(true, |b| !b.phi_nodes().is_empty());
+
+        if preds.len() == 1 && preds[0] == 0 && !target_has_phis {
+            // Safe to inline: B_target's only external predecessor is B0 and it
+            // has no phis. Move B_target's instructions into B0.
+            let target_instrs = ssa
+                .block(target)
+                .map(|b| b.instructions().to_vec())
+                .unwrap_or_default();
+
+            if let Some(entry) = ssa.block_mut(0) {
+                entry.instructions_mut().clear();
+                *entry.instructions_mut() = target_instrs;
+
+                // Redirect any self-references: if B_target had a back-edge to
+                // itself (e.g., a loop), those now need to point to B0 since
+                // B_target's content lives in B0.
+                for instr in entry.instructions_mut() {
+                    instr.op_mut().redirect_target(target, 0);
+                }
+            }
+
+            if let Some(target_block) = ssa.block_mut(target) {
+                target_block.instructions_mut().clear();
+            }
+
+            changes
+                .record(EventKind::BlockRemoved)
+                .at(method_token, 0)
+                .message(format!(
+                    "inlined entry trampoline: B0 jump to B{target} merged into B0"
+                ));
+        } else {
+            // Can't inline (multiple predecessors or phis), but mark as modified
+            // so codegen regenerates clean IL without original junk bytes.
+            changes
+                .record(EventKind::BranchSimplified)
+                .at(method_token, 0)
+                .message(format!(
+                    "entry block is trampoline to B{target} (regenerating clean IL)"
+                ));
+        }
+    }
 }
 
 impl SsaPass for BlockMergingPass {
@@ -202,7 +285,7 @@ impl SsaPass for BlockMergingPass {
     ) -> Result<bool> {
         let mut changes = EventLog::new();
 
-        // Iterate until fixed point
+        // Iterate until fixed point (non-entry trampolines)
         for _ in 0..MAX_ITERATIONS {
             let iteration_changes = Self::run_iteration(ssa, method_token, &mut changes);
 
@@ -210,6 +293,11 @@ impl SsaPass for BlockMergingPass {
                 break;
             }
         }
+
+        // Handle entry block trampoline — B0 has no predecessors so the
+        // redirect-and-clear approach above can't handle it. Instead, inline
+        // the target block when safe, or just mark for regeneration.
+        Self::simplify_entry_trampoline(ssa, method_token, &mut changes);
 
         let changed = !changes.is_empty();
         if changed {
@@ -309,5 +397,150 @@ mod tests {
                 assert!(block.instructions().is_empty(), "B{} should be cleared", i);
             }
         }
+    }
+
+    #[test]
+    fn test_entry_trampoline_inlined() {
+        // B0 is a trampoline to B1, B1 has only B0 as predecessor.
+        // B0's content should be replaced with B1's instructions.
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.jump(1));
+                f.block(1, |b| b.ret());
+            })
+            .unwrap();
+
+        let pass = BlockMergingPass::new();
+        let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
+        let assembly = test_assembly_arc();
+
+        let changed = pass
+            .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &assembly)
+            .unwrap();
+        assert!(changed, "entry trampoline should trigger a change");
+
+        // B0 should now contain B1's ret instruction
+        let block0 = ssa.block(0).unwrap();
+        assert_eq!(block0.instruction_count(), 1);
+        assert!(
+            matches!(block0.instructions()[0].op(), SsaOp::Return { .. }),
+            "B0 should contain ret after inlining, got {:?}",
+            block0.instructions()[0].op()
+        );
+
+        // B1 should be cleared
+        let block1 = ssa.block(1).unwrap();
+        assert!(
+            block1.instructions().is_empty(),
+            "B1 should be cleared after inlining"
+        );
+    }
+
+    #[test]
+    fn test_entry_trampoline_with_loop() {
+        // B0: jump B1, B1: branch(cond, B2, B3), B2: jump B1 (loop), B3: ret.
+        // The non-entry pass redirects B1's branch from B2 to B1 (self-loop),
+        // then the entry trampoline logic inlines B1 into B0.
+        // The self-reference to B1 should be redirected to B0.
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.jump(1));
+                f.block(1, |b| {
+                    let cond = b.const_i32(1);
+                    b.branch(cond, 2, 3);
+                });
+                f.block(2, |b| b.jump(1)); // back-edge to B1
+                f.block(3, |b| b.ret());
+            })
+            .unwrap();
+
+        let pass = BlockMergingPass::new();
+        let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
+        let assembly = test_assembly_arc();
+
+        let changed = pass
+            .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &assembly)
+            .unwrap();
+        assert!(changed);
+
+        // B0 should now contain B1's code (const + branch) with the
+        // self-reference redirected from B1 to B0
+        let block0 = ssa.block(0).unwrap();
+        assert_eq!(
+            block0.instruction_count(),
+            2,
+            "B0 should have const + branch"
+        );
+        if let SsaOp::Branch {
+            true_target,
+            false_target,
+            ..
+        } = block0.instructions()[1].op()
+        {
+            assert_eq!(*true_target, 0, "self-loop should point to B0 after inline");
+            assert_eq!(*false_target, 3, "exit should still point to B3");
+        } else {
+            panic!("expected Branch in B0");
+        }
+    }
+
+    #[test]
+    fn test_entry_trampoline_not_inlined_multi_pred() {
+        // B0: jump B1, B1: code, B2: jump B1 (B1 has preds B0 AND B2).
+        // Can't inline B1 into B0, but method should be marked as changed.
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.jump(1));
+                f.block(1, |b| {
+                    let cond = b.const_i32(1);
+                    b.branch(cond, 2, 3);
+                });
+                f.block(2, |b| {
+                    // Not a trampoline — has nop + jump (2 instructions)
+                    b.nop();
+                    b.jump(1);
+                });
+                f.block(3, |b| b.ret());
+            })
+            .unwrap();
+
+        let pass = BlockMergingPass::new();
+        let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
+        let assembly = test_assembly_arc();
+
+        let changed = pass
+            .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &assembly)
+            .unwrap();
+        assert!(
+            changed,
+            "entry trampoline should mark as changed even when target can't be inlined"
+        );
+
+        // B0 should still be a jump (B1 has 2 predecessors: B0 and B2)
+        let block0 = ssa.block(0).unwrap();
+        assert_eq!(block0.instruction_count(), 1);
+        assert!(
+            matches!(block0.instructions()[0].op(), SsaOp::Jump { .. }),
+            "B0 should remain a jump when target has multiple external predecessors"
+        );
+    }
+
+    #[test]
+    fn test_no_entry_trampoline() {
+        // B0 has actual code — not a trampoline. Should report no changes.
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| b.ret());
+            })
+            .unwrap();
+
+        let pass = BlockMergingPass::new();
+        let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
+        let assembly = test_assembly_arc();
+
+        let changed = pass
+            .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &assembly)
+            .unwrap();
+        assert!(!changed, "non-trampoline entry should report no changes");
     }
 }

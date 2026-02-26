@@ -224,16 +224,10 @@ pub fn rebuild_method_body(
     userstring_map: &HashMap<u32, u32>,
     changes: Option<&AssemblyChanges>,
 ) -> Result<Vec<u8>> {
-    // Parse method body with lenient fallback for malformed exception handlers
-    let mut body = match MethodBody::from(body_data) {
-        Ok(b) => b,
-        Err(_) => match MethodBody::from_lenient(body_data) {
-            Ok(b) => {
-                log::warn!("Method body has malformed EH, using lenient parse");
-                b
-            }
-            Err(e) => return Err(e),
-        },
+    // Parse method body with lenient
+    let mut body = match MethodBody::from_lenient(body_data) {
+        Ok((b, _)) => b,
+        Err(e) => return Err(e),
     };
 
     // Extract IL code from the body data

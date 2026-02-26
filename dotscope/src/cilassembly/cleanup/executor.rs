@@ -152,8 +152,27 @@ pub fn execute_cleanup(
         }
     }
 
+    // Cache body tokens before type removal. This includes:
+    // - Token operands from IL bytecode of surviving methods
+    // - TypeDef/TypeRef tokens from StandAloneSig blobs (local variable signatures)
+    // The latter ensures types referenced only via local variable types are protected
+    // from removal, preventing dangling StandAloneSig references in the output.
+    let body_tokens = scan_method_body_tokens(assembly);
+
+    // Collect TypeDef RIDs that are still referenced by surviving method signatures.
+    // These must not be removed even if explicitly requested, because their removal
+    // would leave invalid type references in StandAloneSig blobs.
+    let sig_referenced_typedefs: HashSet<u32> = body_tokens
+        .iter()
+        .filter(|t| t.is_table(TableId::TypeDef))
+        .map(|t| t.row())
+        .collect();
+
     // 2d: Remove types (in descending RID order)
     for type_token in request.types() {
+        if sig_referenced_typedefs.contains(&type_token.row()) {
+            continue;
+        }
         if try_remove(assembly, TableId::TypeDef, type_token.row()) {
             removed_types.insert(*type_token);
             stats.add(TableId::TypeDef, 1);
@@ -180,11 +199,6 @@ pub fn execute_cleanup(
             stats.add(TableId::ModuleRef, 1);
         }
     }
-
-    // Cache body tokens once — used by both Phase 3 and Phase 4.
-    // Since Phase 3 only removes empty types (which by definition have NO methods),
-    // the body token set is identical between the two calls.
-    let body_tokens = scan_method_body_tokens(assembly);
 
     // Phase 3: Remove empty types (if enabled)
     // This MUST run before cascade reference cleanup (Phase 4) so that

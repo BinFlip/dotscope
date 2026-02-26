@@ -1360,9 +1360,17 @@ fn decompose_fe_instruction(
             }
         }
 
-        // Constrained prefix
+        // Prefix instructions
+        0x12 => {
+            // unaligned. - carries alignment operand (1, 2, or 4)
+            let alignment = extract_u8(&instr.operand).unwrap_or(1);
+            Some(SsaOp::Unaligned { alignment })
+        }
+        0x13 => Some(SsaOp::Volatile),   // volatile.
+        0x14 => Some(SsaOp::TailPrefix), // tail.
         0x16 => extract_type_token(&instr.operand)
-            .map(|constraint_type| SsaOp::Constrained { constraint_type }),
+            .map(|constraint_type| SsaOp::Constrained { constraint_type }), // constrained.
+        0x1E => Some(SsaOp::Readonly),   // readonly.
 
         // Default: unknown FE-prefixed opcode
         _ => {
@@ -1559,6 +1567,14 @@ fn extract_f32(operand: &Operand) -> Option<f32> {
 fn extract_f64(operand: &Operand) -> Option<f64> {
     match operand {
         Operand::Immediate(Immediate::Float64(v)) => Some(*v),
+        _ => None,
+    }
+}
+
+fn extract_u8(operand: &Operand) -> Option<u8> {
+    match operand {
+        Operand::Immediate(Immediate::UInt8(v)) => Some(*v),
+        Operand::Immediate(Immediate::Int8(v)) => u8::try_from(*v).ok(),
         _ => None,
     }
 }

@@ -733,9 +733,9 @@ fn detect_antidecompiler(
 
 /// Detects methods with malformed exception handlers (BitMono AntiDecompiler).
 ///
-/// Scans CIL methods where `MethodBody::from()` (strict) fails but
-/// `MethodBody::from_lenient()` succeeds with non-empty exception handlers.
-/// This indicates garbage EH data injected to crash decompilers.
+/// Uses `MethodBody::from_lenient()` which filters invalid exception handlers
+/// during parsing. If any handlers were filtered (count > 0), the method had
+/// garbage EH data — exactly what BitMono AntiDecompiler injects.
 ///
 /// Confidence: +10 if any found.
 fn detect_malformed_exception_handlers(
@@ -775,13 +775,11 @@ fn detect_malformed_exception_handlers(
 
         let body_data = &file.data()[offset..offset + available];
 
-        // If strict parsing fails but lenient succeeds with EH → malformed
-        if MethodBody::from(body_data).is_err() {
-            if let Ok(lenient) = MethodBody::from_lenient(body_data) {
-                if !lenient.exception_handlers.is_empty() {
-                    findings.init_bitmono().malformed_eh_methods.push(row.token);
-                    malformed_count += 1;
-                }
+        // Use lenient parsing: if any handlers were filtered out, they were invalid
+        if let Ok((_, filtered)) = MethodBody::from_lenient(body_data) {
+            if filtered > 0 {
+                findings.init_bitmono().malformed_eh_methods.push(row.token);
+                malformed_count += 1;
             }
         }
     }

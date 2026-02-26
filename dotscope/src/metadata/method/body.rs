@@ -118,6 +118,17 @@ use crate::{
 /// Real-world methods typically have < 20 handlers.
 const MAX_EXCEPTION_HANDLERS: usize = 1024;
 
+/// Controls how exception handler validation is performed during parsing.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EhValidationMode {
+    /// Strict: return error on any invalid handler (used by `from()`)
+    Strict,
+    /// Filter: log warning and skip invalid handlers (used by `from_lenient()`)
+    Filter,
+    /// Raw: no validation, keep all parsed handlers (used by `from_raw()` for detection)
+    Raw,
+}
+
 /// Validates that an exception handler's offsets and lengths are within the method body bounds.
 ///
 /// # Arguments
@@ -298,23 +309,16 @@ impl MethodBody {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from(data: &[u8]) -> Result<MethodBody> {
-        let body = Self::parse(data)?;
-
-        // Validate exception handler bounds
-        let code_size = body.size_code as u32;
-        for (index, handler) in body.exception_handlers.iter().enumerate() {
-            validate_exception_handler_bounds(handler, code_size, index)?;
-        }
-
+        let (body, _) = Self::parse(data, EhValidationMode::Strict)?;
         Ok(body)
     }
 
-    /// Create a `MethodBody` from bytes without validating exception handler bounds.
+    /// Create a `MethodBody` from bytes, filtering out invalid exception handlers.
     ///
     /// This is useful for parsing method bodies with malformed exception handlers
     /// (e.g., injected by BitMono's AntiDecompiler) where the handler offsets are
-    /// garbage but the method header and IL code are valid. The caller can then
-    /// strip the invalid handlers and rebuild the method body cleanly.
+    /// garbage but the method header and IL code are valid. Invalid handlers are
+    /// logged and skipped; only valid handlers are kept.
     ///
     /// # Arguments
     ///
@@ -322,14 +326,112 @@ impl MethodBody {
     ///
     /// # Returns
     ///
-    /// * [`Ok`]([`MethodBody`]) - Successfully parsed method body (EH bounds not validated)
+    /// * [`Ok`]`((MethodBody, usize))` - Successfully parsed method body with only valid
+    ///   exception handlers, and the count of invalid handlers that were filtered out
     /// * [`Err`]([`crate::Error`]) - Parsing failed due to invalid header format or insufficient data
-    pub fn from_lenient(data: &[u8]) -> Result<MethodBody> {
-        Self::parse(data)
+    pub fn from_lenient(data: &[u8]) -> Result<(MethodBody, usize)> {
+        let (body, filtered) = Self::parse(data, EhValidationMode::Filter)?;
+        if filtered > 0 {
+            log::warn!(
+                "Filtered {filtered} invalid exception handler(s), {} valid handler(s) kept",
+                body.exception_handlers.len()
+            );
+        }
+        Ok((body, filtered))
     }
 
-    /// Internal parsing logic shared by `from()` and `from_lenient()`.
-    fn parse(data: &[u8]) -> Result<MethodBody> {
+    /// Parse without any EH validation. Returns all parsed handlers including garbage.
+    ///
+    /// Used for obfuscation detection where we need to see raw handler data to
+    /// identify injected garbage exception handlers.
+    ///
+    /// # Arguments
+    ///
+    /// * `data` - The byte slice containing the complete method body data
+    ///
+    /// # Returns
+    ///
+    /// * [`Ok`]([`MethodBody`]) - Successfully parsed method body with all handlers (unvalidated)
+    /// * [`Err`]([`crate::Error`]) - Parsing failed due to invalid header format or insufficient data
+    pub fn from_raw(data: &[u8]) -> Result<MethodBody> {
+        let (body, _) = Self::parse(data, EhValidationMode::Raw)?;
+        Ok(body)
+    }
+
+    /// Checks the declared handler count against MAX_EXCEPTION_HANDLERS.
+    ///
+    /// - **Strict**: returns an error
+    /// - **Filter**: no-op (declared count is irrelevant; valid-handler cap is checked per push)
+    /// - **Raw**: logs a warning and signals the caller to break
+    ///
+    /// Returns `Ok(true)` to continue parsing, `Ok(false)` to break (skip this section).
+    fn check_handler_count(handler_count: u32, eh_mode: EhValidationMode) -> Result<bool> {
+        if eh_mode == EhValidationMode::Filter || (handler_count as usize) <= MAX_EXCEPTION_HANDLERS
+        {
+            return Ok(true);
+        }
+
+        match eh_mode {
+            EhValidationMode::Strict => Err(malformed_error!(
+                "Method has too many exception handlers: {} (max: {})",
+                handler_count,
+                MAX_EXCEPTION_HANDLERS
+            )),
+            _ => {
+                log::warn!(
+                    "Method has too many exception handlers: {} (max: {}), skipping",
+                    handler_count,
+                    MAX_EXCEPTION_HANDLERS
+                );
+                Ok(false)
+            }
+        }
+    }
+
+    /// Validates and pushes a parsed exception handler according to the validation mode.
+    ///
+    /// - **Strict**: validates bounds and returns error on failure
+    /// - **Filter**: validates bounds; valid handlers are pushed, invalid ones increment
+    ///   `filtered_count` silently (caller logs the total)
+    /// - **Raw**: pushes unconditionally
+    ///
+    /// Returns `Ok(true)` to continue iterating, `Ok(false)` to stop (max valid handlers reached).
+    fn push_handler(
+        handler: ExceptionHandler,
+        handler_idx: usize,
+        code_size: u32,
+        eh_mode: EhValidationMode,
+        handlers: &mut Vec<ExceptionHandler>,
+        filtered_count: &mut usize,
+    ) -> Result<bool> {
+        match eh_mode {
+            EhValidationMode::Strict => {
+                validate_exception_handler_bounds(&handler, code_size, handler_idx)?;
+                handlers.push(handler);
+            }
+            EhValidationMode::Filter => {
+                if validate_exception_handler_bounds(&handler, code_size, handler_idx).is_ok() {
+                    handlers.push(handler);
+                    if handlers.len() >= MAX_EXCEPTION_HANDLERS {
+                        return Ok(false);
+                    }
+                } else {
+                    *filtered_count += 1;
+                }
+            }
+            EhValidationMode::Raw => {
+                handlers.push(handler);
+            }
+        }
+        Ok(true)
+    }
+
+    /// Internal parsing logic shared by `from()`, `from_lenient()`, and `from_raw()`.
+    ///
+    /// Returns the parsed body and the number of filtered (invalid) exception handlers.
+    /// In Strict mode, this count is always 0 (errors abort before counting).
+    /// In Raw mode, this count is always 0 (nothing is filtered).
+    fn parse(data: &[u8], eh_mode: EhValidationMode) -> Result<(MethodBody, usize)> {
         if data.is_empty() {
             return Err(malformed_error!("Provided data for body parsing is empty"));
         }
@@ -342,16 +444,19 @@ impl MethodBody {
                     return Err(out_of_bounds_error!());
                 }
 
-                Ok(MethodBody {
-                    size_code,
-                    size_header: 1,
-                    local_var_sig_token: 0,
-                    max_stack: 8,
-                    is_fat: false,
-                    is_init_local: false,
-                    is_exception_data: false,
-                    exception_handlers: Vec::new(),
-                })
+                Ok((
+                    MethodBody {
+                        size_code,
+                        size_header: 1,
+                        local_var_sig_token: 0,
+                        max_stack: 8,
+                        is_fat: false,
+                        is_init_local: false,
+                        is_exception_data: false,
+                        exception_handlers: Vec::new(),
+                    },
+                    0,
+                ))
             }
             MethodBodyFlags::FAT_FORMAT => {
                 if data.len() < 12 {
@@ -375,6 +480,7 @@ impl MethodBody {
                 // Exception Handling -> II.25.4.6
                 // The extra sections currently can only contain exception handling data
                 let mut exception_handlers = Vec::new();
+                let mut filtered_count: usize = 0;
                 if flags_header.contains(MethodBodyFlags::MORE_SECTS) {
                     // Set cursor to the end of the header + body, to process exception tables
                     let mut cursor = size_header as usize + size_code as usize;
@@ -400,29 +506,28 @@ impl MethodBody {
                             if handler_count == 0 || data.len() < cursor + needed {
                                 break;
                             }
-                            if handler_count as usize > MAX_EXCEPTION_HANDLERS {
-                                return Err(malformed_error!(
-                                    "Method has too many exception handlers: {} (max: {})",
-                                    handler_count,
-                                    MAX_EXCEPTION_HANDLERS
-                                ));
+                            if !Self::check_handler_count(handler_count, eh_mode)? {
+                                break;
                             }
 
                             cursor += 4;
 
                             for handler_idx in 0..handler_count {
                                 let flags_u32 = read_le_at::<u32>(data, &mut cursor)?;
-                                if flags_u32 > 0xFFFF {
+                                if flags_u32 > 0xFFFF && eh_mode == EhValidationMode::Strict {
                                     return Err(malformed_error!(
                                         "Exception handler {} has invalid flags with upper bits set: 0x{:08X}",
                                         handler_idx,
                                         flags_u32
                                     ));
                                 }
+                                // In Filter/Raw mode, truncate to u16 and let push_handler
+                                // validate via bounds checking — garbage flags typically
+                                // accompany garbage offsets that will be rejected there.
                                 #[allow(clippy::cast_possible_truncation)]
                                 let flags = ExceptionHandlerFlags::new(flags_u32 as u16);
 
-                                exception_handlers.push(ExceptionHandler {
+                                let handler = ExceptionHandler {
                                     flags,
                                     try_offset: read_le_at::<u32>(data, &mut cursor)?,
                                     try_length: read_le_at::<u32>(data, &mut cursor)?,
@@ -430,7 +535,18 @@ impl MethodBody {
                                     handler_length: read_le_at::<u32>(data, &mut cursor)?,
                                     filter_offset: read_le_at::<u32>(data, &mut cursor)?,
                                     handler: None,
-                                });
+                                };
+
+                                if !Self::push_handler(
+                                    handler,
+                                    handler_idx as usize,
+                                    size_code,
+                                    eh_mode,
+                                    &mut exception_handlers,
+                                    &mut filtered_count,
+                                )? {
+                                    break;
+                                }
                             }
                         } else {
                             let method_data_section_size =
@@ -446,17 +562,13 @@ impl MethodBody {
                             if handler_count == 0 || data.len() < cursor + needed {
                                 break;
                             }
-                            if handler_count as usize > MAX_EXCEPTION_HANDLERS {
-                                return Err(malformed_error!(
-                                    "Method has too many exception handlers: {} (max: {})",
-                                    handler_count,
-                                    MAX_EXCEPTION_HANDLERS
-                                ));
+                            if !Self::check_handler_count(handler_count, eh_mode)? {
+                                break;
                             }
 
                             cursor += 4;
-                            for _ in 0..handler_count {
-                                exception_handlers.push(ExceptionHandler {
+                            for handler_idx in 0..handler_count {
+                                let handler = ExceptionHandler {
                                     flags: ExceptionHandlerFlags::new(read_le_at::<u16>(
                                         data,
                                         &mut cursor,
@@ -470,7 +582,18 @@ impl MethodBody {
                                     handler_length: u32::from(read_le_at::<u8>(data, &mut cursor)?),
                                     filter_offset: read_le_at::<u32>(data, &mut cursor)?,
                                     handler: None,
-                                });
+                                };
+
+                                if !Self::push_handler(
+                                    handler,
+                                    handler_idx as usize,
+                                    size_code,
+                                    eh_mode,
+                                    &mut exception_handlers,
+                                    &mut filtered_count,
+                                )? {
+                                    break;
+                                }
                             }
                         }
 
@@ -480,16 +603,19 @@ impl MethodBody {
                     }
                 }
 
-                Ok(MethodBody {
-                    size_code: size_code as usize,
-                    size_header: size_header as usize,
-                    local_var_sig_token,
-                    max_stack,
-                    is_fat: true,
-                    is_init_local,
-                    is_exception_data: !exception_handlers.is_empty(),
-                    exception_handlers,
-                })
+                Ok((
+                    MethodBody {
+                        size_code: size_code as usize,
+                        size_header: size_header as usize,
+                        local_var_sig_token,
+                        max_stack,
+                        is_fat: true,
+                        is_init_local,
+                        is_exception_data: !exception_handlers.is_empty(),
+                        exception_handlers,
+                    },
+                    filtered_count,
+                ))
             }
             _ => Err(malformed_error!(
                 "MethodHeader is neither FAT nor TINY - {}",
@@ -913,14 +1039,15 @@ mod tests {
         assert_eq!(method_header.exception_handlers[1].filter_offset, 0x100001D);
     }
 
-    #[test]
-    fn from_lenient_accepts_malformed_eh() {
-        // Construct a fat method with a single exception handler whose
-        // try region extends far beyond the code size (malformed).
-        let il_code = [0x00u8; 10]; // 10 bytes of nop
-        let code_size: u32 = 10;
+    /// Helper: builds a fat method body with the given small-format EH clauses.
+    /// Each clause is (flags_u16, try_offset_u16, try_length_u8, handler_offset_u16, handler_length_u8, filter_offset_u32).
+    fn build_fat_body_with_small_eh(
+        code_size: u32,
+        clauses: &[(u16, u16, u8, u16, u8, u32)],
+    ) -> Vec<u8> {
+        let il_code = vec![0x00u8; code_size as usize];
 
-        // Fat header: flags = FAT_FORMAT | MORE_SECTS | INIT_LOCALS, size=3 dwords
+        // Fat header: FAT_FORMAT | MORE_SECTS | INIT_LOCALS, size=3 dwords
         let flags: u16 = 0x3003 | 0x0008 | 0x0010;
         let max_stack: u16 = 8;
         let local_var_sig: u32 = 0;
@@ -932,31 +1059,152 @@ mod tests {
         data.extend_from_slice(&local_var_sig.to_le_bytes());
         data.extend_from_slice(&il_code);
 
-        // Align to 4 bytes (header=12 + code=10 = 22, aligned = 24, pad 2)
-        data.extend_from_slice(&[0x00, 0x00]);
+        // Align to 4 bytes
+        let unaligned = 12 + code_size as usize;
+        let aligned = (unaligned + 3) & !3;
+        for _ in 0..(aligned - unaligned) {
+            data.push(0x00);
+        }
 
-        // Small exception section: flags=0x01 (EHTABLE), size=16 (4 header + 12 per handler)
+        // Small exception section header
+        let section_size = (4 + clauses.len() * 12) as u8;
         data.push(0x01); // section flags: EHTABLE
-        data.push(16); // section size
+        data.push(section_size);
         data.push(0x00); // padding
         data.push(0x00); // padding
 
-        // Small EH clause: EXCEPTION type, garbage offsets
-        data.extend_from_slice(&0x0000u16.to_le_bytes()); // flags: EXCEPTION
-        data.extend_from_slice(&0xFFFFu16.to_le_bytes()); // try_offset: way beyond code
-        data.push(0xFF); // try_length: way beyond code
-        data.extend_from_slice(&0xFFFFu16.to_le_bytes()); // handler_offset: way beyond code
-        data.push(0xFF); // handler_length: way beyond code
-        data.extend_from_slice(&0x01000001u32.to_le_bytes()); // filter_offset (class token)
+        for &(flags, try_off, try_len, handler_off, handler_len, filter) in clauses {
+            data.extend_from_slice(&flags.to_le_bytes());
+            data.extend_from_slice(&try_off.to_le_bytes());
+            data.push(try_len);
+            data.extend_from_slice(&handler_off.to_le_bytes());
+            data.push(handler_len);
+            data.extend_from_slice(&filter.to_le_bytes());
+        }
+
+        data
+    }
+
+    #[test]
+    fn from_lenient_filters_invalid_handlers() {
+        // Build a fat method with 3 EH entries: 1 valid, 2 with out-of-bounds offsets.
+        // Code size = 100 bytes
+        let clauses = [
+            // Valid handler: try=[0..10), handler=[10..20)
+            (0x0000u16, 0u16, 10u8, 10u16, 10u8, 0x01000001u32),
+            // Invalid: try_offset way beyond code
+            (0x0000, 0xFFFF, 0xFF, 0xFFFF, 0xFF, 0x01000001),
+            // Invalid: handler_offset beyond code
+            (0x0000, 0, 5, 0xAAAA, 0xBB, 0x01000001),
+        ];
+        let data = build_fat_body_with_small_eh(100, &clauses);
+
+        // Strict from() should fail
+        assert!(MethodBody::from(&data).is_err());
+
+        // Lenient should keep only the valid handler and report 2 filtered
+        let (body, filtered) = MethodBody::from_lenient(&data).unwrap();
+        assert!(body.is_fat);
+        assert_eq!(body.size_code, 100);
+        assert_eq!(body.exception_handlers.len(), 1);
+        assert_eq!(filtered, 2);
+        // The valid handler should be the one kept
+        assert_eq!(body.exception_handlers[0].try_offset, 0);
+        assert_eq!(body.exception_handlers[0].try_length, 10);
+        assert_eq!(body.exception_handlers[0].handler_offset, 10);
+        assert_eq!(body.exception_handlers[0].handler_length, 10);
+    }
+
+    #[test]
+    fn from_raw_keeps_all_handlers() {
+        // Same test data as above: 1 valid + 2 invalid handlers
+        let clauses = [
+            (0x0000u16, 0u16, 10u8, 10u16, 10u8, 0x01000001u32),
+            (0x0000, 0xFFFF, 0xFF, 0xFFFF, 0xFF, 0x01000001),
+            (0x0000, 0, 5, 0xAAAA, 0xBB, 0x01000001),
+        ];
+        let data = build_fat_body_with_small_eh(100, &clauses);
+
+        // Raw should keep all 3 handlers
+        let body = MethodBody::from_raw(&data).unwrap();
+        assert_eq!(body.exception_handlers.len(), 3);
+        // Verify the garbage handler is preserved
+        assert_eq!(body.exception_handlers[1].try_offset, 0xFFFF);
+    }
+
+    #[test]
+    fn from_strict_errors_on_max_exception_handlers() {
+        // Build a method body with handler_count > MAX_EXCEPTION_HANDLERS (1024).
+        // We use a fat EH section so we can declare a large handler count.
+        let code_size: u32 = 100;
+        let il_code = vec![0x00u8; code_size as usize];
+
+        let flags: u16 = 0x3003 | 0x0008 | 0x0010;
+        let max_stack: u16 = 8;
+        let local_var_sig: u32 = 0;
+
+        let mut data = Vec::new();
+        data.extend_from_slice(&flags.to_le_bytes());
+        data.extend_from_slice(&max_stack.to_le_bytes());
+        data.extend_from_slice(&code_size.to_le_bytes());
+        data.extend_from_slice(&local_var_sig.to_le_bytes());
+        data.extend_from_slice(&il_code);
+
+        // Align to 4 bytes
+        let unaligned = 12 + code_size as usize;
+        let aligned = (unaligned + 3) & !3;
+        for _ in 0..(aligned - unaligned) {
+            data.push(0x00);
+        }
+
+        // Fat exception section header
+        let handler_count: u32 = 1025; // > MAX_EXCEPTION_HANDLERS
+        let section_size: u32 = 4 + handler_count * 24;
+        data.push(0x41); // section flags: EHTABLE | FAT_FORMAT
+        let size_bytes = section_size.to_le_bytes();
+        data.push(size_bytes[0]);
+        data.push(size_bytes[1]);
+        data.push(size_bytes[2]);
+
+        // Write handler_count fat EH entries (24 bytes each, all zeros)
+        for _ in 0..handler_count {
+            data.extend_from_slice(&[0u8; 24]);
+        }
+
+        // Strict from() should error on too many handlers
+        assert!(MethodBody::from(&data).is_err());
+    }
+
+    #[test]
+    fn from_lenient_accepts_malformed_eh() {
+        // Construct a fat method with a single exception handler whose
+        // try region extends far beyond the code size (malformed).
+        let clauses = [
+            // Invalid: try_offset way beyond code
+            (
+                0x0000u16,
+                0xFFFFu16,
+                0xFFu8,
+                0xFFFFu16,
+                0xFFu8,
+                0x01000001u32,
+            ),
+        ];
+        let data = build_fat_body_with_small_eh(10, &clauses);
 
         // Strict from() should fail due to bad EH bounds
         assert!(MethodBody::from(&data).is_err());
 
-        // Lenient from_lenient() should succeed
-        let body = MethodBody::from_lenient(&data).unwrap();
+        // Lenient from_lenient() should succeed, filtering out the invalid handler
+        let (body, filtered) = MethodBody::from_lenient(&data).unwrap();
         assert!(body.is_fat);
         assert_eq!(body.size_code, 10);
-        assert_eq!(body.exception_handlers.len(), 1);
-        assert_eq!(body.exception_handlers[0].try_offset, 0xFFFF);
+        assert_eq!(filtered, 1);
+        assert_eq!(body.exception_handlers.len(), 0);
+
+        // Raw from_raw() should keep the handler
+        let raw_body = MethodBody::from_raw(&data).unwrap();
+        assert_eq!(raw_body.exception_handlers.len(), 1);
+        assert_eq!(raw_body.exception_handlers[0].try_offset, 0xFFFF);
     }
 }
