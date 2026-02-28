@@ -83,7 +83,7 @@ pub use visitedmap::VisitedMap;
 #[cfg(all(feature = "legacy-crypto", feature = "emulation"))]
 pub(crate) use crypto::derive_pbkdf1_key;
 #[cfg(feature = "emulation")]
-pub(crate) use crypto::{apply_crypto_transform, derive_pbkdf2_key};
+pub(crate) use crypto::{apply_crypto_transform, derive_pbkdf2_key, verify_rsa_pkcs1v15};
 #[cfg(feature = "legacy-crypto")]
 pub(crate) use crypto::{compute_md5, compute_sha1};
 pub(crate) use crypto::{compute_sha256, compute_sha384, compute_sha512};

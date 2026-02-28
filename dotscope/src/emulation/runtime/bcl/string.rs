@@ -12,7 +12,7 @@ use crate::emulation::{
 use crate::metadata::typesystem::CilFlavor;
 
 /// Registers all `System.String` method hooks.
-pub fn register(manager: &mut HookManager) {
+pub fn register(manager: &HookManager) {
     // Static methods
     manager.register(
         Hook::new("System.String.Concat")
@@ -993,8 +993,8 @@ mod tests {
 
     #[test]
     fn test_register_hooks() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
+        let manager = HookManager::new();
+        register(&manager);
         assert_eq!(manager.len(), 21);
     }
 

@@ -23,13 +23,17 @@
 //! - **TripleDES** (168-bit CBC mode with PKCS7 padding)
 
 use aes::Aes128;
-use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, BlockEncryptMut, KeyIvInit};
+use cbc::cipher::block_padding::{NoPadding, Pkcs7};
+use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyInit, KeyIvInit};
 use cbc::{Decryptor, Encryptor};
 #[cfg(feature = "legacy-crypto")]
 use des::{Des, TdesEde3};
+use ecb::{Decryptor as EcbDecryptor, Encryptor as EcbEncryptor};
 #[cfg(feature = "legacy-crypto")]
 use md5::{Digest as Md5Digest, Md5};
 use pbkdf2::pbkdf2_hmac;
+#[cfg(feature = "emulation")]
+use rsa::{pkcs1v15::Pkcs1v15Sign, RsaPublicKey};
 #[cfg(feature = "legacy-crypto")]
 use sha1::{Digest as Sha1Digest, Sha1};
 use sha2::{Digest as Sha2Digest, Sha256, Sha384, Sha512};
@@ -42,6 +46,14 @@ type Aes192CbcDec = Decryptor<aes::Aes192>;
 type Aes256CbcEnc = Encryptor<aes::Aes256>;
 type Aes256CbcDec = Decryptor<aes::Aes256>;
 
+// Type aliases for AES ECB modes
+type Aes128EcbEnc = EcbEncryptor<Aes128>;
+type Aes128EcbDec = EcbDecryptor<Aes128>;
+type Aes192EcbEnc = EcbEncryptor<aes::Aes192>;
+type Aes192EcbDec = EcbDecryptor<aes::Aes192>;
+type Aes256EcbEnc = EcbEncryptor<aes::Aes256>;
+type Aes256EcbDec = EcbDecryptor<aes::Aes256>;
+
 // Type aliases for DES CBC modes (legacy-crypto feature)
 #[cfg(feature = "legacy-crypto")]
 type DesCbcEnc = Encryptor<Des>;
@@ -51,6 +63,16 @@ type DesCbcDec = Decryptor<Des>;
 type TdesCbcEnc = Encryptor<TdesEde3>;
 #[cfg(feature = "legacy-crypto")]
 type TdesCbcDec = Decryptor<TdesEde3>;
+
+// Type aliases for DES ECB modes (legacy-crypto feature)
+#[cfg(feature = "legacy-crypto")]
+type DesEcbEnc = EcbEncryptor<Des>;
+#[cfg(feature = "legacy-crypto")]
+type DesEcbDec = EcbDecryptor<Des>;
+#[cfg(feature = "legacy-crypto")]
+type TdesEcbEnc = EcbEncryptor<TdesEde3>;
+#[cfg(feature = "legacy-crypto")]
+type TdesEcbDec = EcbDecryptor<TdesEde3>;
 
 /// Computes the MD5 hash of input bytes.
 ///
@@ -298,15 +320,17 @@ pub fn derive_pbkdf1_key(password: &[u8], salt: &[u8], iterations: u32, key_len:
 /// Applies a crypto transformation (encryption or decryption) to data.
 ///
 /// This function handles the actual cryptographic operations for AES, DES, and
-/// TripleDES in CBC mode with PKCS7 padding.
+/// TripleDES in CBC and ECB modes with configurable padding.
 ///
 /// # Arguments
 ///
 /// * `algorithm` - The algorithm name (e.g., "AES", "Rijndael", "DES", "TripleDES")
 /// * `key` - The encryption/decryption key
-/// * `iv` - The initialization vector
+/// * `iv` - The initialization vector (ignored for ECB mode)
 /// * `is_encryptor` - True for encryption, false for decryption
 /// * `data` - The input data to transform
+/// * `mode` - Cipher mode: 1=CBC (default), 2=ECB
+/// * `padding` - Padding mode: 1=None, 2=PKCS7 (default), 3=Zeros
 ///
 /// # Returns
 ///
@@ -319,70 +343,38 @@ pub fn derive_pbkdf1_key(password: &[u8], salt: &[u8], iterations: u32, key_len:
 /// | AES/Rijndael | 16, 24, 32 bytes | 16 bytes |
 /// | DES | 8 bytes | 8 bytes |
 /// | TripleDES/3DES | 24 bytes | 8 bytes |
-///
-/// # Example
-///
-/// ```rust,ignore
-/// use dotscope::utils::crypto::apply_crypto_transform;
-///
-/// let key = [0u8; 16];  // 128-bit AES key
-/// let iv = [0u8; 16];   // 128-bit IV
-/// let plaintext = b"Hello, World!";
-///
-/// // Encrypt
-/// let ciphertext = apply_crypto_transform("AES", &key, &iv, true, plaintext).unwrap();
-///
-/// // Decrypt
-/// let decrypted = apply_crypto_transform("AES", &key, &iv, false, &ciphertext).unwrap();
-/// assert_eq!(decrypted, plaintext);
-/// ```
 pub fn apply_crypto_transform(
     algorithm: &str,
     key: &[u8],
     iv: &[u8],
     is_encryptor: bool,
     data: &[u8],
+    mode: u8,
+    padding: u8,
 ) -> Option<Vec<u8>> {
     // Normalize algorithm name
     let alg_upper = algorithm.to_uppercase();
+    let is_ecb = mode == 2;
 
     if alg_upper.contains("AES") || alg_upper.contains("RIJNDAEL") {
-        // AES - key size determines variant
-        return match key.len() {
-            16 => {
-                if is_encryptor {
-                    aes_encrypt::<Aes128CbcEnc>(key, iv, data)
-                } else {
-                    aes_decrypt::<Aes128CbcDec>(key, iv, data)
-                }
-            }
-            24 => {
-                if is_encryptor {
-                    aes_encrypt::<Aes192CbcEnc>(key, iv, data)
-                } else {
-                    aes_decrypt::<Aes192CbcDec>(key, iv, data)
-                }
-            }
-            32 => {
-                if is_encryptor {
-                    aes_encrypt::<Aes256CbcEnc>(key, iv, data)
-                } else {
-                    aes_decrypt::<Aes256CbcDec>(key, iv, data)
-                }
-            }
-            _ => None, // Unsupported key size
+        return if is_ecb {
+            aes_ecb_transform(key, is_encryptor, data, padding)
+        } else {
+            // CBC mode (default)
+            aes_cbc_transform(key, iv, is_encryptor, data, padding)
         };
     }
 
     // DES/3DES support requires legacy-crypto feature
     #[cfg(feature = "legacy-crypto")]
     if alg_upper.contains("TRIPLEDES") || alg_upper.contains("3DES") {
-        // Triple DES - requires 24-byte key
-        if key.len() == 24 && iv.len() >= 8 {
-            return if is_encryptor {
-                tdes_encrypt(key, iv, data)
+        if key.len() == 24 {
+            return if is_ecb {
+                tdes_ecb_transform(key, is_encryptor, data, padding)
+            } else if iv.len() >= 8 {
+                tdes_cbc_transform(key, iv, is_encryptor, data, padding)
             } else {
-                tdes_decrypt(key, iv, data)
+                None
             };
         }
         return None;
@@ -390,12 +382,13 @@ pub fn apply_crypto_transform(
 
     #[cfg(feature = "legacy-crypto")]
     if alg_upper.contains("DES") {
-        // Single DES - requires 8-byte key
-        if key.len() == 8 && iv.len() >= 8 {
-            return if is_encryptor {
-                des_encrypt(key, iv, data)
+        if key.len() == 8 {
+            return if is_ecb {
+                des_ecb_transform(key, is_encryptor, data, padding)
+            } else if iv.len() >= 8 {
+                des_cbc_transform(key, iv, is_encryptor, data, padding)
             } else {
-                des_decrypt(key, iv, data)
+                None
             };
         }
         return None;
@@ -411,92 +404,215 @@ pub fn apply_crypto_transform(
     None
 }
 
-/// AES encryption helper (CBC mode with PKCS7 padding).
-fn aes_encrypt<E: BlockEncryptMut + KeyIvInit>(
+/// AES CBC mode transform with configurable padding.
+fn aes_cbc_transform(
     key: &[u8],
     iv: &[u8],
+    is_encryptor: bool,
     data: &[u8],
+    padding: u8,
 ) -> Option<Vec<u8>> {
-    if iv.len() < 16 {
-        return None;
+    match key.len() {
+        16 => cbc_transform::<Aes128CbcEnc, Aes128CbcDec>(key, iv, 16, is_encryptor, data, padding),
+        24 => cbc_transform::<Aes192CbcEnc, Aes192CbcDec>(key, iv, 16, is_encryptor, data, padding),
+        32 => cbc_transform::<Aes256CbcEnc, Aes256CbcDec>(key, iv, 16, is_encryptor, data, padding),
+        _ => None,
     }
-    let cipher = E::new_from_slices(key, &iv[..16]).ok()?;
-    // Allocate buffer with padding space (PKCS7 adds up to block_size bytes)
-    let block_size = 16;
-    let padded_len = ((data.len() / block_size) + 1) * block_size;
-    let mut buf = vec![0u8; padded_len];
-    buf[..data.len()].copy_from_slice(data);
-    let result = cipher
-        .encrypt_padded_mut::<Pkcs7>(&mut buf, data.len())
-        .ok()?;
-    Some(result.to_vec())
 }
 
-/// AES decryption helper (CBC mode with PKCS7 padding).
-fn aes_decrypt<D: BlockDecryptMut + KeyIvInit>(
+/// AES ECB mode transform with configurable padding.
+fn aes_ecb_transform(key: &[u8], is_encryptor: bool, data: &[u8], padding: u8) -> Option<Vec<u8>> {
+    match key.len() {
+        16 => ecb_transform::<Aes128EcbEnc, Aes128EcbDec>(key, 16, is_encryptor, data, padding),
+        24 => ecb_transform::<Aes192EcbEnc, Aes192EcbDec>(key, 16, is_encryptor, data, padding),
+        32 => ecb_transform::<Aes256EcbEnc, Aes256EcbDec>(key, 16, is_encryptor, data, padding),
+        _ => None,
+    }
+}
+
+/// Generic CBC mode transform with configurable padding.
+fn cbc_transform<E, D>(
     key: &[u8],
     iv: &[u8],
+    block_size: usize,
+    is_encryptor: bool,
     data: &[u8],
+    padding: u8,
+) -> Option<Vec<u8>>
+where
+    E: BlockEncryptMut + KeyIvInit,
+    D: BlockDecryptMut + KeyIvInit,
+{
+    if iv.len() < block_size {
+        return None;
+    }
+    if is_encryptor {
+        let cipher = E::new_from_slices(key, &iv[..block_size]).ok()?;
+        let padded_len = ((data.len() / block_size) + 1) * block_size;
+        let mut buf = vec![0u8; padded_len];
+        buf[..data.len()].copy_from_slice(data);
+        let result = match padding {
+            1 => cipher
+                .encrypt_padded_mut::<NoPadding>(&mut buf, data.len())
+                .ok()?,
+            3 => {
+                // Zeros padding: pad with zeros to block boundary
+                let result = cipher
+                    .encrypt_padded_mut::<NoPadding>(&mut buf, padded_len)
+                    .ok()?;
+                return Some(result.to_vec());
+            }
+            _ => cipher
+                .encrypt_padded_mut::<Pkcs7>(&mut buf, data.len())
+                .ok()?,
+        };
+        Some(result.to_vec())
+    } else {
+        if data.is_empty() {
+            return None;
+        }
+        let cipher = D::new_from_slices(key, &iv[..block_size]).ok()?;
+        let mut buf = data.to_vec();
+        let result = match padding {
+            1 | 3 => cipher.decrypt_padded_mut::<NoPadding>(&mut buf).ok()?,
+            _ => cipher.decrypt_padded_mut::<Pkcs7>(&mut buf).ok()?,
+        };
+        Some(result.to_vec())
+    }
+}
+
+/// Generic ECB mode transform with configurable padding.
+fn ecb_transform<E, D>(
+    key: &[u8],
+    block_size: usize,
+    is_encryptor: bool,
+    data: &[u8],
+    padding: u8,
+) -> Option<Vec<u8>>
+where
+    E: BlockEncryptMut + KeyInit,
+    D: BlockDecryptMut + KeyInit,
+{
+    if is_encryptor {
+        let cipher = E::new_from_slice(key).ok()?;
+        let padded_len = ((data.len() / block_size) + 1) * block_size;
+        let mut buf = vec![0u8; padded_len];
+        buf[..data.len()].copy_from_slice(data);
+        let result = match padding {
+            1 => cipher
+                .encrypt_padded_mut::<NoPadding>(&mut buf, data.len())
+                .ok()?,
+            3 => {
+                let result = cipher
+                    .encrypt_padded_mut::<NoPadding>(&mut buf, padded_len)
+                    .ok()?;
+                return Some(result.to_vec());
+            }
+            _ => cipher
+                .encrypt_padded_mut::<Pkcs7>(&mut buf, data.len())
+                .ok()?,
+        };
+        Some(result.to_vec())
+    } else {
+        if data.is_empty() {
+            return None;
+        }
+        let cipher = D::new_from_slice(key).ok()?;
+        let mut buf = data.to_vec();
+        let result = match padding {
+            1 | 3 => cipher.decrypt_padded_mut::<NoPadding>(&mut buf).ok()?,
+            _ => cipher.decrypt_padded_mut::<Pkcs7>(&mut buf).ok()?,
+        };
+        Some(result.to_vec())
+    }
+}
+
+/// DES CBC mode transform (legacy-crypto feature).
+#[cfg(feature = "legacy-crypto")]
+fn des_cbc_transform(
+    key: &[u8],
+    iv: &[u8],
+    is_encryptor: bool,
+    data: &[u8],
+    padding: u8,
 ) -> Option<Vec<u8>> {
-    if iv.len() < 16 || data.is_empty() {
-        return None;
-    }
-    let cipher = D::new_from_slices(key, &iv[..16]).ok()?;
-    let mut buf = data.to_vec();
-    let result = cipher.decrypt_padded_mut::<Pkcs7>(&mut buf).ok()?;
-    Some(result.to_vec())
+    cbc_transform::<DesCbcEnc, DesCbcDec>(key, iv, 8, is_encryptor, data, padding)
 }
 
-/// DES encryption helper (CBC mode with PKCS7 padding).
+/// DES ECB mode transform (legacy-crypto feature).
 #[cfg(feature = "legacy-crypto")]
-fn des_encrypt(key: &[u8], iv: &[u8], data: &[u8]) -> Option<Vec<u8>> {
-    let cipher = DesCbcEnc::new_from_slices(key, &iv[..8]).ok()?;
-    let block_size = 8;
-    let padded_len = ((data.len() / block_size) + 1) * block_size;
-    let mut buf = vec![0u8; padded_len];
-    buf[..data.len()].copy_from_slice(data);
-    let result = cipher
-        .encrypt_padded_mut::<Pkcs7>(&mut buf, data.len())
-        .ok()?;
-    Some(result.to_vec())
+fn des_ecb_transform(key: &[u8], is_encryptor: bool, data: &[u8], padding: u8) -> Option<Vec<u8>> {
+    ecb_transform::<DesEcbEnc, DesEcbDec>(key, 8, is_encryptor, data, padding)
 }
 
-/// DES decryption helper (CBC mode with PKCS7 padding).
+/// TripleDES CBC mode transform (legacy-crypto feature).
 #[cfg(feature = "legacy-crypto")]
-fn des_decrypt(key: &[u8], iv: &[u8], data: &[u8]) -> Option<Vec<u8>> {
-    if data.is_empty() {
-        return None;
-    }
-    let cipher = DesCbcDec::new_from_slices(key, &iv[..8]).ok()?;
-    let mut buf = data.to_vec();
-    let result = cipher.decrypt_padded_mut::<Pkcs7>(&mut buf).ok()?;
-    Some(result.to_vec())
+fn tdes_cbc_transform(
+    key: &[u8],
+    iv: &[u8],
+    is_encryptor: bool,
+    data: &[u8],
+    padding: u8,
+) -> Option<Vec<u8>> {
+    cbc_transform::<TdesCbcEnc, TdesCbcDec>(key, iv, 8, is_encryptor, data, padding)
 }
 
-/// TripleDES encryption helper (CBC mode with PKCS7 padding).
+/// TripleDES ECB mode transform (legacy-crypto feature).
 #[cfg(feature = "legacy-crypto")]
-fn tdes_encrypt(key: &[u8], iv: &[u8], data: &[u8]) -> Option<Vec<u8>> {
-    let cipher = TdesCbcEnc::new_from_slices(key, &iv[..8]).ok()?;
-    let block_size = 8;
-    let padded_len = ((data.len() / block_size) + 1) * block_size;
-    let mut buf = vec![0u8; padded_len];
-    buf[..data.len()].copy_from_slice(data);
-    let result = cipher
-        .encrypt_padded_mut::<Pkcs7>(&mut buf, data.len())
-        .ok()?;
-    Some(result.to_vec())
+fn tdes_ecb_transform(key: &[u8], is_encryptor: bool, data: &[u8], padding: u8) -> Option<Vec<u8>> {
+    ecb_transform::<TdesEcbEnc, TdesEcbDec>(key, 8, is_encryptor, data, padding)
 }
 
-/// TripleDES decryption helper (CBC mode with PKCS7 padding).
-#[cfg(feature = "legacy-crypto")]
-fn tdes_decrypt(key: &[u8], iv: &[u8], data: &[u8]) -> Option<Vec<u8>> {
-    if data.is_empty() {
-        return None;
-    }
-    let cipher = TdesCbcDec::new_from_slices(key, &iv[..8]).ok()?;
-    let mut buf = data.to_vec();
-    let result = cipher.decrypt_padded_mut::<Pkcs7>(&mut buf).ok()?;
-    Some(result.to_vec())
+/// Verifies an RSA PKCS#1 v1.5 signature against a hash.
+///
+/// Used by the emulator to implement `RSACryptoServiceProvider.VerifyHash()`.
+///
+/// # Arguments
+///
+/// * `modulus` - The RSA public key modulus (big-endian bytes)
+/// * `exponent` - The RSA public key exponent (big-endian bytes)
+/// * `hash` - The hash value to verify
+/// * `signature` - The RSA signature bytes
+/// * `hash_algorithm` - Hash algorithm name or OID (e.g., "SHA256", "2.16.840.1.101.3.4.2.1")
+///
+/// # Returns
+///
+/// `true` if the signature is valid, `false` otherwise.
+///
+/// # Feature Requirements
+///
+/// This function requires the `emulation` feature (which brings in the `rsa` crate).
+#[cfg(feature = "emulation")]
+pub fn verify_rsa_pkcs1v15(
+    modulus: &[u8],
+    exponent: &[u8],
+    hash: &[u8],
+    signature: &[u8],
+    hash_algorithm: &str,
+) -> bool {
+    let n = rsa::BigUint::from_bytes_be(modulus);
+    let e = rsa::BigUint::from_bytes_be(exponent);
+
+    let pub_key = match RsaPublicKey::new(n, e) {
+        Ok(k) => k,
+        Err(_) => return false,
+    };
+
+    let alg = hash_algorithm.to_uppercase();
+    let alg_ref = alg.as_str();
+
+    // Map OIDs and algorithm names to the appropriate PKCS#1 v1.5 scheme.
+    // RsaPublicKey::verify takes a pre-computed hash, not raw data.
+    let scheme = match alg_ref {
+        "SHA256" | "2.16.840.1.101.3.4.2.1" => Pkcs1v15Sign::new::<sha2::Sha256>(),
+        "SHA384" | "2.16.840.1.101.3.4.2.2" => Pkcs1v15Sign::new::<sha2::Sha384>(),
+        "SHA512" | "2.16.840.1.101.3.4.2.3" => Pkcs1v15Sign::new::<sha2::Sha512>(),
+        #[cfg(feature = "legacy-crypto")]
+        "SHA1" | "1.3.14.3.2.26" => Pkcs1v15Sign::new::<sha1::Sha1>(),
+        _ => return false,
+    };
+
+    pub_key.verify(scheme, hash, signature).is_ok()
 }
 
 #[cfg(test)]
@@ -612,7 +728,7 @@ mod tests {
         let plaintext = b"Hello, World!";
 
         // Encrypt
-        let ciphertext = apply_crypto_transform("AES", &key, &iv, true, plaintext);
+        let ciphertext = apply_crypto_transform("AES", &key, &iv, true, plaintext, 1, 2);
         assert!(ciphertext.is_some(), "Encryption should succeed");
         let ciphertext = ciphertext.unwrap();
         assert_ne!(
@@ -622,7 +738,7 @@ mod tests {
         );
 
         // Decrypt
-        let decrypted = apply_crypto_transform("AES", &key, &iv, false, &ciphertext);
+        let decrypted = apply_crypto_transform("AES", &key, &iv, false, &ciphertext, 1, 2);
         assert!(decrypted.is_some(), "Decryption should succeed");
         assert_eq!(
             decrypted.unwrap(),
@@ -637,8 +753,8 @@ mod tests {
         let iv = [0u8; 16];
         let plaintext = b"Test message for AES-192";
 
-        let ciphertext = apply_crypto_transform("AES", &key, &iv, true, plaintext).unwrap();
-        let decrypted = apply_crypto_transform("AES", &key, &iv, false, &ciphertext).unwrap();
+        let ciphertext = apply_crypto_transform("AES", &key, &iv, true, plaintext, 1, 2).unwrap();
+        let decrypted = apply_crypto_transform("AES", &key, &iv, false, &ciphertext, 1, 2).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
@@ -648,8 +764,8 @@ mod tests {
         let iv = [0u8; 16];
         let plaintext = b"Test message for AES-256";
 
-        let ciphertext = apply_crypto_transform("AES", &key, &iv, true, plaintext).unwrap();
-        let decrypted = apply_crypto_transform("AES", &key, &iv, false, &ciphertext).unwrap();
+        let ciphertext = apply_crypto_transform("AES", &key, &iv, true, plaintext, 1, 2).unwrap();
+        let decrypted = apply_crypto_transform("AES", &key, &iv, false, &ciphertext, 1, 2).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
@@ -660,12 +776,15 @@ mod tests {
         let iv = [0u8; 16];
         let plaintext = b"Test for Rijndael";
 
-        let ciphertext = apply_crypto_transform("Rijndael", &key, &iv, true, plaintext).unwrap();
-        let decrypted = apply_crypto_transform("Rijndael", &key, &iv, false, &ciphertext).unwrap();
+        let ciphertext =
+            apply_crypto_transform("Rijndael", &key, &iv, true, plaintext, 1, 2).unwrap();
+        let decrypted =
+            apply_crypto_transform("Rijndael", &key, &iv, false, &ciphertext, 1, 2).unwrap();
         assert_eq!(decrypted, plaintext);
 
         // Should produce same output as "AES"
-        let aes_ciphertext = apply_crypto_transform("AES", &key, &iv, true, plaintext).unwrap();
+        let aes_ciphertext =
+            apply_crypto_transform("AES", &key, &iv, true, plaintext, 1, 2).unwrap();
         assert_eq!(ciphertext, aes_ciphertext);
     }
 
@@ -675,7 +794,7 @@ mod tests {
         let iv = [0u8; 16];
         let plaintext = b"test";
 
-        let result = apply_crypto_transform("AES", &bad_key, &iv, true, plaintext);
+        let result = apply_crypto_transform("AES", &bad_key, &iv, true, plaintext, 1, 2);
         assert!(result.is_none(), "Should fail with invalid key size");
     }
 
@@ -685,7 +804,7 @@ mod tests {
         let iv = [0u8; 16];
         let plaintext = b"test";
 
-        let result = apply_crypto_transform("UNKNOWN_ALGO", &key, &iv, true, plaintext);
+        let result = apply_crypto_transform("UNKNOWN_ALGO", &key, &iv, true, plaintext, 1, 2);
         assert!(result.is_none(), "Should return None for unknown algorithm");
     }
 
@@ -695,9 +814,9 @@ mod tests {
         let iv = [0u8; 16];
         let plaintext = b"case test";
 
-        let ct1 = apply_crypto_transform("AES", &key, &iv, true, plaintext).unwrap();
-        let ct2 = apply_crypto_transform("aes", &key, &iv, true, plaintext).unwrap();
-        let ct3 = apply_crypto_transform("Aes", &key, &iv, true, plaintext).unwrap();
+        let ct1 = apply_crypto_transform("AES", &key, &iv, true, plaintext, 1, 2).unwrap();
+        let ct2 = apply_crypto_transform("aes", &key, &iv, true, plaintext, 1, 2).unwrap();
+        let ct3 = apply_crypto_transform("Aes", &key, &iv, true, plaintext, 1, 2).unwrap();
 
         assert_eq!(ct1, ct2);
         assert_eq!(ct1, ct3);
@@ -710,8 +829,8 @@ mod tests {
         let iv = [0u8; 16];
         let plaintext = b"test";
 
-        let ct1 = apply_crypto_transform("AES", &key1, &iv, true, plaintext).unwrap();
-        let ct2 = apply_crypto_transform("AES", &key2, &iv, true, plaintext).unwrap();
+        let ct1 = apply_crypto_transform("AES", &key1, &iv, true, plaintext, 1, 2).unwrap();
+        let ct2 = apply_crypto_transform("AES", &key2, &iv, true, plaintext, 1, 2).unwrap();
 
         assert_ne!(ct1, ct2);
     }
@@ -723,8 +842,8 @@ mod tests {
         let iv2 = [1u8; 16];
         let plaintext = b"test";
 
-        let ct1 = apply_crypto_transform("AES", &key, &iv1, true, plaintext).unwrap();
-        let ct2 = apply_crypto_transform("AES", &key, &iv2, true, plaintext).unwrap();
+        let ct1 = apply_crypto_transform("AES", &key, &iv1, true, plaintext, 1, 2).unwrap();
+        let ct2 = apply_crypto_transform("AES", &key, &iv2, true, plaintext, 1, 2).unwrap();
 
         assert_ne!(ct1, ct2);
     }
@@ -736,10 +855,10 @@ mod tests {
         let plaintext = b"";
 
         // Encryption of empty data should produce padding block
-        let ciphertext = apply_crypto_transform("AES", &key, &iv, true, plaintext).unwrap();
+        let ciphertext = apply_crypto_transform("AES", &key, &iv, true, plaintext, 1, 2).unwrap();
         assert_eq!(ciphertext.len(), 16); // One full block of padding
 
-        let decrypted = apply_crypto_transform("AES", &key, &iv, false, &ciphertext).unwrap();
+        let decrypted = apply_crypto_transform("AES", &key, &iv, false, &ciphertext, 1, 2).unwrap();
         assert!(decrypted.is_empty());
     }
 
@@ -749,11 +868,11 @@ mod tests {
         let iv = [0u8; 16];
         let plaintext = [0u8; 32]; // Exactly 2 blocks
 
-        let ciphertext = apply_crypto_transform("AES", &key, &iv, true, &plaintext).unwrap();
+        let ciphertext = apply_crypto_transform("AES", &key, &iv, true, &plaintext, 1, 2).unwrap();
         // PKCS7 adds another block for padding
         assert_eq!(ciphertext.len(), 48);
 
-        let decrypted = apply_crypto_transform("AES", &key, &iv, false, &ciphertext).unwrap();
+        let decrypted = apply_crypto_transform("AES", &key, &iv, false, &ciphertext, 1, 2).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 }
@@ -946,8 +1065,8 @@ mod legacy_tests {
         let iv = [0u8; 8]; // 64-bit IV
         let plaintext = b"DES test";
 
-        let ciphertext = apply_crypto_transform("DES", &key, &iv, true, plaintext).unwrap();
-        let decrypted = apply_crypto_transform("DES", &key, &iv, false, &ciphertext).unwrap();
+        let ciphertext = apply_crypto_transform("DES", &key, &iv, true, plaintext, 1, 2).unwrap();
+        let decrypted = apply_crypto_transform("DES", &key, &iv, false, &ciphertext, 1, 2).unwrap();
         assert_eq!(decrypted, plaintext);
     }
 
@@ -957,12 +1076,15 @@ mod legacy_tests {
         let iv = [0u8; 8]; // 64-bit IV
         let plaintext = b"TripleDES test message";
 
-        let ciphertext = apply_crypto_transform("TripleDES", &key, &iv, true, plaintext).unwrap();
-        let decrypted = apply_crypto_transform("TripleDES", &key, &iv, false, &ciphertext).unwrap();
+        let ciphertext =
+            apply_crypto_transform("TripleDES", &key, &iv, true, plaintext, 1, 2).unwrap();
+        let decrypted =
+            apply_crypto_transform("TripleDES", &key, &iv, false, &ciphertext, 1, 2).unwrap();
         assert_eq!(decrypted, plaintext);
 
         // 3DES alias
-        let ciphertext_3des = apply_crypto_transform("3DES", &key, &iv, true, plaintext).unwrap();
+        let ciphertext_3des =
+            apply_crypto_transform("3DES", &key, &iv, true, plaintext, 1, 2).unwrap();
         assert_eq!(ciphertext, ciphertext_3des);
     }
 }

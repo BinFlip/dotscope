@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use crate::{
-    emulation::{EmValue, EmulationThread},
+    emulation::{thread::ReflectionInvokeRequest, EmValue, EmulationThread},
     metadata::{
         token::Token,
         typesystem::{CilFlavor, PointerSize},
@@ -320,6 +320,19 @@ pub enum PreHookResult {
     /// for methods that return a value, `None` for void methods.
     Bypass(Option<EmValue>),
 
+    /// Bypass the original method and signal a reflection invoke redirect.
+    ///
+    /// The hook has resolved a reflection call (e.g., `MethodBase.Invoke`) and
+    /// wants the controller to redirect execution to the target method. The
+    /// `bypass_value` serves as the placeholder return value (e.g., the newly
+    /// allocated object for constructor invokes).
+    ReflectionInvoke {
+        /// The reflection invoke request describing which method to call.
+        request: Box<ReflectionInvokeRequest>,
+        /// Placeholder return value for the hook's caller.
+        bypass_value: Option<EmValue>,
+    },
+
     /// An error occurred in the hook.
     ///
     /// The emulator will propagate this error to the caller.
@@ -445,6 +458,17 @@ pub enum HookOutcome {
     /// The contained value is the final return value after pre-hook and/or
     /// post-hook processing. `None` indicates a void return.
     Handled(Option<EmValue>),
+
+    /// A hook resolved a reflection invoke redirect.
+    ///
+    /// The controller should redirect execution to the method specified in
+    /// the request, using `bypass_value` as the placeholder return value.
+    ReflectionInvoke {
+        /// The reflection invoke request describing which method to call.
+        request: Box<ReflectionInvokeRequest>,
+        /// Placeholder return value for the hook's caller.
+        bypass_value: Option<EmValue>,
+    },
 }
 
 #[cfg(test)]

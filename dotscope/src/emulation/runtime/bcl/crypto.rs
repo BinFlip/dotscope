@@ -106,10 +106,13 @@ use crate::{
         capture::{BufferSource, CaptureSource},
         runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
         thread::EmulationThread,
-        EmValue, SymbolicValue, TaintSource,
+        EmValue, HeapRef, SymbolicValue, TaintSource,
     },
     metadata::{token::Token, typesystem::CilFlavor},
-    utils::{apply_crypto_transform, compute_sha256, derive_pbkdf2_key},
+    utils::{
+        apply_crypto_transform, base64_decode, compute_sha256, derive_pbkdf2_key,
+        verify_rsa_pkcs1v15,
+    },
 };
 
 /// Registers all cryptographic method hooks with the given hook manager.
@@ -127,14 +130,18 @@ use crate::{
 /// - **Transforms**: `ICryptoTransform.TransformFinalBlock()`, `CryptoStream`
 /// - **Key Derivation**: `PasswordDeriveBytes`, `Rfc2898DeriveBytes`
 /// - **BitConverter**: `GetBytes()`, `ToInt32()`, `ToInt64()`, `ToUInt32()`
-pub fn register(manager: &mut HookManager) {
+pub fn register(manager: &HookManager) {
     // Hash algorithms
     register_md5_hooks(manager);
     register_sha_hooks(manager);
+    register_hash_algorithm_hooks(manager);
 
     // Symmetric encryption
     register_aes_hooks(manager);
     register_des_hooks(manager);
+
+    // Asymmetric encryption
+    register_rsa_hooks(manager);
 
     // Transform hooks
     register_transform_hooks(manager);
@@ -144,9 +151,12 @@ pub fn register(manager: &mut HookManager) {
 
     // BitConverter
     register_bitconverter_hooks(manager);
+
+    // CryptoConfig
+    register_crypto_config_hooks(manager);
 }
 
-fn register_md5_hooks(manager: &mut HookManager) {
+fn register_md5_hooks(manager: &HookManager) {
     // MD5.Create() - requires legacy-crypto
     #[cfg(feature = "legacy-crypto")]
     manager.register(
@@ -175,7 +185,7 @@ fn register_md5_hooks(manager: &mut HookManager) {
     );
 }
 
-fn register_sha_hooks(manager: &mut HookManager) {
+fn register_sha_hooks(manager: &HookManager) {
     // SHA1.Create() - requires legacy-crypto
     #[cfg(feature = "legacy-crypto")]
     manager.register(
@@ -207,7 +217,62 @@ fn register_sha_hooks(manager: &mut HookManager) {
     );
 }
 
-fn register_aes_hooks(manager: &mut HookManager) {
+fn register_hash_algorithm_hooks(manager: &HookManager) {
+    // HashAlgorithm.TransformBlock(byte[], int, int, byte[], int) -> int
+    manager.register(
+        Hook::new("System.Security.Cryptography.HashAlgorithm.TransformBlock")
+            .match_name(
+                "System.Security.Cryptography",
+                "HashAlgorithm",
+                "TransformBlock",
+            )
+            .pre(hash_algorithm_transform_block_pre),
+    );
+
+    // HashAlgorithm.TransformFinalBlock(byte[], int, int) -> byte[]
+    manager.register(
+        Hook::new("System.Security.Cryptography.HashAlgorithm.TransformFinalBlock")
+            .match_name(
+                "System.Security.Cryptography",
+                "HashAlgorithm",
+                "TransformFinalBlock",
+            )
+            .pre(hash_algorithm_transform_final_block_pre),
+    );
+
+    // HashAlgorithm.get_Hash -> byte[]
+    manager.register(
+        Hook::new("System.Security.Cryptography.HashAlgorithm.get_Hash")
+            .match_name("System.Security.Cryptography", "HashAlgorithm", "get_Hash")
+            .pre(hash_algorithm_get_hash_pre),
+    );
+}
+
+fn register_crypto_config_hooks(manager: &HookManager) {
+    // CryptoConfig.MapNameToOID(string) -> string
+    manager.register(
+        Hook::new("System.Security.Cryptography.CryptoConfig.MapNameToOID")
+            .match_name(
+                "System.Security.Cryptography",
+                "CryptoConfig",
+                "MapNameToOID",
+            )
+            .pre(crypto_config_map_name_to_oid_pre),
+    );
+
+    // CryptoConfig.get_AllowOnlyFipsAlgorithms -> bool
+    manager.register(
+        Hook::new("System.Security.Cryptography.CryptoConfig.get_AllowOnlyFipsAlgorithms")
+            .match_name(
+                "System.Security.Cryptography",
+                "CryptoConfig",
+                "get_AllowOnlyFipsAlgorithms",
+            )
+            .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(0)))),
+    );
+}
+
+fn register_aes_hooks(manager: &HookManager) {
     manager.register(
         Hook::new("System.Security.Cryptography.Aes.Create")
             .match_name("System.Security.Cryptography", "Aes", "Create")
@@ -292,7 +357,7 @@ fn register_aes_hooks(manager: &mut HookManager) {
     );
 }
 
-fn register_des_hooks(manager: &mut HookManager) {
+fn register_des_hooks(manager: &HookManager) {
     #[cfg(feature = "legacy-crypto")]
     manager.register(
         Hook::new("System.Security.Cryptography.DES.Create")
@@ -308,7 +373,69 @@ fn register_des_hooks(manager: &mut HookManager) {
     );
 }
 
-fn register_transform_hooks(manager: &mut HookManager) {
+fn register_rsa_hooks(manager: &HookManager) {
+    // RSACryptoServiceProvider..ctor() — creates a fake RSA provider object.
+    // The actual RSA operations are not needed for deobfuscation; we just need
+    // the object to exist so initialization chains can continue past the constructor.
+    manager.register(
+        Hook::new("System.Security.Cryptography.RSACryptoServiceProvider..ctor")
+            .match_name(
+                "System.Security.Cryptography",
+                "RSACryptoServiceProvider",
+                ".ctor",
+            )
+            .pre(rsa_ctor_pre),
+    );
+
+    // RSA.Create() — factory method that returns an RSA instance
+    manager.register(
+        Hook::new("System.Security.Cryptography.RSA.Create")
+            .match_name("System.Security.Cryptography", "RSA", "Create")
+            .pre(rsa_create_pre),
+    );
+
+    // RSACryptoServiceProvider.set_UseMachineKeyStore — no-op property setter
+    manager.register(
+        Hook::new("System.Security.Cryptography.RSACryptoServiceProvider.set_UseMachineKeyStore")
+            .match_name(
+                "System.Security.Cryptography",
+                "RSACryptoServiceProvider",
+                "set_UseMachineKeyStore",
+            )
+            .pre(rsa_set_use_machine_key_store_pre),
+    );
+
+    // RSA.FromXmlString(string) — imports RSA public key from XML
+    manager.register(
+        Hook::new("System.Security.Cryptography.RSA.FromXmlString")
+            .match_name("System.Security.Cryptography", "RSA", "FromXmlString")
+            .pre(rsa_from_xml_string_pre),
+    );
+
+    // AsymmetricAlgorithm.FromXmlString(string) — base class variant
+    manager.register(
+        Hook::new("System.Security.Cryptography.AsymmetricAlgorithm.FromXmlString")
+            .match_name(
+                "System.Security.Cryptography",
+                "AsymmetricAlgorithm",
+                "FromXmlString",
+            )
+            .pre(rsa_from_xml_string_pre),
+    );
+
+    // RSACryptoServiceProvider.VerifyHash(byte[], string, byte[]) -> bool
+    manager.register(
+        Hook::new("System.Security.Cryptography.RSACryptoServiceProvider.VerifyHash")
+            .match_name(
+                "System.Security.Cryptography",
+                "RSACryptoServiceProvider",
+                "VerifyHash",
+            )
+            .pre(rsa_verify_hash_pre),
+    );
+}
+
+fn register_transform_hooks(manager: &HookManager) {
     manager.register(
         Hook::new("System.Security.Cryptography.ICryptoTransform.TransformFinalBlock")
             .match_name(
@@ -348,7 +475,7 @@ fn register_transform_hooks(manager: &mut HookManager) {
     );
 }
 
-fn register_key_derivation_hooks(manager: &mut HookManager) {
+fn register_key_derivation_hooks(manager: &HookManager) {
     #[cfg(feature = "legacy-crypto")]
     manager.register(
         Hook::new("System.Security.Cryptography.PasswordDeriveBytes..ctor")
@@ -392,7 +519,7 @@ fn register_key_derivation_hooks(manager: &mut HookManager) {
     );
 }
 
-fn register_bitconverter_hooks(manager: &mut HookManager) {
+fn register_bitconverter_hooks(manager: &HookManager) {
     manager.register(
         Hook::new("System.BitConverter.GetBytes")
             .match_name("System", "BitConverter", "GetBytes")
@@ -680,6 +807,90 @@ fn rijndael_ctor_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> P
     PreHookResult::Bypass(None)
 }
 
+/// Hook for `System.Security.Cryptography.RSACryptoServiceProvider..ctor` constructor.
+///
+/// The RSA provider cannot be instantiated during static emulation (it requires
+/// OS-level cryptographic key stores). This hook bypasses the constructor so the
+/// allocated object can serve as a placeholder in initialization chains.
+///
+/// # Handled Overloads
+///
+/// - `RSACryptoServiceProvider..ctor() -> void`
+/// - `RSACryptoServiceProvider..ctor(int) -> void`
+/// - `RSACryptoServiceProvider..ctor(CspParameters) -> void`
+fn rsa_ctor_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    PreHookResult::Bypass(None)
+}
+
+/// Hook for `System.Security.Cryptography.RSA.Create` factory method.
+///
+/// Returns a symbolic RSA object since we cannot perform actual RSA operations.
+fn rsa_create_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    PreHookResult::Bypass(Some(EmValue::Symbolic(SymbolicValue::new(
+        CilFlavor::Object,
+        TaintSource::Unknown,
+    ))))
+}
+
+/// Hook for `RSACryptoServiceProvider.set_UseMachineKeyStore` property setter.
+///
+/// No-op — machine key store configuration is irrelevant during emulation.
+fn rsa_set_use_machine_key_store_pre(
+    _ctx: &HookContext<'_>,
+    _thread: &mut EmulationThread,
+) -> PreHookResult {
+    PreHookResult::Bypass(None)
+}
+
+/// Resolves the algorithm name, key, IV, mode, and padding for a `CreateDecryptor`/`CreateEncryptor` call.
+///
+/// Handles both overloads:
+/// - No-arg: reads key/IV from the `SymmetricAlgorithm` heap object
+/// - Two-arg `(byte[] rgbKey, byte[] rgbIV)`: extracts key/IV from the explicit arguments
+///
+/// Returns `(algorithm, Option<key>, Option<iv>, mode, padding)`.
+fn resolve_crypto_key_iv(
+    ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
+    algo_ref: HeapRef,
+) -> (String, Option<Vec<u8>>, Option<Vec<u8>>, u8, u8) {
+    // Try explicit arguments first (2-arg overload: CreateDecryptor(byte[], byte[]))
+    if ctx.args.len() == 2 {
+        let arg_key = ctx.args.first().and_then(|v| match v {
+            EmValue::ObjectRef(h) => thread.heap().get_byte_array(*h),
+            _ => None,
+        });
+        let arg_iv = ctx.args.get(1).and_then(|v| match v {
+            EmValue::ObjectRef(h) => thread.heap().get_byte_array(*h),
+            _ => None,
+        });
+
+        if let Some(key) = arg_key {
+            // Get algo name and mode/padding from the object, but use explicit key/IV
+            let (algorithm, _, _, mode, padding) = thread
+                .heap()
+                .get_symmetric_algorithm_info(algo_ref)
+                .unwrap_or_else(|| ("AES".into(), None, None, 1, 2));
+            let iv = arg_iv.unwrap_or_else(|| {
+                let iv_len = if algorithm.contains("DES") { 8 } else { 16 };
+                vec![0u8; iv_len]
+            });
+            return (algorithm.to_string(), Some(key), Some(iv), mode, padding);
+        }
+    }
+
+    // Fall back to stored key/IV on the algorithm object
+    match thread.heap().get_symmetric_algorithm_info(algo_ref) {
+        Some((alg, Some(k), Some(i), m, p)) => (alg.to_string(), Some(k), Some(i), m, p),
+        Some((alg, Some(k), None, m, p)) => {
+            let iv_len = if alg.contains("DES") { 8 } else { 16 };
+            (alg.to_string(), Some(k), Some(vec![0u8; iv_len]), m, p)
+        }
+        Some((alg, None, iv, m, p)) => (alg.to_string(), None, iv, m, p),
+        None => ("AES".to_string(), None, None, 1, 2),
+    }
+}
+
 /// Hook for `System.Security.Cryptography.SymmetricAlgorithm.CreateDecryptor` method.
 ///
 /// Creates a decryptor transform using the algorithm's key and IV.
@@ -704,23 +915,18 @@ fn create_decryptor_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
         }
     };
 
-    let (algorithm, key, iv) = match thread.heap().get_symmetric_algorithm_info(algo_ref) {
-        Some((alg, Some(k), Some(i))) => (alg, k, i),
-        Some((alg, Some(k), None)) => {
-            let iv_len = if alg.contains("DES") { 8 } else { 16 };
-            (alg, k, vec![0u8; iv_len])
-        }
-        Some((_, None, _)) | None => {
-            return PreHookResult::Bypass(Some(EmValue::Symbolic(SymbolicValue::new(
-                CilFlavor::Object,
-                TaintSource::Unknown,
-            ))));
-        }
+    let (algorithm, key, iv, mode, padding) = resolve_crypto_key_iv(ctx, thread, algo_ref);
+
+    let (Some(key), Some(iv)) = (key, iv) else {
+        return PreHookResult::Bypass(Some(EmValue::Symbolic(SymbolicValue::new(
+            CilFlavor::Object,
+            TaintSource::Unknown,
+        ))));
     };
 
     match thread
         .heap()
-        .alloc_crypto_transform(&algorithm, key, iv, false)
+        .alloc_crypto_transform(&algorithm, key, iv, false, mode, padding)
     {
         Ok(handle) => PreHookResult::Bypass(Some(EmValue::ObjectRef(handle))),
         Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
@@ -751,23 +957,18 @@ fn create_encryptor_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
         }
     };
 
-    let (algorithm, key, iv) = match thread.heap().get_symmetric_algorithm_info(algo_ref) {
-        Some((alg, Some(k), Some(i))) => (alg, k, i),
-        Some((alg, Some(k), None)) => {
-            let iv_len = if alg.contains("DES") { 8 } else { 16 };
-            (alg, k, vec![0u8; iv_len])
-        }
-        Some((_, None, _)) | None => {
-            return PreHookResult::Bypass(Some(EmValue::Symbolic(SymbolicValue::new(
-                CilFlavor::Object,
-                TaintSource::Unknown,
-            ))));
-        }
+    let (algorithm, key, iv, mode, padding) = resolve_crypto_key_iv(ctx, thread, algo_ref);
+
+    let (Some(key), Some(iv)) = (key, iv) else {
+        return PreHookResult::Bypass(Some(EmValue::Symbolic(SymbolicValue::new(
+            CilFlavor::Object,
+            TaintSource::Unknown,
+        ))));
     };
 
     match thread
         .heap()
-        .alloc_crypto_transform(&algorithm, key, iv, true)
+        .alloc_crypto_transform(&algorithm, key, iv, true, mode, padding)
     {
         Ok(handle) => PreHookResult::Bypass(Some(EmValue::ObjectRef(handle))),
         Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
@@ -832,7 +1033,7 @@ fn set_iv_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookRes
 
 /// Hook for `System.Security.Cryptography.SymmetricAlgorithm.set_Mode` property setter.
 ///
-/// Sets the cipher mode (CBC, ECB, etc.). Currently a no-op.
+/// Sets the cipher mode (CBC=1, ECB=2, etc.) on the SymmetricAlgorithm heap object.
 ///
 /// # Handled Overloads
 ///
@@ -841,13 +1042,21 @@ fn set_iv_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookRes
 /// # Parameters
 ///
 /// - `value`: The cipher mode enumeration value
-fn set_mode_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+fn set_mode_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    if let (Some(EmValue::ObjectRef(algo_ref)), Some(EmValue::I32(mode))) =
+        (ctx.this, ctx.args.first())
+    {
+        #[allow(clippy::cast_sign_loss)]
+        let _ = thread
+            .heap()
+            .set_symmetric_algorithm_mode(*algo_ref, *mode as u8);
+    }
     PreHookResult::Bypass(None)
 }
 
 /// Hook for `System.Security.Cryptography.SymmetricAlgorithm.set_Padding` property setter.
 ///
-/// Sets the padding mode (PKCS7, None, etc.). Currently a no-op.
+/// Sets the padding mode (None=1, PKCS7=2, Zeros=3) on the SymmetricAlgorithm heap object.
 ///
 /// # Handled Overloads
 ///
@@ -856,7 +1065,15 @@ fn set_mode_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHoo
 /// # Parameters
 ///
 /// - `value`: The padding mode enumeration value
-fn set_padding_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+fn set_padding_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    if let (Some(EmValue::ObjectRef(algo_ref)), Some(EmValue::I32(padding))) =
+        (ctx.this, ctx.args.first())
+    {
+        #[allow(clippy::cast_sign_loss)]
+        let _ = thread
+            .heap()
+            .set_symmetric_algorithm_padding(*algo_ref, *padding as u8);
+    }
     PreHookResult::Bypass(None)
 }
 
@@ -902,7 +1119,8 @@ fn triple_des_create_pre(_ctx: &HookContext<'_>, thread: &mut EmulationThread) -
 
 /// Hook for `System.Security.Cryptography.ICryptoTransform.TransformFinalBlock` method.
 ///
-/// Transforms the final block of data and captures input for analysis.
+/// Transforms the final block of data using the associated crypto transform's algorithm,
+/// key, IV, mode, and padding. Falls back to passthrough if the transform fails.
 ///
 /// # Handled Overloads
 ///
@@ -918,34 +1136,73 @@ fn transform_final_block_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread
         return PreHookResult::Bypass(Some(EmValue::Null));
     }
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
-        if let Some(bytes) = thread.heap().get_byte_array(*handle) {
-            let source = CaptureSource::new(
-                thread.current_method().unwrap_or(Token::new(0)),
-                thread.id(),
-                thread.current_offset().unwrap_or(0),
-                0,
-            );
-            thread.capture().capture_buffer(
-                bytes.clone(),
-                source,
-                BufferSource::CryptoTransform {
-                    algorithm: "Unknown".to_string(),
-                },
-                "crypto_input",
-            );
+    let EmValue::ObjectRef(input_handle) = &ctx.args[0] else {
+        return PreHookResult::Bypass(Some(EmValue::Null));
+    };
 
-            match thread.heap().alloc_byte_array(&bytes) {
-                Ok(result) => return PreHookResult::Bypass(Some(EmValue::ObjectRef(result))),
-                Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
+    let Some(input_bytes) = thread.heap().get_byte_array(*input_handle) else {
+        return PreHookResult::Bypass(Some(EmValue::Null));
+    };
+
+    // Apply offset/count if provided
+    #[allow(clippy::cast_sign_loss)]
+    let data = match (ctx.args.get(1), ctx.args.get(2)) {
+        (Some(EmValue::I32(offset)), Some(EmValue::I32(count))) => {
+            let offset = *offset as usize;
+            let count = *count as usize;
+            if offset + count <= input_bytes.len() {
+                input_bytes[offset..offset + count].to_vec()
+            } else {
+                input_bytes.clone()
             }
         }
-    }
+        _ => input_bytes.clone(),
+    };
 
-    PreHookResult::Bypass(Some(EmValue::Symbolic(SymbolicValue::new(
-        CilFlavor::Object,
-        TaintSource::Unknown,
-    ))))
+    // Try to get transform info from `this` (the ICryptoTransform object)
+    let result_bytes = if let Some(EmValue::ObjectRef(transform_ref)) = ctx.this {
+        if let Some((algorithm, key, iv, is_encryptor, mode, padding)) =
+            thread.heap().get_crypto_transform_info(*transform_ref)
+        {
+            let transform_result =
+                apply_crypto_transform(&algorithm, &key, &iv, is_encryptor, &data, mode, padding);
+
+            match transform_result {
+                Some(transformed) => {
+                    let label = if is_encryptor {
+                        "encrypted_block"
+                    } else {
+                        "decrypted_block"
+                    };
+                    let source = CaptureSource::new(
+                        thread.current_method().unwrap_or(Token::new(0)),
+                        thread.id(),
+                        thread.current_offset().unwrap_or(0),
+                        0,
+                    );
+                    thread.capture().capture_buffer(
+                        transformed.clone(),
+                        source,
+                        BufferSource::CryptoTransform {
+                            algorithm: algorithm.to_string(),
+                        },
+                        label,
+                    );
+                    transformed
+                }
+                None => data,
+            }
+        } else {
+            data
+        }
+    } else {
+        data
+    };
+
+    match thread.heap().alloc_byte_array(&result_bytes) {
+        Ok(result) => PreHookResult::Bypass(Some(EmValue::ObjectRef(result))),
+        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+    }
 }
 
 /// Hook for `System.Security.Cryptography.CryptoStream..ctor` constructor.
@@ -1043,11 +1300,18 @@ fn crypto_stream_read_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
             return PreHookResult::Bypass(Some(EmValue::I32(0)));
         };
 
-        let transformed_data = if let Some((algorithm, key, iv, is_encryptor)) =
+        let transformed_data = if let Some((algorithm, key, iv, is_encryptor, mode, padding)) =
             thread.heap().get_crypto_transform_info(transform_ref)
         {
-            let transform_result =
-                apply_crypto_transform(&algorithm, &key, &iv, is_encryptor, &stream_data);
+            let transform_result = apply_crypto_transform(
+                &algorithm,
+                &key,
+                &iv,
+                is_encryptor,
+                &stream_data,
+                mode,
+                padding,
+            );
 
             match transform_result {
                 Some(data) => {
@@ -1187,11 +1451,18 @@ fn crypto_stream_flush_final_block_pre(
         return PreHookResult::Bypass(None);
     }
 
-    let transformed_data = if let Some((algorithm, key, iv, is_encryptor)) =
+    let transformed_data = if let Some((algorithm, key, iv, is_encryptor, mode, padding)) =
         thread.heap().get_crypto_transform_info(transform_ref)
     {
-        let transform_result =
-            apply_crypto_transform(&algorithm, &key, &iv, is_encryptor, &write_buffer);
+        let transform_result = apply_crypto_transform(
+            &algorithm,
+            &key,
+            &iv,
+            is_encryptor,
+            &write_buffer,
+            mode,
+            padding,
+        );
 
         match transform_result {
             Some(data) => {
@@ -1620,6 +1891,309 @@ fn bitconverter_to_uint32_pre(
     PreHookResult::Bypass(Some(EmValue::I32(signed_value)))
 }
 
+/// Hook for `HashAlgorithm.TransformBlock(byte[], int, int, byte[], int) -> int`.
+///
+/// Feeds data into an incremental hash computation. Appends the specified slice
+/// from `inputBuffer` to the `CryptoAlgorithm`'s accumulated data buffer.
+///
+/// Returns `inputCount` (the number of bytes processed).
+fn hash_algorithm_transform_block_pre(
+    ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
+) -> PreHookResult {
+    let algo_ref = match ctx.this {
+        Some(EmValue::ObjectRef(r)) => *r,
+        _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    };
+
+    // args: inputBuffer(byte[]), inputOffset(int), inputCount(int), outputBuffer(byte[]), outputOffset(int)
+    let input_handle = match ctx.args.first() {
+        Some(EmValue::ObjectRef(h)) => *h,
+        _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    };
+
+    let Some(input_bytes) = thread.heap().get_byte_array(input_handle) else {
+        return PreHookResult::Bypass(Some(EmValue::I32(0)));
+    };
+
+    #[allow(clippy::cast_sign_loss)]
+    let offset = match ctx.args.get(1) {
+        Some(EmValue::I32(o)) => *o as usize,
+        _ => 0,
+    };
+
+    #[allow(clippy::cast_sign_loss)]
+    let count = match ctx.args.get(2) {
+        Some(EmValue::I32(c)) => *c as usize,
+        _ => input_bytes.len(),
+    };
+
+    let end = (offset + count).min(input_bytes.len());
+    let slice = if offset < input_bytes.len() {
+        &input_bytes[offset..end]
+    } else {
+        &[]
+    };
+
+    thread.heap().append_hash_data(algo_ref, slice);
+
+    // If outputBuffer is non-null, copy input to output (per .NET spec)
+    if let Some(EmValue::ObjectRef(output_handle)) = ctx.args.get(3) {
+        #[allow(clippy::cast_sign_loss)]
+        let output_offset = match ctx.args.get(4) {
+            Some(EmValue::I32(o)) => *o as usize,
+            _ => 0,
+        };
+        for (i, &byte) in slice.iter().enumerate() {
+            let _ = thread.heap_mut().set_array_element(
+                *output_handle,
+                output_offset + i,
+                EmValue::I32(i32::from(byte)),
+            );
+        }
+    }
+
+    #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
+    PreHookResult::Bypass(Some(EmValue::I32(count as i32)))
+}
+
+/// Hook for `HashAlgorithm.TransformFinalBlock(byte[], int, int) -> byte[]`.
+///
+/// Appends the final data slice, computes the hash, and stores it.
+/// Returns the input data slice (per .NET spec — `TransformFinalBlock` returns
+/// the input, NOT the hash).
+fn hash_algorithm_transform_final_block_pre(
+    ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
+) -> PreHookResult {
+    let algo_ref = match ctx.this {
+        Some(EmValue::ObjectRef(r)) => *r,
+        _ => return PreHookResult::Bypass(Some(EmValue::Null)),
+    };
+
+    // args: inputBuffer(byte[]), inputOffset(int), inputCount(int)
+    let input_handle = match ctx.args.first() {
+        Some(EmValue::ObjectRef(h)) => *h,
+        _ => {
+            // No input — just finalize with existing accumulated data
+            let _ = thread.heap().finalize_hash(algo_ref);
+            match thread.heap().alloc_byte_array(&[]) {
+                Ok(r) => return PreHookResult::Bypass(Some(EmValue::ObjectRef(r))),
+                Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
+            }
+        }
+    };
+
+    let Some(input_bytes) = thread.heap().get_byte_array(input_handle) else {
+        let _ = thread.heap().finalize_hash(algo_ref);
+        match thread.heap().alloc_byte_array(&[]) {
+            Ok(r) => return PreHookResult::Bypass(Some(EmValue::ObjectRef(r))),
+            Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
+        }
+    };
+
+    #[allow(clippy::cast_sign_loss)]
+    let offset = match ctx.args.get(1) {
+        Some(EmValue::I32(o)) => *o as usize,
+        _ => 0,
+    };
+
+    #[allow(clippy::cast_sign_loss)]
+    let count = match ctx.args.get(2) {
+        Some(EmValue::I32(c)) => *c as usize,
+        _ => input_bytes.len(),
+    };
+
+    let end = (offset + count).min(input_bytes.len());
+    let slice = if offset < input_bytes.len() {
+        input_bytes[offset..end].to_vec()
+    } else {
+        Vec::new()
+    };
+
+    // Append final bytes and compute hash
+    thread.heap().append_hash_data(algo_ref, &slice);
+    let _ = thread.heap().finalize_hash(algo_ref);
+
+    // Return the input slice (NOT the hash — per .NET spec)
+    match thread.heap().alloc_byte_array(&slice) {
+        Ok(r) => PreHookResult::Bypass(Some(EmValue::ObjectRef(r))),
+        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+    }
+}
+
+/// Hook for `HashAlgorithm.get_Hash -> byte[]`.
+///
+/// Returns the computed hash value after `TransformFinalBlock` has been called.
+fn hash_algorithm_get_hash_pre(
+    ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
+) -> PreHookResult {
+    let algo_ref = match ctx.this {
+        Some(EmValue::ObjectRef(r)) => *r,
+        _ => return PreHookResult::Bypass(Some(EmValue::Null)),
+    };
+
+    match thread.heap().get_hash_result(algo_ref) {
+        Some(hash) => match thread.heap().alloc_byte_array(&hash) {
+            Ok(r) => PreHookResult::Bypass(Some(EmValue::ObjectRef(r))),
+            Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+        },
+        None => PreHookResult::Bypass(Some(EmValue::Null)),
+    }
+}
+
+/// Hook for `RSA.FromXmlString(string)`.
+///
+/// Parses an RSA XML key string and stores the modulus + exponent on the heap object.
+/// Supports the standard `<RSAKeyValue><Modulus>...</Modulus><Exponent>...</Exponent></RSAKeyValue>` format.
+fn rsa_from_xml_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    let algo_ref = match ctx.this {
+        Some(EmValue::ObjectRef(r)) => *r,
+        _ => return PreHookResult::Bypass(None),
+    };
+
+    let xml_string = match ctx.args.first() {
+        Some(EmValue::ObjectRef(r)) => match thread.heap().get_string(*r) {
+            Ok(s) => s.to_string(),
+            Err(_) => return PreHookResult::Bypass(None),
+        },
+        _ => return PreHookResult::Bypass(None),
+    };
+
+    // Simple XML parsing for <Modulus> and <Exponent> base64 values
+    let modulus = extract_xml_element(&xml_string, "Modulus").and_then(|b64| base64_decode(&b64));
+    let exponent = extract_xml_element(&xml_string, "Exponent").and_then(|b64| base64_decode(&b64));
+
+    if let (Some(mod_bytes), Some(exp_bytes)) = (modulus, exponent) {
+        thread
+            .heap()
+            .set_rsa_public_key(algo_ref, mod_bytes, exp_bytes);
+    }
+
+    PreHookResult::Bypass(None)
+}
+
+/// Extracts the text content of an XML element by tag name.
+///
+/// Simple string-based extraction (no full XML parser needed).
+fn extract_xml_element(xml: &str, tag: &str) -> Option<String> {
+    let open = format!("<{tag}>");
+    let close = format!("</{tag}>");
+    let start = xml.find(&open)? + open.len();
+    let end = xml[start..].find(&close)? + start;
+    Some(xml[start..end].trim().to_string())
+}
+
+/// Hook for `RSACryptoServiceProvider.VerifyHash(byte[], string, byte[]) -> bool`.
+///
+/// Verifies an RSA PKCS#1 v1.5 signature using the imported public key.
+fn rsa_verify_hash_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    let algo_ref = match ctx.this {
+        Some(EmValue::ObjectRef(r)) => *r,
+        _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    };
+
+    // args: rgbHash(byte[]), str(string — OID or algorithm name), rgbSignature(byte[])
+    let hash_bytes = match ctx.args.first() {
+        Some(EmValue::ObjectRef(h)) => match thread.heap().get_byte_array(*h) {
+            Some(b) => b,
+            None => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+        },
+        _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    };
+
+    let oid_or_name = match ctx.args.get(1) {
+        Some(EmValue::ObjectRef(r)) => match thread.heap().get_string(*r) {
+            Ok(s) => s.to_string(),
+            Err(_) => "SHA256".to_string(),
+        },
+        _ => "SHA256".to_string(),
+    };
+
+    let signature_bytes = match ctx.args.get(2) {
+        Some(EmValue::ObjectRef(h)) => match thread.heap().get_byte_array(*h) {
+            Some(b) => b,
+            None => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+        },
+        _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    };
+
+    let (modulus, exponent) = match thread.heap().get_rsa_public_key(algo_ref) {
+        Some(k) => k,
+        None => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    };
+
+    let result = verify_rsa_pkcs1v15(
+        &modulus,
+        &exponent,
+        &hash_bytes,
+        &signature_bytes,
+        &oid_or_name,
+    );
+
+    PreHookResult::Bypass(Some(EmValue::I32(i32::from(result))))
+}
+
+/// Hook for `CryptoConfig.MapNameToOID(string) -> string`.
+///
+/// Maps algorithm names to their OID strings.
+fn crypto_config_map_name_to_oid_pre(
+    ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
+) -> PreHookResult {
+    let name = match ctx.args.first() {
+        Some(EmValue::ObjectRef(r)) => match thread.heap().get_string(*r) {
+            Ok(s) => s.to_string(),
+            Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
+        },
+        _ => return PreHookResult::Bypass(Some(EmValue::Null)),
+    };
+
+    let oid = match name.as_str() {
+        "SHA256"
+        | "System.Security.Cryptography.SHA256"
+        | "SHA256CryptoServiceProvider"
+        | "System.Security.Cryptography.SHA256CryptoServiceProvider"
+        | "SHA256Managed"
+        | "System.Security.Cryptography.SHA256Managed" => "2.16.840.1.101.3.4.2.1",
+        "SHA384"
+        | "System.Security.Cryptography.SHA384"
+        | "SHA384CryptoServiceProvider"
+        | "System.Security.Cryptography.SHA384CryptoServiceProvider"
+        | "SHA384Managed"
+        | "System.Security.Cryptography.SHA384Managed" => "2.16.840.1.101.3.4.2.2",
+        "SHA512"
+        | "System.Security.Cryptography.SHA512"
+        | "SHA512CryptoServiceProvider"
+        | "System.Security.Cryptography.SHA512CryptoServiceProvider"
+        | "SHA512Managed"
+        | "System.Security.Cryptography.SHA512Managed" => "2.16.840.1.101.3.4.2.3",
+        "SHA1"
+        | "System.Security.Cryptography.SHA1"
+        | "SHA1CryptoServiceProvider"
+        | "System.Security.Cryptography.SHA1CryptoServiceProvider"
+        | "SHA1Managed"
+        | "System.Security.Cryptography.SHA1Managed" => "1.3.14.3.2.26",
+        "MD5"
+        | "System.Security.Cryptography.MD5"
+        | "MD5CryptoServiceProvider"
+        | "System.Security.Cryptography.MD5CryptoServiceProvider" => "1.2.840.113549.2.5",
+        "RSA"
+        | "System.Security.Cryptography.RSA"
+        | "System.Security.Cryptography.RSACryptoServiceProvider" => "1.2.840.113549.1.1.1",
+        "RIPEMD160" | "System.Security.Cryptography.RIPEMD160" => "1.3.36.3.2.1",
+        "TripleDES" | "System.Security.Cryptography.TripleDES" => "1.2.840.113549.3.7",
+        "DES" | "System.Security.Cryptography.DES" => "1.3.14.3.2.7",
+        _ => return PreHookResult::Bypass(Some(EmValue::Null)),
+    };
+
+    match thread.heap_mut().alloc_string(oid) {
+        Ok(s_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(s_ref))),
+        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1630,8 +2204,8 @@ mod tests {
 
     #[test]
     fn test_register_hooks() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
+        let manager = HookManager::new();
+        register(&manager);
         // Should have registered many hooks
         assert!(manager.len() >= 15);
     }

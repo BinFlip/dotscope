@@ -76,7 +76,7 @@ use crate::{
 /// - `Assembly.GetExecutingAssembly()` / `GetCallingAssembly()` / `GetEntryAssembly()`
 /// - `Assembly.GetManifestResourceStream()` / `GetManifestResourceNames()`
 /// - `Delegate..ctor` / `MulticastDelegate..ctor` / `ResolveEventHandler..ctor`
-pub fn register(manager: &mut HookManager) {
+pub fn register(manager: &HookManager) {
     // AppDomain methods
     manager.register(
         Hook::new("System.AppDomain.get_CurrentDomain")
@@ -94,6 +94,12 @@ pub fn register(manager: &mut HookManager) {
         Hook::new("System.AppDomain.remove_AssemblyResolve")
             .match_name("System", "AppDomain", "remove_AssemblyResolve")
             .pre(appdomain_remove_assembly_resolve_pre),
+    );
+
+    manager.register(
+        Hook::new("System.AppDomain.add_ResourceResolve")
+            .match_name("System", "AppDomain", "add_ResourceResolve")
+            .pre(appdomain_add_resource_resolve_pre),
     );
 
     manager.register(
@@ -228,6 +234,16 @@ fn appdomain_add_assembly_resolve_pre(
 ///
 /// None. This hook is a no-op (event unsubscription is ignored during emulation).
 fn appdomain_remove_assembly_resolve_pre(
+    _ctx: &HookContext<'_>,
+    _thread: &mut EmulationThread,
+) -> PreHookResult {
+    PreHookResult::Bypass(None)
+}
+
+/// Hook for `System.AppDomain.add_ResourceResolve` event accessor.
+///
+/// No-op — event subscription is ignored during emulation.
+fn appdomain_add_resource_resolve_pre(
     _ctx: &HookContext<'_>,
     _thread: &mut EmulationThread,
 ) -> PreHookResult {
@@ -522,19 +538,44 @@ fn assembly_get_manifest_resource_names_pre(
 /// - `MulticastDelegate..ctor(Object, IntPtr) -> void`
 /// - `ResolveEventHandler..ctor(Object, IntPtr) -> void`
 ///
-/// # Parameters
-///
-/// - `target`: The object on which the delegate invokes the instance method.
-/// - `method`: A pointer to the method to be invoked.
-///
-/// # Returns
-///
-/// A symbolic delegate object reference.
-fn delegate_ctor_pre(_ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    match thread.heap_mut().alloc_object(Token::new(0x0100_0012)) {
-        Ok(delegate_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(delegate_ref))),
-        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+/// Extracts the target object and method pointer from the constructor arguments
+/// and creates a proper `HeapObject::Delegate` so that subsequent `Invoke` calls
+/// dispatch to the correct target method.
+fn delegate_ctor_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    // .ctor(object target, native int methodPtr) — args[0] = target, args[1] = method pointer
+    if ctx.args.len() == 2 {
+        let target = match &ctx.args[0] {
+            EmValue::ObjectRef(href) => Some(*href),
+            _ => None,
+        };
+
+        let method_token = match &ctx.args[1] {
+            EmValue::UnmanagedPtr(ptr) => Some(Token::new(*ptr as u32)),
+            EmValue::I32(v) => Some(Token::new(*v as u32)),
+            EmValue::I64(v) => Some(Token::new(*v as u32)),
+            EmValue::NativeInt(v) => Some(Token::new(*v as u32)),
+            _ => None,
+        };
+
+        if let Some(method) = method_token {
+            // The `this` reference is the already-allocated delegate object from handle_newobj.
+            // Replace it with a proper Delegate heap object so Invoke dispatch works.
+            if let Some(EmValue::ObjectRef(this_ref)) = ctx.this {
+                thread.heap().replace_object(
+                    *this_ref,
+                    crate::emulation::memory::HeapObject::Delegate {
+                        type_token: ctx.method_token,
+                        target,
+                        method_token: method,
+                    },
+                );
+            }
+            return PreHookResult::Bypass(None); // constructor returns void
+        }
     }
+
+    // Fallback: leave the object as-is (symbolic)
+    PreHookResult::Bypass(None)
 }
 
 #[cfg(test)]
@@ -547,9 +588,9 @@ mod tests {
 
     #[test]
     fn test_register_hooks() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
-        assert_eq!(manager.len(), 14);
+        let manager = HookManager::new();
+        register(&manager);
+        assert_eq!(manager.len(), 15);
     }
 
     #[test]

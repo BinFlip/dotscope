@@ -153,9 +153,9 @@ pub use engine::{
 
 // Re-export primary types from process module
 pub use process::{
-    CaptureConfig, EmulationConfig, EmulationLimits, EmulationProcess, LimitKind, MemoryConfig,
-    ProcessBuilder, ProcessSummary, StackTraceEntry, StubConfig, TracingConfig,
-    UnknownMethodBehavior,
+    CaptureConfig, EmulationConfig, EmulationLimits, EmulationProcess, EnvironmentConfig,
+    LimitKind, MemoryConfig, ProcessBuilder, ProcessSummary, StackTraceEntry, StubConfig,
+    TracingConfig, UnknownMethodBehavior,
 };
 
 // Re-export primary types from exception module

@@ -79,7 +79,7 @@ use crate::emulation::{
 /// - `Marshal.GetHINSTANCE`, `Marshal.Copy`, `Marshal.ReadByte/Int32`, `Marshal.WriteByte/Int32`
 /// - `IntPtr.op_Explicit`, `IntPtr.Add`, `IntPtr.ToInt32/64`
 /// - `UIntPtr.op_Explicit`
-pub fn register(manager: &mut HookManager) {
+pub fn register(manager: &HookManager) {
     // Marshal methods
     manager.register(
         Hook::new("System.Runtime.InteropServices.Marshal.GetHINSTANCE")
@@ -140,6 +140,24 @@ pub fn register(manager: &mut HookManager) {
         Hook::new("System.IntPtr.ToInt64")
             .match_name("System", "IntPtr", "ToInt64")
             .pre(intptr_to_int64_pre),
+    );
+
+    manager.register(
+        Hook::new("System.IntPtr.op_Equality")
+            .match_name("System", "IntPtr", "op_Equality")
+            .pre(intptr_op_equality_pre),
+    );
+
+    manager.register(
+        Hook::new("System.IntPtr.op_Inequality")
+            .match_name("System", "IntPtr", "op_Inequality")
+            .pre(intptr_op_inequality_pre),
+    );
+
+    manager.register(
+        Hook::new("System.IntPtr.get_Zero")
+            .match_name("System", "IntPtr", "get_Zero")
+            .pre(intptr_get_zero_pre),
     );
 
     // UIntPtr methods
@@ -530,6 +548,42 @@ fn uintptr_op_explicit_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread)
     PreHookResult::Bypass(Some(result))
 }
 
+/// Coerces an `EmValue` to an `i64` for pointer comparison operations.
+fn coerce_to_native(val: &EmValue) -> i64 {
+    match val {
+        EmValue::NativeInt(v) | EmValue::I64(v) => *v,
+        EmValue::NativeUInt(v) | EmValue::UnmanagedPtr(v) => *v as i64,
+        EmValue::I32(v) => i64::from(*v),
+        EmValue::Null => 0,
+        _ => 0,
+    }
+}
+
+/// Hook for `IntPtr.op_Equality(IntPtr, IntPtr)`.
+///
+/// Compares two `IntPtr` values for equality.
+fn intptr_op_equality_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    let lhs = ctx.args.first().map(coerce_to_native).unwrap_or(0);
+    let rhs = ctx.args.get(1).map(coerce_to_native).unwrap_or(0);
+    PreHookResult::Bypass(Some(EmValue::I32(i32::from(lhs == rhs))))
+}
+
+/// Hook for `IntPtr.op_Inequality(IntPtr, IntPtr)`.
+///
+/// Compares two `IntPtr` values for inequality.
+fn intptr_op_inequality_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    let lhs = ctx.args.first().map(coerce_to_native).unwrap_or(0);
+    let rhs = ctx.args.get(1).map(coerce_to_native).unwrap_or(0);
+    PreHookResult::Bypass(Some(EmValue::I32(i32::from(lhs != rhs))))
+}
+
+/// Hook for `IntPtr.get_Zero`.
+///
+/// Returns `IntPtr.Zero` (a null pointer).
+fn intptr_get_zero_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    PreHookResult::Bypass(Some(EmValue::NativeInt(0)))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -541,9 +595,9 @@ mod tests {
 
     #[test]
     fn test_register_hooks() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
-        assert_eq!(manager.len(), 11);
+        let manager = HookManager::new();
+        register(&manager);
+        assert_eq!(manager.len(), 14);
     }
 
     #[test]

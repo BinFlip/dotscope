@@ -6,7 +6,7 @@
 use std::sync::Arc;
 
 use crate::emulation::{
-    AddressSpace, CaptureContext, EmulationThread, SharedFakeObjects, ThreadId,
+    AddressSpace, CaptureContext, EmulationConfig, EmulationThread, SharedFakeObjects, ThreadId,
 };
 
 /// Creates a minimal `EmulationThread` for testing.
@@ -30,5 +30,13 @@ pub fn create_test_thread() -> EmulationThread {
     let address_space = Arc::new(AddressSpace::new());
     let capture = Arc::new(CaptureContext::new());
     let fake_objects = SharedFakeObjects::new(address_space.managed_heap());
-    EmulationThread::new(ThreadId::MAIN, address_space, capture, None, fake_objects)
+    let config = Arc::new(EmulationConfig::default());
+    EmulationThread::new(
+        ThreadId::MAIN,
+        address_space,
+        capture,
+        None,
+        fake_objects,
+        config,
+    )
 }

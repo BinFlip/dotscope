@@ -509,6 +509,28 @@ impl EmulationContext {
         None
     }
 
+    /// Gets the declaring type token and field type flavor for a field.
+    ///
+    /// Returns the owning type's token and the `CilFlavor` of the field's
+    /// declared type. Used by `handle_ldsfld` to return the correct
+    /// zero-initialized default value for fields on initialized types.
+    ///
+    /// # Returns
+    ///
+    /// `Some((type_token, cil_flavor))` if found, `None` otherwise.
+    #[must_use]
+    pub fn get_field_type_info(&self, field_token: Token) -> Option<(Token, CilFlavor)> {
+        for type_info in self.assembly.types().all_types() {
+            for (_, field_rc) in type_info.fields.iter() {
+                if field_rc.token == field_token {
+                    let flavor = CilFlavor::from(&field_rc.signature.base);
+                    return Some((type_info.token, flavor));
+                }
+            }
+        }
+        None
+    }
+
     /// Finds the static constructor (.cctor) for a type.
     ///
     /// The static constructor is a special method named ".cctor" that is

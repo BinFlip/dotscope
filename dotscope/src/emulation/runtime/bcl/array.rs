@@ -84,7 +84,7 @@ fn length_to_i32(len: usize) -> i32 {
 /// - Array methods: `GetValue`, `SetValue`, `GetLength`, `Clone`
 /// - Static methods: `Copy`, `Clear`, `Reverse`, `IndexOf`
 /// - Buffer methods: `BlockCopy`, `ByteLength`
-pub fn register(manager: &mut HookManager) {
+pub fn register(manager: &HookManager) {
     // Instance properties
     manager.register(
         Hook::new("System.Array.get_Length")
@@ -834,8 +834,8 @@ mod tests {
 
     #[test]
     fn test_register_hooks() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
+        let manager = HookManager::new();
+        register(&manager);
         assert_eq!(manager.len(), 13);
     }
 

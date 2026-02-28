@@ -77,7 +77,7 @@ mod unmanaged;
 
 pub use addressspace::{AddressSpace, SharedHeap};
 pub use arguments::ArgumentStorage;
-pub use heap::{EncodingType, HeapObject, ManagedHeap};
+pub use heap::{DictionaryKey, EncodingType, HeapObject, ManagedHeap};
 pub use locals::LocalVariables;
 pub use page::{Page, PAGE_SIZE};
 pub use region::{MemoryProtection, MemoryRegion, SectionInfo, ThreadId};

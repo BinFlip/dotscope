@@ -129,7 +129,7 @@ use crate::{
 ///
 /// All `GetString` methods automatically capture decoded strings through
 /// the emulation thread's capture context.
-pub fn register(manager: &mut HookManager) {
+pub fn register(manager: &HookManager) {
     // Encoding base methods
     manager.register(
         Hook::new("System.Text.Encoding.GetBytes")
@@ -895,8 +895,8 @@ mod tests {
 
     #[test]
     fn test_register_hooks() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
+        let manager = HookManager::new();
+        register(&manager);
         assert_eq!(manager.len(), 16);
     }
 

@@ -18,7 +18,7 @@ use crate::{
     assembly::{FlowType, Immediate, Instruction, InstructionCategory, Operand, StackBehavior},
     emulation::{
         engine::{interpreter::Interpreter, result::StepResult},
-        process::EmulationLimits,
+        process::{EmulationConfig, EmulationLimits},
         AddressSpace, CaptureContext, EmValue, EmulationThread, SharedFakeObjects, ThreadId,
     },
     metadata::{
@@ -45,8 +45,15 @@ fn create_test_thread_with_locals(local_types: Vec<CilFlavor>) -> EmulationThrea
     let address_space = create_test_address_space();
     let capture = Arc::new(CaptureContext::new());
     let fake_objects = SharedFakeObjects::new(address_space.managed_heap());
-    let mut thread =
-        EmulationThread::new(ThreadId::MAIN, address_space, capture, None, fake_objects);
+    let config = Arc::new(EmulationConfig::default());
+    let mut thread = EmulationThread::new(
+        ThreadId::MAIN,
+        address_space,
+        capture,
+        None,
+        fake_objects,
+        config,
+    );
     thread.start_method(Token::new(0x06000001), local_types, vec![], false);
     thread
 }
@@ -58,8 +65,15 @@ fn create_test_thread_with_args(
     let address_space = create_test_address_space();
     let capture = Arc::new(CaptureContext::new());
     let fake_objects = SharedFakeObjects::new(address_space.managed_heap());
-    let mut thread =
-        EmulationThread::new(ThreadId::MAIN, address_space, capture, None, fake_objects);
+    let config = Arc::new(EmulationConfig::default());
+    let mut thread = EmulationThread::new(
+        ThreadId::MAIN,
+        address_space,
+        capture,
+        None,
+        fake_objects,
+        config,
+    );
     thread.start_method(Token::new(0x06000001), local_types, args, false);
     thread
 }

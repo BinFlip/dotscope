@@ -49,8 +49,8 @@
 //! ```rust,ignore
 //! use dotscope::emulation::runtime::{HookManager, bcl};
 //!
-//! let mut manager = HookManager::new();
-//! bcl::register_hooks(&mut manager);
+//! let manager = HookManager::new();
+//! bcl::register_hooks(&manager);
 //!
 //! // The manager can then be used with an emulation controller
 //! ```
@@ -70,17 +70,25 @@
 
 mod appdomain;
 mod array;
+mod collections;
 mod convert;
 mod crypto;
+mod dictionary;
+mod enums;
+mod environment;
 mod gchandle;
 mod interop;
+mod list;
 mod math;
+mod nullable;
 mod reflection;
 mod runtime;
 mod statics;
 mod stream;
 mod string;
+mod stringbuilder;
 mod text;
+mod threading;
 
 pub use statics::get_bcl_static_field;
 
@@ -101,8 +109,8 @@ use crate::emulation::runtime::hook::HookManager;
 /// ```rust,ignore
 /// use dotscope::emulation::runtime::{HookManager, bcl};
 ///
-/// let mut manager = HookManager::new();
-/// bcl::register_hooks(&mut manager);
+/// let manager = HookManager::new();
+/// bcl::register_hooks(&manager);
 ///
 /// // Manager now contains hooks for:
 /// // - System.Array, System.Buffer
@@ -135,12 +143,12 @@ use crate::emulation::runtime::hook::HookManager;
 /// | Stream | `MemoryStream`, `BinaryReader` operations |
 ///
 /// [`HookManager`]: crate::emulation::runtime::HookManager
-pub fn register_hooks(manager: &mut HookManager) {
+pub fn register_hooks(manager: &HookManager) {
     register(manager);
 }
 
 /// Alias for [`register_hooks`] - registers all BCL method hooks.
-pub fn register(manager: &mut HookManager) {
+pub fn register(manager: &HookManager) {
     // Fully migrated modules (hook-based)
     math::register(manager);
     gchandle::register(manager);
@@ -154,4 +162,12 @@ pub fn register(manager: &mut HookManager) {
     string::register(manager);
     stream::register(manager);
     crypto::register(manager);
+    dictionary::register(manager);
+    list::register(manager);
+    collections::register(manager);
+    stringbuilder::register(manager);
+    enums::register(manager);
+    nullable::register(manager);
+    threading::register(manager);
+    environment::register(manager);
 }

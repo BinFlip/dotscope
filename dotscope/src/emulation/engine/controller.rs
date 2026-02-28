@@ -13,6 +13,20 @@
 //! - **Exception handling**: Manages try/catch/finally blocks and stack unwinding
 //! - **Memory management**: Coordinates heap, statics, and stack through [`AddressSpace`]
 //!
+//! # Hook Dispatch Performance
+//!
+//! The controller uses a multi-tier optimization strategy to minimize the cost
+//! of hook dispatch (which runs on every `call`/`callvirt` instruction):
+//!
+//! 1. **Token cache** ([`DashMap`](dashmap::DashMap)) — Lazily populated on first
+//!    call with each method token. Tokens that don't match any hook are cached as
+//!    `NoMatch`, eliminating all metadata lookups on subsequent calls (~95% fast path).
+//!    Tokens that do match cache their resolved name components.
+//! 2. **Name-based index** ([`HookManager`]) — Two-tier DashMap-backed indices for
+//!    O(1) namespace/type/method lookups with zero heap allocations.
+//! 3. **Lock-free dispatch** — The controller holds a direct `Arc<HookManager>`,
+//!    bypassing the `RwLock<RuntimeState>` for all hook operations.
+//!
 //! # Execution Model
 //!
 //! The controller uses a step-based execution loop:
@@ -28,12 +42,16 @@
 
 use std::sync::{Arc, RwLock};
 
+use dashmap::DashMap;
+use log::debug;
+
 use crate::{
     emulation::{
         capture::CaptureContext,
         engine::{
             context::EmulationContext,
             interpreter::Interpreter,
+            resolution::{CallResolution, NewObjResolution, MAX_REDIRECT_DEPTH},
             result::{EmulationOutcome, StepResult},
             trace::{TraceEvent, TraceWriter},
             EmulationError,
@@ -42,20 +60,69 @@ use crate::{
             ExceptionClause, ExceptionInfo, HandlerMatch, InstructionLocation, ThreadExceptionState,
         },
         fakeobjects::SharedFakeObjects,
-        memory::AddressSpace,
+        memory::{AddressSpace, HeapObject},
         process::{EmulationConfig, EmulationLimits, UnknownMethodBehavior},
-        runtime::{get_bcl_static_field, HookContext, HookOutcome, RuntimeState},
+        runtime::{get_bcl_static_field, HookContext, HookManager, HookOutcome, RuntimeState},
         thread::{EmulationThread, ThreadCallFrame},
         EmValue, PointerTarget, SymbolicValue, TaintSource, ThreadId,
     },
     metadata::{
+        method::Method,
         signatures::TypeSignature,
-        tables::{MemberRefSignature, StandAloneSignature, TableId},
+        tables::{MemberRef, MemberRefSignature, StandAloneSignature, TableId},
         token::Token,
-        typesystem::CilFlavor,
+        typesystem::{CilFlavor, CilType, CilTypeReference},
     },
     CilObject, Result,
 };
+
+/// Cached result of token-to-hook resolution.
+///
+/// Populated lazily on the first call with each method token. Subsequent calls
+/// with the same token skip all metadata resolution and name-based matching.
+///
+/// # Variants
+///
+/// - [`NoMatch`](Self::NoMatch) — No hook can match this token. The controller
+///   returns immediately without any metadata lookups or stack inspection. This
+///   is the fast path for the ~95% of method calls that don't hit any hook.
+///
+/// - [`Cached`](Self::Cached) — A hook might (or does) match. Stores pre-resolved
+///   name components and method metadata so that subsequent calls skip Phase 1
+///   (metadata resolution) entirely and jump straight to context building and
+///   hook execution.
+enum TokenCacheEntry {
+    /// No hook can match this token. Skip all name resolution and hook dispatch.
+    NoMatch,
+
+    /// Pre-resolved method identity and metadata for fast hook dispatch.
+    ///
+    /// On cache hit, the controller skips the full metadata resolution (Arc lookups,
+    /// `CilTypeReference` upgrades, signature parsing) and builds the `HookContext`
+    /// directly from these cached values.
+    Cached(ResolvedMethodInfo),
+}
+
+/// Pre-resolved method identity and metadata used for hook dispatch.
+///
+/// Groups the namespace, type name, method name, and calling convention
+/// metadata needed to build a [`HookContext`] without re-resolving
+/// metadata on every call.
+#[derive(Clone)]
+struct ResolvedMethodInfo {
+    /// Namespace of the declaring type (e.g., `"System"`).
+    namespace: Arc<str>,
+    /// Name of the declaring type (e.g., `"String"`).
+    type_name: Arc<str>,
+    /// Name of the method (e.g., `"Concat"`).
+    method_name: Arc<str>,
+    /// Whether this is an internal (MethodDef) method.
+    is_internal: bool,
+    /// Number of declared parameters (excluding `this`).
+    param_count: usize,
+    /// Whether the method has a `this` parameter.
+    has_this: bool,
+}
 
 /// High-level controller for CIL method emulation.
 ///
@@ -90,8 +157,24 @@ pub struct EmulationController {
     /// Shared address space for all memory operations.
     address_space: Arc<AddressSpace>,
 
-    /// Shared runtime state (for stubs).
+    /// Shared runtime state (for mutable state: app domain, unknown method behavior).
     runtime: Arc<RwLock<RuntimeState>>,
+
+    /// Direct reference to the hook manager for lock-free hook dispatch.
+    /// Extracted from RuntimeState during construction. Since hooks are only
+    /// registered during setup (before the controller is created), this
+    /// reference is effectively immutable.
+    hooks: Arc<HookManager>,
+
+    /// Token-to-hook resolution cache.
+    ///
+    /// Populated lazily on the first `try_hook_call` with each method token.
+    /// Maps tokens to pre-resolved metadata + match status, eliminating
+    /// repeated metadata lookups and name matching for hot call sites.
+    ///
+    /// For the ~95% of tokens that don't match any hook, the cache stores
+    /// [`TokenCacheEntry::NoMatch`] and subsequent calls return immediately.
+    token_cache: DashMap<Token, TokenCacheEntry>,
 
     /// Capture context for collecting results during emulation.
     capture: Arc<CaptureContext>,
@@ -130,9 +213,16 @@ impl EmulationController {
         fake_objects: SharedFakeObjects,
         trace_writer: Option<Arc<TraceWriter>>,
     ) -> Self {
+        // Extract a direct reference to the hook manager for lock-free dispatch.
+        // This is safe because hooks are only registered during setup, before
+        // the controller is created. The HookManager is internally thread-safe.
+        let hooks = runtime.read().unwrap_or_else(|e| e.into_inner()).hooks();
+
         EmulationController {
             address_space,
             runtime,
+            hooks,
+            token_cache: DashMap::new(),
             capture,
             config,
             assembly,
@@ -365,6 +455,7 @@ impl EmulationController {
             Arc::clone(&self.capture),
             self.assembly.clone(),
             self.fake_objects.clone(),
+            Arc::clone(&self.config),
         );
 
         // Combine args with their types
@@ -749,21 +840,272 @@ impl EmulationController {
                     args: _,
                     is_virtual,
                 } => {
-                    self.handle_call(interpreter, thread, context, method, is_virtual)?;
+                    let mut token = method;
+                    let mut virt = is_virtual;
+                    let mut pending_pre_push: Option<EmValue> = None;
+
+                    for _ in 0..MAX_REDIRECT_DEPTH {
+                        match self.resolve_call(context, token, thread, virt)? {
+                            CallResolution::HookedBypass { return_value } => {
+                                if let Some(v) = return_value {
+                                    thread.push(v)?;
+                                }
+                                interpreter.ip_mut().advance_current();
+                                break;
+                            }
+                            CallResolution::ReturnSynthetic { value } => {
+                                if let Some(v) = value {
+                                    thread.push(v)?;
+                                }
+                                interpreter.ip_mut().advance_current();
+                                break;
+                            }
+                            CallResolution::EnterMethod {
+                                token: t,
+                                arguments,
+                                expects_return,
+                            } => {
+                                if let Some(v) = pending_pre_push.take() {
+                                    thread.push(v)?;
+                                }
+                                // Trace call if enabled (before pushing frame changes call_depth)
+                                let caller = thread.current_frame().map(ThreadCallFrame::method);
+                                let caller_offset = Some(interpreter.ip().next_offset());
+                                let arg_count = arguments.len();
+
+                                self.push_method_frame(
+                                    interpreter,
+                                    thread,
+                                    context,
+                                    t,
+                                    arguments,
+                                    expects_return,
+                                )?;
+
+                                if self.trace_calls_enabled() {
+                                    self.trace(TraceEvent::MethodCall {
+                                        target: t,
+                                        is_virtual: virt,
+                                        arg_count,
+                                        call_depth: thread.call_depth(),
+                                        caller,
+                                        caller_offset,
+                                    });
+                                }
+                                break;
+                            }
+                            CallResolution::Redirect {
+                                target_token,
+                                arguments,
+                                is_virtual: rv,
+                                pre_push_value,
+                            } => {
+                                for arg in arguments {
+                                    thread.push(arg)?;
+                                }
+                                if let Some(v) = pre_push_value {
+                                    pending_pre_push = Some(v);
+                                }
+                                token = target_token;
+                                virt = rv;
+                            }
+                        }
+                    }
                 }
 
                 StepResult::CallIndirect {
                     signature,
                     function_pointer,
                 } => {
-                    self.handle_calli(interpreter, thread, context, signature, &function_pointer)?;
+                    // Inline preprocessing: get signature, pop args, extract token
+                    let standalone_sig = context.get_standalone_signature(signature).ok_or(
+                        EmulationError::InvalidMethodMetadata {
+                            token: signature,
+                            reason: "StandAloneSig not found for calli",
+                        },
+                    )?;
+
+                    let StandAloneSignature::Method(method_sig) = standalone_sig else {
+                        return Err(EmulationError::TypeMismatch {
+                            operation: "calli",
+                            expected: "method signature",
+                            found: "non-method signature",
+                        }
+                        .into());
+                    };
+
+                    let param_count = method_sig.param_count as usize;
+                    let has_this = method_sig.has_this;
+                    let total_args = if has_this {
+                        param_count + 1
+                    } else {
+                        param_count
+                    };
+
+                    let arg_values = thread.pop_args(total_args)?;
+
+                    let method_token = match function_pointer {
+                        EmValue::UnmanagedPtr(ptr) =>
+                        {
+                            #[allow(clippy::cast_possible_truncation)]
+                            Token::new(ptr as u32)
+                        }
+                        EmValue::NativeInt(val) =>
+                        {
+                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                            Token::new(val as u32)
+                        }
+                        _ => {
+                            return Err(EmulationError::TypeMismatch {
+                                operation: "calli",
+                                expected: "function pointer (UnmanagedPtr or NativeInt)",
+                                found: "invalid value type",
+                            }
+                            .into());
+                        }
+                    };
+
+                    // Not a MethodDef — return symbolic
+                    if method_token.table() != 0x06 {
+                        if !matches!(method_sig.return_type.base, TypeSignature::Void) {
+                            let return_flavor = CilFlavor::from(&method_sig.return_type.base);
+                            thread.push(EmValue::Symbolic(SymbolicValue::new(
+                                return_flavor,
+                                TaintSource::MethodReturn(method_token.value()),
+                            )))?;
+                        }
+                        interpreter.ip_mut().advance_current();
+                    } else {
+                        // Push args back and enter resolution loop
+                        for arg in arg_values {
+                            thread.push(arg)?;
+                        }
+
+                        let mut tok = method_token;
+                        let mut virt = false;
+                        let mut pending_pre_push: Option<EmValue> = None;
+
+                        for _ in 0..MAX_REDIRECT_DEPTH {
+                            match self.resolve_call(context, tok, thread, virt)? {
+                                CallResolution::HookedBypass { return_value } => {
+                                    if let Some(v) = return_value {
+                                        thread.push(v)?;
+                                    }
+                                    interpreter.ip_mut().advance_current();
+                                    break;
+                                }
+                                CallResolution::ReturnSynthetic { value } => {
+                                    if let Some(v) = value {
+                                        thread.push(v)?;
+                                    }
+                                    interpreter.ip_mut().advance_current();
+                                    break;
+                                }
+                                CallResolution::EnterMethod {
+                                    token: t,
+                                    arguments,
+                                    expects_return,
+                                } => {
+                                    if let Some(v) = pending_pre_push.take() {
+                                        thread.push(v)?;
+                                    }
+                                    let caller =
+                                        thread.current_frame().map(ThreadCallFrame::method);
+                                    let caller_offset = Some(interpreter.ip().next_offset());
+                                    let arg_count = arguments.len();
+
+                                    self.push_method_frame(
+                                        interpreter,
+                                        thread,
+                                        context,
+                                        t,
+                                        arguments,
+                                        expects_return,
+                                    )?;
+
+                                    if self.trace_calls_enabled() {
+                                        self.trace(TraceEvent::MethodCall {
+                                            target: t,
+                                            is_virtual: false,
+                                            arg_count,
+                                            call_depth: thread.call_depth(),
+                                            caller,
+                                            caller_offset,
+                                        });
+                                    }
+                                    break;
+                                }
+                                CallResolution::Redirect {
+                                    target_token,
+                                    arguments,
+                                    is_virtual: rv,
+                                    pre_push_value,
+                                } => {
+                                    for arg in arguments {
+                                        thread.push(arg)?;
+                                    }
+                                    if let Some(v) = pre_push_value {
+                                        pending_pre_push = Some(v);
+                                    }
+                                    tok = target_token;
+                                    virt = rv;
+                                }
+                            }
+                        }
+                    }
                 }
 
                 StepResult::NewObj {
                     constructor,
                     args: _,
                 } => {
-                    self.handle_newobj(interpreter, thread, context, constructor)?;
+                    let mut ctor = constructor;
+                    for _ in 0..MAX_REDIRECT_DEPTH {
+                        match self.resolve_newobj(context, ctor, thread)? {
+                            NewObjResolution::Redirect { underlying_token } => {
+                                ctor = underlying_token;
+                            }
+                            NewObjResolution::HookedBypass { obj_ref }
+                            | NewObjResolution::DefaultObject { obj_ref } => {
+                                thread.push(EmValue::ObjectRef(obj_ref))?;
+                                interpreter.ip_mut().advance_current();
+                                break;
+                            }
+                            NewObjResolution::EnterConstructor {
+                                constructor_token,
+                                obj_ref,
+                                arguments,
+                            } => {
+                                // Push obj_ref before saving stack — caller expects it after return
+                                thread.push(EmValue::ObjectRef(obj_ref))?;
+
+                                let caller = thread.current_frame().map(ThreadCallFrame::method);
+                                let caller_offset = Some(interpreter.ip().next_offset());
+                                let arg_count = arguments.len();
+
+                                self.push_method_frame(
+                                    interpreter,
+                                    thread,
+                                    context,
+                                    constructor_token,
+                                    arguments,
+                                    false, // constructors don't return values
+                                )?;
+
+                                if self.trace_calls_enabled() {
+                                    self.trace(TraceEvent::MethodCall {
+                                        target: constructor_token,
+                                        is_virtual: false,
+                                        arg_count,
+                                        call_depth: thread.call_depth(),
+                                        caller,
+                                        caller_offset,
+                                    });
+                                }
+                                break;
+                            }
+                        }
+                    }
                 }
 
                 StepResult::NewArray {
@@ -1414,100 +1756,97 @@ impl EmulationController {
         }
     }
 
-    /// Handles a method call instruction (`call` or `callvirt`).
+    /// Resolves a method call to a [`CallResolution`] without touching the
+    /// instruction pointer or call stack.
     ///
-    /// This is the central dispatch point for all method calls. It:
-    /// 1. Attempts to resolve the call to a registered stub
-    /// 2. If no stub matches, pushes a new call frame for the target method
-    /// 3. Handles virtual dispatch for `callvirt` instructions
-    /// 4. Handles reflection invoke requests from stubs like `MethodBase.Invoke`
-    ///
-    /// # Arguments
-    ///
-    /// * `interpreter` - The CIL interpreter (for IP management)
-    /// * `thread` - The emulation thread (for stack and frame management)
-    /// * `context` - The emulation context (for method metadata lookup)
-    /// * `method_token` - The target method's metadata token
-    /// * `is_virtual` - Whether this is a virtual call (`callvirt` vs `call`)
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - Method lookup fails
-    /// - Stack underflow when popping arguments
-    /// - Virtual dispatch resolution fails
-    fn handle_call(
+    /// This is the non-recursive replacement for [`handle_call`]. The main
+    /// execution loop calls this in a redirect loop and acts on the returned
+    /// variant.
+    fn resolve_call(
         &mut self,
-        interpreter: &mut Interpreter,
-        thread: &mut EmulationThread,
         context: &EmulationContext,
         method_token: Token,
+        thread: &mut EmulationThread,
         is_virtual: bool,
-    ) -> Result<()> {
+    ) -> Result<CallResolution> {
         // First, try to resolve via hooks (highest priority)
-        if let Some(result) = self.try_hook_call(context, method_token, thread)? {
-            // Check if the hook requested a reflection invoke
-            if let Some(reflection_request) = thread.take_pending_reflection_invoke() {
-                // Handle the reflection invoke by recursively calling the target method
+        match self.try_hook_call(context, method_token, thread)? {
+            HookOutcome::ReflectionInvoke {
+                request,
+                bypass_value,
+            } => {
+                let request = *request;
+                let target_token = request.method_token;
 
-                // If a value was returned as placeholder, pop it
-                if result.is_some() {
-                    let _ = thread.pop();
-                }
-
-                // Now handle the reflected method call
-                let target_token = reflection_request.method_token;
-
-                // Check if this is a valid MethodDef token
                 if target_token.is_table(TableId::MethodDef) {
-                    // Push the arguments for the reflected method
-                    if let Some(this_val) = reflection_request.this_ref {
+                    // For ConstructorInfo.Invoke: the hook's return value IS the result
+                    // (the newly allocated object). Push it before entering the constructor
+                    // so it's preserved in the caller's saved stack.
+                    let is_ctor_invoke = request.this_ref.is_some();
+                    let pre_push = if is_ctor_invoke {
+                        bypass_value.clone()
+                    } else {
+                        None
+                    };
+
+                    // Build arguments for the reflected method
+                    let mut args = Vec::new();
+                    if let Some(this_val) = request.this_ref {
                         if !matches!(this_val, EmValue::Null) {
-                            thread.push(this_val)?;
+                            args.push(this_val);
                         }
                     }
+                    args.extend(request.args);
 
-                    for arg in reflection_request.args {
-                        thread.push(arg)?;
-                    }
-
-                    return self.handle_call(interpreter, thread, context, target_token, false);
+                    return Ok(CallResolution::Redirect {
+                        target_token,
+                        arguments: args,
+                        is_virtual: false,
+                        pre_push_value: pre_push,
+                    });
                 }
 
-                interpreter.ip_mut().advance_current();
-                return Ok(());
+                // Target is not a MethodDef — can't invoke via reflection.
+                // Push the placeholder return value so the caller's stack is correct.
+                return Ok(CallResolution::HookedBypass {
+                    return_value: bypass_value,
+                });
             }
-
-            if let Some(value) = result {
-                thread.push(value)?;
+            HookOutcome::Handled(value) => {
+                if let Some(EmValue::Symbolic(ref sym)) = value {
+                    debug!(
+                        "Hook for 0x{:08X} returned Symbolic({:?}, source={:?})",
+                        method_token.value(),
+                        sym.cil_flavor,
+                        sym.source,
+                    );
+                }
+                return Ok(CallResolution::HookedBypass {
+                    return_value: value,
+                });
             }
-            interpreter.ip_mut().advance_current();
-            return Ok(());
+            HookOutcome::NoMatch => { /* continue to next resolution step */ }
         }
 
         // Then try native stubs for P/Invoke methods
         if let Some(result) = self.try_native_call(context, method_token, thread)? {
-            if let Some(value) = result {
-                thread.push(value)?;
-            }
-            interpreter.ip_mut().advance_current();
-            return Ok(());
+            return Ok(CallResolution::HookedBypass {
+                return_value: result,
+            });
         }
 
         // Handle MethodSpec tokens (generic method instantiations)
-        // Resolve to the underlying method token and recurse
         if method_token.is_table(TableId::MethodSpec) {
             if let Some(method_spec) = context.get_method_spec(method_token) {
                 if let Some(underlying_token) =
                     EmulationContext::resolve_method_spec_to_token(&method_spec)
                 {
-                    return self.handle_call(
-                        interpreter,
-                        thread,
-                        context,
-                        underlying_token,
+                    return Ok(CallResolution::Redirect {
+                        target_token: underlying_token,
+                        arguments: vec![],
                         is_virtual,
-                    );
+                        pre_push_value: None,
+                    });
                 }
             }
 
@@ -1519,8 +1858,6 @@ impl EmulationController {
 
         // Handle MemberRef tokens (external methods) without stubs
         if method_token.is_table(TableId::MemberRef) {
-            // MemberRef with no stub - return symbolic value
-            // Look up the MemberRef to get return type info and pop args
             if let Some(member_ref) = context.get_member_ref(method_token) {
                 if let MemberRefSignature::Method(method_sig) = &member_ref.signature {
                     let total_args = if method_sig.has_this {
@@ -1534,21 +1871,41 @@ impl EmulationController {
                         thread.pop()?;
                     }
 
+                    // Get declaring type info for better diagnostics
+                    let type_info = EmulationContext::get_member_ref_type_info(&member_ref);
+                    let type_desc = type_info
+                        .as_ref()
+                        .map(|(ns, tn)| format!("{ns}.{tn}"))
+                        .unwrap_or_else(|| "Unknown".to_string());
+
                     // Return symbolic value if the method has a return type
-                    if !matches!(method_sig.return_type.base, TypeSignature::Void) {
+                    let value = if !matches!(method_sig.return_type.base, TypeSignature::Void) {
                         let return_type = CilFlavor::from(&method_sig.return_type.base);
-                        thread.push(EmValue::Symbolic(SymbolicValue::new(
+                        debug!(
+                            "Unhooked MemberRef 0x{:08X} '{}.{}' → returning Symbolic({:?})",
+                            method_token.value(),
+                            type_desc,
+                            member_ref.name,
+                            return_type
+                        );
+                        Some(EmValue::Symbolic(SymbolicValue::new(
                             return_type,
                             TaintSource::MethodReturn(method_token.value()),
-                        )))?;
-                    }
+                        )))
+                    } else {
+                        debug!(
+                            "Unhooked MemberRef 0x{:08X} '{}.{}' → void (no return)",
+                            method_token.value(),
+                            type_desc,
+                            member_ref.name,
+                        );
+                        None
+                    };
 
-                    interpreter.ip_mut().advance_current();
-                    return Ok(());
+                    return Ok(CallResolution::ReturnSynthetic { value });
                 }
             }
 
-            // Couldn't resolve MemberRef - fail
             return Err(EmulationError::MethodNotFound {
                 token: method_token,
             }
@@ -1558,9 +1915,6 @@ impl EmulationController {
         // Get method signature for internal method
         let method = context.get_method(method_token)?;
 
-        // Get argument count from the signature blob (authoritative source).
-        // The Param table may have fewer entries than the actual parameter count
-        // (e.g., ConfuserEx native stubs have signatures with params but no Param rows).
         let param_count = method.signature.params.len();
         let is_instance = !context.is_static_method(method_token)?;
         let total_args = if is_instance {
@@ -1574,8 +1928,6 @@ impl EmulationController {
 
         // Resolve virtual dispatch if this is a callvirt instruction
         let resolved_method_token = if is_virtual && is_instance && !arg_values.is_empty() {
-            // For virtual calls, resolve the actual method to call based on the
-            // runtime type of the 'this' object (first argument for instance methods)
             Self::resolve_virtual_dispatch(context, thread, method_token, &arg_values[0])
         } else {
             method_token
@@ -1589,9 +1941,6 @@ impl EmulationController {
         };
 
         // Check if this is a native method (x86 code, not IL)
-        // Native methods with the Native+Unmanaged impl flags contain machine code
-        // that our IL emulator cannot execute. These need to be converted to CIL
-        // during the byte-level deobfuscation stage before emulation.
         if method.is_code_native() && method.is_code_unmanaged() {
             return Err(EmulationError::InternalError {
                 description: format!(
@@ -1604,8 +1953,116 @@ impl EmulationController {
             .into());
         }
 
+        // Delegate dispatch: if this is a `runtime managed` method named "Invoke"
+        // on a delegate object, redirect to the delegate's target method.
+        if method.is_code_runtime()
+            && method.name == "Invoke"
+            && is_instance
+            && !arg_values.is_empty()
+        {
+            if let EmValue::ObjectRef(href) = &arg_values[0] {
+                match thread.heap().get(*href) {
+                    Ok(HeapObject::Delegate {
+                        method_token: target_token,
+                        target: delegate_target,
+                        ..
+                    }) => {
+                        let mut dispatch_token = target_token;
+                        let should_dispatch = if target_token.is_table(TableId::MethodDef) {
+                            let has_il = context
+                                .get_method(target_token)
+                                .map(|m| m.has_body() && m.instructions().next().is_some())
+                                .unwrap_or(false);
+                            if has_il {
+                                true
+                            } else {
+                                // Target has no IL body — check if it's abstract/virtual
+                                // and try virtual dispatch to find a concrete override.
+                                let is_virtual = context
+                                    .get_method(target_token)
+                                    .map(|m| m.is_virtual())
+                                    .unwrap_or(false);
+
+                                if is_virtual {
+                                    // Find the target instance for virtual dispatch:
+                                    // 1. Bound instance in the delegate object
+                                    // 2. First invocation argument (open delegate)
+                                    let instance_ref = delegate_target.or_else(|| {
+                                        arg_values.get(1).and_then(|v| match v {
+                                            EmValue::ObjectRef(r) => Some(*r),
+                                            _ => None,
+                                        })
+                                    });
+
+                                    if let Some(inst_ref) = instance_ref {
+                                        let resolved = Self::resolve_virtual_dispatch(
+                                            context,
+                                            thread,
+                                            target_token,
+                                            &EmValue::ObjectRef(inst_ref),
+                                        );
+                                        if resolved != target_token {
+                                            let resolved_has_il = context
+                                                .get_method(resolved)
+                                                .map(|m| {
+                                                    m.has_body()
+                                                        && m.instructions().next().is_some()
+                                                })
+                                                .unwrap_or(false);
+                                            if resolved_has_il {
+                                                dispatch_token = resolved;
+                                                true
+                                            } else {
+                                                false
+                                            }
+                                        } else {
+                                            false
+                                        }
+                                    } else {
+                                        false
+                                    }
+                                } else {
+                                    false
+                                }
+                            }
+                        } else {
+                            target_token.is_table(TableId::MemberRef)
+                        };
+
+                        if should_dispatch {
+                            // Skip arg_values[0] (the delegate 'this') — pass the rest
+                            let delegate_args: Vec<EmValue> = arg_values[1..].to_vec();
+                            return Ok(CallResolution::Redirect {
+                                target_token: dispatch_token,
+                                arguments: delegate_args,
+                                is_virtual: false,
+                                pre_push_value: None,
+                            });
+                        }
+                    }
+                    Ok(other) => {
+                        debug!(
+                            "Delegate Invoke on {:?}: this is {:?}, not a Delegate — dispatch skipped",
+                            resolved_method_token,
+                            std::mem::discriminant(&other),
+                        );
+                    }
+                    Err(_) => {
+                        debug!(
+                            "Delegate Invoke on {:?}: heap lookup failed for {:?}",
+                            resolved_method_token, href,
+                        );
+                    }
+                }
+            } else {
+                debug!(
+                    "Delegate Invoke on {:?}: this is {:?}, not an ObjectRef",
+                    resolved_method_token, arg_values[0],
+                );
+            }
+        }
+
         // Check if we should emulate or return symbolic
-        // Also verify method has actual instructions (not just a body with encrypted/empty code)
         let has_instructions = method.instructions().next().is_some();
         let default_behavior = self
             .runtime
@@ -1616,235 +2073,386 @@ impl EmulationController {
             .unknown_method_behavior();
         match default_behavior {
             UnknownMethodBehavior::Emulate => {
-                // Check if method has a body with actual instructions
                 if method.has_body() && has_instructions {
-                    // Get return info from current frame
-                    let return_method = thread.current_frame().map(ThreadCallFrame::method);
-                    let return_offset = interpreter.ip().next_offset();
-
-                    // Save caller's evaluation stack before entering new method
-                    let caller_stack = thread.take_stack();
-
-                    // Get local types for the callee
-                    let local_cil_flavors = context.get_local_types(resolved_method_token)?;
-
-                    // Get argument types
-                    let callee_is_instance = !context.is_static_method(resolved_method_token)?;
-                    let param_types = context.get_parameter_types(resolved_method_token)?;
-                    let arg_types: Vec<CilFlavor> = if callee_is_instance {
-                        let mut types = vec![CilFlavor::Object];
-                        types.extend(param_types);
-                        types
-                    } else {
-                        param_types
-                    };
-
-                    // Combine args with types
-                    let args_with_types: Vec<(EmValue, CilFlavor)> =
-                        arg_values.into_iter().zip(arg_types).collect();
-
-                    // Determine if the method returns a value
                     let expects_return = context.method_returns_value(resolved_method_token)?;
-
-                    // Create new call frame
-                    let mut frame = ThreadCallFrame::new(
-                        resolved_method_token,
-                        return_method,
-                        return_offset,
-                        local_cil_flavors,
-                        args_with_types,
+                    return Ok(CallResolution::EnterMethod {
+                        token: resolved_method_token,
+                        arguments: arg_values,
                         expects_return,
-                    );
-                    frame.save_caller_stack(caller_stack);
-
-                    // Push the frame to the thread's call stack
-                    thread.push_frame(frame);
-
-                    // Trace call if enabled
-                    if self.trace_calls_enabled() {
-                        self.trace(TraceEvent::MethodCall {
-                            target: resolved_method_token,
-                            is_virtual,
-                            arg_count: total_args,
-                            call_depth: thread.call_depth(),
-                            caller: return_method,
-                            caller_offset: Some(return_offset),
-                        });
-                    }
-
-                    // Update interpreter to new method
-                    interpreter.set_method(resolved_method_token);
-                    interpreter.set_offset(0);
-                } else {
-                    // No body - likely a P/Invoke, return symbolic with proper return type
-                    let return_flavor = context
-                        .get_return_type(resolved_method_token)?
-                        .unwrap_or(CilFlavor::Object);
-                    let symbolic = EmValue::Symbolic(SymbolicValue::new(
-                        return_flavor,
-                        TaintSource::MethodReturn(resolved_method_token.value()),
-                    ));
-                    thread.push(symbolic)?;
-                    interpreter.ip_mut().advance_current();
+                    });
                 }
-            }
-
-            UnknownMethodBehavior::Symbolic => {
-                // Return a symbolic value that can be tracked through data flow
+                // No body - likely a P/Invoke, return symbolic
                 let return_flavor = context
                     .get_return_type(resolved_method_token)?
                     .unwrap_or(CilFlavor::Object);
-                let symbolic = EmValue::Symbolic(SymbolicValue::new(
-                    return_flavor,
-                    TaintSource::MethodReturn(resolved_method_token.value()),
-                ));
-                thread.push(symbolic)?;
-                interpreter.ip_mut().advance_current();
+                Ok(CallResolution::ReturnSynthetic {
+                    value: Some(EmValue::Symbolic(SymbolicValue::new(
+                        return_flavor,
+                        TaintSource::MethodReturn(resolved_method_token.value()),
+                    ))),
+                })
             }
 
-            UnknownMethodBehavior::Fail => {
-                return Err(EmulationError::UnsupportedMethod {
-                    token: resolved_method_token,
-                    reason: "No hook registered and Fail behavior configured",
-                }
-                .into());
+            UnknownMethodBehavior::Symbolic => {
+                let return_flavor = context
+                    .get_return_type(resolved_method_token)?
+                    .unwrap_or(CilFlavor::Object);
+                Ok(CallResolution::ReturnSynthetic {
+                    value: Some(EmValue::Symbolic(SymbolicValue::new(
+                        return_flavor,
+                        TaintSource::MethodReturn(resolved_method_token.value()),
+                    ))),
+                })
             }
+
+            UnknownMethodBehavior::Fail => Err(EmulationError::UnsupportedMethod {
+                token: resolved_method_token,
+                reason: "No hook registered and Fail behavior configured",
+            }
+            .into()),
 
             UnknownMethodBehavior::Default => {
-                // Return a default value based on the return type
                 let return_flavor = context.get_return_type(resolved_method_token)?;
-                if let Some(flavor) = return_flavor {
-                    let default_value = match flavor {
-                        CilFlavor::Void => None,
-                        CilFlavor::Boolean
-                        | CilFlavor::I1
-                        | CilFlavor::U1
-                        | CilFlavor::I2
-                        | CilFlavor::U2
-                        | CilFlavor::I4
-                        | CilFlavor::U4
-                        | CilFlavor::Char => Some(EmValue::I32(0)),
-                        CilFlavor::I8 | CilFlavor::U8 => Some(EmValue::I64(0)),
-                        CilFlavor::R4 => Some(EmValue::F32(0.0)),
-                        CilFlavor::R8 => Some(EmValue::F64(0.0)),
-                        CilFlavor::I | CilFlavor::U => Some(EmValue::NativeInt(0)),
-                        _ => Some(EmValue::Null), // Reference types return null
-                    };
-                    if let Some(value) = default_value {
-                        thread.push(value)?;
-                    }
-                }
-                interpreter.ip_mut().advance_current();
+                let value = return_flavor.and_then(|flavor| match flavor {
+                    CilFlavor::Void => None,
+                    CilFlavor::Boolean
+                    | CilFlavor::I1
+                    | CilFlavor::U1
+                    | CilFlavor::I2
+                    | CilFlavor::U2
+                    | CilFlavor::I4
+                    | CilFlavor::U4
+                    | CilFlavor::Char => Some(EmValue::I32(0)),
+                    CilFlavor::I8 | CilFlavor::U8 => Some(EmValue::I64(0)),
+                    CilFlavor::R4 => Some(EmValue::F32(0.0)),
+                    CilFlavor::R8 => Some(EmValue::F64(0.0)),
+                    CilFlavor::I | CilFlavor::U => Some(EmValue::NativeInt(0)),
+                    _ => Some(EmValue::Null),
+                });
+                Ok(CallResolution::ReturnSynthetic { value })
             }
 
-            UnknownMethodBehavior::Skip => {
-                // Skip the call entirely - don't push any value
-                // Warning: This may cause stack imbalance if return value is expected
-                interpreter.ip_mut().advance_current();
-            }
+            UnknownMethodBehavior::Skip => Ok(CallResolution::ReturnSynthetic { value: None }),
         }
+    }
+
+    /// Pushes a new call frame for a resolved method.
+    ///
+    /// Shared helper used by both `Call` and `NewObj` paths in the main loop.
+    /// Saves the caller's stack, creates the frame, and updates the interpreter.
+    fn push_method_frame(
+        &self,
+        interpreter: &mut Interpreter,
+        thread: &mut EmulationThread,
+        context: &EmulationContext,
+        token: Token,
+        arguments: Vec<EmValue>,
+        expects_return: bool,
+    ) -> Result<()> {
+        // Get return info from current frame
+        let return_method = thread.current_frame().map(ThreadCallFrame::method);
+        let return_offset = interpreter.ip().next_offset();
+
+        // Save caller's evaluation stack before entering new method
+        let caller_stack = thread.take_stack();
+
+        // Get local types for the callee
+        let local_cil_flavors = context.get_local_types(token)?;
+
+        // Get argument types
+        let callee_is_instance = !context.is_static_method(token)?;
+        let param_types = context.get_parameter_types(token)?;
+        let arg_types: Vec<CilFlavor> = if callee_is_instance {
+            let mut types = vec![CilFlavor::Object];
+            types.extend(param_types);
+            types
+        } else {
+            param_types
+        };
+
+        // Combine args with types
+        let args_with_types: Vec<(EmValue, CilFlavor)> =
+            arguments.into_iter().zip(arg_types).collect();
+
+        // Create new call frame
+        let mut frame = ThreadCallFrame::new(
+            token,
+            return_method,
+            return_offset,
+            local_cil_flavors,
+            args_with_types,
+            expects_return,
+        );
+        frame.save_caller_stack(caller_stack);
+
+        // Push the frame to the thread's call stack
+        thread.push_frame(frame);
+
+        // Update interpreter to new method
+        interpreter.set_method(token);
+        interpreter.set_offset(0);
 
         Ok(())
     }
 
-    /// Handles the `calli` instruction - indirect call through a function pointer.
-    ///
-    /// The `calli` instruction calls a method through a function pointer that was
-    /// previously loaded onto the stack (typically via `ldftn` or `ldvirtftn`).
-    /// The call site signature is specified as a StandAloneSig token.
-    ///
-    /// # Arguments
-    ///
-    /// * `interpreter` - The interpreter for instruction pointer management
-    /// * `thread` - The emulation thread for stack operations
-    /// * `context` - The emulation context for metadata lookup
-    /// * `sig_token` - StandAloneSig token containing the call site signature
-    /// * `function_pointer` - The function pointer value (contains method token)
-    fn handle_calli(
+    /// Resolves a `newobj` instruction to a [`NewObjResolution`] without touching
+    /// the instruction pointer or call stack.
+    fn resolve_newobj(
         &mut self,
-        interpreter: &mut Interpreter,
-        thread: &mut EmulationThread,
         context: &EmulationContext,
-        sig_token: Token,
-        function_pointer: &EmValue,
-    ) -> Result<()> {
-        // Get the call site signature from the StandAloneSig table
-        let standalone_sig = context.get_standalone_signature(sig_token).ok_or(
-            EmulationError::InvalidMethodMetadata {
-                token: sig_token,
-                reason: "StandAloneSig not found for calli",
-            },
-        )?;
+        constructor_token: Token,
+        thread: &mut EmulationThread,
+    ) -> Result<NewObjResolution> {
+        // Handle MethodSpec tokens (generic constructor instantiations)
+        if constructor_token.is_table(TableId::MethodSpec) {
+            if let Some(method_spec) = context.get_method_spec(constructor_token) {
+                if let Some(underlying_token) =
+                    EmulationContext::resolve_method_spec_to_token(&method_spec)
+                {
+                    return Ok(NewObjResolution::Redirect { underlying_token });
+                }
+            }
 
-        // Extract method signature - calli requires a method signature, not locals
-        let StandAloneSignature::Method(method_sig) = standalone_sig else {
-            return Err(EmulationError::TypeMismatch {
-                operation: "calli",
-                expected: "method signature",
-                found: "non-method signature",
+            return Err(EmulationError::MethodNotFound {
+                token: constructor_token,
+            }
+            .into());
+        }
+
+        // Handle MemberRef tokens (external constructors)
+        if constructor_token.is_table(TableId::MemberRef) {
+            return self.resolve_newobj_memberref(context, constructor_token, thread);
+        }
+
+        // Get constructor info for MethodDef tokens
+        let method = context.get_method(constructor_token)?;
+        let param_count = method.signature.params.len();
+
+        // Pop constructor arguments
+        let arg_values = thread.pop_args(param_count)?;
+
+        // Allocate the object on the heap
+        let declaring_type = context.get_declaring_type(constructor_token);
+        let type_token = declaring_type.as_ref().map_or_else(
+            || Token::new(constructor_token.value() & 0x00FF_FFFF),
+            |t| t.token,
+        );
+
+        // Get field types for proper initialization
+        let field_types: Vec<(Token, CilFlavor)> = declaring_type
+            .as_ref()
+            .map(|t| {
+                t.fields
+                    .iter()
+                    .filter(|(_, f)| !f.flags.is_static())
+                    .map(|(_, f)| (f.token, CilFlavor::from(&f.signature.base)))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let obj_ref = thread
+            .heap_mut()
+            .alloc_object_with_fields(type_token, &field_types)?;
+
+        // Try to find a constructor hook using the hook system
+        let mut hook_handled = false;
+        if let Some(ref decl_type) = declaring_type {
+            let this_value = EmValue::ObjectRef(obj_ref);
+            let hook_context = HookContext::new(
+                constructor_token,
+                &decl_type.namespace,
+                &decl_type.name,
+                ".ctor",
+                self.config.pointer_size,
+            )
+            .with_this(Some(&this_value))
+            .with_args(&arg_values)
+            .with_internal(constructor_token.is_table(TableId::MethodDef));
+
+            match self.hooks.execute(&hook_context, thread, |_| None)? {
+                HookOutcome::NoMatch => {}
+                HookOutcome::Handled(_) | HookOutcome::ReflectionInvoke { .. } => {
+                    hook_handled = true;
+                }
+            }
+        }
+
+        // Check that the method has a body AND has decoded instructions
+        let has_instructions = method.instructions().next().is_some();
+        if !hook_handled && method.has_body() && has_instructions {
+            let mut full_args = vec![EmValue::ObjectRef(obj_ref)];
+            full_args.extend(arg_values);
+
+            return Ok(NewObjResolution::EnterConstructor {
+                constructor_token,
+                obj_ref,
+                arguments: full_args,
+            });
+        }
+
+        // Delegate constructor detection
+        if !hook_handled && method.is_code_runtime() && arg_values.len() == 2 {
+            if let Some(ref decl_type) = declaring_type {
+                if Self::is_delegate_type(decl_type) {
+                    let target = match &arg_values[0] {
+                        EmValue::ObjectRef(href) => Some(*href),
+                        EmValue::Null => None,
+                        _ => None,
+                    };
+
+                    let method_token_value = match &arg_values[1] {
+                        EmValue::UnmanagedPtr(ptr) => Some(Token::new(*ptr as u32)),
+                        EmValue::I32(v) => Some(Token::new(*v as u32)),
+                        EmValue::I64(v) => Some(Token::new(*v as u32)),
+                        EmValue::NativeInt(v) => Some(Token::new(*v as u32)),
+                        _ => None,
+                    };
+
+                    if let Some(delegate_method) = method_token_value {
+                        debug!(
+                            "Delegate .ctor: upgrading 0x{:08X} to HeapObject::Delegate \
+                             (type=0x{:08X}, target={:?}, method=0x{:08X})",
+                            obj_ref.id(),
+                            type_token.value(),
+                            target,
+                            delegate_method.value(),
+                        );
+
+                        thread.heap().replace_object(
+                            obj_ref,
+                            HeapObject::Delegate {
+                                type_token,
+                                target,
+                                method_token: delegate_method,
+                            },
+                        );
+                    }
+                }
+            }
+        }
+
+        if hook_handled {
+            Ok(NewObjResolution::HookedBypass { obj_ref })
+        } else {
+            Ok(NewObjResolution::DefaultObject { obj_ref })
+        }
+    }
+
+    /// Resolves a `newobj` instruction for MemberRef tokens (external constructors).
+    fn resolve_newobj_memberref(
+        &mut self,
+        context: &EmulationContext,
+        constructor_token: Token,
+        thread: &mut EmulationThread,
+    ) -> Result<NewObjResolution> {
+        let member_ref =
+            context
+                .get_member_ref(constructor_token)
+                .ok_or(EmulationError::MethodNotFound {
+                    token: constructor_token,
+                })?;
+
+        let param_count = if let MemberRefSignature::Method(method_sig) = &member_ref.signature {
+            method_sig.param_count as usize
+        } else {
+            return Err(EmulationError::InvalidOperand {
+                instruction: "newobj",
+                expected: "method signature in MemberRef",
             }
             .into());
         };
 
-        // Calculate argument count from signature
-        let param_count = method_sig.param_count as usize;
-        let has_this = method_sig.has_this;
-        let total_args = if has_this {
-            param_count + 1
+        let args = thread.pop_args(param_count)?;
+
+        let (namespace, type_name_only) = EmulationContext::get_member_ref_type_info(&member_ref)
+            .unwrap_or_else(|| (String::new(), String::from("Unknown")));
+
+        let type_token = EmulationContext::get_member_ref_type_token(&member_ref)
+            .unwrap_or_else(|| Token::new(constructor_token.value() & 0x00FF_FFFF));
+
+        // Get field types for proper initialization if the type is available
+        let field_types: Vec<(Token, CilFlavor)> = context
+            .get_type(type_token)
+            .map(|t| {
+                t.fields
+                    .iter()
+                    .filter(|(_, f)| !f.flags.is_static())
+                    .map(|(_, f)| (f.token, CilFlavor::from(&f.signature.base)))
+                    .collect()
+            })
+            .unwrap_or_default();
+
+        let obj_ref = if type_name_only == "DynamicMethod" && namespace == "System.Reflection.Emit"
+        {
+            thread.heap_mut().alloc_dynamic_method()?
         } else {
-            param_count
+            thread
+                .heap_mut()
+                .alloc_object_with_fields(type_token, &field_types)?
         };
 
-        // Pop arguments from stack (in reverse order - first pushed is last popped)
-        let arg_values = thread.pop_args(total_args)?;
+        // Try to find a constructor hook
+        let this_value = EmValue::ObjectRef(obj_ref);
+        let hook_context = HookContext::new(
+            constructor_token,
+            &namespace,
+            &type_name_only,
+            ".ctor",
+            self.config.pointer_size,
+        )
+        .with_this(Some(&this_value))
+        .with_args(&args)
+        .with_internal(false);
 
-        // Extract the method token from the function pointer
-        // Function pointers are stored as UnmanagedPtr containing the method token value
-        let method_token = match *function_pointer {
-            EmValue::UnmanagedPtr(ptr) =>
-            {
-                #[allow(clippy::cast_possible_truncation)]
-                Token::new(ptr as u32)
+        match self.hooks.execute(&hook_context, thread, |_| None)? {
+            HookOutcome::NoMatch => {}
+            HookOutcome::Handled(_) | HookOutcome::ReflectionInvoke { .. } => {
+                return Ok(NewObjResolution::HookedBypass { obj_ref });
             }
-            EmValue::NativeInt(val) =>
-            {
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                Token::new(val as u32)
-            }
-            _ => {
-                return Err(EmulationError::TypeMismatch {
-                    operation: "calli",
-                    expected: "function pointer (UnmanagedPtr or NativeInt)",
-                    found: "invalid value type",
+        }
+
+        // Delegate constructor detection for MemberRef path
+        if args.len() == 2 {
+            if let Some(cil_type) = context.get_type(type_token) {
+                if Self::is_delegate_type(&cil_type) {
+                    let target = match &args[0] {
+                        EmValue::ObjectRef(href) => Some(*href),
+                        EmValue::Null => None,
+                        _ => None,
+                    };
+
+                    let method_token_value = match &args[1] {
+                        EmValue::UnmanagedPtr(ptr) => Some(Token::new(*ptr as u32)),
+                        EmValue::I32(v) => Some(Token::new(*v as u32)),
+                        EmValue::I64(v) => Some(Token::new(*v as u32)),
+                        EmValue::NativeInt(v) => Some(Token::new(*v as u32)),
+                        _ => None,
+                    };
+
+                    if let Some(delegate_method) = method_token_value {
+                        debug!(
+                            "Delegate .ctor (MemberRef): upgrading 0x{:08X} to HeapObject::Delegate \
+                             (type=0x{:08X}, target={:?}, method=0x{:08X})",
+                            obj_ref.id(),
+                            type_token.value(),
+                            target,
+                            delegate_method.value(),
+                        );
+
+                        thread.heap().replace_object(
+                            obj_ref,
+                            HeapObject::Delegate {
+                                type_token,
+                                target,
+                                method_token: delegate_method,
+                            },
+                        );
+                    }
                 }
-                .into())
             }
-        };
-
-        // Check if the resolved token points to a valid method
-        // Table 0x06 = MethodDef
-        if method_token.table() != 0x06 {
-            // Not a MethodDef - might be an unresolved or invalid pointer
-            // Return symbolic result based on the signature return type
-            if !matches!(method_sig.return_type.base, TypeSignature::Void) {
-                let return_flavor = CilFlavor::from(&method_sig.return_type.base);
-                thread.push(EmValue::Symbolic(SymbolicValue::new(
-                    return_flavor,
-                    TaintSource::MethodReturn(method_token.value()),
-                )))?;
-            }
-            interpreter.ip_mut().advance_current();
-            return Ok(());
         }
 
-        // Delegate to handle_call for the actual method invocation
-        // First push args back onto stack (handle_call will pop them)
-        for arg in arg_values {
-            thread.push(arg)?;
-        }
-
-        // Now call the method (not virtual since we have the exact method token)
-        self.handle_call(interpreter, thread, context, method_token, false)
+        Ok(NewObjResolution::DefaultObject { obj_ref })
     }
 
     /// Resolves virtual dispatch to find the actual method to call.
@@ -1953,14 +2561,8 @@ impl EmulationController {
                 HookContext::native(method_token, dll, &function_name, self.config.pointer_size)
                     .with_args(&args);
 
-            let guard = self
-                .runtime
-                .read()
-                .map_err(|_| EmulationError::LockPoisoned {
-                    description: "runtime lock poisoned",
-                })?;
-            // P/Invoke calls are always bypassed - no "original" to execute
-            match guard.hooks().execute(&hook_context, thread, |_| None)? {
+            // P/Invoke calls are always bypassed - no "original" to execute (lock-free)
+            match self.hooks.execute(&hook_context, thread, |_| None)? {
                 HookOutcome::NoMatch => {
                     // No hook found - push args back and return None
                     // (caller will decide how to handle unhandled P/Invoke)
@@ -1969,7 +2571,11 @@ impl EmulationController {
                     }
                     return Ok(None);
                 }
-                HookOutcome::Handled(result) => {
+                HookOutcome::Handled(result)
+                | HookOutcome::ReflectionInvoke {
+                    bypass_value: result,
+                    ..
+                } => {
                     return Ok(Some(result));
                 }
             }
@@ -1992,72 +2598,161 @@ impl EmulationController {
     ///
     /// # Returns
     ///
-    /// - `Ok(Some(Some(value)))` - Hook matched and returned a value (bypass)
-    /// - `Ok(Some(None))` - Hook matched and returned void (bypass)
-    /// - `Ok(None)` - No matching hook, or hook returned Continue
+    /// - `Ok(HookOutcome::Handled(value))` - Hook matched and returned a value (bypass)
+    /// - `Ok(HookOutcome::ReflectionInvoke { .. })` - Hook resolved a reflection redirect
+    /// - `Ok(HookOutcome::NoMatch)` - No matching hook, or hook returned Continue
     ///
     /// # Errors
     ///
     /// Returns an error if:
     /// - Stack underflow when popping arguments
     /// - Hook execution fails
-    #[allow(clippy::option_option)]
     fn try_hook_call(
         &self,
         context: &EmulationContext,
         method_token: Token,
         thread: &mut EmulationThread,
-    ) -> Result<Option<Option<EmValue>>> {
-        // Extract method info - we use owned Strings to handle both MemberRef and MethodDef
-        let (namespace, type_name, method_name, is_internal, param_count, has_this): (
-            String,
-            String,
-            String,
-            bool,
-            usize,
-            bool,
-        ) = if method_token.is_table(TableId::MemberRef) {
+    ) -> Result<HookOutcome> {
+        // Fast path: check token cache for previously resolved tokens.
+        // This eliminates all metadata lookups and name matching for tokens
+        // we've already seen.
+        if let Some(cached) = self.token_cache.get(&method_token) {
+            return match cached.value() {
+                TokenCacheEntry::NoMatch => Ok(HookOutcome::NoMatch),
+                TokenCacheEntry::Cached(info) => {
+                    // Drop the DashMap guard before doing any mutable thread work
+                    let info = info.clone();
+                    drop(cached);
+
+                    self.execute_hook_with_resolved(context, method_token, thread, &info)
+                }
+            };
+        }
+
+        // Cache miss: full metadata resolution path.
+        // Phase 1: Extract lightweight method identity.
+        // Keep Arc handles alive at function scope so we can borrow &str from them
+        // without any String cloning.
+        let member_ref_arc: Option<Arc<MemberRef>>;
+        let method_arc: Option<Arc<Method>>;
+        let declaring_type_arc: Option<Arc<CilType>>;
+        let is_internal: bool;
+        let param_count: usize;
+        let has_this: bool;
+
+        if method_token.is_table(TableId::MemberRef) {
             // MemberRef (external method)
-            let Some(member_ref) = context.get_member_ref(method_token) else {
-                return Ok(None);
+            let Some(mr) = context.get_member_ref(method_token) else {
+                self.token_cache
+                    .insert(method_token, TokenCacheEntry::NoMatch);
+                return Ok(HookOutcome::NoMatch);
             };
 
-            let (ns, tn) = EmulationContext::get_member_ref_type_info(&member_ref)
-                .unwrap_or_else(|| (String::new(), String::new()));
+            // Upgrade the declaring type weak reference to get namespace/type (O(1))
+            declaring_type_arc = match &mr.declaredby {
+                CilTypeReference::TypeRef(r)
+                | CilTypeReference::TypeDef(r)
+                | CilTypeReference::TypeSpec(r) => r.upgrade(),
+                _ => None,
+            };
 
-            let (count, has_this) = match &member_ref.signature {
+            let (count, ht) = match &mr.signature {
                 MemberRefSignature::Method(sig) => (sig.param_count as usize, sig.has_this),
-                MemberRefSignature::Field(_) => return Ok(None),
+                MemberRefSignature::Field(_) => {
+                    self.token_cache
+                        .insert(method_token, TokenCacheEntry::NoMatch);
+                    return Ok(HookOutcome::NoMatch);
+                }
             };
 
-            (ns, tn, member_ref.name.clone(), false, count, has_this)
+            member_ref_arc = Some(mr);
+            method_arc = None;
+            is_internal = false;
+            param_count = count;
+            has_this = ht;
         } else {
             // MethodDef (internal method)
             let Ok(method) = context.get_method(method_token) else {
-                return Ok(None);
+                self.token_cache
+                    .insert(method_token, TokenCacheEntry::NoMatch);
+                return Ok(HookOutcome::NoMatch);
             };
 
-            let (ns, tn) = if let Some(dt) = context.get_declaring_type(method_token) {
-                (dt.namespace.clone(), dt.name.clone())
-            } else {
-                (String::new(), String::new())
-            };
+            // Use the pre-populated declaring_type on Method (O(1)) instead of
+            // context.get_declaring_type() which does O(N*M) linear search.
+            declaring_type_arc = method.declaring_type_rc();
+            let ht = !method.is_static();
+            let pc = method.signature.params.len();
 
-            let has_this = !context.is_static_method(method_token).unwrap_or(true);
-            (
-                ns,
-                tn,
-                method.name.clone(),
-                true,
-                method.signature.params.len(),
-                has_this,
-            )
+            method_arc = Some(method);
+            member_ref_arc = None;
+            is_internal = true;
+            param_count = pc;
+            has_this = ht;
+        }
+
+        // Borrow &str from the Arc handles — zero allocation
+        let namespace = declaring_type_arc
+            .as_ref()
+            .map_or("", |dt| dt.namespace.as_str());
+        let type_name = declaring_type_arc
+            .as_ref()
+            .map_or("", |dt| dt.name.as_str());
+        let method_name = if let Some(mr) = &member_ref_arc {
+            mr.name.as_str()
+        } else if let Some(m) = &method_arc {
+            m.name.as_str()
+        } else {
+            self.token_cache
+                .insert(method_token, TokenCacheEntry::NoMatch);
+            return Ok(HookOutcome::NoMatch);
         };
 
-        let total_args = if has_this {
-            param_count + 1
+        // Phase 2: Fast reject — O(1) hash lookup, zero allocation.
+        // Also populates the token cache so future calls with the same token
+        // skip all metadata resolution entirely.
+        if !self
+            .hooks
+            .has_potential_match(namespace, type_name, method_name)
+        {
+            self.token_cache
+                .insert(method_token, TokenCacheEntry::NoMatch);
+            return Ok(HookOutcome::NoMatch);
+        }
+
+        // Cache this token as a potential match for future calls.
+        let info = ResolvedMethodInfo {
+            namespace: Arc::from(namespace),
+            type_name: Arc::from(type_name),
+            method_name: Arc::from(method_name),
+            is_internal,
+            param_count,
+            has_this,
+        };
+        self.token_cache
+            .insert(method_token, TokenCacheEntry::Cached(info.clone()));
+
+        // Phase 3+4: Build context and execute hook.
+        self.execute_hook_with_resolved(context, method_token, thread, &info)
+    }
+
+    /// Builds a [`HookContext`] from pre-resolved method identity and executes
+    /// the hook pipeline.
+    ///
+    /// This is the shared execution path used by both the cache-hit and cache-miss
+    /// branches of [`try_hook_call`]. All metadata resolution has already been done;
+    /// this method only handles argument peeking, context building, and hook dispatch.
+    fn execute_hook_with_resolved(
+        &self,
+        context: &EmulationContext,
+        method_token: Token,
+        thread: &mut EmulationThread,
+        info: &ResolvedMethodInfo,
+    ) -> Result<HookOutcome> {
+        let total_args = if info.has_this {
+            info.param_count + 1
         } else {
-            param_count
+            info.param_count
         };
 
         // Peek at arguments without popping (we may not match a hook)
@@ -2072,34 +2767,27 @@ impl EmulationController {
 
         // Split into this and method args
         let (this_ref, method_args): (Option<&EmValue>, &[EmValue]) =
-            if has_this && !args.is_empty() {
+            if info.has_this && !args.is_empty() {
                 (Some(&args[0]), &args[1..])
             } else {
                 (None, &args[..])
             };
 
-        // Build hook context - use references to our owned strings
         let hook_context = HookContext::new(
             method_token,
-            &namespace,
-            &type_name,
-            &method_name,
+            &info.namespace,
+            &info.type_name,
+            &info.method_name,
             self.config.pointer_size,
         )
         .with_this(this_ref)
         .with_args(method_args)
-        .with_internal(is_internal)
+        .with_internal(info.is_internal)
         .with_param_types(param_types_ref)
         .with_return_type(return_type);
 
-        // Try to execute via hooks
-        let guard = self
-            .runtime
-            .read()
-            .map_err(|_| EmulationError::LockPoisoned {
-                description: "runtime lock poisoned",
-            })?;
-        let outcome = guard.hooks().execute(&hook_context, thread, |_| {
+        // Execute matching hook (lock-free via direct Arc<HookManager>)
+        let outcome = self.hooks.execute(&hook_context, thread, |_| {
             // Original method execution callback - for now, we don't execute
             // the original here since the controller handles stubs/internal
             // methods separately. Post-hooks that depend on the original
@@ -2107,295 +2795,38 @@ impl EmulationController {
             None
         })?;
 
-        match outcome {
-            HookOutcome::Handled(value) => {
-                // Hook handled the call (pre-hook bypassed or post-hook returned)
-                thread.pop_args(total_args)?;
-                Ok(Some(value))
-            }
-            HookOutcome::NoMatch => Ok(None),
-        }
-    }
-
-    /// Handles `newobj` instruction - creates a new object instance.
-    ///
-    /// Allocates memory for a new object on the managed heap, then invokes
-    /// the specified constructor. The resulting object reference is pushed
-    /// onto the evaluation stack.
-    ///
-    /// # Arguments
-    ///
-    /// * `interpreter` - The CIL interpreter (for IP management)
-    /// * `thread` - The emulation thread (for stack and heap access)
-    /// * `context` - The emulation context (for type/method metadata)
-    /// * `constructor_token` - Token of the constructor to invoke
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - Constructor lookup fails
-    /// - Stack underflow when popping arguments
-    /// - Heap allocation fails
-    fn handle_newobj(
-        &mut self,
-        interpreter: &mut Interpreter,
-        thread: &mut EmulationThread,
-        context: &EmulationContext,
-        constructor_token: Token,
-    ) -> Result<()> {
-        // Handle MemberRef tokens (external constructors)
-        if constructor_token.is_table(TableId::MemberRef) {
-            return self.handle_newobj_memberref(interpreter, thread, context, constructor_token);
-        }
-
-        // Get constructor info for MethodDef tokens
-        let method = context.get_method(constructor_token)?;
-        let param_count = method.signature.params.len();
-
-        // Pop constructor arguments
-        let arg_values = thread.pop_args(param_count)?;
-
-        // Allocate the object on the heap.
-        // The constructor token is a MethodDef/MethodRef; we need the declaring type.
-        // Use the type system to resolve the declaring type from the method's owning type.
-        let declaring_type = context.get_declaring_type(constructor_token);
-        let type_token = declaring_type.as_ref().map_or_else(
-            || {
-                // External method reference without resolvable declaring type.
-                // Use the token's row index as type identifier for heap tracking.
-                Token::new(constructor_token.value() & 0x00FF_FFFF)
-            },
-            |t| t.token,
-        );
-
-        // Get field types for proper initialization. Instance fields need default values.
-        // Static fields (flags & 0x0010) are not part of object instances.
-        let field_types: Vec<(Token, CilFlavor)> = declaring_type
-            .as_ref()
-            .map(|t| {
-                t.fields
-                    .iter()
-                    .filter(|(_, f)| !f.flags.is_static())
-                    .map(|(_, f)| (f.token, CilFlavor::from(&f.signature.base)))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let obj_ref = thread
-            .heap_mut()
-            .alloc_object_with_fields(type_token, &field_types)?;
-
-        // Try to find a constructor hook using the hook system
-        let mut hook_handled = false;
-        if let Some(ref decl_type) = declaring_type {
-            let this_value = EmValue::ObjectRef(obj_ref);
-            let hook_context = HookContext::new(
-                constructor_token,
-                &decl_type.namespace,
-                &decl_type.name,
-                ".ctor",
-                self.config.pointer_size,
-            )
-            .with_this(Some(&this_value))
-            .with_args(&arg_values)
-            .with_internal(constructor_token.is_table(TableId::MethodDef));
-
-            let guard = self
-                .runtime
-                .read()
-                .map_err(|_| EmulationError::LockPoisoned {
-                    description: "runtime lock poisoned",
-                })?;
-            // Constructors don't return values, so we pass a no-op callback
-            match guard.hooks().execute(&hook_context, thread, |_| None)? {
-                HookOutcome::NoMatch => {}
-                HookOutcome::Handled(_) => {
-                    hook_handled = true;
-                }
-            }
-        }
-
-        // Check that the method has a body AND has decoded instructions
-        // Some methods may have bodies but empty instructions (e.g., encrypted methods)
-        let has_instructions = method.instructions().next().is_some();
-        if !hook_handled && method.has_body() && has_instructions {
-            // Emulate the constructor if it has a body.
-            // Insert 'this' as first argument (instance methods receive 'this' in arg 0).
-            let mut full_args = vec![EmValue::ObjectRef(obj_ref)];
-            full_args.extend(arg_values);
-
-            // Get return info from current frame
-            let return_method = thread.current_frame().map(ThreadCallFrame::method);
-            let return_offset = interpreter.ip().next_offset();
-
-            // The caller expects the new object on the stack after newobj completes.
-            // Since we're emulating the constructor, we need to add obj_ref to the
-            // caller's stack before saving it (it will be restored on constructor return).
-            thread.push(EmValue::ObjectRef(obj_ref))?;
-            let caller_stack = thread.take_stack();
-
-            // Get local types for the constructor
-            let local_cil_flavors = context.get_local_types(constructor_token)?;
-
-            // Get argument types (constructor is always instance, so 'this' + params)
-            let param_types = context.get_parameter_types(constructor_token)?;
-            let mut arg_types = vec![CilFlavor::Object]; // 'this'
-            arg_types.extend(param_types);
-
-            // Combine args with types
-            let args_with_types: Vec<(EmValue, CilFlavor)> =
-                full_args.into_iter().zip(arg_types).collect();
-
-            // Create frame for constructor (constructors don't return values)
-            let mut frame = ThreadCallFrame::new(
-                constructor_token,
-                return_method,
-                return_offset,
-                local_cil_flavors,
-                args_with_types,
-                false, // constructors don't return values
-            );
-            frame.save_caller_stack(caller_stack);
-
-            // Push the frame to the thread's call stack
-            thread.push_frame(frame);
-
-            // Trace constructor call if enabled
-            if self.trace_calls_enabled() {
-                self.trace(TraceEvent::MethodCall {
-                    target: constructor_token,
-                    is_virtual: false,
-                    arg_count: param_count + 1, // +1 for 'this'
-                    call_depth: thread.call_depth(),
-                    caller: return_method,
-                    caller_offset: Some(return_offset),
-                });
-            }
-
-            // Update interpreter to execute constructor
-            interpreter.set_method(constructor_token);
-            interpreter.set_offset(0);
-
-            // Return early - obj_ref was already added to caller's saved stack
-            return Ok(());
-        }
-
-        // Push the new object reference onto the stack (stub case or no constructor body)
-        thread.push(EmValue::ObjectRef(obj_ref))?;
-        // Advance IP past the newobj instruction
-        interpreter.ip_mut().advance_current();
-
-        Ok(())
-    }
-
-    /// Handles `newobj` instruction for MemberRef tokens (external constructors).
-    ///
-    /// MemberRef tokens reference constructors in external assemblies. This method
-    /// looks up the reference, allocates the object, and attempts to find a
-    /// matching constructor stub.
-    ///
-    /// # Arguments
-    ///
-    /// * `interpreter` - The CIL interpreter (for IP management)
-    /// * `thread` - The emulation thread (for stack and heap access)
-    /// * `context` - The emulation context (for MemberRef lookup)
-    /// * `constructor_token` - MemberRef token of the external constructor
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if:
-    /// - MemberRef lookup fails
-    /// - Signature is not a method signature
-    /// - Stack underflow when popping arguments
-    fn handle_newobj_memberref(
-        &mut self,
-        interpreter: &mut Interpreter,
-        thread: &mut EmulationThread,
-        context: &EmulationContext,
-        constructor_token: Token,
-    ) -> Result<()> {
-        // Look up the MemberRef using the context
-        let member_ref =
-            context
-                .get_member_ref(constructor_token)
-                .ok_or(EmulationError::MethodNotFound {
-                    token: constructor_token,
-                })?;
-
-        // Get parameter count from signature
-        let param_count = if let MemberRefSignature::Method(method_sig) = &member_ref.signature {
-            method_sig.param_count as usize
-        } else {
-            return Err(EmulationError::InvalidOperand {
-                instruction: "newobj",
-                expected: "method signature in MemberRef",
-            }
-            .into());
-        };
-
-        // Pop constructor arguments
-        let args = thread.pop_args(param_count)?;
-
-        // Get the declaring type info for hook lookup
-        let (namespace, type_name_only) = EmulationContext::get_member_ref_type_info(&member_ref)
-            .unwrap_or_else(|| (String::new(), String::from("Unknown")));
-
-        // Allocate an object on the heap using the declaring type token
-        let type_token = EmulationContext::get_member_ref_type_token(&member_ref)
-            .unwrap_or_else(|| Token::new(constructor_token.value() & 0x00FF_FFFF));
-
-        // Get field types for proper initialization if the type is available
-        let field_types: Vec<(Token, CilFlavor)> = context
-            .get_type(type_token)
-            .map(|t| {
-                t.fields
-                    .iter()
-                    .filter(|(_, f)| !f.flags.is_static())
-                    .map(|(_, f)| (f.token, CilFlavor::from(&f.signature.base)))
-                    .collect()
-            })
-            .unwrap_or_default();
-
-        let obj_ref = thread
-            .heap_mut()
-            .alloc_object_with_fields(type_token, &field_types)?;
-
-        // Try to find a constructor hook using the hook system
-        let this_value = EmValue::ObjectRef(obj_ref);
-        let hook_context = HookContext::new(
-            constructor_token,
-            &namespace,
-            &type_name_only,
-            ".ctor",
-            self.config.pointer_size,
-        )
-        .with_this(Some(&this_value))
-        .with_args(&args)
-        .with_internal(false); // MemberRef is external
-
-        let guard = self
-            .runtime
-            .read()
-            .map_err(|_| EmulationError::LockPoisoned {
-                description: "runtime lock poisoned",
-            })?;
-        // Constructors don't return values, so we pass a no-op callback
-        match guard.hooks().execute(&hook_context, thread, |_| None)? {
+        match &outcome {
             HookOutcome::NoMatch => {}
-            HookOutcome::Handled(_) => {
-                thread.push(EmValue::ObjectRef(obj_ref))?;
-                interpreter.ip_mut().advance_current();
-                return Ok(());
+            _ => {
+                // Hook matched — pop the arguments from the stack
+                thread.pop_args(total_args)?;
             }
         }
-        drop(guard);
 
-        // No hook found - just return the allocated object
-        // (external constructors without hooks get a default-initialized object)
-        thread.push(EmValue::ObjectRef(obj_ref))?;
-        interpreter.ip_mut().advance_current();
+        Ok(outcome)
+    }
 
-        Ok(())
+    /// Checks whether a type is a delegate type (extends `System.MulticastDelegate` or `System.Delegate`).
+    ///
+    /// Walks the base type chain up to 3 levels looking for either `MulticastDelegate` or `Delegate`
+    /// in the `System` namespace. This detects both standard delegates and custom delegate types
+    /// generated by obfuscators.
+    fn is_delegate_type(cil_type: &CilType) -> bool {
+        let mut current = cil_type.base();
+        for _ in 0..3 {
+            match current {
+                Some(base) => {
+                    if base.namespace == "System"
+                        && (base.name == "MulticastDelegate" || base.name == "Delegate")
+                    {
+                        return true;
+                    }
+                    current = base.base();
+                }
+                None => break,
+            }
+        }
+        false
     }
 
     /// Handles `newarr` instruction - creates a new array.
@@ -2492,9 +2923,12 @@ impl EmulationController {
                 if let Some((namespace, type_name)) =
                     EmulationContext::get_member_ref_type_info(&member_ref)
                 {
-                    if let Some(value) =
-                        get_bcl_static_field(&namespace, &type_name, &member_ref.name)
-                    {
+                    if let Some(value) = get_bcl_static_field(
+                        &namespace,
+                        &type_name,
+                        &member_ref.name,
+                        thread.heap(),
+                    ) {
                         thread.push(value)?;
                         return Ok(());
                     }
@@ -2502,7 +2936,40 @@ impl EmulationController {
             }
         }
 
-        // Unknown field - return symbolic
+        // If the owning type has been initialized (.cctor ran) but the field
+        // wasn't stored, it holds its .NET default value. Per ECMA-335, all
+        // static fields are zero-initialized before .cctor runs:
+        //   - Reference types (Object, String, Class, Array, etc.) → null
+        //   - Integer types (I1, U1, I2, U2, I4, U4) → I32(0)
+        //   - Long types (I8, U8) → I64(0)
+        //   - Float types (R4) → F32(0.0), (R8) → F64(0.0)
+        //   - Native int (I, U) → NativeInt(0)
+        //   - Boolean → I32(0)  (CLI stores bool as i32)
+        //   - Char → I32(0)
+        if let Some((type_token, flavor)) = context.get_field_type_info(field) {
+            if self.address_space.statics().is_type_initialized(type_token) {
+                let default_value = match flavor {
+                    CilFlavor::Boolean
+                    | CilFlavor::Char
+                    | CilFlavor::I1
+                    | CilFlavor::U1
+                    | CilFlavor::I2
+                    | CilFlavor::U2
+                    | CilFlavor::I4
+                    | CilFlavor::U4 => EmValue::I32(0),
+                    CilFlavor::I8 | CilFlavor::U8 => EmValue::I64(0),
+                    CilFlavor::R4 => EmValue::F32(0.0),
+                    CilFlavor::R8 => EmValue::F64(0.0),
+                    CilFlavor::I | CilFlavor::U => EmValue::NativeInt(0),
+                    // Reference types and everything else default to null
+                    _ => EmValue::Null,
+                };
+                thread.push(default_value)?;
+                return Ok(());
+            }
+        }
+
+        // Unknown field on uninitialized type - return symbolic
         thread.push(EmValue::Symbolic(SymbolicValue::new(
             CilFlavor::Object,
             TaintSource::Field(field.value()),
@@ -3126,7 +3593,7 @@ impl EmulationController {
                 match &ptr.target {
                     PointerTarget::Local(idx) => {
                         thread
-                            .current_frame_mut()
+                            .resolve_frame_mut(ptr.frame_depth)
                             .ok_or_else(|| EmulationError::InternalError {
                                 description: "empty call stack".into(),
                             })?
@@ -3135,7 +3602,7 @@ impl EmulationController {
                     }
                     PointerTarget::Argument(idx) => {
                         thread
-                            .current_frame_mut()
+                            .resolve_frame_mut(ptr.frame_depth)
                             .ok_or_else(|| EmulationError::InternalError {
                                 description: "empty call stack".into(),
                             })?
@@ -3281,7 +3748,8 @@ impl EmulationController {
         let value = match src_addr {
             EmValue::ManagedPtr(ptr) => match &ptr.target {
                 PointerTarget::Local(idx) => thread
-                    .current_frame()
+                    .get_frame_at(ptr.frame_depth)
+                    .or_else(|| thread.current_frame())
                     .ok_or_else(|| EmulationError::InternalError {
                         description: "empty call stack".into(),
                     })?
@@ -3289,7 +3757,8 @@ impl EmulationController {
                     .get(usize::from(*idx))?
                     .clone(),
                 PointerTarget::Argument(idx) => thread
-                    .current_frame()
+                    .get_frame_at(ptr.frame_depth)
+                    .or_else(|| thread.current_frame())
                     .ok_or_else(|| EmulationError::InternalError {
                         description: "empty call stack".into(),
                     })?
@@ -3332,7 +3801,7 @@ impl EmulationController {
                 match &ptr.target {
                     PointerTarget::Local(idx) => {
                         thread
-                            .current_frame_mut()
+                            .resolve_frame_mut(ptr.frame_depth)
                             .ok_or_else(|| EmulationError::InternalError {
                                 description: "empty call stack".into(),
                             })?
@@ -3341,7 +3810,7 @@ impl EmulationController {
                     }
                     PointerTarget::Argument(idx) => {
                         thread
-                            .current_frame_mut()
+                            .resolve_frame_mut(ptr.frame_depth)
                             .ok_or_else(|| EmulationError::InternalError {
                                 description: "empty call stack".into(),
                             })?

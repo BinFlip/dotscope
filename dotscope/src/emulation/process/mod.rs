@@ -86,7 +86,7 @@ mod execution;
 
 pub use builder::ProcessBuilder;
 pub use config::{
-    CaptureConfig, EmulationConfig, EmulationLimits, MemoryConfig, StubConfig, TracingConfig,
-    UnknownMethodBehavior,
+    CaptureConfig, EmulationConfig, EmulationLimits, EnvironmentConfig, MemoryConfig, StubConfig,
+    TracingConfig, UnknownMethodBehavior,
 };
 pub use execution::{EmulationProcess, LimitKind, ProcessSummary, StackTraceEntry};

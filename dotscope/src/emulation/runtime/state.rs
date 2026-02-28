@@ -28,8 +28,7 @@
 //!
 //! The runtime state manages:
 //!
-//! - [`HookManager`](super::HookManager) - Method interception with pre/post hooks
-//! - [`NativeStubRegistry`](super::NativeStubRegistry) - P/Invoke stubs
+//! - [`HookManager`](super::HookManager) - Method interception (BCL hooks + P/Invoke stubs)
 //! - [`AppDomainState`](super::AppDomainState) - Application domain simulation
 //! - [`EmulationConfig`](crate::emulation::process::EmulationConfig) - Configuration
 //! - [`UnknownMethodBehavior`](super::UnknownMethodBehavior) - Fallback behavior
@@ -71,9 +70,9 @@
 //!
 //! # Thread Safety
 //!
-//! `RuntimeState` is designed for single-threaded emulation. The state is
-//! mutable and should not be shared between threads without external
-//! synchronization.
+//! `RuntimeState` is designed to be wrapped in `Arc<RwLock<RuntimeState>>`.
+//! The embedded [`HookManager`](super::HookManager) is internally thread-safe
+//! and can be accessed via `hooks()` without holding the `RuntimeState` lock.
 
 use std::sync::Arc;
 
@@ -88,9 +87,8 @@ use crate::{
 /// Central runtime state for .NET emulation.
 ///
 /// `RuntimeState` is the main entry point for runtime services during emulation.
-/// It coordinates method hook execution, native call handling, and application domain
-/// state. Most emulation operations that require "runtime" behavior go through
-/// this struct.
+/// It coordinates method hook execution and application domain state. Most
+/// emulation operations that require "runtime" behavior go through this struct.
 ///
 /// # Creating RuntimeState
 ///
@@ -99,6 +97,21 @@ use crate::{
 /// - [`new()`](Self::new) - Default configuration with BCL hooks and P/Invoke stubs
 /// - [`with_config()`](Self::with_config) - Custom configuration
 /// - [`RuntimeStateBuilder`] - Fluent builder API
+///
+/// # Hook Access
+///
+/// The [`HookManager`](super::HookManager) is internally thread-safe and wrapped
+/// in `Arc`. Use [`hooks()`](Self::hooks) to obtain a shared handle that can be
+/// passed to other components (e.g., the emulation controller) without needing to
+/// hold the `RuntimeState` lock. Registration and dispatch can happen concurrently:
+///
+/// ```ignore
+/// let runtime = RuntimeState::new();
+/// let hooks = runtime.hooks(); // Arc<HookManager>
+///
+/// // Register additional hooks (thread-safe, takes &self)
+/// hooks.register(Hook::new("my-hook").match_method_name("Decrypt"));
+/// ```
 ///
 /// # Method Resolution
 ///
@@ -123,13 +136,13 @@ use crate::{
 /// let config = EmulationConfig::minimal();
 /// let runtime = RuntimeState::with_config(Arc::new(config));
 ///
-/// // Access components (hooks include both BCL and native P/Invoke hooks)
+/// // Access hooks (both BCL and native P/Invoke hooks are pre-registered)
 /// println!("Hooks: {}", runtime.hooks().len());
 /// ```
 #[derive(Debug)]
 pub struct RuntimeState {
     /// Hook manager for method interception (includes BCL and native hooks).
-    hooks: HookManager,
+    hooks: Arc<HookManager>,
 
     /// Application domain simulation state.
     app_domain: AppDomainState,
@@ -185,20 +198,20 @@ impl RuntimeState {
     /// ```
     #[must_use]
     pub fn with_config(config: Arc<EmulationConfig>) -> Self {
-        let mut hooks = HookManager::new();
+        let hooks = HookManager::new();
 
         // Register default BCL hooks based on configuration
         if config.stubs.bcl_stubs {
-            bcl::register(&mut hooks);
+            bcl::register(&hooks);
         }
 
         // Register default native P/Invoke hooks based on configuration
         if config.stubs.pinvoke_stubs {
-            native::register(&mut hooks);
+            native::register(&hooks);
         }
 
         Self {
-            hooks,
+            hooks: Arc::new(hooks),
             app_domain: AppDomainState::new(),
             unknown_method_behavior: UnknownMethodBehavior::default(),
             config,
@@ -211,48 +224,19 @@ impl RuntimeState {
         &self.config
     }
 
-    /// Returns a reference to the hook manager.
+    /// Returns a shared reference-counted handle to the hook manager.
     ///
     /// The hook manager provides flexible method interception with support for:
     /// - Multiple matching criteria (name, signature, runtime data)
     /// - Pre/post hooks with bypass capability
     /// - Closure-based handlers
+    ///
+    /// The `HookManager` is internally thread-safe — all its methods take `&self`,
+    /// so this handle can be shared freely across components without external
+    /// synchronization.
     #[must_use]
-    pub fn hooks(&self) -> &HookManager {
-        &self.hooks
-    }
-
-    /// Returns a mutable reference to the hook manager.
-    pub fn hooks_mut(&mut self) -> &mut HookManager {
-        &mut self.hooks
-    }
-
-    /// Registers a hook for method interception.
-    ///
-    /// This is a convenience method that delegates to
-    /// [`HookManager::register`](super::HookManager::register).
-    ///
-    /// # Arguments
-    ///
-    /// * `hook` - The hook to register
-    ///
-    /// # Examples
-    ///
-    /// ```ignore
-    /// use dotscope::emulation::runtime::{RuntimeState, Hook, PreHookResult};
-    ///
-    /// let mut runtime = RuntimeState::new();
-    /// runtime.register_hook(
-    ///     Hook::new("log-calls")
-    ///         .match_name("System", "String", "Concat")
-    ///         .pre(|ctx, thread| {
-    ///             println!("String.Concat called!");
-    ///             PreHookResult::Continue
-    ///         })
-    /// );
-    /// ```
-    pub fn register_hook(&mut self, hook: Hook) {
-        self.hooks.register(hook);
+    pub fn hooks(&self) -> Arc<HookManager> {
+        Arc::clone(&self.hooks)
     }
 
     /// Returns the behavior for unknown method calls.
@@ -496,16 +480,16 @@ impl RuntimeStateBuilder {
     /// The constructed `RuntimeState`.
     #[must_use]
     pub fn build(self) -> RuntimeState {
-        let mut hooks = HookManager::new();
+        let hooks = HookManager::new();
 
         // Register defaults if enabled
         if self.register_defaults && self.config.stubs.bcl_stubs {
-            bcl::register(&mut hooks);
+            bcl::register(&hooks);
         }
 
         // Register native P/Invoke hooks if enabled
         if self.register_defaults && self.config.stubs.pinvoke_stubs {
-            native::register(&mut hooks);
+            native::register(&hooks);
         }
 
         // Add custom hooks
@@ -514,7 +498,7 @@ impl RuntimeStateBuilder {
         }
 
         RuntimeState {
-            hooks,
+            hooks: Arc::new(hooks),
             app_domain: AppDomainState::new(),
             unknown_method_behavior: self.unknown_method_behavior,
             config: Arc::new(self.config),
@@ -550,10 +534,10 @@ mod tests {
 
     #[test]
     fn test_register_custom_hook() {
-        let mut state = RuntimeState::new();
+        let state = RuntimeState::new();
         let initial_count = state.hooks().len();
 
-        state.register_hook(
+        state.hooks().register(
             Hook::new("test-hook")
                 .with_priority(HookPriority::HIGH)
                 .match_name("Custom", "Type", "Method")
