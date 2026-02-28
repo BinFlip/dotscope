@@ -251,6 +251,16 @@ pub struct AddressSpace {
     ///
     /// Uses `imbl::HashMap` for O(1) fork via structural sharing.
     protection_overrides: RwLock<ImHashMap<u64, MemoryProtection>>,
+
+    /// Monitor lock state: maps heap object ID → re-entrant lock count.
+    ///
+    /// Tracks `System.Threading.Monitor.Enter`/`Exit` calls per object.
+    /// In single-threaded emulation there is no contention, but we still
+    /// track counts so that `Exit` can detect mismatched release attempts
+    /// and `TryEnter` can verify the lock is actually held.
+    ///
+    /// Uses `imbl::HashMap` for O(1) fork via structural sharing.
+    monitor_locks: RwLock<ImHashMap<u64, u32>>,
 }
 
 impl AddressSpace {
@@ -283,6 +293,7 @@ impl AddressSpace {
             next_address: AtomicU64::new(0x1000_0000), // Start at 256MB
             size: address_space_size,
             protection_overrides: RwLock::new(ImHashMap::new()),
+            monitor_locks: RwLock::new(ImHashMap::new()),
         }
     }
 
@@ -304,6 +315,7 @@ impl AddressSpace {
             next_address: AtomicU64::new(0x1000_0000),
             size: 0x1_0000_0000,
             protection_overrides: RwLock::new(ImHashMap::new()),
+            monitor_locks: RwLock::new(ImHashMap::new()),
         }
     }
 
@@ -323,6 +335,49 @@ impl AddressSpace {
     #[must_use]
     pub fn statics(&self) -> &StaticFieldStorage {
         &self.statics
+    }
+
+    /// Acquires a monitor lock on the given heap object.
+    ///
+    /// Increments the re-entrant lock count for the object. In single-threaded
+    /// emulation this always succeeds (no contention), but the count is tracked
+    /// so that `monitor_exit` can detect mismatched releases.
+    ///
+    /// Returns the new lock count (1 for first acquisition).
+    pub fn monitor_enter(&self, object_id: u64) -> u32 {
+        let mut locks = self.monitor_locks.write().unwrap();
+        let count = locks.get(&object_id).copied().unwrap_or(0) + 1;
+        *locks = locks.update(object_id, count);
+        count
+    }
+
+    /// Releases a monitor lock on the given heap object.
+    ///
+    /// Decrements the re-entrant lock count. Returns `true` if the lock was
+    /// held and successfully released, `false` if Exit was called without a
+    /// matching Enter (would throw `SynchronizationLockException` in .NET).
+    pub fn monitor_exit(&self, object_id: u64) -> bool {
+        let mut locks = self.monitor_locks.write().unwrap();
+        match locks.get(&object_id).copied() {
+            Some(count) if count > 1 => {
+                *locks = locks.update(object_id, count - 1);
+                true
+            }
+            Some(1) => {
+                *locks = locks.without(&object_id);
+                true
+            }
+            _ => false, // Not locked — mismatched Exit
+        }
+    }
+
+    /// Checks whether a monitor lock is currently held on the given heap object.
+    #[must_use]
+    pub fn monitor_is_locked(&self, object_id: u64) -> bool {
+        self.monitor_locks
+            .read()
+            .map(|l| l.get(&object_id).copied().unwrap_or(0) > 0)
+            .unwrap_or(false)
     }
 
     /// Maps a region into the address space at a specific address.
@@ -926,6 +981,11 @@ impl Clone for AddressSpace {
             Err(_) => ImHashMap::new(),
         };
 
+        let monitor_locks = match self.monitor_locks.read() {
+            Ok(l) => l.clone(),
+            Err(_) => ImHashMap::new(),
+        };
+
         Self {
             heap: self.heap.clone(), // Cheap Arc clone
             regions: RwLock::new(regions),
@@ -933,6 +993,7 @@ impl Clone for AddressSpace {
             next_address: AtomicU64::new(self.next_address.load(Ordering::SeqCst)),
             size: self.size,
             protection_overrides: RwLock::new(protection_overrides),
+            monitor_locks: RwLock::new(monitor_locks),
         }
     }
 }
@@ -986,6 +1047,8 @@ impl AddressSpace {
             size: self.size,
             // Fresh protection overrides (VirtualProtect state)
             protection_overrides: RwLock::new(ImHashMap::new()),
+            // Fresh monitor locks
+            monitor_locks: RwLock::new(ImHashMap::new()),
         }
     }
 
@@ -1064,6 +1127,13 @@ impl AddressSpace {
             size: self.size,
             // Fork protection overrides - O(1) due to imbl
             protection_overrides: RwLock::new(protection_overrides),
+            // Fork monitor locks - O(1) due to imbl
+            monitor_locks: RwLock::new(
+                self.monitor_locks
+                    .read()
+                    .map(|l| l.clone())
+                    .unwrap_or_default(),
+            ),
         }
     }
 }

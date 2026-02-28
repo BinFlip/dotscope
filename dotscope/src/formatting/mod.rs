@@ -651,8 +651,10 @@ mod tests {
     #[test]
     fn test_raw_mode() {
         let asm = load_crafted_2();
-        let mut opts = FormatterOptions::default();
-        opts.raw = true;
+        let opts = FormatterOptions {
+            raw: true,
+            ..Default::default()
+        };
         let formatter = IlFormatter::new(opts);
         // Format a method with a body: DerivedClass::MethodWithLocals
         let method = asm

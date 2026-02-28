@@ -44,8 +44,8 @@
 //! ```ignore
 //! use dotscope::emulation::runtime::{HookManager, native};
 //!
-//! let mut manager = HookManager::new();
-//! native::register(&mut manager);
+//! let manager = HookManager::new();
+//! native::register(&manager);
 //!
 //! // VirtualProtect, IsDebuggerPresent, etc. are now hooked
 //! ```
@@ -55,7 +55,7 @@
 //! ```ignore
 //! use dotscope::emulation::{Hook, PreHookResult, EmValue};
 //!
-//! let mut manager = HookManager::new();
+//! let manager = HookManager::new();
 //!
 //! manager.register(
 //!     Hook::new("custom-get-tick-count")
@@ -123,7 +123,7 @@ use crate::emulation::{
 /// **Process/Thread Handles:**
 /// - `kernel32!GetCurrentProcess`
 /// - `kernel32!GetCurrentThread`
-pub fn register(manager: &mut HookManager) {
+pub fn register(manager: &HookManager) {
     // Memory management hooks
     register_virtual_protect(manager);
     register_virtual_alloc(manager);
@@ -144,7 +144,7 @@ pub fn register(manager: &mut HookManager) {
 }
 
 /// Registers the VirtualProtect hook.
-fn register_virtual_protect(manager: &mut HookManager) {
+fn register_virtual_protect(manager: &HookManager) {
     manager.register(
         Hook::new("native-virtual-protect")
             .with_priority(HookPriority::HIGH)
@@ -253,7 +253,7 @@ fn register_virtual_protect(manager: &mut HookManager) {
 }
 
 /// Registers the VirtualAlloc hook.
-fn register_virtual_alloc(manager: &mut HookManager) {
+fn register_virtual_alloc(manager: &HookManager) {
     manager.register(
         Hook::new("native-virtual-alloc")
             .with_priority(HookPriority::HIGH)
@@ -296,7 +296,7 @@ fn register_virtual_alloc(manager: &mut HookManager) {
 }
 
 /// Registers the VirtualFree hook.
-fn register_virtual_free(manager: &mut HookManager) {
+fn register_virtual_free(manager: &HookManager) {
     manager.register(
         Hook::new("native-virtual-free")
             .with_priority(HookPriority::HIGH)
@@ -359,7 +359,7 @@ fn register_virtual_free(manager: &mut HookManager) {
 }
 
 /// Registers GetModuleHandle hooks (both A and W variants).
-fn register_get_module_handle(manager: &mut HookManager) {
+fn register_get_module_handle(manager: &HookManager) {
     // GetModuleHandleA
     manager.register(
         Hook::new("native-get-module-handle-a")
@@ -408,7 +408,7 @@ fn register_get_module_handle(manager: &mut HookManager) {
 }
 
 /// Registers the GetProcAddress hook.
-fn register_get_proc_address(manager: &mut HookManager) {
+fn register_get_proc_address(manager: &HookManager) {
     manager.register(
         Hook::new("native-get-proc-address")
             .with_priority(HookPriority::HIGH)
@@ -422,7 +422,7 @@ fn register_get_proc_address(manager: &mut HookManager) {
 }
 
 /// Registers LoadLibrary hooks (both A and W variants).
-fn register_load_library(manager: &mut HookManager) {
+fn register_load_library(manager: &HookManager) {
     // LoadLibraryA
     manager.register(
         Hook::new("native-load-library-a")
@@ -445,7 +445,7 @@ fn register_load_library(manager: &mut HookManager) {
 }
 
 /// Registers the IsDebuggerPresent hook.
-fn register_is_debugger_present(manager: &mut HookManager) {
+fn register_is_debugger_present(manager: &HookManager) {
     manager.register(
         Hook::new("native-is-debugger-present")
             .with_priority(HookPriority::HIGHEST) // Anti-debug bypass should have highest priority
@@ -459,7 +459,7 @@ fn register_is_debugger_present(manager: &mut HookManager) {
 }
 
 /// Registers the CheckRemoteDebuggerPresent hook.
-fn register_check_remote_debugger_present(manager: &mut HookManager) {
+fn register_check_remote_debugger_present(manager: &HookManager) {
     manager.register(
         Hook::new("native-check-remote-debugger-present")
             .with_priority(HookPriority::HIGHEST)
@@ -510,7 +510,7 @@ fn register_check_remote_debugger_present(manager: &mut HookManager) {
 }
 
 /// Registers the GetCurrentProcess hook.
-fn register_get_current_process(manager: &mut HookManager) {
+fn register_get_current_process(manager: &HookManager) {
     manager.register(
         Hook::new("native-get-current-process")
             .with_priority(HookPriority::HIGH)
@@ -524,7 +524,7 @@ fn register_get_current_process(manager: &mut HookManager) {
 }
 
 /// Registers the GetCurrentThread hook.
-fn register_get_current_thread(manager: &mut HookManager) {
+fn register_get_current_thread(manager: &HookManager) {
     manager.register(
         Hook::new("native-get-current-thread")
             .with_priority(HookPriority::HIGH)
@@ -541,7 +541,7 @@ fn register_get_current_thread(manager: &mut HookManager) {
 mod tests {
     use crate::{
         emulation::{
-            runtime::{HookContext, HookManager, PreHookResult},
+            runtime::{HookContext, HookManager, HookOutcome},
             EmValue,
         },
         metadata::{token::Token, typesystem::PointerSize},
@@ -556,8 +556,8 @@ mod tests {
 
     #[test]
     fn test_native_hooks_registered() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
+        let manager = HookManager::new();
+        register(&manager);
 
         // Should have at least 12 hooks (one for each function, with A/W variants)
         assert!(manager.len() >= 12);
@@ -565,62 +565,50 @@ mod tests {
 
     #[test]
     fn test_is_debugger_present_hook() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
+        let manager = HookManager::new();
+        register(&manager);
 
         let mut thread = create_test_thread();
         let context = create_native_context("kernel32", "IsDebuggerPresent").with_args(&[]);
 
-        let hook = manager.find_matching(&context, &thread);
-        assert!(hook.is_some(), "Should find IsDebuggerPresent hook");
-
-        if let Some(h) = hook {
-            let result = h.execute_pre(&context, &mut thread);
-            assert!(matches!(
-                result,
-                Some(PreHookResult::Bypass(Some(EmValue::I32(0))))
-            ));
-        }
+        let outcome = manager.execute(&context, &mut thread, |_| None).unwrap();
+        assert!(
+            matches!(outcome, HookOutcome::Handled(Some(EmValue::I32(0)))),
+            "IsDebuggerPresent should return 0"
+        );
     }
 
     #[test]
     fn test_get_current_process_hook() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
+        let manager = HookManager::new();
+        register(&manager);
 
         let mut thread = create_test_thread();
         let context = create_native_context("kernel32", "GetCurrentProcess").with_args(&[]);
 
-        let hook = manager.find_matching(&context, &thread);
-        assert!(hook.is_some(), "Should find GetCurrentProcess hook");
-
-        if let Some(h) = hook {
-            let result = h.execute_pre(&context, &mut thread);
-            assert!(matches!(
-                result,
-                Some(PreHookResult::Bypass(Some(EmValue::NativeInt(-1))))
-            ));
-        }
+        let outcome = manager.execute(&context, &mut thread, |_| None).unwrap();
+        assert!(
+            matches!(outcome, HookOutcome::Handled(Some(EmValue::NativeInt(-1)))),
+            "GetCurrentProcess should return -1"
+        );
     }
 
     #[test]
     fn test_get_module_handle_null() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
+        let manager = HookManager::new();
+        register(&manager);
 
         let mut thread = create_test_thread();
         let args = [EmValue::NativeInt(0)];
         let context = create_native_context("kernel32", "GetModuleHandleA").with_args(&args);
 
-        let hook = manager.find_matching(&context, &thread);
-        assert!(hook.is_some(), "Should find GetModuleHandleA hook");
-
-        if let Some(h) = hook {
-            let result = h.execute_pre(&context, &mut thread);
-            assert!(matches!(
-                result,
-                Some(PreHookResult::Bypass(Some(EmValue::NativeInt(0x0040_0000))))
-            ));
-        }
+        let outcome = manager.execute(&context, &mut thread, |_| None).unwrap();
+        assert!(
+            matches!(
+                outcome,
+                HookOutcome::Handled(Some(EmValue::NativeInt(0x0040_0000)))
+            ),
+            "GetModuleHandleA(null) should return base address"
+        );
     }
 }

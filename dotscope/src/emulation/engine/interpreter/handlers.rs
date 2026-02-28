@@ -85,7 +85,8 @@ impl Interpreter {
         thread: &mut EmulationThread,
         index: u16,
     ) -> Result<StepResult> {
-        let ptr = EmValue::ManagedPtr(ManagedPointer::to_local(index));
+        let depth = thread.call_depth().saturating_sub(1);
+        let ptr = EmValue::ManagedPtr(ManagedPointer::to_local(index, depth));
         thread.push(ptr)?;
         Ok(StepResult::Continue)
     }
@@ -136,7 +137,8 @@ impl Interpreter {
         thread: &mut EmulationThread,
         index: u16,
     ) -> Result<StepResult> {
-        let ptr = EmValue::ManagedPtr(ManagedPointer::to_argument(index));
+        let depth = thread.call_depth().saturating_sub(1);
+        let ptr = EmValue::ManagedPtr(ManagedPointer::to_argument(index, depth));
         thread.push(ptr)?;
         Ok(StepResult::Continue)
     }
@@ -522,6 +524,16 @@ impl Interpreter {
                     length: 0,
                 })
             })?,
+            EmValue::NativeUInt(v) => usize::try_from(v).map_err(|_| {
+                Error::from(EmulationError::ArrayIndexOutOfBounds {
+                    index: v as i64,
+                    length: 0,
+                })
+            })?,
+            // Null represents zero-initialized values (e.g., unset static int fields)
+            EmValue::Null => 0,
+            // Symbolic integer types default to 0-length array
+            EmValue::Symbolic(_) => 0,
             _ => {
                 return Err(EmulationError::TypeMismatch {
                     operation: "newarr",
@@ -571,6 +583,15 @@ impl Interpreter {
                     }
                 };
                 thread.push(EmValue::NativeUInt(length as u64))?;
+                Ok(StepResult::Continue)
+            }
+            // Symbolic array reference (e.g., from unresolved BCL method returning array) —
+            // propagate as symbolic NativeUInt since ldlen returns native unsigned int.
+            EmValue::Symbolic(sym) => {
+                thread.push(EmValue::Symbolic(SymbolicValue::new(
+                    CilFlavor::U,
+                    sym.source.clone(),
+                )))?;
                 Ok(StepResult::Continue)
             }
             EmValue::Null => Err(EmulationError::NullReference.into()),
@@ -758,6 +779,14 @@ impl Interpreter {
                 thread.push(element)?;
                 Ok(StepResult::Continue)
             }
+            // Symbolic array — return symbolic element of the expected type
+            EmValue::Symbolic(sym) => {
+                thread.push(EmValue::Symbolic(SymbolicValue::new(
+                    expected_type.clone(),
+                    sym.source.clone(),
+                )))?;
+                Ok(StepResult::Continue)
+            }
             EmValue::Null => Err(EmulationError::NullReference.into()),
             _ => Err(EmulationError::TypeMismatch {
                 operation: "ldelem",
@@ -861,6 +890,8 @@ impl Interpreter {
                 heap.set_array_element(href, array_idx, value)?;
                 Ok(StepResult::Continue)
             }
+            // Symbolic array — silently drop the store (no concrete array to write to)
+            EmValue::Symbolic(_) => Ok(StepResult::Continue),
             EmValue::Null => Err(EmulationError::NullReference.into()),
             _ => Err(EmulationError::TypeMismatch {
                 operation: "stelem",
@@ -912,6 +943,14 @@ impl Interpreter {
             EmValue::ObjectRef(href) => {
                 let ptr = EmValue::ManagedPtr(ManagedPointer::to_array_element(href, idx));
                 thread.push(ptr)?;
+                Ok(StepResult::Continue)
+            }
+            // Symbolic array — return symbolic managed pointer
+            EmValue::Symbolic(sym) => {
+                thread.push(EmValue::Symbolic(SymbolicValue::new(
+                    CilFlavor::ByRef,
+                    sym.source.clone(),
+                )))?;
                 Ok(StepResult::Continue)
             }
             EmValue::Null => Err(EmulationError::NullReference.into()),
@@ -1055,15 +1094,27 @@ impl Interpreter {
                         load_from_href(thread, *object)
                     }
                     PointerTarget::Local(idx) => {
-                        let local_value = thread.get_local(usize::from(*idx))?;
-                        match &local_value {
-                            EmValue::ObjectRef(href) => load_from_href(thread, *href),
-                            EmValue::ValueType { .. } | EmValue::Void => {
-                                // ValueType or Void (default-initialized ValueType)
-                                load_from_valuetype(thread, local_value.clone())
+                        let frame = thread
+                            .get_frame_at(ptr.frame_depth)
+                            .or_else(|| thread.current_frame());
+                        let local_value = frame
+                            .and_then(|f| f.locals().get(usize::from(*idx)).ok())
+                            .cloned();
+                        match local_value.as_ref() {
+                            Some(EmValue::ObjectRef(href)) => load_from_href(thread, *href),
+                            Some(EmValue::ValueType { .. }) | Some(EmValue::Void) => {
+                                load_from_valuetype(thread, local_value.unwrap())
                             }
-                            _ => {
-                                // Dereference pointer for other value types
+                            Some(_) => {
+                                let value = thread.deref_pointer(&ptr)?;
+                                if matches!(value, EmValue::ValueType { .. } | EmValue::Void) {
+                                    load_from_valuetype(thread, value)
+                                } else {
+                                    thread.push(value)?;
+                                    Ok(StepResult::Continue)
+                                }
+                            }
+                            None => {
                                 let value = thread.deref_pointer(&ptr)?;
                                 if matches!(value, EmValue::ValueType { .. } | EmValue::Void) {
                                     load_from_valuetype(thread, value)
@@ -1075,14 +1126,27 @@ impl Interpreter {
                         }
                     }
                     PointerTarget::Argument(idx) => {
-                        let arg_value = thread.get_arg(usize::from(*idx))?;
-                        match &arg_value {
-                            EmValue::ObjectRef(href) => load_from_href(thread, *href),
-                            EmValue::ValueType { .. } | EmValue::Void => {
-                                // ValueType or Void (default-initialized ValueType)
-                                load_from_valuetype(thread, arg_value.clone())
+                        let frame = thread
+                            .get_frame_at(ptr.frame_depth)
+                            .or_else(|| thread.current_frame());
+                        let arg_value = frame
+                            .and_then(|f| f.arguments().get(usize::from(*idx)).ok())
+                            .cloned();
+                        match arg_value.as_ref() {
+                            Some(EmValue::ObjectRef(href)) => load_from_href(thread, *href),
+                            Some(EmValue::ValueType { .. }) | Some(EmValue::Void) => {
+                                load_from_valuetype(thread, arg_value.unwrap())
                             }
-                            _ => {
+                            Some(_) => {
+                                let value = thread.deref_pointer(&ptr)?;
+                                if matches!(value, EmValue::ValueType { .. } | EmValue::Void) {
+                                    load_from_valuetype(thread, value)
+                                } else {
+                                    thread.push(value)?;
+                                    Ok(StepResult::Continue)
+                                }
+                            }
+                            None => {
                                 let value = thread.deref_pointer(&ptr)?;
                                 if matches!(value, EmValue::ValueType { .. } | EmValue::Void) {
                                     load_from_valuetype(thread, value)
@@ -1106,6 +1170,14 @@ impl Interpreter {
                 }
             }
             EmValue::Null => Err(EmulationError::NullReference.into()),
+            // Symbolic object reference — field value is unknown, propagate symbolic
+            EmValue::Symbolic(_) => {
+                thread.push(EmValue::Symbolic(SymbolicValue::new(
+                    CilFlavor::Object,
+                    TaintSource::Field(field_token.value()),
+                )))?;
+                Ok(StepResult::Continue)
+            }
             _ => Err(EmulationError::TypeMismatch {
                 operation: "ldfld",
                 expected: "object reference",
@@ -1225,57 +1297,74 @@ impl Interpreter {
                         Ok(StepResult::Continue)
                     }
                     PointerTarget::Local(idx) => {
-                        // Pointer to a local variable
+                        // Pointer to a local variable — resolve against owning frame
                         let local_idx = usize::from(*idx);
-                        let local_value = thread.get_local(local_idx)?;
-                        match &local_value {
-                            EmValue::ObjectRef(href) => {
+                        let frame = thread
+                            .get_frame_at(ptr.frame_depth)
+                            .or_else(|| thread.current_frame());
+                        let local_value =
+                            frame.and_then(|f| f.locals().get(local_idx).ok()).cloned();
+                        match local_value.as_ref() {
+                            Some(EmValue::ObjectRef(href)) => {
                                 let heap = thread.heap_mut();
                                 heap.set_field(*href, field_token, value)?;
                                 Ok(StepResult::Continue)
                             }
-                            EmValue::ValueType { .. } => {
-                                // Update the field in the ValueType and store back
+                            Some(EmValue::ValueType { .. }) => {
                                 if let Some(updated) = store_into_valuetype(
                                     thread,
-                                    local_value.clone(),
+                                    local_value.unwrap(),
                                     field_token,
                                     value.clone(),
                                 ) {
-                                    thread.set_local(local_idx, updated)?;
+                                    // Write back to the owning frame
+                                    thread
+                                        .resolve_frame_mut(ptr.frame_depth)
+                                        .ok_or_else(|| EmulationError::InternalError {
+                                            description: "empty call stack".into(),
+                                        })?
+                                        .locals_mut()
+                                        .set(local_idx, updated)?;
                                     Ok(StepResult::Continue)
                                 } else {
-                                    // Fallback: store through pointer
                                     thread.store_through_pointer(&ptr, value)?;
                                     Ok(StepResult::Continue)
                                 }
                             }
                             _ => {
-                                // Store through pointer for other types
                                 thread.store_through_pointer(&ptr, value)?;
                                 Ok(StepResult::Continue)
                             }
                         }
                     }
                     PointerTarget::Argument(idx) => {
-                        // Pointer to an argument
+                        // Pointer to an argument — resolve against owning frame
                         let arg_idx = usize::from(*idx);
-                        let arg_value = thread.get_arg(arg_idx)?;
-                        match &arg_value {
-                            EmValue::ObjectRef(href) => {
+                        let frame = thread
+                            .get_frame_at(ptr.frame_depth)
+                            .or_else(|| thread.current_frame());
+                        let arg_value =
+                            frame.and_then(|f| f.arguments().get(arg_idx).ok()).cloned();
+                        match arg_value.as_ref() {
+                            Some(EmValue::ObjectRef(href)) => {
                                 let heap = thread.heap_mut();
                                 heap.set_field(*href, field_token, value)?;
                                 Ok(StepResult::Continue)
                             }
-                            EmValue::ValueType { .. } => {
-                                // Update the field in the ValueType and store back
+                            Some(EmValue::ValueType { .. }) => {
                                 if let Some(updated) = store_into_valuetype(
                                     thread,
-                                    arg_value.clone(),
+                                    arg_value.unwrap(),
                                     field_token,
                                     value.clone(),
                                 ) {
-                                    thread.set_arg(arg_idx, updated)?;
+                                    thread
+                                        .resolve_frame_mut(ptr.frame_depth)
+                                        .ok_or_else(|| EmulationError::InternalError {
+                                            description: "empty call stack".into(),
+                                        })?
+                                        .arguments_mut()
+                                        .set(arg_idx, updated)?;
                                     Ok(StepResult::Continue)
                                 } else {
                                     thread.store_through_pointer(&ptr, value)?;

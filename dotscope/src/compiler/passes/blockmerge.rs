@@ -220,9 +220,7 @@ impl BlockMergingPass {
         };
 
         let preds = ssa.block_predecessors(target);
-        let target_has_phis = ssa
-            .block(target)
-            .map_or(true, |b| !b.phi_nodes().is_empty());
+        let target_has_phis = ssa.block(target).is_none_or(|b| !b.phi_nodes().is_empty());
 
         if preds.len() == 1 && preds[0] == 0 && !target_has_phis {
             // Safe to inline: B_target's only external predecessor is B0 and it

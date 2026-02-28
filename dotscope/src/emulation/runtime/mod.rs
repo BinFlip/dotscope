@@ -73,8 +73,8 @@
 //! ```ignore
 //! use dotscope::emulation::runtime::{RuntimeState, Hook, PreHookResult};
 //!
-//! let mut runtime = RuntimeState::new();
-//! runtime.hooks_mut().register(
+//! let runtime = RuntimeState::new();
+//! runtime.hooks().register(
 //!     Hook::new("my-hook")
 //!         .match_name("MyNamespace", "MyType", "MyMethod")
 //!         .pre(|ctx, thread| {

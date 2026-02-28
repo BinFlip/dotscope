@@ -76,7 +76,7 @@ use crate::{
 /// - `RuntimeHelpers.RunClassConstructor` - No-op
 /// - `RuntimeHelpers.RunModuleConstructor` - No-op
 /// - `Object.Equals` - Reference/value equality (instance and static)
-pub fn register(manager: &mut HookManager) {
+pub fn register(manager: &HookManager) {
     manager.register(
         Hook::new("System.Runtime.CompilerServices.RuntimeHelpers.InitializeArray")
             .match_name(
@@ -143,6 +143,14 @@ pub fn register(manager: &mut HookManager) {
         Hook::new("System.Object.Equals")
             .match_name("System", "Object", "Equals")
             .pre(object_equals_pre),
+    );
+
+    // System.Object..ctor() - base constructor, no-op.
+    // Every .NET type's constructor calls base Object::.ctor() which has no side effects.
+    manager.register(
+        Hook::new("System.Object..ctor")
+            .match_name("System", "Object", ".ctor")
+            .pre(object_ctor_pre),
     );
 }
 
@@ -470,6 +478,14 @@ fn object_equals_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> Pr
     PreHookResult::Bypass(Some(EmValue::I32(0)))
 }
 
+/// Hook for `System.Object::.ctor()`.
+///
+/// The base `Object` constructor is a no-op in the CLR. Every type's constructor
+/// chain ultimately calls this, but it performs no initialization.
+fn object_ctor_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    PreHookResult::Bypass(None)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -480,9 +496,9 @@ mod tests {
 
     #[test]
     fn test_register_hooks() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
-        assert_eq!(manager.len(), 7);
+        let manager = HookManager::new();
+        register(&manager);
+        assert_eq!(manager.len(), 8);
     }
 
     #[test]

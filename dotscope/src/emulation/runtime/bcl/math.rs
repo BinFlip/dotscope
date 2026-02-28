@@ -101,7 +101,7 @@ use crate::emulation::{
 /// - **Power/Log**: `Pow`, `Sqrt`, `Log`, `Log10`, `Exp`
 /// - **Trig**: `Sin`, `Cos`, `Tan`, `Asin`, `Acos`, `Atan`, `Atan2`
 /// - **BitOps**: `PopCount`, `LeadingZeroCount`, `TrailingZeroCount`, `RotateLeft`, `RotateRight`
-pub fn register(manager: &mut HookManager) {
+pub fn register(manager: &HookManager) {
     // Basic math
     manager.register(
         Hook::new("System.Math.Abs")
@@ -1090,8 +1090,8 @@ mod tests {
 
     #[test]
     fn test_register_hooks() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
+        let manager = HookManager::new();
+        register(&manager);
 
         // Should have registered all math hooks
         assert!(manager.len() > 20);

@@ -93,6 +93,36 @@ pub trait HookMatcher: Send + Sync {
     /// This should be a concise description of what the matcher checks for,
     /// such as "namespace=System, type=String" or "internal method only".
     fn description(&self) -> String;
+
+    /// Returns the name components if this is a name-based matcher.
+    ///
+    /// Used by [`HookManager`](super::HookManager) to build the hook dispatch
+    /// index. Returns `(namespace, type_name, method_name)` where each component
+    /// is `Some` if specified or `None` if it matches anything.
+    ///
+    /// The default implementation returns `None`, indicating this matcher does
+    /// not provide name-based indexing hints.
+    fn name_components(&self) -> Option<(Option<&str>, Option<&str>, Option<&str>)> {
+        None
+    }
+
+    /// Returns `true` if this matcher requires runtime argument inspection.
+    ///
+    /// Runtime matchers evaluate closures over the actual call arguments. The
+    /// hook manager uses this to determine whether a hook can be resolved purely
+    /// from name-based indexing or needs full context evaluation.
+    fn is_runtime_matcher(&self) -> bool {
+        false
+    }
+
+    /// Returns `true` if this matcher requires method signature information.
+    ///
+    /// Signature matchers check parameter types and return types. The hook
+    /// manager uses this to determine whether parameter/return type metadata
+    /// must be fetched before matching.
+    fn is_signature_matcher(&self) -> bool {
+        false
+    }
 }
 
 /// Matches methods by namespace, type name, and/or method name.
@@ -230,6 +260,14 @@ impl HookMatcher for NameMatcher {
         } else {
             parts.join(", ")
         }
+    }
+
+    fn name_components(&self) -> Option<(Option<&str>, Option<&str>, Option<&str>)> {
+        Some((
+            self.namespace.as_deref(),
+            self.type_name.as_deref(),
+            self.method_name.as_deref(),
+        ))
     }
 }
 
@@ -370,6 +408,10 @@ impl HookMatcher for SignatureMatcher {
             parts.join(", ")
         }
     }
+
+    fn is_signature_matcher(&self) -> bool {
+        true
+    }
 }
 
 /// Matches methods based on runtime argument inspection.
@@ -438,6 +480,10 @@ impl HookMatcher for RuntimeMatcher {
 
     fn description(&self) -> String {
         self.description.clone()
+    }
+
+    fn is_runtime_matcher(&self) -> bool {
+        true
     }
 }
 

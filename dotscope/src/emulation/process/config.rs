@@ -42,7 +42,7 @@
 //! };
 //! ```
 
-use std::{ops::Range, path::PathBuf};
+use std::{collections::HashMap, ops::Range, path::PathBuf};
 
 use crate::metadata::typesystem::PointerSize;
 
@@ -158,6 +158,12 @@ pub struct EmulationConfig {
     ///
     /// Controls what events are logged during emulation.
     pub tracing: TracingConfig,
+
+    /// Environment configuration for simulating `System.Environment` properties.
+    ///
+    /// Controls values returned by hooks for OS version, user name, machine name,
+    /// special folder paths, environment variables, and tick counts.
+    pub environment: EnvironmentConfig,
 }
 
 /// Limits for emulation execution.
@@ -568,6 +574,107 @@ pub struct CaptureConfig {
     pub network_operations: bool,
 }
 
+/// Environment simulation configuration.
+///
+/// Controls the values returned by `System.Environment` property hooks and
+/// related BCL methods like `Module.FullyQualifiedName` and `Assembly.get_Location`.
+/// Provides realistic Windows 10 defaults suitable for deobfuscation.
+///
+/// # Default Values
+///
+/// | Property | Default |
+/// |----------|---------|
+/// | `os_version` | `"10.0.19041.0"` |
+/// | `processor_count` | `4` |
+/// | `is_64bit_os` | `true` |
+/// | `is_64bit_process` | `true` |
+/// | `user_name` | `"user"` |
+/// | `machine_name` | `"DESKTOP-PC"` |
+/// | `current_directory` | `"C:\\Users\\user\\Desktop"` |
+/// | `tick_count_base` | `300_000` (5 min uptime) |
+/// | `tick_count_divisor` | `100` (instructions per ms) |
+#[derive(Clone, Debug)]
+pub struct EnvironmentConfig {
+    /// Simulated OS version string (e.g., `"10.0.19041.0"`).
+    pub os_version: String,
+
+    /// Number of logical processors reported by `Environment.ProcessorCount`.
+    pub processor_count: i32,
+
+    /// Whether the OS is 64-bit (`Environment.Is64BitOperatingSystem`).
+    pub is_64bit_os: bool,
+
+    /// Whether the process is 64-bit (`Environment.Is64BitProcess`).
+    pub is_64bit_process: bool,
+
+    /// User name reported by `Environment.UserName`.
+    pub user_name: String,
+
+    /// Machine name reported by `Environment.MachineName`.
+    pub machine_name: String,
+
+    /// Current directory reported by `Environment.CurrentDirectory`.
+    pub current_directory: String,
+
+    /// Base value for `Environment.TickCount` / `TickCount64` in milliseconds.
+    pub tick_count_base: i64,
+
+    /// Instructions-per-millisecond divisor for tick count advancement.
+    ///
+    /// `tick_count = tick_count_base + instructions_executed / tick_count_divisor`
+    pub tick_count_divisor: u64,
+
+    /// Pre-configured environment variables.
+    ///
+    /// `Environment.GetEnvironmentVariable(name)` returns the value from this map
+    /// or null if missing. Empty by default.
+    pub environment_variables: HashMap<String, String>,
+
+    /// Special folder paths keyed by .NET `SpecialFolder` enum value.
+    ///
+    /// `Environment.GetFolderPath(SpecialFolder)` returns the path from this map.
+    /// Pre-populated with common Windows paths.
+    pub folder_paths: HashMap<i32, String>,
+
+    /// Base directory for `Module.FullyQualifiedName`.
+    ///
+    /// The module name from metadata is appended to this path.
+    pub module_base_path: String,
+
+    /// Base directory for `Assembly.get_Location`.
+    ///
+    /// The module name from metadata is appended to this path.
+    pub assembly_location_base: String,
+}
+
+impl Default for EnvironmentConfig {
+    fn default() -> Self {
+        let mut folder_paths = HashMap::new();
+        folder_paths.insert(0, "C:\\Users\\user\\Desktop".to_string());
+        folder_paths.insert(26, "C:\\Users\\user\\AppData\\Roaming".to_string());
+        folder_paths.insert(28, "C:\\Users\\user\\AppData\\Local".to_string());
+        folder_paths.insert(35, "C:\\ProgramData".to_string());
+        folder_paths.insert(37, "C:\\Windows".to_string());
+        folder_paths.insert(41, "C:\\Program Files".to_string());
+
+        Self {
+            os_version: "10.0.19041.0".to_string(),
+            processor_count: 4,
+            is_64bit_os: true,
+            is_64bit_process: true,
+            user_name: "user".to_string(),
+            machine_name: "DESKTOP-PC".to_string(),
+            current_directory: "C:\\Users\\user\\Desktop".to_string(),
+            tick_count_base: 300_000,
+            tick_count_divisor: 100,
+            environment_variables: HashMap::new(),
+            folder_paths,
+            module_base_path: "C:\\Windows\\Microsoft.NET\\Framework64\\v4.0.30319".to_string(),
+            assembly_location_base: "C:\\Users\\user\\AppData\\Local\\Temp".to_string(),
+        }
+    }
+}
+
 impl Default for EmulationConfig {
     /// Creates a default emulation configuration.
     ///
@@ -586,6 +693,7 @@ impl Default for EmulationConfig {
             memory: MemoryConfig::default(),
             stubs: StubConfig::default(),
             tracing: TracingConfig::default(),
+            environment: EnvironmentConfig::default(),
         }
     }
 }

@@ -351,6 +351,15 @@ pub struct ProcessBuilder {
     ///
     /// If not set, defaults to the assembly name or "emulation".
     name: Option<String>,
+
+    /// Optional PE bytes to use instead of the assembly's own PE data.
+    ///
+    /// When set, these bytes are mapped into the address space instead of
+    /// `assembly.file().data()`. This is used to bypass anti-tamper integrity
+    /// checks: the emulator uses the patched assembly for metadata resolution
+    /// but maps the original (pre-deobfuscation) PE bytes so that in-memory
+    /// hash/checksum verification by the target code sees unmodified data.
+    pe_override: Option<Vec<u8>>,
 }
 
 impl ProcessBuilder {
@@ -380,6 +389,7 @@ impl ProcessBuilder {
             mappings: Vec::new(),
             register_defaults: true,
             name: None,
+            pe_override: None,
         }
     }
 
@@ -622,6 +632,7 @@ impl ProcessBuilder {
     #[must_use]
     pub fn with_max_heap_bytes(mut self, max: usize) -> Self {
         self.config.limits.max_heap_bytes = max;
+        self.config.memory.max_heap_size = max;
         self
     }
 
@@ -956,6 +967,23 @@ impl ProcessBuilder {
         self
     }
 
+    /// Overrides the PE bytes mapped into the emulator's address space.
+    ///
+    /// When the assembly is set via [`assembly`](Self::assembly) or
+    /// [`assembly_arc`](Self::assembly_arc), its PE data is normally mapped
+    /// automatically. This method substitutes different bytes for that mapping
+    /// while still using the assembly for metadata resolution.
+    ///
+    /// This is useful for anti-tamper bypass: deobfuscation may patch the PE
+    /// (decrypting method bodies, updating RVAs), but the target code's integrity
+    /// checks read the in-memory PE image. Mapping the original, unpatched bytes
+    /// lets those checks pass while the emulator uses the patched metadata.
+    #[must_use]
+    pub fn with_pe_override(mut self, pe_bytes: Vec<u8>) -> Self {
+        self.pe_override = Some(pe_bytes);
+        self
+    }
+
     /// Disables registration of default BCL stubs.
     ///
     /// By default, the builder registers stubs for common BCL methods
@@ -1045,10 +1073,10 @@ impl ProcessBuilder {
         }
 
         let config_arc = Arc::new(config);
-        let mut runtime = RuntimeState::with_config(config_arc.clone());
+        let runtime = RuntimeState::with_config(config_arc.clone());
 
         for hook in self.hooks {
-            runtime.register_hook(hook);
+            runtime.hooks().register(hook);
         }
 
         let capture = Arc::new(CaptureContext::with_config(self.capture_config));
@@ -1057,7 +1085,10 @@ impl ProcessBuilder {
 
         if let Some(ref assembly) = self.assembly {
             let loader = PeLoader::default();
-            let pe_bytes = assembly.file().data();
+            let pe_bytes = self
+                .pe_override
+                .as_deref()
+                .unwrap_or(assembly.file().data());
             let name = assembly
                 .assembly()
                 .map_or_else(|| "primary".to_string(), |a| a.name.clone());

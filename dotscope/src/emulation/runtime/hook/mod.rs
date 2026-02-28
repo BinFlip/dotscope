@@ -27,23 +27,6 @@
 //! | [`hook`] | The [`Hook`] builder and executor |
 //! | [`manager`] | [`HookManager`] for hook registration and lookup |
 //!
-//! # Architecture
-//!
-//! ```text
-//! ┌─────────────────────────────────────────────────────────────┐
-//! │                      HookManager                            │
-//! │  ┌─────────────────────────────────────────────────────┐   │
-//! │  │  hooks: Vec<Hook>  (sorted by priority)             │   │
-//! │  └─────────────────────────────────────────────────────┘   │
-//! │                          │                                  │
-//! │                          ▼                                  │
-//! │  ┌─────────────────────────────────────────────────────┐   │
-//! │  │  find_matching(context) -> Option<&Hook>            │   │
-//! │  │  execute_pre(hook, context) -> PreHookResult        │   │
-//! │  │  execute_post(hook, context, result) -> PostResult  │   │
-//! │  └─────────────────────────────────────────────────────┘   │
-//! └─────────────────────────────────────────────────────────────┘
-//! ```
 //!
 //! # Hook Execution Flow
 //!
@@ -83,7 +66,7 @@
 //! ```rust,ignore
 //! use dotscope::emulation::{Hook, HookManager, PreHookResult};
 //!
-//! let mut manager = HookManager::new();
+//! let manager = HookManager::new();
 //!
 //! manager.register(
 //!     Hook::new("log-assembly-load")
@@ -101,7 +84,7 @@
 //! use dotscope::emulation::{Hook, HookManager, PreHookResult};
 //! use dotscope::metadata::typesystem::CilFlavor;
 //!
-//! let mut manager = HookManager::new();
+//! let manager = HookManager::new();
 //!
 //! // Intercept byte[] -> byte[] methods that look like LZMA
 //! manager.register(

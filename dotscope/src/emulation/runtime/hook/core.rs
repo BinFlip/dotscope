@@ -138,6 +138,12 @@ impl Hook {
         self.priority
     }
 
+    /// Returns a reference to the hook's matchers.
+    #[must_use]
+    pub fn matchers(&self) -> &[Box<dyn HookMatcher>] {
+        &self.matchers
+    }
+
     /// Sets the hook's priority.
     ///
     /// Higher priority hooks are checked first. The default is

@@ -425,7 +425,7 @@ impl EmValue {
     /// ```rust
     /// use dotscope::emulation::{EmValue, ManagedPointer};
     ///
-    /// let ptr = ManagedPointer::to_local(0);
+    /// let ptr = ManagedPointer::to_local(0, 0);
     /// let value = EmValue::ManagedPtr(ptr.clone());
     /// assert!(value.as_managed_ptr().is_some());
     /// assert_eq!(EmValue::Null.as_managed_ptr(), None);
@@ -1686,24 +1686,29 @@ pub struct ManagedPointer {
     pub target: PointerTarget,
     /// Byte offset within the target for field access.
     pub offset: u32,
+    /// Call stack index (0-based) of the frame that owns this pointer.
+    /// Only meaningful for Local and Argument targets; set to 0 for others.
+    pub frame_depth: usize,
 }
 
 impl ManagedPointer {
     /// Creates a new managed pointer to a local variable.
     #[must_use]
-    pub fn to_local(index: u16) -> Self {
+    pub fn to_local(index: u16, frame_depth: usize) -> Self {
         ManagedPointer {
             target: PointerTarget::Local(index),
             offset: 0,
+            frame_depth,
         }
     }
 
     /// Creates a new managed pointer to an argument.
     #[must_use]
-    pub fn to_argument(index: u16) -> Self {
+    pub fn to_argument(index: u16, frame_depth: usize) -> Self {
         ManagedPointer {
             target: PointerTarget::Argument(index),
             offset: 0,
+            frame_depth,
         }
     }
 
@@ -1713,6 +1718,7 @@ impl ManagedPointer {
         ManagedPointer {
             target: PointerTarget::ArrayElement { array, index },
             offset: 0,
+            frame_depth: 0,
         }
     }
 
@@ -1722,6 +1728,7 @@ impl ManagedPointer {
         ManagedPointer {
             target: PointerTarget::ObjectField { object, field },
             offset: 0,
+            frame_depth: 0,
         }
     }
 
@@ -1731,6 +1738,7 @@ impl ManagedPointer {
         ManagedPointer {
             target: PointerTarget::StaticField(field),
             offset: 0,
+            frame_depth: 0,
         }
     }
 
@@ -1885,11 +1893,12 @@ mod tests {
 
     #[test]
     fn test_managed_pointer_creation() {
-        let p1 = ManagedPointer::to_local(0);
+        let p1 = ManagedPointer::to_local(0, 0);
         assert_eq!(p1.target, PointerTarget::Local(0));
         assert_eq!(p1.offset, 0);
+        assert_eq!(p1.frame_depth, 0);
 
-        let p2 = ManagedPointer::to_argument(1);
+        let p2 = ManagedPointer::to_argument(1, 0);
         assert_eq!(p2.target, PointerTarget::Argument(1));
 
         let p3 = ManagedPointer::to_array_element(HeapRef::new(1), 5);
@@ -2073,7 +2082,7 @@ mod tests {
 
     #[test]
     fn test_as_pointer_address_managed_fails() {
-        let ptr = ManagedPointer::to_local(0);
+        let ptr = ManagedPointer::to_local(0, 0);
         assert!(EmValue::ManagedPtr(ptr).as_pointer_address().is_err());
     }
 

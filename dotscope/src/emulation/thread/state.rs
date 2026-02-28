@@ -59,6 +59,7 @@ use crate::{
         exception::ThreadExceptionState,
         fakeobjects::SharedFakeObjects,
         memory::{HeapObject, ManagedHeap},
+        process::EmulationConfig,
         value::PointerTarget,
         AddressSpace, ArgumentStorage, EmValue, EvaluationStack, HeapRef, LocalVariables,
         ManagedPointer, ThreadId,
@@ -480,18 +481,14 @@ pub struct EmulationThread {
     /// Return value when thread completes.
     return_value: Option<EmValue>,
 
-    /// Pending reflection invoke request from a stub.
-    ///
-    /// When a stub like `MethodBase.Invoke()` wants to invoke a reflected method,
-    /// it sets this field. The emulation controller checks this after each stub
-    /// call and handles the method invocation.
-    pending_reflection_invoke: Option<ReflectionInvokeRequest>,
-
     /// Pre-allocated fake BCL objects shared with other threads.
     ///
     /// These objects ensure that BCL methods like `Assembly.GetExecutingAssembly()`
     /// return the same reference each time, which is critical for anti-tamper checks.
     fake_objects: SharedFakeObjects,
+
+    /// Emulation configuration for environment hooks and runtime behavior.
+    config: Arc<EmulationConfig>,
 }
 
 /// A request to invoke a method via reflection.
@@ -523,7 +520,6 @@ impl fmt::Debug for EmulationThread {
             .field("assembly", &self.assembly.as_ref().map(|_| "..."))
             .field("instructions_executed", &self.instructions_executed)
             .field("return_value", &self.return_value)
-            .field("pending_reflection_invoke", &self.pending_reflection_invoke)
             .finish_non_exhaustive()
     }
 }
@@ -541,12 +537,14 @@ impl EmulationThread {
     /// * `capture` - Shared capture context for recording artifacts
     /// * `assembly` - Optional assembly for metadata access
     /// * `fake_objects` - Pre-allocated fake BCL objects for consistent references
+    /// * `config` - Emulation configuration for environment hooks
     pub fn new(
         id: ThreadId,
         address_space: Arc<AddressSpace>,
         capture: Arc<CaptureContext>,
         assembly: Option<Arc<CilObject>>,
         fake_objects: SharedFakeObjects,
+        config: Arc<EmulationConfig>,
     ) -> Self {
         Self {
             id,
@@ -562,8 +560,8 @@ impl EmulationThread {
             assembly,
             instructions_executed: 0,
             return_value: None,
-            pending_reflection_invoke: None,
             fake_objects,
+            config,
         }
     }
 
@@ -576,6 +574,7 @@ impl EmulationThread {
         capture: Arc<CaptureContext>,
         assembly: Option<Arc<CilObject>>,
         fake_objects: SharedFakeObjects,
+        config: Arc<EmulationConfig>,
     ) -> Self {
         let mut thread = Self::new(
             ThreadId::MAIN,
@@ -583,6 +582,7 @@ impl EmulationThread {
             capture,
             assembly,
             fake_objects,
+            config,
         );
         thread.name = Some("Main".to_string());
         thread
@@ -595,6 +595,12 @@ impl EmulationThread {
     #[must_use]
     pub fn fake_objects(&self) -> &SharedFakeObjects {
         &self.fake_objects
+    }
+
+    /// Returns a reference to the emulation configuration.
+    #[must_use]
+    pub fn config(&self) -> &EmulationConfig {
+        &self.config
     }
 
     /// Returns the capture context for recording emulation artifacts.
@@ -688,6 +694,28 @@ impl EmulationThread {
     #[must_use]
     pub fn call_depth(&self) -> usize {
         self.call_stack.len()
+    }
+
+    /// Returns a reference to the call frame at the given depth (0-based index).
+    #[must_use]
+    pub fn get_frame_at(&self, depth: usize) -> Option<&ThreadCallFrame> {
+        self.call_stack.get(depth)
+    }
+
+    /// Returns a mutable reference to the call frame at the given depth (0-based index).
+    pub fn get_frame_at_mut(&mut self, depth: usize) -> Option<&mut ThreadCallFrame> {
+        self.call_stack.get_mut(depth)
+    }
+
+    /// Returns a mutable reference to the frame at the given depth, falling back
+    /// to the current (topmost) frame if the depth is out of range.
+    pub fn resolve_frame_mut(&mut self, depth: usize) -> Option<&mut ThreadCallFrame> {
+        let len = self.call_stack.len();
+        if depth < len {
+            self.call_stack.get_mut(depth)
+        } else {
+            self.call_stack.last_mut()
+        }
     }
 
     /// Pushes a new call frame onto the call stack.
@@ -867,30 +895,6 @@ impl EmulationThread {
         self.return_value.take()
     }
 
-    /// Returns any pending reflection invoke request.
-    ///
-    /// This is set by stubs like `MethodBase.Invoke()` when they need to
-    /// invoke a reflected method. The controller should check this after
-    /// each stub execution and handle the invocation.
-    #[must_use]
-    pub fn pending_reflection_invoke(&self) -> Option<&ReflectionInvokeRequest> {
-        self.pending_reflection_invoke.as_ref()
-    }
-
-    /// Takes and returns any pending reflection invoke request.
-    ///
-    /// This clears the pending request, allowing the controller to handle it.
-    pub fn take_pending_reflection_invoke(&mut self) -> Option<ReflectionInvokeRequest> {
-        self.pending_reflection_invoke.take()
-    }
-
-    /// Sets a pending reflection invoke request.
-    ///
-    /// Called by stubs like `MethodBase.Invoke()` to request method invocation.
-    pub fn set_pending_reflection_invoke(&mut self, request: ReflectionInvokeRequest) {
-        self.pending_reflection_invoke = Some(request);
-    }
-
     /// Marks the thread as faulted due to an unhandled exception.
     pub fn fault(&mut self) {
         self.state = ThreadState::Faulted;
@@ -1024,11 +1028,23 @@ impl EmulationThread {
         match &ptr.target {
             PointerTarget::Local(index) => {
                 let idx = usize::from(*index);
-                self.get_local(idx).cloned()
+                let frame = self
+                    .get_frame_at(ptr.frame_depth)
+                    .or_else(|| self.current_frame())
+                    .ok_or_else(|| EmulationError::InternalError {
+                        description: "empty call stack".into(),
+                    })?;
+                frame.locals().get(idx).cloned()
             }
             PointerTarget::Argument(index) => {
                 let idx = usize::from(*index);
-                self.get_arg(idx).cloned()
+                let frame = self
+                    .get_frame_at(ptr.frame_depth)
+                    .or_else(|| self.current_frame())
+                    .ok_or_else(|| EmulationError::InternalError {
+                        description: "empty call stack".into(),
+                    })?;
+                frame.arguments().get(idx).cloned()
             }
             PointerTarget::ArrayElement { array, index } => self
                 .address_space
@@ -1070,11 +1086,23 @@ impl EmulationThread {
         match &ptr.target {
             PointerTarget::Local(index) => {
                 let idx = usize::from(*index);
-                self.set_local(idx, value)
+                let frame = self.resolve_frame_mut(ptr.frame_depth).ok_or_else(|| {
+                    EmulationError::InternalError {
+                        description: "empty call stack".into(),
+                    }
+                })?;
+                frame.locals_mut().set(idx, value)?;
+                Ok(())
             }
             PointerTarget::Argument(index) => {
                 let idx = usize::from(*index);
-                self.set_arg(idx, value)
+                let frame = self.resolve_frame_mut(ptr.frame_depth).ok_or_else(|| {
+                    EmulationError::InternalError {
+                        description: "empty call stack".into(),
+                    }
+                })?;
+                frame.arguments_mut().set(idx, value)?;
+                Ok(())
             }
             PointerTarget::ArrayElement { array, index } => self
                 .address_space
@@ -1165,7 +1193,8 @@ mod tests {
         let space = Arc::new(AddressSpace::new());
         let capture = Arc::new(CaptureContext::new());
         let fake_objects = SharedFakeObjects::new(space.managed_heap());
-        let thread = EmulationThread::main(space, capture, None, fake_objects);
+        let config = Arc::new(EmulationConfig::default());
+        let thread = EmulationThread::main(space, capture, None, fake_objects, config);
         assert_eq!(thread.id(), ThreadId::MAIN);
         assert_eq!(thread.name(), Some("Main"));
     }

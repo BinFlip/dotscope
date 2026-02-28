@@ -68,7 +68,7 @@ use crate::emulation::{
 /// - `GCHandle.Target` - Get/set target object
 /// - `GCHandle.IsAllocated` - Check allocation status
 /// - `GCHandle.ToIntPtr` / `FromIntPtr` - Handle conversion
-pub fn register(manager: &mut HookManager) {
+pub fn register(manager: &HookManager) {
     manager.register(
         Hook::new("System.Runtime.InteropServices.GCHandle.Alloc")
             .match_name("System.Runtime.InteropServices", "GCHandle", "Alloc")
@@ -284,8 +284,8 @@ mod tests {
 
     #[test]
     fn test_register_hooks() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
+        let manager = HookManager::new();
+        register(&manager);
         assert_eq!(manager.len(), 8);
     }
 

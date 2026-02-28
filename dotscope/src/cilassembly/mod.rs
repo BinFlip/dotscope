@@ -1188,6 +1188,15 @@ impl CilAssembly {
         CilObject::from_mem_with_validation(bytes, validation_config)
     }
 
+    /// Discards all changes and recovers the underlying view.
+    ///
+    /// This is O(1) — it just moves the view out, dropping the changes layer.
+    /// The original view is still backed by the unmodified CoW/mmap data.
+    #[must_use]
+    pub fn into_view(self) -> CilAssemblyView {
+        self.view
+    }
+
     /// Gets the original row count for a table
     pub fn original_table_row_count(&self, table_id: TableId) -> u32 {
         if let Some(tables) = self.view.tables() {

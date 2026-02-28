@@ -35,7 +35,7 @@
 //! heap (no garbage collection is simulated).
 
 use std::{
-    collections::HashMap,
+    collections::{HashMap, HashSet as StdHashSet, VecDeque},
     fmt,
     sync::{
         atomic::{AtomicU64, AtomicUsize, Ordering},
@@ -45,23 +45,30 @@ use std::{
 
 use imbl::HashMap as ImHashMap;
 
+#[cfg(feature = "legacy-crypto")]
+use crate::utils::{compute_md5, compute_sha1};
 use crate::{
     emulation::{engine::EmulationError, EmValue, HeapRef},
     metadata::{
+        signatures::TypeSignature,
         token::Token,
         typesystem::{CilFlavor, PointerSize},
     },
+    utils::{compute_sha256, compute_sha384, compute_sha512},
     Result,
 };
 
-/// Info about a symmetric algorithm: (algorithm_type, key, iv).
-pub type SymmetricAlgorithmInfo = (Arc<str>, Option<Vec<u8>>, Option<Vec<u8>>);
+/// Info about a symmetric algorithm: (algorithm_type, key, iv, mode, padding).
+pub type SymmetricAlgorithmInfo = (Arc<str>, Option<Vec<u8>>, Option<Vec<u8>>, u8, u8);
 
-/// Info about a crypto transform: (algorithm, key, iv, is_encryptor).
-pub type CryptoTransformInfo = (Arc<str>, Vec<u8>, Vec<u8>, bool);
+/// Info about a crypto transform: (algorithm, key, iv, is_encryptor, mode, padding).
+pub type CryptoTransformInfo = (Arc<str>, Vec<u8>, Vec<u8>, bool, u8, u8);
 
 /// Info about key derivation: (password, salt, iterations, hash_algorithm).
 pub type KeyDerivationInfo = (Vec<u8>, Vec<u8>, u32, Arc<str>);
+
+/// Info about a reflection property: (property_name, declaring_type_token, getter_token, setter_token).
+pub type ReflectionPropertyInfo = (Arc<str>, Token, Option<Token>, Option<Token>);
 
 /// Iterator over heap objects.
 ///
@@ -124,6 +131,73 @@ pub enum EncodingType {
     Utf16Be,
     /// UTF-32 encoding (4 bytes per character).
     Utf32,
+}
+
+/// Key type for Dictionary and HashSet storage.
+///
+/// Supports the common .NET key types used in obfuscator lookup tables:
+/// integers, strings, booleans, chars, and object references.
+#[derive(Clone, Debug, Hash, Eq, PartialEq)]
+pub enum DictionaryKey {
+    /// Integer key (covers i32, i64, NativeInt, NativeUInt).
+    Integer(i64),
+    /// String key.
+    String(Arc<str>),
+    /// Boolean key.
+    Bool(bool),
+    /// Character key.
+    Char(char),
+    /// Object reference key (identity-based equality).
+    ObjectRef(HeapRef),
+    /// Null key.
+    Null,
+}
+
+impl DictionaryKey {
+    /// Converts an `EmValue` to a `DictionaryKey`.
+    ///
+    /// Returns `None` for value types that cannot be used as dictionary keys
+    /// (e.g., floats, void, pointers, value types).
+    #[must_use]
+    pub fn from_emvalue(value: &EmValue, heap: &ManagedHeap) -> Option<Self> {
+        match value {
+            EmValue::I32(v) => Some(DictionaryKey::Integer(i64::from(*v))),
+            EmValue::I64(v) => Some(DictionaryKey::Integer(*v)),
+            EmValue::NativeInt(v) => Some(DictionaryKey::Integer(*v)),
+            EmValue::NativeUInt(v) => Some(DictionaryKey::Integer(*v as i64)),
+            EmValue::Bool(v) => Some(DictionaryKey::Bool(*v)),
+            EmValue::Char(v) => Some(DictionaryKey::Char(*v)),
+            EmValue::Null => Some(DictionaryKey::Null),
+            EmValue::ObjectRef(href) => {
+                // For string references, use string value equality
+                if let Ok(s) = heap.get_string(*href) {
+                    Some(DictionaryKey::String(s))
+                } else {
+                    Some(DictionaryKey::ObjectRef(*href))
+                }
+            }
+            _ => None,
+        }
+    }
+
+    /// Converts this key back to an `EmValue`.
+    #[must_use]
+    pub fn to_emvalue(&self, heap: &ManagedHeap) -> EmValue {
+        match self {
+            DictionaryKey::Integer(v) => EmValue::I32(*v as i32),
+            DictionaryKey::String(s) => {
+                if let Ok(href) = heap.alloc_string(s) {
+                    EmValue::ObjectRef(href)
+                } else {
+                    EmValue::Null
+                }
+            }
+            DictionaryKey::Bool(v) => EmValue::Bool(*v),
+            DictionaryKey::Char(v) => EmValue::Char(*v),
+            DictionaryKey::ObjectRef(href) => EmValue::ObjectRef(*href),
+            DictionaryKey::Null => EmValue::Null,
+        }
+    }
 }
 
 /// Object stored on the managed heap.
@@ -208,12 +282,20 @@ pub enum HeapObject {
         encoding_type: EncodingType,
     },
 
-    /// A cryptographic hash algorithm instance (for crypto stubs).
+    /// A cryptographic hash/asymmetric algorithm instance (for crypto stubs).
     ///
-    /// Used to stub `MD5`, `SHA1`, `SHA256`, etc.
+    /// Used to stub `MD5`, `SHA1`, `SHA256`, `RSACryptoServiceProvider`, etc.
+    /// Supports incremental hashing via `accumulated_data` / `hash_result`
+    /// and RSA key import via `rsa_public_key`.
     CryptoAlgorithm {
-        /// The algorithm name (e.g., "MD5", "SHA1", "SHA256").
+        /// The algorithm name (e.g., "MD5", "SHA1", "SHA256", "RSA").
         algorithm_type: Arc<str>,
+        /// Data accumulated via `TransformBlock` for incremental hashing.
+        accumulated_data: Vec<u8>,
+        /// Computed hash after `TransformFinalBlock` / `finalize_hash`.
+        hash_result: Option<Vec<u8>>,
+        /// Imported RSA public key as (modulus, exponent) from `FromXmlString`.
+        rsa_public_key: Option<(Vec<u8>, Vec<u8>)>,
     },
 
     /// A symmetric encryption algorithm instance (for crypto stubs).
@@ -226,6 +308,10 @@ pub enum HeapObject {
         key: Option<Vec<u8>>,
         /// The initialization vector, if set.
         iv: Option<Vec<u8>>,
+        /// Cipher mode: 1=CBC (default), 2=ECB, 4=CFB — matches .NET CipherMode enum.
+        mode: u8,
+        /// Padding mode: 1=None, 2=PKCS7 (default), 3=Zeros — matches .NET PaddingMode enum.
+        padding: u8,
     },
 
     /// A crypto transform instance (encryptor/decryptor).
@@ -241,6 +327,10 @@ pub enum HeapObject {
         iv: Vec<u8>,
         /// Whether this is an encryptor (true) or decryptor (false).
         is_encryptor: bool,
+        /// Cipher mode: 1=CBC (default), 2=ECB, 4=CFB.
+        mode: u8,
+        /// Padding mode: 1=None, 2=PKCS7 (default), 3=Zeros.
+        padding: u8,
     },
 
     /// A reflection method info object.
@@ -250,6 +340,81 @@ pub enum HeapObject {
     ReflectionMethod {
         /// The method token that was resolved.
         method_token: Token,
+    },
+
+    /// A reflection type object carrying the actual metadata type token.
+    ///
+    /// Created by `Type.GetTypeFromHandle()` to track which type was resolved.
+    /// Used by `Type.GetFields()` to look up fields from the assembly metadata.
+    ReflectionType {
+        /// The TypeDef/TypeRef/TypeSpec metadata token.
+        type_token: Token,
+    },
+
+    /// A reflection field info object carrying field and declaring type tokens.
+    ///
+    /// Created by `Type.GetFields()` to track which field was resolved.
+    /// Used by `FieldInfo.SetValue()` and `FieldInfo.GetValue()` to read/write field values.
+    ReflectionField {
+        /// The FieldDef metadata token (0x04 table).
+        field_token: Token,
+        /// The TypeDef token of the type that declares this field.
+        declaring_type_token: Token,
+        /// Whether this is a static field.
+        is_static: bool,
+    },
+
+    /// A reflection property info object carrying property metadata.
+    ///
+    /// Created by `Type.GetProperty()` to track which property was resolved.
+    /// Used by `PropertyInfo.GetValue()` and `PropertyInfo.SetValue()` to invoke
+    /// the getter/setter methods via `ReflectionInvokeRequest`.
+    ReflectionProperty {
+        /// The property name.
+        property_name: Arc<str>,
+        /// The TypeDef token of the type that declares this property.
+        declaring_type_token: Token,
+        /// The method token for the getter, if any.
+        getter_token: Option<Token>,
+        /// The method token for the setter, if any.
+        setter_token: Option<Token>,
+    },
+
+    /// A reflection parameter info object carrying parameter metadata.
+    ///
+    /// Created by `MethodBase.GetParameters()` to provide real parameter type
+    /// information. Used by `ParameterInfo.get_ParameterType` to return the
+    /// actual parameter type.
+    ReflectionParameter {
+        /// The method token that owns this parameter.
+        method_token: Token,
+        /// The zero-based position of this parameter in the method signature.
+        position: u32,
+        /// The type signature of this parameter.
+        parameter_type: TypeSignature,
+    },
+
+    /// A `System.Reflection.Emit.DynamicMethod` instance.
+    ///
+    /// Tracks the target method that the dynamic IL calls, so that
+    /// `DynamicMethod.CreateDelegate` can create a functional delegate.
+    /// The target is set when `ILGenerator.Emit(OpCode, MethodInfo)` is
+    /// called with a Call/Callvirt opcode.
+    DynamicMethod {
+        /// The target method token from `ILGenerator.Emit(OpCode, MethodInfo)`.
+        /// Set when the emitted IL contains a call/callvirt instruction.
+        target_method: Option<Token>,
+        /// The ILGenerator associated with this DynamicMethod, if created.
+        il_generator: Option<HeapRef>,
+    },
+
+    /// A `System.Reflection.Emit.ILGenerator` instance.
+    ///
+    /// Linked back to its owning `DynamicMethod` so that `Emit(OpCode, MethodInfo)`
+    /// can store the target method token on the DynamicMethod.
+    ILGenerator {
+        /// Reference to the DynamicMethod this generator belongs to.
+        dynamic_method: HeapRef,
     },
 
     /// A key derivation function instance (PBKDF2, PasswordDeriveBytes).
@@ -267,6 +432,26 @@ pub enum HeapObject {
         hash_algorithm: Arc<str>,
     },
 
+    /// A generic dictionary (key-value store).
+    ///
+    /// Used to emulate `System.Collections.Generic.Dictionary<TKey, TValue>`.
+    /// Keys are stored as [`DictionaryKey`] supporting integers, strings, booleans,
+    /// chars, and object references.
+    Dictionary {
+        /// The stored entries: key → value.
+        entries: HashMap<DictionaryKey, EmValue>,
+    },
+
+    /// A generic list (`System.Collections.Generic.List<T>`).
+    ///
+    /// Stores elements in insertion order with indexed access.
+    /// Used by obfuscator initialization routines that build collections
+    /// of delegate proxies, field references, and other runtime data.
+    List {
+        /// The stored elements in insertion order.
+        elements: Vec<EmValue>,
+    },
+
     /// A stream instance (MemoryStream, resource stream, etc.).
     ///
     /// Stores the stream data buffer and current read/write position.
@@ -276,6 +461,34 @@ pub enum HeapObject {
         data: Vec<u8>,
         /// Current position in the stream.
         position: usize,
+    },
+
+    /// A `System.Text.StringBuilder` instance.
+    ///
+    /// Stores a mutable string buffer for efficient string building operations.
+    StringBuilder {
+        /// The current string buffer contents.
+        buffer: String,
+        /// The capacity hint (informational only).
+        capacity: usize,
+    },
+
+    /// A `System.Collections.Generic.Stack<T>` instance (LIFO).
+    Stack {
+        /// Elements stored with the top of the stack at the end.
+        elements: Vec<EmValue>,
+    },
+
+    /// A `System.Collections.Generic.Queue<T>` instance (FIFO).
+    Queue {
+        /// Elements stored with the front at index 0.
+        elements: VecDeque<EmValue>,
+    },
+
+    /// A `System.Collections.Generic.HashSet<T>` instance.
+    HashSet {
+        /// The stored elements using [`DictionaryKey`] for hashing.
+        elements: StdHashSet<DictionaryKey>,
     },
 
     /// A CryptoStream instance wrapping another stream with encryption/decryption.
@@ -298,6 +511,24 @@ pub enum HeapObject {
         /// Write buffer accumulating data before transformation (Write mode only).
         write_buffer: Vec<u8>,
     },
+
+    /// A compressed stream (DeflateStream or GZipStream).
+    ///
+    /// Stores a reference to the underlying stream and caches the decompressed
+    /// data on first read. Uses "decompress-all-at-once" approach: on first
+    /// read, the entire underlying stream is decompressed and cached.
+    CompressedStream {
+        /// The underlying stream containing compressed data.
+        underlying_stream: HeapRef,
+        /// Compression type: 0=Deflate, 1=GZip.
+        compression_type: u8,
+        /// Mode: 0=Decompress, 1=Compress.
+        mode: u8,
+        /// Cached decompressed data (populated on first read).
+        decompressed_data: Option<Vec<u8>>,
+        /// Current read position in the decompressed data.
+        read_position: usize,
+    },
 }
 
 impl HeapObject {
@@ -318,9 +549,22 @@ impl HeapObject {
             HeapObject::SymmetricAlgorithm { .. } => "symmetric algorithm",
             HeapObject::CryptoTransform { .. } => "crypto transform",
             HeapObject::ReflectionMethod { .. } => "reflection method",
+            HeapObject::ReflectionType { .. } => "reflection type",
+            HeapObject::ReflectionField { .. } => "reflection field",
+            HeapObject::ReflectionProperty { .. } => "reflection property",
+            HeapObject::ReflectionParameter { .. } => "reflection parameter",
+            HeapObject::DynamicMethod { .. } => "dynamic method",
+            HeapObject::ILGenerator { .. } => "IL generator",
+            HeapObject::Dictionary { .. } => "dictionary",
+            HeapObject::List { .. } => "list",
+            HeapObject::StringBuilder { .. } => "string builder",
+            HeapObject::Stack { .. } => "stack",
+            HeapObject::Queue { .. } => "queue",
+            HeapObject::HashSet { .. } => "hash set",
             HeapObject::KeyDerivation { .. } => "key derivation",
             HeapObject::Stream { .. } => "stream",
             HeapObject::CryptoStream { .. } => "crypto stream",
+            HeapObject::CompressedStream { .. } => "compressed stream",
         }
     }
 
@@ -337,13 +581,25 @@ impl HeapObject {
             HeapObject::Object { fields, .. } => 24 + fields.len() * 16,
             HeapObject::BoxedValue { .. }
             | HeapObject::CryptoAlgorithm { .. }
-            | HeapObject::ReflectionMethod { .. } => 32,
+            | HeapObject::ReflectionMethod { .. }
+            | HeapObject::ReflectionType { .. }
+            | HeapObject::ReflectionField { .. }
+            | HeapObject::ReflectionProperty { .. }
+            | HeapObject::ReflectionParameter { .. }
+            | HeapObject::DynamicMethod { .. }
+            | HeapObject::ILGenerator { .. } => 32,
             HeapObject::CryptoTransform { key, iv, .. } => 48 + key.len() + iv.len(),
             HeapObject::Delegate { .. } => 48,
             HeapObject::Encoding { .. } => 24,
             HeapObject::SymmetricAlgorithm { key, iv, .. } => {
                 32 + key.as_ref().map_or(0, Vec::len) + iv.as_ref().map_or(0, Vec::len)
             }
+            HeapObject::Dictionary { entries } => 48 + entries.len() * 32,
+            HeapObject::List { elements } => 32 + elements.len() * 8,
+            HeapObject::StringBuilder { buffer, .. } => 32 + buffer.len(),
+            HeapObject::Stack { elements } => 32 + elements.len() * 8,
+            HeapObject::Queue { elements } => 32 + elements.len() * 8,
+            HeapObject::HashSet { elements } => 48 + elements.len() * 16,
             HeapObject::KeyDerivation { password, salt, .. } => 48 + password.len() + salt.len(),
             HeapObject::Stream { data, .. } => 32 + data.len(),
             HeapObject::CryptoStream {
@@ -351,6 +607,9 @@ impl HeapObject {
                 write_buffer,
                 ..
             } => 64 + transformed_data.as_ref().map_or(0, Vec::len) + write_buffer.len(),
+            HeapObject::CompressedStream {
+                decompressed_data, ..
+            } => 48 + decompressed_data.as_ref().map_or(0, Vec::len),
         }
     }
 }
@@ -401,7 +660,7 @@ impl fmt::Display for HeapObject {
             HeapObject::Encoding { encoding_type } => {
                 write!(f, "encoding({encoding_type:?})")
             }
-            HeapObject::CryptoAlgorithm { algorithm_type } => {
+            HeapObject::CryptoAlgorithm { algorithm_type, .. } => {
                 write!(f, "crypto_algorithm({algorithm_type})")
             }
             HeapObject::SymmetricAlgorithm { algorithm_type, .. } => {
@@ -424,6 +683,81 @@ impl fmt::Display for HeapObject {
             }
             HeapObject::ReflectionMethod { method_token } => {
                 write!(f, "reflection_method(0x{:08x})", method_token.value())
+            }
+            HeapObject::ReflectionType { type_token } => {
+                write!(f, "reflection_type(0x{:08x})", type_token.value())
+            }
+            HeapObject::ReflectionField {
+                field_token,
+                declaring_type_token,
+                is_static,
+            } => {
+                let kind = if *is_static { "static" } else { "instance" };
+                write!(
+                    f,
+                    "reflection_field({kind}, 0x{:08x}, declaring=0x{:08x})",
+                    field_token.value(),
+                    declaring_type_token.value()
+                )
+            }
+            HeapObject::ReflectionProperty {
+                property_name,
+                declaring_type_token,
+                ..
+            } => {
+                write!(
+                    f,
+                    "reflection_property({property_name}, declaring=0x{:08x})",
+                    declaring_type_token.value()
+                )
+            }
+            HeapObject::ReflectionParameter {
+                method_token,
+                position,
+                ..
+            } => {
+                write!(
+                    f,
+                    "reflection_parameter(pos={position}, method=0x{:08x})",
+                    method_token.value()
+                )
+            }
+            HeapObject::DynamicMethod { target_method, .. } => {
+                write!(
+                    f,
+                    "dynamic_method(target={:?})",
+                    target_method.map(|t| format!("0x{:08x}", t.value()))
+                )
+            }
+            HeapObject::ILGenerator { dynamic_method } => {
+                write!(f, "il_generator(dm={:?})", dynamic_method)
+            }
+            HeapObject::Dictionary { entries } => {
+                write!(f, "dictionary({} entries)", entries.len())
+            }
+            HeapObject::List { elements } => {
+                write!(f, "list({} elements)", elements.len())
+            }
+            HeapObject::StringBuilder { buffer, .. } => {
+                if buffer.len() > 50 {
+                    write!(
+                        f,
+                        "stringbuilder({}... len={})",
+                        &buffer[..47],
+                        buffer.len()
+                    )
+                } else {
+                    write!(f, "stringbuilder(\"{buffer}\")")
+                }
+            }
+            HeapObject::Stack { elements } => {
+                write!(f, "stack({} elements)", elements.len())
+            }
+            HeapObject::Queue { elements } => {
+                write!(f, "queue({} elements)", elements.len())
+            }
+            HeapObject::HashSet { elements } => {
+                write!(f, "hashset({} elements)", elements.len())
             }
             HeapObject::KeyDerivation {
                 hash_algorithm,
@@ -450,6 +784,25 @@ impl fmt::Display for HeapObject {
                 write!(
                     f,
                     "crypto_stream(mode={mode_str}, cached={cached}, buffered={buffered})"
+                )
+            }
+            HeapObject::CompressedStream {
+                compression_type,
+                mode,
+                decompressed_data,
+                read_position,
+                ..
+            } => {
+                let kind = if *compression_type == 0 {
+                    "Deflate"
+                } else {
+                    "GZip"
+                };
+                let mode_str = if *mode == 0 { "Decompress" } else { "Compress" };
+                let cached = decompressed_data.as_ref().map_or(0, Vec::len);
+                write!(
+                    f,
+                    "compressed_stream({kind}, mode={mode_str}, cached={cached}, pos={read_position})"
                 )
             }
         }
@@ -1051,14 +1404,26 @@ impl ManagedHeap {
             Some(HeapObject::CryptoAlgorithm { .. }) => Ok(Token::new(0x0100_0004)),
             Some(HeapObject::SymmetricAlgorithm { .. }) => Ok(Token::new(0x0100_0005)),
             Some(HeapObject::CryptoTransform { .. }) => Ok(Token::new(0x0100_0006)),
-            // Reflection method uses the stored method token as its type (for identification)
-            Some(HeapObject::ReflectionMethod { method_token }) => Ok(*method_token),
-            // Key derivation uses a placeholder token
-            Some(HeapObject::KeyDerivation { .. }) => Ok(Token::new(0x0100_0007)),
-            // Stream uses a placeholder token
-            Some(HeapObject::Stream { .. }) => Ok(Token::new(0x0100_0008)),
-            // CryptoStream uses a placeholder token
-            Some(HeapObject::CryptoStream { .. }) => Ok(Token::new(0x0100_0009)),
+            // Reflection objects use non-colliding placeholder tokens (table 0x7F
+            // doesn't exist in ECMA-335, so these will never match real TypeRef entries).
+            Some(HeapObject::ReflectionMethod { .. }) => Ok(Token::new(0x7F00_0002)),
+            Some(HeapObject::ReflectionType { .. }) => Ok(Token::new(0x7F00_0001)),
+            Some(HeapObject::ReflectionField { .. }) => Ok(Token::new(0x7F00_0004)),
+            Some(HeapObject::ReflectionProperty { .. }) => Ok(Token::new(0x7F00_0005)),
+            Some(HeapObject::ReflectionParameter { .. }) => Ok(Token::new(0x7F00_0013)),
+            // Other stubs use same non-colliding range
+            Some(HeapObject::Dictionary { .. }) => Ok(Token::new(0x7F00_000D)),
+            Some(HeapObject::List { .. }) => Ok(Token::new(0x7F00_000E)),
+            Some(HeapObject::StringBuilder { .. }) => Ok(Token::new(0x7F00_000F)),
+            Some(HeapObject::Stack { .. }) => Ok(Token::new(0x7F00_0010)),
+            Some(HeapObject::Queue { .. }) => Ok(Token::new(0x7F00_0011)),
+            Some(HeapObject::HashSet { .. }) => Ok(Token::new(0x7F00_0012)),
+            Some(HeapObject::DynamicMethod { .. }) => Ok(Token::new(0x7F00_000A)),
+            Some(HeapObject::ILGenerator { .. }) => Ok(Token::new(0x7F00_000B)),
+            Some(HeapObject::KeyDerivation { .. }) => Ok(Token::new(0x7F00_0007)),
+            Some(HeapObject::Stream { .. }) => Ok(Token::new(0x7F00_0008)),
+            Some(HeapObject::CryptoStream { .. }) => Ok(Token::new(0x7F00_0009)),
+            Some(HeapObject::CompressedStream { .. }) => Ok(Token::new(0x7F00_0014)),
             None => Err(EmulationError::InvalidHeapReference {
                 reference_id: heap_ref.id(),
             }
@@ -1325,6 +1690,9 @@ impl ManagedHeap {
     pub fn alloc_crypto_algorithm(&self, algorithm_type: &str) -> Result<HeapRef> {
         self.alloc_object_internal(HeapObject::CryptoAlgorithm {
             algorithm_type: algorithm_type.into(),
+            accumulated_data: Vec::new(),
+            hash_result: None,
+            rsa_public_key: None,
         })
     }
 
@@ -1339,8 +1707,112 @@ impl ManagedHeap {
     pub fn get_crypto_algorithm_type(&self, heap_ref: HeapRef) -> Option<Arc<str>> {
         let state = self.state.read().expect("heap lock poisoned");
         match state.objects.get(&heap_ref.id())? {
-            HeapObject::CryptoAlgorithm { algorithm_type } => Some(Arc::clone(algorithm_type)),
+            HeapObject::CryptoAlgorithm { algorithm_type, .. } => Some(Arc::clone(algorithm_type)),
             _ => None,
+        }
+    }
+
+    /// Appends data to a `CryptoAlgorithm`'s accumulated hash buffer.
+    ///
+    /// Used by `HashAlgorithm.TransformBlock` to feed incremental data.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn append_hash_data(&self, heap_ref: HeapRef, data: &[u8]) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::CryptoAlgorithm {
+            accumulated_data, ..
+        }) = state.objects.get_mut(&heap_ref.id())
+        {
+            accumulated_data.extend_from_slice(data);
+        }
+    }
+
+    /// Finalizes incremental hashing on a `CryptoAlgorithm` object.
+    ///
+    /// Computes the hash from `accumulated_data` using the stored `algorithm_type`,
+    /// stores the result in `hash_result`, and returns a copy.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn finalize_hash(&self, heap_ref: HeapRef) -> Option<Vec<u8>> {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::CryptoAlgorithm {
+            algorithm_type,
+            accumulated_data,
+            hash_result,
+            ..
+        }) = state.objects.get_mut(&heap_ref.id())
+        {
+            let hash = match algorithm_type.as_ref() {
+                "SHA256" | "SHA256Managed" => compute_sha256(accumulated_data),
+                "SHA384" => compute_sha384(accumulated_data),
+                "SHA512" => compute_sha512(accumulated_data),
+                #[cfg(feature = "legacy-crypto")]
+                "SHA1" | "SHA1Managed" => compute_sha1(accumulated_data),
+                #[cfg(feature = "legacy-crypto")]
+                "MD5" => compute_md5(accumulated_data),
+                _ => compute_sha256(accumulated_data),
+            };
+            *hash_result = Some(hash.clone());
+            Some(hash)
+        } else {
+            None
+        }
+    }
+
+    /// Returns the stored hash result from a `CryptoAlgorithm` object.
+    ///
+    /// Available after `finalize_hash` has been called.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn get_hash_result(&self, heap_ref: HeapRef) -> Option<Vec<u8>> {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::CryptoAlgorithm { hash_result, .. }) =
+            state.objects.get(&heap_ref.id())
+        {
+            hash_result.clone()
+        } else {
+            None
+        }
+    }
+
+    /// Stores an RSA public key (modulus, exponent) on a `CryptoAlgorithm` object.
+    ///
+    /// Used by `RSACryptoServiceProvider.FromXmlString` to import a public key.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn set_rsa_public_key(&self, heap_ref: HeapRef, modulus: Vec<u8>, exponent: Vec<u8>) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::CryptoAlgorithm { rsa_public_key, .. }) =
+            state.objects.get_mut(&heap_ref.id())
+        {
+            *rsa_public_key = Some((modulus, exponent));
+        }
+    }
+
+    /// Returns the RSA public key (modulus, exponent) from a `CryptoAlgorithm` object.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn get_rsa_public_key(&self, heap_ref: HeapRef) -> Option<(Vec<u8>, Vec<u8>)> {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::CryptoAlgorithm { rsa_public_key, .. }) =
+            state.objects.get(&heap_ref.id())
+        {
+            rsa_public_key.clone()
+        } else {
+            None
         }
     }
 
@@ -1356,6 +1828,8 @@ impl ManagedHeap {
             algorithm_type: algorithm_type.into(),
             key: None,
             iv: None,
+            mode: 1,    // CBC
+            padding: 2, // PKCS7
         })
     }
 
@@ -1407,6 +1881,52 @@ impl ManagedHeap {
         .into())
     }
 
+    /// Sets the cipher mode for a symmetric algorithm.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_ref` - Reference to the symmetric algorithm object.
+    /// * `mode` - Cipher mode (1=CBC, 2=ECB, 4=CFB).
+    pub fn set_symmetric_algorithm_mode(&self, heap_ref: HeapRef, new_mode: u8) -> Result<()> {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::SymmetricAlgorithm { mode, .. }) =
+            state.objects.get_mut(&heap_ref.id())
+        {
+            *mode = new_mode;
+            return Ok(());
+        }
+        Err(EmulationError::HeapTypeMismatch {
+            expected: "SymmetricAlgorithm",
+            found: "other",
+        }
+        .into())
+    }
+
+    /// Sets the padding mode for a symmetric algorithm.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_ref` - Reference to the symmetric algorithm object.
+    /// * `padding` - Padding mode (1=None, 2=PKCS7, 3=Zeros).
+    pub fn set_symmetric_algorithm_padding(
+        &self,
+        heap_ref: HeapRef,
+        new_padding: u8,
+    ) -> Result<()> {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::SymmetricAlgorithm { padding, .. }) =
+            state.objects.get_mut(&heap_ref.id())
+        {
+            *padding = new_padding;
+            return Ok(());
+        }
+        Err(EmulationError::HeapTypeMismatch {
+            expected: "SymmetricAlgorithm",
+            found: "other",
+        }
+        .into())
+    }
+
     /// Gets the symmetric algorithm parameters.
     ///
     /// # Returns
@@ -1427,7 +1947,15 @@ impl ManagedHeap {
                 algorithm_type,
                 key,
                 iv,
-            } => Some((algorithm_type.clone(), key.clone(), iv.clone())),
+                mode,
+                padding,
+            } => Some((
+                algorithm_type.clone(),
+                key.clone(),
+                iv.clone(),
+                *mode,
+                *padding,
+            )),
             _ => None,
         }
     }
@@ -1451,12 +1979,16 @@ impl ManagedHeap {
         key: Vec<u8>,
         iv: Vec<u8>,
         is_encryptor: bool,
+        mode: u8,
+        padding: u8,
     ) -> Result<HeapRef> {
         self.alloc_object_internal(HeapObject::CryptoTransform {
             algorithm: algorithm.into(),
             key,
             iv,
             is_encryptor,
+            mode,
+            padding,
         })
     }
 
@@ -1478,7 +2010,16 @@ impl ManagedHeap {
                 key,
                 iv,
                 is_encryptor,
-            } => Some((algorithm.clone(), key.clone(), iv.clone(), *is_encryptor)),
+                mode,
+                padding,
+            } => Some((
+                algorithm.clone(),
+                key.clone(),
+                iv.clone(),
+                *is_encryptor,
+                *mode,
+                *padding,
+            )),
             _ => None,
         }
     }
@@ -1522,6 +2063,918 @@ impl ManagedHeap {
         match state.objects.get(&heap_ref.id())? {
             HeapObject::ReflectionMethod { method_token } => Some(*method_token),
             _ => None,
+        }
+    }
+
+    /// Allocates a reflection type object on the heap.
+    ///
+    /// Creates a `ReflectionType` object that stores the actual metadata type token.
+    /// Used by `Type.GetTypeFromHandle()` to track which type was resolved, enabling
+    /// subsequent calls like `Type.GetFields()` to look up the type's fields.
+    ///
+    /// # Arguments
+    ///
+    /// * `type_token` - The TypeDef/TypeRef/TypeSpec metadata token.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap is out of memory.
+    pub fn alloc_reflection_type(&self, type_token: Token) -> Result<HeapRef> {
+        self.alloc_object_internal(HeapObject::ReflectionType { type_token })
+    }
+
+    /// Gets the type token from a reflection type object.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn get_reflection_type_token(&self, heap_ref: HeapRef) -> Option<Token> {
+        let state = self.state.read().expect("heap lock poisoned");
+        match state.objects.get(&heap_ref.id())? {
+            HeapObject::ReflectionType { type_token } => Some(*type_token),
+            _ => None,
+        }
+    }
+
+    /// Allocates a reflection field info object on the heap.
+    ///
+    /// Creates a `ReflectionField` object that stores the field's metadata token and
+    /// declaring type token. Used by `FieldInfo.SetValue()` and `FieldInfo.GetValue()`
+    /// to determine which field to read/write.
+    ///
+    /// # Arguments
+    ///
+    /// * `field_token` - The FieldDef metadata token.
+    /// * `declaring_type_token` - The TypeDef token of the declaring type.
+    /// * `is_static` - Whether this is a static field.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap is out of memory.
+    pub fn alloc_reflection_field(
+        &self,
+        field_token: Token,
+        declaring_type_token: Token,
+        is_static: bool,
+    ) -> Result<HeapRef> {
+        self.alloc_object_internal(HeapObject::ReflectionField {
+            field_token,
+            declaring_type_token,
+            is_static,
+        })
+    }
+
+    /// Gets the field info from a reflection field object.
+    ///
+    /// Returns `(field_token, declaring_type_token, is_static)` if the reference
+    /// points to a `ReflectionField`, or `None` otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn get_reflection_field_info(&self, heap_ref: HeapRef) -> Option<(Token, Token, bool)> {
+        let state = self.state.read().expect("heap lock poisoned");
+        match state.objects.get(&heap_ref.id())? {
+            HeapObject::ReflectionField {
+                field_token,
+                declaring_type_token,
+                is_static,
+            } => Some((*field_token, *declaring_type_token, *is_static)),
+            _ => None,
+        }
+    }
+
+    /// Allocates a reflection property info object on the heap.
+    ///
+    /// Creates a `ReflectionProperty` object that stores the property name,
+    /// declaring type token, and optional getter/setter method tokens.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap is out of memory.
+    pub fn alloc_reflection_property(
+        &self,
+        property_name: Arc<str>,
+        declaring_type_token: Token,
+        getter_token: Option<Token>,
+        setter_token: Option<Token>,
+    ) -> Result<HeapRef> {
+        self.alloc_object_internal(HeapObject::ReflectionProperty {
+            property_name,
+            declaring_type_token,
+            getter_token,
+            setter_token,
+        })
+    }
+
+    /// Gets the property info from a reflection property object.
+    ///
+    /// Returns `(property_name, declaring_type_token, getter_token, setter_token)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn get_reflection_property_info(
+        &self,
+        heap_ref: HeapRef,
+    ) -> Option<ReflectionPropertyInfo> {
+        let state = self.state.read().expect("heap lock poisoned");
+        match state.objects.get(&heap_ref.id())? {
+            HeapObject::ReflectionProperty {
+                property_name,
+                declaring_type_token,
+                getter_token,
+                setter_token,
+            } => Some((
+                property_name.clone(),
+                *declaring_type_token,
+                *getter_token,
+                *setter_token,
+            )),
+            _ => None,
+        }
+    }
+
+    /// Allocates a reflection parameter info object on the heap.
+    ///
+    /// Creates a `ReflectionParameter` object that stores the method token,
+    /// parameter position, and type signature.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the heap is out of memory.
+    pub fn alloc_reflection_parameter(
+        &self,
+        method_token: Token,
+        position: u32,
+        parameter_type: TypeSignature,
+    ) -> Result<HeapRef> {
+        self.alloc_object_internal(HeapObject::ReflectionParameter {
+            method_token,
+            position,
+            parameter_type,
+        })
+    }
+
+    /// Gets the parameter info from a reflection parameter object.
+    ///
+    /// Returns `(method_token, position, parameter_type)`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn get_reflection_parameter_info(
+        &self,
+        heap_ref: HeapRef,
+    ) -> Option<(Token, u32, TypeSignature)> {
+        let state = self.state.read().expect("heap lock poisoned");
+        match state.objects.get(&heap_ref.id())? {
+            HeapObject::ReflectionParameter {
+                method_token,
+                position,
+                parameter_type,
+            } => Some((*method_token, *position, parameter_type.clone())),
+            _ => None,
+        }
+    }
+
+    // ── DynamicMethod / ILGenerator helpers ────────────────────────────
+
+    /// Allocates a new `DynamicMethod` on the heap with no target method.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::HeapMemoryLimitExceeded`] if heap is out of memory.
+    pub fn alloc_dynamic_method(&self) -> Result<HeapRef> {
+        self.alloc_object_internal(HeapObject::DynamicMethod {
+            target_method: None,
+            il_generator: None,
+        })
+    }
+
+    /// Allocates a new `ILGenerator` linked to the given `DynamicMethod`.
+    ///
+    /// Also updates the DynamicMethod to reference this ILGenerator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::HeapMemoryLimitExceeded`] if heap is out of memory.
+    pub fn alloc_il_generator(&self, dynamic_method: HeapRef) -> Result<HeapRef> {
+        let il_ref = self.alloc_object_internal(HeapObject::ILGenerator { dynamic_method })?;
+        // Link the ILGenerator back to the DynamicMethod
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::DynamicMethod { il_generator, .. }) =
+            state.objects.get_mut(&dynamic_method.id())
+        {
+            *il_generator = Some(il_ref);
+        }
+        Ok(il_ref)
+    }
+
+    /// Sets the target method on a `DynamicMethod` (called from `ILGenerator.Emit`).
+    ///
+    /// When `ILGenerator.Emit(OpCode, MethodInfo)` is called with a Call/Callvirt,
+    /// this stores the resolved method token on the DynamicMethod so that
+    /// `CreateDelegate` can create a functional delegate.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn set_dynamic_method_target(&self, dm_ref: HeapRef, target: Token) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::DynamicMethod { target_method, .. }) =
+            state.objects.get_mut(&dm_ref.id())
+        {
+            *target_method = Some(target);
+        }
+    }
+
+    /// Gets the target method token from a `DynamicMethod`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn get_dynamic_method_target(&self, dm_ref: HeapRef) -> Option<Token> {
+        let state = self.state.read().expect("heap lock poisoned");
+        match state.objects.get(&dm_ref.id())? {
+            HeapObject::DynamicMethod { target_method, .. } => *target_method,
+            _ => None,
+        }
+    }
+
+    /// Gets the owning DynamicMethod reference from an ILGenerator.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn get_il_generator_owner(&self, il_ref: HeapRef) -> Option<HeapRef> {
+        let state = self.state.read().expect("heap lock poisoned");
+        match state.objects.get(&il_ref.id())? {
+            HeapObject::ILGenerator { dynamic_method } => Some(*dynamic_method),
+            _ => None,
+        }
+    }
+
+    /// Allocates a new empty Dictionary on the heap.
+    ///
+    /// # Errors
+    ///
+    /// Returns error if the heap memory limit is exceeded.
+    pub fn alloc_dictionary(&self) -> Result<HeapRef> {
+        self.alloc_object_internal(HeapObject::Dictionary {
+            entries: HashMap::new(),
+        })
+    }
+
+    /// Adds a key-value pair to a Dictionary on the heap.
+    ///
+    /// Returns `true` if the entry was added, `false` if the key already existed
+    /// (matching .NET `Dictionary.Add` semantics, though we don't throw).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn dictionary_add(&self, heap_ref: HeapRef, key: DictionaryKey, value: EmValue) -> bool {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::Dictionary { entries }) = state.objects.get_mut(&heap_ref.id()) {
+            if entries.contains_key(&key) {
+                return false;
+            }
+            entries.insert(key, value);
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Checks if a Dictionary contains the specified key.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn dictionary_contains_key(&self, heap_ref: HeapRef, key: &DictionaryKey) -> bool {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::Dictionary { entries }) = state.objects.get(&heap_ref.id()) {
+            entries.contains_key(key)
+        } else {
+            false
+        }
+    }
+
+    /// Gets a value from a Dictionary by key.
+    ///
+    /// Returns `None` if the key is not found or the reference is not a Dictionary.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn dictionary_get(&self, heap_ref: HeapRef, key: &DictionaryKey) -> Option<EmValue> {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::Dictionary { entries }) = state.objects.get(&heap_ref.id()) {
+            entries.get(key).cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Sets a key-value pair in a Dictionary (insert or update).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn dictionary_set(&self, heap_ref: HeapRef, key: DictionaryKey, value: EmValue) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::Dictionary { entries }) = state.objects.get_mut(&heap_ref.id()) {
+            entries.insert(key, value);
+        }
+    }
+
+    /// Removes a key from a Dictionary.
+    ///
+    /// Returns `true` if the key was removed, `false` if it wasn't found.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn dictionary_remove(&self, heap_ref: HeapRef, key: &DictionaryKey) -> bool {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::Dictionary { entries }) = state.objects.get_mut(&heap_ref.id()) {
+            entries.remove(key).is_some()
+        } else {
+            false
+        }
+    }
+
+    /// Clears all entries from a Dictionary.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn dictionary_clear(&self, heap_ref: HeapRef) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::Dictionary { entries }) = state.objects.get_mut(&heap_ref.id()) {
+            entries.clear();
+        }
+    }
+
+    /// Gets the number of entries in a Dictionary.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn dictionary_count(&self, heap_ref: HeapRef) -> usize {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::Dictionary { entries }) = state.objects.get(&heap_ref.id()) {
+            entries.len()
+        } else {
+            0
+        }
+    }
+
+    /// Returns a clone of all keys in a Dictionary.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn dictionary_keys(&self, heap_ref: HeapRef) -> Vec<DictionaryKey> {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::Dictionary { entries }) = state.objects.get(&heap_ref.id()) {
+            entries.keys().cloned().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Returns a clone of all values in a Dictionary.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn dictionary_values(&self, heap_ref: HeapRef) -> Vec<EmValue> {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::Dictionary { entries }) = state.objects.get(&heap_ref.id()) {
+            entries.values().cloned().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Replaces a heap object with an empty Dictionary.
+    ///
+    /// This is used by the Dictionary `.ctor` hook to convert the pre-allocated
+    /// generic object into a functional `HeapObject::Dictionary`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn replace_with_dictionary(&self, heap_ref: HeapRef) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if state.objects.contains_key(&heap_ref.id()) {
+            state.objects.insert(
+                heap_ref.id(),
+                HeapObject::Dictionary {
+                    entries: HashMap::new(),
+                },
+            );
+        }
+    }
+
+    /// Replaces a heap object with an empty List.
+    ///
+    /// This is used by the `List<T>` `.ctor` hook to convert the pre-allocated
+    /// generic object into a functional `HeapObject::List`.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn replace_with_list(&self, heap_ref: HeapRef) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if state.objects.contains_key(&heap_ref.id()) {
+            state.objects.insert(
+                heap_ref.id(),
+                HeapObject::List {
+                    elements: Vec::new(),
+                },
+            );
+        }
+    }
+
+    /// Appends an element to a List.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn list_add(&self, heap_ref: HeapRef, value: EmValue) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::List { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            elements.push(value);
+        }
+    }
+
+    /// Gets an element from a List by index.
+    ///
+    /// Returns `None` if the index is out of bounds or the reference is not a List.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn list_get(&self, heap_ref: HeapRef, index: usize) -> Option<EmValue> {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::List { elements }) = state.objects.get(&heap_ref.id()) {
+            elements.get(index).cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Sets an element in a List by index.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn list_set(&self, heap_ref: HeapRef, index: usize, value: EmValue) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::List { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            if index < elements.len() {
+                elements[index] = value;
+            }
+        }
+    }
+
+    /// Gets the number of elements in a List.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn list_count(&self, heap_ref: HeapRef) -> usize {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::List { elements }) = state.objects.get(&heap_ref.id()) {
+            elements.len()
+        } else {
+            0
+        }
+    }
+
+    /// Inserts an element at the specified index in a List.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn list_insert(&self, heap_ref: HeapRef, index: usize, value: EmValue) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::List { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            if index <= elements.len() {
+                elements.insert(index, value);
+            }
+        }
+    }
+
+    /// Removes the element at the specified index from a List.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn list_remove_at(&self, heap_ref: HeapRef, index: usize) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::List { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            if index < elements.len() {
+                elements.remove(index);
+            }
+        }
+    }
+
+    /// Clears all elements from a List.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn list_clear(&self, heap_ref: HeapRef) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::List { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            elements.clear();
+        }
+    }
+
+    /// Removes the element at the given index from a List and returns it.
+    ///
+    /// Returns `None` if the index is out of bounds or the reference is not a List.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn list_remove(&self, heap_ref: HeapRef, index: usize) -> Option<EmValue> {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::List { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            if index < elements.len() {
+                return Some(elements.remove(index));
+            }
+        }
+        None
+    }
+
+    /// Returns a clone of all elements in a List as a Vec.
+    ///
+    /// Used by `List<T>.ToArray()` to create an array from the list contents.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn list_to_vec(&self, heap_ref: HeapRef) -> Vec<EmValue> {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::List { elements }) = state.objects.get(&heap_ref.id()) {
+            elements.clone()
+        } else {
+            Vec::new()
+        }
+    }
+
+    /// Reverses the elements in a List in-place.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn list_reverse(&self, heap_ref: HeapRef) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::List { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            elements.reverse();
+        }
+    }
+
+    /// Replaces any heap object at the given reference with a new object.
+    ///
+    /// Used by collection constructors and StringBuilder mutations.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn replace_object(&self, heap_ref: HeapRef, obj: HeapObject) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if state.objects.contains_key(&heap_ref.id()) {
+            state.objects.insert(heap_ref.id(), obj);
+        }
+    }
+
+    /// Allocates a new list pre-populated with elements.
+    ///
+    /// Used by `List.GetRange` to create a new sub-list.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::HeapMemoryLimitExceeded`] if heap is out of memory.
+    pub fn alloc_list_with_elements(&self, elements: Vec<EmValue>) -> Result<HeapRef> {
+        self.alloc_object_internal(HeapObject::List { elements })
+    }
+
+    // ── Stack helpers ──────────────────────────────────────────────────
+
+    /// Replaces a heap object with an empty Stack.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn replace_with_stack(&self, heap_ref: HeapRef) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if state.objects.contains_key(&heap_ref.id()) {
+            state.objects.insert(
+                heap_ref.id(),
+                HeapObject::Stack {
+                    elements: Vec::new(),
+                },
+            );
+        }
+    }
+
+    /// Pushes an element onto a Stack.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn stack_push(&self, heap_ref: HeapRef, value: EmValue) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::Stack { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            elements.push(value);
+        }
+    }
+
+    /// Pops an element from a Stack (LIFO).
+    ///
+    /// Returns `None` if the stack is empty or the reference is not a Stack.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn stack_pop(&self, heap_ref: HeapRef) -> Option<EmValue> {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::Stack { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            elements.pop()
+        } else {
+            None
+        }
+    }
+
+    /// Peeks at the top element of a Stack without removing it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn stack_peek(&self, heap_ref: HeapRef) -> Option<EmValue> {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::Stack { elements }) = state.objects.get(&heap_ref.id()) {
+            elements.last().cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Returns the number of elements in a Stack.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn stack_count(&self, heap_ref: HeapRef) -> usize {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::Stack { elements }) = state.objects.get(&heap_ref.id()) {
+            elements.len()
+        } else {
+            0
+        }
+    }
+
+    /// Clears all elements from a Stack.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn stack_clear(&self, heap_ref: HeapRef) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::Stack { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            elements.clear();
+        }
+    }
+
+    /// Returns a clone of all elements in a Stack (top-first / LIFO order).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn stack_to_vec(&self, heap_ref: HeapRef) -> Vec<EmValue> {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::Stack { elements }) = state.objects.get(&heap_ref.id()) {
+            let mut result = elements.clone();
+            result.reverse(); // LIFO order: last pushed = first in output
+            result
+        } else {
+            Vec::new()
+        }
+    }
+
+    // ── Queue helpers ──────────────────────────────────────────────────
+
+    /// Replaces a heap object with an empty Queue.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn replace_with_queue(&self, heap_ref: HeapRef) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if state.objects.contains_key(&heap_ref.id()) {
+            state.objects.insert(
+                heap_ref.id(),
+                HeapObject::Queue {
+                    elements: VecDeque::new(),
+                },
+            );
+        }
+    }
+
+    /// Enqueues an element to the back of a Queue.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn queue_enqueue(&self, heap_ref: HeapRef, value: EmValue) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::Queue { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            elements.push_back(value);
+        }
+    }
+
+    /// Dequeues an element from the front of a Queue (FIFO).
+    ///
+    /// Returns `None` if the queue is empty or the reference is not a Queue.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn queue_dequeue(&self, heap_ref: HeapRef) -> Option<EmValue> {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::Queue { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            elements.pop_front()
+        } else {
+            None
+        }
+    }
+
+    /// Peeks at the front element of a Queue without removing it.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn queue_peek(&self, heap_ref: HeapRef) -> Option<EmValue> {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::Queue { elements }) = state.objects.get(&heap_ref.id()) {
+            elements.front().cloned()
+        } else {
+            None
+        }
+    }
+
+    /// Returns the number of elements in a Queue.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn queue_count(&self, heap_ref: HeapRef) -> usize {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::Queue { elements }) = state.objects.get(&heap_ref.id()) {
+            elements.len()
+        } else {
+            0
+        }
+    }
+
+    /// Clears all elements from a Queue.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn queue_clear(&self, heap_ref: HeapRef) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::Queue { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            elements.clear();
+        }
+    }
+
+    /// Returns a clone of all elements in a Queue (front-first / FIFO order).
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn queue_to_vec(&self, heap_ref: HeapRef) -> Vec<EmValue> {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::Queue { elements }) = state.objects.get(&heap_ref.id()) {
+            elements.iter().cloned().collect()
+        } else {
+            Vec::new()
+        }
+    }
+
+    // ── HashSet helpers ────────────────────────────────────────────────
+
+    /// Replaces a heap object with an empty HashSet.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn replace_with_hashset(&self, heap_ref: HeapRef) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if state.objects.contains_key(&heap_ref.id()) {
+            state.objects.insert(
+                heap_ref.id(),
+                HeapObject::HashSet {
+                    elements: StdHashSet::new(),
+                },
+            );
+        }
+    }
+
+    /// Adds an element to a HashSet. Returns `true` if the element was newly added.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn hashset_add(&self, heap_ref: HeapRef, key: DictionaryKey) -> bool {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::HashSet { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            elements.insert(key)
+        } else {
+            false
+        }
+    }
+
+    /// Removes an element from a HashSet. Returns `true` if the element was removed.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn hashset_remove(&self, heap_ref: HeapRef, key: &DictionaryKey) -> bool {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::HashSet { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            elements.remove(key)
+        } else {
+            false
+        }
+    }
+
+    /// Checks if a HashSet contains the specified element.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn hashset_contains(&self, heap_ref: HeapRef, key: &DictionaryKey) -> bool {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::HashSet { elements }) = state.objects.get(&heap_ref.id()) {
+            elements.contains(key)
+        } else {
+            false
+        }
+    }
+
+    /// Returns the number of elements in a HashSet.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn hashset_count(&self, heap_ref: HeapRef) -> usize {
+        let state = self.state.read().expect("heap lock poisoned");
+        if let Some(HeapObject::HashSet { elements }) = state.objects.get(&heap_ref.id()) {
+            elements.len()
+        } else {
+            0
+        }
+    }
+
+    /// Clears all elements from a HashSet.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn hashset_clear(&self, heap_ref: HeapRef) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::HashSet { elements }) = state.objects.get_mut(&heap_ref.id()) {
+            elements.clear();
         }
     }
 
@@ -1749,6 +3202,29 @@ impl ManagedHeap {
             write_len
         } else {
             0
+        }
+    }
+
+    /// Truncates or extends the stream to the given length.
+    ///
+    /// If the new length is shorter than the current data, the data is truncated.
+    /// If longer, the data is zero-extended. The position is clamped to the new length.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_ref` - Reference to the stream object.
+    /// * `new_length` - The desired length.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn truncate_stream(&self, heap_ref: HeapRef, new_length: usize) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(HeapObject::Stream { data, position }) = state.objects.get_mut(&heap_ref.id()) {
+            data.resize(new_length, 0);
+            if *position > new_length {
+                *position = new_length;
+            }
         }
     }
 
@@ -2075,6 +3551,187 @@ impl ManagedHeap {
         // Update size atomically
         self.current_size.fetch_sub(buffer_len, Ordering::Relaxed);
         true
+    }
+
+    /// Replaces an existing heap object with a CompressedStream.
+    ///
+    /// Used when a `DeflateStream` or `GZipStream` is constructed on top of
+    /// an already-allocated object (instance constructor pattern).
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_ref` - Reference to the object to replace.
+    /// * `underlying_stream` - Reference to the underlying stream containing compressed data.
+    /// * `compression_type` - 0 for Deflate, 1 for GZip.
+    /// * `mode` - 0 for Decompress, 1 for Compress.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the object was replaced, `false` if the reference is invalid.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn replace_with_compressed_stream(
+        &self,
+        heap_ref: HeapRef,
+        underlying_stream: HeapRef,
+        compression_type: u8,
+        mode: u8,
+    ) -> bool {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        if let Some(old_obj) = state.objects.get(&heap_ref.id()) {
+            let old_size = old_obj.estimated_size();
+            let new_obj = HeapObject::CompressedStream {
+                underlying_stream,
+                compression_type,
+                mode,
+                decompressed_data: None,
+                read_position: 0,
+            };
+            let new_size = new_obj.estimated_size();
+            state.objects.insert(heap_ref.id(), new_obj);
+
+            // Update size tracking atomically
+            if new_size >= old_size {
+                self.current_size
+                    .fetch_add(new_size - old_size, Ordering::Relaxed);
+            } else {
+                self.current_size
+                    .fetch_sub(old_size - new_size, Ordering::Relaxed);
+            }
+            true
+        } else {
+            false
+        }
+    }
+
+    /// Gets info about a CompressedStream: (underlying_stream, compression_type, mode).
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_ref` - Reference to the CompressedStream object.
+    ///
+    /// # Returns
+    ///
+    /// `Some((underlying_stream, compression_type, mode))` if the object is a CompressedStream,
+    /// `None` otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn get_compressed_stream_info(&self, heap_ref: HeapRef) -> Option<(HeapRef, u8, u8)> {
+        let state = self.state.read().expect("heap lock poisoned");
+        match state.objects.get(&heap_ref.id())? {
+            HeapObject::CompressedStream {
+                underlying_stream,
+                compression_type,
+                mode,
+                ..
+            } => Some((*underlying_stream, *compression_type, *mode)),
+            _ => None,
+        }
+    }
+
+    /// Sets the decompressed data cache for a CompressedStream.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_ref` - Reference to the CompressedStream object.
+    /// * `data` - The decompressed data to cache.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn set_compressed_stream_data(&self, heap_ref: HeapRef, data: Vec<u8>) {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        let data_len = data.len();
+
+        // Get old cached size
+        let old_cached_size = match state.objects.get(&heap_ref.id()) {
+            Some(HeapObject::CompressedStream {
+                decompressed_data, ..
+            }) => decompressed_data.as_ref().map_or(0, Vec::len),
+            _ => return,
+        };
+
+        if let Some(HeapObject::CompressedStream {
+            decompressed_data, ..
+        }) = state.objects.get_mut(&heap_ref.id())
+        {
+            *decompressed_data = Some(data);
+        }
+
+        // Update size tracking atomically
+        if data_len >= old_cached_size {
+            self.current_size
+                .fetch_add(data_len - old_cached_size, Ordering::Relaxed);
+        } else {
+            self.current_size
+                .fetch_sub(old_cached_size - data_len, Ordering::Relaxed);
+        }
+    }
+
+    /// Reads bytes from a CompressedStream's decompressed cache.
+    ///
+    /// Returns the bytes read and advances the read position.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_ref` - Reference to the CompressedStream object.
+    /// * `count` - Maximum number of bytes to read.
+    ///
+    /// # Returns
+    ///
+    /// The bytes read (may be fewer than `count` if EOF reached), or `None`
+    /// if the stream has no decompressed data yet.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    pub fn read_compressed_stream(&self, heap_ref: HeapRef, count: usize) -> Option<Vec<u8>> {
+        let mut state = self.state.write().expect("heap lock poisoned");
+        let obj = state.objects.get_mut(&heap_ref.id())?;
+        match obj {
+            HeapObject::CompressedStream {
+                decompressed_data: Some(data),
+                read_position,
+                ..
+            } => {
+                let available = data.len().saturating_sub(*read_position);
+                let to_read = count.min(available);
+                let bytes = data[*read_position..*read_position + to_read].to_vec();
+                *read_position += to_read;
+                Some(bytes)
+            }
+            _ => None,
+        }
+    }
+
+    /// Checks if a CompressedStream has cached decompressed data.
+    ///
+    /// # Arguments
+    ///
+    /// * `heap_ref` - Reference to the CompressedStream object.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the CompressedStream has cached decompressed data, `false` otherwise.
+    ///
+    /// # Panics
+    ///
+    /// Panics if the internal `RwLock` is poisoned.
+    #[must_use]
+    pub fn has_compressed_stream_data(&self, heap_ref: HeapRef) -> bool {
+        let state = self.state.read().expect("heap lock poisoned");
+        matches!(
+            state.objects.get(&heap_ref.id()),
+            Some(HeapObject::CompressedStream {
+                decompressed_data: Some(_),
+                ..
+            })
+        )
     }
 }
 

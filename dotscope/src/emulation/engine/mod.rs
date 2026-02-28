@@ -58,6 +58,7 @@ mod controller;
 mod error;
 mod interpreter;
 mod pointer;
+mod resolution;
 mod result;
 mod stats;
 mod trace;
@@ -78,9 +79,10 @@ mod tests {
     use crate::{
         assembly::{decode_stream, InstructionAssembler},
         emulation::{
-            process::EmulationLimits, AddressSpace, CaptureContext, EmValue, EmulationContext,
-            EmulationThread, HeapObject, Interpreter, ManagedHeap, SharedFakeObjects, StepResult,
-            ThreadExceptionState, ThreadId,
+            process::{EmulationConfig, EmulationLimits},
+            AddressSpace, CaptureContext, EmValue, EmulationContext, EmulationThread, HeapObject,
+            Interpreter, ManagedHeap, SharedFakeObjects, StepResult, ThreadExceptionState,
+            ThreadId,
         },
         file::parser::Parser,
         metadata::{token::Token, typesystem::CilFlavor},
@@ -115,8 +117,15 @@ mod tests {
         let capture = Arc::new(CaptureContext::new());
         let fake_objects = SharedFakeObjects::new(address_space.managed_heap());
         let interpreter = Interpreter::new(limits, Arc::clone(&address_space), PointerSize::Bit64);
-        let mut thread =
-            EmulationThread::new(ThreadId::MAIN, address_space, capture, None, fake_objects);
+        let config = Arc::new(EmulationConfig::default());
+        let mut thread = EmulationThread::new(
+            ThreadId::MAIN,
+            address_space,
+            capture,
+            None,
+            fake_objects,
+            config,
+        );
 
         // Start a method with the given args and locals
         thread.start_method(Token::new(0x06000001), locals, args, false);

@@ -844,6 +844,7 @@ mod tests {
 
     use crate::emulation::{
         capture::CaptureContext,
+        process::EmulationConfig,
         thread::{
             EmulationThread, SchedulerOutcome, ThreadPriority, ThreadScheduler, WaitReason,
             WakeCondition,
@@ -855,7 +856,15 @@ mod tests {
         let space = Arc::new(AddressSpace::new());
         let capture = Arc::new(CaptureContext::new());
         let fake_objects = SharedFakeObjects::new(space.managed_heap());
-        EmulationThread::new(ThreadId::new(id), space, capture, None, fake_objects)
+        let config = Arc::new(EmulationConfig::default());
+        EmulationThread::new(
+            ThreadId::new(id),
+            space,
+            capture,
+            None,
+            fake_objects,
+            config,
+        )
     }
 
     #[test]
@@ -930,6 +939,7 @@ mod tests {
         let space = Arc::new(AddressSpace::new());
         let capture = Arc::new(CaptureContext::new());
         let fake_objects = SharedFakeObjects::new(space.managed_heap());
+        let config = Arc::new(EmulationConfig::default());
 
         let mut low_thread = EmulationThread::new(
             ThreadId::new(1),
@@ -937,6 +947,7 @@ mod tests {
             Arc::clone(&capture),
             None,
             fake_objects.clone(),
+            Arc::clone(&config),
         );
         low_thread.set_priority(ThreadPriority::Lowest);
 
@@ -946,6 +957,7 @@ mod tests {
             Arc::clone(&capture),
             None,
             fake_objects,
+            config,
         );
         high_thread.set_priority(ThreadPriority::Highest);
 

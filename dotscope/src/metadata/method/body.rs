@@ -1062,9 +1062,7 @@ mod tests {
         // Align to 4 bytes
         let unaligned = 12 + code_size as usize;
         let aligned = (unaligned + 3) & !3;
-        for _ in 0..(aligned - unaligned) {
-            data.push(0x00);
-        }
+        data.extend(std::iter::repeat_n(0x00, aligned - unaligned));
 
         // Small exception section header
         let section_size = (4 + clauses.len() * 12) as u8;
@@ -1153,9 +1151,7 @@ mod tests {
         // Align to 4 bytes
         let unaligned = 12 + code_size as usize;
         let aligned = (unaligned + 3) & !3;
-        for _ in 0..(aligned - unaligned) {
-            data.push(0x00);
-        }
+        data.extend(std::iter::repeat_n(0x00, aligned - unaligned));
 
         // Fat exception section header
         let handler_count: u32 = 1025; // > MAX_EXCEPTION_HANDLERS

@@ -92,7 +92,7 @@ use crate::{
 /// - `Convert.ToInt32`, `ToUInt32`, `ToInt64`, `ToUInt64` (32/64-bit conversions)
 /// - `Convert.ToSingle`, `ToDouble` (floating-point conversions)
 /// - `Convert.ToChar`, `ToBoolean`, `ToString` (other conversions)
-pub fn register(manager: &mut HookManager) {
+pub fn register(manager: &HookManager) {
     // Base64 operations
     manager.register(
         Hook::new("System.Convert.ToBase64String")
@@ -796,8 +796,8 @@ mod tests {
 
     #[test]
     fn test_register_hooks() {
-        let mut manager = HookManager::new();
-        register(&mut manager);
+        let manager = HookManager::new();
+        register(&manager);
         assert_eq!(manager.len(), 15);
     }
 
