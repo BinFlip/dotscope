@@ -81,7 +81,11 @@
 use std::collections::HashMap;
 
 use crate::{
-    assembly::{encoder::InstructionEncoder, Immediate, Operand},
+    assembly::{
+        encoder::InstructionEncoder,
+        instructions::{INSTRUCTIONS, INSTRUCTIONS_FE, INSTRUCTIONS_FE_MAX, INSTRUCTIONS_MAX},
+        FlowType, Immediate, Operand, OperandType,
+    },
     metadata::{
         method::{ExceptionHandler, ExceptionHandlerFlags},
         token::Token,
@@ -188,6 +192,7 @@ struct TryBlockInfo {
 /// let (bytecode, max_stack, handlers) = asm.finish()?;
 /// # Ok::<(), dotscope::Error>(())
 /// ```
+#[derive(Debug, Clone)]
 pub struct InstructionAssembler {
     /// Core encoder for instruction generation with built-in stack tracking
     encoder: InstructionEncoder,
@@ -434,6 +439,122 @@ impl InstructionAssembler {
     #[must_use]
     pub fn get_label_position(&self, label_name: &str) -> Option<u32> {
         self.encoder.get_label_position(label_name)
+    }
+
+    /// Emit an instruction by its opcode value with an optional operand.
+    ///
+    /// Looks up the instruction mnemonic from the `INSTRUCTIONS` / `INSTRUCTIONS_FE`
+    /// tables and delegates to the encoder's `emit_instruction`. This enables generic
+    /// opcode emission without needing per-opcode method calls — useful for bridging
+    /// .NET `ILGenerator.Emit(OpCode, ...)` into the assembler.
+    ///
+    /// For branch instructions, use [`emit_branch_to_label`](Self::emit_branch_to_label) instead.
+    ///
+    /// # Parameters
+    ///
+    /// * `opcode` - The opcode value: 0x00-0xE0 for single-byte opcodes, or
+    ///   0xFE00-0xFEFF for extended opcodes (matching .NET `OpCode.Value`)
+    /// * `operand` - Optional operand for the instruction
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the opcode is out of range, has an empty mnemonic
+    /// (unused opcode slot), or if the operand doesn't match the expected type.
+    pub fn emit_opcode(&mut self, opcode: u16, operand: Option<Operand>) -> Result<&mut Self> {
+        let mnemonic = Self::lookup_mnemonic(opcode)?;
+        self.encoder.emit_instruction(mnemonic, operand)?;
+        Ok(self)
+    }
+
+    /// Emit a branch instruction by its opcode value targeting a named label.
+    ///
+    /// Looks up the instruction mnemonic from the `INSTRUCTIONS` / `INSTRUCTIONS_FE`
+    /// tables and delegates to the encoder's `emit_branch`. The label reference is
+    /// resolved during finalization.
+    ///
+    /// # Parameters
+    ///
+    /// * `opcode` - The branch opcode value (e.g., 0x2B for `br.s`, 0x38 for `br`)
+    /// * `label` - The target label name
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the opcode is not a branch instruction or the mnemonic
+    /// is unrecognized.
+    pub fn emit_branch_to_label(&mut self, opcode: u16, label: &str) -> Result<&mut Self> {
+        let mnemonic = Self::lookup_mnemonic(opcode)?;
+        self.encoder.emit_branch(mnemonic, label)?;
+        Ok(self)
+    }
+
+    /// Look up the mnemonic string for an opcode value.
+    ///
+    /// Handles both single-byte (0x00-0xE0) and extended (0xFE00-0xFEFF) opcodes
+    /// by indexing into the static `INSTRUCTIONS` / `INSTRUCTIONS_FE` tables.
+    fn lookup_mnemonic(opcode: u16) -> Result<&'static str> {
+        if opcode < u16::from(INSTRUCTIONS_MAX) {
+            let entry = &INSTRUCTIONS[opcode as usize];
+            if entry.instr.is_empty() {
+                return Err(malformed_error!("unused opcode slot 0x{:02X}", opcode));
+            }
+            Ok(entry.instr)
+        } else if opcode >= 0xFE00 {
+            let sub = (opcode & 0xFF) as usize;
+            if sub >= usize::from(INSTRUCTIONS_FE_MAX) {
+                return Err(malformed_error!(
+                    "extended opcode 0xFE{:02X} out of range",
+                    sub
+                ));
+            }
+            let entry = &INSTRUCTIONS_FE[sub];
+            if entry.instr.is_empty() {
+                return Err(malformed_error!("unused extended opcode 0xFE{:02X}", sub));
+            }
+            Ok(entry.instr)
+        } else {
+            Err(malformed_error!("invalid opcode value 0x{:04X}", opcode))
+        }
+    }
+
+    /// Check whether an opcode value represents a branch instruction.
+    ///
+    /// Returns `true` for conditional branches, unconditional branches, and `leave` instructions.
+    #[must_use]
+    pub fn is_branch_opcode(opcode: u16) -> bool {
+        let flow = if opcode < u16::from(INSTRUCTIONS_MAX) {
+            INSTRUCTIONS[opcode as usize].flow
+        } else if opcode >= 0xFE00 {
+            let sub = (opcode & 0xFF) as usize;
+            if sub >= usize::from(INSTRUCTIONS_FE_MAX) {
+                return false;
+            }
+            INSTRUCTIONS_FE[sub].flow
+        } else {
+            return false;
+        };
+        matches!(
+            flow,
+            FlowType::ConditionalBranch | FlowType::UnconditionalBranch | FlowType::Leave
+        )
+    }
+
+    /// Check whether an opcode value takes a metadata token operand.
+    ///
+    /// Returns `true` for opcodes whose operand type is `Token` (e.g., `call`, `newobj`, `ldfld`).
+    #[must_use]
+    pub fn is_token_opcode(opcode: u16) -> bool {
+        let op_type = if opcode < u16::from(INSTRUCTIONS_MAX) {
+            INSTRUCTIONS[opcode as usize].op_type
+        } else if opcode >= 0xFE00 {
+            let sub = (opcode & 0xFF) as usize;
+            if sub >= usize::from(INSTRUCTIONS_FE_MAX) {
+                return false;
+            }
+            INSTRUCTIONS_FE[sub].op_type
+        } else {
+            return false;
+        };
+        matches!(op_type, OperandType::Token)
     }
 
     /// Define a label at the current position.

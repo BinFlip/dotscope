@@ -21,7 +21,7 @@ use std::fmt;
 
 use crate::metadata::{
     cilobject::CilObject,
-    method::Method,
+    method::{ExceptionHandlerFlags, Method},
     signatures::{
         parse_local_var_signature, CustomModifiers, SignatureArray, SignatureLocalVariable,
         SignatureMethod, SignatureMethodSpec, SignatureParameter, SignaturePointer,
@@ -29,7 +29,7 @@ use crate::metadata::{
     },
     tables::{MemberRefSignature, StandAloneSigRaw, StandAloneSignature},
     token::Token,
-    typesystem::{ArrayDimensions, CilFlavor},
+    typesystem::{wellknown, ArrayDimensions, CilFlavor},
 };
 
 /// Reference to a type in metadata.
@@ -897,24 +897,12 @@ impl SsaType {
 
     /// Matches a System namespace type name to its SSA primitive type.
     fn match_system_type(name: &str) -> Option<Self> {
+        // Handle types that map through CilPrimitiveKind
+        if let Some(kind) = wellknown::system_name_to_primitive(name) {
+            return Some(Self::from_cil_flavor(&CilFlavor::from(kind), Token::new(0)));
+        }
+        // Non-primitive System types
         match name {
-            "Void" => Some(Self::Void),
-            "Boolean" => Some(Self::Bool),
-            "Char" => Some(Self::Char),
-            "SByte" => Some(Self::I8),
-            "Byte" => Some(Self::U8),
-            "Int16" => Some(Self::I16),
-            "UInt16" => Some(Self::U16),
-            "Int32" => Some(Self::I32),
-            "UInt32" => Some(Self::U32),
-            "Int64" => Some(Self::I64),
-            "UInt64" => Some(Self::U64),
-            "Single" => Some(Self::F32),
-            "Double" => Some(Self::F64),
-            "IntPtr" => Some(Self::NativeInt),
-            "UIntPtr" => Some(Self::NativeUInt),
-            "String" => Some(Self::String),
-            "Object" => Some(Self::Object),
             "TypedReference" => Some(Self::TypedReference),
             _ => None,
         }
@@ -1002,6 +990,18 @@ pub trait TypeProvider {
     /// Returns the original local variable type signatures for code generation.
     fn local_type_signatures(&self) -> Option<Vec<SignatureLocalVariable>> {
         None
+    }
+
+    /// Returns the exception type for a catch handler, identified by its handler index.
+    ///
+    /// This is used during SSA construction to type the exception object that the
+    /// CLR pushes onto the stack at catch handler entry (ECMA-335 §I.12.4.2.5).
+    ///
+    /// Returns `SsaType::Object` by default (all .NET exceptions are reference types).
+    /// Implementations may return a more specific type (e.g., `SsaType::Class`) if
+    /// the catch clause's type token can be resolved.
+    fn handler_catch_type(&self, _handler_index: usize) -> SsaType {
+        SsaType::Object
     }
 }
 
@@ -1359,6 +1359,32 @@ impl<'a> TypeContext<'a> {
         let locals_sig = parse_local_var_signature(sig_data).ok()?;
         Some(locals_sig.locals)
     }
+
+    /// Returns the catch handler's exception type as an `SsaType`.
+    ///
+    /// Resolves the catch clause's type token from the method's exception handler
+    /// table. Falls back to `SsaType::Object` if the handler index is out of
+    /// range or the type cannot be resolved.
+    #[must_use]
+    pub fn handler_catch_type(&self, handler_index: usize) -> SsaType {
+        let Some(body) = self.method.body.get() else {
+            return SsaType::Object;
+        };
+
+        let Some(handler) = body.exception_handlers.get(handler_index) else {
+            return SsaType::Object;
+        };
+
+        // For catch handlers, resolve the type token from the handler's type reference
+        if handler.flags == ExceptionHandlerFlags::EXCEPTION {
+            if let Some(type_ref) = &handler.handler {
+                return SsaType::from_type_token(type_ref.token, self.assembly);
+            }
+        }
+
+        // Filter handlers and fallback: exception type is System.Object
+        SsaType::Object
+    }
 }
 
 impl TypeProvider for TypeContext<'_> {
@@ -1392,6 +1418,10 @@ impl TypeProvider for TypeContext<'_> {
 
     fn local_type_signatures(&self) -> Option<Vec<SignatureLocalVariable>> {
         TypeContext::local_type_signatures(self)
+    }
+
+    fn handler_catch_type(&self, handler_index: usize) -> SsaType {
+        self.handler_catch_type(handler_index)
     }
 }
 

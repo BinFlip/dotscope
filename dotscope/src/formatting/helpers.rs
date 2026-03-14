@@ -402,7 +402,7 @@ fn format_assembly_scoped(cil_type: &CilType) -> String {
 /// Walk the external reference and enclosing type chains to find the assembly ref name.
 fn find_assembly_ref(cil_type: &CilType) -> Option<String> {
     // Check direct external reference (resolution scope)
-    match cil_type.get_external() {
+    match cil_type.external() {
         Some(CilTypeReference::AssemblyRef(aref)) => return Some(aref.name.clone()),
         // For nested TypeRefs, the resolution scope points to the parent TypeRef.
         // Walk up that chain to find the assembly ref.

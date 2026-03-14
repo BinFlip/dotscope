@@ -35,7 +35,7 @@
 //! - Does not perform code motion (dominator-based GVN would be more powerful)
 //! - Works within a single method
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use crate::{
     analysis::{BinaryOpKind, SsaFunction, SsaOp, SsaVarId, UnaryOpKind},
@@ -204,7 +204,7 @@ impl SsaPass for GlobalValueNumberingPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        _assembly: &CilObject,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
 
@@ -222,11 +222,12 @@ impl SsaPass for GlobalValueNumberingPass {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use crate::{
         analysis::{BinaryOpKind, ConstValue, SsaFunctionBuilder, SsaOp, SsaVarId, UnaryOpKind},
-        compiler::{EventLog, GlobalValueNumberingPass},
+        compiler::{
+            passes::gvn::{GlobalValueNumberingPass, ValueKey},
+            EventLog,
+        },
         metadata::token::Token,
     };
 

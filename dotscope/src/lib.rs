@@ -40,7 +40,7 @@
 //! - **Assembly Layer**: CIL instruction processing with complete disassembly and assembly capabilities
 //! - **Analysis Layer**: SSA form, control flow graphs, data flow analysis, and call graphs
 //! - **Compiler Layer**: SSA optimization passes, code generation (SSA → CIL), and pass scheduling
-//! - **Deobfuscation Layer**: Detection engine and obfuscator-specific handling (passes live in compiler)
+//! - **Deobfuscation Layer**: Technique-based detection and transformation with ConfuserEx, BitMono, and Obfuscar support
 //! - **Emulation Layer**: CIL bytecode interpreter with BCL stubs for runtime value computation
 //! - **Validation Layer**: Configurable validation and integrity checking
 //!
@@ -64,8 +64,8 @@
 //! - **Memory safe** - Built in Rust with comprehensive error handling
 //! - **Rich type system** - Full support for generics, signatures, and complex .NET types
 //! - **Static analysis** - SSA form, control flow graphs, data flow analysis, call graphs
-//! - **Deobfuscation** - 20 passes, ConfuserEx support, string decryption, control flow recovery
-//! - **CIL emulation** - Bytecode interpreter with 119+ BCL stubs and copy-on-write memory
+//! - **Deobfuscation** - 21 passes, 30 techniques, ConfuserEx/BitMono/Obfuscar support, string decryption, control flow recovery
+//! - **CIL emulation** - Bytecode interpreter with 600+ BCL stubs and copy-on-write memory
 //! - **Extensible architecture** - Modular design for custom analysis and tooling
 //!
 //! # Usage Examples
@@ -453,8 +453,9 @@ pub mod analysis;
 /// Deobfuscation framework and transformation passes.
 ///
 /// This module provides infrastructure for detecting and removing code obfuscation
-/// from .NET assemblies. It uses an SSA-based pass architecture with a system
-/// for obfuscator-specific detection and handling.
+/// from .NET assemblies. It combines an SSA-based pass architecture with a
+/// technique-based detection and transformation system that supports multiple
+/// obfuscators including ConfuserEx, BitMono, and Obfuscar.
 ///
 /// # Key Components
 ///
@@ -464,10 +465,11 @@ pub mod analysis;
 /// - [`crate::compiler::PassScheduler`] - Manages pass execution and fixpoint iteration
 /// - [`crate::deobfuscation::AnalysisContext`] - Shared interprocedural analysis data
 ///
-/// ## Obfuscator System
-/// - [`crate::deobfuscation::Obfuscator`] - Trait for obfuscator-specific handling
-/// - [`crate::deobfuscation::ObfuscatorDetector`] - Runs obfuscators for detection
-/// - [`crate::deobfuscation::DetectionScore`] - Confidence-based detection scoring
+/// ## Technique System
+/// - [`crate::deobfuscation::Technique`] - Unified trait for detection and transformation (30 built-in techniques)
+/// - [`crate::deobfuscation::TechniqueRegistry`] - Manages registered techniques with confidence-scored detection
+/// - [`crate::deobfuscation::TechniqueCategory`] - Categorization (anti-debug, anti-dump, string encryption, etc.)
+/// - [`crate::deobfuscation::Detection`] / [`crate::deobfuscation::Evidence`] - Detection results with evidence
 ///
 /// ## Built-in Passes
 ///
@@ -712,7 +714,7 @@ pub mod compiler;
 /// // Cheap forks share the base state via copy-on-write
 /// if let Some(decryptor) = base_process.find_method("Decryptor", "Decrypt") {
 ///     for key in 0..100i32 {
-///         let fork = base_process.fork();
+///         let fork = base_process.fork()?;
 ///         let outcome = fork.execute_method(decryptor, vec![EmValue::I32(key)])?;
 ///         // Each fork runs independently without affecting the base process
 ///     }

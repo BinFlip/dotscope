@@ -121,6 +121,8 @@ fn main() -> anyhow::Result<()> {
             aggressive,
             detailed,
             report,
+            #[cfg(feature = "smart-rename")]
+            rename_ai,
         } => commands::deobfuscate::run(
             path,
             &commands::deobfuscate::DeobfuscateOptions {
@@ -133,6 +135,8 @@ fn main() -> anyhow::Result<()> {
                 aggressive: *aggressive,
                 detailed: *detailed,
                 report: report.as_deref(),
+                #[cfg(feature = "smart-rename")]
+                rename_ai: rename_ai.as_deref(),
                 global: &cli.global,
             },
         ),

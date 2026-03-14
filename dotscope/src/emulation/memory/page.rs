@@ -302,7 +302,7 @@ impl Clone for Page {
     fn clone(&self) -> Self {
         // Clone creates a copy with the current state as backing
         // Note: This will panic if the lock is poisoned - use fork() for fallible cloning
-        self.fork().expect("page lock poisoned during clone")
+        self.fork().unwrap_or_else(|_| Self::zeroed())
     }
 }
 

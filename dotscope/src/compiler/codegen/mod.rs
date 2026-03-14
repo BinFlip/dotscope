@@ -1928,9 +1928,13 @@ impl SsaCodeGenerator {
             // Block has no decomposed ops - it's an empty block (e.g., a merge point created
             // by control flow unflattening or other SSA transformations).
             //
-            // Empty blocks act as merge points where control can fall through to the next
-            // block. If this is an empty block at the end of the method with branches
-            // targeting it, the encoder's finalize() will add a proper terminator.
+            // If the original block also has no terminator, there is no meaningful fallthrough —
+            // mark as unreachable so the stack depth doesn't leak to the next block in the layout.
+            // This is critical for empty exception handler entry blocks whose pre-set depth (1 for
+            // catch/filter) would otherwise propagate incorrectly to unrelated successor blocks.
+            if block.terminator_op().is_none() {
+                encoder.mark_unreachable();
+            }
             return Ok(());
         }
 
@@ -2151,33 +2155,34 @@ impl SsaCodeGenerator {
                     // Mark as in_progress for cycle detection
                     in_progress.insert(idx);
 
-                    // IMPORTANT: Spill all stack_vars BEFORE loading any operands.
+                    // Spill stack_vars that would be buried by operand loads.
                     //
-                    // When loading operands for an operation, we might need to load
-                    // some from storage (ldloc/ldarg) and some from stack_vars. The
-                    // issue is that loading from storage pushes onto the CIL stack,
-                    // which can bury values that were in stack_vars. If we then try
-                    // to load another operand and it's not on top of stack_vars, the
-                    // spill logic would emit stloc instructions that would store the
-                    // WRONG values (the operands we just loaded, not the buried results).
+                    // When loading operands for an operation, some come from the
+                    // CIL stack (tracked in stack_vars) and some from storage
+                    // (ldloc/ldarg). Loading from storage pushes onto the CIL stack,
+                    // which can bury values in stack_vars.
                     //
-                    // To prevent this, we spill all stack_vars values upfront, ensuring
-                    // a clean stack state before loading any operands.
+                    // Optimization: if the first operand (loaded first, bottom of
+                    // CIL stack) matches the stack_vars top, it can stay on the
+                    // stack — the LoadOperand handler will consume it directly.
+                    // Subsequent operands that need storage loads will be pushed on
+                    // top of it, which is the correct CIL evaluation order.
+                    //
+                    // Only spill when the first operand does NOT match the stack
+                    // top, because loading it from storage would bury the tracked
+                    // stack values.
                     let operands = &ctx.operands_cache[idx];
-                    let any_operand_needs_storage_load = operands.iter().any(|op_var| {
-                        // Check if this operand would be loaded from storage (not from stack)
-                        if let Some(last) = self.stack_vars.last() {
-                            if *last == *op_var {
-                                return false; // Would be taken from stack, no storage load
-                            }
-                        }
-                        // Would need storage load (or spill + storage load)
-                        true
+                    let first_operand_on_stack = operands.first().is_some_and(|first_op| {
+                        self.stack_vars.last().is_some_and(|top| *top == *first_op)
                     });
 
-                    if any_operand_needs_storage_load && !self.stack_vars.is_empty() {
-                        // Spill all stack_vars now, before loading any operands
-                        self.spill_stack(encoder, ctx.ssa)?;
+                    if !first_operand_on_stack && !self.stack_vars.is_empty() {
+                        let needs_storage_load = operands
+                            .iter()
+                            .any(|op_var| self.stack_vars.last().is_none_or(|top| *top != *op_var));
+                        if needs_storage_load {
+                            self.spill_stack(encoder, ctx.ssa)?;
+                        }
                     }
 
                     // Schedule: first Emit (pushed first, runs last),
@@ -2279,8 +2284,33 @@ impl SsaCodeGenerator {
                                 Self::is_used_outside_block(ctx.ssa, dest, ctx.current_block_idx);
 
                             if uses > 1 || used_outside_block {
-                                // Multi-use or cross-block use: store to local immediately.
-                                self.store_var(encoder, ctx.ssa, dest)?;
+                                // Multi-use or cross-block use: must store to a local.
+                                //
+                                // Optimization: if the next pending work item will load
+                                // this same variable, emit `dup; stloc.N` instead of
+                                // `stloc.N` followed by a later `ldloc.N`. The `dup`
+                                // keeps a copy on the evaluation stack for the immediate
+                                // consumer while `stloc` persists it for later uses.
+                                // This avoids a redundant store-then-load round-trip.
+                                let next_loads_dest =
+                                    work_stack.last().is_some_and(|item| match item {
+                                        CodeGenWorkItem::LoadOperand(consumer_idx, op_idx) => ctx
+                                            .operands_cache[*consumer_idx]
+                                            .get(*op_idx)
+                                            .is_some_and(|op| *op == dest),
+                                        _ => false,
+                                    });
+
+                                if next_loads_dest {
+                                    // Emit dup (keeps value on stack) then store.
+                                    encoder.emit_instruction("dup", None)?;
+                                    self.store_var(encoder, ctx.ssa, dest)?;
+                                    // Pop the LoadOperand — the value is already on the
+                                    // stack from dup, so the load is satisfied.
+                                    work_stack.pop();
+                                } else {
+                                    self.store_var(encoder, ctx.ssa, dest)?;
+                                }
                             } else {
                                 // Single-use value within this block: leave on stack for now.
                                 // The consumer should use it directly. Storage will be allocated
@@ -3939,6 +3969,23 @@ impl SsaCodeGenerator {
         false_target: usize,
         next_block_idx: Option<usize>,
     ) -> Result<()> {
+        // Same-target: condition is irrelevant, discard it and emit unconditional branch
+        if true_target == false_target {
+            encoder.emit_instruction("pop", None)?;
+            if self.successor_has_phi_from(ssa, current_block_idx, true_target)? {
+                self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, true_target)?;
+            }
+            if Some(true_target) != next_block_idx {
+                let label = self
+                    .block_labels
+                    .get(&true_target)
+                    .cloned()
+                    .unwrap_or_else(|| format!("block_{true_target}"));
+                encoder.emit_branch("br", &label)?;
+            }
+            return Ok(());
+        }
+
         let true_has_phi = self.successor_has_phi_from(ssa, current_block_idx, true_target)?;
         let false_has_phi = self.successor_has_phi_from(ssa, current_block_idx, false_target)?;
 
@@ -4025,6 +4072,24 @@ impl SsaCodeGenerator {
         false_target: usize,
         next_block_idx: Option<usize>,
     ) -> Result<()> {
+        // Same-target: comparison is irrelevant, discard both operands
+        if true_target == false_target {
+            encoder.emit_instruction("pop", None)?;
+            encoder.emit_instruction("pop", None)?;
+            if self.successor_has_phi_from(ssa, current_block_idx, true_target)? {
+                self.emit_phi_stores_for_successor(encoder, ssa, current_block_idx, true_target)?;
+            }
+            if Some(true_target) != next_block_idx {
+                let label = self
+                    .block_labels
+                    .get(&true_target)
+                    .cloned()
+                    .unwrap_or_else(|| format!("block_{true_target}"));
+                encoder.emit_branch("br", &label)?;
+            }
+            return Ok(());
+        }
+
         let true_has_phi = self.successor_has_phi_from(ssa, current_block_idx, true_target)?;
         let false_has_phi = self.successor_has_phi_from(ssa, current_block_idx, false_target)?;
 

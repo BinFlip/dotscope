@@ -2304,6 +2304,40 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             }
         }
 
+        // Step 1b: Handler entry blocks — create properly-typed exception variables.
+        //
+        // ECMA-335 §I.12.4.2.5: When control transfers to a catch/filter handler,
+        // the runtime pushes the exception object on the stack. This is an implicit
+        // definition that doesn't flow from any predecessor — it's created by the
+        // runtime. Exception handler entry blocks typically have 0 predecessors in
+        // the CFG (exception edges aren't modeled as regular edges), so no phi is
+        // placed and predecessor-based resolution will fail.
+        //
+        // We create a new SSA variable with the correct exception type here, before
+        // the normal entry stack resolution loop, so the exception object has proper
+        // typing from the start.
+        if let Some(cfg_block) = self.cfg.block(NodeId::new(block_idx)) {
+            if let Some(handler_info) = &cfg_block.handler_entry {
+                if handler_info.entry_stack_depth() > 0 {
+                    let handler_index = handler_info.handler_index;
+                    let exception_type = self.type_provider.handler_catch_type(handler_index);
+
+                    if let Some(ref entry) = entry_stack {
+                        if let Some(&placeholder) = entry.first() {
+                            let origin = self.stack_slot_origin(0);
+                            let group = self.stack_group(0);
+                            let new_var =
+                                self.new_def(origin, group, block_idx, None, exception_type);
+                            *pushed_counts.entry(group).or_insert(0) += 1;
+                            rename_map.insert(placeholder, new_var);
+                            // Mark slot 0 as handled so the resolution loop below skips it
+                            slots_with_phis.insert(0);
+                        }
+                    }
+                }
+            }
+        }
+
         // Map entry stack slots without PHIs to reaching definitions.
         // For Stack groups, prefer predecessor exit stacks over current_def.
         let idom = dom_tree.immediate_dominator(NodeId::new(block_idx));

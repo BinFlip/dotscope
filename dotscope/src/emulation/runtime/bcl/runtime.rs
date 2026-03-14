@@ -22,6 +22,12 @@
 //! | `RunModuleConstructor(ModuleHandle)` | Runs module constructor (no-op) |
 //! | `Object.Equals(object)` | Instance reference/value equality |
 //! | `Object.Equals(object, object)` | Static reference/value equality |
+//! | `Object.MemberwiseClone()` | Shallow clone heap object |
+//! | `ValueType.Equals(object)` | Field-by-field value type equality |
+//! | `GC.Collect()` | No-op (GC not emulated) |
+//! | `GC.SuppressFinalize(object)` | No-op (GC not emulated) |
+//! | `GC.KeepAlive(object)` | No-op (GC not emulated) |
+//! | `GC.WaitForPendingFinalizers()` | No-op (GC not emulated) |
 //!
 //! # Deobfuscation Use Cases
 //!
@@ -54,11 +60,16 @@
 
 use crate::{
     emulation::{
+        memory::HeapObject,
         runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
         thread::EmulationThread,
         EmValue,
     },
-    metadata::{tables::FieldRvaRaw, typesystem::CilFlavor},
+    metadata::{
+        tables::FieldRvaRaw,
+        typesystem::{CilFlavor, PointerSize},
+    },
+    Result,
 };
 
 /// Registers all `RuntimeHelpers` method hooks with the given hook manager.
@@ -76,7 +87,13 @@ use crate::{
 /// - `RuntimeHelpers.RunClassConstructor` - No-op
 /// - `RuntimeHelpers.RunModuleConstructor` - No-op
 /// - `Object.Equals` - Reference/value equality (instance and static)
-pub fn register(manager: &HookManager) {
+/// - `Object.MemberwiseClone` - Shallow clone heap object
+/// - `ValueType.Equals` - Field-by-field value type equality
+/// - `GC.Collect` - No-op
+/// - `GC.SuppressFinalize` - No-op
+/// - `GC.KeepAlive` - No-op
+/// - `GC.WaitForPendingFinalizers` - No-op
+pub fn register(manager: &HookManager) -> Result<()> {
     manager.register(
         Hook::new("System.Runtime.CompilerServices.RuntimeHelpers.InitializeArray")
             .match_name(
@@ -85,7 +102,7 @@ pub fn register(manager: &HookManager) {
                 "InitializeArray",
             )
             .pre(runtime_helpers_initialize_array_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.Runtime.CompilerServices.RuntimeHelpers.GetHashCode")
@@ -95,7 +112,7 @@ pub fn register(manager: &HookManager) {
                 "GetHashCode",
             )
             .pre(runtime_helpers_get_hash_code_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.Runtime.CompilerServices.RuntimeHelpers.Equals")
@@ -105,7 +122,7 @@ pub fn register(manager: &HookManager) {
                 "Equals",
             )
             .pre(runtime_helpers_equals_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.Runtime.CompilerServices.RuntimeHelpers.GetObjectValue")
@@ -115,7 +132,7 @@ pub fn register(manager: &HookManager) {
                 "GetObjectValue",
             )
             .pre(runtime_helpers_get_object_value_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.Runtime.CompilerServices.RuntimeHelpers.RunClassConstructor")
@@ -125,7 +142,7 @@ pub fn register(manager: &HookManager) {
                 "RunClassConstructor",
             )
             .pre(runtime_helpers_run_class_constructor_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.Runtime.CompilerServices.RuntimeHelpers.RunModuleConstructor")
@@ -135,7 +152,7 @@ pub fn register(manager: &HookManager) {
                 "RunModuleConstructor",
             )
             .pre(runtime_helpers_run_module_constructor_pre),
-    );
+    )?;
 
     // System.Object.Equals - handles both instance and static overloads.
     // Critical for ConfuserEx anti-tamper: Assembly.GetExecutingAssembly().Equals(...)
@@ -143,7 +160,7 @@ pub fn register(manager: &HookManager) {
         Hook::new("System.Object.Equals")
             .match_name("System", "Object", "Equals")
             .pre(object_equals_pre),
-    );
+    )?;
 
     // System.Object..ctor() - base constructor, no-op.
     // Every .NET type's constructor calls base Object::.ctor() which has no side effects.
@@ -151,7 +168,135 @@ pub fn register(manager: &HookManager) {
         Hook::new("System.Object..ctor")
             .match_name("System", "Object", ".ctor")
             .pre(object_ctor_pre),
-    );
+    )?;
+
+    // System.Object.ToString() — type-aware string conversion
+    manager.register(
+        Hook::new("System.Object.ToString")
+            .match_name("System", "Object", "ToString")
+            .pre(object_to_string_pre),
+    )?;
+
+    // System.Object.GetHashCode() — identity-based hash code
+    manager.register(
+        Hook::new("System.Object.GetHashCode")
+            .match_name("System", "Object", "GetHashCode")
+            .pre(object_get_hash_code_pre),
+    )?;
+
+    // System.Object.MemberwiseClone() — shallow clone
+    manager.register(
+        Hook::new("System.Object.MemberwiseClone")
+            .match_name("System", "Object", "MemberwiseClone")
+            .pre(object_memberwise_clone_pre),
+    )?;
+
+    // System.ValueType.Equals(object) — value type field-by-field equality
+    manager.register(
+        Hook::new("System.ValueType.Equals")
+            .match_name("System", "ValueType", "Equals")
+            .pre(valuetype_equals_pre),
+    )?;
+
+    // GC stubs — no-op in the emulator
+    manager.register(
+        Hook::new("System.GC.Collect")
+            .match_name("System", "GC", "Collect")
+            .pre(gc_noop_pre),
+    )?;
+    manager.register(
+        Hook::new("System.GC.SuppressFinalize")
+            .match_name("System", "GC", "SuppressFinalize")
+            .pre(gc_noop_pre),
+    )?;
+    manager.register(
+        Hook::new("System.GC.KeepAlive")
+            .match_name("System", "GC", "KeepAlive")
+            .pre(gc_noop_pre),
+    )?;
+    manager.register(
+        Hook::new("System.GC.WaitForPendingFinalizers")
+            .match_name("System", "GC", "WaitForPendingFinalizers")
+            .pre(gc_noop_pre),
+    )?;
+    manager.register(
+        Hook::new("System.GC.get_MaxGeneration")
+            .match_name("System", "GC", "get_MaxGeneration")
+            .pre(gc_get_max_generation_pre),
+    )?;
+
+    // System.Runtime.CompilerServices.Unsafe stubs
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.Unsafe.As")
+            .match_name("System.Runtime.CompilerServices", "Unsafe", "As")
+            .pre(unsafe_as_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.Unsafe.SizeOf")
+            .match_name("System.Runtime.CompilerServices", "Unsafe", "SizeOf")
+            .pre(unsafe_sizeof_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.Unsafe.Add")
+            .match_name("System.Runtime.CompilerServices", "Unsafe", "Add")
+            .pre(unsafe_passthrough_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.Unsafe.AddByteOffset")
+            .match_name("System.Runtime.CompilerServices", "Unsafe", "AddByteOffset")
+            .pre(unsafe_passthrough_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.Unsafe.ReadUnaligned")
+            .match_name("System.Runtime.CompilerServices", "Unsafe", "ReadUnaligned")
+            .pre(unsafe_read_unaligned_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.Unsafe.WriteUnaligned")
+            .match_name(
+                "System.Runtime.CompilerServices",
+                "Unsafe",
+                "WriteUnaligned",
+            )
+            .pre(unsafe_write_noop_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.Unsafe.AsRef")
+            .match_name("System.Runtime.CompilerServices", "Unsafe", "AsRef")
+            .pre(unsafe_as_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.Unsafe.AsPointer")
+            .match_name("System.Runtime.CompilerServices", "Unsafe", "AsPointer")
+            .pre(unsafe_passthrough_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.Unsafe.ByteOffset")
+            .match_name("System.Runtime.CompilerServices", "Unsafe", "ByteOffset")
+            .pre(unsafe_byte_offset_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.Unsafe.AreSame")
+            .match_name("System.Runtime.CompilerServices", "Unsafe", "AreSame")
+            .pre(unsafe_are_same_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.Unsafe.IsNullRef")
+            .match_name("System.Runtime.CompilerServices", "Unsafe", "IsNullRef")
+            .pre(unsafe_is_null_ref_pre),
+    )?;
+
+    Ok(())
 }
 
 /// Hook for `System.Runtime.CompilerServices.RuntimeHelpers.InitializeArray` method.
@@ -319,7 +464,7 @@ fn runtime_helpers_initialize_array_pre(
             _ => EmValue::I32(i32::from(data[byte_offset])),
         };
 
-        let _ = thread.heap_mut().set_array_element(array_ref, i, value);
+        try_hook!(thread.heap_mut().set_array_element(array_ref, i, value));
     }
 
     PreHookResult::Bypass(None)
@@ -486,6 +631,325 @@ fn object_ctor_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> Pre
     PreHookResult::Bypass(None)
 }
 
+/// Hook for `Object.ToString()`.
+///
+/// Returns a string representation of the object. Type-aware:
+/// - String objects → return self
+/// - Boxed integers → numeric string
+/// - ReflectionType → type's full name
+/// - Other objects → type name or "System.Object"
+#[allow(clippy::cast_sign_loss)]
+fn object_to_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    let text = match ctx.this {
+        Some(EmValue::ObjectRef(href)) => {
+            match thread.heap().get(*href) {
+                Ok(HeapObject::String(_)) => {
+                    // String.ToString() returns itself
+                    return PreHookResult::Bypass(Some(EmValue::ObjectRef(*href)));
+                }
+                Ok(HeapObject::BoxedValue { value, .. }) => match &*value {
+                    EmValue::I32(v) => v.to_string(),
+                    EmValue::I64(v) => v.to_string(),
+                    EmValue::F32(v) => v.to_string(),
+                    EmValue::F64(v) => v.to_string(),
+                    EmValue::Bool(b) => if *b { "True" } else { "False" }.to_string(),
+                    EmValue::Char(c) => c.to_string(),
+                    _ => "System.Object".to_string(),
+                },
+                Ok(HeapObject::ReflectionType { type_token, .. }) => {
+                    // Return the type's full name if available
+                    if let Some(asm) = thread.assembly().cloned() {
+                        if let Some(cil_type) = asm.types().resolve(&type_token) {
+                            if cil_type.namespace.is_empty() {
+                                cil_type.name.clone()
+                            } else {
+                                format!("{}.{}", cil_type.namespace, cil_type.name)
+                            }
+                        } else {
+                            format!("Type(0x{:08X})", type_token.value())
+                        }
+                    } else {
+                        "System.Object".to_string()
+                    }
+                }
+                Ok(HeapObject::Object { type_token, .. }) => {
+                    // Try to get the type name from metadata
+                    if let Some(asm) = thread.assembly().cloned() {
+                        if let Some(cil_type) = asm.types().resolve(&type_token) {
+                            if cil_type.namespace.is_empty() {
+                                cil_type.name.clone()
+                            } else {
+                                format!("{}.{}", cil_type.namespace, cil_type.name)
+                            }
+                        } else {
+                            "System.Object".to_string()
+                        }
+                    } else {
+                        "System.Object".to_string()
+                    }
+                }
+                _ => "System.Object".to_string(),
+            }
+        }
+        Some(EmValue::I32(v)) => v.to_string(),
+        Some(EmValue::I64(v)) => v.to_string(),
+        Some(EmValue::Bool(b)) => if *b { "True" } else { "False" }.to_string(),
+        Some(EmValue::Char(c)) => c.to_string(),
+        _ => "System.Object".to_string(),
+    };
+
+    match thread.heap_mut().alloc_string(&text) {
+        Ok(str_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(str_ref))),
+        Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
+    }
+}
+
+/// Hook for `Object.GetHashCode()`.
+///
+/// Returns a deterministic hash code based on object identity (heap reference ID)
+/// or the underlying value for value types.
+fn object_get_hash_code_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    #[allow(clippy::cast_possible_truncation)]
+    let hash = match ctx.this {
+        Some(EmValue::ObjectRef(href)) => href.id() as i32,
+        Some(EmValue::I32(v)) => *v,
+        Some(EmValue::I64(v)) => *v as i32,
+        Some(EmValue::Bool(b)) => i32::from(*b),
+        Some(EmValue::Char(c)) => *c as i32,
+        _ => 0,
+    };
+    PreHookResult::Bypass(Some(EmValue::I32(hash)))
+}
+
+/// Hook for `System.Object.MemberwiseClone()`.
+///
+/// Creates a shallow copy of the current object. Allocates a new heap object
+/// with the same type token and copies all field values.
+///
+/// # Handled Overloads
+///
+/// - `Object.MemberwiseClone() -> Object` (protected, instance)
+fn object_memberwise_clone_pre(
+    ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
+) -> PreHookResult {
+    let Some(EmValue::ObjectRef(src_ref)) = ctx.this else {
+        return PreHookResult::Bypass(Some(EmValue::Null));
+    };
+
+    let src_obj = match thread.heap().get(*src_ref) {
+        Ok(obj) => obj,
+        Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
+    };
+
+    match src_obj {
+        HeapObject::Object {
+            type_token, fields, ..
+        } => {
+            // Allocate a new object with the same type
+            let new_ref = match thread.heap_mut().alloc_object(type_token) {
+                Ok(r) => r,
+                Err(_) => return PreHookResult::Bypass(Some(EmValue::Null)),
+            };
+            // Copy all fields
+            for (field_token, value) in &fields {
+                try_hook!(thread
+                    .heap_mut()
+                    .set_field(new_ref, *field_token, value.clone()));
+            }
+            PreHookResult::Bypass(Some(EmValue::ObjectRef(new_ref)))
+        }
+        HeapObject::BoxedValue {
+            type_token, value, ..
+        } => {
+            // Clone the boxed value
+            match thread.heap_mut().alloc_boxed(type_token, (*value).clone()) {
+                Ok(new_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(new_ref))),
+                Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+            }
+        }
+        _ => {
+            // For other heap object types, return the original reference
+            // (strings are immutable, arrays would need element-by-element copy)
+            PreHookResult::Bypass(Some(EmValue::ObjectRef(*src_ref)))
+        }
+    }
+}
+
+/// Hook for `System.ValueType.Equals(object)`.
+///
+/// Compares two value types field-by-field. If both `this` and the argument are
+/// boxed values with the same type token, compares their inner values. Otherwise
+/// falls back to reference equality.
+///
+/// # Handled Overloads
+///
+/// - `ValueType.Equals(object) -> bool` (virtual, instance)
+fn valuetype_equals_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    let Some(this_val) = ctx.this else {
+        return PreHookResult::Bypass(Some(EmValue::I32(0)));
+    };
+
+    let other = if ctx.args.is_empty() {
+        &EmValue::Null
+    } else {
+        &ctx.args[0]
+    };
+
+    // Fast path: direct EmValue comparison (unboxed value types on the stack)
+    if this_val.clr_equals(other) {
+        return PreHookResult::Bypass(Some(EmValue::I32(1)));
+    }
+
+    // Boxed value comparison: compare inner values if same type
+    let (this_ref, other_ref) = match (this_val, other) {
+        (EmValue::ObjectRef(a), EmValue::ObjectRef(b)) => (*a, *b),
+        _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    };
+
+    let this_obj = match thread.heap().get(this_ref) {
+        Ok(obj) => obj,
+        Err(_) => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    };
+
+    let other_obj = match thread.heap().get(other_ref) {
+        Ok(obj) => obj,
+        Err(_) => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    };
+
+    let equal = match (&this_obj, &other_obj) {
+        (
+            HeapObject::BoxedValue {
+                type_token: t1,
+                value: v1,
+                ..
+            },
+            HeapObject::BoxedValue {
+                type_token: t2,
+                value: v2,
+                ..
+            },
+        ) => {
+            // Same type token and same inner value
+            t1 == t2 && v1.clr_equals(v2)
+        }
+        (
+            HeapObject::Object {
+                type_token: t1,
+                fields: f1,
+                ..
+            },
+            HeapObject::Object {
+                type_token: t2,
+                fields: f2,
+                ..
+            },
+        ) => {
+            // Same type and all fields equal
+            t1 == t2
+                && f1.len() == f2.len()
+                && f1
+                    .iter()
+                    .all(|(k, v)| f2.get(k).is_some_and(|v2| v.clr_equals(v2)))
+        }
+        _ => false,
+    };
+
+    PreHookResult::Bypass(Some(EmValue::I32(i32::from(equal))))
+}
+
+/// No-op hook for GC methods (`GC.Collect()`, `GC.SuppressFinalize()`, `GC.KeepAlive()`,
+/// `GC.WaitForPendingFinalizers()`).
+///
+/// Garbage collection is not emulated — these are safe to skip entirely.
+fn gc_noop_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    PreHookResult::Bypass(None)
+}
+
+/// Hook for `GC.get_MaxGeneration`.
+///
+/// .NET has 3 generations (0, 1, 2), so `MaxGeneration` returns 2.
+fn gc_get_max_generation_pre(
+    _ctx: &HookContext<'_>,
+    _thread: &mut EmulationThread,
+) -> PreHookResult {
+    PreHookResult::Bypass(Some(EmValue::I32(2)))
+}
+
+/// Hook for `Unsafe.As<T>(object)` / `Unsafe.AsRef<T>(ref byte)`.
+///
+/// Reinterpret cast is a no-op in the emulator — just pass the value through.
+fn unsafe_as_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    let result = ctx.args.first().cloned().unwrap_or(EmValue::Null);
+    PreHookResult::Bypass(Some(result))
+}
+
+/// Hook for `Unsafe.SizeOf<T>()`.
+///
+/// Returns a reasonable default size. Without generic instantiation info we
+/// fall back to pointer size (8 on 64-bit, 4 on 32-bit). The return type
+/// hint from the generic parameter is not available at hook level, so we
+/// use a conservative default.
+fn unsafe_sizeof_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    let size = match ctx.pointer_size {
+        PointerSize::Bit64 => 8,
+        PointerSize::Bit32 => 4,
+    };
+    PreHookResult::Bypass(Some(EmValue::I32(size)))
+}
+
+/// Hook for `Unsafe.Add<T>(ref T, int)` / `Unsafe.AddByteOffset` / `Unsafe.AsPointer`.
+///
+/// Stub: returns the first argument unchanged.
+fn unsafe_passthrough_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    let result = ctx.args.first().cloned().unwrap_or(EmValue::Null);
+    PreHookResult::Bypass(Some(result))
+}
+
+/// Hook for `Unsafe.ReadUnaligned<T>(ref byte)`.
+///
+/// Stub: returns 0. Without actual memory layout we cannot read raw bytes.
+fn unsafe_read_unaligned_pre(
+    _ctx: &HookContext<'_>,
+    _thread: &mut EmulationThread,
+) -> PreHookResult {
+    PreHookResult::Bypass(Some(EmValue::I32(0)))
+}
+
+/// Hook for `Unsafe.WriteUnaligned<T>(ref byte, T)`.
+///
+/// No-op stub — raw memory writes are not supported in the emulator.
+fn unsafe_write_noop_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    PreHookResult::Bypass(None)
+}
+
+/// Hook for `Unsafe.ByteOffset<T>(ref T, ref T)`.
+///
+/// Stub: returns 0 (cannot compute real pointer differences in emulation).
+fn unsafe_byte_offset_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    PreHookResult::Bypass(Some(EmValue::NativeInt(0)))
+}
+
+/// Hook for `Unsafe.AreSame<T>(ref T, ref T)`.
+///
+/// Compares the two arguments for reference equality.
+fn unsafe_are_same_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    if ctx.args.len() >= 2 {
+        let same = ctx.args[0].clr_equals(&ctx.args[1]);
+        PreHookResult::Bypass(Some(EmValue::I32(i32::from(same))))
+    } else {
+        PreHookResult::Bypass(Some(EmValue::I32(0)))
+    }
+}
+
+/// Hook for `Unsafe.IsNullRef<T>(ref T)`.
+///
+/// Returns true if the argument is Null.
+fn unsafe_is_null_ref_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    let is_null = matches!(ctx.args.first(), Some(EmValue::Null) | None);
+    PreHookResult::Bypass(Some(EmValue::I32(i32::from(is_null))))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -497,8 +961,8 @@ mod tests {
     #[test]
     fn test_register_hooks() {
         let manager = HookManager::new();
-        register(&manager);
-        assert_eq!(manager.len(), 8);
+        register(&manager).unwrap();
+        assert_eq!(manager.len(), 28);
     }
 
     #[test]

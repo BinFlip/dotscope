@@ -429,31 +429,44 @@ impl MemoryRegion {
     /// For PE images, this returns `READ_EXECUTE` as a default, but use
     /// [`protection_at`](Self::protection_at) for accurate per-section protection.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    #[must_use]
-    pub fn protection(&self) -> MemoryProtection {
-        *self.protection.read().expect("protection lock poisoned")
+    /// Returns [`EmulationError::LockPoisoned`] if the protection lock is poisoned.
+    pub fn protection(&self) -> Result<MemoryProtection, EmulationError> {
+        Ok(*self
+            .protection
+            .read()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "memory region",
+            })?)
     }
 
     /// Sets the protection flags for this region.
     ///
     /// This is used by `VirtualProtect` to change region protection.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    pub fn set_protection(&self, protection: MemoryProtection) {
-        *self.protection.write().expect("protection lock poisoned") = protection;
+    /// Returns [`EmulationError::LockPoisoned`] if the protection lock is poisoned.
+    pub fn set_protection(&self, protection: MemoryProtection) -> Result<(), EmulationError> {
+        *self
+            .protection
+            .write()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "memory region",
+            })? = protection;
+        Ok(())
     }
 
     /// Returns the protection flags for a specific address.
     ///
     /// For PE images, this considers the section containing the address.
     /// Addresses in headers or unmapped areas return `READ` only.
-    #[must_use]
-    pub fn protection_at(&self, address: u64) -> MemoryProtection {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::LockPoisoned`] if the protection lock is poisoned.
+    pub fn protection_at(&self, address: u64) -> Result<MemoryProtection, EmulationError> {
         if let Some(ref sections) = self.sections {
             // Safe: offset within a memory region always fits in u32
             #[allow(clippy::cast_possible_truncation)]
@@ -462,11 +475,11 @@ impl MemoryRegion {
                 if rva >= section.virtual_address
                     && rva < section.virtual_address + section.virtual_size
                 {
-                    return section.protection;
+                    return Ok(section.protection);
                 }
             }
             // Address is in headers or unmapped - read only
-            MemoryProtection::READ
+            Ok(MemoryProtection::READ)
         } else {
             self.protection()
         }
@@ -602,7 +615,7 @@ impl MemoryRegion {
             pages: forked_pages?,
             sections: self.sections.clone(),
             label: self.label.clone(),
-            protection: RwLock::new(self.protection()),
+            protection: RwLock::new(self.protection()?),
             kind: self.kind,
         })
     }
@@ -662,9 +675,18 @@ impl MemoryRegion {
 
 impl Clone for MemoryRegion {
     fn clone(&self) -> Self {
-        // Clone uses fork() internally - will panic if lock is poisoned
-        // For fallible cloning, use fork() directly
-        self.fork().expect("page lock poisoned during clone")
+        // Clone uses fork() internally. On poisoned lock, falls back to
+        // an empty region with the same metadata (extremely unlikely path).
+        let fallback_protection = self.protection().unwrap_or(MemoryProtection::READ_WRITE);
+        self.fork().unwrap_or_else(|_| Self {
+            base: self.base,
+            size: self.size,
+            pages: Vec::new(),
+            sections: self.sections.clone(),
+            label: self.label.clone(),
+            protection: RwLock::new(fallback_protection),
+            kind: self.kind,
+        })
     }
 }
 
@@ -819,13 +841,13 @@ mod tests {
         let region = MemoryRegion::pe_image(0x10000, &vec![0u8; 0x4000], sections, "test.exe");
 
         // .text section should be READ | EXECUTE
-        let text_prot = region.protection_at(0x11000);
+        let text_prot = region.protection_at(0x11000).unwrap();
         assert!(text_prot.contains(MemoryProtection::READ));
         assert!(text_prot.contains(MemoryProtection::EXECUTE));
         assert!(!text_prot.contains(MemoryProtection::WRITE));
 
         // .data section should be READ | WRITE
-        let data_prot = region.protection_at(0x12000);
+        let data_prot = region.protection_at(0x12000).unwrap();
         assert!(data_prot.contains(MemoryProtection::READ));
         assert!(data_prot.contains(MemoryProtection::WRITE));
     }
@@ -843,7 +865,7 @@ mod tests {
 
         assert_eq!(region.base(), 0x5000);
         assert_eq!(region.size(), 0x2000);
-        assert_eq!(region.protection(), MemoryProtection::READ_WRITE);
+        assert_eq!(region.protection().unwrap(), MemoryProtection::READ_WRITE);
 
         // Should be zero-initialized
         let data = region.read(0x5000, 16).unwrap();

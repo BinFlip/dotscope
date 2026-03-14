@@ -40,6 +40,8 @@ pub enum StepResult {
         args: Vec<EmValue>,
         /// Whether this is a virtual call.
         is_virtual: bool,
+        /// Constrained type token for `constrained. callvirt` sequences.
+        constrained_type: Option<Token>,
     },
 
     /// Construct a new object.
@@ -105,12 +107,28 @@ pub enum StepResult {
     /// Breakpoint instruction encountered.
     Breakpoint,
 
-    /// Tail call prefix was set.
+    /// Jump to another method, transferring current arguments (ECMA-335 `jmp`).
+    ///
+    /// The `jmp` instruction (opcode 0x27) replaces the current method with
+    /// the target without using the evaluation stack — the current method's
+    /// arguments are passed directly to the target.
+    Jmp {
+        /// Token of the method to jump to.
+        method: Token,
+    },
+
+    /// Tail call: call a method reusing the current frame (ECMA-335 `tail.` prefix).
+    ///
+    /// When the `tail.` prefix precedes `call` or `callvirt`, the current method's
+    /// stack frame is removed before the call executes. The called method returns
+    /// directly to the current method's caller, preventing call depth growth.
     TailCall {
         /// Token of the method to tail-call.
         method: Token,
-        /// Arguments for the call.
-        args: Vec<EmValue>,
+        /// Whether this is a virtual call (`tail. callvirt`).
+        is_virtual: bool,
+        /// Constrained type token for `constrained. tail. callvirt` sequences.
+        constrained_type: Option<Token>,
     },
 
     /// Copy a value type from one address to another.
@@ -277,14 +295,25 @@ impl fmt::Display for StepResult {
                 method,
                 args,
                 is_virtual,
+                constrained_type,
             } => {
                 let call_type = if *is_virtual { "callvirt" } else { "call" };
-                write!(
-                    f,
-                    "{call_type} 0x{:08X} with {} args",
-                    method.value(),
-                    args.len()
-                )
+                if let Some(ct) = constrained_type {
+                    write!(
+                        f,
+                        "constrained.0x{:08X} {call_type} 0x{:08X} with {} args",
+                        ct.value(),
+                        method.value(),
+                        args.len()
+                    )
+                } else {
+                    write!(
+                        f,
+                        "{call_type} 0x{:08X} with {} args",
+                        method.value(),
+                        args.len()
+                    )
+                }
             }
             StepResult::NewObj { constructor, args } => {
                 write!(
@@ -315,13 +344,18 @@ impl fmt::Display for StepResult {
             StepResult::EndFilter { value } => write!(f, "endfilter {value:?}"),
             StepResult::Rethrow => write!(f, "rethrow"),
             StepResult::Breakpoint => write!(f, "breakpoint"),
-            StepResult::TailCall { method, args } => {
-                write!(
-                    f,
-                    "tail.call 0x{:08X} with {} args",
-                    method.value(),
-                    args.len()
-                )
+            StepResult::Jmp { method } => {
+                write!(f, "jmp 0x{:08X}", method.value())
+            }
+            StepResult::TailCall {
+                method, is_virtual, ..
+            } => {
+                let call_type = if *is_virtual {
+                    "tail.callvirt"
+                } else {
+                    "tail.call"
+                };
+                write!(f, "{call_type} 0x{:08X}", method.value())
             }
             StepResult::CopyObject { type_token } => {
                 write!(f, "cpobj 0x{:08X}", type_token.value())
@@ -553,6 +587,7 @@ mod tests {
             method: Token::new(0x06000001),
             args: vec![EmValue::I32(1), EmValue::I32(2)],
             is_virtual: false,
+            constrained_type: None,
         };
         assert!(result.is_control_transfer());
 

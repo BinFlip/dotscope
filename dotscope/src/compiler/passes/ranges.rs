@@ -31,10 +31,7 @@
 //! The pattern matcher in `OpaquePredicatePass` can't see through the add,
 //! but range propagation tracks y = 15 through the CFG.
 
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
     analysis::{ConstValue, PhiNode, SsaBlock, SsaCfg, SsaFunction, SsaOp, SsaVarId, ValueRange},
@@ -86,7 +83,7 @@ impl SsaPass for ValueRangePropagationPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        _assembly: &CilObject,
     ) -> Result<bool> {
         // Run range analysis
         let mut analysis = RangeAnalysis::new();
@@ -722,13 +719,14 @@ impl RangeResult {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::collections::HashMap;
 
     use crate::{
         analysis::{SsaFunctionBuilder, SsaOp, SsaVarId, ValueRange},
-        compiler::SsaPass,
+        compiler::{
+            passes::ranges::{RangeAnalysis, RangeResult, ValueRangePropagationPass},
+            SsaPass,
+        },
     };
 
     #[test]

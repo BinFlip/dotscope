@@ -37,12 +37,27 @@ pub enum CallResolution {
         arguments: Vec<EmValue>,
         /// Whether the caller expects a return value on the stack.
         expects_return: bool,
+        /// Assembly index for dynamically loaded assemblies (`None` = primary).
+        assembly_index: Option<u8>,
+        /// Method-level generic type arguments (`!!0`, `!!1`, ...) from MethodSpec.
+        method_type_args: Option<Vec<Token>>,
     },
 
     /// No body/hook — return a synthetic value. Push value, advance IP.
     ReturnSynthetic {
         /// Synthetic value to push (None for void).
         value: Option<EmValue>,
+    },
+
+    /// A hook threw a CLR exception during call resolution.
+    ///
+    /// The main loop should create a synthetic exception object and route it
+    /// through CIL exception handling (`try`/`catch`/`finally`).
+    ThrowException {
+        /// Synthetic exception type token.
+        exception_type: Token,
+        /// Diagnostic message.
+        message: String,
     },
 
     /// Re-resolve with a different target (MethodSpec, delegate, reflection).
@@ -61,6 +76,14 @@ pub enum CallResolution {
         /// entering the method frame, so it's preserved in the caller's saved
         /// stack across the constructor call.
         pre_push_value: Option<EmValue>,
+        /// Whether this redirect originated from a reflection invoke
+        /// (`MethodBase.Invoke`). Used to mark the frame so exceptions
+        /// are wrapped in `TargetInvocationException`.
+        is_reflection_invoke: bool,
+        /// Assembly index for cross-assembly redirects (`None` = primary).
+        assembly_index: Option<u8>,
+        /// Method-level generic type arguments (`!!0`, `!!1`, ...) from MethodSpec.
+        method_type_args: Option<Vec<Token>>,
     },
 }
 
@@ -88,6 +111,14 @@ pub enum NewObjResolution {
     DefaultObject {
         /// The allocated object reference.
         obj_ref: HeapRef,
+    },
+
+    /// A hook threw a CLR exception during newobj resolution.
+    ThrowException {
+        /// Synthetic exception type token.
+        exception_type: Token,
+        /// Diagnostic message.
+        message: String,
     },
 
     /// Re-resolve with an underlying token (MethodSpec → MethodDef).

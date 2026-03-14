@@ -21,8 +21,8 @@ A high-performance, cross-platform framework for analyzing, reverse engineering,
 - **Memory safe** - Built in Rust with comprehensive error handling and fuzzing
 - **Rich type system** - Full support for generics, signatures, and complex .NET types
 - **Static analysis** - SSA form, control flow graphs, data flow analysis, call graphs, and loop detection
-- **Deobfuscation** - 20 optimization passes with ConfuserEx and Obfuscar support, string decryption, control flow recovery
-- **CIL emulation** - Full bytecode interpreter with BCL stubs for runtime value computation
+- **Deobfuscation** - 21 optimization passes, 30 techniques with ConfuserEx, BitMono, and Obfuscar support, string decryption, control flow recovery
+- **CIL emulation** - Full bytecode interpreter with 600+ BCL stubs for runtime value computation
 - **Extensible architecture** - Modular design for custom analysis and tooling
 
 ## Quick Start
@@ -269,9 +269,10 @@ Static program analysis infrastructure for .NET methods:
 SSA-based deobfuscation engine for protected .NET assemblies:
 
 - **Pass Pipeline**: 4-phase scheduler (normalize, optimize, deobfuscate, finalize) with fixpoint iteration
-- **20 Transformation Passes**: Constant propagation, copy propagation, GVN, dead code elimination, control flow unflattening, opaque predicate removal, strength reduction, algebraic simplification, block merging, loop canonicalization, LICM, jump threading, inlining, and more
-- **Obfuscator Detection**: Confidence-scored detection framework with extensible registry
-- **ConfuserEx Support**: Anti-tamper, anti-debug, constants (normal/dynamic/CFG), control flow, resources
+- **21 Transformation Passes**: Constant propagation, copy propagation, GVN, dead code elimination, control flow unflattening, opaque predicate removal, strength reduction, algebraic simplification, block merging, loop canonicalization, LICM, jump threading, inlining, delegate proxy resolution, and more
+- **30 Detection Techniques**: Technique-based detection with extensible registry
+- **ConfuserEx Support**: Anti-tamper, anti-debug, anti-dump, constants, control flow, resources, reference proxy, marker removal
+- **BitMono Support**: Anti-debug, hooks, junk code, call-to-calli, string encryption, unmanaged strings, PE repair, renaming
 - **Obfuscar Support**: String hiding (XOR decryption), symbol renaming, SuppressIldasm removal
 - **Code Generation**: SSA-to-CIL conversion with register coalescing and phi elimination
 - **Decryption**: Emulation-based string and constant decryption
@@ -280,12 +281,14 @@ SSA-based deobfuscation engine for protected .NET assemblies:
 
 CIL bytecode interpreter for controlled .NET code execution:
 
-- **Interpreter**: Supports 200+ CIL opcodes with full operand handling
+- **Interpreter**: Supports 213 CIL opcodes with full operand handling
 - **Memory Model**: Copy-on-write address space with heap, statics, and mapped regions
-- **BCL Stubs**: 200+ method stubs for Math, String, Array, Convert, Crypto, and more
+- **BCL Stubs**: 600+ method stubs for Math, String, Array, Convert, Crypto, IO, Reflection, Collections, and more
 - **Hook System**: Pre/post method interception with flexible matching criteria
-- **Exception Handling**: Try/catch/finally with stack unwinding
+- **Exception Handling**: Try/catch/finally with stack unwinding and synthetic exception hierarchy
 - **Process Builder**: Configurable execution with instruction, call depth, and memory limits
+- **Generic Instantiation**: Runtime generic type/method instantiation with deduplication
+- **Interface Dispatch**: IMT-based interface method resolution with VTable caching
 
 ## Examples
 
@@ -304,7 +307,7 @@ Check out the [examples](examples/) directory for complete working examples with
 - **[Raw Assembly View](examples/raw_assembly_view.rs)** - Direct access to PE headers, metadata streams, and heaps
 - **[Project Loader](examples/project_loader.rs)** - Loading assemblies with automatic dependency resolution
 - **[Analysis](examples/analysis.rs)** - View SSA form, disassembly, control flow graphs, and call graphs
-- **[Deobfuscation](examples/deobfuscate.rs)** - CLI tool for deobfuscating .NET assemblies with ConfuserEx and Obfuscar support
+- **[Deobfuscation](examples/deobfuscate.rs)** - CLI tool for deobfuscating .NET assemblies with ConfuserEx, BitMono, and Obfuscar support
 
 Each example includes detailed documentation explaining:
 

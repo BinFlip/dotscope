@@ -30,7 +30,7 @@
 //! These simplifications are essential for deobfuscation because obfuscators
 //! often insert redundant operations like `x xor x xor y` to compute `y`.
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use crate::{
     analysis::{simplify_op, ConstValue, SimplifyResult, SsaFunction, SsaOp, SsaVarId},
@@ -178,7 +178,7 @@ impl SsaPass for AlgebraicSimplificationPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        _assembly: &CilObject,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
 
@@ -201,11 +201,12 @@ impl SsaPass for AlgebraicSimplificationPass {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::collections::HashMap;
 
-    use crate::analysis::{ConstValue, SsaOp, SsaVarId};
+    use crate::{
+        analysis::{ConstValue, SsaOp, SsaVarId},
+        compiler::passes::algebraic::{AlgebraicSimplificationPass, Simplification},
+    };
 
     #[test]
     fn test_div_by_one() {

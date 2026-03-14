@@ -17,7 +17,7 @@
 //! The confidence score combines these signals to distinguish CFF from normal
 //! loops or state machines.
 
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 
 use crate::{
     analysis::{SsaFunction, SsaOp, SsaVarId},
@@ -711,10 +711,11 @@ impl<'a> CffDetector<'a> {
     /// The confidence score combines multiple signals:
     /// - Case block count (more = stronger signal)
     /// - State variable presence with phi node
-    /// - Back-edge ratio (case blocks returning to dispatcher)
+    /// - Back-edge ratio (case blocks returning to dispatcher, transitively)
     /// - Dominance relationship (dispatcher dominates case blocks)
     /// - Switch instruction presence
     /// - State transform (modulo operation is a strong indicator)
+    /// - Method coverage (fraction of all blocks dominated by dispatcher)
     fn compute_confidence(
         &mut self,
         dispatcher_block: usize,
@@ -723,6 +724,11 @@ impl<'a> CffDetector<'a> {
         case_blocks: &HashSet<usize>,
         exit_blocks: &HashSet<usize>,
     ) -> f64 {
+        // Ensure dominator tree is computed before we start (avoids borrow issues).
+        let _ = self.get_dom_tree();
+        let dom_tree = self.dom_tree.as_ref().unwrap();
+        let ssa = self.ssa;
+
         let mut score = 0.0;
         let case_count = case_blocks.len();
 
@@ -749,15 +755,21 @@ impl<'a> CffDetector<'a> {
         }
 
         // Signal 3: Dispatcher has many predecessors (back edges)
-        let pred_count = self.ssa.block_predecessors(dispatcher_block).len();
+        let pred_count = ssa.block_predecessors(dispatcher_block).len();
         if pred_count >= case_count / 2 {
             score += 0.10;
         }
 
-        // Signal 4: Case blocks mostly go back to dispatcher
+        // Signal 4: Case blocks mostly reach back to dispatcher (transitively)
+        //
+        // PureLogs and similar obfuscators wrap case blocks in try/catch regions,
+        // so case blocks reach the dispatcher through intermediate blocks (Leave
+        // targets, merge blocks) rather than jumping directly. We use bounded BFS
+        // within the dispatcher's dominated region to count transitive back-edges.
+        let dispatcher_node = NodeId::new(dispatcher_block);
         let back_edge_count = case_blocks
             .iter()
-            .filter(|&&b| self.ssa.block_successors(b).contains(&dispatcher_block))
+            .filter(|&&b| can_reach_dispatcher(ssa, b, dispatcher_block, dispatcher_node, dom_tree))
             .count();
         // Safe: counts are small integers, precision loss is negligible for scoring
         #[allow(clippy::cast_precision_loss)]
@@ -781,51 +793,85 @@ impl<'a> CffDetector<'a> {
         }
 
         // Signal 8: Dominance - dispatcher should dominate most case blocks
-        // This is a strong structural indicator of CFF
-        let dominance_score = self.compute_dominance_score(dispatcher_block, case_blocks);
-        score += dominance_score * 0.20;
-
-        score.min(1.0)
-    }
-
-    /// Computes a dominance score for CFF detection.
-    ///
-    /// In a CFF pattern, the dispatcher block should dominate all case blocks
-    /// because every path to a case block must go through the dispatcher.
-    ///
-    /// Returns a value between 0.0 and 1.0 based on how many case blocks
-    /// are dominated by the dispatcher.
-    fn compute_dominance_score(
-        &mut self,
-        dispatcher_block: usize,
-        case_blocks: &HashSet<usize>,
-    ) -> f64 {
-        if case_blocks.is_empty() {
-            return 0.0;
-        }
-
-        // Get the dominator tree
-        let dom_tree = self.get_dom_tree();
-        let dispatcher_node = NodeId::new(dispatcher_block);
-
-        // Count how many case blocks are dominated by the dispatcher
         let dominated_count = case_blocks
             .iter()
             .filter(|&&case_block| {
-                // Skip the dispatcher itself if it's in case_blocks
-                if case_block == dispatcher_block {
-                    return true;
-                }
-                let case_node = NodeId::new(case_block);
-                dom_tree.dominates(dispatcher_node, case_node)
+                case_block == dispatcher_block
+                    || dom_tree.dominates(dispatcher_node, NodeId::new(case_block))
             })
             .count();
-
-        // Safe: counts are small integers, precision loss is negligible for scoring
         #[allow(clippy::cast_precision_loss)]
-        let ratio = dominated_count as f64 / case_blocks.len() as f64;
-        ratio
+        let dominance_ratio = dominated_count as f64 / case_blocks.len().max(1) as f64;
+        score += dominance_ratio * 0.20;
+
+        // Signal 9: Method coverage — fraction of ALL blocks dominated by this candidate.
+        // A real CFF dispatcher dominates most of the function (it controls nearly all
+        // execution paths). A nested loop only dominates a small subset.
+        let total_blocks = ssa.block_count();
+        if total_blocks > 0 {
+            let dominated_total = (0..total_blocks)
+                .filter(|&b| {
+                    b == dispatcher_block || dom_tree.dominates(dispatcher_node, NodeId::new(b))
+                })
+                .count();
+            #[allow(clippy::cast_precision_loss)]
+            let coverage = dominated_total as f64 / total_blocks as f64;
+            score += coverage * 0.10;
+        }
+
+        score.min(1.0)
     }
+}
+
+/// Checks if a block can transitively reach the dispatcher via blocks
+/// dominated by the dispatcher.
+///
+/// PureLogs and similar obfuscators wrap CFF case blocks in try/catch
+/// regions, so case blocks don't jump directly back to the dispatcher.
+/// Instead they go through intermediate blocks (`Leave` targets, merge
+/// blocks) before eventually reaching the dispatcher. This function does
+/// bounded BFS to detect these transitive paths.
+fn can_reach_dispatcher(
+    ssa: &SsaFunction,
+    from: usize,
+    dispatcher_block: usize,
+    dispatcher_node: NodeId,
+    dom_tree: &DominatorTree,
+) -> bool {
+    // Direct check first (fast path)
+    if ssa.block_successors(from).contains(&dispatcher_block) {
+        return true;
+    }
+
+    const MAX_DEPTH: usize = 10;
+    let mut queue = VecDeque::new();
+    let mut visited = HashSet::new();
+
+    for succ in ssa.block_successors(from) {
+        if succ != from {
+            queue.push_back((succ, 1));
+        }
+    }
+    visited.insert(from);
+
+    while let Some((block, depth)) = queue.pop_front() {
+        if block == dispatcher_block {
+            return true;
+        }
+        if depth >= MAX_DEPTH || !visited.insert(block) {
+            continue;
+        }
+        // Only follow blocks dominated by the dispatcher (stay within the CFF region)
+        if !dom_tree.dominates(dispatcher_node, NodeId::new(block)) {
+            continue;
+        }
+        for succ in ssa.block_successors(block) {
+            if !visited.contains(&succ) {
+                queue.push_back((succ, depth + 1));
+            }
+        }
+    }
+    false
 }
 
 #[cfg(test)]

@@ -25,9 +25,6 @@
 //!     .at(method_token, 0x42)
 //!     .message("decrypted: \"hello world\"");
 //!
-//! // Record an engine-level info
-//! log.info("Starting pass: ConstantFolding");
-//!
 //! // Get summary statistics
 //! println!("{}", log.summary());
 //! ```
@@ -82,34 +79,8 @@ pub enum EventKind {
     /// An obfuscation artifact was removed (method, type, metadata).
     ArtifactRemoved,
 
-    /// A method was identified as a string decryptor.
-    DecryptorIdentified,
-    /// A method was identified as a dispatcher.
-    DispatcherIdentified,
-    /// A method was identified as pure (no side effects).
-    PureMethodIdentified,
-    /// A method was identified as an inlining candidate.
-    InlineCandidateIdentified,
-
-    /// Obfuscator detection completed.
-    DetectionComplete,
-    /// An SSA pass started.
-    PassStarted,
-    /// An SSA pass completed.
-    PassCompleted,
-    /// Method processing started.
-    MethodProcessingStarted,
-    /// Method processing completed.
-    MethodProcessingCompleted,
     /// Code regeneration completed.
     CodeRegenerated,
-
-    /// Informational message.
-    Info,
-    /// Warning (something unexpected but recoverable).
-    Warning,
-    /// Error (something failed).
-    Error,
 }
 
 impl EventKind {
@@ -137,22 +108,7 @@ impl EventKind {
             Self::MethodBodyDecrypted => "method body decrypted",
             Self::AntiTamperRemoved => "anti-tamper removed",
             Self::ArtifactRemoved => "artifact removed",
-            // Analysis
-            Self::DecryptorIdentified => "decryptor identified",
-            Self::DispatcherIdentified => "dispatcher identified",
-            Self::PureMethodIdentified => "pure method identified",
-            Self::InlineCandidateIdentified => "inline candidate identified",
-            // Engine
-            Self::DetectionComplete => "detection complete",
-            Self::PassStarted => "pass started",
-            Self::PassCompleted => "pass completed",
-            Self::MethodProcessingStarted => "method processing started",
-            Self::MethodProcessingCompleted => "method processing completed",
             Self::CodeRegenerated => "code regenerated",
-            // Diagnostic
-            Self::Info => "info",
-            Self::Warning => "warning",
-            Self::Error => "error",
         }
     }
 
@@ -181,12 +137,6 @@ impl EventKind {
                 | Self::AntiTamperRemoved
                 | Self::ArtifactRemoved
         )
-    }
-
-    /// Returns true if this is a diagnostic event (info/warning/error/failure).
-    #[must_use]
-    pub fn is_diagnostic(&self) -> bool {
-        matches!(self, Self::Info | Self::Warning | Self::Error)
     }
 }
 
@@ -381,21 +331,6 @@ impl EventLog {
         EventBuilder::new(self, kind)
     }
 
-    /// Records an informational message.
-    pub fn info(&self, message: impl Into<String>) {
-        self.events.push(Event::new(EventKind::Info, message));
-    }
-
-    /// Records a warning message.
-    pub fn warn(&self, message: impl Into<String>) {
-        self.events.push(Event::new(EventKind::Warning, message));
-    }
-
-    /// Records an error message.
-    pub fn error(&self, message: impl Into<String>) {
-        self.events.push(Event::new(EventKind::Error, message));
-    }
-
     /// Merges another event log into this one by reference.
     pub fn merge_ref(&self, other: &EventLog) {
         for (_, event) in &other.events {
@@ -470,27 +405,6 @@ impl EventLog {
                 None
             }
         })
-    }
-
-    /// Returns an iterator over diagnostic events only.
-    pub fn diagnostics(&self) -> impl Iterator<Item = &Event> + '_ {
-        self.events.iter().filter_map(|(_, e)| {
-            if e.kind.is_diagnostic() {
-                Some(e)
-            } else {
-                None
-            }
-        })
-    }
-
-    /// Returns an iterator over warning events.
-    pub fn warnings(&self) -> impl Iterator<Item = &Event> + '_ {
-        self.filter_kind(EventKind::Warning)
-    }
-
-    /// Returns an iterator over error events.
-    pub fn errors(&self) -> impl Iterator<Item = &Event> + '_ {
-        self.filter_kind(EventKind::Error)
     }
 
     /// Counts events grouped by kind.
@@ -618,20 +532,8 @@ pub struct DerivedStats {
     pub methods_marked_dead: usize,
     /// Number of methods with code regenerated.
     pub methods_regenerated: usize,
-    /// Number of dispatchers identified/processed.
-    pub dispatchers: usize,
-    /// Number of string decryptor methods identified.
-    pub string_decryptors: usize,
-    /// Number of inline candidates identified.
-    pub inline_candidates: usize,
-    /// Number of pure methods identified.
-    pub pure_methods: usize,
     /// Number of artifacts removed (methods, types, metadata).
     pub artifacts_removed: usize,
-    /// Number of warnings.
-    pub warnings: usize,
-    /// Number of errors.
-    pub errors: usize,
     /// Number of pass iterations.
     pub iterations: usize,
     /// Processing time.
@@ -658,13 +560,7 @@ impl DerivedStats {
             methods_inlined: get(EventKind::MethodInlined),
             methods_marked_dead: get(EventKind::MethodMarkedDead),
             methods_regenerated: get(EventKind::CodeRegenerated),
-            dispatchers: get(EventKind::DispatcherIdentified),
-            string_decryptors: get(EventKind::DecryptorIdentified),
-            inline_candidates: get(EventKind::InlineCandidateIdentified),
-            pure_methods: get(EventKind::PureMethodIdentified),
             artifacts_removed: get(EventKind::ArtifactRemoved),
-            warnings: get(EventKind::Warning),
-            errors: get(EventKind::Error),
             iterations: 0,
             total_time: Duration::ZERO,
         }
@@ -731,11 +627,6 @@ impl DerivedStats {
             ));
         }
 
-        // Control flow
-        if self.dispatchers > 0 {
-            parts.push(format!("{} dispatchers", self.dispatchers));
-        }
-
         // Cleanup stats
         if self.methods_marked_dead > 0 {
             parts.push(format!("{} dead methods", self.methods_marked_dead));
@@ -745,14 +636,6 @@ impl DerivedStats {
         }
         if self.artifacts_removed > 0 {
             parts.push(format!("{} artifacts removed", self.artifacts_removed));
-        }
-
-        // Diagnostic info - show errors/warnings
-        if self.errors > 0 {
-            parts.push(format!("{} errors", self.errors));
-        }
-        if self.warnings > 0 {
-            parts.push(format!("{} warnings", self.warnings));
         }
 
         let stats = if parts.is_empty() {
@@ -790,7 +673,12 @@ pub fn truncate_string(s: &str, max_len: usize) -> String {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::{sync::Arc, thread};
+
+    use crate::{
+        compiler::events::{DerivedStats, EventKind, EventLog},
+        metadata::token::Token,
+    };
 
     #[test]
     fn test_empty_log() {
@@ -835,19 +723,6 @@ mod tests {
         assert!(log.has(EventKind::StringDecrypted));
         assert!(log.has(EventKind::ConstantFolded));
         assert!(!log.has(EventKind::BlockRemoved));
-    }
-
-    #[test]
-    fn test_info_warn_error() {
-        let log = EventLog::new();
-
-        log.info("informational message");
-        log.warn("warning message");
-        log.error("error message");
-
-        assert_eq!(log.count_kind(EventKind::Info), 1);
-        assert_eq!(log.count_kind(EventKind::Warning), 1);
-        assert_eq!(log.count_kind(EventKind::Error), 1);
     }
 
     #[test]
@@ -915,13 +790,11 @@ mod tests {
         log.record(EventKind::StringDecrypted).at(method1, 0x10);
         log.record(EventKind::StringDecrypted).at(method2, 0x20);
         log.record(EventKind::ConstantFolded).at(method1, 0x30);
-        log.warn("a warning");
 
         let stats = DerivedStats::from_log(&log);
         assert_eq!(stats.methods_transformed, 2);
         assert_eq!(stats.strings_decrypted, 2);
         assert_eq!(stats.constants_folded, 1);
-        assert_eq!(stats.warnings, 1);
     }
 
     #[test]
@@ -944,15 +817,10 @@ mod tests {
         let method = Token::new(0x06000001);
 
         log.record(EventKind::StringDecrypted).at(method, 0x10);
-        log.info("some info");
-        log.warn("some warning");
         log.record(EventKind::BlockRemoved).at(method, 0x20);
 
         let transformations: Vec<_> = log.transformations().collect();
         assert_eq!(transformations.len(), 2);
-
-        let diagnostics: Vec<_> = log.diagnostics().collect();
-        assert_eq!(diagnostics.len(), 2);
     }
 
     #[test]
@@ -983,9 +851,6 @@ mod tests {
 
     #[test]
     fn test_thread_safe_append() {
-        use std::sync::Arc;
-        use std::thread;
-
         let log = Arc::new(EventLog::new());
         let mut handles = vec![];
 

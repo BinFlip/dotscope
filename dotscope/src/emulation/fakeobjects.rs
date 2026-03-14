@@ -36,10 +36,7 @@
 
 use std::sync::Arc;
 
-use crate::{
-    emulation::{HeapRef, ManagedHeap},
-    metadata::token::Token,
-};
+use crate::emulation::{tokens, HeapRef, ManagedHeap};
 
 /// Pre-allocated fake BCL objects for consistent emulation behavior.
 ///
@@ -106,11 +103,11 @@ impl FakeObjects {
     /// Initializes the fake objects by allocating them on the provided heap.
     ///
     /// This allocates:
-    /// - A fake `Assembly` object (type token 0x0100_0010)
-    /// - A fake `AppDomain` object (type token 0x0100_0011)
+    /// - A fake `Assembly` object (type token 0x7F00_00F0)
+    /// - A fake `AppDomain` object (type token 0x7F00_00F1)
     ///
-    /// These are synthetic type tokens that don't correspond to real metadata entries,
-    /// but they're sufficient for object identity comparisons.
+    /// These use synthetic tokens in the 0x7F table range (which doesn't exist in
+    /// ECMA-335) to avoid collisions with real TypeRef RIDs in table 0x01.
     ///
     /// # Arguments
     ///
@@ -123,8 +120,8 @@ impl FakeObjects {
     pub fn initialize(heap: &ManagedHeap) -> Self {
         // Use well-known synthetic tokens for fake type definitions
         // These don't need to resolve to real types - they're just for object identity
-        let assembly = heap.alloc_object(Token::new(0x0100_0010)).ok();
-        let app_domain = heap.alloc_object(Token::new(0x0100_0011)).ok();
+        let assembly = heap.alloc_object(tokens::singletons::ASSEMBLY).ok();
+        let app_domain = heap.alloc_object(tokens::singletons::APP_DOMAIN).ok();
 
         Self {
             assembly,

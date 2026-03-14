@@ -14,6 +14,12 @@ struct MethodEntry {
     access: String,
     declaring_type: String,
     name: String,
+    is_static: bool,
+    is_virtual: bool,
+    is_abstract: bool,
+    param_count: usize,
+    return_type: String,
+    body_size: Option<usize>,
 }
 
 #[derive(Debug, Serialize)]
@@ -71,11 +77,19 @@ pub fn run(
             method.name.clone()
         };
 
+        let body_size = method.body.get().map(|b| b.size_code);
+
         entries.push(MethodEntry {
             token: method.token.to_string(),
             access: method.flags_access.to_string(),
             declaring_type: declaring_fullname,
             name: method_display,
+            is_static: method.is_static(),
+            is_virtual: method.is_virtual(),
+            is_abstract: method.is_abstract(),
+            param_count: method.signature.params.len(),
+            return_type: format!("{}", method.signature.return_type),
+            body_size,
         });
     }
 

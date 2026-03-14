@@ -18,23 +18,21 @@ use crate::{
     assembly::{FlowType, Immediate, Instruction, InstructionCategory, Operand, StackBehavior},
     emulation::{
         engine::{interpreter::Interpreter, result::StepResult},
-        process::{EmulationConfig, EmulationLimits},
-        AddressSpace, CaptureContext, EmValue, EmulationThread, SharedFakeObjects, ThreadId,
+        memory::AddressSpace,
+        process::EmulationLimits,
+        EmValue, EmulationThread, ThreadId,
     },
     metadata::{
         token::Token,
         typesystem::{CilFlavor, PointerSize},
     },
-    test::emulation::create_test_thread,
+    test::emulation::{create_test_context, create_test_thread},
 };
 
-fn create_test_address_space() -> Arc<AddressSpace> {
-    Arc::new(AddressSpace::new())
-}
-
 fn create_test_interpreter() -> (Interpreter, Arc<AddressSpace>) {
-    let address_space = create_test_address_space();
+    let ctx = create_test_context();
     let limits = EmulationLimits::default();
+    let address_space = Arc::clone(&ctx.address_space);
     (
         Interpreter::new(limits, Arc::clone(&address_space), PointerSize::Bit64),
         address_space,
@@ -42,18 +40,8 @@ fn create_test_interpreter() -> (Interpreter, Arc<AddressSpace>) {
 }
 
 fn create_test_thread_with_locals(local_types: Vec<CilFlavor>) -> EmulationThread {
-    let address_space = create_test_address_space();
-    let capture = Arc::new(CaptureContext::new());
-    let fake_objects = SharedFakeObjects::new(address_space.managed_heap());
-    let config = Arc::new(EmulationConfig::default());
-    let mut thread = EmulationThread::new(
-        ThreadId::MAIN,
-        address_space,
-        capture,
-        None,
-        fake_objects,
-        config,
-    );
+    let ctx = create_test_context();
+    let mut thread = EmulationThread::new(ThreadId::MAIN, ctx);
     thread.start_method(Token::new(0x06000001), local_types, vec![], false);
     thread
 }
@@ -62,18 +50,8 @@ fn create_test_thread_with_args(
     args: Vec<(EmValue, CilFlavor)>,
     local_types: Vec<CilFlavor>,
 ) -> EmulationThread {
-    let address_space = create_test_address_space();
-    let capture = Arc::new(CaptureContext::new());
-    let fake_objects = SharedFakeObjects::new(address_space.managed_heap());
-    let config = Arc::new(EmulationConfig::default());
-    let mut thread = EmulationThread::new(
-        ThreadId::MAIN,
-        address_space,
-        capture,
-        None,
-        fake_objects,
-        config,
-    );
+    let ctx = create_test_context();
+    let mut thread = EmulationThread::new(ThreadId::MAIN, ctx);
     thread.start_method(Token::new(0x06000001), local_types, args, false);
     thread
 }
@@ -124,7 +102,7 @@ fn make_instruction_with_operand(
 
 #[test]
 fn test_nop() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     let instr = make_instruction(0x00, "nop");
@@ -138,7 +116,7 @@ fn test_nop() {
 
 #[test]
 fn test_ldc_i4_constants() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     // Test ldc.i4.0 through ldc.i4.8
@@ -164,7 +142,7 @@ fn test_ldc_i4_constants() {
 
 #[test]
 fn test_ldc_i4_m1() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     let instr = make_instruction(0x15, "ldc.i4.m1");
@@ -176,7 +154,7 @@ fn test_ldc_i4_m1() {
 
 #[test]
 fn test_ldnull() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     let instr = make_instruction(0x14, "ldnull");
@@ -188,7 +166,7 @@ fn test_ldnull() {
 
 #[test]
 fn test_dup() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(42)).unwrap();
@@ -203,7 +181,7 @@ fn test_dup() {
 
 #[test]
 fn test_pop() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(42)).unwrap();
@@ -218,7 +196,7 @@ fn test_pop() {
 
 #[test]
 fn test_add() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(10)).unwrap();
@@ -233,7 +211,7 @@ fn test_add() {
 
 #[test]
 fn test_sub() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(50)).unwrap();
@@ -248,7 +226,7 @@ fn test_sub() {
 
 #[test]
 fn test_mul() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(5)).unwrap();
@@ -263,7 +241,7 @@ fn test_mul() {
 
 #[test]
 fn test_neg() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(42)).unwrap();
@@ -277,7 +255,7 @@ fn test_neg() {
 
 #[test]
 fn test_ldloc_stloc() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread_with_locals(vec![CilFlavor::I4, CilFlavor::I4]);
 
     // Store 42 in local 0
@@ -294,7 +272,7 @@ fn test_ldloc_stloc() {
 
 #[test]
 fn test_branch_brtrue() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     // Test brtrue with non-zero value (should branch)
@@ -328,7 +306,7 @@ fn test_branch_brtrue() {
 
 #[test]
 fn test_branch_brfalse() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     // Test brfalse with zero value (should branch)
@@ -362,7 +340,7 @@ fn test_branch_brfalse() {
 
 #[test]
 fn test_conv_i8() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(42)).unwrap();
@@ -377,8 +355,9 @@ fn test_conv_i8() {
 #[test]
 fn test_execution_stats() {
     let limits = EmulationLimits::new().with_max_instructions(10);
-    let address_space = create_test_address_space();
-    let mut interpreter = Interpreter::new(limits, address_space, PointerSize::Bit64);
+    let ctx = create_test_context();
+    let mut interpreter =
+        Interpreter::new(limits, Arc::clone(&ctx.address_space), PointerSize::Bit64);
     interpreter.start();
 
     // Manually increment the counter to simulate executing instructions
@@ -392,8 +371,9 @@ fn test_execution_stats() {
 #[test]
 fn test_instruction_limit() {
     let limits = EmulationLimits::new().with_max_instructions(5);
-    let address_space = create_test_address_space();
-    let mut interpreter = Interpreter::new(limits, address_space, PointerSize::Bit64);
+    let ctx = create_test_context();
+    let mut interpreter =
+        Interpreter::new(limits, Arc::clone(&ctx.address_space), PointerSize::Bit64);
     interpreter.start();
 
     // Manually increment the counter to simulate executing instructions
@@ -407,7 +387,7 @@ fn test_instruction_limit() {
 
 #[test]
 fn test_div() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(100)).unwrap();
@@ -422,7 +402,7 @@ fn test_div() {
 
 #[test]
 fn test_rem() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(17)).unwrap();
@@ -437,7 +417,7 @@ fn test_rem() {
 
 #[test]
 fn test_and() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(0b1111_0000)).unwrap();
@@ -452,7 +432,7 @@ fn test_and() {
 
 #[test]
 fn test_or() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(0b1111_0000)).unwrap();
@@ -467,7 +447,7 @@ fn test_or() {
 
 #[test]
 fn test_xor() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(0b1111_0000)).unwrap();
@@ -482,7 +462,7 @@ fn test_xor() {
 
 #[test]
 fn test_not() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(0)).unwrap();
@@ -496,7 +476,7 @@ fn test_not() {
 
 #[test]
 fn test_shl() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(1)).unwrap();
@@ -511,7 +491,7 @@ fn test_shl() {
 
 #[test]
 fn test_shr() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(64)).unwrap();
@@ -526,7 +506,7 @@ fn test_shr() {
 
 #[test]
 fn test_ret() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     let instr = make_instruction(0x2A, "ret");
@@ -537,7 +517,7 @@ fn test_ret() {
 
 #[test]
 fn test_break() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     let instr = make_instruction(0x01, "break");
@@ -548,7 +528,7 @@ fn test_break() {
 
 #[test]
 fn test_br_s() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     let instr = Instruction {
@@ -575,7 +555,7 @@ fn test_br_s() {
 
 #[test]
 fn test_ldc_i4_s() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     let instr =
@@ -588,7 +568,7 @@ fn test_ldc_i4_s() {
 
 #[test]
 fn test_ldc_i4() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     let instr =
@@ -601,7 +581,7 @@ fn test_ldc_i4() {
 
 #[test]
 fn test_ldc_i8() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     let instr = make_instruction_with_operand(
@@ -617,7 +597,7 @@ fn test_ldc_i8() {
 
 #[test]
 fn test_ldc_r4() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     let instr = make_instruction_with_operand(
@@ -637,7 +617,7 @@ fn test_ldc_r4() {
 
 #[test]
 fn test_ldc_r8() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     let instr = make_instruction_with_operand(
@@ -657,7 +637,7 @@ fn test_ldc_r8() {
 
 #[test]
 fn test_ldarg_0_through_3() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread_with_args(
         vec![
             (EmValue::I32(100), CilFlavor::I4),
@@ -691,7 +671,7 @@ fn test_ldarg_0_through_3() {
 
 #[test]
 fn test_conv_r4() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(42)).unwrap();
@@ -709,7 +689,7 @@ fn test_conv_r4() {
 
 #[test]
 fn test_conv_r8() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(42)).unwrap();
@@ -727,7 +707,7 @@ fn test_conv_r8() {
 
 #[test]
 fn test_conv_i4() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I64(0x1_0000_002A)).unwrap(); // Value > i32::MAX
@@ -741,7 +721,7 @@ fn test_conv_i4() {
 
 #[test]
 fn test_float_arithmetic() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     // Test add with floats
@@ -761,7 +741,7 @@ fn test_float_arithmetic() {
 
 #[test]
 fn test_i64_arithmetic() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     // Test mul with i64
@@ -777,7 +757,7 @@ fn test_i64_arithmetic() {
 
 #[test]
 fn test_beq_s_branches_when_equal() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(42)).unwrap();
@@ -807,7 +787,7 @@ fn test_beq_s_branches_when_equal() {
 
 #[test]
 fn test_beq_s_continues_when_not_equal() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     thread.push(EmValue::I32(42)).unwrap();
@@ -837,7 +817,7 @@ fn test_beq_s_continues_when_not_equal() {
 
 #[test]
 fn test_bgt_s() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     // 50 > 30 should branch
@@ -875,7 +855,7 @@ fn test_bgt_s() {
 
 #[test]
 fn test_blt_s() {
-    let (interpreter, _address_space) = create_test_interpreter();
+    let (mut interpreter, _address_space) = create_test_interpreter();
     let mut thread = create_test_thread();
 
     // 30 < 50 should branch

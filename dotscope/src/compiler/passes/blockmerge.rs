@@ -1,8 +1,15 @@
-//! Block merging pass for eliminating trampoline blocks.
+//! Block merging pass for simplifying control flow.
 //!
-//! This pass identifies and eliminates "trampoline" blocks - blocks that contain
-//! only a single unconditional jump instruction. By redirecting predecessors to
-//! jump directly to the target, we simplify the control flow graph.
+//! Two optimizations:
+//!
+//! 1. **Trampoline elimination** — removes blocks containing only an unconditional
+//!    jump by redirecting predecessors to the ultimate target.
+//!
+//! 2. **Block coalescing** — merges a block into its sole predecessor when the
+//!    predecessor's only successor is that block. This eliminates unnecessary
+//!    block boundaries in straight-line code (common after CFF reconstruction).
+//!    Phi nodes in the successor are converted to Copy instructions since they
+//!    have exactly one incoming edge.
 //!
 //! # Entry Block Handling
 //!
@@ -14,7 +21,7 @@
 //! The SSA builder never decodes the unreachable junk, so regenerating the IL
 //! from SSA produces clean output.
 //!
-//! # Example
+//! # Trampoline Elimination Example
 //!
 //! Before:
 //! ```text
@@ -29,20 +36,27 @@
 //! B4: ... actual code ...
 //! ```
 //!
-//! # Algorithm
+//! # Block Coalescing Example
 //!
-//! 1. Identify trampoline blocks (no phi nodes, single jump instruction)
-//! 2. For each trampoline, find its ultimate target (following jump chains)
-//! 3. Update all predecessor blocks to jump directly to the target
-//! 4. Clear the trampoline block (it becomes unreachable)
-//! 5. If the entry block is a trampoline, inline target or mark for regeneration
+//! Before (after CFF reconstruction):
+//! ```text
+//! B5: v1 = call Foo()
+//!     jump B6
+//! B6: callvirt Bar(v1)
+//!     jump B7
+//! ```
 //!
-//! The pass runs iteratively until no more trampolines are found.
+//! After:
+//! ```text
+//! B5: v1 = call Foo()
+//!     callvirt Bar(v1)
+//!     jump B7
+//! ```
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
-    analysis::SsaFunction,
+    analysis::{PhiOperand, SsaFunction, SsaInstruction, SsaOp},
     compiler::{pass::SsaPass, passes::utils::resolve_chain, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
     CilObject, Result,
@@ -194,6 +208,200 @@ impl BlockMergingPass {
         redirected + cleared
     }
 
+    /// Merges blocks connected by a single edge.
+    ///
+    /// When Block A's only successor is Block B (via `Jump`) and Block B's only
+    /// predecessor is Block A, the two blocks can be merged: Block A's terminator
+    /// is replaced by Block B's instructions. Any phi nodes in Block B are
+    /// converted to Copy instructions (they have exactly one incoming edge).
+    ///
+    /// Blocks involved in exception handler boundaries are excluded because
+    /// merging them would break the handler region structure.
+    fn coalesce_blocks(
+        ssa: &mut SsaFunction,
+        method_token: Token,
+        changes: &mut EventLog,
+    ) -> usize {
+        let mut merged = 0;
+
+        // Collect exception handler boundary blocks.
+        //
+        // Region *start* blocks (try_start, handler_start, filter_start) must not
+        // be used as the MERGE TARGET because absorbing a predecessor outside the
+        // region would pull non-region code into the region.
+        //
+        // Region *end* blocks (try_end, handler_end) must not be used as the MERGE
+        // SOURCE because absorbing a successor outside the region would extend the
+        // region past its intended boundary.
+        //
+        // Merging within a region is safe: if A is a try_start and B is the next
+        // block inside the same try body, merging B into A keeps the try region
+        // starting at A.
+        let mut no_merge_into: HashSet<usize> = HashSet::new();
+        let mut no_merge_from: HashSet<usize> = HashSet::new();
+        for handler in ssa.exception_handlers() {
+            if let Some(b) = handler.try_start_block {
+                no_merge_into.insert(b);
+            }
+            if let Some(b) = handler.try_end_block {
+                no_merge_from.insert(b);
+            }
+            if let Some(b) = handler.handler_start_block {
+                no_merge_into.insert(b);
+            }
+            if let Some(b) = handler.handler_end_block {
+                no_merge_from.insert(b);
+            }
+            if let Some(b) = handler.filter_start_block {
+                no_merge_into.insert(b);
+            }
+        }
+
+        // Iterate until fixed point.
+        for _ in 0..MAX_ITERATIONS {
+            let mut iteration_merges = 0;
+
+            // Build predecessor counts for all blocks.
+            let block_count = ssa.block_count();
+            let mut pred_counts: Vec<usize> = vec![0; block_count];
+            let mut pred_of: Vec<Option<usize>> = vec![None; block_count];
+            for idx in 0..block_count {
+                let successors = ssa
+                    .block(idx)
+                    .and_then(|b| b.terminator_op())
+                    .map(SsaOp::successors)
+                    .unwrap_or_default();
+                for succ in successors {
+                    if succ < block_count {
+                        pred_counts[succ] += 1;
+                        pred_of[succ] = Some(idx);
+                    }
+                }
+            }
+            // Entry block has an implicit edge.
+            pred_counts[0] += 1;
+
+            // Find mergeable pairs: A -> B where A's terminator is Jump(B),
+            // B has exactly 1 predecessor, and neither is a handler boundary.
+            let mut pairs: Vec<(usize, usize)> = Vec::new();
+            let mut consumed: HashSet<usize> = HashSet::new();
+            for a_idx in 0..block_count {
+                if consumed.contains(&a_idx) {
+                    continue;
+                }
+                let b_idx = match ssa.block(a_idx).and_then(|b| b.terminator_op()) {
+                    Some(SsaOp::Jump { target }) => *target,
+                    _ => continue,
+                };
+                if b_idx >= block_count || b_idx == a_idx {
+                    continue;
+                }
+                if pred_counts[b_idx] != 1 {
+                    continue;
+                }
+                if no_merge_from.contains(&a_idx) || no_merge_into.contains(&b_idx) {
+                    continue;
+                }
+                // B must have instructions (not already cleared).
+                let b_empty = ssa.block(b_idx).is_none_or(|b| b.instructions().is_empty());
+                if b_empty {
+                    continue;
+                }
+                pairs.push((a_idx, b_idx));
+                consumed.insert(a_idx);
+                consumed.insert(b_idx);
+            }
+
+            for (a_idx, b_idx) in pairs {
+                // Convert B's phi nodes to Copy instructions.
+                let phi_copies: Vec<SsaInstruction> = ssa
+                    .block(b_idx)
+                    .map(|b| {
+                        b.phi_nodes()
+                            .iter()
+                            .filter_map(|phi| {
+                                // Single predecessor → exactly one operand.
+                                let operand = phi.operands().first()?;
+                                let dest = phi.result();
+                                let src = operand.value();
+                                if dest == src {
+                                    return None; // Self-copy, skip.
+                                }
+                                Some(SsaInstruction::synthetic(SsaOp::Copy { dest, src }))
+                            })
+                            .collect()
+                    })
+                    .unwrap_or_default();
+
+                // Take B's instructions.
+                let b_instrs: Vec<SsaInstruction> = ssa
+                    .block(b_idx)
+                    .map(|b| b.instructions().to_vec())
+                    .unwrap_or_default();
+
+                // Remove A's terminator (the Jump) and append phi copies + B's instructions.
+                if let Some(a_block) = ssa.block_mut(a_idx) {
+                    // Pop the Jump terminator.
+                    let instrs = a_block.instructions_mut();
+                    if instrs
+                        .last()
+                        .is_some_and(|i| matches!(i.op(), SsaOp::Jump { .. }))
+                    {
+                        instrs.pop();
+                    }
+                    // Append phi copies then B's instructions.
+                    instrs.extend(phi_copies);
+                    instrs.extend(b_instrs);
+                }
+
+                // Update B's internal self-references to point to A.
+                if let Some(a_block) = ssa.block_mut(a_idx) {
+                    for instr in a_block.instructions_mut() {
+                        instr.op_mut().redirect_target(b_idx, a_idx);
+                    }
+                }
+
+                // Clear B.
+                if let Some(b_block) = ssa.block_mut(b_idx) {
+                    b_block.phi_nodes_mut().clear();
+                    b_block.instructions_mut().clear();
+                }
+
+                // Redirect any other block that referenced B to now reference A.
+                // This handles the case where B had successors that now become A's
+                // successors — their phi operands need predecessor updates.
+                for phi_block_idx in 0..block_count {
+                    if phi_block_idx == a_idx || phi_block_idx == b_idx {
+                        continue;
+                    }
+                    if let Some(block) = ssa.block_mut(phi_block_idx) {
+                        for phi in block.phi_nodes_mut() {
+                            for operand in phi.operands_mut() {
+                                if operand.predecessor() == b_idx {
+                                    *operand = PhiOperand::new(operand.value(), a_idx);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                changes
+                    .record(EventKind::BlockRemoved)
+                    .at(method_token, b_idx)
+                    .message(format!("coalesced B{b_idx} into B{a_idx}"));
+
+                iteration_merges += 1;
+            }
+
+            merged += iteration_merges;
+            if iteration_merges == 0 {
+                break;
+            }
+        }
+
+        merged
+    }
+
     /// Simplifies an entry block that is just a trampoline (unconditional jump).
     ///
     /// Non-entry trampolines are handled by `run_iteration` which redirects
@@ -271,7 +479,7 @@ impl SsaPass for BlockMergingPass {
     }
 
     fn description(&self) -> &'static str {
-        "Eliminates trampoline blocks (single-jump blocks)"
+        "Eliminates trampoline blocks and coalesces single-edge block pairs"
     }
 
     fn run_on_method(
@@ -279,11 +487,11 @@ impl SsaPass for BlockMergingPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        _assembly: &CilObject,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
 
-        // Iterate until fixed point (non-entry trampolines)
+        // Phase 1: Eliminate trampoline blocks (jump-only blocks).
         for _ in 0..MAX_ITERATIONS {
             let iteration_changes = Self::run_iteration(ssa, method_token, &mut changes);
 
@@ -292,10 +500,17 @@ impl SsaPass for BlockMergingPass {
             }
         }
 
-        // Handle entry block trampoline — B0 has no predecessors so the
+        // Phase 2: Handle entry block trampoline — B0 has no predecessors so the
         // redirect-and-clear approach above can't handle it. Instead, inline
         // the target block when safe, or just mark for regeneration.
         Self::simplify_entry_trampoline(ssa, method_token, &mut changes);
+
+        // Phase 3: Coalesce non-trivial blocks connected by a single edge.
+        // After trampoline elimination and CFF reconstruction, there may be
+        // blocks with actual instructions connected by unconditional jumps
+        // where the successor has a single predecessor. Merging these produces
+        // larger blocks, reducing cross-block stores in the codegen.
+        Self::coalesce_blocks(ssa, method_token, &mut changes);
 
         let changed = !changes.is_empty();
         if changed {
@@ -307,13 +522,11 @@ impl SsaPass for BlockMergingPass {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::sync::Arc;
 
     use crate::{
         analysis::{CallGraph, SsaFunctionBuilder, SsaOp},
-        compiler::{CompilerContext, SsaPass},
+        compiler::{passes::blockmerge::BlockMergingPass, CompilerContext, SsaPass},
         metadata::token::Token,
         test::helpers::test_assembly_arc,
     };
@@ -540,5 +753,95 @@ mod tests {
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &assembly)
             .unwrap();
         assert!(!changed, "non-trampoline entry should report no changes");
+    }
+
+    #[test]
+    fn test_coalesce_single_edge_blocks() {
+        // B0: const + jump B1, B1: const + jump B2, B2: ret.
+        // B0→B1 and B1→B2 are single-edge pairs that should be coalesced.
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let _ = b.const_i32(42);
+                    b.jump(1);
+                });
+                f.block(1, |b| {
+                    let _ = b.const_i32(99);
+                    b.jump(2);
+                });
+                f.block(2, |b| b.ret());
+            })
+            .unwrap();
+
+        let pass = BlockMergingPass::new();
+        let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
+        let assembly = test_assembly_arc();
+
+        let changed = pass
+            .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &assembly)
+            .unwrap();
+        assert!(changed, "block coalescing should trigger changes");
+
+        // B0 should now contain all instructions: two consts + ret
+        let block0 = ssa.block(0).unwrap();
+        assert!(
+            block0.instruction_count() >= 3,
+            "B0 should have at least 3 instructions after coalescing, got {}",
+            block0.instruction_count()
+        );
+        assert!(
+            matches!(
+                block0.instructions().last().map(|i| i.op()),
+                Some(SsaOp::Return { .. })
+            ),
+            "B0's last instruction should be ret"
+        );
+
+        // B1 and B2 should be cleared
+        for i in 1..=2 {
+            if let Some(block) = ssa.block(i) {
+                assert!(
+                    block.instructions().is_empty(),
+                    "B{i} should be cleared after coalescing"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn test_coalesce_preserves_multi_predecessor_blocks() {
+        // B0: branch(cond, B1, B2), B1: jump B3, B2: jump B3, B3: ret.
+        // B3 has two predecessors — should NOT be coalesced.
+        let mut ssa = SsaFunctionBuilder::new(0, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let c = b.const_i32(1);
+                    b.branch(c, 1, 2);
+                });
+                f.block(1, |b| {
+                    let _ = b.const_i32(10);
+                    b.jump(3);
+                });
+                f.block(2, |b| {
+                    let _ = b.const_i32(20);
+                    b.jump(3);
+                });
+                f.block(3, |b| b.ret());
+            })
+            .unwrap();
+
+        let pass = BlockMergingPass::new();
+        let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
+        let assembly = test_assembly_arc();
+
+        pass.run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &assembly)
+            .unwrap();
+
+        // B3 should still exist with instructions (not merged)
+        let block3 = ssa.block(3).unwrap();
+        assert!(
+            !block3.instructions().is_empty(),
+            "B3 should NOT be coalesced (has 2 predecessors)"
+        );
     }
 }

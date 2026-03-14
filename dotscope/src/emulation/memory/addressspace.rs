@@ -158,11 +158,10 @@ impl SharedHeap {
     /// Unlike `clone()` which shares the same heap via `Arc`, `fork()`
     /// creates a truly independent heap that starts with the same data
     /// but diverges on modification.
-    #[must_use]
-    pub fn fork(&self) -> Self {
-        Self {
-            inner: Arc::new(self.inner.fork()),
-        }
+    pub fn fork(&self) -> Result<Self> {
+        Ok(Self {
+            inner: Arc::new(self.inner.fork()?),
+        })
     }
 }
 
@@ -224,7 +223,7 @@ impl std::ops::Deref for SharedHeap {
 ///
 /// // Access static fields
 /// let field_token = Token::new(0x04000001);
-/// space.set_static(field_token, EmValue::I32(42));
+/// space.set_static(field_token, EmValue::I32(42)).unwrap();
 /// ```
 #[derive(Debug)]
 pub struct AddressSpace {
@@ -264,8 +263,8 @@ pub struct AddressSpace {
 }
 
 impl AddressSpace {
-    /// Page size for protection tracking (4KB).
-    const PAGE_SIZE: u64 = 0x1000;
+    /// Page size for protection tracking (4KB), derived from [`page::PAGE_SIZE`].
+    const PAGE_SIZE: u64 = super::page::PAGE_SIZE as u64;
 
     /// Creates a new address space with default settings.
     ///
@@ -605,7 +604,7 @@ impl AddressSpace {
         regions
             .iter()
             .find(|r| r.contains(address))
-            .map(|r| r.protection_at(address))
+            .and_then(|r| r.protection_at(address).ok())
     }
 
     /// Sets the memory protection for a range of addresses.
@@ -691,8 +690,11 @@ impl AddressSpace {
     /// # Arguments
     ///
     /// * `field_token` - The metadata token of the static field
-    #[must_use]
-    pub fn get_static(&self, field_token: Token) -> Option<EmValue> {
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::LockPoisoned`] if the static field storage lock is poisoned.
+    pub fn get_static(&self, field_token: Token) -> Result<Option<EmValue>> {
         self.statics.get(field_token)
     }
 
@@ -702,8 +704,12 @@ impl AddressSpace {
     ///
     /// * `field_token` - The metadata token of the static field
     /// * `value` - The value to store
-    pub fn set_static(&self, field_token: Token, value: EmValue) {
-        self.statics.set(field_token, value);
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::LockPoisoned`] if the static field storage lock is poisoned.
+    pub fn set_static(&self, field_token: Token, value: EmValue) -> Result<()> {
+        self.statics.set(field_token, value)
     }
 
     /// Allocates unmanaged memory (for `Marshal.AllocHGlobal`, etc.).
@@ -968,36 +974,6 @@ impl Default for AddressSpace {
     }
 }
 
-impl Clone for AddressSpace {
-    fn clone(&self) -> Self {
-        // Clone shares the heap (cheap Arc clone) but copies regions
-        let regions = match self.regions.read() {
-            Ok(r) => r.clone(),
-            Err(_) => Vec::new(),
-        };
-
-        let protection_overrides = match self.protection_overrides.read() {
-            Ok(p) => p.clone(), // O(1) due to imbl structural sharing
-            Err(_) => ImHashMap::new(),
-        };
-
-        let monitor_locks = match self.monitor_locks.read() {
-            Ok(l) => l.clone(),
-            Err(_) => ImHashMap::new(),
-        };
-
-        Self {
-            heap: self.heap.clone(), // Cheap Arc clone
-            regions: RwLock::new(regions),
-            statics: self.statics.clone(),
-            next_address: AtomicU64::new(self.next_address.load(Ordering::SeqCst)),
-            size: self.size,
-            protection_overrides: RwLock::new(protection_overrides),
-            monitor_locks: RwLock::new(monitor_locks),
-        }
-    }
-}
-
 impl AddressSpace {
     /// Creates a fresh address space that shares memory regions but has independent mutable state.
     ///
@@ -1023,8 +999,8 @@ impl AddressSpace {
     ///
     /// // Modifications to fresh don't affect template's heap/statics
     /// fresh.set_static(dotscope::metadata::token::Token::new(0x04000001),
-    ///                  dotscope::emulation::EmValue::I32(42));
-    /// assert!(template.get_static(dotscope::metadata::token::Token::new(0x04000001)).is_none());
+    ///                  dotscope::emulation::EmValue::I32(42)).unwrap();
+    /// assert!(template.get_static(dotscope::metadata::token::Token::new(0x04000001)).unwrap().is_none());
     /// ```
     #[must_use]
     pub fn spawn_fresh(&self) -> Self {
@@ -1087,40 +1063,57 @@ impl AddressSpace {
     /// // Set up template with data
     /// let template = AddressSpace::new();
     /// template.map_data(0x1000, &[1, 2, 3, 4], "data").unwrap();
-    /// template.set_static(Token::new(0x04000001), EmValue::I32(42));
+    /// template.set_static(Token::new(0x04000001), EmValue::I32(42)).unwrap();
     ///
     /// // Fork creates independent copy with shared backing
-    /// let forked = template.fork();
+    /// let forked = template.fork().unwrap();
     ///
     /// // Modifications are independent
-    /// forked.set_static(Token::new(0x04000001), EmValue::I32(100));
+    /// forked.set_static(Token::new(0x04000001), EmValue::I32(100)).unwrap();
     /// forked.write(0x1000, &[0xFF]).unwrap();
     ///
     /// // Original unchanged
-    /// assert_eq!(template.get_static(Token::new(0x04000001)), Some(EmValue::I32(42)));
+    /// assert_eq!(template.get_static(Token::new(0x04000001)).unwrap(), Some(EmValue::I32(42)));
     /// assert_eq!(template.read(0x1000, 1).unwrap(), vec![1]);
     /// ```
-    #[must_use]
-    pub fn fork(&self) -> Self {
+    pub fn fork(&self) -> Result<Self> {
+        use crate::emulation::engine::EmulationError;
         // Fork all regions (each region forks its pages)
-        let regions = match self.regions.read() {
-            Ok(r) => r.iter().filter_map(|region| region.fork().ok()).collect(),
-            Err(_) => Vec::new(),
-        };
+        let regions = self
+            .regions
+            .read()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "address space regions",
+            })?
+            .iter()
+            .map(|region| region.fork())
+            .collect::<std::result::Result<Vec<_>, _>>()?;
 
         // Fork protection overrides (O(1) due to imbl)
-        let protection_overrides = match self.protection_overrides.read() {
-            Ok(p) => p.clone(),
-            Err(_) => ImHashMap::new(),
-        };
+        let protection_overrides = self
+            .protection_overrides
+            .read()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "address space protection overrides",
+            })?
+            .clone();
 
-        Self {
+        // Fork monitor locks (O(1) due to imbl)
+        let monitor_locks = self
+            .monitor_locks
+            .read()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "address space monitor locks",
+            })?
+            .clone();
+
+        Ok(Self {
             // Fork heap - O(1) due to imbl structural sharing
-            heap: self.heap.fork(),
+            heap: self.heap.fork()?,
             // Forked regions - each region's pages use CoW
             regions: RwLock::new(regions),
             // Fork statics - O(1) due to imbl structural sharing
-            statics: self.statics.fork(),
+            statics: self.statics.fork()?,
             // Copy allocation pointer
             next_address: AtomicU64::new(self.next_address.load(Ordering::SeqCst)),
             // Same size limit
@@ -1128,13 +1121,8 @@ impl AddressSpace {
             // Fork protection overrides - O(1) due to imbl
             protection_overrides: RwLock::new(protection_overrides),
             // Fork monitor locks - O(1) due to imbl
-            monitor_locks: RwLock::new(
-                self.monitor_locks
-                    .read()
-                    .map(|l| l.clone())
-                    .unwrap_or_default(),
-            ),
-        }
+            monitor_locks: RwLock::new(monitor_locks),
+        })
     }
 }
 
@@ -1184,10 +1172,10 @@ mod tests {
         let space = AddressSpace::new();
         let field = Token::new(0x04000001);
 
-        assert!(space.get_static(field).is_none());
+        assert!(space.get_static(field).unwrap().is_none());
 
-        space.set_static(field, EmValue::I32(42));
-        assert_eq!(space.get_static(field), Some(EmValue::I32(42)));
+        space.set_static(field, EmValue::I32(42)).unwrap();
+        assert_eq!(space.get_static(field).unwrap(), Some(EmValue::I32(42)));
     }
 
     #[test]
@@ -1195,8 +1183,8 @@ mod tests {
         let space1 = AddressSpace::new();
         let str_ref = space1.alloc_string("Hello").unwrap();
 
-        // Clone shares the heap
-        let space2 = space1.clone();
+        // Create a second address space sharing the same heap
+        let space2 = AddressSpace::with_heap(space1.heap().clone());
 
         // Both can see the string
         let s1 = space1.get_string(str_ref).unwrap();
@@ -1254,7 +1242,7 @@ mod tests {
         space.map_data(0x1000, &[1, 2, 3, 4], "test").unwrap();
 
         // Fork
-        let forked = space.fork();
+        let forked = space.fork().unwrap();
 
         // Both see the same initial data
         assert_eq!(space.read(0x1000, 4).unwrap(), vec![1, 2, 3, 4]);
@@ -1274,7 +1262,7 @@ mod tests {
         let str_ref = space.alloc_string("Original").unwrap();
 
         // Fork
-        let forked = space.fork();
+        let forked = space.fork().unwrap();
 
         // Both see the same string
         assert_eq!(&*space.get_string(str_ref).unwrap(), "Original");
@@ -1292,21 +1280,21 @@ mod tests {
     fn test_fork_statics_isolation() {
         let space = AddressSpace::new();
         let field = Token::new(0x04000001);
-        space.set_static(field, EmValue::I32(42));
+        space.set_static(field, EmValue::I32(42)).unwrap();
 
         // Fork
-        let forked = space.fork();
+        let forked = space.fork().unwrap();
 
         // Both see the same static
-        assert_eq!(space.get_static(field), Some(EmValue::I32(42)));
-        assert_eq!(forked.get_static(field), Some(EmValue::I32(42)));
+        assert_eq!(space.get_static(field).unwrap(), Some(EmValue::I32(42)));
+        assert_eq!(forked.get_static(field).unwrap(), Some(EmValue::I32(42)));
 
         // Modify in fork
-        forked.set_static(field, EmValue::I32(100));
+        forked.set_static(field, EmValue::I32(100)).unwrap();
 
         // Original unchanged
-        assert_eq!(space.get_static(field), Some(EmValue::I32(42)));
-        assert_eq!(forked.get_static(field), Some(EmValue::I32(100)));
+        assert_eq!(space.get_static(field).unwrap(), Some(EmValue::I32(42)));
+        assert_eq!(forked.get_static(field).unwrap(), Some(EmValue::I32(100)));
     }
 
     #[test]
@@ -1318,7 +1306,7 @@ mod tests {
         space.set_protection(0x1000, 0x1000, MemoryProtection::READ_EXECUTE);
 
         // Fork
-        let forked = space.fork();
+        let forked = space.fork().unwrap();
 
         // Both see the same protection
         assert_eq!(
@@ -1348,20 +1336,20 @@ mod tests {
     fn test_multiple_forks_isolation() {
         let space = AddressSpace::new();
         let field = Token::new(0x04000001);
-        space.set_static(field, EmValue::I32(1));
+        space.set_static(field, EmValue::I32(1)).unwrap();
 
         // Create multiple forks
-        let fork1 = space.fork();
-        let fork2 = space.fork();
+        let fork1 = space.fork().unwrap();
+        let fork2 = space.fork().unwrap();
 
         // Modify each independently
-        fork1.set_static(field, EmValue::I32(10));
-        fork2.set_static(field, EmValue::I32(20));
+        fork1.set_static(field, EmValue::I32(10)).unwrap();
+        fork2.set_static(field, EmValue::I32(20)).unwrap();
 
         // Each has its own value
-        assert_eq!(space.get_static(field), Some(EmValue::I32(1)));
-        assert_eq!(fork1.get_static(field), Some(EmValue::I32(10)));
-        assert_eq!(fork2.get_static(field), Some(EmValue::I32(20)));
+        assert_eq!(space.get_static(field).unwrap(), Some(EmValue::I32(1)));
+        assert_eq!(fork1.get_static(field).unwrap(), Some(EmValue::I32(10)));
+        assert_eq!(fork2.get_static(field).unwrap(), Some(EmValue::I32(20)));
     }
 
     #[test]
@@ -1370,7 +1358,7 @@ mod tests {
         let str_ref = heap.alloc_string("Hello").unwrap();
 
         // Fork the heap
-        let forked = heap.fork();
+        let forked = heap.fork().unwrap();
 
         // Both see the string
         assert_eq!(&*heap.get_string(str_ref).unwrap(), "Hello");

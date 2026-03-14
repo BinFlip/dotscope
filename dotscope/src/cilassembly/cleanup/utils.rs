@@ -8,7 +8,11 @@ use std::collections::{BTreeSet, HashSet};
 
 use crate::{
     cilassembly::CilAssembly,
-    metadata::{method::MethodBody, tables::TableId, token::Token},
+    metadata::{
+        method::MethodBody,
+        tables::{MethodDefRaw, TableId},
+        token::Token,
+    },
 };
 
 /// Placeholder RVA threshold — RVAs at or above this value are placeholder RVAs
@@ -104,6 +108,34 @@ pub(super) fn extract_local_var_sig_rid(data: &[u8]) -> Option<u32> {
         }
     }
     None
+}
+
+/// Returns true if the given MethodDef row is a `.cctor` (static constructor).
+///
+/// This is the raw-table-level equivalent of [`Method::is_cctor()`] for code
+/// that operates on RIDs and [`CilAssembly`] rather than resolved method objects.
+///
+/// `.cctor` methods are invoked implicitly by the runtime on first type access,
+/// not via explicit IL instructions. They must be protected from cascade removal
+/// because they don't appear in method body token scans.
+pub(crate) fn is_cctor_method(assembly: &CilAssembly, method_rid: u32) -> bool {
+    let view = assembly.view();
+    let Some(tables) = view.tables() else {
+        return false;
+    };
+    let Some(method_table) = tables.table::<MethodDefRaw>() else {
+        return false;
+    };
+    let Some(row) = method_table.get(method_rid) else {
+        return false;
+    };
+    let Some(strings) = view.strings() else {
+        return false;
+    };
+    strings
+        .get(row.name as usize)
+        .ok()
+        .is_some_and(|name| name == ".cctor")
 }
 
 #[cfg(test)]

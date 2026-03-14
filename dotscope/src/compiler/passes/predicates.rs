@@ -40,10 +40,7 @@
 //! jump B1
 //! ```
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     analysis::{
@@ -1249,7 +1246,7 @@ impl SsaPass for OpaquePredicatePass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
+        assembly: &CilObject,
     ) -> Result<bool> {
         let changes = EventLog::new();
 
@@ -1460,10 +1457,9 @@ impl SsaPass for OpaquePredicatePass {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use crate::{
         analysis::{ConstValue, MethodRef, SsaFunctionBuilder, SsaOp, SsaVarId, ValueRange},
+        compiler::passes::predicates::{DefinitionCache, OpaquePredicatePass, PredicateResult},
         metadata::token::Token,
     };
 

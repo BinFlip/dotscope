@@ -28,9 +28,30 @@
 
 use std::sync::RwLock;
 
-use imbl::{HashMap as ImHashMap, HashSet as ImHashSet};
+use imbl::HashMap as ImHashMap;
 
-use crate::{emulation::EmValue, metadata::token::Token};
+use crate::{
+    emulation::{engine::EmulationError, EmValue},
+    metadata::token::Token,
+    Result,
+};
+
+/// Tracks the initialization state of a type's static constructor.
+///
+/// Per ECMA-335 §II.10.5.3.3, type initialization follows a three-state model:
+/// - `Uninitialized` — .cctor has not been triggered
+/// - `InProgress` — .cctor is currently executing (re-entrant access skips)
+/// - `Initialized` — .cctor completed (or the type has no .cctor)
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TypeInitState {
+    /// The type's static constructor has not yet been triggered.
+    Uninitialized,
+    /// The type's static constructor is currently executing.
+    /// Re-entrant access from the same thread should be allowed (skip .cctor).
+    InProgress,
+    /// The type's static constructor has completed (successfully or with failure).
+    Initialized,
+}
 
 /// Storage for static fields in the emulated process.
 ///
@@ -58,16 +79,16 @@ use crate::{emulation::EmValue, metadata::token::Token};
 ///
 /// // Store a static field
 /// let field_token = Token::new(0x04000001);
-/// storage.set(field_token, EmValue::I32(42));
+/// storage.set(field_token, EmValue::I32(42)).unwrap();
 ///
 /// // Retrieve it later
-/// assert_eq!(storage.get(field_token), Some(EmValue::I32(42)));
+/// assert_eq!(storage.get(field_token).unwrap(), Some(EmValue::I32(42)));
 ///
 /// // Fork creates an independent copy (O(1) operation!)
-/// let forked = storage.fork();
-/// forked.set(field_token, EmValue::I32(100));
+/// let forked = storage.fork().unwrap();
+/// forked.set(field_token, EmValue::I32(100)).unwrap();
 /// // Original is unchanged
-/// assert_eq!(storage.get(field_token), Some(EmValue::I32(42)));
+/// assert_eq!(storage.get(field_token).unwrap(), Some(EmValue::I32(42)));
 /// ```
 #[derive(Debug)]
 pub struct StaticFieldStorage {
@@ -75,9 +96,9 @@ pub struct StaticFieldStorage {
     /// Uses imbl::HashMap for O(1) fork via structural sharing.
     fields: RwLock<ImHashMap<Token, EmValue>>,
 
-    /// Tracks which types have had their static constructors run.
-    /// Uses imbl::HashSet for O(1) fork via structural sharing.
-    initialized_types: RwLock<ImHashSet<Token>>,
+    /// Tracks type initialization state using a three-state model.
+    /// Uses imbl::HashMap for O(1) fork via structural sharing.
+    type_init_state: RwLock<ImHashMap<Token, TypeInitState>>,
 }
 
 impl StaticFieldStorage {
@@ -86,7 +107,7 @@ impl StaticFieldStorage {
     pub fn new() -> Self {
         Self {
             fields: RwLock::new(ImHashMap::new()),
-            initialized_types: RwLock::new(ImHashSet::new()),
+            type_init_state: RwLock::new(ImHashMap::new()),
         }
     }
 
@@ -100,13 +121,17 @@ impl StaticFieldStorage {
     ///
     /// `Some(EmValue)` if the field exists, `None` otherwise.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    #[must_use]
-    pub fn get(&self, field_token: Token) -> Option<EmValue> {
-        let fields = self.fields.read().expect("fields lock poisoned");
-        fields.get(&field_token).cloned()
+    /// Returns [`EmulationError::LockPoisoned`] if the fields lock is poisoned.
+    pub fn get(&self, field_token: Token) -> Result<Option<EmValue>> {
+        let fields = self
+            .fields
+            .read()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        Ok(fields.get(&field_token).cloned())
     }
 
     /// Sets a static field value.
@@ -118,12 +143,18 @@ impl StaticFieldStorage {
     /// * `field_token` - The metadata token of the field
     /// * `value` - The value to store
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    pub fn set(&self, field_token: Token, value: EmValue) {
-        let mut fields = self.fields.write().expect("fields lock poisoned");
+    /// Returns [`EmulationError::LockPoisoned`] if the fields lock is poisoned.
+    pub fn set(&self, field_token: Token, value: EmValue) -> Result<()> {
+        let mut fields = self
+            .fields
+            .write()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
         fields.insert(field_token, value);
+        Ok(())
     }
 
     /// Returns `true` if the static field exists.
@@ -132,13 +163,17 @@ impl StaticFieldStorage {
     ///
     /// * `field_token` - The metadata token of the field
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    #[must_use]
-    pub fn contains(&self, field_token: Token) -> bool {
-        let fields = self.fields.read().expect("fields lock poisoned");
-        fields.contains_key(&field_token)
+    /// Returns [`EmulationError::LockPoisoned`] if the fields lock is poisoned.
+    pub fn contains(&self, field_token: Token) -> Result<bool> {
+        let fields = self
+            .fields
+            .read()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        Ok(fields.contains_key(&field_token))
     }
 
     /// Removes a static field and returns its value.
@@ -151,52 +186,103 @@ impl StaticFieldStorage {
     ///
     /// The removed value, or `None` if the field didn't exist.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    pub fn remove(&self, field_token: Token) -> Option<EmValue> {
-        let mut fields = self.fields.write().expect("fields lock poisoned");
-        fields.remove(&field_token)
+    /// Returns [`EmulationError::LockPoisoned`] if the fields lock is poisoned.
+    pub fn remove(&self, field_token: Token) -> Result<Option<EmValue>> {
+        let mut fields = self
+            .fields
+            .write()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        Ok(fields.remove(&field_token))
     }
 
-    /// Returns `true` if the type's static constructor has been run.
+    /// Returns `true` if the type's static constructor has been run or is currently running.
     ///
     /// This is used to implement the `.cctor` execution semantics where
-    /// static constructors run at most once per type.
+    /// static constructors run at most once per type. Returns `true` for both
+    /// `InProgress` and `Initialized` states (ECMA-335 §II.10.5.3.3: re-entrant
+    /// access during .cctor execution is allowed without re-running .cctor).
     ///
     /// # Arguments
     ///
     /// * `type_token` - The type's metadata token
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    #[must_use]
-    pub fn is_type_initialized(&self, type_token: Token) -> bool {
-        let initialized = self
-            .initialized_types
+    /// Returns [`EmulationError::LockPoisoned`] if the type init state lock is poisoned.
+    pub fn is_type_initialized(&self, type_token: Token) -> Result<bool> {
+        let state = self
+            .type_init_state
             .read()
-            .expect("initialized lock poisoned");
-        initialized.contains(&type_token)
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        Ok(matches!(
+            state.get(&type_token),
+            Some(TypeInitState::InProgress | TypeInitState::Initialized)
+        ))
+    }
+
+    /// Returns the current initialization state of a type.
+    ///
+    /// # Arguments
+    ///
+    /// * `type_token` - The type's metadata token
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::LockPoisoned`] if the type init state lock is poisoned.
+    pub fn type_init_state(&self, type_token: Token) -> Result<TypeInitState> {
+        let state = self
+            .type_init_state
+            .read()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        Ok(state
+            .get(&type_token)
+            .copied()
+            .unwrap_or(TypeInitState::Uninitialized))
+    }
+
+    /// Sets a type's initialization state.
+    ///
+    /// # Arguments
+    ///
+    /// * `type_token` - The type's metadata token
+    /// * `state` - The new initialization state
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::LockPoisoned`] if the type init state lock is poisoned.
+    pub fn set_type_init_state(&self, type_token: Token, init_state: TypeInitState) -> Result<()> {
+        let mut state = self
+            .type_init_state
+            .write()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        state.insert(type_token, init_state);
+        Ok(())
     }
 
     /// Marks a type as having had its static constructor run.
     ///
     /// Call this after successfully executing a type's `.cctor` method.
+    /// This sets the state to `Initialized`.
     ///
     /// # Arguments
     ///
     /// * `type_token` - The type's metadata token
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    pub fn mark_type_initialized(&self, type_token: Token) {
-        let mut initialized = self
-            .initialized_types
-            .write()
-            .expect("initialized lock poisoned");
-        initialized.insert(type_token);
+    /// Returns [`EmulationError::LockPoisoned`] if the type init state lock is poisoned.
+    pub fn mark_type_initialized(&self, type_token: Token) -> Result<()> {
+        self.set_type_init_state(type_token, TypeInitState::Initialized)
     }
 
     /// Clears all static fields and initialization state.
@@ -204,68 +290,93 @@ impl StaticFieldStorage {
     /// This resets the storage to its initial empty state, useful for
     /// testing or resetting the emulator.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    pub fn clear(&self) {
-        let mut fields = self.fields.write().expect("fields lock poisoned");
-        let mut initialized = self
-            .initialized_types
+    /// Returns [`EmulationError::LockPoisoned`] if any lock is poisoned.
+    pub fn clear(&self) -> Result<()> {
+        let mut fields = self
+            .fields
             .write()
-            .expect("initialized lock poisoned");
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        let mut state = self
+            .type_init_state
+            .write()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
         fields.clear();
-        initialized.clear();
+        state.clear();
+        Ok(())
     }
 
     /// Returns the number of static fields stored.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        let fields = self.fields.read().expect("fields lock poisoned");
-        fields.len()
+    /// Returns [`EmulationError::LockPoisoned`] if the fields lock is poisoned.
+    pub fn len(&self) -> Result<usize> {
+        let fields = self
+            .fields
+            .read()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        Ok(fields.len())
     }
 
     /// Returns `true` if no static fields are stored.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        let fields = self.fields.read().expect("fields lock poisoned");
-        fields.is_empty()
+    /// Returns [`EmulationError::LockPoisoned`] if the fields lock is poisoned.
+    pub fn is_empty(&self) -> Result<bool> {
+        let fields = self
+            .fields
+            .read()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        Ok(fields.is_empty())
     }
 
     /// Returns all stored field tokens.
     ///
     /// Useful for debugging and diagnostics.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    #[must_use]
-    pub fn field_tokens(&self) -> Vec<Token> {
-        let fields = self.fields.read().expect("fields lock poisoned");
-        fields.keys().copied().collect()
+    /// Returns [`EmulationError::LockPoisoned`] if the fields lock is poisoned.
+    pub fn field_tokens(&self) -> Result<Vec<Token>> {
+        let fields = self
+            .fields
+            .read()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        Ok(fields.keys().copied().collect())
     }
 
     /// Returns all type tokens that have been marked as initialized.
     ///
     /// Useful for debugging and diagnostics.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    #[must_use]
-    pub fn initialized_types(&self) -> Vec<Token> {
-        let initialized = self
-            .initialized_types
+    /// Returns [`EmulationError::LockPoisoned`] if the type init state lock is poisoned.
+    pub fn initialized_types(&self) -> Result<Vec<Token>> {
+        let state = self
+            .type_init_state
             .read()
-            .expect("initialized lock poisoned");
-        initialized.iter().copied().collect()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        Ok(state
+            .iter()
+            .filter(|(_, s)| matches!(s, TypeInitState::Initialized))
+            .map(|(t, _)| *t)
+            .collect())
     }
 
     /// Forks this storage, creating an independent copy with CoW semantics.
@@ -279,34 +390,33 @@ impl StaticFieldStorage {
     /// This is an O(1) operation due to `imbl`'s structural sharing.
     /// The actual data is only copied when either storage modifies an entry.
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the internal `RwLock` is poisoned.
-    #[must_use]
-    pub fn fork(&self) -> Self {
-        let fields = self.fields.read().expect("fields lock poisoned");
-        let initialized = self
-            .initialized_types
+    /// Returns [`EmulationError::LockPoisoned`] if any lock is poisoned.
+    pub fn fork(&self) -> Result<Self> {
+        let fields = self
+            .fields
             .read()
-            .expect("initialized lock poisoned");
-        Self {
-            // imbl::HashMap::clone() and imbl::HashSet::clone() are O(1) - structural sharing!
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        let state = self
+            .type_init_state
+            .read()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "static field storage",
+            })?;
+        Ok(Self {
+            // imbl::HashMap::clone() is O(1) - structural sharing!
             fields: RwLock::new(fields.clone()),
-            initialized_types: RwLock::new(initialized.clone()),
-        }
+            type_init_state: RwLock::new(state.clone()),
+        })
     }
 }
 
 impl Default for StaticFieldStorage {
     fn default() -> Self {
         Self::new()
-    }
-}
-
-impl Clone for StaticFieldStorage {
-    fn clone(&self) -> Self {
-        // Clone is the same as fork - O(1) due to imbl's structural sharing
-        self.fork()
     }
 }
 
@@ -323,22 +433,22 @@ mod tests {
         let field = Token::new(0x04000001);
 
         // Initially empty
-        assert!(storage.get(field).is_none());
-        assert!(!storage.contains(field));
+        assert!(storage.get(field).unwrap().is_none());
+        assert!(!storage.contains(field).unwrap());
 
         // Set a value
-        storage.set(field, EmValue::I32(42));
-        assert!(storage.contains(field));
-        assert_eq!(storage.get(field), Some(EmValue::I32(42)));
+        storage.set(field, EmValue::I32(42)).unwrap();
+        assert!(storage.contains(field).unwrap());
+        assert_eq!(storage.get(field).unwrap(), Some(EmValue::I32(42)));
 
         // Update the value
-        storage.set(field, EmValue::I32(100));
-        assert_eq!(storage.get(field), Some(EmValue::I32(100)));
+        storage.set(field, EmValue::I32(100)).unwrap();
+        assert_eq!(storage.get(field).unwrap(), Some(EmValue::I32(100)));
 
         // Remove
-        let removed = storage.remove(field);
+        let removed = storage.remove(field).unwrap();
         assert_eq!(removed, Some(EmValue::I32(100)));
-        assert!(storage.get(field).is_none());
+        assert!(storage.get(field).unwrap().is_none());
     }
 
     #[test]
@@ -347,14 +457,14 @@ mod tests {
         let type_token = Token::new(0x02000001);
 
         // Initially not initialized
-        assert!(!storage.is_type_initialized(type_token));
+        assert!(!storage.is_type_initialized(type_token).unwrap());
 
         // Mark as initialized
-        storage.mark_type_initialized(type_token);
-        assert!(storage.is_type_initialized(type_token));
+        storage.mark_type_initialized(type_token).unwrap();
+        assert!(storage.is_type_initialized(type_token).unwrap());
 
         // Check we can get the list
-        let initialized = storage.initialized_types();
+        let initialized = storage.initialized_types().unwrap();
         assert!(initialized.contains(&type_token));
     }
 
@@ -364,30 +474,15 @@ mod tests {
         let field = Token::new(0x04000001);
         let type_token = Token::new(0x02000001);
 
-        storage.set(field, EmValue::I32(42));
-        storage.mark_type_initialized(type_token);
+        storage.set(field, EmValue::I32(42)).unwrap();
+        storage.mark_type_initialized(type_token).unwrap();
 
-        assert!(!storage.is_empty());
+        assert!(!storage.is_empty().unwrap());
 
-        storage.clear();
+        storage.clear().unwrap();
 
-        assert!(storage.is_empty());
-        assert!(!storage.is_type_initialized(type_token));
-    }
-
-    #[test]
-    fn test_clone() {
-        let storage = StaticFieldStorage::new();
-        let field = Token::new(0x04000001);
-        storage.set(field, EmValue::I32(42));
-
-        let cloned = storage.clone();
-        assert_eq!(cloned.get(field), Some(EmValue::I32(42)));
-
-        // Modifications to clone don't affect original
-        cloned.set(field, EmValue::I32(100));
-        assert_eq!(storage.get(field), Some(EmValue::I32(42)));
-        assert_eq!(cloned.get(field), Some(EmValue::I32(100)));
+        assert!(storage.is_empty().unwrap());
+        assert!(!storage.is_type_initialized(type_token).unwrap());
     }
 
     #[test]
@@ -398,48 +493,48 @@ mod tests {
         let type_token = Token::new(0x02000001);
 
         // Set up original
-        storage.set(field1, EmValue::I32(42));
-        storage.mark_type_initialized(type_token);
+        storage.set(field1, EmValue::I32(42)).unwrap();
+        storage.mark_type_initialized(type_token).unwrap();
 
         // Fork
-        let forked = storage.fork();
+        let forked = storage.fork().unwrap();
 
         // Both see the same data
-        assert_eq!(storage.get(field1), Some(EmValue::I32(42)));
-        assert_eq!(forked.get(field1), Some(EmValue::I32(42)));
-        assert!(storage.is_type_initialized(type_token));
-        assert!(forked.is_type_initialized(type_token));
+        assert_eq!(storage.get(field1).unwrap(), Some(EmValue::I32(42)));
+        assert_eq!(forked.get(field1).unwrap(), Some(EmValue::I32(42)));
+        assert!(storage.is_type_initialized(type_token).unwrap());
+        assert!(forked.is_type_initialized(type_token).unwrap());
 
         // Modify forked
-        forked.set(field1, EmValue::I32(100));
-        forked.set(field2, EmValue::I32(200));
+        forked.set(field1, EmValue::I32(100)).unwrap();
+        forked.set(field2, EmValue::I32(200)).unwrap();
 
         // Original is unchanged
-        assert_eq!(storage.get(field1), Some(EmValue::I32(42)));
-        assert!(storage.get(field2).is_none());
+        assert_eq!(storage.get(field1).unwrap(), Some(EmValue::I32(42)));
+        assert!(storage.get(field2).unwrap().is_none());
 
         // Forked has new values
-        assert_eq!(forked.get(field1), Some(EmValue::I32(100)));
-        assert_eq!(forked.get(field2), Some(EmValue::I32(200)));
+        assert_eq!(forked.get(field1).unwrap(), Some(EmValue::I32(100)));
+        assert_eq!(forked.get(field2).unwrap(), Some(EmValue::I32(200)));
     }
 
     #[test]
     fn test_fork_isolation() {
         let storage = StaticFieldStorage::new();
         let field = Token::new(0x04000001);
-        storage.set(field, EmValue::I32(1));
+        storage.set(field, EmValue::I32(1)).unwrap();
 
         // Create multiple forks
-        let fork1 = storage.fork();
-        let fork2 = storage.fork();
+        let fork1 = storage.fork().unwrap();
+        let fork2 = storage.fork().unwrap();
 
         // Modify each independently
-        fork1.set(field, EmValue::I32(10));
-        fork2.set(field, EmValue::I32(20));
+        fork1.set(field, EmValue::I32(10)).unwrap();
+        fork2.set(field, EmValue::I32(20)).unwrap();
 
         // Each has its own value
-        assert_eq!(storage.get(field), Some(EmValue::I32(1)));
-        assert_eq!(fork1.get(field), Some(EmValue::I32(10)));
-        assert_eq!(fork2.get(field), Some(EmValue::I32(20)));
+        assert_eq!(storage.get(field).unwrap(), Some(EmValue::I32(1)));
+        assert_eq!(fork1.get(field).unwrap(), Some(EmValue::I32(10)));
+        assert_eq!(fork2.get(field).unwrap(), Some(EmValue::I32(20)));
     }
 }

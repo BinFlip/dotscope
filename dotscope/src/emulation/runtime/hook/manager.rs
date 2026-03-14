@@ -170,14 +170,14 @@ fn insert_sorted(bucket: &mut Vec<HookEntry>, entry: HookEntry) {
 ///         .with_priority(HookPriority::LOW)
 ///         .match_method_name("Decrypt")
 ///         .pre(|ctx, thread| PreHookResult::Continue)
-/// );
+/// )?;
 ///
 /// manager.register(
 ///     Hook::new("high-priority")
 ///         .with_priority(HookPriority::HIGH)
 ///         .match_method_name("Decrypt")
 ///         .pre(|ctx, thread| PreHookResult::Bypass(Some(EmValue::I32(42))))
-/// );
+/// )?;
 ///
 /// // When "Decrypt" is called, "high-priority" matches first
 /// ```
@@ -229,13 +229,17 @@ impl HookManager {
     ///
     /// * `hook` - The hook to register
     ///
+    /// # Errors
+    ///
+    /// Returns an error if the internal wildcard lock is poisoned.
+    ///
     /// # Examples
     ///
     /// ```rust,ignore
     /// let manager = HookManager::new();
-    /// manager.register(Hook::new("my-hook").match_method_name("Test"));
+    /// manager.register(Hook::new("my-hook").match_method_name("Test"))?;
     /// ```
-    pub fn register(&self, hook: Hook) {
+    pub fn register(&self, hook: Hook) -> Result<()> {
         let route = extract_route(&hook);
         let entry = HookEntry::new(hook);
 
@@ -255,15 +259,18 @@ impl HookManager {
                 insert_sorted(&mut bucket, entry);
             }
             None => {
-                let mut wildcards = self
-                    .wildcard_hooks
-                    .write()
-                    .unwrap_or_else(|e| e.into_inner());
+                let mut wildcards =
+                    self.wildcard_hooks
+                        .write()
+                        .map_err(|_| EmulationError::LockPoisoned {
+                            description: "hook manager",
+                        })?;
                 insert_sorted(&mut wildcards, entry);
             }
         }
 
         self.total_count.fetch_add(1, Ordering::Relaxed);
+        Ok(())
     }
 
     /// Checks whether any hook could potentially match the given name components.
@@ -274,32 +281,42 @@ impl HookManager {
     ///
     /// Returns `true` if there is at least one hook indexed under any key that
     /// matches the given names, or if wildcard hooks exist.
-    #[must_use]
-    pub fn has_potential_match(&self, namespace: &str, type_name: &str, method_name: &str) -> bool {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the internal wildcard lock is poisoned.
+    pub fn has_potential_match(
+        &self,
+        namespace: &str,
+        type_name: &str,
+        method_name: &str,
+    ) -> Result<bool> {
         let wildcards = self
             .wildcard_hooks
             .read()
-            .unwrap_or_else(|e| e.into_inner());
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "hook manager",
+            })?;
         if !wildcards.is_empty() {
-            return true;
+            return Ok(true);
         }
         drop(wildcards);
 
         if let Some(type_map) = self.full_index.get(namespace) {
             if let Some(method_map) = type_map.get(type_name) {
                 if method_map.contains_key(method_name) {
-                    return true;
+                    return Ok(true);
                 }
             }
         }
 
         if let Some(type_map) = self.type_index.get(namespace) {
             if type_map.contains_key(type_name) {
-                return true;
+                return Ok(true);
             }
         }
 
-        self.method_index.contains_key(method_name)
+        Ok(self.method_index.contains_key(method_name))
     }
 
     /// Executes a method call through the hook system.
@@ -361,7 +378,7 @@ impl HookManager {
     {
         // Find a matching hook. This returns an owned Arc<Hook>, so no guards
         // are held during hook execution.
-        let Some(hook) = self.find_matching(context, thread) else {
+        let Some(hook) = self.find_matching(context, thread)? else {
             return Ok(HookOutcome::NoMatch);
         };
 
@@ -387,6 +404,15 @@ impl HookManager {
                     msg
                 ))
                 .into());
+            }
+            Some(PreHookResult::Throw {
+                exception_type,
+                message,
+            }) => {
+                return Ok(HookOutcome::ThrewException {
+                    exception_type,
+                    message,
+                });
             }
             Some(PreHookResult::Continue) | None => {
                 // Continue to original method execution
@@ -442,11 +468,15 @@ impl HookManager {
     ///
     /// Returns an owned `Arc<Hook>` so all index guards are released before hook
     /// execution begins. The Arc clone cost is negligible (~1ns atomic increment).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the internal wildcard lock is poisoned.
     fn find_matching(
         &self,
         context: &HookContext<'_>,
         thread: &EmulationThread,
-    ) -> Option<Arc<Hook>> {
+    ) -> Result<Option<Arc<Hook>>> {
         // Tier 1a: Exact name match (most common path, zero-alloc via DashMap)
         if let Some(type_map) = self.full_index.get(context.namespace) {
             if let Some(method_map) = type_map.get(context.type_name) {
@@ -457,10 +487,10 @@ impl HookManager {
                             && !entry.has_signature_matchers
                             && entry.hook.matchers().len() == 1
                         {
-                            return Some(Arc::clone(&entry.hook));
+                            return Ok(Some(Arc::clone(&entry.hook)));
                         }
                         if entry.hook.matches(context, thread) {
-                            return Some(Arc::clone(&entry.hook));
+                            return Ok(Some(Arc::clone(&entry.hook)));
                         }
                     }
                 }
@@ -472,7 +502,7 @@ impl HookManager {
             if let Some(candidates) = type_map.get(context.type_name) {
                 for entry in candidates {
                     if entry.hook.matches(context, thread) {
-                        return Some(Arc::clone(&entry.hook));
+                        return Ok(Some(Arc::clone(&entry.hook)));
                     }
                 }
             }
@@ -482,7 +512,7 @@ impl HookManager {
         if let Some(candidates) = self.method_index.get(context.method_name) {
             for entry in candidates.iter() {
                 if entry.hook.matches(context, thread) {
-                    return Some(Arc::clone(&entry.hook));
+                    return Ok(Some(Arc::clone(&entry.hook)));
                 }
             }
         }
@@ -491,29 +521,29 @@ impl HookManager {
         let wildcards = self
             .wildcard_hooks
             .read()
-            .unwrap_or_else(|e| e.into_inner());
-        wildcards
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "hook manager",
+            })?;
+        Ok(wildcards
             .iter()
             .find(|e| e.hook.matches(context, thread))
-            .map(|e| Arc::clone(&e.hook))
+            .map(|e| Arc::clone(&e.hook)))
     }
 }
 
 impl std::fmt::Debug for HookManager {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let wildcard_count = self
+            .wildcard_hooks
+            .read()
+            .map_err(|_| std::fmt::Error)?
+            .len();
         f.debug_struct("HookManager")
             .field("hook_count", &self.total_count.load(Ordering::Relaxed))
             .field("full_index_namespaces", &self.full_index.len())
             .field("type_index_namespaces", &self.type_index.len())
             .field("method_index_entries", &self.method_index.len())
-            .field(
-                "wildcard_hooks",
-                &self
-                    .wildcard_hooks
-                    .read()
-                    .unwrap_or_else(|e| e.into_inner())
-                    .len(),
-            )
+            .field("wildcard_hooks", &wildcard_count)
             .finish()
     }
 }
@@ -538,8 +568,12 @@ mod tests {
     fn test_hook_manager_registration() {
         let manager = HookManager::new();
 
-        manager.register(Hook::new("hook1").match_method_name("Method1"));
-        manager.register(Hook::new("hook2").match_method_name("Method2"));
+        manager
+            .register(Hook::new("hook1").match_method_name("Method1"))
+            .unwrap();
+        manager
+            .register(Hook::new("hook2").match_method_name("Method2"))
+            .unwrap();
 
         assert_eq!(manager.len(), 2);
         assert!(!manager.is_empty());
@@ -550,24 +584,30 @@ mod tests {
         let manager = HookManager::new();
         let mut thread = create_test_thread();
 
-        manager.register(
-            Hook::new("low")
-                .with_priority(HookPriority::LOW)
-                .match_method_name("Test")
-                .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(1)))),
-        );
-        manager.register(
-            Hook::new("high")
-                .with_priority(HookPriority::HIGH)
-                .match_method_name("Test")
-                .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(3)))),
-        );
-        manager.register(
-            Hook::new("normal")
-                .with_priority(HookPriority::NORMAL)
-                .match_method_name("Test")
-                .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(2)))),
-        );
+        manager
+            .register(
+                Hook::new("low")
+                    .with_priority(HookPriority::LOW)
+                    .match_method_name("Test")
+                    .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(1)))),
+            )
+            .unwrap();
+        manager
+            .register(
+                Hook::new("high")
+                    .with_priority(HookPriority::HIGH)
+                    .match_method_name("Test")
+                    .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(3)))),
+            )
+            .unwrap();
+        manager
+            .register(
+                Hook::new("normal")
+                    .with_priority(HookPriority::NORMAL)
+                    .match_method_name("Test")
+                    .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(2)))),
+            )
+            .unwrap();
 
         // High priority should win — verified through execute
         let context = HookContext::new(
@@ -588,30 +628,46 @@ mod tests {
     fn test_has_potential_match() {
         let manager = HookManager::new();
 
-        manager.register(Hook::new("string-concat").match_name("System", "String", "Concat"));
+        manager
+            .register(Hook::new("string-concat").match_name("System", "String", "Concat"))
+            .unwrap();
 
-        assert!(manager.has_potential_match("System", "String", "Concat"));
-        assert!(!manager.has_potential_match("System", "String", "Replace"));
-        assert!(!manager.has_potential_match("System", "Math", "Abs"));
+        assert!(manager
+            .has_potential_match("System", "String", "Concat")
+            .unwrap());
+        assert!(!manager
+            .has_potential_match("System", "String", "Replace")
+            .unwrap());
+        assert!(!manager
+            .has_potential_match("System", "Math", "Abs")
+            .unwrap());
     }
 
     #[test]
     fn test_has_potential_match_with_wildcard() {
         let manager = HookManager::new();
 
-        manager.register(Hook::new("wildcard").match_runtime("always", |_, _| true));
+        manager
+            .register(Hook::new("wildcard").match_runtime("always", |_, _| true))
+            .unwrap();
 
-        assert!(manager.has_potential_match("Any", "Thing", "AtAll"));
+        assert!(manager
+            .has_potential_match("Any", "Thing", "AtAll")
+            .unwrap());
     }
 
     #[test]
     fn test_has_potential_match_type_level() {
         let manager = HookManager::new();
 
-        manager.register(Hook::new("type-hook").match_type_name("Console"));
+        manager
+            .register(Hook::new("type-hook").match_type_name("Console"))
+            .unwrap();
 
         // match_type_name has no namespace, goes to wildcard
-        assert!(manager.has_potential_match("System", "Console", "WriteLine"));
+        assert!(manager
+            .has_potential_match("System", "Console", "WriteLine")
+            .unwrap());
     }
 
     #[test]
@@ -619,11 +675,13 @@ mod tests {
         let manager = HookManager::new();
         let mut thread = create_test_thread();
 
-        manager.register(
-            Hook::new("exact-match")
-                .match_name("System", "String", "Concat")
-                .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(42)))),
-        );
+        manager
+            .register(
+                Hook::new("exact-match")
+                    .match_name("System", "String", "Concat")
+                    .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(42)))),
+            )
+            .unwrap();
 
         let context = HookContext::new(
             Token::new(0x06000001),
@@ -648,11 +706,13 @@ mod tests {
         let manager = HookManager::new();
         let mut thread = create_test_thread();
 
-        manager.register(
-            Hook::new("method-only")
-                .match_method_name("Decrypt")
-                .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(99)))),
-        );
+        manager
+            .register(
+                Hook::new("method-only")
+                    .match_method_name("Decrypt")
+                    .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(99)))),
+            )
+            .unwrap();
 
         let context = HookContext::new(
             Token::new(0x06000001),
@@ -694,11 +754,13 @@ mod tests {
         let manager = HookManager::new();
         let mut thread = create_test_thread();
 
-        manager.register(
-            Hook::new("bypass-test")
-                .match_name("System", "String", "Test")
-                .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(42)))),
-        );
+        manager
+            .register(
+                Hook::new("bypass-test")
+                    .match_name("System", "String", "Test")
+                    .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(42)))),
+            )
+            .unwrap();
 
         let context = HookContext::new(
             Token::new(0x06000001),
@@ -728,18 +790,20 @@ mod tests {
         let manager = HookManager::new();
         let mut thread = create_test_thread();
 
-        manager.register(
-            Hook::new("continue-then-modify")
-                .match_name("System", "String", "Test")
-                .pre(|_ctx, _thread| PreHookResult::Continue)
-                .post(|_ctx, _thread, result| {
-                    if let Some(EmValue::I32(v)) = result {
-                        PostHookResult::Replace(Some(EmValue::I32(v * 2)))
-                    } else {
-                        PostHookResult::Keep
-                    }
-                }),
-        );
+        manager
+            .register(
+                Hook::new("continue-then-modify")
+                    .match_name("System", "String", "Test")
+                    .pre(|_ctx, _thread| PreHookResult::Continue)
+                    .post(|_ctx, _thread, result| {
+                        if let Some(EmValue::I32(v)) = result {
+                            PostHookResult::Replace(Some(EmValue::I32(v * 2)))
+                        } else {
+                            PostHookResult::Keep
+                        }
+                    }),
+            )
+            .unwrap();
 
         let context = HookContext::new(
             Token::new(0x06000001),
@@ -763,11 +827,13 @@ mod tests {
         let manager = HookManager::new();
         let mut thread = create_test_thread();
 
-        manager.register(
-            Hook::new("error-test")
-                .match_name("System", "String", "Test")
-                .pre(|_ctx, _thread| PreHookResult::Error("test error".to_string())),
-        );
+        manager
+            .register(
+                Hook::new("error-test")
+                    .match_name("System", "String", "Test")
+                    .pre(|_ctx, _thread| PreHookResult::Error("test error".to_string())),
+            )
+            .unwrap();
 
         let context = HookContext::new(
             Token::new(0x06000001),
@@ -788,12 +854,14 @@ mod tests {
         let manager = HookManager::new();
         let mut thread = create_test_thread();
 
-        manager.register(
-            Hook::new("post-keep")
-                .match_name("System", "String", "Test")
-                .pre(|_ctx, _thread| PreHookResult::Continue)
-                .post(|_ctx, _thread, _result| PostHookResult::Keep),
-        );
+        manager
+            .register(
+                Hook::new("post-keep")
+                    .match_name("System", "String", "Test")
+                    .pre(|_ctx, _thread| PreHookResult::Continue)
+                    .post(|_ctx, _thread, _result| PostHookResult::Keep),
+            )
+            .unwrap();
 
         let context = HookContext::new(
             Token::new(0x06000001),
@@ -817,12 +885,14 @@ mod tests {
         let manager = HookManager::new();
         let mut thread = create_test_thread();
 
-        manager.register(
-            Hook::new("post-error")
-                .match_name("System", "String", "Test")
-                .pre(|_ctx, _thread| PreHookResult::Continue)
-                .post(|_ctx, _thread, _result| PostHookResult::Error("post error".to_string())),
-        );
+        manager
+            .register(
+                Hook::new("post-error")
+                    .match_name("System", "String", "Test")
+                    .pre(|_ctx, _thread| PreHookResult::Continue)
+                    .post(|_ctx, _thread, _result| PostHookResult::Error("post error".to_string())),
+            )
+            .unwrap();
 
         let context = HookContext::new(
             Token::new(0x06000001),
@@ -843,18 +913,22 @@ mod tests {
         let manager = HookManager::new();
         let mut thread = create_test_thread();
 
-        manager.register(
-            Hook::new("low-priority")
-                .with_priority(HookPriority::LOW)
-                .match_name("System", "String", "Concat")
-                .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(1)))),
-        );
-        manager.register(
-            Hook::new("high-priority")
-                .with_priority(HookPriority::HIGH)
-                .match_name("System", "String", "Concat")
-                .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(2)))),
-        );
+        manager
+            .register(
+                Hook::new("low-priority")
+                    .with_priority(HookPriority::LOW)
+                    .match_name("System", "String", "Concat")
+                    .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(1)))),
+            )
+            .unwrap();
+        manager
+            .register(
+                Hook::new("high-priority")
+                    .with_priority(HookPriority::HIGH)
+                    .match_name("System", "String", "Concat")
+                    .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::I32(2)))),
+            )
+            .unwrap();
 
         let context = HookContext::new(
             Token::new(0x06000001),
@@ -876,9 +950,15 @@ mod tests {
     fn test_registration_count() {
         let manager = HookManager::new();
 
-        manager.register(Hook::new("hook1").match_name("System", "String", "Concat"));
-        manager.register(Hook::new("hook2").match_name("System", "Math", "Abs"));
-        manager.register(Hook::new("hook3").match_method_name("Decrypt"));
+        manager
+            .register(Hook::new("hook1").match_name("System", "String", "Concat"))
+            .unwrap();
+        manager
+            .register(Hook::new("hook2").match_name("System", "Math", "Abs"))
+            .unwrap();
+        manager
+            .register(Hook::new("hook3").match_method_name("Decrypt"))
+            .unwrap();
 
         assert_eq!(manager.len(), 3);
     }

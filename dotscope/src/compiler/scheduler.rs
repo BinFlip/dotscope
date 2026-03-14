@@ -395,8 +395,6 @@ impl PassScheduler {
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use crate::{
         analysis::SsaFunction,
         compiler::{context::CompilerContext, pass::SsaPass, EventKind, PassScheduler},
@@ -428,7 +426,7 @@ mod tests {
             _ssa: &mut SsaFunction,
             method_token: Token,
             ctx: &CompilerContext,
-            _assembly: &Arc<CilObject>,
+            _assembly: &CilObject,
         ) -> Result<bool> {
             for i in 0..self.changes_to_make {
                 ctx.events

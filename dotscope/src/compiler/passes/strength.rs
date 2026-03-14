@@ -35,7 +35,7 @@
 //! v2 = shl v0, v1
 //! ```
 
-use std::{collections::HashSet, sync::Arc};
+use std::collections::HashSet;
 
 use crate::{
     analysis::{ConstValue, DefUseIndex, SsaFunction, SsaOp, SsaVarId, ValueRange},
@@ -403,7 +403,7 @@ impl SsaPass for StrengthReductionPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        _assembly: &CilObject,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
         // Build DefUseIndex for definition and use tracking

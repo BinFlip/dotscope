@@ -18,13 +18,16 @@ use crate::{
             compaction::mark_unreferenced_heap_entries,
             orphans::{self, DeletionContext},
             references::{collect_pre_deletion_references, scan_method_body_tokens},
-            utils::{list_range, try_remove},
+            utils::{is_cctor_method, list_range, try_remove},
             CleanupRequest, CleanupStats,
         },
         CilAssembly,
     },
     metadata::{
-        tables::{CustomAttributeRaw, FieldRaw, MethodDefRaw, TableId, TypeDefRaw},
+        tables::{
+            CustomAttributeRaw, FieldRaw, MethodDefRaw, MethodImplRaw, MethodSemanticsRaw,
+            MethodSpecRaw, TableId, TypeDefRaw,
+        },
         token::Token,
     },
     Result,
@@ -200,6 +203,116 @@ pub fn execute_cleanup(
         }
     }
 
+    // Phase 2.5: Dead definition elimination (unified fixpoint).
+    //
+    // After explicit deletions, methods and fields that were ONLY referenced
+    // by the deleted entities become unreferenced. The cascade principle:
+    // "if something was referenced by deleted entities and is no longer
+    // referenced by any surviving entity, it is dead and should be removed."
+    //
+    // A MethodDef is considered "still alive" if it is referenced by ANY of:
+    // - IL bytecode in a surviving method body (call, callvirt, newobj, etc.)
+    // - MethodSpec.method (generic instantiation)
+    // - CustomAttribute.constructor (attribute constructor)
+    // - MethodSemantics.method (property getter/setter, event add/remove)
+    // - MethodImpl.method_body or method_declaration (explicit overrides)
+    //
+    // A Field is considered "still alive" if it is referenced from any
+    // surviving method's IL (ldfld, stfld, ldsfld, stsfld, ldflda, ldsflda).
+    //
+    // This is a fixpoint loop because each round of cascade-deleted definitions
+    // may reveal further unreferenced definitions (transitive chains).
+    if request.remove_orphans() {
+        const MAX_CASCADE_ROUNDS: usize = 10;
+        for _round in 0..MAX_CASCADE_ROUNDS {
+            // Compute the full set of alive tokens from both IL bytecode
+            // and all metadata tables that reference methods/fields.
+            let alive_methods = collect_alive_method_tokens(assembly);
+            let alive_fields = collect_alive_field_tokens(assembly);
+
+            // Find MethodDef tokens from pre_refs that are no longer referenced
+            // by any surviving entity.
+            let dead_methods: Vec<Token> = pre_refs
+                .il_tokens
+                .iter()
+                .filter(|t| t.is_table(TableId::MethodDef))
+                .filter(|t| !alive_methods.contains(t))
+                .filter(|t| !removed_methods.contains(t))
+                .filter(|t| {
+                    !assembly
+                        .changes()
+                        .is_row_deleted(TableId::MethodDef, t.row())
+                })
+                // Safety: never cascade-remove .cctor methods — they are
+                // invoked by the runtime on first type access, not via IL.
+                .filter(|t| !is_cctor_method(assembly, t.row()))
+                .copied()
+                .collect();
+
+            // Find Field tokens from pre_refs that are no longer referenced
+            // by any surviving entity. Only cascade-remove fields that appear
+            // in pre_refs (were referenced by explicitly or previously deleted
+            // entities) to avoid removing pre-existing unreferenced fields
+            // that may be used via reflection.
+            let dead_fields: Vec<Token> = pre_refs
+                .il_tokens
+                .iter()
+                .filter(|t| t.is_table(TableId::Field))
+                .filter(|t| !alive_fields.contains(t))
+                .filter(|t| !removed_fields.contains(t))
+                .filter(|t| !assembly.changes().is_row_deleted(TableId::Field, t.row()))
+                .copied()
+                .collect();
+
+            if dead_methods.is_empty() && dead_fields.is_empty() {
+                break;
+            }
+
+            // Collect pre-deletion refs from dead definitions BEFORE deleting
+            // them, so their references feed into subsequent cascade rounds
+            // and the MemberRef/TypeRef cascade.
+            let dead_methods_set: BTreeSet<Token> = dead_methods.iter().copied().collect();
+            let dead_fields_set: BTreeSet<Token> = dead_fields.iter().copied().collect();
+            let empty_types = BTreeSet::new();
+            let new_refs = collect_pre_deletion_references(
+                assembly,
+                &dead_methods_set,
+                &dead_fields_set,
+                &empty_types,
+            );
+            pre_refs.il_tokens.extend(new_refs.il_tokens);
+            pre_refs.typeref_rids.extend(new_refs.typeref_rids);
+            pre_refs
+                .standalonesig_rids
+                .extend(new_refs.standalonesig_rids);
+
+            // Delete methods in reverse RID order to avoid shifting issues.
+            let mut method_count = 0usize;
+            for token in dead_methods.iter().rev() {
+                if try_remove(assembly, TableId::MethodDef, token.row()) {
+                    removed_methods.insert(*token);
+                    method_count += 1;
+                }
+            }
+            stats.add(TableId::MethodDef, method_count);
+
+            // Delete fields in reverse RID order.
+            let mut field_count = 0usize;
+            for token in dead_fields.iter().rev() {
+                if try_remove(assembly, TableId::Field, token.row()) {
+                    removed_fields.insert(*token);
+                    field_count += 1;
+                }
+            }
+            stats.add(TableId::Field, field_count);
+        }
+    }
+
+    // Rescan body tokens after MethodDef cascade — the set may have changed
+    // significantly and both Phase 3 (empty types) and Phase 4 (reference
+    // cascade) need an accurate snapshot.
+    let body_tokens = scan_method_body_tokens(assembly);
+
     // Phase 3: Remove empty types (if enabled)
     // This MUST run before cascade reference cleanup (Phase 4) so that
     // TypeRef/AssemblyRef entries referenced only by empty types (e.g.,
@@ -365,20 +478,27 @@ fn remove_empty_types(
                 continue;
             }
 
-            // Calculate method count for this type
+            // Calculate method count for this type — only count non-deleted rows.
+            // Using the raw range (next_type.method_list - this_type.method_list) is
+            // incorrect after deletions: a type whose methods were all deleted still
+            // has a non-zero range, so we must check each row individually.
             let method_range = list_range(type_rid, type_count, methoddef_count, |rid| {
                 typedef_table.get(rid).map(|t| t.method_list)
             });
-            let method_count = method_range.end.saturating_sub(typedef.method_list);
+            let live_method_count = (typedef.method_list..method_range.end)
+                .filter(|&rid| !assembly.changes().is_row_deleted(TableId::MethodDef, rid))
+                .count();
 
-            // Calculate field count for this type
+            // Calculate field count for this type — same logic.
             let field_range = list_range(type_rid, type_count, field_count, |rid| {
                 typedef_table.get(rid).map(|t| t.field_list)
             });
-            let field_count_type = field_range.end.saturating_sub(typedef.field_list);
+            let live_field_count = (typedef.field_list..field_range.end)
+                .filter(|&rid| !assembly.changes().is_row_deleted(TableId::Field, rid))
+                .count();
 
-            // Type is empty if it has no methods and no fields
-            if method_count == 0 && field_count_type == 0 {
+            // Type is empty if it has no surviving methods and no surviving fields
+            if live_method_count == 0 && live_field_count == 0 {
                 empty.push(type_rid);
             }
         }
@@ -397,6 +517,122 @@ fn remove_empty_types(
     }
 
     (removed, removed_tokens)
+}
+
+/// Collects the complete set of MethodDef tokens that are still alive.
+///
+/// A MethodDef is considered alive if it is referenced from ANY of:
+///
+/// 1. **IL bytecode** — `call`, `callvirt`, `newobj`, `ldftn`, `ldvirtftn`
+///    instructions in surviving method bodies (via `scan_method_body_tokens`)
+/// 2. **MethodSpec.method** — generic instantiations that are themselves
+///    referenced from IL. A MethodSpec token in IL → its underlying MethodDef
+///    is alive.
+/// 3. **CustomAttribute.constructor** — attribute constructors on surviving
+///    entities.
+/// 4. **MethodSemantics.method** — property getters/setters, event add/remove
+///    handlers on surviving types.
+/// 5. **MethodImpl.method_body / method_declaration** — explicit interface
+///    overrides on surviving types.
+fn collect_alive_method_tokens(assembly: &CilAssembly) -> HashSet<Token> {
+    // Start with IL body tokens (all token operands from surviving method bodies).
+    let body_tokens = scan_method_body_tokens(assembly);
+
+    let mut alive: HashSet<Token> = body_tokens
+        .iter()
+        .filter(|t| t.is_table(TableId::MethodDef))
+        .copied()
+        .collect();
+
+    let view = assembly.view();
+    let Some(tables) = view.tables() else {
+        return alive;
+    };
+
+    // MethodSpec.method → if the MethodSpec token is referenced from IL,
+    // the underlying MethodDef is alive.
+    if let Some(methodspec_table) = tables.table::<MethodSpecRaw>() {
+        for row in methodspec_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::MethodSpec, row.rid)
+            {
+                continue;
+            }
+            let spec_token = Token::from_parts(TableId::MethodSpec, row.rid);
+            if body_tokens.contains(&spec_token) && row.method.token.is_table(TableId::MethodDef) {
+                alive.insert(row.method.token);
+            }
+        }
+    }
+
+    // CustomAttribute.constructor → if the attribute is not deleted,
+    // its constructor method is alive.
+    if let Some(attr_table) = tables.table::<CustomAttributeRaw>() {
+        for row in attr_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::CustomAttribute, row.rid)
+            {
+                continue;
+            }
+            if row.constructor.token.is_table(TableId::MethodDef) {
+                alive.insert(row.constructor.token);
+            }
+        }
+    }
+
+    // MethodSemantics.method → property getters/setters, event add/remove.
+    // These are alive if the row itself is not deleted.
+    if let Some(sem_table) = tables.table::<MethodSemanticsRaw>() {
+        for row in sem_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::MethodSemantics, row.rid)
+            {
+                continue;
+            }
+            let method_token = Token::from_parts(TableId::MethodDef, row.method);
+            alive.insert(method_token);
+        }
+    }
+
+    // MethodImpl.method_body / method_declaration → explicit overrides.
+    if let Some(impl_table) = tables.table::<MethodImplRaw>() {
+        for row in impl_table {
+            if assembly
+                .changes()
+                .is_row_deleted(TableId::MethodImpl, row.rid)
+            {
+                continue;
+            }
+            if row.method_body.token.is_table(TableId::MethodDef) {
+                alive.insert(row.method_body.token);
+            }
+            if row.method_declaration.token.is_table(TableId::MethodDef) {
+                alive.insert(row.method_declaration.token);
+            }
+        }
+    }
+
+    alive
+}
+
+/// Collects the complete set of Field tokens that are still alive.
+///
+/// A field is considered alive if it is referenced from any surviving method's
+/// IL bytecode (`ldfld`, `stfld`, `ldsfld`, `stsfld`, `ldflda`, `ldsflda`).
+///
+/// Unlike methods, fields have no equivalent to MethodSemantics/MethodImpl/
+/// CustomAttribute.constructor that would keep them alive independently of IL.
+/// Fields referenced only by FieldRVA/Constant/FieldLayout are dependent
+/// entries that get cleaned up when the field itself is removed.
+fn collect_alive_field_tokens(assembly: &CilAssembly) -> HashSet<Token> {
+    let body_tokens = scan_method_body_tokens(assembly);
+    body_tokens
+        .into_iter()
+        .filter(|t| t.is_table(TableId::Field))
+        .collect()
 }
 
 #[cfg(test)]

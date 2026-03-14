@@ -35,7 +35,7 @@
 //!
 //! The SCCP pass will then fold the combined constants in the next iteration.
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use crate::{
     analysis::{ConstValue, DefUseIndex, SsaFunction, SsaOp, SsaVarId},
@@ -413,7 +413,7 @@ impl SsaPass for ReassociationPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
+        assembly: &CilObject,
     ) -> Result<bool> {
         let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
         let mut changes = EventLog::new();
@@ -437,9 +437,10 @@ impl SsaPass for ReassociationPass {
 
 #[cfg(test)]
 mod tests {
-    use super::OpKind;
-
-    use crate::{analysis::ConstValue, metadata::typesystem::PointerSize};
+    use crate::{
+        analysis::ConstValue, compiler::passes::reassociate::OpKind,
+        metadata::typesystem::PointerSize,
+    };
 
     #[test]
     fn test_op_kind_combine_add() {

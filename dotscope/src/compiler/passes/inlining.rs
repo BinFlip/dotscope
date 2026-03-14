@@ -49,7 +49,7 @@
 //! Proxy devirtualization preserves semantics because the forwarded call
 //! happens exactly once in either case - we're just eliminating the wrapper.
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use crate::{
     analysis::{
@@ -105,7 +105,7 @@ struct InliningContext<'a> {
     /// The analysis context with method summaries, call graph, etc.
     analysis_ctx: &'a CompilerContext,
     /// The assembly for resolving tokens
-    assembly: &'a Arc<CilObject>,
+    assembly: &'a CilObject,
     /// Event log for recording changes
     changes: EventLog,
 }
@@ -128,7 +128,7 @@ impl<'a> InliningContext<'a> {
         caller_ssa: &'a mut SsaFunction,
         caller_token: Token,
         analysis_ctx: &'a CompilerContext,
-        assembly: &'a Arc<CilObject>,
+        assembly: &'a CilObject,
     ) -> Self {
         Self {
             pass,
@@ -1208,7 +1208,7 @@ impl SsaPass for InliningPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
+        assembly: &CilObject,
     ) -> Result<bool> {
         // Create method-specific inlining context
         let mut inline_ctx = InliningContext::new(self, ssa, method_token, ctx, assembly);

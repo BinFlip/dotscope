@@ -36,10 +36,7 @@
 //! pass.run_on_method(&mut ssa, method_token, &ctx, &assembly)?;
 //! ```
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     analysis::{find_token_dependencies, SsaFunction, SsaOp},
@@ -48,9 +45,11 @@ use crate::{
     CilObject, Result,
 };
 
-/// Action to perform on a tainted instruction.
+/// Action to perform on a tainted instruction during neutralization.
 enum InstrAction {
+    /// Replace the instruction with a `Nop` (used for non-terminator instructions).
     Nop,
+    /// Replace a conditional branch with an unconditional `Jump` to the given block.
     Jump(usize),
 }
 
@@ -351,7 +350,7 @@ impl SsaPass for NeutralizationPass<'_> {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        _assembly: &CilObject,
     ) -> Result<bool> {
         let neutralized = self.neutralize_method(ssa);
 

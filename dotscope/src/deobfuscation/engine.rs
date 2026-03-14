@@ -4,7 +4,7 @@
 //! .NET assemblies. It orchestrates detection, analysis, pass execution,
 //! and code generation.
 
-use std::{sync::Arc, time::Instant};
+use std::{collections::HashSet, sync::Arc, time::Instant};
 
 use log::info;
 use rayon::prelude::*;
@@ -15,7 +15,7 @@ use crate::{
     compiler::{
         AlgebraicSimplificationPass, BlockMergingPass, CallSiteInfo, ConstantPropagationPass,
         ControlFlowSimplificationPass, CopyPropagationPass, DeadCodeEliminationPass,
-        DeadMethodEliminationPass, EventKind, EventLog, GlobalValueNumberingPass, InliningPass,
+        DeadMethodEliminationPass, EventKind, GlobalValueNumberingPass, InliningPass,
         JumpThreadingPass, LicmPass, MethodSummary, OpaquePredicatePass, ParameterSummary,
         PassScheduler, ReassociationPass, SsaCodeGenerator, SsaPass, StrengthReductionPass,
         ValueRangePropagationPass,
@@ -24,18 +24,19 @@ use crate::{
         cleanup::execute_cleanup,
         config::EngineConfig,
         context::AnalysisContext,
-        detector::ObfuscatorDetector,
-        findings::DeobfuscationFindings,
-        obfuscators::{utils::validate_cleanup_request, Obfuscator, PassPhase},
         passes::{CffReconstructionPass, DecryptionPass, NeutralizationPass, UnflattenConfig},
         result::DeobfuscationResult,
+        techniques::{
+            Detections, PassPhase, Technique, TechniqueRegistry, TechniqueResult, WorkingAssembly,
+        },
+        EmulationTemplatePool,
     },
     metadata::{
         tables::{MethodDefRaw, TableDataOwned, TableId},
         token::Token,
         validation::ValidationConfig,
     },
-    CilObject, Error, File, Result,
+    CilObject, CleanupRequest, Error, File, Result,
 };
 
 /// Main deobfuscation engine.
@@ -78,10 +79,8 @@ use crate::{
 pub struct DeobfuscationEngine {
     /// Configuration.
     config: EngineConfig,
-    /// Obfuscator detector.
-    detector: ObfuscatorDetector,
-    /// Pass scheduler (owns all pass vectors and orchestrates execution).
-    scheduler: PassScheduler,
+    /// Technique-based deobfuscation registry.
+    registry: TechniqueRegistry,
 }
 
 impl Default for DeobfuscationEngine {
@@ -102,10 +101,21 @@ impl DeobfuscationEngine {
     /// A new `DeobfuscationEngine` instance ready to process assemblies.
     #[must_use]
     pub fn new(config: EngineConfig) -> Self {
+        Self {
+            config,
+            registry: TechniqueRegistry::with_defaults(),
+        }
+    }
+
+    /// Creates a fresh pass scheduler configured from the engine settings.
+    ///
+    /// Called once per run so that each pipeline execution starts with a clean
+    /// scheduler and no stale pass state.
+    fn create_scheduler(&self) -> PassScheduler {
         let mut scheduler = PassScheduler::new(
-            config.max_iterations,
-            config.stable_iterations,
-            config.max_phase_iterations,
+            self.config.max_iterations,
+            self.config.stable_iterations,
+            self.config.max_phase_iterations,
         );
 
         // Phase 1: Structure recovery (control-flow unflattening)
@@ -115,7 +125,7 @@ impl DeobfuscationEngine {
         // Populated by create_deob_passes() after AnalysisContext is built.
 
         // Phase 3: Simplification (opaque predicates + CFG recovery + jump threading + range propagation)
-        if config.enable_opaque_predicate_removal {
+        if self.config.enable_opaque_predicate_removal {
             scheduler
                 .simplify
                 .push(Box::new(OpaquePredicatePass::new()));
@@ -123,7 +133,7 @@ impl DeobfuscationEngine {
                 .simplify
                 .push(Box::new(ValueRangePropagationPass::new()));
         }
-        if config.enable_control_flow_simplification {
+        if self.config.enable_control_flow_simplification {
             scheduler
                 .simplify
                 .push(Box::new(ControlFlowSimplificationPass::new()));
@@ -131,21 +141,22 @@ impl DeobfuscationEngine {
         }
 
         // Phase 4: Proxy/delegate inlining
-        if config.enable_inlining {
-            scheduler
-                .inline
-                .push(Box::new(InliningPass::new(config.inline_threshold, false)));
+        if self.config.enable_inlining {
+            scheduler.inline.push(Box::new(InliningPass::new(
+                self.config.inline_threshold,
+                false,
+            )));
         }
 
         // Normalization passes (run after each structural change in every phase)
-        if config.enable_dead_code_elimination {
+        if self.config.enable_dead_code_elimination {
             scheduler
                 .normalize
                 .push(Box::new(DeadCodeEliminationPass::new()));
             scheduler.normalize.push(Box::new(BlockMergingPass::new()));
             scheduler.normalize.push(Box::new(LicmPass::new()));
         }
-        if config.enable_constant_propagation {
+        if self.config.enable_constant_propagation {
             scheduler.normalize.push(Box::new(ReassociationPass::new()));
             scheduler
                 .normalize
@@ -154,12 +165,12 @@ impl DeobfuscationEngine {
                 .normalize
                 .push(Box::new(GlobalValueNumberingPass::new()));
         }
-        if config.enable_copy_propagation {
+        if self.config.enable_copy_propagation {
             scheduler
                 .normalize
                 .push(Box::new(CopyPropagationPass::new()));
         }
-        if config.enable_strength_reduction {
+        if self.config.enable_strength_reduction {
             scheduler
                 .normalize
                 .push(Box::new(StrengthReductionPass::new()));
@@ -168,25 +179,20 @@ impl DeobfuscationEngine {
                 .push(Box::new(AlgebraicSimplificationPass::new()));
         }
 
-        let mut detector = ObfuscatorDetector::new();
-        detector.set_threshold(config.detection_threshold as usize);
-
-        Self {
-            config,
-            detector,
-            scheduler,
-        }
+        scheduler
     }
 
-    /// Registers an obfuscator with the engine.
+    /// Registers a technique with the engine.
     ///
-    /// Obfuscators provide obfuscator-specific detection and transformation logic.
+    /// Techniques are evaluated during the detection phase and, if detected,
+    /// participate in byte-level transforms and SSA pass creation.
     ///
     /// # Arguments
     ///
-    /// * `obfuscator` - The obfuscator to register, wrapped in an `Arc` for shared ownership.
-    pub fn register_obfuscator(&mut self, obfuscator: Arc<dyn Obfuscator>) {
-        self.detector.register(obfuscator);
+    /// * `technique` - The technique to register. Ownership is transferred to the
+    ///   engine's internal [`TechniqueRegistry`].
+    pub fn register_technique(&mut self, technique: Box<dyn Technique>) {
+        self.registry.register(technique);
     }
 
     /// Processes an assembly through the complete deobfuscation pipeline.
@@ -217,141 +223,113 @@ impl DeobfuscationEngine {
     /// - Obfuscator deobfuscation or postprocessing fails
     /// - Final strict reload fails
     pub fn process_assembly(
-        &mut self,
+        &self,
+        assembly: CilObject,
+    ) -> Result<(CilObject, DeobfuscationResult)> {
+        self.run_technique_pipeline(assembly)
+    }
+
+    /// Runs technique detection on an assembly and returns a [`DeobfuscationResult`].
+    ///
+    /// This is a detection-only API — no transforms are applied. Useful for
+    /// identifying which obfuscator was used without modifying the assembly.
+    /// The returned result contains per-technique detections and attribution
+    /// but no events (since no transforms were run).
+    ///
+    /// # Arguments
+    ///
+    /// * `assembly` - The assembly to detect obfuscation techniques in (read-only).
+    ///
+    /// # Returns
+    ///
+    /// A [`DeobfuscationResult`] containing per-technique detections, attribution,
+    /// and timing information. The `events` field will be empty since no transforms
+    /// are applied.
+    #[must_use]
+    pub fn detect(&self, assembly: &CilObject) -> DeobfuscationResult {
+        let start = Instant::now();
+        let mut detections = Detections::new();
+        let mut technique_results = Vec::new();
+
+        for tech in self.registry.techniques() {
+            if !tech.enabled(&self.config) {
+                continue;
+            }
+            let detection = tech.detect(assembly);
+            if detection.detected {
+                technique_results.push(TechniqueResult {
+                    id: tech.id().to_string(),
+                    detected: true,
+                    transformed: false,
+                    evidence: detection.evidence.clone(),
+                    events: crate::compiler::EventLog::new(),
+                    duration: std::time::Duration::ZERO,
+                });
+            }
+            detections.insert(tech.id(), detection);
+        }
+
+        let attribution = self.registry.compute_attribution(&detections);
+        let attributions = self.registry.compute_attributions_all(&detections);
+        DeobfuscationResult::new_with_techniques(
+            crate::compiler::EventLog::new(),
+            technique_results,
+            attribution,
+        )
+        .with_attributions(attributions)
+        .with_timing(start.elapsed(), 0)
+    }
+
+    /// Runs the technique-based deobfuscation pipeline.
+    ///
+    /// This is the new pipeline that replaces the obfuscator-based one.
+    /// Flow: detect → byte transforms → SSA transforms → neutralize → codegen → cleanup
+    fn run_technique_pipeline(
+        &self,
         assembly: CilObject,
     ) -> Result<(CilObject, DeobfuscationResult)> {
         let start = Instant::now();
+        let mut technique_results: Vec<TechniqueResult> = Vec::new();
 
-        // Phase 1: Detection (borrow, read-only)
-        let (obfuscator, mut findings) = self.detector.detect(&assembly);
-        if let Some(ref obf) = obfuscator {
-            info!(
-                "Detected: {} (score: {})",
-                obf.name(),
-                findings.detection_score()
-            );
-        } else {
-            info!("No obfuscator detected");
-        }
+        // === Phase 1: IL detection ===
+        let mut detections = self.run_il_detection(&assembly);
 
-        // Phase 2: Byte-level deobfuscation (consume → produce)
-        let (assembly, byte_level_events) =
-            self.run_byte_level(assembly, obfuscator.as_ref(), &mut findings)?;
+        // === Phase 2: Byte transforms ===
+        let assembly =
+            self.run_byte_transforms(assembly, &mut detections, &mut technique_results)?;
 
-        // Phase 3: SSA pipeline + code generation + postprocessing (consume → produce)
-        let (assembly, ssa_events, iterations) =
-            self.run_ssa_pipeline(assembly, obfuscator.as_ref(), &findings)?;
+        // === Phase 2.5: Post-transform re-detection ===
+        self.run_post_transform_detection(&assembly, &mut detections);
+        self.record_detected_techniques(&detections, &mut technique_results);
 
-        // Build result by merging all events
-        let events = byte_level_events;
-        events.merge(&ssa_events);
-        let result =
-            DeobfuscationResult::new(events, findings).with_timing(start.elapsed(), iterations);
-
-        info!(
-            "Deobfuscation complete in {:.1}s",
-            start.elapsed().as_secs_f64()
-        );
-        Ok((assembly, result))
-    }
-
-    /// Phase 2: Byte-level deobfuscation.
-    ///
-    /// Runs obfuscator-specific byte-level transformations such as:
-    /// - Anti-tamper decryption
-    /// - Method body decryption
-    /// - Resource unpacking
-    ///
-    /// # Arguments
-    ///
-    /// * `assembly` - The assembly to process (consumed).
-    /// * `detection` - Detection results identifying the obfuscator.
-    ///
-    /// # Returns
-    ///
-    /// A tuple of (processed assembly, event log).
-    fn run_byte_level(
-        &self,
-        assembly: CilObject,
-        obfuscator: Option<&Arc<dyn Obfuscator>>,
-        findings: &mut DeobfuscationFindings,
-    ) -> Result<(CilObject, EventLog)> {
-        let mut events = EventLog::new();
-
-        let assembly = if let Some(obfuscator) = obfuscator {
-            obfuscator.set_config(&self.config);
-            obfuscator.deobfuscate(assembly, &mut events, findings)?
-        } else {
-            assembly
-        };
-
-        Ok((assembly, events))
-    }
-
-    /// Phase 3: SSA pipeline, code generation, and postprocessing.
-    ///
-    /// This phase:
-    /// 1. Reloads the assembly with analysis validation
-    /// 2. Builds the analysis context with call graph and SSA
-    /// 3. Runs interprocedural analysis
-    /// 4. Executes SSA optimization passes
-    /// 5. Generates optimized bytecode
-    /// 6. Runs obfuscator-specific postprocessing (cleanup)
-    ///
-    /// The `AnalysisContext` is created internally and lives for the duration
-    /// of this phase. The assembly is wrapped in `Arc` internally for sharing
-    /// with the context and emulation.
-    ///
-    /// # Arguments
-    ///
-    /// * `assembly` - The assembly to process (consumed).
-    /// * `detection` - Detection results identifying the obfuscator.
-    ///
-    /// # Returns
-    ///
-    /// A tuple of (processed assembly, event log, iteration count).
-    fn run_ssa_pipeline(
-        &mut self,
-        assembly: CilObject,
-        obfuscator: Option<&Arc<dyn Obfuscator>>,
-        findings: &DeobfuscationFindings,
-    ) -> Result<(CilObject, EventLog, usize)> {
-        // Wrap in Arc for shared access during analysis
+        // === Phase 3: SSA pipeline ===
         let assembly_arc = Arc::new(assembly);
-
-        // Build analysis context (doesn't store assembly)
         let ctx = self.build_context(&assembly_arc)?;
 
-        // Initialize context with obfuscator-specific data
-        // This registers decryptors and other state needed by SSA passes
-        if let Some(obfuscator) = obfuscator {
-            obfuscator.initialize_context(&ctx, &assembly_arc, findings);
+        // === Phase 3.5: SSA detection + initialize + create passes ===
+        self.run_ssa_detection(&ctx, &assembly_arc, &mut detections);
+        self.record_detected_techniques(&detections, &mut technique_results);
+        self.initialize_techniques(&ctx, &assembly_arc, &detections);
+
+        // Create shared emulation template pool (only if any technique needs emulation)
+        if Self::needs_emulation(&ctx) {
+            let original_pe_cow = assembly_arc.file().fork_cowfile()?;
+            let pool = Arc::new(EmulationTemplatePool::new(
+                Arc::clone(&assembly_arc),
+                original_pe_cow,
+                Arc::clone(&ctx.emulation_hooks),
+                Arc::clone(&ctx.warmup_methods),
+                Arc::clone(&ctx.statemachine_providers),
+                self.config.clone(),
+            ));
+            pool.warmup()?;
+            let _ = ctx.template_pool.set(pool);
         }
 
-        // Create built-in deob passes first (clears structure/value vectors)
-        self.create_deob_passes(&ctx);
-
-        // Add obfuscator-specific SSA passes AFTER built-in passes so they
-        // aren't wiped by create_deob_passes() clearing structure/value.
-        if let Some(obfuscator) = obfuscator {
-            for (phase, pass) in obfuscator.passes(findings) {
-                match phase {
-                    PassPhase::Structure => self.scheduler.structure.push(pass),
-                    PassPhase::Value => self.scheduler.value.push(pass),
-                    PassPhase::Simplify => self.scheduler.simplify.push(pass),
-                    PassPhase::Inline => self.scheduler.inline.push(pass),
-                    PassPhase::Normalize => self.scheduler.normalize.push(pass),
-                }
-            }
-        }
-
-        // Populate no_inline from dispatchers and registered decryptors
-        for token in ctx.dispatchers.iter() {
-            ctx.compiler.no_inline.insert(*token);
-        }
-        for token in ctx.decryptors.registered_tokens() {
-            ctx.compiler.no_inline.insert(token);
-        }
+        let mut scheduler = self.create_scheduler();
+        self.create_deob_passes(&ctx, &mut scheduler);
+        self.create_technique_passes(&ctx, &assembly_arc, &detections, &mut scheduler);
+        self.configure_no_inline(&ctx);
 
         // Interprocedural analysis
         info!(
@@ -360,92 +338,543 @@ impl DeobfuscationEngine {
         );
         self.run_interprocedural_analysis(&ctx)?;
 
-        // Run SSA optimization passes
+        // Run SSA passes to fixpoint
         info!(
             "Running SSA optimization pipeline (max {} iterations)",
             self.config.max_iterations
         );
-        let mut iterations = self.run_pipeline_on_context(&ctx, &assembly_arc)?;
+        let mut iterations = scheduler.run_pipeline(&ctx, &assembly_arc)?;
 
-        // Run dead method elimination after all passes to identify methods that
-        // became unreachable due to inlining or other transformations.
-        // This uses SSA call information to account for transformations.
+        // === Detection iteration loop ===
+        // After the pipeline stabilizes, re-run SSA detection to discover
+        // techniques that were hidden by earlier passes (e.g., delegate
+        // proxy resolution reveals string decryptor call sites).
+        iterations += self.run_detection_loop(
+            &ctx,
+            &assembly_arc,
+            &mut scheduler,
+            &mut detections,
+            &mut technique_results,
+        )?;
+
+        // Dead method elimination
         if ctx.config.cleanup.remove_unused_methods {
             let dead_method_pass = DeadMethodEliminationPass::new();
             let _ = dead_method_pass.run_global(&ctx, &assembly_arc)?;
         }
 
-        // Get obfuscator's cleanup request and run neutralization pass
-        // This removes instructions that reference protection infrastructure
-        let cleanup_request = if let Some(obfuscator) = obfuscator {
-            if let Some(request) = obfuscator.cleanup_request(&assembly_arc, &ctx, findings)? {
-                // Validate the cleanup request for safety
-                validate_cleanup_request(
-                    &request,
-                    &assembly_arc,
-                    ctx.config.cleanup.remove_unused_methods,
-                );
-                let removed_tokens = request.all_tokens();
-                let mut neutralized = false;
+        // === Phase 4: Neutralization ===
+        // Neutralize references to deleted tokens across ALL SSA-processed methods.
+        // The token set is expanded so that type deletions also cover their member
+        // tokens (fields, methods), which is what SSA instructions actually reference.
+        let merged_cleanup = self.build_cleanup(&ctx, &detections);
 
-                if !removed_tokens.is_empty() {
-                    let pass = NeutralizationPass::new(&removed_tokens);
+        let all_tokens = Self::expand_cleanup_tokens(&merged_cleanup, &assembly_arc);
+        if !all_tokens.is_empty() {
+            let pass = NeutralizationPass::new(&all_tokens);
+            let mut neutralized = false;
 
-                    // Neutralize module .cctor if it exists.
-                    // The .cctor may contain both protection initialization AND legitimate code,
-                    // so we neutralize (partial removal) rather than delete.
-                    if let Some(cctor_token) = assembly_arc.types().module_cctor() {
-                        if let Some(mut ssa) = ctx.ssa_functions.get_mut(&cctor_token) {
-                            if pass.run_on_method(&mut ssa, cctor_token, &ctx, &assembly_arc)? {
-                                neutralized = true;
-                            }
-                        }
+            let method_tokens: Vec<Token> = ctx.ssa_functions.iter().map(|e| *e.key()).collect();
+            for method_token in &method_tokens {
+                if let Some(mut ssa) = ctx.ssa_functions.get_mut(method_token) {
+                    if pass.run_on_method(&mut ssa, *method_token, &ctx, &assembly_arc)? {
+                        neutralized = true;
                     }
                 }
-
-                // After neutralization, re-run the full SSA pass pipeline to fixpoint
-                // This cleans up dead code that fed into neutralized instructions
-                if neutralized {
-                    iterations += self.run_pipeline_on_context(&ctx, &assembly_arc)?;
-                }
-
-                Some(request)
-            } else {
-                None
             }
-        } else {
-            None
-        };
 
-        // Canonicalize all SSA functions before code generation
+            if neutralized {
+                iterations += scheduler.run_pipeline(&ctx, &assembly_arc)?;
+            }
+        }
+
+        // Canonicalize and release
         ctx.canonicalize_all_ssa();
+        drop(scheduler);
 
-        // Unwrap the Arc - we should be the only owner now
+        // Release the emulation template pool's Arc<CilObject> reference
+        // before attempting to unwrap the assembly Arc.
+        if let Some(pool) = ctx.template_pool.get() {
+            pool.release();
+        }
+
         let assembly = Arc::try_unwrap(assembly_arc).map_err(|_| {
             Error::Deobfuscation("Cannot unwrap assembly - still has other references".into())
         })?;
 
-        // Generate code from SSA back to CIL
+        // === Phase 5: Code generation ===
         let (assembly, methods_regenerated) = Self::generate_code(assembly, &ctx)?;
         info!(
             "Code generation: {} method bodies regenerated",
             methods_regenerated
         );
 
-        // Unified cleanup: combine obfuscator cleanup request with dead methods
-        // All cleanup happens in one pass to avoid RID staleness issues.
-        let obfuscator_removals = cleanup_request
-            .as_ref()
-            .map_or(0, |r| r.types_len() + r.methods_len() + r.fields_len());
-        let dead_methods = ctx.dead_methods.len();
+        // === Phase 6: Cleanup ===
         info!(
-            "Cleanup: {} obfuscator artifacts, {} dead methods",
-            obfuscator_removals, dead_methods
+            "Cleanup request: {} types, {} methods, {} fields, {} attributes",
+            merged_cleanup.types_len(),
+            merged_cleanup.methods_len(),
+            merged_cleanup.fields_len(),
+            merged_cleanup.attributes_len(),
         );
+        let cleanup_request =
+            if merged_cleanup.has_deletions() || !merged_cleanup.excluded_sections().is_empty() {
+                Some(merged_cleanup)
+            } else {
+                None
+            };
         let assembly = execute_cleanup(assembly, cleanup_request, &ctx)?;
 
+        // === Phase 7: Attribution ===
+        let attribution = self.registry.compute_attribution(&detections);
+        let attributions = self.registry.compute_attributions_all(&detections);
+
+        // === Build result ===
         let events = ctx.compiler.events.take();
-        Ok((assembly, events, iterations))
+        let result =
+            DeobfuscationResult::new_with_techniques(events, technique_results, attribution)
+                .with_attributions(attributions)
+                .with_timing(start.elapsed(), iterations);
+
+        info!(
+            "Technique pipeline complete in {:.1}s",
+            start.elapsed().as_secs_f64()
+        );
+        Ok((assembly, result))
+    }
+
+    // === Extracted helpers for run_technique_pipeline ===
+
+    /// Phase 1: Run IL-level detection on all enabled techniques.
+    ///
+    /// Iterates all registered techniques, skipping disabled ones, and calls
+    /// [`Technique::detect`] on each. Results are collected into a [`Detections`]
+    /// map keyed by technique ID.
+    ///
+    /// # Arguments
+    ///
+    /// * `assembly` - The assembly to run IL-level detection on.
+    ///
+    /// # Returns
+    ///
+    /// A [`Detections`] map containing detection results for all enabled techniques.
+    fn run_il_detection(&self, assembly: &CilObject) -> Detections {
+        let mut detections = Detections::new();
+        for tech in self.registry.techniques() {
+            if !tech.enabled(&self.config) {
+                continue;
+            }
+            let detection = tech.detect(assembly);
+            if detection.detected {
+                info!("[technique] Detected: {}", tech.name());
+            }
+            detections.insert(tech.id(), detection);
+        }
+        detections
+    }
+
+    /// Phase 2: Run byte-level transforms for detected techniques.
+    ///
+    /// Iterates detected techniques in dependency order and applies their byte-level
+    /// transforms (e.g., anti-tamper decryption, PE section restoration). Transforms
+    /// that modify raw bytes trigger a regeneration of the assembly.
+    ///
+    /// # Arguments
+    ///
+    /// * `assembly` - The assembly to transform (consumed and returned).
+    /// * `detections` - Detection results; updated with transform status.
+    /// * `technique_results` - Accumulated per-technique results for reporting.
+    ///
+    /// # Returns
+    ///
+    /// The transformed [`CilObject`], or an error if regeneration fails.
+    fn run_byte_transforms(
+        &self,
+        assembly: CilObject,
+        detections: &mut Detections,
+        technique_results: &mut Vec<TechniqueResult>,
+    ) -> Result<CilObject> {
+        let mut working = WorkingAssembly::new(assembly);
+        for tech in self.registry.sorted_techniques(detections) {
+            if !detections.is_detected(tech.id()) {
+                continue;
+            }
+            let detection = detections.get(tech.id()).unwrap();
+            let Some(transform_result) = tech.byte_transform(&mut working, detection, detections)
+            else {
+                continue;
+            };
+            let tech_start = Instant::now();
+            match transform_result {
+                Ok(events) => {
+                    technique_results.push(TechniqueResult {
+                        id: tech.id().to_string(),
+                        detected: true,
+                        transformed: true,
+                        evidence: detection.evidence.clone(),
+                        events,
+                        duration: tech_start.elapsed(),
+                    });
+                    detections.mark_transformed(tech.id());
+                    if tech.requires_regeneration() {
+                        working.commit()?;
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[technique] {} transform failed: {}", tech.name(), e);
+                }
+            }
+        }
+        working.into_cilobject()
+    }
+
+    /// Phase 2.5: Re-detect on post-transform assembly.
+    ///
+    /// Byte transforms (e.g. anti-tamper decryption) reveal infrastructure
+    /// patterns that were invisible when method bodies were encrypted.
+    fn run_post_transform_detection(&self, assembly: &CilObject, detections: &mut Detections) {
+        for tech in self.registry.techniques() {
+            if !tech.enabled(&self.config) {
+                continue;
+            }
+            let detection = tech.detect(assembly);
+            if detection.detected {
+                info!("[technique] Post-transform re-detected: {}", tech.name());
+            }
+            // Use merge() not insert(): preserves positive detections from Phase 1
+            // that become invisible after the byte transform consumed the evidence.
+            detections.merge(tech.id(), detection);
+        }
+    }
+
+    /// Records detected techniques into the results list, deduplicating by ID.
+    ///
+    /// Scans all registered techniques and appends a [`TechniqueResult`] for each
+    /// that was detected but not yet recorded. Called after each detection phase
+    /// to capture newly-discovered techniques.
+    ///
+    /// # Arguments
+    ///
+    /// * `detections` - The current detection state.
+    /// * `technique_results` - The results list to append to; existing entries are
+    ///   not duplicated.
+    fn record_detected_techniques(
+        &self,
+        detections: &Detections,
+        technique_results: &mut Vec<TechniqueResult>,
+    ) {
+        for tech in self.registry.techniques() {
+            if let Some(d) = detections.get(tech.id()) {
+                if d.detected {
+                    let already_recorded = technique_results.iter().any(|r| r.id == tech.id());
+                    if !already_recorded {
+                        technique_results.push(TechniqueResult {
+                            id: tech.id().to_string(),
+                            detected: true,
+                            transformed: false,
+                            evidence: d.evidence.clone(),
+                            events: crate::compiler::EventLog::new(),
+                            duration: std::time::Duration::ZERO,
+                        });
+                    }
+                }
+            }
+        }
+    }
+
+    /// Phase 3.5: Run SSA-level detection on all enabled techniques.
+    ///
+    /// Called after SSA functions are built, this runs [`Technique::detect_ssa`]
+    /// on each enabled technique. SSA-level detection can follow def-use chains
+    /// for more precise pattern matching than IL-level detection.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The analysis context containing SSA functions.
+    /// * `assembly` - The assembly for metadata lookups.
+    /// * `detections` - Detection results; merged with SSA-level findings.
+    fn run_ssa_detection(
+        &self,
+        ctx: &AnalysisContext,
+        assembly: &CilObject,
+        detections: &mut Detections,
+    ) {
+        for tech in self.registry.techniques() {
+            if !tech.enabled(&self.config) {
+                continue;
+            }
+            let ssa_det = tech.detect_ssa(ctx, assembly);
+            if ssa_det.detected {
+                info!("[technique] SSA-detected: {}", tech.name());
+            }
+            detections.merge(tech.id(), ssa_det);
+        }
+    }
+
+    /// Initializes detected techniques by registering decryptors, emulation hooks,
+    /// warmup methods, and other state needed by their SSA passes.
+    ///
+    /// Tracks initialization via `ctx.initialized_techniques` to prevent
+    /// double-initialization across detection re-scan rounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The analysis context for registering hooks, warmup methods, etc.
+    /// * `assembly` - The assembly for metadata lookups.
+    /// * `detections` - Detection results with findings for each technique.
+    fn initialize_techniques(
+        &self,
+        ctx: &AnalysisContext,
+        assembly: &CilObject,
+        detections: &Detections,
+    ) {
+        for tech in self.registry.sorted_techniques(detections) {
+            if !detections.is_detected(tech.id()) {
+                continue;
+            }
+            if tech.ssa_phase().is_none() {
+                continue;
+            }
+            if ctx.initialized_techniques.contains(tech.id()) {
+                continue;
+            }
+            let detection = detections.get(tech.id()).unwrap();
+            tech.initialize(ctx, assembly, detection, detections);
+            ctx.initialized_techniques.insert(tech.id().to_string());
+        }
+    }
+
+    /// Creates technique-owned SSA passes and adds them to the scheduler.
+    ///
+    /// For each detected technique with an SSA phase, calls
+    /// [`Technique::create_pass`] and inserts the resulting pass into the
+    /// appropriate phase bucket on the scheduler. Tracks created passes in
+    /// `ctx.passes_created` to prevent duplicate instances when called again
+    /// during detection re-scan rounds.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The analysis context (used for pass creation and dedup tracking).
+    /// * `assembly` - The assembly (shared reference for pass construction).
+    /// * `detections` - Detection results with findings for each technique.
+    /// * `scheduler` - The pass scheduler to add technique passes to.
+    fn create_technique_passes(
+        &self,
+        ctx: &AnalysisContext,
+        assembly: &Arc<CilObject>,
+        detections: &Detections,
+        scheduler: &mut PassScheduler,
+    ) {
+        for tech in self.registry.sorted_techniques(detections) {
+            if !detections.is_detected(tech.id()) {
+                continue;
+            }
+            if ctx.passes_created.contains(tech.id()) {
+                continue;
+            }
+            let Some(phase) = tech.ssa_phase() else {
+                continue;
+            };
+            let detection = detections.get(tech.id()).unwrap();
+            if let Some(pass) = tech.create_pass(ctx, detection, assembly) {
+                match phase {
+                    PassPhase::Structure => scheduler.structure.push(pass),
+                    PassPhase::Value => scheduler.value.push(pass),
+                    PassPhase::Simplify => scheduler.simplify.push(pass),
+                    PassPhase::Inline => scheduler.inline.push(pass),
+                    PassPhase::Normalize => scheduler.normalize.push(pass),
+                }
+                ctx.passes_created.insert(tech.id().to_string());
+            }
+        }
+    }
+
+    /// Marks dispatcher and decryptor methods as non-inlinable.
+    ///
+    /// CFF dispatchers should not be inlined because they are unflattened in
+    /// place. Decryptor methods should not be inlined because the
+    /// [`DecryptionPass`] needs to see them as intact call targets.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The analysis context containing dispatcher and decryptor token sets.
+    fn configure_no_inline(&self, ctx: &AnalysisContext) {
+        for token in ctx.dispatchers.iter() {
+            ctx.compiler.no_inline.insert(*token);
+        }
+        for token in ctx.decryptors.registered_tokens() {
+            ctx.compiler.no_inline.insert(token);
+        }
+    }
+
+    /// Returns `true` if any technique has registered emulation requirements.
+    ///
+    /// Checks for decryptors, warmup methods, emulation hooks, or state machine
+    /// providers — any of which indicate that passes will need emulation.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The analysis context to inspect for emulation requirements.
+    fn needs_emulation(ctx: &AnalysisContext) -> bool {
+        ctx.decryptors.has_decryptors()
+            || ctx.has_warmup_methods()
+            || ctx.has_emulation_hooks()
+            || ctx.has_statemachine_providers()
+    }
+
+    /// Detection iteration loop: re-run SSA detection after the pipeline stabilizes.
+    ///
+    /// After the initial pipeline run reaches fixpoint, some techniques may become
+    /// detectable for the first time (e.g., delegate proxy resolution exposes
+    /// string decryptor call sites). This loop:
+    ///
+    /// 1. Re-runs `detect_ssa()` on all techniques
+    /// 2. Initializes newly-detected techniques
+    /// 3. Creates their passes and adds them to the scheduler
+    /// 4. Re-runs the pipeline
+    ///
+    /// Bounded by `config.max_detection_rounds`.
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The analysis context for detection and pass creation.
+    /// * `assembly` - The assembly (shared reference for detection and passes).
+    /// * `scheduler` - The pass scheduler to add newly-created passes to.
+    /// * `detections` - Detection results; updated with new SSA-level findings.
+    /// * `technique_results` - Accumulated per-technique results for reporting.
+    ///
+    /// # Returns
+    ///
+    /// The total number of additional pipeline iterations executed across all
+    /// detection rounds.
+    fn run_detection_loop(
+        &self,
+        ctx: &AnalysisContext,
+        assembly: &Arc<CilObject>,
+        scheduler: &mut PassScheduler,
+        detections: &mut Detections,
+        technique_results: &mut Vec<TechniqueResult>,
+    ) -> Result<usize> {
+        let mut total_iterations = 0;
+
+        for detection_round in 0..self.config.max_detection_rounds {
+            let mut new_detections = false;
+
+            for tech in self.registry.techniques() {
+                if !tech.enabled(&self.config) {
+                    continue;
+                }
+                let ssa_det = tech.detect_ssa(ctx, assembly);
+                if !ssa_det.detected {
+                    continue;
+                }
+                if detections.is_detected(tech.id()) {
+                    // Already known — merge updated findings but don't count as new
+                    detections.merge(tech.id(), ssa_det);
+                    continue;
+                }
+                info!(
+                    "[technique] Re-detected (round {}): {}",
+                    detection_round + 1,
+                    tech.name()
+                );
+                detections.merge(tech.id(), ssa_det);
+                new_detections = true;
+            }
+
+            if !new_detections {
+                break;
+            }
+
+            // Record newly detected techniques
+            self.record_detected_techniques(detections, technique_results);
+
+            // Initialize newly-detected techniques
+            self.initialize_techniques(ctx, assembly, detections);
+
+            // Create passes for newly-detected techniques (skips already-created)
+            self.create_technique_passes(ctx, assembly, detections, scheduler);
+
+            // Update no-inline sets for new decryptors
+            self.configure_no_inline(ctx);
+
+            // Re-run pipeline
+            total_iterations += scheduler.run_pipeline(ctx, assembly)?;
+        }
+
+        Ok(total_iterations)
+    }
+
+    /// Builds the merged cleanup request from all detected techniques and decryptors.
+    ///
+    /// Iterates all detected techniques in dependency order, collects their
+    /// individual cleanup requests (types, methods, fields to remove), and merges
+    /// them into a single [`CleanupRequest`]. Also adds methods from fully-emulated
+    /// decryptors that are now safe to remove.
+    ///
+    /// This request is used by both the neutralization pass (to know which tokens
+    /// to neutralize) and the final cleanup phase (to perform the actual deletions).
+    fn build_cleanup(&self, ctx: &AnalysisContext, detections: &Detections) -> CleanupRequest {
+        let mut merged_cleanup = detections.merged_cleanup();
+        for tech in self.registry.sorted_techniques(detections) {
+            if !detections.is_detected(tech.id()) {
+                continue;
+            }
+            let detection = detections.get(tech.id()).unwrap();
+            if let Some(tech_cleanup) = tech.cleanup(detection) {
+                merged_cleanup.merge(&tech_cleanup);
+            }
+        }
+
+        // Add decryptors that were fully emulated and are now safe to remove.
+        for token in ctx.decryptors.removable_decryptors() {
+            merged_cleanup.add_method(token);
+        }
+
+        merged_cleanup
+    }
+
+    /// Expands a cleanup request's token set to include member tokens of deleted types.
+    ///
+    /// The cleanup request stores [`TypeDef`](TableId::TypeDef) tokens for types
+    /// scheduled for deletion, but SSA instructions reference their members via
+    /// [`Field`](TableId::Field) and [`MethodDef`](TableId::MethodDef) tokens.
+    /// Without expansion, the neutralization pass cannot match instructions that
+    /// load fields or call methods belonging to deleted types.
+    ///
+    /// For each type in the request, this collects all its field and method tokens
+    /// from the type registry and adds them to the token set.
+    ///
+    /// # Arguments
+    ///
+    /// * `request` - The merged cleanup request containing types, methods, and
+    ///   fields scheduled for deletion.
+    /// * `assembly` - The assembly whose type registry is used to resolve type
+    ///   members.
+    ///
+    /// # Returns
+    ///
+    /// A [`HashSet`] containing all tokens from the request plus the expanded
+    /// member tokens. Returns the original token set unchanged if no types are
+    /// scheduled for deletion.
+    fn expand_cleanup_tokens(request: &CleanupRequest, assembly: &CilObject) -> HashSet<Token> {
+        let mut tokens = request.all_tokens();
+        let registry = assembly.types();
+
+        for type_token in request.types() {
+            if let Some(cil_type) = registry.get(type_token) {
+                for (_, field) in cil_type.fields.iter() {
+                    tokens.insert(field.token);
+                }
+                for (_, method_ref) in cil_type.methods.iter() {
+                    if let Some(method) = method_ref.upgrade() {
+                        tokens.insert(method.token);
+                    }
+                }
+            }
+        }
+
+        tokens
     }
 
     /// Entry point: Process assembly from file path.
@@ -537,30 +966,121 @@ impl DeobfuscationEngine {
     /// - SSA construction fails for the method
     /// - Any pass returns an error
     pub fn process_method(
-        &mut self,
+        &self,
         assembly: CilObject,
         method_token: Token,
     ) -> Result<(SsaFunction, DeobfuscationResult)> {
         let start = Instant::now();
+        let mut technique_results: Vec<TechniqueResult> = Vec::new();
 
         // Phase 1: Detection
-        let (obfuscator, mut findings) = self.detector.detect(&assembly);
-
-        // Phase 2: Byte-level deobfuscation (anti-tamper, etc.)
-        let (assembly, byte_events) =
-            self.run_byte_level(assembly, obfuscator.as_ref(), &mut findings)?;
-        let assembly = Arc::new(assembly);
-
-        // Phase 3: Build context with full obfuscator initialization
-        let ctx = self.build_context(&assembly)?;
-
-        // Initialize context with obfuscator-specific data (decryptors, MethodSpec mappings)
-        if let Some(obfuscator) = obfuscator.as_ref() {
-            obfuscator.initialize_context(&ctx, &assembly, &findings);
+        let mut detections = Detections::new();
+        for tech in self.registry.techniques() {
+            if !tech.enabled(&self.config) {
+                continue;
+            }
+            let detection = tech.detect(&assembly);
+            if detection.detected {
+                info!("[technique] Detected: {}", tech.name());
+            }
+            detections.insert(tech.id(), detection);
         }
 
-        // Create deob passes that share state with the AnalysisContext
-        self.create_deob_passes(&ctx);
+        // Phase 2: Byte transforms
+        let mut working = WorkingAssembly::new(assembly);
+        for tech in self.registry.sorted_techniques(&detections) {
+            if !detections.is_detected(tech.id()) {
+                continue;
+            }
+            let detection = detections.get(tech.id()).unwrap();
+            let Some(transform_result) = tech.byte_transform(&mut working, detection, &detections)
+            else {
+                continue;
+            };
+            let tech_start = Instant::now();
+            match transform_result {
+                Ok(events) => {
+                    technique_results.push(TechniqueResult {
+                        id: tech.id().to_string(),
+                        detected: true,
+                        transformed: true,
+                        evidence: detection.evidence.clone(),
+                        events,
+                        duration: tech_start.elapsed(),
+                    });
+                    detections.mark_transformed(tech.id());
+                    if tech.requires_regeneration() {
+                        working.commit()?;
+                    }
+                }
+                Err(e) => {
+                    log::warn!("[technique] {} transform failed: {}", tech.name(), e);
+                }
+            }
+        }
+        let assembly = working.into_cilobject()?;
+
+        // Phase 2.5: Re-detect on post-transform assembly
+        for tech in self.registry.techniques() {
+            if !tech.enabled(&self.config) {
+                continue;
+            }
+            let detection = tech.detect(&assembly);
+            if detection.detected {
+                info!("[technique] Post-transform detected: {}", tech.name());
+            }
+            detections.merge(tech.id(), detection);
+        }
+
+        // Phase 3: Build context and initialize techniques
+        let assembly = Arc::new(assembly);
+        let ctx = self.build_context(&assembly)?;
+
+        // Phase 3.5: SSA-level detection
+        for tech in self.registry.techniques() {
+            if !tech.enabled(&self.config) {
+                continue;
+            }
+            let ssa_det = tech.detect_ssa(&ctx, &assembly);
+            if ssa_det.detected {
+                info!("[technique] SSA-detected: {}", tech.name());
+            }
+            detections.merge(tech.id(), ssa_det);
+        }
+
+        for tech in self.registry.sorted_techniques(&detections) {
+            if !detections.is_detected(tech.id()) {
+                continue;
+            }
+            if tech.ssa_phase().is_none() {
+                continue;
+            }
+            let detection = detections.get(tech.id()).unwrap();
+            tech.initialize(&ctx, &assembly, detection, &detections);
+        }
+
+        // Create scheduler with compiler + technique passes
+        let mut scheduler = self.create_scheduler();
+        self.create_deob_passes(&ctx, &mut scheduler);
+
+        for tech in self.registry.sorted_techniques(&detections) {
+            if !detections.is_detected(tech.id()) {
+                continue;
+            }
+            let Some(phase) = tech.ssa_phase() else {
+                continue;
+            };
+            let detection = detections.get(tech.id()).unwrap();
+            if let Some(pass) = tech.create_pass(&ctx, detection, &assembly) {
+                match phase {
+                    PassPhase::Structure => scheduler.structure.push(pass),
+                    PassPhase::Value => scheduler.value.push(pass),
+                    PassPhase::Simplify => scheduler.simplify.push(pass),
+                    PassPhase::Inline => scheduler.inline.push(pass),
+                    PassPhase::Normalize => scheduler.normalize.push(pass),
+                }
+            }
+        }
 
         // Extract just the target method's SSA, process only this method
         let target_ssa = ctx
@@ -575,7 +1095,7 @@ impl DeobfuscationEngine {
         ctx.add_entry_point(method_token);
 
         // Run SSA optimization passes
-        let iterations = self.run_pipeline_on_context(&ctx, &assembly)?;
+        let iterations = scheduler.run_pipeline(&ctx, &assembly)?;
 
         // Extract and canonicalize
         let (_, mut final_ssa) = ctx
@@ -585,11 +1105,13 @@ impl DeobfuscationEngine {
 
         final_ssa.canonicalize();
 
-        // Merge events
-        let events = byte_events;
-        events.merge(&ctx.events.take());
+        let events = ctx.compiler.events.take();
+        let attribution = self.registry.compute_attribution(&detections);
+        let attributions = self.registry.compute_attributions_all(&detections);
         let result =
-            DeobfuscationResult::new(events, findings).with_timing(start.elapsed(), iterations);
+            DeobfuscationResult::new_with_techniques(events, technique_results, attribution)
+                .with_attributions(attributions)
+                .with_timing(start.elapsed(), iterations);
 
         Ok((final_ssa, result))
     }
@@ -618,7 +1140,7 @@ impl DeobfuscationEngine {
     ///
     /// Returns an error if any pass returns an error.
     pub fn process_ssa(
-        &mut self,
+        &self,
         assembly: &Arc<CilObject>,
         ssa: &mut SsaFunction,
         method_token: Token,
@@ -629,8 +1151,9 @@ impl DeobfuscationEngine {
         let call_graph = Arc::new(CallGraph::new());
         let ctx = AnalysisContext::new(call_graph);
 
-        // Create deob passes that share state with the AnalysisContext
-        self.create_deob_passes(&ctx);
+        // Create a fresh scheduler and populate deob passes
+        let mut scheduler = self.create_scheduler();
+        self.create_deob_passes(&ctx, &mut scheduler);
 
         // Take ownership of SSA temporarily
         let ssa_owned = std::mem::replace(ssa, SsaFunction::new(0, 0));
@@ -638,7 +1161,7 @@ impl DeobfuscationEngine {
         ctx.add_entry_point(method_token);
 
         // Run the pipeline
-        let iterations = self.run_pipeline_on_context(&ctx, assembly)?;
+        let iterations = scheduler.run_pipeline(&ctx, assembly)?;
 
         // Extract and canonicalize the SSA, then return it via the mutable reference
         let (_, mut final_ssa) = ctx
@@ -651,45 +1174,34 @@ impl DeobfuscationEngine {
 
         let events = ctx.events.take();
         Ok(
-            DeobfuscationResult::new(events, DeobfuscationFindings::new())
+            DeobfuscationResult::new_with_techniques(events, Vec::new(), None)
                 .with_timing(start.elapsed(), iterations),
         )
     }
 
-    /// Creates deobfuscation-specific passes that share state with the analysis context.
+    /// Creates infrastructure deobfuscation passes.
     ///
-    /// Called after `build_context` and `initialize_context` to populate the
-    /// structure (CFF unflattening) and value (decryption) pass vectors.
-    fn create_deob_passes(&mut self, ctx: &AnalysisContext) {
-        self.scheduler.structure.clear();
-        self.scheduler.value.clear();
-        if self.config.enable_control_flow_simplification {
-            self.scheduler
-                .structure
-                .push(Box::new(CffReconstructionPass::new(
-                    ctx,
-                    UnflattenConfig::default(),
-                )));
-        }
-        if self.config.enable_string_decryption {
-            self.scheduler
-                .value
-                .push(Box::new(DecryptionPass::new(ctx)));
-        }
-    }
+    /// Adds only the passes that are not owned by any specific technique:
+    /// - [`DecryptionPass`]: shared by all string/constant decryption techniques
+    ///   (ConfuserEx, BitMono, Obfuscar, Generic strings/constants)
+    ///
+    /// Technique-owned passes (`OpaqueFieldPredicatePass`, `CffReconstructionPass`)
+    /// are created by their respective techniques via [`SsaTechnique::create_pass`]
+    /// and added separately by the technique pipeline.
+    fn create_deob_passes(&self, ctx: &AnalysisContext, scheduler: &mut PassScheduler) {
+        // CFF reconstruction runs unconditionally — it benefits all assemblies
+        // regardless of whether CFF was explicitly detected, and is harmless
+        // on non-CFF methods.
+        scheduler
+            .structure
+            .push(Box::new(CffReconstructionPass::new(
+                ctx,
+                UnflattenConfig::default(),
+            )));
 
-    /// Runs the deobfuscation pipeline on an already-prepared context.
-    ///
-    /// This is the shared internal implementation used by all public APIs.
-    /// The context must already have SSA functions loaded.
-    ///
-    /// Returns the number of iterations. Events are accumulated in `ctx.events`.
-    fn run_pipeline_on_context(
-        &mut self,
-        ctx: &AnalysisContext,
-        assembly: &Arc<CilObject>,
-    ) -> Result<usize> {
-        self.scheduler.run_pipeline(ctx, assembly)
+        if self.config.enable_string_decryption {
+            scheduler.value.push(Box::new(DecryptionPass::new(ctx)));
+        }
     }
 
     /// Generates bytecode from optimized SSA and writes it back to the assembly.
@@ -963,7 +1475,17 @@ impl DeobfuscationEngine {
 
     /// Runs interprocedural analysis on all methods.
     ///
-    /// Performs bottom-up summary computation and top-down constant propagation.
+    /// Performs interprocedural analysis: bottom-up summary computation followed
+    /// by top-down constant propagation.
+    ///
+    /// In the bottom-up phase, iterates methods in reverse topological order
+    /// (leaves first) to compute [`MethodSummary`] for each — return info,
+    /// purity, parameter analysis, inlining candidacy, and pattern detection
+    /// (string decryptors, dispatchers).
+    ///
+    /// In the top-down phase, collects call-site information from callers and
+    /// propagates constant arguments to callee parameter summaries, enabling
+    /// interprocedural constant propagation during SSA optimization.
     #[allow(clippy::unnecessary_wraps)] // Returns Result for API consistency with other analysis phases
     fn run_interprocedural_analysis(&self, ctx: &AnalysisContext) -> Result<()> {
         // Bottom-up: compute summaries from leaves to roots
@@ -992,7 +1514,11 @@ impl DeobfuscationEngine {
         Ok(())
     }
 
-    /// Computes the summary for a single method.
+    /// Computes the [`MethodSummary`] for a single method from its SSA representation.
+    ///
+    /// Analyzes return behavior, side-effect purity, parameter usage, instruction
+    /// count, inlining candidacy (pure + below threshold), and pattern detection
+    /// for string decryptors and CFF dispatchers.
     fn compute_method_summary(&self, ssa: &SsaFunction, token: Token) -> MethodSummary {
         let mut summary = MethodSummary::new(token);
 
@@ -1148,8 +1674,7 @@ mod tests {
         },
         compiler::EventLog,
         deobfuscation::{
-            config::EngineConfig, engine::DeobfuscationEngine, findings::DeobfuscationFindings,
-            result::DeobfuscationResult,
+            config::EngineConfig, engine::DeobfuscationEngine, result::DeobfuscationResult,
         },
         metadata::token::Token,
     };
@@ -1178,15 +1703,16 @@ mod tests {
     #[test]
     fn test_pipeline_passes_default() {
         let engine = DeobfuscationEngine::default();
+        let scheduler = engine.create_scheduler();
 
         // Deob passes (structure, value) start empty — populated by create_deob_passes()
         // after detection builds an AnalysisContext.
-        assert!(engine.scheduler.structure.is_empty()); // Populated later with CffReconstructionPass
-        assert!(engine.scheduler.value.is_empty()); // Populated later with DecryptionPass
+        assert!(scheduler.structure.is_empty()); // Populated later with CffReconstructionPass
+        assert!(scheduler.value.is_empty()); // Populated later with DecryptionPass
 
         // Generic compiler passes are always present from the constructor.
-        assert!(!engine.scheduler.simplify.is_empty()); // Opaque predicates + CFG (Phase 3)
-        assert!(!engine.scheduler.normalize.is_empty()); // DCE, constant prop, GVN, copy prop, strength reduction
+        assert!(!scheduler.simplify.is_empty()); // Opaque predicates + CFG (Phase 3)
+        assert!(!scheduler.normalize.is_empty()); // DCE, constant prop, GVN, copy prop, strength reduction
     }
 
     #[test]
@@ -1203,12 +1729,13 @@ mod tests {
         };
 
         let engine = DeobfuscationEngine::new(config);
+        let scheduler = engine.create_scheduler();
 
         // Reassociation + constant propagation + GVN should be in normalize
-        assert_eq!(engine.scheduler.normalize.len(), 3); // ReassociationPass + ConstantPropagationPass + GVN
-        assert!(engine.scheduler.simplify.is_empty()); // No opaque pred or CFG
-        assert!(engine.scheduler.structure.is_empty()); // No unflattening
-        assert!(engine.scheduler.value.is_empty()); // No decryption
+        assert_eq!(scheduler.normalize.len(), 3); // ReassociationPass + ConstantPropagationPass + GVN
+        assert!(scheduler.simplify.is_empty()); // No opaque pred or CFG
+        assert!(scheduler.structure.is_empty()); // No unflattening
+        assert!(scheduler.value.is_empty()); // No decryption
     }
 
     #[test]
@@ -1483,7 +2010,7 @@ mod tests {
 
     #[test]
     fn test_deobfuscation_result_summary() {
-        let result = DeobfuscationResult::new(EventLog::new(), DeobfuscationFindings::new());
+        let result = DeobfuscationResult::new_with_techniques(EventLog::new(), Vec::new(), None);
 
         // summary() returns just the stats (no prefix)
         let summary = result.summary();
@@ -1492,6 +2019,5 @@ mod tests {
         // detailed_summary() includes detection info
         let detailed = result.detailed_summary();
         assert!(detailed.contains("Deobfuscation complete"));
-        assert!(detailed.contains("Detection"));
     }
 }

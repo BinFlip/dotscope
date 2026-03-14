@@ -327,8 +327,8 @@ impl OwnedDependencyValidator {
                 // A type is local (from target assembly) if get_external() returns None.
                 // A type is external if get_external() returns Some(...).
                 if base_type.token == type_entry.token {
-                    let type_is_local = type_entry.get_external().is_none();
-                    let base_is_local = base_type.get_external().is_none();
+                    let type_is_local = type_entry.external().is_none();
+                    let base_is_local = base_type.external().is_none();
 
                     // Only flag self-reference if both are local (same assembly)
                     // or both are external from the same source
@@ -363,8 +363,8 @@ impl OwnedDependencyValidator {
                     // Check for self-referential interface implementation
                     // Only flag if both types are from the same assembly
                     if interface_type.token == type_entry.token {
-                        let type_is_local = type_entry.get_external().is_none();
-                        let interface_is_local = interface_type.get_external().is_none();
+                        let type_is_local = type_entry.external().is_none();
+                        let interface_is_local = interface_type.external().is_none();
 
                         let is_same_assembly =
                             matches!((type_is_local, interface_is_local), (true, true));
@@ -389,8 +389,8 @@ impl OwnedDependencyValidator {
                     // Check for self-referential nested type containment
                     // Only flag if both types are from the same assembly
                     if nested_type.token == type_entry.token {
-                        let type_is_local = type_entry.get_external().is_none();
-                        let nested_is_local = nested_type.get_external().is_none();
+                        let type_is_local = type_entry.external().is_none();
+                        let nested_is_local = nested_type.external().is_none();
 
                         let is_same_assembly =
                             matches!((type_is_local, nested_is_local), (true, true));

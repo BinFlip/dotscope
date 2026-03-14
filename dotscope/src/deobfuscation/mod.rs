@@ -1,12 +1,12 @@
 //! Deobfuscation framework for .NET assemblies.
 //!
 //! This module provides a comprehensive deobfuscation system built on SSA
-//! (Static Single Assignment) form. The key insight is that SSA provides
-//! explicit def-use chains that make value tracking and propagation natural.
+//! (Static Single Assignment) form and a technique-oriented architecture
+//! where each protection type is a self-contained module.
 //!
 //! # Architecture
 //!
-//! The deobfuscation system is SSA-centric:
+//! The deobfuscation pipeline is technique-oriented:
 //!
 //! ```text
 //! ┌─────────────────────────────────────────────────────────────────────────┐
@@ -15,54 +15,43 @@
 //! │  Input: Assembly (CilObject)                                            │
 //! │           │                                                             │
 //! │           ▼                                                             │
-//! │  ┌─────────────────────────────────────────────────────────────────┐   │
-//! │  │                    Obfuscator Detection                          │   │
-//! │  │  Obfuscator-based detection with confidence scoring              │   │
-//! │  └────────────────────────────┬────────────────────────────────────┘   │
-//! │                               │                                         │
-//! │                               ▼                                         │
-//! │  ┌─────────────────────────────────────────────────────────────────┐   │
-//! │  │                    Build SSA & Analysis Context                  │   │
-//! │  │  CFG → Dominance → Phi Placement → Interprocedural Analysis     │   │
-//! │  └────────────────────────────┬────────────────────────────────────┘   │
-//! │                               │                                         │
-//! │                               ▼                                         │
-//! │  ┌─────────────────────────────────────────────────────────────────┐   │
-//! │  │                    Pass Scheduler (Fixpoint)                     │   │
-//! │  │  ┌───────────────────────────────────────────────────────────┐  │   │
-//! │  │  │ Run passes in priority order until no more changes:       │  │   │
-//! │  │  │                                                           │  │   │
-//! │  │  │  Value Propagation & Folding:                             │  │   │
-//! │  │  │  • Constant Propagation (SCCP-based)                      │  │   │
-//! │  │  │  • Copy Propagation / Phi Simplification                  │  │   │
-//! │  │  │  • Global Value Numbering (CSE)                           │  │   │
-//! │  │  │  • Strength Reduction                                     │  │   │
-//! │  │  │                                                           │  │   │
-//! │  │  │  Control Flow Recovery:                                   │  │   │
-//! │  │  │  • Control Flow Simplification (jump threading)           │  │   │
-//! │  │  │  • Control Flow Unflattening (dispatcher removal)         │  │   │
-//! │  │  │  • Enhanced Unflattening (SCCP + emulation)               │  │   │
-//! │  │  │  • Loop Canonicalization (preheader/latch insertion)      │  │   │
-//! │  │  │                                                           │  │   │
-//! │  │  │  Dead Code Elimination:                                   │  │   │
-//! │  │  │  • Dead Code Elimination (unreachable blocks)             │  │   │
-//! │  │  │  • Dead Method Elimination (unused methods)               │  │   │
-//! │  │  │                                                           │  │   │
-//! │  │  │  Predicate & Condition Handling:                          │  │   │
-//! │  │  │  • Opaque Predicate Removal                               │  │   │
-//! │  │  │                                                           │  │   │
-//! │  │  │  String & Data Recovery:                                  │  │   │
-//! │  │  │  • String Decryption (emulation-based)                    │  │   │
-//! │  │  │  • String Pattern Matching (lightweight)                  │  │   │
-//! │  │  │                                                           │  │   │
-//! │  │  │  Method Optimization:                                     │  │   │
-//! │  │  │  • Small Method Inlining                                  │  │   │
-//! │  │  └───────────────────────────────────────────────────────────┘  │   │
-//! │  │  Repeat until fixpoint (no more changes)                        │   │
-//! │  └────────────────────────────┬────────────────────────────────────┘   │
-//! │                               │                                         │
-//! │                               ▼                                         │
-//! │  Output: DeobfuscationResult (stats, changes, detection info)          │
+//! │  Phase 1: Technique Detection                                           │
+//! │  • Each registered technique runs detect() on the assembly              │
+//! │  • Produces Detection with confidence, evidence, and findings           │
+//! │           │                                                             │
+//! │           ▼                                                             │
+//! │  Phase 2: Byte-level Transforms (Technique::byte_transform)             │
+//! │  • Anti-tamper decryption, metadata repair, resource extraction         │
+//! │  • PE regeneration between transforms                                   │
+//! │           │                                                             │
+//! │           ▼                                                             │
+//! │  Phase 2.5: Re-detect SSA Techniques                                    │
+//! │  • Byte transforms may reveal new patterns in decrypted method bodies   │
+//! │           │                                                             │
+//! │           ▼                                                             │
+//! │  Phase 3: SSA Pipeline (Technique::ssa_phase + create_pass)             │
+//! │  • Build SSA, interprocedural analysis                                  │
+//! │  • Technique initialization (register decryptors, hooks, etc.)          │
+//! │  • Technique-provided passes + compiler passes in fixpoint scheduler    │
+//! │           │                                                             │
+//! │           ▼                                                             │
+//! │  Phase 4: Neutralization                                                │
+//! │  • Remove protection infrastructure from module .cctor                  │
+//! │           │                                                             │
+//! │           ▼                                                             │
+//! │  Phase 5: Code Generation                                               │
+//! │  • Generate CIL bytecode from optimized SSA                             │
+//! │           │                                                             │
+//! │           ▼                                                             │
+//! │  Phase 6: Cleanup                                                       │
+//! │  • Remove dead types, methods, fields, and metadata artifacts           │
+//! │           │                                                             │
+//! │           ▼                                                             │
+//! │  Phase 7: Attribution                                                   │
+//! │  • Identify obfuscator from technique detection signatures              │
+//! │           │                                                             │
+//! │           ▼                                                             │
+//! │  Output: DeobfuscationResult (stats, technique results, attribution)   │
 //! └─────────────────────────────────────────────────────────────────────────┘
 //! ```
 //!
@@ -70,88 +59,27 @@
 //!
 //! ## Engine
 //!
-//! The main entry point for deobfuscation ([`crate::deobfuscation::DeobfuscationEngine`]):
+//! [`DeobfuscationEngine`](crate::deobfuscation::DeobfuscationEngine) is the main entry point:
 //!
-//! - Orchestrates detection, analysis, pass execution, and postprocessing
-//! - Manages obfuscator support for detection and specialized handling
+//! - Orchestrates detection, byte transforms, SSA passes, and cleanup
+//! - Manages the [`TechniqueRegistry`](crate::deobfuscation::TechniqueRegistry) of all registered techniques
 //! - Coordinates the pass scheduler for fixpoint iteration
 //!
-//! ## Obfuscator System
+//! ## Technique System
 //!
-//! Extensible obfuscator detection and handling ([`crate::deobfuscation::Obfuscator`]):
+//! Each protection technique is a self-contained module implementing:
 //!
-//! - [`crate::deobfuscation::ObfuscatorDetector`] - Runs obfuscators to identify which one was used
-//! - [`crate::deobfuscation::ObfuscatorRegistry`] - Manages registered obfuscators
-//! - [`crate::deobfuscation::DetectionScore`] / [`crate::deobfuscation::DeobfuscationFindings`] - Confidence-based detection with findings
-//!
-//! ### Built-in Obfuscators
-//!
-//! - [`ConfuserExObfuscator`](crate::deobfuscation::ConfuserExObfuscator) — ConfuserEx (all standard protections)
-//! - [`ObfuscarObfuscator`](crate::deobfuscation::ObfuscarObfuscator) — Obfuscar (string encryption, renaming)
-//! - [`BitMonoObfuscator`](crate::deobfuscation::BitMonoObfuscator) — BitMono (16 protections including PE repair)
+//! - [`Technique`](crate::deobfuscation::Technique) — unified trait: `detect()`, `byte_transform()`, `ssa_phase()`, `detect_ssa()`, etc.
 //!
 //! ## Pass System
 //!
 //! SSA-based transformation passes ([`crate::compiler::SsaPass`]):
 //!
-//! - [`crate::compiler::PassScheduler`] - Manages pass execution order and fixpoint iteration
-//! - [`crate::compiler::EventLog`] - Tracks changes made by passes
-//! - [`crate::deobfuscation::AnalysisContext`] - Shared interprocedural analysis data
-//!
-//! # Built-in Passes
-//!
-//! The framework includes a comprehensive set of SSA transformation passes.
-//! See the [`compiler`](crate::compiler) module for detailed documentation of each pass.
-//!
-//! ## Value Propagation & Folding
-//!
-//! | Pass | Description |
-//! |------|-------------|
-//! | [`ConstantPropagationPass`](crate::compiler::ConstantPropagationPass) | Propagates and folds constant values using SCCP |
-//! | [`CopyPropagationPass`](crate::compiler::CopyPropagationPass) | Eliminates redundant copy operations and phi nodes |
-//! | [`GlobalValueNumberingPass`](crate::compiler::GlobalValueNumberingPass) | Eliminates redundant computations via value numbering |
-//! | [`StrengthReductionPass`](crate::compiler::StrengthReductionPass) | Replaces expensive operations with cheaper equivalents |
-//!
-//! ## Control Flow Recovery
-//!
-//! | Pass | Description |
-//! |------|-------------|
-//! | [`ControlFlowSimplificationPass`](crate::compiler::ControlFlowSimplificationPass) | Jump threading, branch simplification, dead tail removal |
-//! | [`CffReconstructionPass`](crate::deobfuscation::CffReconstructionPass) | Z3-backed dispatcher analysis and CFG reconstruction |
-//! | [`LoopCanonicalizationPass`](crate::compiler::LoopCanonicalizationPass) | Ensures loops have single preheaders and latches |
-//!
-//! ## Dead Code Elimination
-//!
-//! | Pass | Description |
-//! |------|-------------|
-//! | [`DeadCodeEliminationPass`](crate::compiler::DeadCodeEliminationPass) | Removes unreachable blocks and unused definitions |
-//! | [`DeadMethodEliminationPass`](crate::compiler::DeadMethodEliminationPass) | Identifies and marks methods with no live callers |
-//!
-//! ## Predicate & Condition Handling
-//!
-//! | Pass | Description |
-//! |------|-------------|
-//! | [`OpaquePredicatePass`](crate::compiler::OpaquePredicatePass) | Removes always-true/false conditions, simplifies comparisons |
-//!
-//! ## Decryption
-//!
-//! | Pass | Description |
-//! |------|-------------|
-//! | [`DecryptionPass`](crate::deobfuscation::DecryptionPass) | Decrypts values via emulation of registered decryptor methods |
-//!
-//! Decryptors are registered via:
-//! - Obfuscator-specific detection (e.g., ConfuserEx pattern matching)
-//! - Heuristic detection for generic signature-based detection
-//!
-//! ## Method Optimization
-//!
-//! | Pass | Description |
-//! |------|-------------|
-//! | [`InliningPass`](crate::compiler::InliningPass) | Inlines small methods and constant-returning functions |
+//! - [`crate::compiler::PassScheduler`] — Manages pass execution order and fixpoint iteration
+//! - [`crate::compiler::EventLog`] — Tracks changes made by passes
+//! - [`AnalysisContext`](crate::deobfuscation::AnalysisContext) — Shared interprocedural analysis data
 //!
 //! # Usage
-//!
-//! ## Basic Usage
 //!
 //! ```rust,ignore
 //! use dotscope::deobfuscation::{DeobfuscationEngine, EngineConfig};
@@ -159,34 +87,8 @@
 //! let config = EngineConfig::default();
 //! let mut engine = DeobfuscationEngine::new(config);
 //!
-//! let mut assembly = CilObject::from_path("obfuscated.dll")?;
-//! let result = engine.process_file(&mut assembly)?;
-//!
+//! let (deobfuscated, result) = engine.process_file("obfuscated.dll")?;
 //! println!("{}", result.summary());
-//! ```
-//!
-//! ## Custom Configuration
-//!
-//! ```rust,no_run
-//! use dotscope::deobfuscation::{DeobfuscationEngine, EngineConfig};
-//!
-//! let config = EngineConfig {
-//!     max_iterations: 50,
-//!     inline_threshold: 30,
-//!     emulation_max_instructions: 50000,
-//!     ..Default::default()
-//! };
-//!
-//! let mut engine = DeobfuscationEngine::new(config);
-//! ```
-//!
-//! ## Adding Custom Obfuscators
-//!
-//! ```rust,ignore
-//! use dotscope::deobfuscation::{DeobfuscationEngine, Obfuscator};
-//!
-//! let mut engine = DeobfuscationEngine::with_defaults();
-//! engine.register_obfuscator(Arc::new(MyCustomObfuscator::new()));
 //! ```
 
 // Infrastructure
@@ -194,47 +96,42 @@ mod cleanup;
 mod config;
 mod context;
 mod decryptors;
-mod detection;
-mod findings;
+mod renamer;
 mod result;
 mod statemachine;
+mod template;
+pub(crate) mod utils;
 
-// Deobfuscation-specific SSA passes (moved from compiler/passes/)
+// Deobfuscation-specific SSA passes
 mod passes;
 
-// Engine and detector
-mod detector;
+// Engine
 mod engine;
 
-// Obfuscator support
-mod obfuscators;
+// Technique-centric framework
+mod techniques;
 
 // Core types
 pub use cleanup::execute_cleanup;
 pub use config::{CleanupConfig, EngineConfig, ResolutionStrategy};
 pub use context::{AnalysisContext, HookFactory};
 pub use decryptors::{CacheKey, DecryptedCall, DecryptorContext, FailedCall, FailureReason};
-pub use detection::{DetectionEvidence, DetectionScore};
-pub use detector::{DetectorBuilder, ObfuscatorDetector};
 pub use engine::DeobfuscationEngine;
-pub use findings::{
-    BitMonoFindings, ConfuserExFindings, DeobfuscationFindings, NativeHelperInfo, ObfuscarFindings,
-    ObfuscatorData,
-};
-pub use obfuscators::{
-    create_anti_tamper_stub_hook, create_lzma_hook, detect_bitmono, detect_confuserex,
-    detect_obfuscar, find_encrypted_methods, BitMonoObfuscator, ConfuserExObfuscator,
-    ObfuscarObfuscator, Obfuscator, ObfuscatorInfo, ObfuscatorRegistry, PassPhase,
-};
 pub use passes::{
     CffReconstructionPass, ConversionStats, DecryptionPass, NativeMethodConversionPass,
     NeutralizationPass, TraceTree, UnflattenConfig,
 };
+pub use renamer::SmartRenameConfig;
 pub use result::DeobfuscationResult;
 pub use statemachine::{
     CfgInfo, SsaOpKind, StateMachineCallSite, StateMachineProvider, StateMachineSemantics,
     StateMachineState, StateSlotOperation, StateUpdateCall,
 };
+pub use techniques::{
+    AttributionResult, Detection, Detections, Evidence, ObfuscatorSignature, PassPhase, Technique,
+    TechniqueCategory, TechniqueRegistry, TechniqueResult, WorkingAssembly,
+};
+pub(crate) use template::EmulationTemplatePool;
 
 #[cfg(test)]
 mod tests {
@@ -264,7 +161,7 @@ mod tests {
 
         let assembly = CilObject::from_path_with_validation(path, ValidationConfig::analysis())?;
 
-        let mut engine = DeobfuscationEngine::new(EngineConfig::default());
+        let engine = DeobfuscationEngine::new(EngineConfig::default());
         let (deobfuscated, result) = engine.process_assembly(assembly)?;
 
         assert!(deobfuscated.module().is_some());

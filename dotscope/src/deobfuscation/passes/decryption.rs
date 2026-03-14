@@ -59,10 +59,7 @@
 //! call Console::WriteLine(v0)
 //! ```
 
-use std::sync::{
-    atomic::{AtomicBool, Ordering},
-    Arc, Mutex, RwLock,
-};
+use std::sync::{Arc, Mutex};
 
 use rayon::prelude::*;
 
@@ -70,13 +67,12 @@ use crate::{
     analysis::{ConstValue, SsaCfg, SsaFunction, SsaOp, SsaVarId, ValueResolver},
     compiler::{CompilerContext, EventKind, EventLog, ModificationScope, SsaPass},
     deobfuscation::{
-        context::{AnalysisContext, HookFactory},
+        context::AnalysisContext,
         decryptors::{DecryptorContext, FailureReason},
-        CfgInfo, StateMachineProvider, StateMachineState, StateUpdateCall,
+        CfgInfo, EmulationTemplatePool, StateMachineProvider, StateMachineState, StateUpdateCall,
     },
     emulation::{
-        EmValue, EmulationError, EmulationOutcome, EmulationProcess, EmulationThread,
-        ProcessBuilder, StepResult,
+        EmValue, EmulationError, EmulationOutcome, EmulationProcess, EmulationThread, StepResult,
     },
     metadata::{token::Token, typesystem::PointerSize},
     utils::graph::{
@@ -96,44 +92,27 @@ use crate::{
 /// which is populated during the detection phase by obfuscator-specific and
 /// heuristic detectors.
 ///
-/// # Template Process
+/// # Emulation Template
 ///
-/// The pass owns its emulation template process, which is created lazily on
-/// first use and based on the current assembly state. This ensures:
-/// - Clear lifecycle: template is created fresh for each deobfuscation run
-/// - No stale state: the template always matches the current assembly version
-/// - Efficient forking: subsequent emulations use O(1) CoW forks
+/// The pass uses the shared [`EmulationTemplatePool`] for O(1) CoW forks.
+/// The pool is warmed up once during engine initialization; this pass simply
+/// calls [`EmulationTemplatePool::fork()`] for each decryption attempt.
 ///
-/// The template is cleared in `finalize()` to release the assembly reference
-/// before code generation needs to unwrap the Arc.
-///
-/// # Warmup Requirements
-///
-/// If warmup methods are registered but fail to execute, the `warmup_failed`
-/// flag is set and all subsequent decryption attempts are skipped.
+/// If the pool is unavailable (no techniques registered emulation hooks),
+/// decryption is silently skipped.
 pub struct DecryptionPass {
-    /// Template emulation process for Copy-on-Write forking.
+    /// Shared emulation template pool for O(1) forks.
     ///
-    /// Initialized lazily on first decryption call. Each subsequent decryption
-    /// forks this template in O(1) time via structural sharing. Cleared in
-    /// `finalize()` to release the assembly reference.
-    template_process: RwLock<Option<EmulationProcess>>,
-    /// Set to true if warmup failed - disables all decryption.
-    warmup_failed: AtomicBool,
+    /// `None` when no techniques registered emulation requirements.
+    /// Each decryption call forks the pool's warmed template.
+    template_pool: Option<Arc<EmulationTemplatePool>>,
 
-    // ── Deobfuscation-specific state (captured at construction time) ────
     /// Decryptor tracking context (shared with AnalysisContext).
     decryptors: Arc<DecryptorContext>,
-    /// Hook factories for creating obfuscator-specific emulation hooks.
-    emulation_hooks: Arc<boxcar::Vec<HookFactory>>,
-    /// Methods to execute during template warmup (e.g., .cctors).
-    warmup_methods: Arc<boxcar::Vec<Token>>,
     /// State machine providers for order-dependent decryption.
     statemachine_providers: Arc<boxcar::Vec<Arc<dyn StateMachineProvider>>>,
-    /// Maximum instructions for emulation.
+    /// Maximum instructions per emulation call.
     emulation_max_instructions: u64,
-    /// Tracing configuration for emulation.
-    tracing_config: Option<crate::emulation::TracingConfig>,
 }
 
 /// Owned CFG analysis info, storing dominator tree and predecessors.
@@ -159,150 +138,29 @@ impl CfgInfoOwned {
     }
 }
 
-impl Default for DecryptionPass {
-    fn default() -> Self {
-        Self {
-            template_process: RwLock::new(None),
-            warmup_failed: AtomicBool::new(false),
-            decryptors: Arc::new(DecryptorContext::new()),
-            emulation_hooks: Arc::new(boxcar::Vec::new()),
-            warmup_methods: Arc::new(boxcar::Vec::new()),
-            statemachine_providers: Arc::new(boxcar::Vec::new()),
-            emulation_max_instructions: 5_000_000,
-            tracing_config: None,
-        }
-    }
-}
-
 impl DecryptionPass {
     /// Creates a new constant decryption pass from an analysis context.
     ///
-    /// Captures shared references to the context's decryptors, emulation hooks,
-    /// warmup methods, and state machine providers so the pass can operate
-    /// independently during pipeline execution.
+    /// Captures shared references to the context's decryptors and state machine
+    /// providers. Emulation is backed by the shared [`EmulationTemplatePool`]
+    /// stored in the context (if available).
+    ///
+    /// # Arguments
+    ///
+    /// * `ctx` - The analysis context providing registered decryptors, state
+    ///   machine providers, configuration, and the shared template pool.
+    ///
+    /// # Returns
+    ///
+    /// A new `DecryptionPass` ready for pipeline execution.
     #[must_use]
     pub fn new(ctx: &AnalysisContext) -> Self {
         Self {
-            template_process: RwLock::new(None),
-            warmup_failed: AtomicBool::new(false),
+            template_pool: ctx.template_pool.get().cloned(),
             decryptors: Arc::clone(&ctx.decryptors),
-            emulation_hooks: Arc::clone(&ctx.emulation_hooks),
-            warmup_methods: Arc::clone(&ctx.warmup_methods),
             statemachine_providers: Arc::clone(&ctx.statemachine_providers),
             emulation_max_instructions: ctx.config.emulation_max_instructions,
-            tracing_config: ctx.config.tracing.clone(),
         }
-    }
-
-    /// Creates the template emulation process with warmup.
-    ///
-    /// This is called once on first emulation. The expensive setup (PE loading,
-    /// hook registration, etc.) happens here.
-    ///
-    /// # Warmup Phase
-    ///
-    /// If warmup methods are registered (e.g., static constructors), they are
-    /// executed on the template BEFORE it is stored. This is critical for
-    /// obfuscators like ConfuserEx where the decryptor type's .cctor performs
-    /// expensive one-time initialization (LZMA decompression of constants).
-    ///
-    /// Without warmup, every forked process would re-execute the .cctor,
-    /// leading to O(n * warmup_cost) instead of O(warmup_cost + n * lookup_cost).
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if warmup fails. This prevents incorrect decryption
-    /// results when the decryptor's initialization state is incomplete.
-    fn create_template_process(
-        &self,
-        ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
-    ) -> Result<EmulationProcess> {
-        // Use a higher instruction limit for template creation + warmup
-        // Warmup may involve expensive operations like LZMA decompression
-        let warmup_instruction_limit = self.emulation_max_instructions.max(10_000_000);
-
-        let mut builder = ProcessBuilder::new()
-            .assembly_arc(Arc::clone(assembly))
-            .with_max_instructions(warmup_instruction_limit)
-            .with_max_call_depth(100)
-            .name("decryption_template");
-
-        // Add tracing configuration if provided
-        if let Some(ref tracing) = self.tracing_config {
-            // Set context to "decryption" for the decryption pass
-            // This includes warmup and all forked decryption calls
-            let decryption_tracing = tracing.clone().with_context("decryption");
-            builder = builder.with_tracing(decryption_tracing);
-        }
-
-        // Add obfuscator-specific hooks
-        for (_, factory) in self.emulation_hooks.iter() {
-            builder = builder.hook(factory());
-        }
-
-        let process = builder.build()?;
-
-        // Execute warmup methods (e.g., .cctors that initialize decryptor state)
-        let warmup_methods: Vec<Token> = self.warmup_methods.iter().map(|(_, &m)| m).collect();
-        if !warmup_methods.is_empty() {
-            for warmup_token in &warmup_methods {
-                // Execute the warmup method - failure aborts decryption
-                match process.execute_method(*warmup_token, vec![]) {
-                    Ok(EmulationOutcome::Completed { .. }) => {
-                        // Warmup executed successfully
-                    }
-                    Ok(EmulationOutcome::UnhandledException { exception, .. }) => {
-                        // Warmup threw an unhandled exception - this means decryptor
-                        // state may be incomplete
-                        ctx.events.warn(format!(
-                            "Warmup method 0x{:08X} threw unhandled exception: {:?} - aborting decryption emulation",
-                            warmup_token.value(),
-                            exception
-                        ));
-                        return Err(Error::Emulation(Box::new(EmulationError::InternalError {
-                            description: format!(
-                                "warmup method 0x{:08X} threw unhandled exception",
-                                warmup_token.value()
-                            ),
-                        })));
-                    }
-                    Ok(outcome) => {
-                        // Other outcomes (LimitReached, RequiresSymbolic, etc.) also mean
-                        // warmup didn't complete properly
-                        ctx.events.warn(format!(
-                            "Warmup method 0x{:08X} did not complete: {} - aborting decryption emulation",
-                            warmup_token.value(),
-                            outcome
-                        ));
-                        return Err(Error::Emulation(Box::new(EmulationError::InternalError {
-                            description: format!(
-                                "warmup method 0x{:08X} did not complete: {}",
-                                warmup_token.value(),
-                                outcome
-                            ),
-                        })));
-                    }
-                    Err(e) => {
-                        // Warmup failed - abort decryption emulation
-                        ctx.events.warn(format!(
-                            "Warmup method 0x{:08X} failed: {} - aborting decryption emulation",
-                            warmup_token.value(),
-                            e
-                        ));
-                        return Err(Error::Emulation(Box::new(EmulationError::InternalError {
-                            description: format!(
-                                "warmup method 0x{:08X} failed: {}",
-                                warmup_token.value(),
-                                e
-                            ),
-                        })));
-                    }
-                }
-            }
-        }
-
-        Ok(process)
     }
 
     /// Finds the state machine provider that applies to a method.
@@ -318,63 +176,17 @@ impl DecryptionPass {
         None
     }
 
-    /// Forks the template emulation process for a decryption call.
+    /// Forks the shared emulation template for a decryption call.
     ///
-    /// Initializes the template on first call, then returns O(1) forks.
-    /// If warmup previously failed, returns an error immediately.
-    fn fork_template_process(
-        &self,
-        ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
-    ) -> Result<EmulationProcess> {
-        if self.warmup_failed.load(Ordering::Relaxed) {
-            return Err(Error::Emulation(Box::new(EmulationError::InternalError {
-                description: "warmup failed - decryption disabled".to_string(),
-            })));
-        }
-
-        // Check if template exists (read lock)
-        {
-            let guard = self
-                .template_process
-                .read()
-                .map_err(|e| Error::LockError(format!("template process read lock: {e}")))?;
-            if let Some(ref template) = *guard {
-                return Ok(template.fork());
-            }
-        }
-
-        // Create template (write lock)
-        let mut guard = self
-            .template_process
-            .write()
-            .map_err(|e| Error::LockError(format!("template process write lock: {e}")))?;
-
-        // Double-check after acquiring write lock
-        if let Some(ref template) = *guard {
-            return Ok(template.fork());
-        }
-
-        // Also check warmup_failed after acquiring lock to handle race condition:
-        // Thread A may have failed and set the flag while Thread B was waiting for the lock
-        if self.warmup_failed.load(Ordering::Relaxed) {
-            return Err(Error::Emulation(Box::new(EmulationError::InternalError {
-                description: "warmup failed - decryption disabled".to_string(),
-            })));
-        }
-
-        // Create and store the template (warmup runs here, may fail)
-        match self.create_template_process(ctx, assembly) {
-            Ok(process) => {
-                let forked = process.fork();
-                *guard = Some(process);
-                Ok(forked)
-            }
-            Err(e) => {
-                // Mark warmup as failed so we don't retry
-                self.warmup_failed.store(true, Ordering::Relaxed);
-                Err(e)
-            }
+    /// Returns an O(1) CoW copy of the pre-warmed template from the
+    /// [`EmulationTemplatePool`]. Returns an error if no pool is available
+    /// or if warmup previously failed.
+    fn fork_template_process(&self) -> Result<EmulationProcess> {
+        match &self.template_pool {
+            Some(pool) => pool.fork(),
+            None => Err(Error::Emulation(Box::new(EmulationError::InternalError {
+                description: "no emulation template available".to_string(),
+            }))),
         }
     }
 
@@ -386,8 +198,6 @@ impl DecryptionPass {
     ///
     /// * `decryptor` - The resolved decryptor MethodDef token.
     /// * `args` - The constant argument values.
-    /// * `ctx` - The analysis context for caching and emulation.
-    /// * `assembly` - Shared reference to the assembly for emulation.
     ///
     /// # Returns
     ///
@@ -397,8 +207,6 @@ impl DecryptionPass {
         &self,
         decryptor: Token,
         args: &[ConstValue],
-        ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
     ) -> (Option<ConstValue>, Option<FailureReason>) {
         if let Some(cached) = self
             .decryptors
@@ -407,7 +215,7 @@ impl DecryptionPass {
             return (Some(cached), None);
         }
 
-        let (result, failure) = self.emulate_call(decryptor, args, ctx, assembly);
+        let (result, failure) = self.emulate_call(decryptor, args);
 
         if let Some(ref value) = result {
             self.decryptors.cache_value(decryptor, args, value.clone());
@@ -427,8 +235,6 @@ impl DecryptionPass {
     ///
     /// * `method` - The method token to emulate (may be MethodSpec for generics).
     /// * `args` - The constant arguments to pass.
-    /// * `ctx` - The analysis context containing emulation config and hooks.
-    /// * `assembly` - Shared reference to the assembly for emulation.
     ///
     /// # Returns
     ///
@@ -437,13 +243,11 @@ impl DecryptionPass {
         &self,
         method: Token,
         args: &[ConstValue],
-        ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
     ) -> (Option<ConstValue>, Option<FailureReason>) {
         // Fork from the template process - O(1) due to CoW semantics.
         // The template is created lazily on first call with expensive PE loading,
         // hooks, etc. Subsequent calls share memory via structural sharing.
-        let process = match self.fork_template_process(ctx, assembly) {
+        let process = match self.fork_template_process() {
             Ok(p) => p,
             Err(e) => {
                 return (None, Some(FailureReason::EmulationFailed(e.to_string())));
@@ -653,7 +457,7 @@ impl DecryptionPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
+        assembly: &CilObject,
         provider: &dyn StateMachineProvider,
         ptr_size: PointerSize,
     ) -> (bool, EventLog) {
@@ -769,8 +573,7 @@ impl DecryptionPass {
 
             // Decrypt using the computed key
             let args = vec![ConstValue::I32(actual_key)];
-            let (result, failure) =
-                self.try_decrypt_at_call(call_site.decryptor, &args, ctx, assembly);
+            let (result, failure) = self.try_decrypt_at_call(call_site.decryptor, &args);
 
             if let Some(value) = result {
                 self.decryptors.record_success(
@@ -818,13 +621,11 @@ impl DecryptionPass {
             self.decryptors
                 .record_failure(*decryptor, method_token, *location, reason.clone());
 
-            changes
-                .record(EventKind::Warning)
-                .at(method_token, *location)
-                .message(format!(
-                    "CFG mode decryption failed for decryptor 0x{:08X}: {reason}",
-                    decryptor.value()
-                ));
+            log::warn!(
+                "CFG mode decryption failed for decryptor 0x{:08X} in method {}: {reason}",
+                decryptor.value(),
+                method_token
+            );
         }
 
         // Replace state update calls with Const operations
@@ -960,12 +761,7 @@ impl SsaPass for DecryptionPass {
     }
 
     fn finalize(&mut self, _ctx: &CompilerContext) -> Result<()> {
-        // Clear the template process to release its Arc<CilObject> reference.
-        // This is needed so the assembly can be unwrapped for code generation.
-        *self
-            .template_process
-            .write()
-            .map_err(|e| Error::LockError(format!("template process write lock: {e}")))? = None;
+        // Pool lifecycle is managed by the engine — nothing to release here.
         Ok(())
     }
 
@@ -974,15 +770,19 @@ impl SsaPass for DecryptionPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
+        assembly: &CilObject,
     ) -> Result<bool> {
         // Early exit if no decryptors are registered
         if !self.decryptors.has_decryptors() {
             return Ok(false);
         }
 
-        // Early exit if warmup failed - decryption is disabled
-        if self.warmup_failed.load(Ordering::Relaxed) {
+        // Early exit if warmup explicitly failed
+        if self
+            .template_pool
+            .as_ref()
+            .is_some_and(|pool| pool.warmup_failed())
+        {
             return Ok(false);
         }
 
@@ -1067,7 +867,7 @@ impl SsaPass for DecryptionPass {
         let successes: Vec<_> = candidates
             .into_par_iter()
             .filter_map(|(block_idx, instr_idx, dest, decryptor, location, args)| {
-                let (result, failure) = self.try_decrypt_at_call(decryptor, &args, ctx, assembly);
+                let (result, failure) = self.try_decrypt_at_call(decryptor, &args);
 
                 if let Some(value) = result {
                     Some((block_idx, instr_idx, dest, decryptor, location, value))
@@ -1120,17 +920,15 @@ impl SsaPass for DecryptionPass {
             self.decryptors
                 .record_failure(*decryptor, method_token, *location, reason.clone());
 
-            changes
-                .record(EventKind::Warning)
-                .at(method_token, *location)
-                .message(format!(
-                    "Decryption failed for decryptor 0x{:08X}: {reason}",
-                    decryptor.value()
-                ));
+            log::warn!(
+                "Decryption failed for decryptor 0x{:08X} in method {}: {reason}",
+                decryptor.value(),
+                method_token
+            );
         }
 
         // Determine if actual transformations were made
-        let changed = changes.iter().any(|e| !e.kind.is_diagnostic());
+        let changed = changes.iter().any(|e| e.kind.is_transformation());
         if !changes.is_empty() {
             ctx.events.merge(&changes);
         }
@@ -1167,12 +965,6 @@ mod tests {
         let pass = DecryptionPass::new(&ctx);
         assert_eq!(pass.name(), "decryption");
         assert!(!pass.description().is_empty());
-    }
-
-    #[test]
-    fn test_pass_default() {
-        let pass = DecryptionPass::default();
-        assert_eq!(pass.name(), "decryption");
     }
 
     #[test]

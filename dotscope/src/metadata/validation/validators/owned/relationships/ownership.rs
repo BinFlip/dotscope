@@ -138,7 +138,7 @@ impl OwnedOwnershipValidator {
         let methods = context.object().methods();
 
         for type_entry in context.target_assembly_types() {
-            if type_entry.get_external().is_some() {
+            if type_entry.external().is_some() {
                 continue;
             }
 

@@ -2106,7 +2106,7 @@ fn test_fibonacci_deobfuscation_preserves_semantics() {
 
     // Run full deobfuscation
     let config = EngineConfig::default();
-    let mut engine = DeobfuscationEngine::new(config);
+    let engine = DeobfuscationEngine::new(config);
     let (output, _) = engine.process_assembly(assembly).expect("deobfuscation");
 
     // Find Fibonacci method
@@ -2222,7 +2222,7 @@ fn test_fibonacci_pass_combinations() {
                 Err(_) => return, // Skip if test file not available
             };
 
-        let mut engine = DeobfuscationEngine::new(config);
+        let engine = DeobfuscationEngine::new(config);
         let (output, _) = engine.process_assembly(assembly).expect("deobfuscate");
 
         let tables = output.tables().expect("tables");

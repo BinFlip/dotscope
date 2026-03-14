@@ -44,9 +44,11 @@ mod hash;
 mod primitives;
 mod registry;
 mod resolver;
+pub mod wellknown;
 
 use std::{
     collections::HashSet,
+    fmt,
     sync::{Arc, OnceLock, RwLock},
 };
 
@@ -65,10 +67,10 @@ use crate::{
     metadata::{
         customattributes::CustomAttributeValueList,
         method::{MethodRc, MethodRefList},
-        query::MethodQuery,
+        query::{FieldQuery, MethodQuery},
         security::Security,
         tables::{
-            EventList, FieldAttributes, FieldList, GenericParamList, InterfaceEntryList,
+            EventList, FieldAttributes, FieldList, FieldRc, GenericParamList, InterfaceEntryList,
             MethodSpec, MethodSpecList, PropertyList, TableId, TypeAttributes,
         },
         token::Token,
@@ -537,7 +539,7 @@ impl CilType {
     ///
     /// ## Returns
     /// Returns the external reference if it has been set, or `None` if it's still pending resolution.
-    pub fn get_external(&self) -> Option<&CilTypeReference> {
+    pub fn external(&self) -> Option<&CilTypeReference> {
         self.external.get()
     }
 
@@ -654,11 +656,15 @@ impl CilType {
             let base_fullname = base_type.fullname();
 
             // Direct well-known base types
-            if base_fullname == "System.ValueType" || base_fullname == "System.Enum" {
+            if base_fullname == wellknown::names::VALUE_TYPE
+                || base_fullname == wellknown::names::ENUM
+            {
                 return Some(CilFlavor::ValueType);
             }
 
-            if base_fullname == "System.Delegate" || base_fullname == "System.MulticastDelegate" {
+            if base_fullname == wellknown::names::DELEGATE
+                || base_fullname == wellknown::names::MULTICAST_DELEGATE
+            {
                 return Some(CilFlavor::Class); // Delegates are reference types but special classes
             }
 
@@ -725,15 +731,19 @@ impl CilType {
             let ancestor_name = ancestor.fullname();
 
             // Check for well-known ancestor types
-            if ancestor_name == "System.ValueType" || ancestor_name == "System.Enum" {
+            if ancestor_name == wellknown::names::VALUE_TYPE
+                || ancestor_name == wellknown::names::ENUM
+            {
                 return Some(CilFlavor::ValueType);
             }
 
-            if ancestor_name == "System.Delegate" || ancestor_name == "System.MulticastDelegate" {
+            if ancestor_name == wellknown::names::DELEGATE
+                || ancestor_name == wellknown::names::MULTICAST_DELEGATE
+            {
                 return Some(CilFlavor::Class);
             }
 
-            if ancestor_name == "System.Object" {
+            if ancestor_name == wellknown::names::OBJECT {
                 // Reached the root - this is a reference type class
                 return Some(CilFlavor::Class);
             }
@@ -928,7 +938,8 @@ impl CilType {
     /// Returns true if this type is an enum (inherits from `System.Enum`).
     #[must_use]
     pub fn is_enum(&self) -> bool {
-        self.base().is_some_and(|b| b.fullname() == "System.Enum")
+        self.base()
+            .is_some_and(|b| b.fullname() == wellknown::names::ENUM)
     }
 
     /// Returns true if this type is a delegate (inherits from `System.Delegate` or `System.MulticastDelegate`).
@@ -936,7 +947,7 @@ impl CilType {
     pub fn is_delegate(&self) -> bool {
         self.base().is_some_and(|b| {
             let name = b.fullname();
-            name == "System.MulticastDelegate" || name == "System.Delegate"
+            name == wellknown::names::MULTICAST_DELEGATE || name == wellknown::names::DELEGATE
         })
     }
 
@@ -951,6 +962,57 @@ impl CilType {
     /// ```
     pub fn query_methods(&self) -> MethodQuery<'_> {
         MethodQuery::from_type(&self.methods)
+    }
+
+    /// Returns a composable query over fields defined in this type.
+    ///
+    /// This provides a fluent API mirroring [`query_methods()`](Self::query_methods):
+    /// ```rust,ignore
+    /// let static_fields = type_info.query_fields().static_fields().find_all();
+    /// let value_field = type_info.query_fields().instance_fields().name("value__").find_first();
+    /// ```
+    pub fn query_fields(&self) -> FieldQuery<'_> {
+        FieldQuery::from_type(&self.fields)
+    }
+
+    /// Returns the `.cctor` (class constructor / type initializer) token, if present.
+    #[must_use]
+    pub fn cctor(&self) -> Option<Token> {
+        self.query_methods()
+            .static_constructors()
+            .find_first()
+            .map(|m| m.token)
+    }
+
+    /// Returns the first `.ctor` (instance constructor) token, if present.
+    #[must_use]
+    pub fn ctor(&self) -> Option<Token> {
+        self.query_methods()
+            .constructors()
+            .find_first()
+            .map(|m| m.token)
+    }
+
+    /// Returns true if this is the global `<Module>` type.
+    #[must_use]
+    pub fn is_module_type(&self) -> bool {
+        self.name == wellknown::members::MODULE_TYPE
+    }
+
+    /// Returns an iterator over all methods defined in this type.
+    ///
+    /// Automatically upgrades weak references, skipping any that have been dropped.
+    pub fn methods(&self) -> impl Iterator<Item = MethodRc> + '_ {
+        self.methods
+            .iter()
+            .filter_map(|(_, method_ref)| method_ref.upgrade())
+    }
+
+    /// Returns an iterator over all fields defined in this type.
+    ///
+    /// Returns references to the field entries in the field list.
+    pub fn fields(&self) -> impl Iterator<Item = &FieldRc> + '_ {
+        self.fields.iter().map(|(_, field)| field)
     }
 
     /// Returns true if this is a nested type with private or internal visibility.
@@ -1503,5 +1565,11 @@ impl CilType {
         (derived_fullname.contains('`') || base_fullname.contains('`'))
             && (derived_fullname.starts_with(base_fullname.split('`').next().unwrap_or(""))
                 || base_fullname.starts_with(derived_fullname.split('`').next().unwrap_or("")))
+    }
+}
+
+impl fmt::Display for CilType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{}", self.fullname())
     }
 }

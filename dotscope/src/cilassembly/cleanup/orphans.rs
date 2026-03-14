@@ -638,7 +638,6 @@ pub fn remove_orphan_assemblyrefs(assembly: &mut CilAssembly, candidates: &BTree
 
         alive
     };
-
     let (removed, _) =
         remove_candidates_not_alive(assembly, TableId::AssemblyRef, candidates, &alive);
     removed

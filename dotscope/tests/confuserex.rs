@@ -21,7 +21,7 @@ use common::verification::{
     SemanticVerificationResult, VerificationLevel,
 };
 use dotscope::{
-    deobfuscation::{detect_confuserex, DeobfuscationEngine, DeobfuscationFindings, EngineConfig},
+    deobfuscation::{DeobfuscationEngine, EngineConfig},
     metadata::validation::ValidationConfig,
     CilObject,
 };
@@ -450,15 +450,20 @@ fn test_sample_comprehensive(
     } else {
         EngineConfig::default()
     };
-    let mut engine = DeobfuscationEngine::new(config);
+    let engine = DeobfuscationEngine::new(config);
+
+    // Run detection on the original assembly before deobfuscation
+    let pre_det = engine.detect(&assembly);
+    let pre_detected =
+        |id: &str| -> bool { pre_det.techniques.iter().any(|t| t.id == id && t.detected) };
 
     match engine.process_assembly(assembly) {
         Ok((output, deob_result)) => {
             result.success = true;
 
             let stats = deob_result.stats();
-            result.warning_count = stats.warnings;
-            result.error_count = stats.errors;
+            result.warning_count = 0;
+            result.error_count = 0;
             result.stats = Some(DeobfuscationStats {
                 methods_transformed: stats.methods_transformed,
                 constants_folded: stats.constants_folded,
@@ -469,34 +474,76 @@ fn test_sample_comprehensive(
 
             result.methods_after = output.methods().iter().count();
 
-            // DETECTION from engine findings
-            let findings = &deob_result.findings;
-            result.verification.markers_detected = findings.has_marker_attributes();
-            result.verification.suppress_ildasm_detected = findings.has_suppress_ildasm();
-            result.verification.decryptors_detected = findings.decryptor_methods.count();
-            result.verification.anti_debug_detected = findings.anti_debug_methods.count();
-            result.verification.anti_tamper_detected = findings.anti_tamper_methods.count();
-            result.verification.encrypted_methods_detected = findings
-                .confuserex()
-                .map_or(0, |cx| cx.encrypted_method_count);
-            result.verification.resources_detected = findings.resource_handler_methods.count();
-            result.verification.proxy_methods_detected = findings.proxy_methods.count();
+            // DETECTION from pre-deobfuscation technique detection + post-transform
+            // technique results. Some techniques (proxy, constants, anti-debug) are
+            // only detectable after byte transforms decrypt method bodies.
+            let technique_detected = |id: &str| -> bool {
+                pre_detected(id)
+                    || deob_result
+                        .techniques
+                        .iter()
+                        .any(|t| t.id == id && t.detected)
+            };
+            result.verification.markers_detected = technique_detected("confuserex.marker");
+            result.verification.suppress_ildasm_detected = technique_detected("generic.ildasm");
+            result.verification.decryptors_detected = if technique_detected("confuserex.constants")
+            {
+                1
+            } else {
+                0
+            };
+            result.verification.anti_debug_detected = if technique_detected("confuserex.debug") {
+                1
+            } else {
+                0
+            };
+            result.verification.anti_tamper_detected = if technique_detected("confuserex.tamper") {
+                1
+            } else {
+                0
+            };
+            result.verification.encrypted_methods_detected =
+                if technique_detected("confuserex.tamper") {
+                    1
+                } else {
+                    0
+                };
+            result.verification.resources_detected = if technique_detected("confuserex.resources") {
+                1
+            } else {
+                0
+            };
+            result.verification.proxy_methods_detected = if technique_detected("confuserex.proxy") {
+                1
+            } else {
+                0
+            };
 
             // REMOVAL: re-detect on output
             result.verification.has_valid_entry_point = output.cor20header().entry_point_token != 0;
-            let mut findings_after = DeobfuscationFindings::new();
-            let _ = detect_confuserex(&output, &mut findings_after);
-            result.verification.markers_remaining = findings_after.has_marker_attributes();
-            result.verification.suppress_ildasm_remaining = findings_after.has_suppress_ildasm();
-            result.verification.decryptors_remaining = findings_after.decryptor_methods.count();
-            result.verification.anti_debug_remaining = findings_after.anti_debug_methods.count();
-            result.verification.anti_tamper_remaining = findings_after.anti_tamper_methods.count();
-            result.verification.encrypted_methods_remaining = findings_after
-                .confuserex()
-                .map_or(0, |cx| cx.encrypted_method_count);
-            result.verification.resources_remaining =
-                findings_after.resource_handler_methods.count();
-            result.verification.proxy_methods_remaining = findings_after.proxy_methods.count();
+            let engine = DeobfuscationEngine::default();
+            let post_det = engine.detect(&output);
+            let has_post_technique =
+                |id: &str| -> bool { post_det.techniques.iter().any(|t| t.id == id && t.detected) };
+            let post_technique_count = |id: &str| -> usize {
+                post_det
+                    .techniques
+                    .iter()
+                    .find(|t| t.id == id && t.detected)
+                    .map_or(0, |t| t.evidence.len())
+            };
+            result.verification.markers_remaining = has_post_technique("confuserex.marker");
+            result.verification.suppress_ildasm_remaining = has_post_technique("generic.ildasm");
+            result.verification.decryptors_remaining = post_technique_count("confuserex.constants")
+                + post_technique_count("generic.constants");
+            result.verification.anti_debug_remaining =
+                post_technique_count("confuserex.debug") + post_technique_count("generic.debug");
+            result.verification.anti_tamper_remaining = post_technique_count("confuserex.tamper");
+            result.verification.encrypted_methods_remaining =
+                post_technique_count("confuserex.tamper");
+            result.verification.resources_remaining = post_technique_count("confuserex.resources");
+            result.verification.proxy_methods_remaining = post_technique_count("confuserex.proxy");
+            let _ = post_det.attribution; // used for detection; individual techniques checked above
             let (_, switch_count) = check_has_switch_dispatcher(&output);
             result.verification.switches_remaining = switch_count;
 

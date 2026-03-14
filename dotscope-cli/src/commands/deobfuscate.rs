@@ -1,9 +1,10 @@
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
+#[cfg(feature = "smart-rename")]
+use dotscope::deobfuscation::SmartRenameConfig;
 use dotscope::deobfuscation::{
-    CleanupConfig, DeobfuscationEngine, DeobfuscationFindings, DeobfuscationResult, EngineConfig,
-    NativeHelperInfo,
+    CleanupConfig, DeobfuscationEngine, DeobfuscationResult, EngineConfig,
 };
 use log::info;
 use serde::Serialize;
@@ -31,23 +32,14 @@ struct DeobfuscationReport {
 
 #[derive(Debug, Serialize)]
 struct DetectionReport {
-    decryptors: Vec<String>,
-    anti_tamper: Vec<String>,
-    encrypted_method_count: usize,
-    anti_debug: Vec<String>,
-    anti_dump: Vec<String>,
-    proxy_methods: Vec<String>,
-    resource_handlers: Vec<String>,
-    native_helpers: Vec<NativeHelperEntry>,
-    marker_attributes: Vec<String>,
-    suppress_ildasm: Option<String>,
-    invalid_metadata: Vec<String>,
+    techniques: Vec<TechniqueEntry>,
 }
 
 #[derive(Debug, Serialize)]
-struct NativeHelperEntry {
-    token: String,
-    rva: String,
+struct TechniqueEntry {
+    id: String,
+    detected: bool,
+    transformed: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -76,6 +68,8 @@ pub struct DeobfuscateOptions<'a> {
     pub aggressive: bool,
     pub detailed: bool,
     pub report: Option<&'a Path>,
+    #[cfg(feature = "smart-rename")]
+    pub rename_ai: Option<&'a Path>,
     pub global: &'a GlobalOptions,
 }
 
@@ -122,21 +116,14 @@ fn run_single(path: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
         eprintln!("deobfuscate: {input_name} -> {output_name}");
         eprintln!();
 
-        if opts.detailed {
-            // Detailed mode: per-token breakdown
-            if let Some(obf) = &report.obfuscator {
-                eprintln!("  Obfuscator:  {} (score: {})", obf, report.score);
-            } else {
-                eprintln!("  Obfuscator:  none detected");
-            }
-            display_size(report.input_size, report.output_size);
-            display_detection(&report.detection, true);
+        if let Some(obf) = &report.obfuscator {
+            eprintln!("  Obfuscator:  {} (score: {})", obf, report.score);
         } else {
-            // Summary mode: use Display impl
-            eprint!("{}", result.findings);
-            display_size(report.input_size, report.output_size);
+            eprintln!("  Obfuscator:  none detected");
         }
 
+        display_size(report.input_size, report.output_size);
+        display_detection(&report.detection, opts.detailed);
         display_stats(&report);
 
         eprintln!();
@@ -253,6 +240,14 @@ fn build_config(opts: &DeobfuscateOptions) -> EngineConfig {
         config.cleanup = CleanupConfig::disabled();
     }
 
+    #[cfg(feature = "smart-rename")]
+    if let Some(model_path) = opts.rename_ai {
+        config.cleanup.smart_rename = Some(SmartRenameConfig {
+            model_path: model_path.to_path_buf(),
+            ..SmartRenameConfig::default()
+        });
+    }
+
     config
 }
 
@@ -291,22 +286,24 @@ fn build_report(
     input_size: u64,
     output_size: u64,
 ) -> DeobfuscationReport {
-    let obfuscator_name = result.findings.obfuscator_name.clone();
-    let score = result.findings.detection.score();
+    let obfuscator_name = result
+        .attribution
+        .as_ref()
+        .map(|a| a.obfuscator_name.clone());
+    let score = result
+        .attribution
+        .as_ref()
+        .map_or(0, |a| a.supporting_matched);
 
     let derived = result.stats();
-    let warnings: Vec<String> = result
-        .events
-        .warnings()
-        .map(|ev| ev.message.clone())
-        .collect();
+    let warnings: Vec<String> = Vec::new();
 
-    let detection = build_detection_report(&result.findings);
+    let detection = build_detection_report(result);
 
     DeobfuscationReport {
         file: file_display_name(input),
         output: file_display_name(output),
-        detected: result.findings.obfuscator_name.is_some(),
+        detected: result.attribution.is_some(),
         obfuscator: obfuscator_name,
         score,
         input_size,
@@ -332,85 +329,18 @@ fn build_report(
     }
 }
 
-fn build_detection_report(findings: &DeobfuscationFindings) -> DetectionReport {
-    let decryptors: Vec<String> = findings
-        .decryptor_methods
+fn build_detection_report(result: &DeobfuscationResult) -> DetectionReport {
+    let techniques: Vec<TechniqueEntry> = result
+        .techniques
         .iter()
-        .map(|(_, t)| format!("{t}"))
-        .collect();
-
-    let anti_tamper: Vec<String> = findings
-        .anti_tamper_methods
-        .iter()
-        .map(|(_, t)| format!("{t}"))
-        .collect();
-
-    let anti_debug: Vec<String> = findings
-        .anti_debug_methods
-        .iter()
-        .map(|(_, t)| format!("{t}"))
-        .collect();
-
-    let anti_dump: Vec<String> = findings
-        .anti_dump_methods
-        .iter()
-        .map(|(_, t)| format!("{t}"))
-        .collect();
-
-    let proxy_methods: Vec<String> = findings
-        .proxy_methods
-        .iter()
-        .map(|(_, t)| format!("{t}"))
-        .collect();
-
-    let resource_handlers: Vec<String> = findings
-        .resource_handler_methods
-        .iter()
-        .map(|(_, t)| format!("{t}"))
-        .collect();
-
-    let native_helpers: Vec<NativeHelperEntry> = findings
-        .confuserex()
-        .map(|cx| {
-            cx.native_helpers
-                .iter()
-                .map(|(_, h): (usize, &NativeHelperInfo)| NativeHelperEntry {
-                    token: format!("{}", h.token),
-                    rva: format!("0x{:08X}", h.rva),
-                })
-                .collect()
+        .map(|t| TechniqueEntry {
+            id: t.id.clone(),
+            detected: t.detected,
+            transformed: t.transformed,
         })
-        .unwrap_or_default();
-
-    let marker_attributes: Vec<String> = findings
-        .marker_attribute_tokens
-        .iter()
-        .map(|(_, t)| format!("{t}"))
         .collect();
 
-    let suppress_ildasm = findings.suppress_ildasm_token.map(|t| format!("{t}"));
-
-    let invalid_metadata: Vec<String> = findings
-        .invalid_metadata_entries
-        .iter()
-        .map(|(_, t)| format!("{t}"))
-        .collect();
-
-    DetectionReport {
-        decryptors,
-        anti_tamper,
-        encrypted_method_count: findings
-            .confuserex()
-            .map_or(0, |cx| cx.encrypted_method_count),
-        anti_debug,
-        anti_dump,
-        proxy_methods,
-        resource_handlers,
-        native_helpers,
-        marker_attributes,
-        suppress_ildasm,
-        invalid_metadata,
-    }
+    DetectionReport { techniques }
 }
 
 fn display_size(input_size: u64, output_size: u64) {
@@ -427,150 +357,29 @@ fn display_size(input_size: u64, output_size: u64) {
 }
 
 fn display_detection(det: &DetectionReport, detailed: bool) {
-    let has_any = !det.decryptors.is_empty()
-        || !det.anti_tamper.is_empty()
-        || !det.anti_debug.is_empty()
-        || !det.anti_dump.is_empty()
-        || !det.proxy_methods.is_empty()
-        || !det.resource_handlers.is_empty()
-        || !det.native_helpers.is_empty()
-        || !det.marker_attributes.is_empty()
-        || det.suppress_ildasm.is_some()
-        || !det.invalid_metadata.is_empty();
+    if det.techniques.is_empty() {
+        return;
+    }
 
-    if !has_any {
+    let detected: Vec<&TechniqueEntry> = det.techniques.iter().filter(|t| t.detected).collect();
+    if detected.is_empty() {
         return;
     }
 
     eprintln!();
-    eprintln!("  Detected protections:");
+    eprintln!("  Detected techniques:");
 
-    if !det.decryptors.is_empty() {
-        eprintln!(
-            "    Decryptors:        {} {}",
-            det.decryptors.len(),
-            pluralize("method", det.decryptors.len())
-        );
-        if detailed {
-            for token in &det.decryptors {
-                eprintln!("      {token}");
-            }
-        }
-    }
-
-    if !det.anti_tamper.is_empty() {
-        if det.encrypted_method_count > 0 {
-            eprintln!(
-                "    Anti-tamper:       {} {} ({} encrypted bodies)",
-                det.anti_tamper.len(),
-                pluralize("method", det.anti_tamper.len()),
-                det.encrypted_method_count
-            );
+    for entry in &detected {
+        let status = if entry.transformed {
+            "transformed"
         } else {
-            eprintln!(
-                "    Anti-tamper:       {} {}",
-                det.anti_tamper.len(),
-                pluralize("method", det.anti_tamper.len())
-            );
-        }
-        if detailed {
-            for token in &det.anti_tamper {
-                eprintln!("      {token}");
-            }
-        }
-    }
+            "detected"
+        };
+        eprintln!("    {:<24} ({})", entry.id, status);
 
-    if !det.anti_debug.is_empty() {
-        eprintln!(
-            "    Anti-debug:        {} {}",
-            det.anti_debug.len(),
-            pluralize("method", det.anti_debug.len())
-        );
         if detailed {
-            for token in &det.anti_debug {
-                eprintln!("      {token}");
-            }
-        }
-    }
-
-    if !det.anti_dump.is_empty() {
-        eprintln!(
-            "    Anti-dump:         {} {}",
-            det.anti_dump.len(),
-            pluralize("method", det.anti_dump.len())
-        );
-        if detailed {
-            for token in &det.anti_dump {
-                eprintln!("      {token}");
-            }
-        }
-    }
-
-    if !det.proxy_methods.is_empty() {
-        eprintln!(
-            "    Proxy methods:     {} {}",
-            det.proxy_methods.len(),
-            pluralize("method", det.proxy_methods.len())
-        );
-        if detailed {
-            for token in &det.proxy_methods {
-                eprintln!("      {token}");
-            }
-        }
-    }
-
-    if !det.resource_handlers.is_empty() {
-        eprintln!(
-            "    Resources:         {} {}",
-            det.resource_handlers.len(),
-            pluralize("handler", det.resource_handlers.len())
-        );
-        if detailed {
-            for token in &det.resource_handlers {
-                eprintln!("      {token}");
-            }
-        }
-    }
-
-    if !det.native_helpers.is_empty() {
-        eprintln!(
-            "    Native helpers:    {} {}",
-            det.native_helpers.len(),
-            pluralize("method", det.native_helpers.len())
-        );
-        if detailed {
-            for entry in &det.native_helpers {
-                eprintln!("      {} (RVA: {})", entry.token, entry.rva);
-            }
-        }
-    }
-
-    if !det.marker_attributes.is_empty() {
-        eprintln!("    Marker attributes: yes");
-        if detailed {
-            for token in &det.marker_attributes {
-                eprintln!("      {token}");
-            }
-        }
-    }
-
-    if let Some(token) = &det.suppress_ildasm {
-        eprintln!("    SuppressIldasm:    yes");
-        if detailed {
-            eprintln!("      {token}");
-        }
-    }
-
-    if !det.invalid_metadata.is_empty() {
-        eprintln!(
-            "    Invalid metadata:  {} {}",
-            det.invalid_metadata.len(),
-            pluralize("entry", det.invalid_metadata.len())
-        );
-        if detailed {
-            for token in &det.invalid_metadata {
-                eprintln!("      {token}");
-            }
+            // In detailed mode the id and status are already shown above;
+            // nothing extra to expand per technique at this time.
         }
     }
 }
@@ -633,16 +442,6 @@ fn display_stats(report: &DeobfuscationReport) {
     }
     if s.artifacts_removed > 0 {
         eprintln!("    Artifacts:   {} removed", s.artifacts_removed);
-    }
-}
-
-fn pluralize(word: &str, count: usize) -> String {
-    if count == 1 {
-        word.to_string()
-    } else if let Some(stem) = word.strip_suffix('y') {
-        format!("{stem}ies")
-    } else {
-        format!("{word}s")
     }
 }
 

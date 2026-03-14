@@ -24,10 +24,7 @@
 //! This pass works best after constant propagation and branch simplification,
 //! as those passes may expose more dead code.
 
-use std::{
-    collections::{HashMap, HashSet, VecDeque},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
     analysis::{
@@ -1006,7 +1003,7 @@ impl SsaPass for DeadCodeEliminationPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        _assembly: &CilObject,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
 
@@ -1089,13 +1086,13 @@ impl SsaPass for DeadMethodEliminationPass {
         _ssa: &mut SsaFunction,
         _method_token: Token,
         _ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        _assembly: &CilObject,
     ) -> Result<bool> {
         // This is a global pass, so run_on_method is not used
         Ok(false)
     }
 
-    fn run_global(&self, ctx: &CompilerContext, _assembly: &Arc<CilObject>) -> Result<bool> {
+    fn run_global(&self, ctx: &CompilerContext, _assembly: &CilObject) -> Result<bool> {
         let changes = EventLog::new();
 
         // Build a live call graph from actual SSA calls (not the static call graph).
@@ -1166,8 +1163,6 @@ impl SsaPass for DeadMethodEliminationPass {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::sync::Arc;
 
     use crate::{
@@ -1175,7 +1170,7 @@ mod tests {
             CallGraph, ConstValue, DefSite, MethodRef, PhiNode, PhiOperand, SsaBlock, SsaFunction,
             SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId, VariableOrigin,
         },
-        compiler::{CompilerContext, SsaPass},
+        compiler::{passes::deadcode::DeadCodeEliminationPass, CompilerContext, SsaPass},
         metadata::token::Token,
         test::helpers::test_assembly_arc,
     };

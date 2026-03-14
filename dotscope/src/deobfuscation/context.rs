@@ -4,7 +4,11 @@
 //! state. It implements `Deref<Target = CompilerContext>` so all compiler context
 //! methods are accessible directly through `&AnalysisContext`.
 
-use std::{ops::Deref, sync::Arc};
+use std::{
+    collections::HashSet,
+    ops::Deref,
+    sync::{Arc, OnceLock},
+};
 
 use dashmap::DashSet;
 
@@ -12,19 +16,23 @@ use crate::{
     compiler::CompilerContext,
     deobfuscation::{
         config::EngineConfig, decryptors::DecryptorContext, statemachine::StateMachineProvider,
+        EmulationTemplatePool,
     },
-    emulation::Hook,
+    emulation::{EmValue, Hook},
     metadata::token::Token,
 };
 
-/// A factory function that creates a new [`Hook`] instance.
+/// A named factory that creates a new [`Hook`] instance.
 ///
 /// Hook factories are used instead of storing hooks directly because hooks
 /// contain non-Clone types (closures, trait objects). Each emulation process
 /// gets fresh hook instances by calling all registered factories.
-///
-/// This is a boxed closure to allow capturing state (e.g., method tokens to stub).
-pub type HookFactory = Box<dyn Fn() -> Hook + Send + Sync>;
+pub struct HookFactory {
+    /// Identifies which technique/obfuscator registered this hook.
+    pub source: &'static str,
+    /// The factory closure that produces a fresh hook.
+    pub factory: Box<dyn Fn() -> Hook + Send + Sync>,
+}
 
 /// Analysis context for the SSA pipeline phase.
 ///
@@ -69,13 +77,15 @@ pub struct AnalysisContext {
     /// to get fresh hooks for each emulation process.
     pub emulation_hooks: Arc<boxcar::Vec<HookFactory>>,
 
-    /// Methods that need to be executed during emulation template warmup.
+    /// Methods to execute during emulation template warmup, with optional arguments.
     ///
-    /// Obfuscators register static constructors (.cctors) here that should run
-    /// before decryption emulation begins. This is critical for obfuscators like
-    /// ConfuserEx where the .cctor performs expensive initialization (LZMA
-    /// decompression) that should happen once on the template, not on every fork.
-    pub warmup_methods: Arc<boxcar::Vec<Token>>,
+    /// Entries with empty args are typically .cctors (static constructors) that
+    /// initialize decryptor state. Entries with args are decryptor methods called
+    /// once to trigger lazy initialization (e.g., PureLogs string table loading).
+    ///
+    /// Warmup runs on the template process before forking, so the expensive
+    /// initialization happens once instead of on every fork.
+    pub warmup_methods: Arc<boxcar::Vec<(Token, Vec<EmValue>)>>,
 
     /// State machine providers for order-dependent constant decryption.
     ///
@@ -83,6 +93,25 @@ pub struct AnalysisContext {
     /// with CFGCtx) registers a provider during detection. The decryption pass
     /// queries these providers to determine how to process each method.
     pub statemachine_providers: Arc<boxcar::Vec<Arc<dyn StateMachineProvider>>>,
+
+    /// Tracks which techniques have already been initialized.
+    ///
+    /// Prevents double-initialization when detection re-scan discovers a technique
+    /// that was already initialized in an earlier round. Keyed by technique ID.
+    pub initialized_techniques: DashSet<String>,
+
+    /// Tracks which techniques have had their SSA passes created and added to the scheduler.
+    ///
+    /// Prevents duplicate pass instances when the detection loop re-discovers techniques
+    /// that were already set up in earlier rounds. Keyed by technique ID.
+    pub passes_created: DashSet<String>,
+
+    /// Shared emulation template pool for all passes needing emulation.
+    ///
+    /// Set once after technique initialization via [`OnceLock::set`]. Passes
+    /// access it through [`template_pool()`](Self::template_pool) to get O(1) CoW forks
+    /// instead of independently creating and warming up emulation processes.
+    pub template_pool: OnceLock<Arc<EmulationTemplatePool>>,
 }
 
 impl Deref for AnalysisContext {
@@ -110,10 +139,11 @@ impl AnalysisContext {
             emulation_hooks: Arc::new(boxcar::Vec::new()),
             warmup_methods: Arc::new(boxcar::Vec::new()),
             statemachine_providers: Arc::new(boxcar::Vec::new()),
+            initialized_techniques: DashSet::new(),
+            passes_created: DashSet::new(),
+            template_pool: OnceLock::new(),
         }
     }
-
-    // ── Dispatcher tracking ────────────────────────────────────────────
 
     /// Checks if a method is a dispatcher (control flow obfuscation).
     #[must_use]
@@ -127,23 +157,32 @@ impl AnalysisContext {
         self.compiler.no_inline.insert(token);
     }
 
-    // ── Emulation hooks ────────────────────────────────────────────────
-
     /// Registers an emulation hook factory.
     ///
     /// Obfuscators call this during `initialize_context()` to provide hooks
     /// that should be used during decryption emulation.
-    pub fn register_emulation_hook<F>(&self, factory: F)
+    pub fn register_emulation_hook<F>(&self, source: &'static str, factory: F)
     where
         F: Fn() -> Hook + Send + Sync + 'static,
     {
-        self.emulation_hooks.push(Box::new(factory));
+        // Deduplicate: skip if a hook from this source is already registered.
+        let already_registered = self.emulation_hooks.iter().any(|(_, h)| h.source == source);
+        if already_registered {
+            return;
+        }
+        self.emulation_hooks.push(HookFactory {
+            source,
+            factory: Box::new(factory),
+        });
     }
 
     /// Creates fresh hook instances from all registered factories.
     #[must_use]
     pub fn create_emulation_hooks(&self) -> Vec<Hook> {
-        self.emulation_hooks.iter().map(|(_, f)| f()).collect()
+        self.emulation_hooks
+            .iter()
+            .map(|(_, h)| (h.factory)())
+            .collect()
     }
 
     /// Returns true if any emulation hooks are registered.
@@ -158,20 +197,24 @@ impl AnalysisContext {
         self.config.emulation_max_instructions
     }
 
-    // ── Warmup methods ─────────────────────────────────────────────────
-
     /// Registers a method to be executed during emulation template warmup.
-    pub fn register_warmup_method(&self, method: Token) {
-        if self.warmup_methods.iter().any(|(_, &m)| m == method) {
+    ///
+    /// Pass empty `args` for .cctors, or provide arguments for decryptor methods
+    /// that need a single call to trigger lazy initialization.
+    pub fn register_warmup_method(&self, method: Token, args: Vec<EmValue>) {
+        if self.warmup_methods.iter().any(|(_, (m, _))| *m == method) {
             return;
         }
-        self.warmup_methods.push(method);
+        self.warmup_methods.push((method, args));
     }
 
-    /// Returns all registered warmup methods.
+    /// Returns all registered warmup methods with their arguments.
     #[must_use]
-    pub fn warmup_methods(&self) -> Vec<Token> {
-        self.warmup_methods.iter().map(|(_, &m)| m).collect()
+    pub fn warmup_methods(&self) -> Vec<(Token, Vec<EmValue>)> {
+        self.warmup_methods
+            .iter()
+            .map(|(_, entry)| entry.clone())
+            .collect()
     }
 
     /// Returns true if any warmup methods are registered.
@@ -180,10 +223,19 @@ impl AnalysisContext {
         !self.warmup_methods.is_empty()
     }
 
-    // ── State machine providers ────────────────────────────────────────
-
     /// Registers a state machine provider for order-dependent decryption.
+    ///
+    /// Idempotent: skips registration if an existing provider already covers
+    /// any of the same methods (indicating duplicate registration).
     pub fn register_statemachine_provider(&self, provider: Arc<dyn StateMachineProvider>) {
+        let new_methods: HashSet<Token> = provider.methods().into_iter().collect();
+        let already_covered = self.statemachine_providers.iter().any(|(_, existing)| {
+            let existing_methods: HashSet<Token> = existing.methods().into_iter().collect();
+            !existing_methods.is_disjoint(&new_methods)
+        });
+        if already_covered {
+            return;
+        }
         self.statemachine_providers.push(provider);
     }
 

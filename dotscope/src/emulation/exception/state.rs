@@ -256,6 +256,19 @@ pub struct ThreadExceptionState {
     ///
     /// Used to skip the current handler when searching during rethrow.
     current_handler_offset: Option<u32>,
+
+    /// The method token of the currently executing catch handler.
+    ///
+    /// Tracks which method owns the catch handler so that `leave` instructions
+    /// in nested method calls don't accidentally clear the handler state.
+    current_handler_method: Option<Token>,
+
+    /// Whether we are currently executing a finally block during exception unwinding.
+    ///
+    /// Per ECMA-335 §II.12.4.2.5: if a new exception is thrown during a finally
+    /// that was entered as part of exception unwinding, the old exception is
+    /// replaced by the new one and unwinding restarts from the current point.
+    in_unwind_finally: bool,
 }
 
 impl ThreadExceptionState {
@@ -355,6 +368,7 @@ impl ThreadExceptionState {
         self.filter_result = None;
         self.exception_origin_offset = None;
         self.current_handler_offset = None;
+        self.in_unwind_finally = false;
     }
 
     /// Checks if exception handling is in progress.
@@ -610,6 +624,12 @@ impl ThreadExceptionState {
         self.current_handler_offset
     }
 
+    /// Returns the method that owns the current catch handler.
+    #[must_use]
+    pub fn current_handler_method(&self) -> Option<Token> {
+        self.current_handler_method
+    }
+
     /// Enters a catch handler with tracking for rethrow support.
     ///
     /// Unlike [`enter_catch`](Self::enter_catch), this preserves the exception
@@ -617,11 +637,13 @@ impl ThreadExceptionState {
     ///
     /// # Arguments
     ///
+    /// * `method` - The method token that owns this catch handler
     /// * `origin_offset` - The IL offset where the exception was thrown
     /// * `handler_offset` - The IL offset of this catch handler
-    pub fn enter_catch_handler(&mut self, origin_offset: u32, handler_offset: u32) {
+    pub fn enter_catch_handler(&mut self, method: Token, origin_offset: u32, handler_offset: u32) {
         self.exception_origin_offset = Some(origin_offset);
         self.current_handler_offset = Some(handler_offset);
+        self.current_handler_method = Some(method);
         // Note: we do NOT clear the exception here - rethrow needs it
     }
 
@@ -632,6 +654,40 @@ impl ThreadExceptionState {
     pub fn leave_catch_handler(&mut self) {
         self.exception_origin_offset = None;
         self.current_handler_offset = None;
+        self.current_handler_method = None;
+    }
+
+    /// Returns whether we are currently in a finally block entered during exception unwinding.
+    #[must_use]
+    pub fn in_unwind_finally(&self) -> bool {
+        self.in_unwind_finally
+    }
+
+    /// Sets the unwind-finally state.
+    ///
+    /// Set to `true` when entering a finally block during exception unwinding.
+    /// Set to `false` when the finally completes normally via `endfinally`.
+    pub fn set_in_unwind_finally(&mut self, in_unwind: bool) {
+        self.in_unwind_finally = in_unwind;
+    }
+
+    /// Gets a mutable reference to the current exception info.
+    ///
+    /// Used to build stack traces during unwinding without consuming the exception.
+    pub fn exception_mut(&mut self) -> Option<&mut ExceptionInfo> {
+        self.current_exception.as_mut()
+    }
+
+    /// Handles a new exception thrown during an unwind-finally.
+    ///
+    /// Per ECMA-335 §II.12.4.2.5: the old exception is abandoned and the new
+    /// exception replaces it. The pending finally queue is cleared since the old
+    /// unwind chain is no longer relevant.
+    pub fn replace_exception_in_unwind_finally(&mut self, new_exception: ExceptionInfo) {
+        self.current_exception = Some(new_exception);
+        self.pending_finally.clear();
+        self.in_unwind_finally = false;
+        self.handling_exception = true;
     }
 
     /// Clears exception-related state when fully handled.
@@ -642,6 +698,7 @@ impl ThreadExceptionState {
         self.filter_result = None;
         self.exception_origin_offset = None;
         self.current_handler_offset = None;
+        self.current_handler_method = None;
     }
 }
 

@@ -13,6 +13,15 @@ pub fn to_u32(value: usize) -> Result<u32> {
         .map_err(|_| malformed_error!("PE serialization value {value} exceeds u32::MAX"))
 }
 
+/// Converts a `usize` to `i32` with saturation at `i32::MAX`.
+///
+/// Useful for returning array lengths and similar values to .NET code,
+/// where `int` is the expected return type.
+#[must_use]
+pub fn to_i32_saturating(value: usize) -> i32 {
+    i32::try_from(value).unwrap_or(i32::MAX)
+}
+
 /// Checks if a value is a power of two and returns the exponent.
 ///
 /// Returns `Some(n)` if `value == 2^n`, `None` otherwise.
@@ -77,6 +86,20 @@ mod tests {
     fn test_to_u32_overflow() {
         assert!(to_u32(u32::MAX as usize + 1).is_err());
         assert!(to_u32(usize::MAX).is_err());
+    }
+
+    #[test]
+    fn test_to_i32_saturating_in_range() {
+        assert_eq!(to_i32_saturating(0), 0);
+        assert_eq!(to_i32_saturating(1), 1);
+        assert_eq!(to_i32_saturating(i32::MAX as usize), i32::MAX);
+    }
+
+    #[cfg(target_pointer_width = "64")]
+    #[test]
+    fn test_to_i32_saturating_overflow() {
+        assert_eq!(to_i32_saturating(i32::MAX as usize + 1), i32::MAX);
+        assert_eq!(to_i32_saturating(usize::MAX), i32::MAX);
     }
 
     #[test]

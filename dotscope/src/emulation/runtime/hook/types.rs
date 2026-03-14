@@ -12,7 +12,7 @@
 use std::sync::Arc;
 
 use crate::{
-    emulation::{thread::ReflectionInvokeRequest, EmValue, EmulationThread},
+    emulation::{synthetic_exception, thread::ReflectionInvokeRequest, EmValue, EmulationThread},
     metadata::{
         token::Token,
         typesystem::{CilFlavor, PointerSize},
@@ -335,8 +335,122 @@ pub enum PreHookResult {
 
     /// An error occurred in the hook.
     ///
-    /// The emulator will propagate this error to the caller.
+    /// The emulator will propagate this error to the caller as a hard Rust error
+    /// that bypasses CIL exception handling. Use [`Throw`](Self::Throw) instead
+    /// when simulating a CLR exception that should be routable to `catch` handlers.
     Error(String),
+
+    /// The hook throws a CLR exception that should be routable to CIL catch handlers.
+    ///
+    /// Unlike [`Error`](Self::Error), this variant creates an exception that flows
+    /// through the normal CIL exception handling path (`try`/`catch`/`finally`).
+    Throw {
+        /// Synthetic exception type token (from `synthetic_exception` constants).
+        exception_type: Token,
+        /// Message for diagnostics/tracing.
+        message: String,
+    },
+}
+
+impl PreHookResult {
+    /// Creates a `Throw` for `System.NullReferenceException`.
+    #[must_use]
+    pub fn throw_null_reference() -> Self {
+        Self::Throw {
+            exception_type: synthetic_exception::NULL_REFERENCE,
+            message: "NullReferenceException".into(),
+        }
+    }
+
+    /// Creates a `Throw` for `System.IO.EndOfStreamException`.
+    #[must_use]
+    pub fn throw_end_of_stream() -> Self {
+        Self::Throw {
+            exception_type: synthetic_exception::END_OF_STREAM,
+            message: "EndOfStreamException".into(),
+        }
+    }
+
+    /// Creates a `Throw` for `System.ObjectDisposedException`.
+    #[must_use]
+    pub fn throw_object_disposed() -> Self {
+        Self::Throw {
+            exception_type: synthetic_exception::OBJECT_DISPOSED,
+            message: "ObjectDisposedException".into(),
+        }
+    }
+
+    /// Creates a `Throw` for `System.InvalidOperationException`.
+    #[must_use]
+    pub fn throw_invalid_operation(msg: &str) -> Self {
+        Self::Throw {
+            exception_type: synthetic_exception::INVALID_OPERATION,
+            message: format!("InvalidOperationException: {msg}"),
+        }
+    }
+
+    /// Creates a `Throw` for `System.FormatException`.
+    #[must_use]
+    pub fn throw_format_exception() -> Self {
+        Self::Throw {
+            exception_type: synthetic_exception::FORMAT_EXCEPTION,
+            message: "FormatException".into(),
+        }
+    }
+
+    /// Creates a `Throw` for `System.Collections.Generic.KeyNotFoundException`.
+    #[must_use]
+    pub fn throw_key_not_found() -> Self {
+        Self::Throw {
+            exception_type: synthetic_exception::KEY_NOT_FOUND,
+            message: "KeyNotFoundException".into(),
+        }
+    }
+
+    /// Creates a `Throw` for `System.ArgumentNullException`.
+    #[must_use]
+    pub fn throw_argument_null(param: &str) -> Self {
+        Self::Throw {
+            exception_type: synthetic_exception::ARGUMENT_NULL,
+            message: format!("ArgumentNullException: {param}"),
+        }
+    }
+
+    /// Creates a `Throw` for `System.IO.FileNotFoundException`.
+    #[must_use]
+    pub fn throw_file_not_found(path: &str) -> Self {
+        Self::Throw {
+            exception_type: synthetic_exception::FILE_NOT_FOUND,
+            message: format!("FileNotFoundException: {path}"),
+        }
+    }
+
+    /// Creates a `Throw` for `System.ArgumentException`.
+    #[must_use]
+    pub fn throw_argument_exception(msg: &str) -> Self {
+        Self::Throw {
+            exception_type: synthetic_exception::ARGUMENT_EXCEPTION,
+            message: format!("ArgumentException: {msg}"),
+        }
+    }
+
+    /// Creates a `Throw` for `System.TypeLoadException`.
+    #[must_use]
+    pub fn throw_type_load(msg: &str) -> Self {
+        Self::Throw {
+            exception_type: synthetic_exception::TYPE_LOAD,
+            message: format!("TypeLoadException: {msg}"),
+        }
+    }
+
+    /// Creates a `Throw` for `System.NotImplementedException`.
+    #[must_use]
+    pub fn throw_not_implemented(msg: &str) -> Self {
+        Self::Throw {
+            exception_type: synthetic_exception::NOT_IMPLEMENTED,
+            message: format!("NotImplementedException: {msg}"),
+        }
+    }
 }
 
 /// Result of executing a post-hook.
@@ -468,6 +582,17 @@ pub enum HookOutcome {
         request: Box<ReflectionInvokeRequest>,
         /// Placeholder return value for the hook's caller.
         bypass_value: Option<EmValue>,
+    },
+
+    /// A hook threw a CLR exception.
+    ///
+    /// The controller should create a synthetic exception object and route it
+    /// through the CIL exception handling path (`try`/`catch`/`finally`).
+    ThrewException {
+        /// Synthetic exception type token.
+        exception_type: Token,
+        /// Diagnostic message.
+        message: String,
     },
 }
 

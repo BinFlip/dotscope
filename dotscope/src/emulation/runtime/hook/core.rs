@@ -319,7 +319,7 @@ impl Hook {
     ///     .match_runtime("lzma-header", |ctx: &HookContext<'_>, thread: &EmulationThread| {
     ///         // Check if first arg is a byte[] starting with LZMA magic
     ///         if let Some(EmValue::ObjectRef(r)) = ctx.args.first() {
-    ///             if let Some(bytes) = thread.heap().get_array_as_bytes(*r, PointerSize::Bit64) {
+    ///             if let Ok(Some(bytes)) = thread.heap().get_array_as_bytes(*r, PointerSize::Bit64) {
     ///                 return bytes.len() >= 5 && bytes[0] == 0x5D;
     ///             }
     ///         }

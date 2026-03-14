@@ -47,10 +47,7 @@
 //!     branch (i < 10), header, exit
 //! ```
 
-use std::{
-    collections::{HashSet, VecDeque},
-    sync::Arc,
-};
+use std::collections::{HashSet, VecDeque};
 
 use crate::{
     analysis::{LoopAnalyzer, LoopInfo, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
@@ -100,7 +97,7 @@ impl SsaPass for LicmPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        _assembly: &CilObject,
     ) -> Result<bool> {
         let forest = LoopAnalyzer::new(ssa).analyze();
 

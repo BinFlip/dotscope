@@ -9,6 +9,7 @@ use crate::{
         token::Token,
         typesystem::{CilFlavor, PointerSize},
     },
+    utils::LeBytes,
 };
 
 /// Runtime value during CIL emulation.
@@ -1510,35 +1511,35 @@ impl EmValue {
     /// use dotscope::metadata::typesystem::{CilFlavor, PointerSize};
     ///
     /// let value = EmValue::I32(0x12345678);
-    /// assert_eq!(value.to_le_bytes(&CilFlavor::I4, PointerSize::Bit64), vec![0x78, 0x56, 0x34, 0x12]);
-    /// assert_eq!(value.to_le_bytes(&CilFlavor::I2, PointerSize::Bit64), vec![0x78, 0x56]);
-    /// assert_eq!(value.to_le_bytes(&CilFlavor::I1, PointerSize::Bit64), vec![0x78]);
+    /// assert_eq!(&*value.to_le_bytes(&CilFlavor::I4, PointerSize::Bit64), &[0x78, 0x56, 0x34, 0x12]);
+    /// assert_eq!(&*value.to_le_bytes(&CilFlavor::I2, PointerSize::Bit64), &[0x78, 0x56]);
+    /// assert_eq!(&*value.to_le_bytes(&CilFlavor::I1, PointerSize::Bit64), &[0x78]);
     /// ```
     #[must_use]
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    pub fn to_le_bytes(&self, flavor: &CilFlavor, ptr_size: PointerSize) -> Vec<u8> {
+    pub fn to_le_bytes(&self, flavor: &CilFlavor, ptr_size: PointerSize) -> LeBytes {
         match (self, flavor) {
             (EmValue::I32(v), CilFlavor::I1 | CilFlavor::U1 | CilFlavor::Boolean) => {
-                vec![*v as u8]
+                LeBytes::from_byte(*v as u8)
             }
             (EmValue::I32(v), CilFlavor::I2 | CilFlavor::U2 | CilFlavor::Char) => {
-                (*v as i16).to_le_bytes().to_vec()
+                LeBytes::from_2((*v as i16).to_le_bytes())
             }
-            (EmValue::I32(v), _) => v.to_le_bytes().to_vec(),
-            (EmValue::I64(v), _) => v.to_le_bytes().to_vec(),
-            (EmValue::F32(v), _) => v.to_le_bytes().to_vec(),
-            (EmValue::F64(v), _) => v.to_le_bytes().to_vec(),
+            (EmValue::I32(v), _) => LeBytes::from_4(v.to_le_bytes()),
+            (EmValue::I64(v), _) => LeBytes::from_8(v.to_le_bytes()),
+            (EmValue::F32(v), _) => LeBytes::from_4(v.to_le_bytes()),
+            (EmValue::F64(v), _) => LeBytes::from_8(v.to_le_bytes()),
             (EmValue::NativeInt(v), _) => match ptr_size {
-                PointerSize::Bit32 => (*v as i32).to_le_bytes().to_vec(),
-                PointerSize::Bit64 => v.to_le_bytes().to_vec(),
+                PointerSize::Bit32 => LeBytes::from_4((*v as i32).to_le_bytes()),
+                PointerSize::Bit64 => LeBytes::from_8(v.to_le_bytes()),
             },
             (EmValue::NativeUInt(v), _) => match ptr_size {
-                PointerSize::Bit32 => (*v as u32).to_le_bytes().to_vec(),
-                PointerSize::Bit64 => v.to_le_bytes().to_vec(),
+                PointerSize::Bit32 => LeBytes::from_4((*v as u32).to_le_bytes()),
+                PointerSize::Bit64 => LeBytes::from_8(v.to_le_bytes()),
             },
-            (EmValue::Bool(v), _) => vec![u8::from(*v)],
-            (EmValue::Char(v), _) => (*v as u16).to_le_bytes().to_vec(),
-            _ => vec![0; flavor.element_size(ptr_size).unwrap_or(ptr_size.bytes())],
+            (EmValue::Bool(v), _) => LeBytes::from_byte(u8::from(*v)),
+            (EmValue::Char(v), _) => LeBytes::from_2((*v as u16).to_le_bytes()),
+            _ => LeBytes::zeroed(flavor.element_size(ptr_size).unwrap_or(ptr_size.bytes())),
         }
     }
 

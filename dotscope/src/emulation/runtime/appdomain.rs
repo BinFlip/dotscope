@@ -69,9 +69,9 @@
 //! - String interning for comparison optimizations
 //! - Assembly resolve events for plugin loading
 
-use std::collections::HashMap;
+use std::{collections::HashMap, sync::Arc};
 
-use crate::{emulation::HeapRef, metadata::token::Token};
+use crate::{emulation::HeapRef, metadata::token::Token, CilObject};
 
 /// Simulated application domain state.
 ///
@@ -107,7 +107,7 @@ use crate::{emulation::HeapRef, metadata::token::Token};
 /// // The domain is ready for emulation
 /// assert!(domain.executing_assembly().is_some());
 /// ```
-#[derive(Debug, Default)]
+#[derive(Default)]
 pub struct AppDomainState {
     /// Loaded assemblies indexed by their simple name.
     ///
@@ -143,6 +143,28 @@ pub struct AppDomainState {
     /// This corresponds to `Assembly.GetEntryAssembly()` in .NET, which
     /// returns the assembly that contains the application's entry point.
     entry_assembly: Option<Token>,
+
+    /// Parsed assemblies loaded at runtime via `Assembly.Load(byte[])`.
+    ///
+    /// Each entry is a fully parsed [`CilObject`] that can be used for
+    /// metadata resolution and instruction fetching. The index into this
+    /// vector is stored in [`ThreadCallFrame::assembly_index`] to track
+    /// which assembly a frame belongs to.
+    loaded_cilobjects: Vec<Arc<CilObject>>,
+}
+
+impl std::fmt::Debug for AppDomainState {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("AppDomainState")
+            .field("loaded_assemblies", &self.loaded_assemblies)
+            .field("interned_strings_count", &self.interned_strings.len())
+            .field("assembly_resolve_handlers", &self.assembly_resolve_handlers)
+            .field("type_resolve_handlers", &self.type_resolve_handlers)
+            .field("executing_assembly", &self.executing_assembly)
+            .field("entry_assembly", &self.entry_assembly)
+            .field("loaded_cilobjects_count", &self.loaded_cilobjects.len())
+            .finish()
+    }
 }
 
 /// Information about a loaded assembly in the application domain.
@@ -413,6 +435,62 @@ impl AppDomainState {
     #[must_use]
     pub fn type_resolve_handlers(&self) -> &[Token] {
         &self.type_resolve_handlers
+    }
+
+    /// Registers a parsed assembly loaded at runtime (e.g., via `Assembly.Load(byte[])`).
+    ///
+    /// Returns the index of the newly registered assembly, which can be stored
+    /// in [`ThreadCallFrame::assembly_index`] to associate frames with their
+    /// originating assembly.
+    ///
+    /// # Arguments
+    ///
+    /// * `asm` - The parsed [`CilObject`] wrapped in `Arc`
+    pub fn register_parsed_assembly(&mut self, asm: Arc<CilObject>) -> usize {
+        let index = self.loaded_cilobjects.len();
+        self.loaded_cilobjects.push(asm);
+        index
+    }
+
+    /// Retrieves a previously registered parsed assembly by index.
+    ///
+    /// # Arguments
+    ///
+    /// * `index` - The index returned by [`register_parsed_assembly`](Self::register_parsed_assembly)
+    #[must_use]
+    pub fn get_parsed_assembly(&self, index: usize) -> Option<&Arc<CilObject>> {
+        self.loaded_cilobjects.get(index)
+    }
+
+    /// Searches all loaded assemblies for a type matching the given namespace and name.
+    ///
+    /// Returns the assembly index and type token if found. This enables
+    /// cross-assembly type resolution for dynamically loaded assemblies.
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - The type's namespace (e.g., "System.IO")
+    /// * `name` - The type's name (e.g., "MemoryStream")
+    #[must_use]
+    pub fn find_type_across_assemblies(
+        &self,
+        namespace: &str,
+        name: &str,
+    ) -> Option<(usize, Token)> {
+        for (index, asm) in self.loaded_cilobjects.iter().enumerate() {
+            for cil_type in asm.types().all_types() {
+                if cil_type.namespace == namespace && cil_type.name == name {
+                    return Some((index, cil_type.token));
+                }
+            }
+        }
+        None
+    }
+
+    /// Returns the number of dynamically loaded parsed assemblies.
+    #[must_use]
+    pub fn parsed_assembly_count(&self) -> usize {
+        self.loaded_cilobjects.len()
     }
 }
 

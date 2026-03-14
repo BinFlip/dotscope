@@ -39,14 +39,9 @@ use std::collections::HashSet;
 use crate::{
     cilassembly::{CilAssembly, CleanupRequest, GeneratorConfig},
     compiler::EventKind,
-    deobfuscation::{
-        context::AnalysisContext,
-        obfuscators::utils::{is_obfuscated_name, is_special_name},
-    },
+    deobfuscation::{context::AnalysisContext, renamer},
     metadata::{
-        tables::{FieldRaw, MethodDefRaw, ParamRaw, TableId, TypeDefRaw},
-        token::Token,
-        validation::ValidationConfig,
+        tables::TableId, token::Token, typesystem::wellknown, validation::ValidationConfig,
     },
     CilObject, Result,
 };
@@ -59,6 +54,21 @@ use crate::{
 /// 3. Executes cleanup via the `CilAssembly` infrastructure
 /// 4. Handles renaming and section exclusion
 /// 5. Regenerates the assembly
+///
+/// # Arguments
+///
+/// * `assembly` - The assembly to clean up (consumed and regenerated).
+/// * `obfuscator_request` - Optional cleanup request from the obfuscator-specific
+///   technique. If `None`, a default request is created from the analysis context
+///   configuration.
+/// * `ctx` - The analysis context containing dead methods, neutralized tokens,
+///   configuration settings, and event log.
+///
+/// # Returns
+///
+/// A new `CilObject` with the requested types, methods, fields, and sections
+/// removed, and any obfuscated names renamed. The assembly is regenerated
+/// with strict validation.
 ///
 /// # Errors
 ///
@@ -81,9 +91,10 @@ pub fn execute_cleanup(
     // Add dead methods from analysis
     let aggressive = ctx.config.cleanup.remove_unused_methods;
     if aggressive {
+        let entry_points = compute_entry_points(&assembly, aggressive);
         for token in ctx.dead_methods.iter() {
             let token = *token;
-            if !is_entry_point(&assembly, token, aggressive) {
+            if !entry_points.contains(&token) {
                 request.add_method(token);
             }
         }
@@ -95,10 +106,8 @@ pub fn execute_cleanup(
     // reflection trampolines). If they're no longer referenced by any surviving
     // method body, the cascade will remove them and their parent TypeRef/AssemblyRef.
     if ctx.config.cleanup.remove_orphan_metadata {
-        let neutralized: Vec<Token> = ctx.neutralized_tokens.iter().map(|t| *t).collect();
-        if !neutralized.is_empty() {
-            request.add_rewrite_orphaned_tokens(neutralized);
-        }
+        let neutralized = ctx.neutralized_tokens.iter().map(|t| *t);
+        request.add_rewrite_orphaned_tokens(neutralized);
     }
 
     // Determine if we should rename obfuscated names
@@ -120,9 +129,7 @@ pub fn execute_cleanup(
     let fields_count = request.fields_len();
 
     if types_count > 0 || methods_count > 0 || fields_count > 0 {
-        ctx.events.record(EventKind::Info).message(format!(
-            "Cleanup: {types_count} types, {methods_count} methods, {fields_count} fields"
-        ));
+        log::info!("Cleanup: {types_count} types, {methods_count} methods, {fields_count} fields");
     }
 
     for section_name in request.excluded_sections() {
@@ -134,7 +141,19 @@ pub fn execute_cleanup(
     // Log individual removals before consuming the assembly
     log_cleanup_request(&request, &assembly, ctx);
 
-    // Convert directly — no reparsing needed
+    // Collect rename entries while CilObject is still alive (before consumption).
+    // The smart renamer needs CilObject-level APIs (types(), resolver(), member_ref())
+    // for metadata queries — these aren't available on CilAssembly.
+    let rename_entries = if rename_obfuscated {
+        Some(renamer::renames_collect(
+            &assembly,
+            ctx.config.cleanup.smart_rename.as_ref(),
+        )?)
+    } else {
+        None
+    };
+
+    // Convert directly — no reparsing needed (consumes CilObject)
     let mut cil_assembly = assembly.into_assembly();
 
     // Repair metadata anomalies injected by obfuscators.
@@ -148,9 +167,9 @@ pub fn execute_cleanup(
     // Add cleanup request (the actual cleanup is executed during generation)
     cil_assembly.add_cleanup(&request);
 
-    // Handle renaming
-    if rename_obfuscated {
-        let count = rename_obfuscated_names(&mut cil_assembly);
+    // Apply collected renames to the string heap
+    if let Some(entries) = rename_entries {
+        let count = renamer::renames_apply(&mut cil_assembly, entries)?;
         if count > 0 {
             ctx.events
                 .record(EventKind::ArtifactRemoved)
@@ -167,6 +186,11 @@ pub fn execute_cleanup(
 }
 
 /// Logs cleanup request details to the event log.
+///
+/// Records an [`EventKind::ArtifactRemoved`] event for each type, method,
+/// field, and custom attribute scheduled for removal. Type events include
+/// the fully-qualified name when available; methods and fields log their
+/// token values.
 fn log_cleanup_request(request: &CleanupRequest, assembly: &CilObject, ctx: &AnalysisContext) {
     // Log type removals
     for type_token in request.types() {
@@ -240,33 +264,54 @@ fn repair_duplicate_assembly_rows(cil_assembly: &mut CilAssembly, ctx: &Analysis
         ));
 }
 
-/// Detects and marks an empty module `.cctor` for removal.
+/// Sweeps empty `<Module>` methods after neutralization.
 ///
-/// If the module `.cctor` was processed by the SSA pipeline and its final
-/// instruction count is <= 1 (just a `ret`), it has become effectively empty
-/// after neutralization and should be removed.
+/// Scans all methods in `<Module>` that were processed by the SSA pipeline
+/// and marks those with <= 1 instruction (just `ret`) for removal. This covers
+/// the module `.cctor` (after anti-tamper/anti-debug removal) and other
+/// infrastructure methods (anti-debug hooks, etc.) that become empty bodies
+/// after the neutralization pass NOP'd their contents.
+///
+/// `.cctor` methods are always safe to delete when empty because they are
+/// invoked by the runtime on first type access, not via explicit IL calls.
+/// Non-`.cctor` methods are only deleted if they are known dead (not called
+/// by any surviving method). This prevents deleting junk methods that are
+/// still referenced — deleting them would shift RIDs and create dangling
+/// call targets in the callers.
 fn sweep_empty_module_cctor(
     assembly: &CilObject,
     request: &mut CleanupRequest,
     ctx: &AnalysisContext,
 ) {
-    let Some(cctor_token) = assembly.types().module_cctor() else {
+    let Some(module_type) = assembly.types().module_type() else {
         return;
     };
 
-    // Only consider if the SSA pipeline processed this method
-    let Some(ssa_func) = ctx.ssa_functions.get(&cctor_token) else {
-        return;
-    };
+    for (_, method_ref) in module_type.methods.iter() {
+        let Some(method) = method_ref.upgrade() else {
+            continue;
+        };
 
-    // If the .cctor has at most 1 instruction (just `ret`), it's empty
-    if ssa_func.instruction_count() <= 1 {
-        log::debug!(
-            "Sweep: empty module .cctor (0x{:08X}) with {} instructions",
-            cctor_token.value(),
-            ssa_func.instruction_count()
-        );
-        request.add_method(cctor_token);
+        let Some(ssa_func) = ctx.ssa_functions.get(&method.token) else {
+            continue;
+        };
+
+        if ssa_func.instruction_count() <= 1 {
+            let is_cctor = method.name == wellknown::members::CCTOR;
+            let is_dead = ctx.dead_methods.contains(&method.token);
+
+            if !is_cctor && !is_dead {
+                continue;
+            }
+
+            log::debug!(
+                "Sweep: empty module method 0x{:08X} ({}) with {} instructions",
+                method.token.value(),
+                method.name,
+                ssa_func.instruction_count()
+            );
+            request.add_method(method.token);
+        }
     }
 }
 
@@ -274,6 +319,15 @@ fn sweep_empty_module_cctor(
 ///
 /// Returns `None` if cleanup is disabled. Otherwise returns a `CleanupRequest`
 /// with orphan removal and empty type settings from the config.
+///
+/// # Arguments
+///
+/// * `ctx` - The analysis context whose cleanup configuration is inspected.
+///
+/// # Returns
+///
+/// `Some(CleanupRequest)` with settings derived from the config, or `None`
+/// if all cleanup options are disabled.
 pub(crate) fn create_cleanup_request(ctx: &AnalysisContext) -> Option<CleanupRequest> {
     let cleanup_config = &ctx.config.cleanup;
     if !cleanup_config.any_enabled() {
@@ -292,6 +346,15 @@ pub(crate) fn create_cleanup_request(ctx: &AnalysisContext) -> Option<CleanupReq
 /// This is the standard pattern for adding protection methods to cleanup: iterate
 /// the token collection, check each against `is_entry_point()`, and only add
 /// non-entry-point methods.
+///
+/// # Arguments
+///
+/// * `request` - The cleanup request to add methods to.
+/// * `assembly` - The assembly used to resolve method metadata and entry point.
+/// * `tokens` - The method tokens to consider for removal.
+/// * `aggressive` - If `true`, trust dead-code analysis and only protect the
+///   assembly entry point and static constructors. If `false`, also protect
+///   public methods as potential external API.
 pub(crate) fn add_safe_methods(
     request: &mut CleanupRequest,
     assembly: &CilObject,
@@ -305,7 +368,67 @@ pub(crate) fn add_safe_methods(
     }
 }
 
+/// Pre-computes the set of entry-point method tokens that should not be removed.
+///
+/// This avoids calling [`is_entry_point`] per dead method (which does a linear
+/// scan over all methods each time), reducing the overall complexity from
+/// O(dead_methods * all_methods) to O(all_methods).
+fn compute_entry_points(assembly: &CilObject, aggressive: bool) -> HashSet<Token> {
+    let mut entry_points = HashSet::new();
+
+    // Assembly entry point
+    let entry_token_val = assembly.cor20header().entry_point_token;
+    if entry_token_val != 0 {
+        entry_points.insert(Token::new(entry_token_val));
+    }
+
+    for method_entry in assembly.methods() {
+        let method = method_entry.value();
+
+        // Static constructors are special runtime entry points
+        if method.is_cctor() {
+            entry_points.insert(method.token);
+            continue;
+        }
+
+        if aggressive {
+            continue;
+        }
+
+        // In non-aggressive mode, protect public methods as potential external API.
+        // Exception: public methods in <Module> are obfuscator infrastructure.
+        if method.is_public() {
+            let in_module = assembly.types().module_type().is_some_and(|module_type| {
+                module_type
+                    .methods
+                    .iter()
+                    .any(|(_, r)| r.upgrade().is_some_and(|m| m.token == method.token))
+            });
+            if !in_module {
+                entry_points.insert(method.token);
+            }
+        }
+    }
+
+    entry_points
+}
+
 /// Checks if a method is an entry point that should not be removed.
+///
+/// Entry points include the assembly's declared entry point (e.g., `Main`),
+/// static constructors (`.cctor`), and — in non-aggressive mode — public methods
+/// outside the `<Module>` type.
+///
+/// # Arguments
+///
+/// * `assembly` - The assembly containing the method.
+/// * `method_token` - The token of the method to check.
+/// * `aggressive` - If `true`, only protect the assembly entry point and static
+///   constructors. If `false`, also protect public methods.
+///
+/// # Returns
+///
+/// `true` if the method should be preserved, `false` if it is safe to remove.
 pub(crate) fn is_entry_point(assembly: &CilObject, method_token: Token, aggressive: bool) -> bool {
     // Check if it's the assembly entry point
     let entry_token = assembly.cor20header().entry_point_token;
@@ -334,209 +457,27 @@ pub(crate) fn is_entry_point(assembly: &CilObject, method_token: Token, aggressi
         return false;
     }
 
-    // In non-aggressive mode, protect public methods as potential external API
-    if method.is_public() {
-        return true;
-    }
-
-    // Instance constructors in public types could be called externally
-    if method.is_ctor() && method.is_public() {
+    // In non-aggressive mode, protect public methods as potential external API.
+    // Exception: public methods in <Module> are obfuscator infrastructure
+    // (e.g., constant decryptors, anti-tamper hooks) — not real entry points.
+    let in_module = assembly.types().module_type().is_some_and(|module_type| {
+        module_type
+            .methods
+            .iter()
+            .any(|(_, r)| r.upgrade().is_some_and(|m| m.token == method_token))
+    });
+    if method.is_public() && !in_module {
         return true;
     }
 
     false
 }
 
-/// Generator for simple sequential names.
-#[derive(Debug, Default)]
-struct SimpleNameGenerator {
-    types: usize,
-    methods: usize,
-    fields: usize,
-    params: usize,
-}
-
-impl SimpleNameGenerator {
-    #[must_use]
-    pub fn new() -> Self {
-        Self::default()
-    }
-
-    pub fn next_type_name(&mut self) -> String {
-        let name = Self::index_to_name(self.types);
-        self.types += 1;
-        name
-    }
-
-    pub fn next_method_name(&mut self) -> String {
-        let name = Self::index_to_name_lower(self.methods);
-        self.methods += 1;
-        name
-    }
-
-    pub fn next_field_name(&mut self) -> String {
-        let name = format!("f_{}", Self::index_to_name_lower(self.fields));
-        self.fields += 1;
-        name
-    }
-
-    pub fn next_param_name(&mut self) -> String {
-        let name = format!("p_{}", Self::index_to_name_lower(self.params));
-        self.params += 1;
-        name
-    }
-
-    #[must_use]
-    pub fn index_to_name(mut index: usize) -> String {
-        let mut result = String::new();
-        loop {
-            let remainder = index % 26;
-            // Safe: remainder is always 0..25 from modulo 26
-            #[allow(clippy::cast_possible_truncation)]
-            result.insert(0, (b'A' + remainder as u8) as char);
-            if index < 26 {
-                break;
-            }
-            index = index / 26 - 1;
-        }
-        result
-    }
-
-    #[must_use]
-    pub fn index_to_name_lower(mut index: usize) -> String {
-        let mut result = String::new();
-        loop {
-            let remainder = index % 26;
-            // Safe: remainder is always 0..25 from modulo 26
-            #[allow(clippy::cast_possible_truncation)]
-            result.insert(0, (b'a' + remainder as u8) as char);
-            if index < 26 {
-                break;
-            }
-            index = index / 26 - 1;
-        }
-        result
-    }
-}
-
-/// Renames obfuscated type, method, and field names to simple identifiers.
-fn rename_obfuscated_names(cil_assembly: &mut CilAssembly) -> usize {
-    let mut renamed_count = 0;
-    let mut name_generator = SimpleNameGenerator::new();
-
-    let view = cil_assembly.view();
-    let Some(tables) = view.tables() else {
-        return 0;
-    };
-
-    let Some(strings) = view.strings() else {
-        return 0;
-    };
-
-    let mut names_to_rename: Vec<(u32, String)> = Vec::new();
-
-    // Collect obfuscated names from TypeDef
-    if let Some(typedef_table) = tables.table::<TypeDefRaw>() {
-        for rid in 1..=typedef_table.row_count {
-            if let Some(typedef) = typedef_table.get(rid) {
-                if rid == 1 {
-                    continue;
-                }
-
-                let name_index = typedef.type_name;
-                if name_index > 0 {
-                    if let Ok(name) = strings.get(name_index as usize) {
-                        if is_obfuscated_name(name)
-                            && !is_special_name(name)
-                            && !names_to_rename.iter().any(|(idx, _)| *idx == name_index)
-                        {
-                            let new_name = name_generator.next_type_name();
-                            names_to_rename.push((name_index, new_name));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Collect obfuscated method names from MethodDef
-    if let Some(methoddef_table) = tables.table::<MethodDefRaw>() {
-        for rid in 1..=methoddef_table.row_count {
-            if let Some(methoddef) = methoddef_table.get(rid) {
-                let name_index = methoddef.name;
-                if name_index > 0 {
-                    if let Ok(name) = strings.get(name_index as usize) {
-                        if is_obfuscated_name(name)
-                            && !is_special_name(name)
-                            && !names_to_rename.iter().any(|(idx, _)| *idx == name_index)
-                        {
-                            let new_name = name_generator.next_method_name();
-                            names_to_rename.push((name_index, new_name));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Collect obfuscated field names from Field
-    if let Some(field_table) = tables.table::<FieldRaw>() {
-        for rid in 1..=field_table.row_count {
-            if let Some(field) = field_table.get(rid) {
-                let name_index = field.name;
-                if name_index > 0 {
-                    if let Ok(name) = strings.get(name_index as usize) {
-                        if is_obfuscated_name(name)
-                            && !is_special_name(name)
-                            && !names_to_rename.iter().any(|(idx, _)| *idx == name_index)
-                        {
-                            let new_name = name_generator.next_field_name();
-                            names_to_rename.push((name_index, new_name));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Collect obfuscated parameter names from Param
-    if let Some(param_table) = tables.table::<ParamRaw>() {
-        for rid in 1..=param_table.row_count {
-            if let Some(param) = param_table.get(rid) {
-                let name_index = param.name;
-                if name_index > 0 {
-                    if let Ok(name) = strings.get(name_index as usize) {
-                        if is_obfuscated_name(name)
-                            && !is_special_name(name)
-                            && !names_to_rename.iter().any(|(idx, _)| *idx == name_index)
-                        {
-                            let new_name = name_generator.next_param_name();
-                            names_to_rename.push((name_index, new_name));
-                        }
-                    }
-                }
-            }
-        }
-    }
-
-    // Apply the renames to the string heap
-    for (string_index, new_name) in &names_to_rename {
-        if cil_assembly.string_update(*string_index, new_name).is_ok() {
-            renamed_count += 1;
-        }
-    }
-
-    renamed_count
-}
-
 #[cfg(test)]
 mod tests {
     use crate::{
         cilassembly::CleanupRequest,
-        deobfuscation::{
-            cleanup::SimpleNameGenerator,
-            obfuscators::utils::{is_obfuscated_name, is_special_name},
-        },
+        deobfuscation::utils::{is_obfuscated_name, is_special_name},
         metadata::token::Token,
     };
 
@@ -552,15 +493,6 @@ mod tests {
         assert_eq!(request.types_len(), 1);
         assert_eq!(request.methods_len(), 1);
         assert_eq!(request.fields_len(), 1);
-    }
-
-    #[test]
-    fn test_name_generator() {
-        assert_eq!(SimpleNameGenerator::index_to_name(0), "A");
-        assert_eq!(SimpleNameGenerator::index_to_name(25), "Z");
-        assert_eq!(SimpleNameGenerator::index_to_name(26), "AA");
-        assert_eq!(SimpleNameGenerator::index_to_name(27), "AB");
-        assert_eq!(SimpleNameGenerator::index_to_name(702), "AAA");
     }
 
     #[test]
@@ -610,42 +542,5 @@ mod tests {
         assert!(is_special_name("set_Item"));
         assert!(is_special_name("add_Click"));
         assert!(is_special_name("remove_Changed"));
-    }
-
-    /// Regression test: renaming obfuscated names must preserve TypeRef substring
-    /// references in the string heap. The .NET string heap uses substring sharing
-    /// (e.g., "Console" as a suffix of "writeToConsole"), and the generator must
-    /// correctly remap these after heap modifications.
-    #[test]
-    fn test_rename_preserves_typeref_substring_references() {
-        use crate::{cilassembly::CilAssembly, metadata::validation::ValidationConfig, CilObject};
-
-        let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !std::path::Path::new(path).exists() {
-            eprintln!("Skipping: sample not found");
-            return;
-        }
-
-        let assembly =
-            CilObject::from_path_with_validation(path, ValidationConfig::analysis()).unwrap();
-        let bytes = assembly.file().data().to_vec();
-        let mut cil_assembly = CilAssembly::from_bytes(bytes).unwrap();
-
-        let count = super::rename_obfuscated_names(&mut cil_assembly);
-        assert!(count > 0, "Expected at least one rename");
-
-        // Generate and validate with production strictness — this catches broken
-        // TypeRef string offsets that would result in "Out of Bounds" errors.
-        let output = cil_assembly
-            .into_cilobject_with(
-                ValidationConfig::production(),
-                crate::cilassembly::GeneratorConfig::default(),
-            )
-            .expect("Generation with renames should produce valid assembly");
-
-        // Double-check: reload from bytes with production validation
-        let output_bytes = output.file().data();
-        CilObject::from_mem_with_validation(output_bytes.to_vec(), ValidationConfig::production())
-            .expect("Roundtrip after rename should pass production validation");
     }
 }

@@ -50,14 +50,20 @@
 //! they decrypt the bytes and call `Assembly.Load(byte[])`. This hook captures those
 //! bytes, allowing the analyst to extract the unpacked assembly.
 
+use std::sync::Arc;
+
+use log::debug;
+
 use crate::{
     emulation::{
         capture::{AssemblyLoadMethod, CaptureSource},
+        memory::DelegateEntry,
         runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
         thread::EmulationThread,
-        EmValue,
+        EmValue, HeapObject,
     },
     metadata::{token::Token, typesystem::CilFlavor},
+    CilObject, Result,
 };
 
 /// Registers all AppDomain and Assembly method hooks with the given hook manager.
@@ -76,99 +82,101 @@ use crate::{
 /// - `Assembly.GetExecutingAssembly()` / `GetCallingAssembly()` / `GetEntryAssembly()`
 /// - `Assembly.GetManifestResourceStream()` / `GetManifestResourceNames()`
 /// - `Delegate..ctor` / `MulticastDelegate..ctor` / `ResolveEventHandler..ctor`
-pub fn register(manager: &HookManager) {
+pub fn register(manager: &HookManager) -> Result<()> {
     // AppDomain methods
     manager.register(
         Hook::new("System.AppDomain.get_CurrentDomain")
             .match_name("System", "AppDomain", "get_CurrentDomain")
             .pre(appdomain_get_current_domain_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.AppDomain.add_AssemblyResolve")
             .match_name("System", "AppDomain", "add_AssemblyResolve")
             .pre(appdomain_add_assembly_resolve_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.AppDomain.remove_AssemblyResolve")
             .match_name("System", "AppDomain", "remove_AssemblyResolve")
             .pre(appdomain_remove_assembly_resolve_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.AppDomain.add_ResourceResolve")
             .match_name("System", "AppDomain", "add_ResourceResolve")
             .pre(appdomain_add_resource_resolve_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.AppDomain.GetAssemblies")
             .match_name("System", "AppDomain", "GetAssemblies")
             .pre(appdomain_get_assemblies_pre),
-    );
+    )?;
 
     // Assembly methods
     manager.register(
         Hook::new("System.Reflection.Assembly.Load")
             .match_name("System.Reflection", "Assembly", "Load")
             .pre(assembly_load_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.Reflection.Assembly.LoadFrom")
             .match_name("System.Reflection", "Assembly", "LoadFrom")
             .pre(assembly_load_from_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.Reflection.Assembly.GetExecutingAssembly")
             .match_name("System.Reflection", "Assembly", "GetExecutingAssembly")
             .pre(assembly_get_executing_assembly_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.Reflection.Assembly.GetCallingAssembly")
             .match_name("System.Reflection", "Assembly", "GetCallingAssembly")
             .pre(assembly_get_calling_assembly_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.Reflection.Assembly.GetEntryAssembly")
             .match_name("System.Reflection", "Assembly", "GetEntryAssembly")
             .pre(assembly_get_entry_assembly_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.Reflection.Assembly.GetManifestResourceStream")
             .match_name("System.Reflection", "Assembly", "GetManifestResourceStream")
             .pre(assembly_get_manifest_resource_stream_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.Reflection.Assembly.GetManifestResourceNames")
             .match_name("System.Reflection", "Assembly", "GetManifestResourceNames")
             .pre(assembly_get_manifest_resource_names_pre),
-    );
+    )?;
 
     // Delegate methods
     manager.register(
         Hook::new("System.Delegate..ctor")
             .match_name("System", "Delegate", ".ctor")
             .pre(delegate_ctor_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.MulticastDelegate..ctor")
             .match_name("System", "MulticastDelegate", ".ctor")
             .pre(delegate_ctor_pre),
-    );
+    )?;
 
     manager.register(
         Hook::new("System.ResolveEventHandler..ctor")
             .match_name("System", "ResolveEventHandler", ".ctor")
             .pre(delegate_ctor_pre),
-    );
+    )?;
+
+    Ok(())
 }
 
 /// Hook for `System.AppDomain.get_CurrentDomain` property.
@@ -196,7 +204,7 @@ fn appdomain_get_current_domain_pre(
     // Fallback: allocate new object if cache not initialized
     match thread.heap_mut().alloc_object(Token::new(0x0100_0011)) {
         Ok(domain_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(domain_ref))),
-        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+        Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
     }
 }
 
@@ -269,7 +277,7 @@ fn appdomain_get_assemblies_pre(
 ) -> PreHookResult {
     match thread.heap_mut().alloc_array(CilFlavor::Object, 0) {
         Ok(array_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(array_ref))),
-        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+        Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
     }
 }
 
@@ -299,7 +307,7 @@ fn appdomain_get_assemblies_pre(
 fn assembly_load_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
     // Assembly.Load(byte[]) - first arg is the byte array
     if let Some(EmValue::ObjectRef(array_ref)) = ctx.args.first() {
-        if let Some(bytes) = thread.heap().get_byte_array(*array_ref) {
+        if let Some(bytes) = try_hook!(thread.heap().get_byte_array(*array_ref)) {
             // Capture the assembly bytes
             let source = CaptureSource::new(
                 thread.current_method().unwrap_or(Token::new(0)),
@@ -307,16 +315,31 @@ fn assembly_load_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pre
                 thread.current_offset().unwrap_or(0),
                 0,
             );
-            thread
-                .capture()
-                .capture_assembly(bytes, source, AssemblyLoadMethod::LoadBytes, None);
+            thread.capture().capture_assembly(
+                bytes.clone(),
+                source,
+                AssemblyLoadMethod::LoadBytes,
+                None,
+            );
+
+            // Parse the loaded assembly for cross-assembly resolution
+            if let Ok(loaded_asm) = CilObject::from_mem(bytes) {
+                let asm_arc = Arc::new(loaded_asm);
+                if let Ok(mut state) = thread.runtime_state().write() {
+                    let index = state.app_domain_mut().register_parsed_assembly(asm_arc);
+                    debug!(
+                        "Assembly.Load(byte[]): parsed and registered as index {}",
+                        index
+                    );
+                }
+            }
         }
     }
 
     // Return a fake Assembly object
     match thread.heap_mut().alloc_object(Token::new(0x0100_0010)) {
         Ok(assembly_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(assembly_ref))),
-        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+        Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
     }
 }
 
@@ -341,7 +364,7 @@ fn assembly_load_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pre
 fn assembly_load_from_pre(_ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
     match thread.heap_mut().alloc_object(Token::new(0x0100_0010)) {
         Ok(assembly_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(assembly_ref))),
-        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+        Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
     }
 }
 
@@ -376,7 +399,7 @@ fn assembly_get_executing_assembly_pre(
     // Fallback: allocate new object if cache not initialized
     match thread.heap_mut().alloc_object(Token::new(0x0100_0010)) {
         Ok(assembly_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(assembly_ref))),
-        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+        Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
     }
 }
 
@@ -411,7 +434,7 @@ fn assembly_get_calling_assembly_pre(
     // Fallback: allocate new object if cache not initialized
     match thread.heap_mut().alloc_object(Token::new(0x0100_0010)) {
         Ok(assembly_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(assembly_ref))),
-        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+        Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
     }
 }
 
@@ -445,7 +468,7 @@ fn assembly_get_entry_assembly_pre(
     // Fallback: allocate new object if cache not initialized
     match thread.heap_mut().alloc_object(Token::new(0x0100_0010)) {
         Ok(assembly_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(assembly_ref))),
-        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+        Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
     }
 }
 
@@ -501,9 +524,10 @@ fn assembly_get_manifest_resource_stream_pre(
     };
 
     // Allocate a stream with the resource data
-    match thread.heap_mut().alloc_stream(data.to_vec()) {
+    let type_token = thread.resolve_type_token("System.IO", "MemoryStream");
+    match thread.heap_mut().alloc_stream(data.to_vec(), type_token) {
         Ok(stream_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(stream_ref))),
-        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+        Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
     }
 }
 
@@ -526,7 +550,7 @@ fn assembly_get_manifest_resource_names_pre(
 ) -> PreHookResult {
     match thread.heap_mut().alloc_array(CilFlavor::String, 0) {
         Ok(array_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(array_ref))),
-        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+        Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
     }
 }
 
@@ -561,14 +585,16 @@ fn delegate_ctor_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pre
             // The `this` reference is the already-allocated delegate object from handle_newobj.
             // Replace it with a proper Delegate heap object so Invoke dispatch works.
             if let Some(EmValue::ObjectRef(this_ref)) = ctx.this {
-                thread.heap().replace_object(
+                try_hook!(thread.heap().replace_object(
                     *this_ref,
-                    crate::emulation::memory::HeapObject::Delegate {
+                    HeapObject::Delegate {
                         type_token: ctx.method_token,
-                        target,
-                        method_token: method,
+                        invocation_list: vec![DelegateEntry {
+                            target,
+                            method_token: method,
+                        }],
                     },
-                );
+                ));
             }
             return PreHookResult::Bypass(None); // constructor returns void
         }
@@ -589,7 +615,7 @@ mod tests {
     #[test]
     fn test_register_hooks() {
         let manager = HookManager::new();
-        register(&manager);
+        register(&manager).unwrap();
         assert_eq!(manager.len(), 15);
     }
 
@@ -610,6 +636,173 @@ mod tests {
             PreHookResult::Bypass(Some(EmValue::ObjectRef(_))) => {}
             _ => panic!("Expected Bypass with ObjectRef"),
         }
+    }
+
+    #[test]
+    fn test_add_assembly_resolve_noop() {
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "AppDomain",
+            "add_AssemblyResolve",
+            PointerSize::Bit64,
+        );
+        let mut thread = create_test_thread();
+        let result = appdomain_add_assembly_resolve_pre(&ctx, &mut thread);
+        assert!(matches!(result, PreHookResult::Bypass(None)));
+    }
+
+    #[test]
+    fn test_assembly_get_executing() {
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.Reflection",
+            "Assembly",
+            "GetExecutingAssembly",
+            PointerSize::Bit64,
+        );
+        let mut thread = create_test_thread();
+        let result = assembly_get_executing_assembly_pre(&ctx, &mut thread);
+        assert!(matches!(
+            result,
+            PreHookResult::Bypass(Some(EmValue::ObjectRef(_)))
+        ));
+    }
+
+    #[test]
+    fn test_assembly_get_calling() {
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.Reflection",
+            "Assembly",
+            "GetCallingAssembly",
+            PointerSize::Bit64,
+        );
+        let mut thread = create_test_thread();
+        let result = assembly_get_calling_assembly_pre(&ctx, &mut thread);
+        assert!(matches!(
+            result,
+            PreHookResult::Bypass(Some(EmValue::ObjectRef(_)))
+        ));
+    }
+
+    #[test]
+    fn test_assembly_get_entry() {
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.Reflection",
+            "Assembly",
+            "GetEntryAssembly",
+            PointerSize::Bit64,
+        );
+        let mut thread = create_test_thread();
+        let result = assembly_get_entry_assembly_pre(&ctx, &mut thread);
+        assert!(matches!(
+            result,
+            PreHookResult::Bypass(Some(EmValue::ObjectRef(_)))
+        ));
+    }
+
+    #[test]
+    fn test_get_manifest_resource_stream_fallback() {
+        let mut thread = create_test_thread();
+        let name = thread.heap_mut().alloc_string("nonexistent").unwrap();
+        let args = [EmValue::ObjectRef(name)];
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.Reflection",
+            "Assembly",
+            "GetManifestResourceStream",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
+        let result = assembly_get_manifest_resource_stream_pre(&ctx, &mut thread);
+        // Without assembly context, should return Null or Continue
+        assert!(matches!(
+            result,
+            PreHookResult::Continue | PreHookResult::Bypass(Some(EmValue::Null))
+        ));
+    }
+
+    #[test]
+    fn test_get_manifest_resource_names() {
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.Reflection",
+            "Assembly",
+            "GetManifestResourceNames",
+            PointerSize::Bit64,
+        );
+        let mut thread = create_test_thread();
+        let result = assembly_get_manifest_resource_names_pre(&ctx, &mut thread);
+        // Should return an empty array or ObjectRef
+        assert!(matches!(
+            result,
+            PreHookResult::Bypass(Some(EmValue::ObjectRef(_))) | PreHookResult::Continue
+        ));
+    }
+
+    #[test]
+    fn test_get_assemblies() {
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "AppDomain",
+            "GetAssemblies",
+            PointerSize::Bit64,
+        );
+        let mut thread = create_test_thread();
+        let result = appdomain_get_assemblies_pre(&ctx, &mut thread);
+        assert!(matches!(
+            result,
+            PreHookResult::Bypass(Some(EmValue::ObjectRef(_)))
+        ));
+    }
+
+    #[test]
+    fn test_delegate_ctor() {
+        let mut thread = create_test_thread();
+        let obj = thread
+            .heap_mut()
+            .alloc_object(Token::new(0x02000001))
+            .unwrap();
+        let target = thread
+            .heap_mut()
+            .alloc_object(Token::new(0x02000002))
+            .unwrap();
+        let this = EmValue::ObjectRef(obj);
+        let args = [EmValue::ObjectRef(target), EmValue::NativeInt(0x06000001)];
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System",
+            "MulticastDelegate",
+            ".ctor",
+            PointerSize::Bit64,
+        )
+        .with_this(Some(&this))
+        .with_args(&args);
+        let result = delegate_ctor_pre(&ctx, &mut thread);
+        assert!(matches!(result, PreHookResult::Bypass(None)));
+    }
+
+    #[test]
+    fn test_assembly_load_from_fallback() {
+        let mut thread = create_test_thread();
+        let path = thread.heap_mut().alloc_string("test.dll").unwrap();
+        let args = [EmValue::ObjectRef(path)];
+        let ctx = HookContext::new(
+            Token::new(0x0A000001),
+            "System.Reflection",
+            "Assembly",
+            "LoadFrom",
+            PointerSize::Bit64,
+        )
+        .with_args(&args);
+        let result = assembly_load_from_pre(&ctx, &mut thread);
+        assert!(matches!(
+            result,
+            PreHookResult::Bypass(Some(EmValue::ObjectRef(_)))
+        ));
     }
 
     #[test]

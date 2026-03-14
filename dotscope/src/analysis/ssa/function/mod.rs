@@ -839,8 +839,17 @@ impl SsaFunction {
             // Check if all uses are in Pop instructions (value is discarded)
             let has_meaningful_use = var.uses().iter().any(|use_site| {
                 if use_site.is_phi_operand {
-                    // Phi operand — meaningful if the phi result is typed
-                    return true;
+                    // Phi operand — only meaningful if the phi result has a known type.
+                    // If the phi result is also Unknown, this is just Unknown feeding
+                    // Unknown (e.g., uninitialized locals in a loop), not a real error.
+                    if let Some(block) = self.block(use_site.block) {
+                        if let Some(phi) = block.phi(use_site.instruction) {
+                            if let Some(result_var) = self.variable(phi.result()) {
+                                return !result_var.var_type().is_unknown();
+                            }
+                        }
+                    }
+                    return false;
                 }
                 if let Some(block) = self.block(use_site.block) {
                     if let Some(instr) = block.instruction(use_site.instruction) {
@@ -851,11 +860,36 @@ impl SsaFunction {
             });
 
             if has_meaningful_use {
+                // Collect details about the meaningful uses for debugging
+                let use_details: Vec<String> = var
+                    .uses()
+                    .iter()
+                    .map(|use_site| {
+                        if use_site.is_phi_operand {
+                            return format!("phi in block {}", use_site.block);
+                        }
+                        if let Some(block) = self.block(use_site.block) {
+                            if let Some(instr) = block.instruction(use_site.instruction) {
+                                return format!(
+                                    "block {} instr {}: {:?}",
+                                    use_site.block,
+                                    use_site.instruction,
+                                    instr.op()
+                                );
+                            }
+                        }
+                        format!(
+                            "block {} instr {}: <unknown>",
+                            use_site.block, use_site.instruction
+                        )
+                    })
+                    .collect();
                 return Err(format!(
-                    "Variable {} (origin={:?}) has Unknown type but is used ({} uses)",
+                    "Variable {} (origin={:?}) has Unknown type but is used ({} uses): [{}]",
                     var.id(),
                     var.origin(),
-                    var.uses().len()
+                    var.uses().len(),
+                    use_details.join(", ")
                 ));
             }
         }

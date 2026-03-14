@@ -183,7 +183,7 @@ pub trait StateMachineProvider: Send + Sync + std::fmt::Debug {
         ssa: &SsaFunction,
         ctx: &CompilerContext,
         method: Token,
-        assembly: &Arc<CilObject>,
+        assembly: &CilObject,
     ) -> Vec<(usize, usize, u32)>;
 
     /// Finds all state update calls in a method.
@@ -249,7 +249,7 @@ pub trait StateMachineProvider: Send + Sync + std::fmt::Debug {
         _ssa: &SsaFunction,
         _state_updates: &[StateUpdateCall],
         _decryptor_tokens: &HashSet<Token>,
-        _assembly: &Arc<CilObject>,
+        _assembly: &CilObject,
     ) -> Vec<StateMachineCallSite> {
         Vec::new()
     }
@@ -860,7 +860,11 @@ impl StateMachineState {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::sync::Arc;
+
+    use crate::deobfuscation::statemachine::{
+        SsaOpKind, StateMachineSemantics, StateMachineState, StateSlotOperation,
+    };
 
     #[test]
     fn test_slot_operation_xor() {
