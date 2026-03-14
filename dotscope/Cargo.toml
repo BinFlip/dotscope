@@ -52,7 +52,7 @@ rustc-hash = "2.1.1"
 boxcar = "0.2.14"
 quick-xml = "0.39.2"
 hex = "0.4.3"
-rsa = { version = "0.9.8", optional = true }
+num-bigint = { version = "0.4.6", optional = true }
 log = "0.4.29"
 flate2 = "1.1.9"
 lzma-rs = "0.3.0"
@@ -86,7 +86,7 @@ legacy-crypto = ["dep:sha1", "dep:md-5", "dep:des"]
 # CIL bytecode emulation engine.
 # Enables: controlled CIL execution, BCL method hooks, heap/stack emulation.
 # Used by deobfuscation for runtime value computation and string decryption.
-emulation = ["dep:imbl", "dep:rsa"]
+emulation = ["dep:imbl", "dep:num-bigint"]
 
 # Compiler infrastructure: SSA optimization passes, code generation, pass scheduler.
 # Enables: interprocedural analysis, inlining, constant propagation, SSA-to-CIL codegen.
