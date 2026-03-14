@@ -125,11 +125,14 @@ mod capture;
 mod engine;
 mod exception;
 mod fakeobjects;
+mod filesystem;
 mod loader;
 mod memory;
 mod process;
 mod runtime;
 mod thread;
+pub(crate) mod tokens;
+mod tracer;
 mod value;
 
 // Re-export primary types from value module
@@ -142,13 +145,13 @@ pub use value::{
 pub use memory::{
     AddressSpace, ArgumentStorage, EncodingType, EvaluationStack, HeapObject, LocalVariables,
     ManagedHeap, MemoryProtection, MemoryRegion, Page, SectionInfo, SharedHeap, StaticFieldStorage,
-    ThreadId, UnmanagedMemory, UnmanagedRef, PAGE_SIZE,
+    ThreadId, TypeInitState, TypeWrapper, UnmanagedMemory, UnmanagedRef, PAGE_SIZE,
 };
 
 // Re-export primary types from engine module
 pub use engine::{
     synthetic_exception, EmulationContext, EmulationController, EmulationError, EmulationOutcome,
-    InstructionPointer, Interpreter, LimitExceeded, StepResult, TraceEvent, TraceWriter,
+    InstructionPointer, Interpreter, LimitExceeded, StepResult,
 };
 
 // Re-export primary types from process module
@@ -156,6 +159,12 @@ pub use process::{
     CaptureConfig, EmulationConfig, EmulationLimits, EmulationProcess, EnvironmentConfig,
     LimitKind, MemoryConfig, ProcessBuilder, ProcessSummary, StackTraceEntry, StubConfig,
     TracingConfig, UnknownMethodBehavior,
+};
+
+// Re-export tracing infrastructure
+pub use tracer::{
+    build_call_tree, CallTreeBuilder, CallTreeNode, ExceptionRecord, InstructionTraceLevel,
+    MethodPattern, TraceEvent, TraceFilter, TraceListener, TraceWriter,
 };
 
 // Re-export primary types from exception module
@@ -168,8 +177,8 @@ pub use exception::{
 // Re-export primary types from thread module
 pub use thread::{
     EmulationThread, EventState, MonitorState, MutexState, SchedulerOutcome, SemaphoreState,
-    SyncError, SyncState, ThreadCallFrame, ThreadPriority, ThreadScheduler, ThreadState,
-    WaitReason, WakeCondition,
+    SyncError, SyncState, ThreadCallFrame, ThreadContext, ThreadPriority, ThreadScheduler,
+    ThreadState, WaitReason, WakeCondition,
 };
 
 // Re-export primary types from runtime module
@@ -191,6 +200,9 @@ pub use capture::{
 pub use loader::{
     DataLoader, LoadedImage, LoadedSection, MappedRegionInfo, PeLoader, PeLoaderConfig,
 };
+
+// Re-export primary types from filesystem module
+pub use filesystem::VirtualFs;
 
 // Re-export primary types from fakeobjects module
 pub use fakeobjects::{FakeObjects, SharedFakeObjects};

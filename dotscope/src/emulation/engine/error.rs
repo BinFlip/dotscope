@@ -9,32 +9,92 @@ use crate::metadata::{token::Token, typesystem::CilFlavor};
 
 /// Synthetic exception type tokens for CLR exceptions.
 ///
-/// These tokens are used to represent BCL exception types when converting
-/// emulation errors to CLR exceptions that can be caught by exception handlers.
+/// These tokens represent BCL exception types when converting emulation errors
+/// to CLR exceptions that can be caught by exception handlers. They use table
+/// `0x7F` (which does not exist in ECMA-335) to avoid collisions with real
+/// metadata tokens. The second byte `0x01` distinguishes exception tokens from
+/// heap type tokens (`0x7F00_xxxx`).
 ///
-/// | Token        | CLR Type                          |
-/// |--------------|-----------------------------------|
-/// | 0x0100_FF01  | System.IndexOutOfRangeException   |
-/// | 0x0100_FF02  | System.NullReferenceException     |
-/// | 0x0100_FF03  | System.DivideByZeroException      |
-/// | 0x0100_FF04  | System.OverflowException          |
-/// | 0x0100_FF05  | System.InvalidCastException       |
-/// | 0x0100_FF00  | System.Exception (base)           |
+/// | Token        | CLR Type                                          |
+/// |--------------|---------------------------------------------------|
+/// | 0x7F01_0000  | System.Exception (base)                           |
+/// | 0x7F01_0001  | System.IndexOutOfRangeException                   |
+/// | 0x7F01_0002  | System.NullReferenceException                     |
+/// | 0x7F01_0003  | System.DivideByZeroException                      |
+/// | 0x7F01_0004  | System.OverflowException                          |
+/// | 0x7F01_0005  | System.InvalidCastException                       |
+/// | 0x7F01_0006  | System.IO.EndOfStreamException                    |
+/// | 0x7F01_0007  | System.ObjectDisposedException                    |
+/// | 0x7F01_0008  | System.InvalidOperationException                  |
+/// | 0x7F01_0009  | System.FormatException                            |
+/// | 0x7F01_000A  | System.ArgumentException                          |
+/// | 0x7F01_000B  | System.ArgumentNullException                      |
+/// | 0x7F01_000C  | System.NotSupportedException                      |
+/// | 0x7F01_000D  | System.Collections.Generic.KeyNotFoundException   |
+/// | 0x7F01_000E  | System.IO.FileNotFoundException                   |
+/// | 0x7F01_000F  | System.IO.DirectoryNotFoundException              |
+/// | 0x7F01_0010  | System.Reflection.TargetInvocationException        |
+/// | 0x7F01_0011  | System.ArithmeticException                        |
+/// | 0x7F01_0012  | System.IO.IOException                             |
+/// | 0x7F01_0013  | System.TypeInitializationException                |
+/// | 0x7F01_0014  | System.SystemException                            |
+/// | 0x7F01_0015  | System.TypeLoadException                          |
+/// | 0x7F01_0016  | System.MissingMethodException                     |
+/// | 0x7F01_0017  | System.MissingFieldException                      |
+/// | 0x7F01_0018  | System.NotImplementedException                    |
 pub mod synthetic_exception {
     use crate::metadata::token::Token;
 
+    /// System.Exception (generic base — root of the hierarchy).
+    pub const BASE_EXCEPTION: Token = Token::new(0x7F01_0000);
     /// System.IndexOutOfRangeException
-    pub const INDEX_OUT_OF_RANGE: Token = Token::new(0x0100_FF01);
+    pub const INDEX_OUT_OF_RANGE: Token = Token::new(0x7F01_0001);
     /// System.NullReferenceException
-    pub const NULL_REFERENCE: Token = Token::new(0x0100_FF02);
+    pub const NULL_REFERENCE: Token = Token::new(0x7F01_0002);
     /// System.DivideByZeroException
-    pub const DIVIDE_BY_ZERO: Token = Token::new(0x0100_FF03);
+    pub const DIVIDE_BY_ZERO: Token = Token::new(0x7F01_0003);
     /// System.OverflowException
-    pub const OVERFLOW: Token = Token::new(0x0100_FF04);
+    pub const OVERFLOW: Token = Token::new(0x7F01_0004);
     /// System.InvalidCastException
-    pub const INVALID_CAST: Token = Token::new(0x0100_FF05);
-    /// System.Exception (generic base)
-    pub const BASE_EXCEPTION: Token = Token::new(0x0100_FF00);
+    pub const INVALID_CAST: Token = Token::new(0x7F01_0005);
+    /// System.IO.EndOfStreamException
+    pub const END_OF_STREAM: Token = Token::new(0x7F01_0006);
+    /// System.ObjectDisposedException
+    pub const OBJECT_DISPOSED: Token = Token::new(0x7F01_0007);
+    /// System.InvalidOperationException
+    pub const INVALID_OPERATION: Token = Token::new(0x7F01_0008);
+    /// System.FormatException
+    pub const FORMAT_EXCEPTION: Token = Token::new(0x7F01_0009);
+    /// System.ArgumentException
+    pub const ARGUMENT_EXCEPTION: Token = Token::new(0x7F01_000A);
+    /// System.ArgumentNullException
+    pub const ARGUMENT_NULL: Token = Token::new(0x7F01_000B);
+    /// System.NotSupportedException
+    pub const NOT_SUPPORTED: Token = Token::new(0x7F01_000C);
+    /// System.Collections.Generic.KeyNotFoundException
+    pub const KEY_NOT_FOUND: Token = Token::new(0x7F01_000D);
+    /// System.IO.FileNotFoundException
+    pub const FILE_NOT_FOUND: Token = Token::new(0x7F01_000E);
+    /// System.IO.DirectoryNotFoundException
+    pub const DIRECTORY_NOT_FOUND: Token = Token::new(0x7F01_000F);
+    /// System.Reflection.TargetInvocationException
+    pub const TARGET_INVOCATION: Token = Token::new(0x7F01_0010);
+    /// System.ArithmeticException — parent of DivideByZero, Overflow.
+    pub const ARITHMETIC: Token = Token::new(0x7F01_0011);
+    /// System.IO.IOException — parent of EndOfStream, FileNotFound, DirectoryNotFound.
+    pub const IO_EXCEPTION: Token = Token::new(0x7F01_0012);
+    /// System.TypeInitializationException — wraps .cctor failures.
+    pub const TYPE_INITIALIZATION: Token = Token::new(0x7F01_0013);
+    /// System.SystemException — intermediate base for most runtime exceptions.
+    pub const SYSTEM_EXCEPTION: Token = Token::new(0x7F01_0014);
+    /// System.TypeLoadException
+    pub const TYPE_LOAD: Token = Token::new(0x7F01_0015);
+    /// System.MissingMethodException
+    pub const MISSING_METHOD: Token = Token::new(0x7F01_0016);
+    /// System.MissingFieldException
+    pub const MISSING_FIELD: Token = Token::new(0x7F01_0017);
+    /// System.NotImplementedException
+    pub const NOT_IMPLEMENTED: Token = Token::new(0x7F01_0018);
 }
 
 /// Errors that can occur during CIL emulation.

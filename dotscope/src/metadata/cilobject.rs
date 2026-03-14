@@ -182,6 +182,7 @@ use crate::{
         loader::CilObjectData,
         method::{method_name_by_token, MethodMap, MethodRc},
         query::{MethodQuery, TypeQuery},
+        resolver::TokenResolver,
         resources::Resources,
         root::Root,
         streams::{Blob, Guid, Strings, TablesHeader, UserStrings},
@@ -1742,6 +1743,55 @@ impl CilObject {
     /// ```
     pub fn query_methods(&self) -> MethodQuery<'_> {
         MethodQuery::from_assembly(&self.data.methods)
+    }
+
+    /// Returns a cross-table token resolver for this assembly.
+    ///
+    /// The [`TokenResolver`] normalizes metadata token references across tables,
+    /// resolving indirections that arise from the .NET metadata table design:
+    ///
+    /// - **TypeRef → TypeDef**: Finds the local type definition for an external
+    ///   type reference, giving access to the type's methods and fields.
+    /// - **MemberRef → MethodDef**: Resolves a member reference to the locally
+    ///   defined method, enabling emulation of calls that use MemberRef tokens.
+    /// - **MemberRef → FieldDef**: Resolves a member reference to the locally
+    ///   defined field for field access instructions.
+    /// - **MethodSpec → MethodDef**: Unwraps generic method instantiations to
+    ///   their base method definition.
+    ///
+    /// This complements [`query_types()`](Self::query_types) and
+    /// [`query_methods()`](Self::query_methods) (which filter existing collections)
+    /// and [`TypeResolver`](crate::metadata::typesystem::TypeResolver) (which
+    /// resolves type *signatures* from blob heaps into [`CilType`](crate::metadata::typesystem::CilType)
+    /// instances).
+    ///
+    /// The resolver is a zero-cost borrowing wrapper — it holds only a reference
+    /// to this `CilObject` and performs no allocations or caching.
+    ///
+    /// # Examples
+    ///
+    /// ```rust,no_run
+    /// use dotscope::CilObject;
+    /// use dotscope::metadata::token::Token;
+    ///
+    /// let assembly = CilObject::from_path("tests/samples/WindowsBase.dll")?;
+    /// let resolver = assembly.resolver();
+    ///
+    /// // Resolve a MemberRef to its local MethodDef
+    /// let member_ref = Token::new(0x0A000001);
+    /// if let Some(method_def) = resolver.resolve_method(member_ref) {
+    ///     println!("Resolved to MethodDef: 0x{:08X}", method_def.value());
+    /// }
+    ///
+    /// // Find which type declares a method
+    /// let method = Token::new(0x06000001);
+    /// if let Some(declaring_type) = resolver.declaring_type(method) {
+    ///     println!("Declared in: {}", declaring_type.fullname());
+    /// }
+    /// # Ok::<(), dotscope::Error>(())
+    /// ```
+    pub fn resolver(&self) -> TokenResolver<'_> {
+        TokenResolver::new(self)
     }
 
     /// Builds and returns the call graph for this assembly.

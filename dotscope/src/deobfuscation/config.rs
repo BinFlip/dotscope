@@ -5,7 +5,7 @@
 
 use std::time::Duration;
 
-use crate::emulation::TracingConfig;
+use crate::{deobfuscation::SmartRenameConfig, emulation::TracingConfig};
 
 /// Configuration for the deobfuscation engine.
 ///
@@ -96,6 +96,16 @@ pub struct EngineConfig {
     /// Post-deobfuscation cleanup configuration.
     pub cleanup: CleanupConfig,
 
+    /// Maximum number of detection re-scan rounds after the SSA pipeline stabilizes.
+    ///
+    /// After the initial pipeline run reaches fixpoint, the engine re-runs SSA
+    /// detection to discover techniques hidden by earlier passes (e.g., delegate
+    /// proxy resolution reveals string decryptor call sites). Each new detection
+    /// triggers initialization and an additional pipeline run.
+    ///
+    /// Default: 2 (enough for delegate → string decryptor chains).
+    pub max_detection_rounds: usize,
+
     /// Tracing configuration for emulation debugging.
     ///
     /// When set, emulation processes created during deobfuscation will write
@@ -143,6 +153,13 @@ pub struct CleanupConfig {
     ///
     /// Enable this in aggressive mode for maximum size reduction.
     pub remove_unused_methods: bool,
+
+    /// Optional configuration for LLM-powered smart renaming.
+    ///
+    /// When `Some`, the cascade renamer uses LLM inference for semantic
+    /// identifier names. When `None`, falls back to simple sequential naming.
+    /// Requires the `smart-rename` Cargo feature for the LLM backend.
+    pub smart_rename: Option<SmartRenameConfig>,
 }
 
 impl Default for CleanupConfig {
@@ -155,6 +172,7 @@ impl Default for CleanupConfig {
             remove_artifact_sections: true,
             rename_obfuscated_names: true,
             remove_unused_methods: false, // Off by default - may break reflection/exports
+            smart_rename: None,
         }
     }
 }
@@ -177,6 +195,7 @@ impl CleanupConfig {
             remove_artifact_sections: false,
             rename_obfuscated_names: false,
             remove_unused_methods: false,
+            smart_rename: None,
         }
     }
 
@@ -197,6 +216,7 @@ impl CleanupConfig {
     pub fn aggressive() -> Self {
         Self {
             remove_unused_methods: true,
+            smart_rename: None,
             ..Self::default()
         }
     }
@@ -238,6 +258,7 @@ impl Default for EngineConfig {
                 ResolutionStrategy::Emulation,
             ],
             cleanup: CleanupConfig::default(),
+            max_detection_rounds: 2,
             tracing: None,
         }
     }
@@ -275,6 +296,7 @@ impl EngineConfig {
             enable_inlining: false,
             enable_interprocedural: false,
             resolution_strategies: vec![ResolutionStrategy::Static, ResolutionStrategy::Pattern],
+            max_detection_rounds: 1,
             ..Self::default()
         }
     }
@@ -308,6 +330,7 @@ impl EngineConfig {
                 ResolutionStrategy::Symbolic,
             ],
             cleanup: CleanupConfig::aggressive(),
+            max_detection_rounds: 3,
             ..Self::default()
         }
     }

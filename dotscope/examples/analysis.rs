@@ -462,7 +462,7 @@ fn display_ssa_deobfuscated(
     println!("{}", "=".repeat(80));
 
     let config = EngineConfig::default();
-    let mut engine = DeobfuscationEngine::new(config);
+    let engine = DeobfuscationEngine::new(config);
 
     let (deobfuscated_ssa, result) = engine.process_method(assembly, method.token)?;
 
@@ -494,12 +494,13 @@ fn display_ssa_deobfuscated(
     }
 
     // Show detection results if any
-    if let Some(name) = &result.findings.obfuscator_name {
+    if let Some(attr) = &result.attribution {
         println!("\n  Detected obfuscator:");
         println!(
-            "    - {} (score: {})",
-            name,
-            result.findings.detection.score()
+            "    - {} ({} techniques, {} supporting)",
+            attr.obfuscator_name,
+            attr.technique_ids.len(),
+            attr.supporting_matched
         );
     }
 

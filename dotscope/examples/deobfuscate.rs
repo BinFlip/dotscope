@@ -16,9 +16,11 @@
 //! cargo run --example deobfuscate -- input.exe -o output.exe --verbose
 //! ```
 
-use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::thread;
+use std::{
+    path::PathBuf,
+    sync::atomic::{AtomicBool, Ordering},
+    thread,
+};
 
 use clap::Parser;
 use dotscope::{
@@ -139,17 +141,17 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     // Display detection results
     eprintln!();
     eprintln!("=== Detection ===");
-    if let Some(name) = &result.findings.obfuscator_name {
-        eprintln!("{}: score {}", name, result.findings.detection.score());
+    if let Some(ref attr) = result.attribution {
+        eprintln!(
+            "{}: {} techniques, {} supporting",
+            attr.obfuscator_name,
+            attr.technique_ids.len(),
+            attr.supporting_matched
+        );
         if verbose {
-            for evidence in result.findings.detection.evidence() {
-                eprintln!("  - {:?}", evidence);
+            for id in &attr.technique_ids {
+                eprintln!("  - technique: {}", id);
             }
-        } else {
-            eprintln!(
-                "  Evidence: {}",
-                result.findings.detection.evidence_summary()
-            );
         }
     }
 
@@ -157,17 +159,6 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
     eprintln!();
     eprintln!("=== Results ===");
     eprintln!("{}", result.detailed_summary());
-
-    if verbose {
-        let warning_count = result.events.warnings().count();
-        if warning_count > 0 {
-            eprintln!();
-            eprintln!("=== Warnings ({}) ===", warning_count);
-            for warning in result.events.warnings() {
-                eprintln!("  - {}", warning.message);
-            }
-        }
-    }
 
     // Save the result
     eprintln!();

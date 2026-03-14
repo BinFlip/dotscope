@@ -48,21 +48,26 @@
 //! let value = thread.pop()?;
 //! ```
 
-use std::collections::HashMap;
-use std::fmt;
-use std::sync::Arc;
+use std::{
+    collections::HashMap,
+    fmt,
+    sync::{Arc, RwLock},
+};
 
 use crate::{
     emulation::{
         capture::CaptureContext,
-        engine::EmulationError,
+        engine::{EmulationError, SyntheticMethodBody},
         exception::ThreadExceptionState,
         fakeobjects::SharedFakeObjects,
-        memory::{HeapObject, ManagedHeap},
+        filesystem::VirtualFs,
+        memory::{AddressSpace, DelegateEntry, HeapObject, ManagedHeap},
         process::EmulationConfig,
+        runtime::RuntimeState,
+        thread::ThreadContext,
         value::PointerTarget,
-        AddressSpace, ArgumentStorage, EmValue, EvaluationStack, HeapRef, LocalVariables,
-        ManagedPointer, ThreadId,
+        ArgumentStorage, EmValue, EvaluationStack, HeapRef, LocalVariables, ManagedPointer,
+        ThreadId,
     },
     metadata::{token::Token, typesystem::CilFlavor},
     CilObject, Error, Result,
@@ -234,6 +239,47 @@ pub struct ThreadCallFrame {
 
     /// Saved evaluation stack from the caller (restored on return).
     caller_stack: Vec<EmValue>,
+
+    /// Saved leave target from the caller's exception state.
+    ///
+    /// When a method call happens from within a finally handler, the caller's
+    /// leave target must be preserved. Without this, the callee's own `leave`
+    /// instructions would overwrite the shared `leave_target` field on the
+    /// thread's exception state, causing the caller's `endfinally` to lose
+    /// its leave target and incorrectly fall through to exception propagation.
+    saved_leave_target: Option<u32>,
+
+    /// Whether this frame was entered via a `MethodBase.Invoke` / reflection
+    /// invoke redirect. When an exception propagates out of such a frame, it
+    /// must be wrapped in `TargetInvocationException`, mirroring real .NET
+    /// behavior where `MethodBase.Invoke` wraps all target exceptions.
+    is_reflection_invoke: bool,
+
+    /// Whether this frame is executing a static constructor (.cctor).
+    /// When an unhandled exception propagates out of a .cctor frame, it
+    /// should be recorded in the [`CctorTracker`](crate::emulation::engine::cctors::CctorTracker)
+    /// so that subsequent accesses to the type re-throw the same exception.
+    is_cctor: bool,
+
+    /// Type arguments from the declaring type's generic instantiation (!0, !1, ...).
+    type_type_args: Option<Vec<Token>>,
+
+    /// Type arguments from the method's generic instantiation (!!0, !!1, ...).
+    method_type_args: Option<Vec<Token>>,
+
+    /// Trace call ID assigned when this frame was created, for correlating returns.
+    call_id: u64,
+
+    /// Index of the assembly this frame's method belongs to.
+    ///
+    /// `None` means the primary assembly (the one loaded at process start).
+    /// `Some(i)` refers to the i-th dynamically loaded assembly registered in
+    /// [`AppDomainState`](crate::emulation::runtime::AppDomainState).
+    ///
+    /// This enables cross-assembly execution: when a method from a dynamically
+    /// loaded assembly calls another method, the controller uses this index to
+    /// fetch instructions and resolve metadata from the correct assembly.
+    assembly_index: Option<u8>,
 }
 
 impl ThreadCallFrame {
@@ -266,6 +312,13 @@ impl ThreadCallFrame {
             instruction_offset: 0,
             expects_return,
             caller_stack: Vec::new(),
+            saved_leave_target: None,
+            is_reflection_invoke: false,
+            is_cctor: false,
+            type_type_args: None,
+            method_type_args: None,
+            call_id: 0,
+            assembly_index: None,
         }
     }
 
@@ -387,6 +440,95 @@ impl ThreadCallFrame {
         &self.caller_stack
     }
 
+    /// Saves the caller's leave target for later restoration.
+    ///
+    /// Called when entering a new method from within a finally handler to
+    /// prevent the callee's `leave` instructions from clobbering the
+    /// caller's leave target in the shared exception state.
+    pub fn save_leave_target(&mut self, target: Option<u32>) {
+        self.saved_leave_target = target;
+    }
+
+    /// Takes the saved leave target, leaving `None`.
+    ///
+    /// Used when returning from a method to restore the caller's leave target.
+    pub fn take_saved_leave_target(&mut self) -> Option<u32> {
+        self.saved_leave_target.take()
+    }
+
+    /// Marks this frame as entered via a reflection invoke (MethodBase.Invoke).
+    ///
+    /// When an exception propagates out of such a frame, the exception routing
+    /// converts the exception type to `TargetInvocationException`.
+    pub fn set_reflection_invoke(&mut self) {
+        self.is_reflection_invoke = true;
+    }
+
+    /// Returns whether this frame was entered via a reflection invoke.
+    #[must_use]
+    pub fn is_reflection_invoke(&self) -> bool {
+        self.is_reflection_invoke
+    }
+
+    /// Marks this frame as executing a static constructor (.cctor).
+    pub fn set_is_cctor(&mut self) {
+        self.is_cctor = true;
+    }
+
+    /// Returns whether this frame is executing a .cctor.
+    #[must_use]
+    pub fn is_cctor(&self) -> bool {
+        self.is_cctor
+    }
+
+    /// Sets the type arguments from the declaring type's generic instantiation.
+    pub fn set_type_type_args(&mut self, args: Vec<Token>) {
+        self.type_type_args = Some(args);
+    }
+
+    /// Returns the type arguments from the declaring type (!0, !1, ...).
+    #[must_use]
+    pub fn type_type_args(&self) -> Option<&[Token]> {
+        self.type_type_args.as_deref()
+    }
+
+    /// Sets the method-level type arguments from a MethodSpec (!!0, !!1, ...).
+    pub fn set_method_type_args(&mut self, args: Vec<Token>) {
+        self.method_type_args = Some(args);
+    }
+
+    /// Returns the method-level type arguments (!!0, !!1, ...).
+    #[must_use]
+    pub fn method_type_args(&self) -> Option<&[Token]> {
+        self.method_type_args.as_deref()
+    }
+
+    /// Sets the trace call ID for correlating method returns with their calls.
+    pub fn set_call_id(&mut self, call_id: u64) {
+        self.call_id = call_id;
+    }
+
+    /// Returns the trace call ID assigned when this frame was created.
+    #[must_use]
+    pub fn call_id(&self) -> u64 {
+        self.call_id
+    }
+
+    /// Sets the assembly index for this frame.
+    ///
+    /// `None` = primary assembly, `Some(i)` = i-th dynamically loaded assembly.
+    pub fn set_assembly_index(&mut self, index: Option<u8>) {
+        self.assembly_index = index;
+    }
+
+    /// Returns the assembly index for this frame.
+    ///
+    /// `None` = primary assembly, `Some(i)` = i-th dynamically loaded assembly.
+    #[must_use]
+    pub fn assembly_index(&self) -> Option<u8> {
+        self.assembly_index
+    }
+
     /// Returns a reference to the local variables storage.
     #[must_use]
     pub fn locals(&self) -> &LocalVariables {
@@ -466,14 +608,8 @@ pub struct EmulationThread {
     /// Thread-local storage (field token -> value).
     tls: HashMap<Token, EmValue>,
 
-    /// Shared address space for heap and memory access.
-    address_space: Arc<AddressSpace>,
-
-    /// Shared capture context for recording emulation artifacts.
-    capture: Arc<CaptureContext>,
-
-    /// Assembly being emulated (for metadata access).
-    assembly: Option<Arc<CilObject>>,
+    /// Shared process environment (address space, runtime, capture, config, etc.).
+    context: Arc<ThreadContext>,
 
     /// Total instructions executed by this thread.
     instructions_executed: u64,
@@ -481,14 +617,30 @@ pub struct EmulationThread {
     /// Return value when thread completes.
     return_value: Option<EmValue>,
 
-    /// Pre-allocated fake BCL objects shared with other threads.
+    /// Pending multicast delegate invocation state.
     ///
-    /// These objects ensure that BCL methods like `Assembly.GetExecutingAssembly()`
-    /// return the same reference each time, which is critical for anti-tamper checks.
-    fake_objects: SharedFakeObjects,
+    /// When a delegate with multiple entries in its invocation list is invoked,
+    /// the first entry is dispatched immediately and remaining entries are stored
+    /// here. After each entry's method returns, the controller checks this state
+    /// and dispatches the next entry until all are exhausted.
+    multicast_state: Option<MulticastState>,
+}
 
-    /// Emulation configuration for environment hooks and runtime behavior.
-    config: Arc<EmulationConfig>,
+/// State for tracking multicast delegate invocation progress.
+///
+/// When a delegate's `Invoke` is called and the invocation list has multiple
+/// entries, the dispatcher stores remaining entries and the original arguments
+/// here. The controller processes one entry at a time; only the last entry's
+/// return value is propagated to the caller.
+#[derive(Debug, Clone)]
+pub struct MulticastState {
+    /// Remaining delegate entries to invoke (front = next to dispatch).
+    pub remaining_entries: Vec<DelegateEntry>,
+    /// Arguments passed to each delegate entry (excluding the 'this' delegate ref).
+    pub delegate_args: Vec<EmValue>,
+    /// Call depth when multicast dispatch started, used to detect when
+    /// the current entry's method has returned back to the dispatch level.
+    pub dispatch_depth: usize,
 }
 
 /// A request to invoke a method via reflection.
@@ -502,6 +654,8 @@ pub struct ReflectionInvokeRequest {
     pub this_ref: Option<EmValue>,
     /// Arguments to pass to the method.
     pub args: Vec<EmValue>,
+    /// Method-level generic type arguments (from `MakeGenericMethod`).
+    pub method_type_args: Option<Vec<Token>>,
 }
 
 impl fmt::Debug for EmulationThread {
@@ -515,9 +669,7 @@ impl fmt::Debug for EmulationThread {
             .field("eval_stack", &self.eval_stack)
             .field("exception_state", &self.exception_state)
             .field("tls", &self.tls)
-            .field("address_space", &"...")
-            .field("capture", &"...")
-            .field("assembly", &self.assembly.as_ref().map(|_| "..."))
+            .field("context", &"...")
             .field("instructions_executed", &self.instructions_executed)
             .field("return_value", &self.return_value)
             .finish_non_exhaustive()
@@ -525,7 +677,7 @@ impl fmt::Debug for EmulationThread {
 }
 
 impl EmulationThread {
-    /// Creates a new thread with the given configuration.
+    /// Creates a new thread with the given shared context.
     ///
     /// The thread starts in the [`ThreadState::Ready`] state with normal
     /// priority and an empty call stack.
@@ -533,19 +685,8 @@ impl EmulationThread {
     /// # Arguments
     ///
     /// * `id` - Unique identifier for this thread
-    /// * `address_space` - Shared address space for memory operations
-    /// * `capture` - Shared capture context for recording artifacts
-    /// * `assembly` - Optional assembly for metadata access
-    /// * `fake_objects` - Pre-allocated fake BCL objects for consistent references
-    /// * `config` - Emulation configuration for environment hooks
-    pub fn new(
-        id: ThreadId,
-        address_space: Arc<AddressSpace>,
-        capture: Arc<CaptureContext>,
-        assembly: Option<Arc<CilObject>>,
-        fake_objects: SharedFakeObjects,
-        config: Arc<EmulationConfig>,
-    ) -> Self {
+    /// * `context` - Shared process environment (address space, runtime, config, etc.)
+    pub fn new(id: ThreadId, context: Arc<ThreadContext>) -> Self {
         Self {
             id,
             name: None,
@@ -555,13 +696,10 @@ impl EmulationThread {
             eval_stack: EvaluationStack::new(1000),
             exception_state: ThreadExceptionState::new(),
             tls: HashMap::new(),
-            address_space,
-            capture,
-            assembly,
+            context,
             instructions_executed: 0,
             return_value: None,
-            fake_objects,
-            config,
+            multicast_state: None,
         }
     }
 
@@ -569,23 +707,16 @@ impl EmulationThread {
     ///
     /// This is a convenience constructor for creating the primary thread
     /// that typically executes the program's entry point.
-    pub fn main(
-        address_space: Arc<AddressSpace>,
-        capture: Arc<CaptureContext>,
-        assembly: Option<Arc<CilObject>>,
-        fake_objects: SharedFakeObjects,
-        config: Arc<EmulationConfig>,
-    ) -> Self {
-        let mut thread = Self::new(
-            ThreadId::MAIN,
-            address_space,
-            capture,
-            assembly,
-            fake_objects,
-            config,
-        );
+    pub fn main(context: Arc<ThreadContext>) -> Self {
+        let mut thread = Self::new(ThreadId::MAIN, context);
         thread.name = Some("Main".to_string());
         thread
+    }
+
+    /// Returns a reference to the shared thread context.
+    #[must_use]
+    pub fn context(&self) -> &Arc<ThreadContext> {
+        &self.context
     }
 
     /// Returns a reference to the shared fake BCL objects.
@@ -594,13 +725,28 @@ impl EmulationThread {
     /// for methods like `Assembly.GetExecutingAssembly()`.
     #[must_use]
     pub fn fake_objects(&self) -> &SharedFakeObjects {
-        &self.fake_objects
+        &self.context.fake_objects
+    }
+
+    /// Returns a reference to the virtual filesystem.
+    #[must_use]
+    pub fn virtual_fs(&self) -> &Arc<VirtualFs> {
+        &self.context.virtual_fs
+    }
+
+    /// Returns a reference to the shared runtime state.
+    ///
+    /// Used by hooks to access the `AppDomainState` for registering
+    /// dynamically loaded assemblies and querying runtime state.
+    #[must_use]
+    pub fn runtime_state(&self) -> &Arc<RwLock<RuntimeState>> {
+        &self.context.runtime
     }
 
     /// Returns a reference to the emulation configuration.
     #[must_use]
     pub fn config(&self) -> &EmulationConfig {
-        &self.config
+        &self.context.config
     }
 
     /// Returns the capture context for recording emulation artifacts.
@@ -609,7 +755,7 @@ impl EmulationThread {
     /// and other data discovered during emulation.
     #[must_use]
     pub fn capture(&self) -> &Arc<CaptureContext> {
-        &self.capture
+        &self.context.capture
     }
 
     /// Returns the assembly being emulated.
@@ -618,7 +764,67 @@ impl EmulationThread {
     /// and other assembly-level data during emulation.
     #[must_use]
     pub fn assembly(&self) -> Option<&Arc<CilObject>> {
-        self.assembly.as_ref()
+        self.context.assembly.as_ref()
+    }
+
+    /// Registers a synthetic method body and returns its unique token.
+    ///
+    /// Delegates to [`ThreadContext::register_synthetic_method`].
+    pub fn register_synthetic_method(&self, body: SyntheticMethodBody) -> Token {
+        self.context.register_synthetic_method(body)
+    }
+
+    /// Converts a type token to a [`CilFlavor`] via the primary assembly's
+    /// type registry.
+    ///
+    /// Returns `None` if the assembly is not set or the token is unknown.
+    #[must_use]
+    pub fn type_token_to_cil_flavor(&self, token: Token) -> Option<CilFlavor> {
+        let asm = self.context.assembly.as_ref()?;
+        asm.types().get(&token).map(|t| t.flavor().clone())
+    }
+
+    /// Resolves a .NET type by namespace and name to its metadata token.
+    ///
+    /// Searches the primary assembly first, then any dynamically loaded assemblies
+    /// registered via `Assembly.Load(byte[])`. This allows BCL hooks to tag
+    /// heap-allocated wrapper objects with their correct .NET type identity,
+    /// enabling virtual dispatch to work correctly.
+    ///
+    /// # Arguments
+    ///
+    /// * `namespace` - The type's namespace (e.g., `"System.IO"`)
+    /// * `name` - The type's name (e.g., `"MemoryStream"`)
+    ///
+    /// # Returns
+    ///
+    /// `Some(Token)` if the type is found, `None` if the assembly doesn't
+    /// reference this type (falls back to synthetic tokens).
+    #[must_use]
+    pub fn resolve_type_token(&self, namespace: &str, name: &str) -> Option<Token> {
+        // Check the primary assembly
+        if let Some(asm) = &self.context.assembly {
+            let fullname = if namespace.is_empty() {
+                name.to_string()
+            } else {
+                format!("{namespace}.{name}")
+            };
+            if let Some(cil_type) = asm.types().get_by_fullname(&fullname, true) {
+                return Some(cil_type.token);
+            }
+        }
+
+        // Check dynamically loaded assemblies
+        if let Ok(state) = self.context.runtime.read() {
+            if let Some((_, token)) = state
+                .app_domain()
+                .find_type_across_assemblies(namespace, name)
+            {
+                return Some(token);
+            }
+        }
+
+        None
     }
 
     /// Returns the thread's unique identifier.
@@ -834,10 +1040,33 @@ impl EmulationThread {
         &mut self.exception_state
     }
 
+    /// Sets a pending multicast delegate invocation state.
+    ///
+    /// Called by the delegate dispatcher when a delegate with multiple entries
+    /// in its invocation list is invoked. The remaining entries (after the first)
+    /// and the original arguments are stored here for the controller to process.
+    pub fn set_multicast_state(&mut self, state: MulticastState) {
+        self.multicast_state = Some(state);
+    }
+
+    /// Takes and returns the pending multicast state, leaving `None` in its place.
+    ///
+    /// Called by the controller after a multicast entry's method returns to
+    /// check if there are more entries to dispatch.
+    pub fn take_multicast_state(&mut self) -> Option<MulticastState> {
+        self.multicast_state.take()
+    }
+
+    /// Returns `true` if there is a pending multicast delegate invocation.
+    #[must_use]
+    pub fn has_multicast_state(&self) -> bool {
+        self.multicast_state.is_some()
+    }
+
     /// Returns a reference to the shared address space.
     #[must_use]
     pub fn address_space(&self) -> &AddressSpace {
-        &self.address_space
+        &self.context.address_space
     }
 
     /// Gets a thread-local storage value by its field token.
@@ -995,7 +1224,7 @@ impl EmulationThread {
     /// Returns a reference to the managed heap.
     #[must_use]
     pub fn heap(&self) -> &ManagedHeap {
-        self.address_space.managed_heap()
+        self.context.address_space.managed_heap()
     }
 
     /// Returns a reference to the managed heap for mutation.
@@ -1004,7 +1233,7 @@ impl EmulationThread {
     /// mutation is done through `&self` methods on `ManagedHeap`.
     #[must_use]
     pub fn heap_mut(&self) -> &ManagedHeap {
-        self.address_space.managed_heap()
+        self.context.address_space.managed_heap()
     }
 
     /// Gets an object from the heap.
@@ -1016,7 +1245,7 @@ impl EmulationThread {
     ///
     /// Returns error if reference is invalid.
     pub fn get_heap_object(&self, heap_ref: HeapRef) -> Result<HeapObject> {
-        self.address_space.managed_heap().get(heap_ref)
+        self.context.address_space.managed_heap().get(heap_ref)
     }
 
     /// Dereferences a managed pointer and returns the value at that location.
@@ -1047,10 +1276,12 @@ impl EmulationThread {
                 frame.arguments().get(idx).cloned()
             }
             PointerTarget::ArrayElement { array, index } => self
+                .context
                 .address_space
                 .managed_heap()
                 .get_array_element(*array, *index),
             PointerTarget::ObjectField { object, field } => self
+                .context
                 .address_space
                 .managed_heap()
                 .get_field(*object, *field)
@@ -1063,9 +1294,10 @@ impl EmulationThread {
                     .into()
                 }),
             PointerTarget::StaticField(field_token) => self
+                .context
                 .address_space
                 .statics()
-                .get(*field_token)
+                .get(*field_token)?
                 .ok_or_else(|| {
                     EmulationError::TypeMismatch {
                         operation: "ldind (static field)",
@@ -1105,15 +1337,20 @@ impl EmulationThread {
                 Ok(())
             }
             PointerTarget::ArrayElement { array, index } => self
+                .context
                 .address_space
                 .managed_heap()
                 .set_array_element(*array, *index, value),
             PointerTarget::ObjectField { object, field } => self
+                .context
                 .address_space
                 .managed_heap()
                 .set_field(*object, *field, value),
             PointerTarget::StaticField(field_token) => {
-                self.address_space.statics().set(*field_token, value);
+                self.context
+                    .address_space
+                    .statics()
+                    .set(*field_token, value)?;
                 Ok(())
             }
         }
@@ -1152,11 +1389,16 @@ impl EmulationThread {
     ///
     /// Clears the current stack and pushes all provided values in order.
     /// Used when returning from a method to restore the caller's stack.
-    pub fn restore_stack(&mut self, values: Vec<EmValue>) {
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the stack is full.
+    pub fn restore_stack(&mut self, values: Vec<EmValue>) -> Result<()> {
         self.eval_stack.clear();
         for value in values {
-            let _ = self.eval_stack.push(value);
+            self.eval_stack.push(value)?;
         }
+        Ok(())
     }
 
     /// Clears the evaluation stack.
@@ -1177,7 +1419,7 @@ impl EmulationThread {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::test::emulation::create_test_thread;
+    use crate::test::emulation::{create_test_context, create_test_thread};
 
     #[test]
     fn test_thread_creation() {
@@ -1190,11 +1432,8 @@ mod tests {
 
     #[test]
     fn test_thread_main() {
-        let space = Arc::new(AddressSpace::new());
-        let capture = Arc::new(CaptureContext::new());
-        let fake_objects = SharedFakeObjects::new(space.managed_heap());
-        let config = Arc::new(EmulationConfig::default());
-        let thread = EmulationThread::main(space, capture, None, fake_objects, config);
+        let ctx = create_test_context();
+        let thread = EmulationThread::main(ctx);
         assert_eq!(thread.id(), ThreadId::MAIN);
         assert_eq!(thread.name(), Some("Main"));
     }

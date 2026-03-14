@@ -40,7 +40,7 @@
 //!
 //! In practice, the algorithm converges quickly (usually 1-3 iterations).
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use crate::{
     analysis::{PhiAnalyzer, SsaFunction, SsaType, SsaVarId, VariableOrigin},
@@ -251,7 +251,7 @@ impl SsaPass for CopyPropagationPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
+        assembly: &CilObject,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
 

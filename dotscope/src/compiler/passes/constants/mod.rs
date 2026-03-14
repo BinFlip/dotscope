@@ -33,10 +33,7 @@
 //! v5 = 0           // absorbing element
 //! ```
 
-use std::{
-    collections::{HashMap, HashSet},
-    sync::Arc,
-};
+use std::collections::{HashMap, HashSet};
 
 use crate::{
     analysis::{
@@ -1221,7 +1218,7 @@ impl SsaPass for ConstantPropagationPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
+        assembly: &CilObject,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
         let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);

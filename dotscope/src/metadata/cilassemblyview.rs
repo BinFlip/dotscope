@@ -741,6 +741,44 @@ impl CilAssemblyView {
         Self::from_dotscope_file_with_validation(pe_file, validation_config)
     }
 
+    /// Creates a `CilAssemblyView` from an owned [`File`] with custom validation.
+    ///
+    /// The `File` is wrapped in an `Arc` internally. Used when rebuilding a
+    /// view after byte-level patches have been committed in-place (e.g. from
+    /// `WorkingAssembly::commit`).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the file cannot be parsed as a .NET assembly.
+    pub fn from_file_with_validation(
+        file: File,
+        validation_config: ValidationConfig,
+    ) -> Result<Self> {
+        Self::load_with_validation(Arc::new(file), validation_config)
+    }
+
+    /// Consumes this view and returns the underlying owned [`File`].
+    ///
+    /// Drops the borrowing metadata structures first, which reduces the
+    /// `Arc<File>` reference count to 1, then unwraps the `Arc` to obtain
+    /// exclusive ownership of the `File`.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the `Arc<File>` still has multiple owners at the
+    /// time of unwrapping, which indicates a bug in the caller.
+    pub fn into_file(self) -> Result<File> {
+        // into_heads() is ouroboros-generated and accessible within this module.
+        // It drops the borrowing CilAssemblyViewData (which holds one Arc clone)
+        // before returning the owned `file: Arc<File>` — leaving count = 1.
+        let heads = self.into_heads();
+        Arc::try_unwrap(heads.file).map_err(|_| {
+            crate::Error::Other(
+                "CilAssemblyView::into_file: Arc<File> has unexpected extra owners".to_string(),
+            )
+        })
+    }
+
     /// Internal method for loading a CilAssemblyView from a File structure with validation.
     ///
     /// This method serves as the common implementation for validation-enabled loading operations.

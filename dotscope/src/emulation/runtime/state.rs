@@ -65,7 +65,7 @@
 //! let runtime = RuntimeStateBuilder::new()
 //!     .config(EmulationConfig::minimal())
 //!     .hook(Hook::new("my-hook").match_method_name("Decrypt"))
-//!     .build();
+//!     .build()?;
 //! ```
 //!
 //! # Thread Safety
@@ -82,6 +82,7 @@ use crate::{
         runtime::{bcl, hook::HookManager, native, AppDomainState, Hook},
     },
     metadata::token::Token,
+    Result,
 };
 
 /// Central runtime state for .NET emulation.
@@ -170,6 +171,9 @@ impl RuntimeState {
     /// let runtime = RuntimeState::new();
     /// assert!(!runtime.hooks().is_empty());
     /// ```
+    /// # Panics
+    ///
+    /// Panics if BCL hook registration fails (e.g., due to a poisoned lock).
     #[must_use]
     pub fn new() -> Self {
         Self::with_config(Arc::new(EmulationConfig::default()))
@@ -202,12 +206,12 @@ impl RuntimeState {
 
         // Register default BCL hooks based on configuration
         if config.stubs.bcl_stubs {
-            bcl::register(&hooks);
+            bcl::register(&hooks).expect("BCL hook registration should not fail at startup");
         }
 
         // Register default native P/Invoke hooks based on configuration
         if config.stubs.pinvoke_stubs {
-            native::register(&hooks);
+            native::register(&hooks).expect("Native hook registration should not fail at startup");
         }
 
         Self {
@@ -315,7 +319,7 @@ impl Default for RuntimeState {
 ///
 /// let runtime = RuntimeStateBuilder::new()
 ///     .config(EmulationConfig::minimal())
-///     .build();
+///     .build()?;
 /// ```
 ///
 /// ## Adding Custom Hooks
@@ -327,7 +331,7 @@ impl Default for RuntimeState {
 ///     .hook(Hook::new("my-hook")
 ///         .match_method_name("Decrypt")
 ///         .pre(|ctx, thread| PreHookResult::Continue))
-///     .build();
+///     .build()?;
 /// ```
 ///
 /// ## Disabling Defaults
@@ -339,7 +343,7 @@ impl Default for RuntimeState {
 /// let runtime = RuntimeStateBuilder::new()
 ///     .no_defaults()
 ///     .hook(my_hook)
-///     .build();
+///     .build()?;
 ///
 /// // Only custom hooks are registered
 /// ```
@@ -369,7 +373,7 @@ impl RuntimeStateBuilder {
     /// use dotscope::emulation::runtime::RuntimeStateBuilder;
     ///
     /// let builder = RuntimeStateBuilder::new();
-    /// let runtime = builder.build();
+    /// let runtime = builder.build()?;
     /// ```
     #[must_use]
     pub fn new() -> Self {
@@ -417,7 +421,7 @@ impl RuntimeStateBuilder {
     ///     .hook(Hook::new("my-hook")
     ///         .match_method_name("Decrypt")
     ///         .pre(|ctx, thread| PreHookResult::Continue))
-    ///     .build();
+    ///     .build()?;
     /// ```
     #[must_use]
     pub fn hook(mut self, hook: Hook) -> Self {
@@ -458,7 +462,7 @@ impl RuntimeStateBuilder {
     /// let runtime = RuntimeStateBuilder::new()
     ///     .no_defaults()
     ///     .hook(my_hook)
-    ///     .build();
+    ///     .build()?;
     ///
     /// // Only custom hooks are registered
     /// ```
@@ -475,34 +479,33 @@ impl RuntimeStateBuilder {
     /// 2. Clears default hooks if [`no_defaults()`](Self::no_defaults) was called
     /// 3. Registers all custom hooks
     ///
-    /// # Returns
+    /// # Errors
     ///
-    /// The constructed `RuntimeState`.
-    #[must_use]
-    pub fn build(self) -> RuntimeState {
+    /// Returns an error if hook registration fails due to a poisoned lock.
+    pub fn build(self) -> Result<RuntimeState> {
         let hooks = HookManager::new();
 
         // Register defaults if enabled
         if self.register_defaults && self.config.stubs.bcl_stubs {
-            bcl::register(&hooks);
+            bcl::register(&hooks)?;
         }
 
         // Register native P/Invoke hooks if enabled
         if self.register_defaults && self.config.stubs.pinvoke_stubs {
-            native::register(&hooks);
+            native::register(&hooks)?;
         }
 
         // Add custom hooks
         for hook in self.hooks {
-            hooks.register(hook);
+            hooks.register(hook)?;
         }
 
-        RuntimeState {
+        Ok(RuntimeState {
             hooks: Arc::new(hooks),
             app_domain: AppDomainState::new(),
             unknown_method_behavior: self.unknown_method_behavior,
             config: Arc::new(self.config),
-        }
+        })
     }
 }
 
@@ -537,12 +540,15 @@ mod tests {
         let state = RuntimeState::new();
         let initial_count = state.hooks().len();
 
-        state.hooks().register(
-            Hook::new("test-hook")
-                .with_priority(HookPriority::HIGH)
-                .match_name("Custom", "Type", "Method")
-                .pre(|_ctx, _thread| PreHookResult::Continue),
-        );
+        state
+            .hooks()
+            .register(
+                Hook::new("test-hook")
+                    .with_priority(HookPriority::HIGH)
+                    .match_name("Custom", "Type", "Method")
+                    .pre(|_ctx, _thread| PreHookResult::Continue),
+            )
+            .unwrap();
 
         assert_eq!(state.hooks().len(), initial_count + 1);
     }
@@ -556,7 +562,8 @@ mod tests {
                     .match_method_name("Test")
                     .pre(|_ctx, _thread| PreHookResult::Continue),
             )
-            .build();
+            .build()
+            .unwrap();
 
         // Should have BCL hooks plus our custom hook
         assert!(!state.hooks().is_empty());
@@ -571,7 +578,8 @@ mod tests {
                     .match_method_name("Test")
                     .pre(|_ctx, _thread| PreHookResult::Continue),
             )
-            .build();
+            .build()
+            .unwrap();
 
         // Only our custom hook
         assert_eq!(state.hooks().len(), 1);

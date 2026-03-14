@@ -29,7 +29,7 @@ pub fn run(
 
     let assembly = if deobfuscate {
         let config = EngineConfig::default();
-        let mut engine = DeobfuscationEngine::new(config);
+        let engine = DeobfuscationEngine::new(config);
         let (deobfuscated, result) = engine
             .process_assembly(assembly)
             .with_context(|| "deobfuscation failed")?;

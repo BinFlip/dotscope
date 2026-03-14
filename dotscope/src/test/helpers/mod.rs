@@ -23,11 +23,12 @@ use crate::{
         tables::{AssemblyRefRc, FileRc, ModuleRefRc},
         token::Token,
         typesystem::{CilTypeRc, CilTypeReference},
+        validation::ValidationConfig,
     },
     CilObject, Error, Result,
 };
 
-use super::{
+use crate::test::{
     builders::{AssemblyRefBuilder, CilTypeBuilder, FileBuilder, MethodBuilder, ModuleRefBuilder},
     validator::TestAssembly,
 };
@@ -172,6 +173,19 @@ where
     f(&mut assembly)?;
     let bytes = assembly.to_memory()?;
     Ok(TestAssembly::from_bytes_with_error(bytes, error_pattern))
+}
+
+/// Loads a [`CilObject`] from a relative sample path with analysis validation.
+///
+/// Used by deobfuscation technique tests to load obfuscated samples.
+///
+/// # Panics
+///
+/// Panics if the file cannot be loaded.
+pub fn load_sample(rel: &str) -> CilObject {
+    let p = format!("{}/{}", env!("CARGO_MANIFEST_DIR"), rel);
+    CilObject::from_path_with_validation(&p, ValidationConfig::analysis())
+        .unwrap_or_else(|e| panic!("Failed to load test sample '{rel}': {e}"))
 }
 
 /// Returns a cached `Arc<CilObject>` for use in pass tests.

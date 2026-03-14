@@ -53,6 +53,7 @@ pub(crate) mod graph;
 mod hash;
 mod heap_calc;
 mod io;
+mod lebytes;
 mod math;
 mod synchronization;
 mod visitedmap;
@@ -68,15 +69,17 @@ pub use hash::{hash_blob, hash_guid, hash_string};
 pub use heap_calc::calculate_table_row_size;
 #[allow(unused_imports)]
 pub use io::{
-    read_be, read_be_at, read_be_at_dyn, read_compressed_int, read_compressed_int_at,
-    read_compressed_uint, read_compressed_uint_at, read_le, read_le_at, read_le_at_dyn,
-    write_7bit_encoded_int, write_be, write_be_at, write_be_at_dyn, write_compressed_int,
-    write_compressed_uint, write_le, write_le_at, write_le_at_dyn, write_prefixed_string_utf16,
-    write_prefixed_string_utf8, write_string_at, write_string_utf8, CilIO,
+    decode_utf16le, read_be, read_be_at, read_be_at_dyn, read_compressed_int,
+    read_compressed_int_at, read_compressed_uint, read_compressed_uint_at, read_le, read_le_at,
+    read_le_at_dyn, read_packed_len, write_7bit_encoded_int, write_be, write_be_at,
+    write_be_at_dyn, write_compressed_int, write_compressed_uint, write_le, write_le_at,
+    write_le_at_dyn, write_prefixed_string_utf16, write_prefixed_string_utf8, write_string_at,
+    write_string_utf8, CilIO,
 };
+pub use lebytes::LeBytes;
 #[cfg(feature = "compiler")]
 pub use math::is_power_of_two;
-pub use math::to_u32;
+pub use math::{to_i32_saturating, to_u32};
 pub use synchronization::FailFastBarrier;
 pub use visitedmap::VisitedMap;
 
@@ -84,9 +87,11 @@ pub use visitedmap::VisitedMap;
 pub(crate) use crypto::derive_pbkdf1_key;
 #[cfg(feature = "emulation")]
 pub(crate) use crypto::{apply_crypto_transform, derive_pbkdf2_key, verify_rsa_pkcs1v15};
+pub(crate) use crypto::{
+    compute_hmac_sha256, compute_hmac_sha512, compute_sha256, compute_sha384, compute_sha512,
+};
 #[cfg(feature = "legacy-crypto")]
 pub(crate) use crypto::{compute_md5, compute_sha1};
-pub(crate) use crypto::{compute_sha256, compute_sha384, compute_sha512};
 
 #[allow(unused_imports)]
 pub(crate) use decompress::{

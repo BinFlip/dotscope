@@ -192,6 +192,8 @@ pub mod marshalling;
 pub mod method;
 /// Composable query system for types and methods
 pub mod query;
+/// Cross-table token resolver for metadata normalization
+pub mod resolver;
 /// Implementation of the .NET resources
 pub mod resources;
 /// Implementation of the root metadata structure

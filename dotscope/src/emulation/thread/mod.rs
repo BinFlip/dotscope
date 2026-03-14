@@ -70,13 +70,15 @@
 //! - [`EventState`] - State of manual/auto reset events
 //! - [`SyncError`] - Errors from synchronization operations
 
+mod context;
 mod scheduler;
 mod state;
 mod sync;
 
+pub use context::ThreadContext;
 pub use scheduler::{SchedulerOutcome, ThreadScheduler, WakeCondition};
 pub use state::{
-    EmulationThread, ReflectionInvokeRequest, ThreadCallFrame, ThreadPriority, ThreadState,
-    WaitReason,
+    EmulationThread, MulticastState, ReflectionInvokeRequest, ThreadCallFrame, ThreadPriority,
+    ThreadState, WaitReason,
 };
 pub use sync::{EventState, MonitorState, MutexState, SemaphoreState, SyncError, SyncState};

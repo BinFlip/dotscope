@@ -81,6 +81,27 @@
 
 #![allow(unused_macros)]
 
+/// Unwrap a `Result` inside a BCL hook, converting errors to `PreHookResult::Error`.
+///
+/// BCL hooks return `PreHookResult`, not `Result`. This macro bridges the gap
+/// by converting any `Err(e)` into `PreHookResult::Error(format!("{e}"))` with
+/// an early return, while unwrapping `Ok(val)` for normal flow.
+///
+/// # Usage
+///
+/// ```rust,ignore
+/// let value = try_hook!(heap.get_string(href));
+/// // `value` is the unwrapped Ok variant
+/// ```
+macro_rules! try_hook {
+    ($expr:expr) => {
+        match $expr {
+            Ok(val) => val,
+            Err(e) => return PreHookResult::Error(format!("{e}")),
+        }
+    };
+}
+
 /// Acquire a mutex lock with automatic panic handling.
 ///
 /// This macro simplifies acquiring a lock on a [`std::sync::Mutex`] by automatically

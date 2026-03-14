@@ -1,0 +1,730 @@
+//! Shared utilities for deobfuscation techniques.
+//!
+//! Provides common helpers used across multiple technique implementations:
+//!
+//! - **Type resolution**: [`resolve_constructor_type()`] and friends unify the pattern
+//!   of walking CustomAttribute → constructor → declaring type across MethodDef and
+//!   MemberRef indirections.
+//! - **Name classification**: [`is_obfuscated_name()`] and [`is_special_name()`] identify
+//!   obfuscated identifiers vs. protected .NET names.
+//! - **Call-site counting**: [`build_call_site_counts()`] provides O(n) batch counting of
+//!   call/callvirt targets.
+//! - **Method name resolution**: [`is_method_named()`] checks if a token resolves to a
+//!   method whose name contains a given substring.
+//! - **Blob parsing**: [`read_packed_len()`] decodes the .NET SerString packed length encoding.
+
+use std::collections::{HashMap, HashSet};
+
+use crate::{
+    metadata::{
+        signatures::{parse_field_signature, TypeSignature},
+        streams::Strings,
+        tables::{
+            ClassLayoutRaw, FieldRaw, MemberRefRaw, MetadataTable, MethodDefRaw, TableId,
+            TypeDefRaw, TypeRefRaw,
+        },
+        token::Token,
+        typesystem::wellknown,
+    },
+    CilObject,
+};
+
+/// Determines a FieldRVA entry's data size from the ClassLayout table.
+///
+/// FieldRVA fields are backed by compiler-generated value types with explicit
+/// layout (e.g., `__StaticArrayInitTypeSize=16`). The actual size is in the
+/// ClassLayout table's `class_size` column.
+pub(crate) fn get_field_data_size(assembly: &CilObject, field_rid: u32) -> Option<usize> {
+    let tables = assembly.tables()?;
+    let blobs = assembly.blob()?;
+
+    let field_table = tables.table::<FieldRaw>()?;
+    let field_row = field_table.get(field_rid)?;
+
+    let sig_data = blobs.get(field_row.signature as usize).ok()?;
+    let field_sig = parse_field_signature(sig_data).ok()?;
+
+    match &field_sig.base {
+        TypeSignature::ValueType(token) => {
+            if token.table() != 0x02 {
+                return None;
+            }
+            let type_rid = token.row();
+
+            let class_layout_table = tables.table::<ClassLayoutRaw>()?;
+            for layout in class_layout_table {
+                if layout.parent == type_rid {
+                    return Some(layout.class_size as usize);
+                }
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+/// Checks if a name contains obfuscation indicators (zero-width chars, PUA, spaces).
+pub(crate) fn is_obfuscated_name(name: &str) -> bool {
+    if name.is_empty() {
+        return false;
+    }
+
+    // ASCII spaces in identifiers are a strong obfuscation signal (BitMono FullRenamer).
+    if name.contains(' ') {
+        return true;
+    }
+
+    for c in name.chars() {
+        match c {
+            '\u{200B}'..='\u{200F}'
+            | '\u{202A}'..='\u{202E}'
+            | '\u{2060}'..='\u{206F}'
+            | '\u{FEFF}'
+            | '\u{E000}'..='\u{F8FF}' => return true,
+            c if !c.is_ascii() => {
+                if !c.is_alphabetic() {
+                    return true;
+                }
+            }
+            _ => {}
+        }
+    }
+
+    false
+}
+
+/// Checks if a name is a special .NET name that should not be renamed.
+///
+/// Protects constructors, module types, CLR-internal angle-bracket names,
+/// and property/event accessor prefixes (get_, set_, add_, remove_).
+pub(crate) fn is_special_name(name: &str) -> bool {
+    if name == wellknown::members::CTOR || name == wellknown::members::CCTOR {
+        return true;
+    }
+
+    if name == wellknown::members::MODULE_TYPE || name == wellknown::members::PRIVATE_IMPL {
+        return true;
+    }
+
+    // Angle-bracket-wrapped names are CLR-internal (e.g. "<Generic Parameter>").
+    if name.starts_with('<') && name.ends_with('>') {
+        return true;
+    }
+
+    // Names containing spaces cannot be legitimate property/event accessors.
+    if name.contains(' ') {
+        return false;
+    }
+
+    if name.starts_with("get_")
+        || name.starts_with("set_")
+        || name.starts_with("add_")
+        || name.starts_with("remove_")
+    {
+        return true;
+    }
+
+    false
+}
+
+/// Counts the number of `call` or `callvirt` instructions targeting each token
+/// in `target_tokens`, scanning every method in `assembly` once.
+///
+/// The scan is O(n) in the total number of instructions across all methods,
+/// regardless of how many target tokens are provided. Callers should collect
+/// all candidate tokens first and pass them together rather than calling this
+/// function once per token.
+///
+/// # Arguments
+///
+/// * `assembly` - The assembly to scan for call sites.
+/// * `target_tokens` - Tokens to count call sites for. May be any iterator
+///   of [`Token`] values (e.g., `Vec::iter().copied()`, `HashSet::iter().copied()`).
+///
+/// # Returns
+///
+/// A [`HashMap`] from each target token to its call-site count. Every token
+/// in `target_tokens` is present in the map; tokens with no callers have a
+/// count of `0`. Returns an empty map if `target_tokens` is empty.
+///
+/// # Examples
+///
+/// ```ignore
+/// use crate::deobfuscation::utils::build_call_site_counts;
+///
+/// let candidates: Vec<Token> = collect_decryptor_candidates(&assembly);
+/// let counts = build_call_site_counts(&assembly, candidates.iter().copied());
+/// let active: Vec<Token> = candidates
+///     .into_iter()
+///     .filter(|t| *counts.get(t).unwrap_or(&0) >= 3)
+///     .collect();
+/// ```
+pub(crate) fn build_call_site_counts(
+    assembly: &CilObject,
+    target_tokens: impl IntoIterator<Item = Token>,
+) -> HashMap<Token, usize> {
+    let targets: HashSet<Token> = target_tokens.into_iter().collect();
+    if targets.is_empty() {
+        return HashMap::new();
+    }
+
+    let mut counts: HashMap<Token, usize> = targets.iter().map(|&t| (t, 0)).collect();
+    let mut memberref_cache: HashMap<Token, Option<Token>> = HashMap::new();
+
+    for method_entry in assembly.methods() {
+        let method = method_entry.value();
+        for instr in method.instructions() {
+            if instr.mnemonic == "call" || instr.mnemonic == "callvirt" {
+                if let Some(token) = instr.get_token_operand() {
+                    if let Some(count) = counts.get_mut(&token) {
+                        *count += 1;
+                    } else if token.is_table(TableId::MemberRef) {
+                        let resolved = memberref_cache
+                            .entry(token)
+                            .or_insert_with(|| assembly.resolver().resolve_memberref_method(token));
+                        if let Some(resolved_token) = resolved {
+                            if let Some(count) = counts.get_mut(resolved_token) {
+                                *count += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    counts
+}
+
+/// Resolved type information from a constructor's declaring type.
+///
+/// Produced by [`resolve_constructor_type()`] when walking the CustomAttribute →
+/// constructor → declaring type chain. Contains all metadata that different
+/// technique implementations may need.
+#[derive(Debug, Clone)]
+pub(crate) struct ResolvedType<'a> {
+    /// Type name (e.g., `"ConfusedByAttribute"`).
+    pub name: &'a str,
+    /// Type namespace, if present (e.g., `"System.Runtime.CompilerServices"`).
+    pub namespace: Option<&'a str>,
+    /// TypeDef token for locally-defined types, `None` for external TypeRef types.
+    pub typedef_token: Option<Token>,
+    /// Whether the TypeRef has module scope (`resolution_scope` points to the Module table).
+    pub has_module_scope: bool,
+}
+
+/// Resolves a constructor token to its declaring type information.
+///
+/// Dispatches on the constructor's table tag (MethodDef or MemberRef) to walk
+/// the appropriate metadata tables and resolve the declaring type's name,
+/// namespace, and token.
+///
+/// # Arguments
+///
+/// * `tag` - Table identifier of the constructor (typically `MethodDef` or `MemberRef`).
+/// * `row` - Row index within the table.
+/// * `methoddef_table` - Optional reference to the MethodDef table.
+/// * `typedef_table` - Optional reference to the TypeDef table.
+/// * `typeref_table` - Optional reference to the TypeRef table.
+/// * `memberref_table` - Optional reference to the MemberRef table.
+/// * `strings` - The `#Strings` heap for resolving name indices.
+///
+/// # Returns
+///
+/// [`Some(ResolvedType)`] with the declaring type's metadata, or `None` if
+/// the constructor cannot be resolved (missing tables, invalid row, etc.).
+pub(crate) fn resolve_constructor_type<'a>(
+    tag: TableId,
+    row: u32,
+    methoddef_table: Option<&'a MetadataTable<'a, MethodDefRaw>>,
+    typedef_table: Option<&'a MetadataTable<'a, TypeDefRaw>>,
+    typeref_table: Option<&'a MetadataTable<'a, TypeRefRaw>>,
+    memberref_table: Option<&'a MetadataTable<'a, MemberRefRaw>>,
+    strings: &'a Strings<'a>,
+) -> Option<ResolvedType<'a>> {
+    match tag {
+        TableId::MethodDef => {
+            resolve_methoddef_declaring_type(row, methoddef_table, typedef_table, strings)
+        }
+        TableId::MemberRef => resolve_memberref_declaring_type(
+            row,
+            memberref_table,
+            typedef_table,
+            typeref_table,
+            strings,
+        ),
+        _ => None,
+    }
+}
+
+/// Resolves a MethodDef to its declaring TypeDef's name, namespace, and token.
+///
+/// Walks the TypeDef table to find the type that owns the given method RID
+/// by checking `method_list` ranges.
+pub(crate) fn resolve_methoddef_declaring_type<'a>(
+    method_row: u32,
+    methoddef_table: Option<&'a MetadataTable<'a, MethodDefRaw>>,
+    typedef_table: Option<&'a MetadataTable<'a, TypeDefRaw>>,
+    strings: &'a Strings<'a>,
+) -> Option<ResolvedType<'a>> {
+    let methoddef_table = methoddef_table?;
+    let typedef_table = typedef_table?;
+    let method = methoddef_table.get(method_row)?;
+
+    let typedef = typedef_table.iter().find(|t| {
+        t.method_list <= method.rid
+            && typedef_table
+                .iter()
+                .find(|next| next.rid > t.rid)
+                .is_none_or(|next| method.rid < next.method_list)
+    })?;
+
+    let name = strings.get(typedef.type_name as usize).ok()?;
+    let namespace = strings.get(typedef.type_namespace as usize).ok();
+
+    Some(ResolvedType {
+        name,
+        namespace,
+        typedef_token: Some(typedef.token),
+        has_module_scope: false,
+    })
+}
+
+/// Resolves a MemberRef to its declaring type's name, namespace, and token.
+///
+/// The MemberRef class column can point to TypeDef (local type) or TypeRef
+/// (external reference). For TypeDef, the typedef token is included; for
+/// TypeRef, the `has_module_scope` flag indicates whether the reference
+/// resolves through the Module table.
+pub(crate) fn resolve_memberref_declaring_type<'a>(
+    memberref_row: u32,
+    memberref_table: Option<&'a MetadataTable<'a, MemberRefRaw>>,
+    typedef_table: Option<&'a MetadataTable<'a, TypeDefRaw>>,
+    typeref_table: Option<&'a MetadataTable<'a, TypeRefRaw>>,
+    strings: &'a Strings<'a>,
+) -> Option<ResolvedType<'a>> {
+    let memberref_table = memberref_table?;
+    let memberref = memberref_table.get(memberref_row)?;
+
+    match memberref.class.tag {
+        TableId::TypeDef => {
+            let typedef_table = typedef_table?;
+            let typedef = typedef_table.get(memberref.class.row)?;
+            let name = strings.get(typedef.type_name as usize).ok()?;
+            let namespace = strings.get(typedef.type_namespace as usize).ok();
+            Some(ResolvedType {
+                name,
+                namespace,
+                typedef_token: Some(typedef.token),
+                has_module_scope: false,
+            })
+        }
+        TableId::TypeRef => {
+            let typeref_table = typeref_table?;
+            let typeref = typeref_table.get(memberref.class.row)?;
+            let name = strings.get(typeref.type_name as usize).ok()?;
+            let namespace = strings.get(typeref.type_namespace as usize).ok();
+            Some(ResolvedType {
+                name,
+                namespace,
+                typedef_token: None,
+                has_module_scope: typeref.resolution_scope.tag == TableId::Module,
+            })
+        }
+        _ => None,
+    }
+}
+
+/// Scans all methods for calls matching any of the given name patterns.
+///
+/// For each method, checks every instruction with a token operand against the
+/// list of `patterns`. If the resolved method name contains pattern `i`, the
+/// method is recorded with that pattern index. Multiple patterns can match in
+/// a single method.
+///
+/// # Arguments
+///
+/// * `assembly` - The assembly to scan.
+/// * `patterns` - Name substrings to match against resolved method names.
+///
+/// # Returns
+///
+/// A [`HashMap`] from method token to the set of matched pattern indices.
+/// Only methods with at least one match are included.
+pub(crate) fn find_methods_calling_apis(
+    assembly: &CilObject,
+    patterns: &[&str],
+) -> HashMap<Token, Vec<usize>> {
+    let mut results: HashMap<Token, Vec<usize>> = HashMap::new();
+
+    for method_entry in assembly.methods() {
+        let method = method_entry.value();
+        let mut matched = Vec::new();
+
+        for instr in method.instructions() {
+            if let Some(token) = instr.get_token_operand() {
+                if let Some(name) = assembly.resolve_method_name(token) {
+                    for (i, pattern) in patterns.iter().enumerate() {
+                        if name.contains(pattern) && !matched.contains(&i) {
+                            matched.push(i);
+                        }
+                    }
+                }
+            }
+        }
+
+        if !matched.is_empty() {
+            results.insert(method.token, matched);
+        }
+    }
+
+    results
+}
+
+/// Filters candidate tokens by call-site count threshold.
+///
+/// Retains only candidates that are called at least `min_calls` times
+/// according to the provided call-site counts.
+///
+/// # Arguments
+///
+/// * `candidates` - Tokens to filter.
+/// * `counts` - Call-site counts (from [`build_call_site_counts`]).
+/// * `min_calls` - Minimum number of call sites required to keep a token.
+///
+/// # Returns
+///
+/// A [`Vec`] of tokens meeting the threshold.
+pub(crate) fn filter_by_call_threshold(
+    candidates: Vec<Token>,
+    counts: &HashMap<Token, usize>,
+    min_calls: usize,
+) -> Vec<Token> {
+    candidates
+        .into_iter()
+        .filter(|t| *counts.get(t).unwrap_or(&0) >= min_calls)
+        .collect()
+}
+
+/// Builds a mapping from byte-array field tokens to their FieldRVA backing
+/// field tokens by scanning `.cctor` methods for `RuntimeHelpers.InitializeArray`
+/// patterns.
+///
+/// The .NET compiler emits this pattern to initialize static `byte[]` fields
+/// from FieldRVA data:
+/// ```text
+/// ldtoken    <backing_field>        // FieldRVA-backed ExplicitLayout struct
+/// call       RuntimeHelpers.InitializeArray(Array, RuntimeFieldHandle)
+/// stsfld     <byte_array_field>     // byte[] field used in code
+/// ```
+///
+/// # Returns
+///
+/// A [`HashMap`] mapping each byte-array field token to its backing field token.
+pub(crate) fn build_init_array_map(assembly: &CilObject) -> HashMap<Token, Token> {
+    let mut map = HashMap::new();
+
+    for method_entry in assembly.methods() {
+        let method = method_entry.value();
+
+        if method.name != wellknown::members::CCTOR {
+            continue;
+        }
+
+        let instructions: Vec<_> = method.instructions().collect();
+
+        for (i, instr) in instructions.iter().enumerate() {
+            if instr.mnemonic != "call" {
+                continue;
+            }
+            let Some(call_token) = instr.get_token_operand() else {
+                continue;
+            };
+
+            // Check if it's InitializeArray
+            let is_init_array = assembly
+                .refs_members()
+                .get(&call_token)
+                .is_some_and(|r| r.value().name == "InitializeArray");
+
+            if !is_init_array {
+                continue;
+            }
+
+            if i < 1 || i + 1 >= instructions.len() {
+                continue;
+            }
+
+            // Find ldtoken before the call (within 3 instructions back)
+            let mut backing_field_token = None;
+            for j in (0..i).rev() {
+                if instructions[j].mnemonic == "ldtoken" {
+                    backing_field_token = instructions[j].get_token_operand();
+                    break;
+                }
+                if i - j > 3 {
+                    break;
+                }
+            }
+
+            // Find stsfld after the call
+            let stsfld_instr = &instructions[i + 1];
+            if stsfld_instr.mnemonic != "stsfld" {
+                continue;
+            }
+
+            if let (Some(backing), Some(byte_array)) =
+                (backing_field_token, stsfld_instr.get_token_operand())
+            {
+                map.insert(byte_array, backing);
+            }
+        }
+    }
+
+    map
+}
+
+/// Checks if a name is a valid GUID string.
+///
+/// Expected pattern: `xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx` (36 characters),
+/// with dashes at positions 8, 13, 18, and 23 and hex digits everywhere else.
+/// Both uppercase and lowercase hex digits are accepted.
+pub(crate) fn is_guid_name(name: &str) -> bool {
+    if name.len() != 36 {
+        return false;
+    }
+    let bytes = name.as_bytes();
+    if bytes[8] != b'-' || bytes[13] != b'-' || bytes[18] != b'-' || bytes[23] != b'-' {
+        return false;
+    }
+    bytes.iter().enumerate().all(|(i, &b)| {
+        if i == 8 || i == 13 || i == 18 || i == 23 {
+            true
+        } else {
+            b.is_ascii_hexdigit()
+        }
+    })
+}
+
+/// Resolves a CustomAttribute's constructor to its declaring type.
+///
+/// Convenience wrapper around [`resolve_constructor_type`] that extracts
+/// the necessary tables and strings from the assembly, removing the need
+/// for callers to pass 6+ arguments.
+///
+/// # Arguments
+///
+/// * `assembly` - The assembly containing the attribute.
+/// * `attr` - The raw CustomAttribute row to resolve.
+///
+/// # Returns
+///
+/// [`Some(ResolvedType)`] with the declaring type's metadata, or `None` if
+/// the constructor cannot be resolved.
+pub(crate) fn resolve_custom_attr_type<'a>(
+    assembly: &'a CilObject,
+    attr: &crate::metadata::tables::CustomAttributeRaw,
+) -> Option<ResolvedType<'a>> {
+    let tables = assembly.tables()?;
+    let strings = assembly.strings()?;
+
+    resolve_constructor_type(
+        attr.constructor.tag,
+        attr.constructor.row,
+        tables.table::<MethodDefRaw>(),
+        tables.table::<TypeDefRaw>(),
+        tables.table::<TypeRefRaw>(),
+        tables.table::<MemberRefRaw>(),
+        strings,
+    )
+}
+
+/// Checks whether a metadata token resolves to a method whose name contains `name`.
+///
+/// # Arguments
+///
+/// * `assembly` - The assembly used to resolve the token.
+/// * `token` - Metadata token to look up (MethodDef or MemberRef).
+/// * `name` - Substring to search for in the resolved method name.
+///
+/// # Returns
+///
+/// `true` if the token resolves to a method name that contains `name`,
+/// `false` if the token does not resolve or the name does not match.
+pub(crate) fn is_method_named(assembly: &CilObject, token: Token, name: &str) -> bool {
+    assembly
+        .resolve_method_name(token)
+        .is_some_and(|n| n.contains(name))
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::test::helpers::load_sample;
+    use crate::{
+        deobfuscation::utils::{
+            build_call_site_counts, is_method_named, is_obfuscated_name, is_special_name,
+            resolve_constructor_type,
+        },
+        metadata::{
+            tables::{MemberRefRaw, MethodDefRaw, TableId, TypeDefRaw, TypeRefRaw},
+            token::Token,
+        },
+    };
+
+    #[test]
+    fn test_is_obfuscated_name_normal_names() {
+        assert!(!is_obfuscated_name("Main"));
+        assert!(!is_obfuscated_name("Program"));
+        assert!(!is_obfuscated_name("get_Count"));
+        assert!(!is_obfuscated_name(".ctor"));
+        assert!(!is_obfuscated_name("<Module>"));
+    }
+
+    #[test]
+    fn test_is_obfuscated_name_empty() {
+        assert!(!is_obfuscated_name(""));
+    }
+
+    #[test]
+    fn test_is_obfuscated_name_spaces() {
+        assert!(is_obfuscated_name("Hello World"));
+        assert!(is_obfuscated_name(" "));
+    }
+
+    #[test]
+    fn test_is_obfuscated_name_zero_width() {
+        assert!(is_obfuscated_name("\u{200B}"));
+        assert!(is_obfuscated_name("a\u{FEFF}b"));
+        assert!(is_obfuscated_name("\u{202A}test"));
+    }
+
+    #[test]
+    fn test_is_obfuscated_name_pua() {
+        assert!(is_obfuscated_name("\u{E000}"));
+        assert!(is_obfuscated_name("abc\u{F800}"));
+    }
+
+    #[test]
+    fn test_is_special_name_constructors() {
+        assert!(is_special_name(".ctor"));
+        assert!(is_special_name(".cctor"));
+    }
+
+    #[test]
+    fn test_is_special_name_module_types() {
+        assert!(is_special_name("<Module>"));
+        assert!(is_special_name("<PrivateImplementationDetails>"));
+    }
+
+    #[test]
+    fn test_is_special_name_clr_internal() {
+        assert!(is_special_name("<Generic Parameter>"));
+        // Closure names like <>c__DisplayClass0_0 are NOT wrapped in angle brackets
+        // (they start with < but don't end with >), so they are not protected.
+        assert!(!is_special_name("<>c__DisplayClass0_0"));
+    }
+
+    #[test]
+    fn test_is_special_name_accessors() {
+        assert!(is_special_name("get_Count"));
+        assert!(is_special_name("set_Value"));
+        assert!(is_special_name("add_Click"));
+        assert!(is_special_name("remove_Changed"));
+    }
+
+    #[test]
+    fn test_is_special_name_regular() {
+        assert!(!is_special_name("Main"));
+        assert!(!is_special_name("DoWork"));
+        assert!(!is_special_name("ToString"));
+    }
+
+    #[test]
+    fn test_is_special_name_spaces_not_special() {
+        assert!(!is_special_name("get_ Count"));
+        assert!(!is_special_name("Hello World"));
+    }
+
+    #[test]
+    fn test_build_call_site_counts_empty_targets() {
+        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let counts = build_call_site_counts(&asm, std::iter::empty());
+        assert!(counts.is_empty());
+    }
+
+    #[test]
+    fn test_build_call_site_counts_nonexistent_token() {
+        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let bogus = Token::new(0x06FFFFFF);
+        let counts = build_call_site_counts(&asm, std::iter::once(bogus));
+        assert_eq!(counts.get(&bogus), Some(&0));
+    }
+
+    #[test]
+    fn test_resolve_constructor_type_confuserex_marker() {
+        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe");
+
+        let tables = asm.tables().expect("tables should be present");
+        let strings = asm.strings().expect("strings should be present");
+
+        let ca_table = tables
+            .table::<crate::metadata::tables::CustomAttributeRaw>()
+            .expect("CustomAttribute table should be present");
+
+        let methoddef_table = tables.table::<MethodDefRaw>();
+        let typedef_table = tables.table::<TypeDefRaw>();
+        let typeref_table = tables.table::<TypeRefRaw>();
+        let memberref_table = tables.table::<MemberRefRaw>();
+
+        let mut found_marker = false;
+        for attr in ca_table {
+            if let Some(resolved) = resolve_constructor_type(
+                attr.constructor.tag,
+                attr.constructor.row,
+                methoddef_table,
+                typedef_table,
+                typeref_table,
+                memberref_table,
+                strings,
+            ) {
+                if resolved.name.contains("ConfuserVersion")
+                    || resolved.name.contains("ConfusedByAttribute")
+                {
+                    found_marker = true;
+                    // ConfuserEx defines marker attributes locally → has typedef_token
+                    assert!(resolved.typedef_token.is_some());
+                    break;
+                }
+            }
+        }
+        assert!(found_marker, "Expected to find ConfuserEx marker attribute");
+    }
+
+    #[test]
+    fn test_resolve_constructor_type_unsupported_tag() {
+        // Tag other than MethodDef/MemberRef should return None
+        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+
+        let tables = asm.tables().expect("tables should be present");
+        let strings = asm.strings().expect("strings should be present");
+
+        let result = resolve_constructor_type(
+            TableId::Field,
+            1,
+            tables.table::<MethodDefRaw>(),
+            tables.table::<TypeDefRaw>(),
+            tables.table::<TypeRefRaw>(),
+            tables.table::<MemberRefRaw>(),
+            strings,
+        );
+        assert!(result.is_none());
+    }
+
+    #[test]
+    fn test_is_method_named_with_real_assembly() {
+        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+
+        // Token for a nonexistent method should return false
+        assert!(!is_method_named(&asm, Token::new(0x06FFFFFF), "Main"));
+    }
+}

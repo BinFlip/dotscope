@@ -8,13 +8,24 @@
 //!
 //! The engine module is organized into several sub-modules:
 //!
+//! - [`callresolver`] - Call resolution pipeline: hook dispatch, virtual dispatch,
+//!   delegate dispatch, P/Invoke, frame creation, and type initialization
 //! - [`context`] - Execution context providing access to assembly metadata
-//! - [`error`] - Emulation error types and result handling
-//! - [`frame`] - Call frame management for method invocations
+//! - [`controller`] - High-level execution loop orchestrating calls, returns,
+//!   and exception handling
+//! - [`dispatch`] - Virtual and interface method dispatch with caching
+//! - [`error`] - Emulation error types, synthetic exception tokens, and result
+//!   handling
+//! - [`exceptions`] - Synthetic exception type hierarchy for catch discrimination
+//! - [`exhandler`] - Exception handler search, finally scheduling, and stack
+//!   unwinding
+//! - [`generics`] - Generic type/method instantiation tracking
 //! - [`interpreter`] - Core instruction interpreter with opcode dispatch
-//! - [`stats`] - Execution statistics and limit tracking
 //! - [`pointer`] - Instruction pointer and position tracking
+//! - [`resolution`] - Call and newobj resolution result types
 //! - [`result`] - Step and emulation result types
+//! - [`stats`] - Execution statistics and limit tracking
+//! - [`typeops`] - Type operations (box, unbox, cast, sizeof, static fields)
 //!
 //! # Key Components
 //!
@@ -53,42 +64,49 @@
 //! }
 //! ```
 
+mod callresolver;
+mod cctors;
 mod context;
 mod controller;
+mod dispatch;
 mod error;
+mod exceptions;
+mod exhandler;
+mod generics;
 mod interpreter;
 mod pointer;
 mod resolution;
 mod result;
 mod stats;
-mod trace;
+mod typeops;
 
-pub use context::EmulationContext;
+pub use context::{EmulationContext, SyntheticMethodBody};
 pub use controller::EmulationController;
 pub use error::{synthetic_exception, EmulationError};
 pub use interpreter::Interpreter;
 pub use pointer::InstructionPointer;
 pub use result::{EmulationOutcome, StepResult};
 pub use stats::LimitExceeded;
-pub use trace::{TraceEvent, TraceWriter};
 
 #[cfg(test)]
 mod tests {
     use std::{path::Path, sync::Arc};
 
+    use dashmap::DashMap;
+
     use crate::{
         assembly::{decode_stream, InstructionAssembler},
         emulation::{
-            process::{EmulationConfig, EmulationLimits},
-            AddressSpace, CaptureContext, EmValue, EmulationContext, EmulationThread, HeapObject,
-            Interpreter, ManagedHeap, SharedFakeObjects, StepResult, ThreadExceptionState,
-            ThreadId,
+            exception::{ExceptionInfo, InstructionLocation},
+            process::EmulationLimits,
+            EmValue, EmulationContext, EmulationThread, HeapObject, HeapRef, Interpreter,
+            ManagedHeap, StepResult, ThreadExceptionState, ThreadId,
         },
         file::parser::Parser,
         metadata::{token::Token, typesystem::CilFlavor},
         prelude::PointerSize,
         project::ProjectLoader,
-        test::emulation::create_test_thread,
+        test::emulation::{create_test_context, create_test_thread},
         Result,
     };
 
@@ -112,20 +130,11 @@ mod tests {
         let instructions = decode_stream(&mut parser, 0)?;
 
         // Set up interpreter and thread
+        let ctx = create_test_context();
         let limits = EmulationLimits::default();
-        let address_space = Arc::new(AddressSpace::new());
-        let capture = Arc::new(CaptureContext::new());
-        let fake_objects = SharedFakeObjects::new(address_space.managed_heap());
-        let interpreter = Interpreter::new(limits, Arc::clone(&address_space), PointerSize::Bit64);
-        let config = Arc::new(EmulationConfig::default());
-        let mut thread = EmulationThread::new(
-            ThreadId::MAIN,
-            address_space,
-            capture,
-            None,
-            fake_objects,
-            config,
-        );
+        let mut interpreter =
+            Interpreter::new(limits, Arc::clone(&ctx.address_space), PointerSize::Bit64);
+        let mut thread = EmulationThread::new(ThreadId::MAIN, ctx);
 
         // Start a method with the given args and locals
         thread.start_method(Token::new(0x06000001), locals, args, false);
@@ -1023,7 +1032,7 @@ mod tests {
         let result = heap
             .get_byte_array(byte_array_ref)
             .expect("Should get byte array");
-        assert_eq!(result, bytes);
+        assert_eq!(result, Some(bytes));
     }
 
     #[test]
@@ -1103,11 +1112,6 @@ mod tests {
 
     #[test]
     fn test_exception_state() {
-        use crate::emulation::{
-            exception::{ExceptionInfo, InstructionLocation},
-            HeapRef,
-        };
-
         let mut state = ThreadExceptionState::new();
 
         // Initially no exception
@@ -1188,7 +1192,7 @@ mod tests {
         let Some(assembly) = load_crafted_2_assembly() else {
             return;
         };
-        let context = EmulationContext::new(assembly);
+        let context = EmulationContext::new(assembly, Arc::new(DashMap::new()));
 
         // Test finding the Program.Main method
         let main_token = context.find_static_method("", "Program", "Main");
@@ -1228,7 +1232,7 @@ mod tests {
         let Some(assembly) = load_crafted_2_assembly() else {
             return;
         };
-        let context = EmulationContext::new(assembly);
+        let context = EmulationContext::new(assembly, Arc::new(DashMap::new()));
 
         // Find a method with known characteristics
         let token = context
@@ -1258,7 +1262,7 @@ mod tests {
         let Some(assembly) = load_crafted_2_assembly() else {
             return;
         };
-        let context = EmulationContext::new(assembly);
+        let context = EmulationContext::new(assembly, Arc::new(DashMap::new()));
 
         // Find the Main method
         let main_token = context
@@ -1292,7 +1296,7 @@ mod tests {
         let Some(assembly) = load_crafted_2_assembly() else {
             return;
         };
-        let context = EmulationContext::new(assembly);
+        let context = EmulationContext::new(assembly, Arc::new(DashMap::new()));
 
         // Find types for compatibility testing
         let base_type = context
@@ -1321,7 +1325,7 @@ mod tests {
         let Some(assembly) = load_crafted_2_assembly() else {
             return;
         };
-        let context = EmulationContext::new(assembly);
+        let context = EmulationContext::new(assembly, Arc::new(DashMap::new()));
 
         // Get base class virtual method
         let base_method = context
@@ -1353,7 +1357,7 @@ mod tests {
         let Some(assembly) = load_crafted_2_assembly() else {
             return;
         };
-        let context = EmulationContext::new(assembly.clone());
+        let context = EmulationContext::new(assembly.clone(), Arc::new(DashMap::new()));
 
         // Create process using ProcessBuilder
         let process = crate::emulation::ProcessBuilder::new()
@@ -1394,7 +1398,7 @@ mod tests {
         let Some(assembly) = load_crafted_2_assembly() else {
             return;
         };
-        let context = EmulationContext::new(assembly.clone());
+        let context = EmulationContext::new(assembly.clone(), Arc::new(DashMap::new()));
 
         // Test Extensions::GetReference IL structure
         // Expected from monodis: nop, ldarg.0, ldarg.1, ldelem.i4, stloc.0, br.s, ldloc.0, ret
@@ -1430,7 +1434,7 @@ mod tests {
         let Some(assembly) = load_crafted_2_assembly() else {
             return;
         };
-        let context = EmulationContext::new(assembly.clone());
+        let context = EmulationContext::new(assembly.clone(), Arc::new(DashMap::new()));
 
         // Find Person::get_Age method
         let get_age_token = context

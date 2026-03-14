@@ -810,7 +810,7 @@ impl TypeResolver {
 
                 // Use the base type's source instead of the current assembly source
                 // Generic instantiations should inherit the source from their base type
-                let source = if let Some(external) = base_type.get_external() {
+                let source = if let Some(external) = base_type.external() {
                     self.registry.register_source(external)
                 } else {
                     // For types without external reference, fall back to current source
@@ -868,6 +868,11 @@ impl TypeResolver {
                 if let Some(definition_base) = base_type.base() {
                     generic_inst.set_base(&definition_base.into())?;
                 }
+
+                if let Some(enclosing) = base_type.enclosing_type.get() {
+                    let _ = generic_inst.set_enclosing_type(enclosing);
+                }
+
                 Ok(generic_inst)
             }
             TypeSignature::GenericParamType(index) => {

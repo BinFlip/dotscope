@@ -842,29 +842,19 @@ impl Default for ThreadScheduler {
 mod tests {
     use std::sync::Arc;
 
-    use crate::emulation::{
-        capture::CaptureContext,
-        process::EmulationConfig,
-        thread::{
-            EmulationThread, SchedulerOutcome, ThreadPriority, ThreadScheduler, WaitReason,
-            WakeCondition,
+    use crate::{
+        emulation::{
+            thread::{
+                EmulationThread, SchedulerOutcome, ThreadPriority, ThreadScheduler, WaitReason,
+                WakeCondition,
+            },
+            EmValue, HeapRef, ThreadId,
         },
-        AddressSpace, EmValue, HeapRef, SharedFakeObjects, ThreadId,
+        test::emulation::create_test_context,
     };
 
     fn create_test_thread(id: u32) -> EmulationThread {
-        let space = Arc::new(AddressSpace::new());
-        let capture = Arc::new(CaptureContext::new());
-        let fake_objects = SharedFakeObjects::new(space.managed_heap());
-        let config = Arc::new(EmulationConfig::default());
-        EmulationThread::new(
-            ThreadId::new(id),
-            space,
-            capture,
-            None,
-            fake_objects,
-            config,
-        )
+        EmulationThread::new(ThreadId::new(id), create_test_context())
     }
 
     #[test]
@@ -936,29 +926,12 @@ mod tests {
     fn test_thread_priority() {
         let mut scheduler = ThreadScheduler::new(100);
 
-        let space = Arc::new(AddressSpace::new());
-        let capture = Arc::new(CaptureContext::new());
-        let fake_objects = SharedFakeObjects::new(space.managed_heap());
-        let config = Arc::new(EmulationConfig::default());
+        let ctx = create_test_context();
 
-        let mut low_thread = EmulationThread::new(
-            ThreadId::new(1),
-            Arc::clone(&space),
-            Arc::clone(&capture),
-            None,
-            fake_objects.clone(),
-            Arc::clone(&config),
-        );
+        let mut low_thread = EmulationThread::new(ThreadId::new(1), Arc::clone(&ctx));
         low_thread.set_priority(ThreadPriority::Lowest);
 
-        let mut high_thread = EmulationThread::new(
-            ThreadId::new(2),
-            Arc::clone(&space),
-            Arc::clone(&capture),
-            None,
-            fake_objects,
-            config,
-        );
+        let mut high_thread = EmulationThread::new(ThreadId::new(2), ctx);
         high_thread.set_priority(ThreadPriority::Highest);
 
         // Add low priority first

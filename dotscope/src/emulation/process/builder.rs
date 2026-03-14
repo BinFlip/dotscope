@@ -80,18 +80,26 @@ use std::sync::Arc;
 
 use log::debug;
 
+use cowfile::CowFile;
+
 use crate::{
     emulation::{
         capture::CaptureContext,
-        engine::TraceWriter,
         fakeobjects::SharedFakeObjects,
+        filesystem::VirtualFs,
         loader::{DataLoader, PeLoader, PeLoaderConfig},
         memory::{AddressSpace, MemoryProtection, SharedHeap},
         process::{CaptureConfig, EmulationConfig, EmulationProcess, TracingConfig},
         runtime::{Hook, RuntimeState},
+        thread::ThreadContext,
+        tracer::{TraceListener, TraceWriter},
         EmValue,
     },
-    metadata::{tables::FieldRvaRaw, token::Token, typesystem::PointerSize},
+    metadata::{
+        tables::{FieldRvaRaw, ModuleRaw},
+        token::Token,
+        typesystem::PointerSize,
+    },
     CilObject, Result,
 };
 
@@ -116,13 +124,13 @@ use crate::{
 ///
 /// * `assembly` - The assembly to read FieldRVA data from
 /// * `address_space` - The address space containing static field storage
-fn populate_fieldrva_statics(assembly: &CilObject, address_space: &AddressSpace) {
+fn populate_fieldrva_statics(assembly: &CilObject, address_space: &AddressSpace) -> Result<()> {
     let Some(tables) = assembly.tables() else {
-        return;
+        return Ok(());
     };
 
     let Some(fieldrva_table) = tables.table::<FieldRvaRaw>() else {
-        return;
+        return Ok(());
     };
 
     let types = assembly.types();
@@ -176,8 +184,9 @@ fn populate_fieldrva_statics(assembly: &CilObject, address_space: &AddressSpace)
         };
 
         // Store in static field storage
-        address_space.statics().set(field_token, value);
+        address_space.statics().set(field_token, value)?;
     }
+    Ok(())
 }
 
 /// Deferred mapping operation for [`ProcessBuilder`].
@@ -360,6 +369,20 @@ pub struct ProcessBuilder {
     /// but maps the original (pre-deobfuscation) PE bytes so that in-memory
     /// hash/checksum verification by the target code sees unmodified data.
     pe_override: Option<Vec<u8>>,
+
+    /// Virtual filesystem entries to populate during build.
+    virtual_fs_entries: Vec<VirtualFsEntry>,
+
+    /// Trace listeners to attach to the trace writer.
+    trace_listeners: Vec<Box<dyn TraceListener>>,
+}
+
+/// A deferred virtual filesystem entry for the builder.
+enum VirtualFsEntry {
+    /// Map from in-memory data.
+    Data { vfs_path: String, data: Vec<u8> },
+    /// Map from an existing CowFile (takes ownership).
+    CowFile { vfs_path: String, cow: CowFile },
 }
 
 impl ProcessBuilder {
@@ -390,6 +413,8 @@ impl ProcessBuilder {
             register_defaults: true,
             name: None,
             pe_override: None,
+            virtual_fs_entries: Vec::new(),
+            trace_listeners: Vec::new(),
         }
     }
 
@@ -984,6 +1009,31 @@ impl ProcessBuilder {
         self
     }
 
+    /// Maps a virtual file from in-memory data.
+    ///
+    /// The data will be accessible to emulated code via FileStream/File hooks.
+    #[must_use]
+    pub fn with_virtual_file(mut self, vfs_path: &str, data: Vec<u8>) -> Self {
+        self.virtual_fs_entries.push(VirtualFsEntry::Data {
+            vfs_path: vfs_path.to_string(),
+            data,
+        });
+        self
+    }
+
+    /// Maps a virtual file from an existing CowFile (takes ownership).
+    ///
+    /// For mmap-backed CowFiles, this is zero-copy. The CowFile's pending
+    /// writes are not carried over.
+    #[must_use]
+    pub fn with_virtual_file_cow(mut self, vfs_path: &str, cow: CowFile) -> Self {
+        self.virtual_fs_entries.push(VirtualFsEntry::CowFile {
+            vfs_path: vfs_path.to_string(),
+            cow,
+        });
+        self
+    }
+
     /// Disables registration of default BCL stubs.
     ///
     /// By default, the builder registers stubs for common BCL methods
@@ -997,6 +1047,24 @@ impl ProcessBuilder {
     #[must_use]
     pub fn no_default_stubs(mut self) -> Self {
         self.register_defaults = false;
+        self
+    }
+
+    /// Adds a trace listener that will receive all trace events.
+    ///
+    /// Listeners are attached to the [`TraceWriter`] during build. They
+    /// receive events synchronously during emulation, so keep processing
+    /// lightweight.
+    ///
+    /// Tracing must be enabled (via [`TracingConfig`]) for listeners to
+    /// receive events.
+    ///
+    /// # Arguments
+    ///
+    /// * `listener` - A boxed [`TraceListener`](crate::emulation::TraceListener) implementation
+    #[must_use]
+    pub fn with_trace_listener(mut self, listener: Box<dyn TraceListener>) -> Self {
+        self.trace_listeners.push(listener);
         self
     }
 
@@ -1076,7 +1144,7 @@ impl ProcessBuilder {
         let runtime = RuntimeState::with_config(config_arc.clone());
 
         for hook in self.hooks {
-            runtime.hooks().register(hook);
+            runtime.hooks().register(hook)?;
         }
 
         let capture = Arc::new(CaptureContext::with_config(self.capture_config));
@@ -1096,7 +1164,7 @@ impl ProcessBuilder {
                 loaded_images.push(image);
             }
 
-            populate_fieldrva_statics(assembly, &address_space);
+            populate_fieldrva_statics(assembly, &address_space)?;
         }
 
         for mapping in self.mappings {
@@ -1157,41 +1225,93 @@ impl ProcessBuilder {
                 .map_or_else(|| "emulation".to_string(), |asm| asm.name.clone())
         });
 
-        // Create trace writer if tracing is enabled
-        let trace_writer = if config_arc.tracing.is_enabled() {
+        // Create trace writer if tracing is enabled or listeners are registered
+        let has_listeners = !self.trace_listeners.is_empty();
+        let trace_writer = if config_arc.tracing.is_enabled() || has_listeners {
             let context = config_arc.tracing.context_prefix.clone();
-            if let Some(ref path) = config_arc.tracing.output_path {
+            let mut writer = if let Some(ref path) = config_arc.tracing.output_path {
                 // File-based tracing - propagate errors to caller
-                let writer = TraceWriter::new_file(path, context).map_err(|e| {
+                TraceWriter::new_file(path, context).map_err(|e| {
                     crate::Error::TracingError(format!(
                         "Failed to create trace file {}: {e}",
                         path.display()
                     ))
-                })?;
-                Some(Arc::new(writer))
+                })?
             } else {
                 // Memory-based tracing
-                Some(Arc::new(TraceWriter::new_memory(
-                    config_arc.tracing.max_trace_entries,
-                    context,
-                )))
+                TraceWriter::new_memory(config_arc.tracing.max_trace_entries, context)
+            };
+            for listener in self.trace_listeners {
+                writer.add_listener(listener);
             }
+            Some(Arc::new(writer))
         } else {
             None
         };
 
+        // Build virtual filesystem from accumulated entries
+        let mut virtual_fs = VirtualFs::new();
+        for entry in self.virtual_fs_entries {
+            match entry {
+                VirtualFsEntry::Data { vfs_path, data } => {
+                    virtual_fs.map_data(&vfs_path, data);
+                }
+                VirtualFsEntry::CowFile { vfs_path, cow } => {
+                    virtual_fs.map_cow(&vfs_path, cow);
+                }
+            }
+        }
+
+        // Auto-map the assembly's PE under its .NET module name.
+        // Anti-tamper checks use Assembly.Location (which returns a path ending
+        // in the module name) to open and verify the PE. The VirtualFs filename
+        // fallback matches the filename component regardless of the full path.
+        //
+        // Try owned module metadata first, then fall back to raw Module table
+        // (same approach as Assembly.get_Location hook) for obfuscated binaries
+        // where owned metadata may not be populated.
+        if let Some(ref assembly) = self.assembly {
+            let module_name = assembly.module().map(|m| m.name.clone()).or_else(|| {
+                let tables = assembly.tables()?;
+                let strings = assembly.strings()?;
+                let module_table = tables.table::<ModuleRaw>()?;
+                let module_row = module_table.iter().next()?;
+                strings.get(module_row.name as usize).ok().map(String::from)
+            });
+
+            if let Some(name) = module_name {
+                if !virtual_fs.exists(&name) {
+                    match assembly.file().fork_cowfile() {
+                        Ok(cow) => {
+                            debug!("Auto-mapped assembly PE as virtual file: {}", name);
+                            virtual_fs.map_cow(&name, cow);
+                        }
+                        Err(e) => {
+                            debug!("Auto-map: fork_cowfile failed for module '{}': {}", name, e);
+                        }
+                    }
+                }
+            }
+        }
+
         let hook_count = runtime.hooks().len();
+
+        let context = Arc::new(ThreadContext::new(
+            address_space,
+            Arc::new(std::sync::RwLock::new(runtime)),
+            capture,
+            config_arc,
+            self.assembly,
+            fake_objects,
+            Arc::new(virtual_fs),
+        ));
+
         let process = EmulationProcess {
             name,
-            assembly: self.assembly,
-            config: config_arc,
-            address_space,
-            runtime: Arc::new(std::sync::RwLock::new(runtime)),
-            capture,
+            context,
             loaded_images,
             mapped_regions,
             instruction_count: std::sync::atomic::AtomicU64::new(0),
-            fake_objects,
             trace_writer,
         };
         debug!("Emulation process ready: {} hooks registered", hook_count);
@@ -1267,12 +1387,12 @@ mod tests {
     fn test_builder_no_default_hooks() {
         // With default hooks enabled (default behavior)
         let process_with_hooks = ProcessBuilder::new().build().unwrap();
-        let runtime_with = process_with_hooks.runtime.read().unwrap();
+        let runtime_with = process_with_hooks.runtime().read().unwrap();
         let count_with = runtime_with.hooks().len();
 
         // With default hooks disabled
         let process_no_hooks = ProcessBuilder::new().no_default_stubs().build().unwrap();
-        let runtime_no = process_no_hooks.runtime.read().unwrap();
+        let runtime_no = process_no_hooks.runtime().read().unwrap();
         let count_no = runtime_no.hooks().len();
 
         // Default hooks should have many registered (BCL + native)

@@ -29,6 +29,7 @@ use cbc::{Decryptor, Encryptor};
 #[cfg(feature = "legacy-crypto")]
 use des::{Des, TdesEde3};
 use ecb::{Decryptor as EcbDecryptor, Encryptor as EcbEncryptor};
+use hmac::{Hmac, Mac};
 #[cfg(feature = "legacy-crypto")]
 use md5::{Digest as Md5Digest, Md5};
 use pbkdf2::pbkdf2_hmac;
@@ -170,6 +171,50 @@ pub fn compute_sha512(data: &[u8]) -> Vec<u8> {
     let mut hasher = Sha512::new();
     Sha2Digest::update(&mut hasher, data);
     hasher.finalize().to_vec()
+}
+
+/// Computes the HMAC-SHA256 of input bytes with the given key.
+///
+/// # Arguments
+///
+/// * `key` - The HMAC key bytes
+/// * `data` - The input bytes to authenticate
+///
+/// # Returns
+///
+/// A 32-byte vector containing the HMAC-SHA256 result.
+#[must_use]
+pub fn compute_hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
+    type HmacSha256 = Hmac<Sha256>;
+
+    // HMAC accepts keys of any size (per RFC 2104), so this never fails.
+    let Ok(mut mac) = <HmacSha256 as Mac>::new_from_slice(key) else {
+        return Vec::new();
+    };
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
+}
+
+/// Computes the HMAC-SHA512 of input bytes with the given key.
+///
+/// # Arguments
+///
+/// * `key` - The HMAC key bytes
+/// * `data` - The input bytes to authenticate
+///
+/// # Returns
+///
+/// A 64-byte vector containing the HMAC-SHA512 result.
+#[must_use]
+pub fn compute_hmac_sha512(key: &[u8], data: &[u8]) -> Vec<u8> {
+    type HmacSha512 = Hmac<Sha512>;
+
+    // HMAC accepts keys of any size (per RFC 2104), so this never fails.
+    let Ok(mut mac) = <HmacSha512 as Mac>::new_from_slice(key) else {
+        return Vec::new();
+    };
+    mac.update(data);
+    mac.finalize().into_bytes().to_vec()
 }
 
 /// Derives a key using PBKDF2 (RFC 2898 Section 5.2).

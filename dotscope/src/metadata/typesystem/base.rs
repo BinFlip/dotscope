@@ -1554,6 +1554,83 @@ impl CilFlavor {
             _ => None,
         }
     }
+
+    /// Returns the size in bytes of this type flavor, if it has a fixed size.
+    ///
+    /// Returns `Some(n)` for primitive types and `Void`. Returns `None` for
+    /// `ValueType` (needs `ClassLayout`), `FnPtr`, and all reference/complex types
+    /// since their size depends on context.
+    ///
+    /// # Arguments
+    ///
+    /// * `ptr_size` - The target pointer size, used for native int/uint and reference types.
+    #[must_use]
+    pub fn byte_size(&self, ptr_size: PointerSize) -> Option<usize> {
+        match self {
+            CilFlavor::Void => Some(0),
+            CilFlavor::Boolean | CilFlavor::I1 | CilFlavor::U1 => Some(1),
+            CilFlavor::Char | CilFlavor::I2 | CilFlavor::U2 => Some(2),
+            CilFlavor::I4 | CilFlavor::U4 | CilFlavor::R4 => Some(4),
+            CilFlavor::I8 | CilFlavor::U8 | CilFlavor::R8 => Some(8),
+            CilFlavor::I | CilFlavor::U => Some(ptr_size.bytes()),
+            CilFlavor::TypedRef { .. } => Some(ptr_size.bytes() * 2),
+            // Reference types are pointer-sized
+            CilFlavor::Object
+            | CilFlavor::String
+            | CilFlavor::Class
+            | CilFlavor::Interface
+            | CilFlavor::Array { .. }
+            | CilFlavor::Pointer
+            | CilFlavor::ByRef
+            | CilFlavor::GenericInstance => Some(ptr_size.bytes()),
+            // ValueType, FnPtr, GenericParameter, Pinned, Unknown — context-dependent
+            _ => None,
+        }
+    }
+}
+
+impl From<CilPrimitiveKind> for CilFlavor {
+    fn from(kind: CilPrimitiveKind) -> Self {
+        match kind {
+            CilPrimitiveKind::Void => CilFlavor::Void,
+            CilPrimitiveKind::Boolean => CilFlavor::Boolean,
+            CilPrimitiveKind::Char => CilFlavor::Char,
+            CilPrimitiveKind::I1 => CilFlavor::I1,
+            CilPrimitiveKind::U1 => CilFlavor::U1,
+            CilPrimitiveKind::I2 => CilFlavor::I2,
+            CilPrimitiveKind::U2 => CilFlavor::U2,
+            CilPrimitiveKind::I4 => CilFlavor::I4,
+            CilPrimitiveKind::U4 => CilFlavor::U4,
+            CilPrimitiveKind::I8 => CilFlavor::I8,
+            CilPrimitiveKind::U8 => CilFlavor::U8,
+            CilPrimitiveKind::R4 => CilFlavor::R4,
+            CilPrimitiveKind::R8 => CilFlavor::R8,
+            CilPrimitiveKind::I => CilFlavor::I,
+            CilPrimitiveKind::U => CilFlavor::U,
+            CilPrimitiveKind::Object => CilFlavor::Object,
+            CilPrimitiveKind::String => CilFlavor::String,
+            CilPrimitiveKind::ValueType => CilFlavor::ValueType,
+            CilPrimitiveKind::Var => CilFlavor::GenericParameter {
+                index: 0,
+                method: false,
+            },
+            CilPrimitiveKind::MVar => CilFlavor::GenericParameter {
+                index: 0,
+                method: true,
+            },
+            CilPrimitiveKind::Null => CilFlavor::Object,
+            CilPrimitiveKind::TypedReference => CilFlavor::TypedRef { target_type: None },
+            CilPrimitiveKind::Class => CilFlavor::Class,
+        }
+    }
+}
+
+impl TryFrom<CilFlavor> for CilPrimitiveKind {
+    type Error = ();
+
+    fn try_from(flavor: CilFlavor) -> std::result::Result<Self, Self::Error> {
+        flavor.to_primitive_kind().ok_or(())
+    }
 }
 
 impl fmt::Display for CilFlavor {

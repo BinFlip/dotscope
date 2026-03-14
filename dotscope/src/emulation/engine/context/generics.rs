@@ -1,0 +1,203 @@
+//! Generic parameter substitution and type signature resolution for the emulation context.
+//!
+//! Provides conversion of `TypeSignature` to metadata tokens and substitution of
+//! generic type/method parameters in method signatures.
+
+use crate::{
+    emulation::engine::{context::EmulationContext, generics::GenericRegistry},
+    metadata::{
+        signatures::{SignatureMethod, SignatureParameter, TypeSignature},
+        token::Token,
+        typesystem::CilPrimitiveKind,
+    },
+};
+
+impl EmulationContext {
+    /// Converts a `TypeSignature` to a metadata `Token`.
+    ///
+    /// Maps primitive type signatures to their well-known `CilPrimitiveKind` tokens
+    /// (`0xF000_xxxx`), concrete class/value type references to their tokens,
+    /// and generic instantiations to synthetic tokens via `GenericRegistry`.
+    ///
+    /// Generic parameters (`GenericParamType`/`GenericParamMethod`) are resolved
+    /// from the provided type/method argument lists when available.
+    ///
+    /// # Arguments
+    ///
+    /// * `sig` - The type signature to resolve
+    /// * `type_args` - Type-level generic arguments (`!0`, `!1`, ...) if available
+    /// * `method_args` - Method-level generic arguments (`!!0`, `!!1`, ...) if available
+    /// * `generics` - Generic registry for creating synthetic instantiation tokens
+    #[must_use]
+    pub fn type_signature_to_token(
+        &self,
+        sig: &TypeSignature,
+        type_args: Option<&[Token]>,
+        method_args: Option<&[Token]>,
+        generics: &GenericRegistry,
+    ) -> Option<Token> {
+        match sig {
+            // Primitive types → well-known tokens
+            TypeSignature::Void => Some(CilPrimitiveKind::Void.token()),
+            TypeSignature::Boolean => Some(CilPrimitiveKind::Boolean.token()),
+            TypeSignature::Char => Some(CilPrimitiveKind::Char.token()),
+            TypeSignature::I1 => Some(CilPrimitiveKind::I1.token()),
+            TypeSignature::U1 => Some(CilPrimitiveKind::U1.token()),
+            TypeSignature::I2 => Some(CilPrimitiveKind::I2.token()),
+            TypeSignature::U2 => Some(CilPrimitiveKind::U2.token()),
+            TypeSignature::I4 => Some(CilPrimitiveKind::I4.token()),
+            TypeSignature::U4 => Some(CilPrimitiveKind::U4.token()),
+            TypeSignature::I8 => Some(CilPrimitiveKind::I8.token()),
+            TypeSignature::U8 => Some(CilPrimitiveKind::U8.token()),
+            TypeSignature::R4 => Some(CilPrimitiveKind::R4.token()),
+            TypeSignature::R8 => Some(CilPrimitiveKind::R8.token()),
+            TypeSignature::I => Some(CilPrimitiveKind::I.token()),
+            TypeSignature::U => Some(CilPrimitiveKind::U.token()),
+            TypeSignature::String => Some(CilPrimitiveKind::String.token()),
+            TypeSignature::Object => Some(CilPrimitiveKind::Object.token()),
+            TypeSignature::TypedByRef => Some(CilPrimitiveKind::TypedReference.token()),
+
+            // Concrete class or value type → direct token
+            TypeSignature::Class(token) | TypeSignature::ValueType(token) => Some(*token),
+
+            // Generic type parameter (!0, !1, ...) → resolve from type args
+            TypeSignature::GenericParamType(index) => {
+                type_args.and_then(|args| args.get(*index as usize).copied())
+            }
+
+            // Generic method parameter (!!0, !!1, ...) → resolve from method args
+            TypeSignature::GenericParamMethod(index) => {
+                method_args.and_then(|args| args.get(*index as usize).copied())
+            }
+
+            // Generic instantiation (e.g., List<int>) → register in GenericRegistry
+            TypeSignature::GenericInst(base, args) => {
+                let base_token =
+                    self.type_signature_to_token(base, type_args, method_args, generics)?;
+                let arg_tokens: Vec<Token> = args
+                    .iter()
+                    .filter_map(|a| {
+                        self.type_signature_to_token(a, type_args, method_args, generics)
+                    })
+                    .collect();
+                if arg_tokens.len() != args.len() {
+                    return None; // Could not resolve all args
+                }
+                Some(generics.get_or_create_type(base_token, arg_tokens))
+            }
+
+            // SzArray (T[]) → use element type token directly for now
+            TypeSignature::SzArray(sz_array) => {
+                self.type_signature_to_token(&sz_array.base, type_args, method_args, generics)
+            }
+
+            // ByRef — unwrap and return inner token
+            TypeSignature::ByRef(inner) => {
+                self.type_signature_to_token(inner, type_args, method_args, generics)
+            }
+
+            // Ptr — unwrap and return inner token
+            TypeSignature::Ptr(ptr) => {
+                self.type_signature_to_token(&ptr.base, type_args, method_args, generics)
+            }
+
+            // Pinned — unwrap and return inner token
+            TypeSignature::Pinned(inner) => {
+                self.type_signature_to_token(inner, type_args, method_args, generics)
+            }
+
+            // Types that don't map cleanly to a single token
+            _ => None,
+        }
+    }
+
+    /// Substitutes generic type parameters in a method signature.
+    ///
+    /// Walks the method's parameter and return type signatures, replacing
+    /// `GenericParamType(n)` with `type_args[n]` and `GenericParamMethod(n)`
+    /// with `method_args[n]`. This is needed for correct signature matching
+    /// when dispatching generic method instantiations.
+    ///
+    /// # Arguments
+    ///
+    /// * `sig` - The method signature to substitute
+    /// * `type_args` - Type-level generic arguments (`!0`, `!1`, ...)
+    /// * `method_args` - Method-level generic arguments (`!!0`, `!!1`, ...)
+    #[must_use]
+    pub fn substitute_generic_params(
+        sig: &SignatureMethod,
+        type_args: Option<&[Token]>,
+        method_args: Option<&[Token]>,
+    ) -> SignatureMethod {
+        let substitute_type_sig = |ts: &TypeSignature| -> TypeSignature {
+            Self::substitute_type_signature(ts, type_args, method_args)
+        };
+
+        let new_params: Vec<SignatureParameter> = sig
+            .params
+            .iter()
+            .map(|p| SignatureParameter {
+                base: substitute_type_sig(&p.base),
+                by_ref: p.by_ref,
+                modifiers: p.modifiers.clone(),
+            })
+            .collect();
+
+        let new_return = SignatureParameter {
+            base: substitute_type_sig(&sig.return_type.base),
+            by_ref: sig.return_type.by_ref,
+            modifiers: sig.return_type.modifiers.clone(),
+        };
+
+        let mut result = sig.clone();
+        result.return_type = new_return;
+        result.params = new_params;
+        result
+    }
+
+    /// Substitutes generic parameters in a single type signature.
+    fn substitute_type_signature(
+        sig: &TypeSignature,
+        type_args: Option<&[Token]>,
+        method_args: Option<&[Token]>,
+    ) -> TypeSignature {
+        match sig {
+            TypeSignature::GenericParamType(index) => {
+                if let Some(token) = type_args.and_then(|args| args.get(*index as usize)) {
+                    TypeSignature::Class(*token)
+                } else {
+                    sig.clone()
+                }
+            }
+            TypeSignature::GenericParamMethod(index) => {
+                if let Some(token) = method_args.and_then(|args| args.get(*index as usize)) {
+                    TypeSignature::Class(*token)
+                } else {
+                    sig.clone()
+                }
+            }
+            TypeSignature::GenericInst(base, args) => {
+                let new_base = Self::substitute_type_signature(base, type_args, method_args);
+                let new_args: Vec<TypeSignature> = args
+                    .iter()
+                    .map(|a| Self::substitute_type_signature(a, type_args, method_args))
+                    .collect();
+                TypeSignature::GenericInst(Box::new(new_base), new_args)
+            }
+            TypeSignature::SzArray(sz) => {
+                let new_elem = Self::substitute_type_signature(&sz.base, type_args, method_args);
+                TypeSignature::SzArray(crate::metadata::signatures::SignatureSzArray {
+                    base: Box::new(new_elem),
+                    modifiers: sz.modifiers.clone(),
+                })
+            }
+            TypeSignature::ByRef(inner) => TypeSignature::ByRef(Box::new(
+                Self::substitute_type_signature(inner, type_args, method_args),
+            )),
+            TypeSignature::Pinned(inner) => TypeSignature::Pinned(Box::new(
+                Self::substitute_type_signature(inner, type_args, method_args),
+            )),
+            _ => sig.clone(),
+        }
+    }
+}

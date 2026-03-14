@@ -200,7 +200,7 @@ impl CompleteTypeSpec {
 
     /// Check if type sources are equivalent
     fn source_matches(&self, existing_type: &CilType) -> bool {
-        let ext_ref = existing_type.get_external();
+        let ext_ref = existing_type.external();
 
         match (&self.source, ext_ref) {
             (TypeSource::Assembly(_), None) => true,
@@ -805,7 +805,7 @@ impl TypeRegistry {
     /// ## Arguments
     /// * '`new_type`' - The type to register
     pub fn insert(&self, new_type: &CilTypeRc) {
-        let source = match new_type.get_external() {
+        let source = match new_type.external() {
             Some(external_source) => self.register_source(external_source),
             None => TypeSource::Assembly(self.current_assembly.clone()),
         };
@@ -1202,10 +1202,47 @@ impl TypeRegistry {
         None
     }
 
+    /// Resolves a type token to its most concrete [`CilType`] representation.
+    ///
+    /// For **TypeRef** tokens (table 0x01), performs a fullname-based lookup to find
+    /// the corresponding **TypeDef** (or **TypeSpec**) within this assembly. This is
+    /// essential because TypeRef entries are lightweight cross-module references that
+    /// lack populated method and field lists — resolving to a TypeDef ensures callers
+    /// can inspect the type's full structure.
+    ///
+    /// For all other token types (TypeDef, TypeSpec, primitives), behaves identically
+    /// to [`get()`](Self::get).
+    ///
+    /// # Fallback Behavior
+    ///
+    /// If a TypeRef has no matching TypeDef in this assembly (i.e., it refers to an
+    /// external type from another module), the original TypeRef entry is returned.
+    /// This ensures the method never returns `None` for valid tokens that exist in
+    /// the registry.
+    ///
+    /// # Arguments
+    ///
+    /// * `token` - A type metadata token (TypeDef, TypeRef, TypeSpec, or primitive).
+    ///
+    /// # Returns
+    ///
+    /// * `Some(CilTypeRc)` - The resolved type, preferring TypeDef over TypeRef
+    /// * `None` - The token does not exist in the registry
+    #[must_use]
+    pub fn resolve(&self, token: &Token) -> Option<CilTypeRc> {
+        let entry = self.get(token)?;
+        if token.is_table(TableId::TypeRef) {
+            self.get_by_fullname(&entry.fullname(), false)
+                .or(Some(entry))
+        } else {
+            Some(entry)
+        }
+    }
+
     /// Get all TypeDefs by fully qualified name.
     ///
     /// # Arguments
-    /// * `fullname` - The fully qualified name in "namespace.name" format  
+    /// * `fullname` - The fully qualified name in "namespace.name" format
     /// * `include_external` - Whether to search external registries
     ///
     /// # Returns
@@ -1714,7 +1751,7 @@ impl TypeRegistry {
 
         // Redirect the TypeRef token in all secondary indexes to use the TypeDef's metadata
         // Remove TypeRef from its original indexes (old metadata)
-        if let Some(external) = original_typeref.get_external() {
+        if let Some(external) = original_typeref.external() {
             let source = self.register_source(external);
             if let Some(mut list) = self.types_by_source.get_mut(&source) {
                 list.retain(|&token| token != typeref_token);
@@ -1742,7 +1779,7 @@ impl TypeRegistry {
         }
 
         // Add TypeRef token to the TypeDef's indexes (new metadata)
-        if let Some(external) = resolved_typedef.get_external() {
+        if let Some(external) = resolved_typedef.external() {
             let source = self.register_source(external);
             self.types_by_source
                 .entry(source)

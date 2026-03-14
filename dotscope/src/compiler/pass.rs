@@ -14,8 +14,6 @@
 //! - [`ModificationScope::InstructionsOnly`] — Lightweight repair (recompute def-use, clean up)
 //! - [`ModificationScope::CfgModifying`] — Full `rebuild_ssa()` (recompute dominators, phis, etc.)
 
-use std::sync::Arc;
-
 use crate::{
     analysis::SsaFunction, compiler::CompilerContext, metadata::token::Token, CilObject, Result,
 };
@@ -130,7 +128,7 @@ pub trait SsaPass: Send + Sync {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
+        assembly: &CilObject,
     ) -> Result<bool>;
 
     /// Run on the entire assembly (for interprocedural passes).
@@ -148,7 +146,7 @@ pub trait SsaPass: Send + Sync {
     /// # Errors
     ///
     /// Returns an error if the pass fails to process the assembly.
-    fn run_global(&self, _ctx: &CompilerContext, _assembly: &Arc<CilObject>) -> Result<bool> {
+    fn run_global(&self, _ctx: &CompilerContext, _assembly: &CilObject) -> Result<bool> {
         Ok(false)
     }
 

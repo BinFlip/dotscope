@@ -44,7 +44,7 @@
 
 use std::{collections::HashMap, ops::Range, path::PathBuf};
 
-use crate::metadata::typesystem::PointerSize;
+use crate::{emulation::tracer::TraceFilter, metadata::typesystem::PointerSize};
 
 /// Comprehensive emulation configuration with fine-grained control.
 ///
@@ -455,6 +455,15 @@ pub struct TracingConfig {
     /// - "decryption-N" for string decryption calls (N = call index)
     /// - "anti-tamper" for anti-tamper processing
     pub context_prefix: Option<String>,
+
+    /// Filter controlling which methods and call depths produce trace output.
+    ///
+    /// When set, only trace events matching the filter are emitted. This keeps
+    /// trace output manageable for complex samples by restricting tracing to
+    /// specific methods, call depths, or name patterns.
+    ///
+    /// Default: `TraceFilter::default()` (no filtering — all events pass).
+    pub filter: TraceFilter,
 }
 
 /// Behavior when encountering methods without registered hooks.
@@ -778,6 +787,7 @@ impl TracingConfig {
             max_trace_entries: 0, // Unlimited for file-based
             output_path: Some(path.into()),
             context_prefix: None,
+            filter: TraceFilter::default(),
         }
     }
 
@@ -797,6 +807,7 @@ impl TracingConfig {
             max_trace_entries: 0,
             output_path: Some(path.into()),
             context_prefix: None,
+            filter: TraceFilter::default(),
         }
     }
 
@@ -848,6 +859,7 @@ impl Default for TracingConfig {
             max_trace_entries: 10_000,
             output_path: None,
             context_prefix: None,
+            filter: TraceFilter::default(),
         }
     }
 }

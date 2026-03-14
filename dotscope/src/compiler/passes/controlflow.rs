@@ -35,7 +35,7 @@ use crate::{
         CompilerContext, EventKind, EventLog,
     },
     metadata::token::Token,
-    Result,
+    CilObject, Result,
 };
 
 /// Maximum iterations for the fixed-point algorithm to prevent infinite loops.
@@ -68,19 +68,25 @@ impl ControlFlowSimplificationPass {
         Self
     }
 
-    /// Finds branches where both targets are the same block.
+    /// Finds branches where both targets resolve to the same block.
     ///
     /// A branch `branch cond, B, B` can be simplified to `jump B` since
-    /// the condition doesn't affect the control flow.
+    /// the condition doesn't affect the control flow. Also detects cases
+    /// where targets are different blocks but resolve to the same ultimate
+    /// destination through trampoline chains.
     ///
     /// # Arguments
     ///
     /// * `ssa` - The SSA function to analyze.
+    /// * `trampolines` - Map of trampoline blocks to their targets.
     ///
     /// # Returns
     ///
     /// A vector of (block index, target block) pairs for branches to simplify.
-    fn find_same_target_branches(ssa: &SsaFunction) -> Vec<(usize, usize)> {
+    fn find_same_target_branches(
+        ssa: &SsaFunction,
+        trampolines: &HashMap<usize, usize>,
+    ) -> Vec<(usize, usize)> {
         ssa.iter_blocks()
             .filter_map(|(block_idx, block)| {
                 block.terminator_op().and_then(|op| match op {
@@ -88,7 +94,36 @@ impl ControlFlowSimplificationPass {
                         true_target,
                         false_target,
                         ..
-                    } if true_target == false_target => Some((block_idx, *true_target)),
+                    } => {
+                        if true_target == false_target {
+                            return Some((block_idx, *true_target));
+                        }
+                        // Resolve through trampoline chains to catch convergent targets
+                        let true_ultimate = resolve_chain(trampolines, *true_target);
+                        let false_ultimate = resolve_chain(trampolines, *false_target);
+                        if true_ultimate == false_ultimate {
+                            Some((block_idx, true_ultimate))
+                        } else {
+                            None
+                        }
+                    }
+                    SsaOp::Switch {
+                        targets, default, ..
+                    } => {
+                        if targets.iter().all(|t| *t == *default) {
+                            return Some((block_idx, *default));
+                        }
+                        // Resolve through trampoline chains
+                        let default_ultimate = resolve_chain(trampolines, *default);
+                        if targets
+                            .iter()
+                            .all(|t| resolve_chain(trampolines, *t) == default_ultimate)
+                        {
+                            Some((block_idx, default_ultimate))
+                        } else {
+                            None
+                        }
+                    }
                     _ => None,
                 })
             })
@@ -255,8 +290,8 @@ impl ControlFlowSimplificationPass {
             total_changes += Self::apply_jump_threading(ssa, &trampolines, method_token, changes);
         }
 
-        // Step 2: Simplify branches to same target
-        let same_target_branches = Self::find_same_target_branches(ssa);
+        // Step 2: Simplify branches to same target (also resolves through trampolines)
+        let same_target_branches = Self::find_same_target_branches(ssa, &trampolines);
         if !same_target_branches.is_empty() {
             total_changes += Self::simplify_same_target_branches(
                 ssa,
@@ -290,7 +325,7 @@ impl SsaPass for ControlFlowSimplificationPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &std::sync::Arc<crate::CilObject>,
+        _assembly: &CilObject,
     ) -> Result<bool> {
         let mut changes = EventLog::new();
 
@@ -311,8 +346,7 @@ impl SsaPass for ControlFlowSimplificationPass {
 }
 #[cfg(test)]
 mod tests {
-    use super::*;
-
+    use std::collections::HashMap;
     use std::sync::Arc;
 
     use crate::{
@@ -320,7 +354,10 @@ mod tests {
             CallGraph, ConstValue, SsaBlock, SsaFunction, SsaFunctionBuilder, SsaInstruction,
             SsaOp, SsaVarId,
         },
-        compiler::{passes::deadcode::find_dead_tails, CompilerContext, SsaPass},
+        compiler::{
+            passes::{controlflow::ControlFlowSimplificationPass, deadcode::find_dead_tails},
+            CompilerContext, SsaPass,
+        },
         metadata::token::Token,
         test::helpers::test_assembly_arc,
     };
@@ -342,7 +379,8 @@ mod tests {
             })
             .unwrap();
 
-        let same_targets = ControlFlowSimplificationPass::find_same_target_branches(&ssa);
+        let same_targets =
+            ControlFlowSimplificationPass::find_same_target_branches(&ssa, &HashMap::new());
         assert!(same_targets.is_empty());
     }
 
@@ -358,7 +396,8 @@ mod tests {
             })
             .unwrap();
 
-        let same_targets = ControlFlowSimplificationPass::find_same_target_branches(&ssa);
+        let same_targets =
+            ControlFlowSimplificationPass::find_same_target_branches(&ssa, &HashMap::new());
         assert_eq!(same_targets.len(), 1);
         assert_eq!(same_targets[0], (0, 1));
     }
@@ -380,8 +419,58 @@ mod tests {
             })
             .unwrap();
 
-        let same_targets = ControlFlowSimplificationPass::find_same_target_branches(&ssa);
+        let same_targets =
+            ControlFlowSimplificationPass::find_same_target_branches(&ssa, &HashMap::new());
         assert_eq!(same_targets.len(), 2);
+    }
+
+    #[test]
+    fn test_find_same_target_branches_convergent_trampolines() {
+        // Branch(cond, 1, 2) where both 1 and 2 are trampolines to 3
+        let ssa = SsaFunctionBuilder::new(4, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 1, 2); // Different targets...
+                });
+                f.block(1, |b| b.jump(3)); // ...but both trampoline to 3
+                f.block(2, |b| b.jump(3));
+                f.block(3, |b| b.ret());
+            })
+            .unwrap();
+
+        // Without trampoline info, targets look different
+        let same_targets =
+            ControlFlowSimplificationPass::find_same_target_branches(&ssa, &HashMap::new());
+        assert!(same_targets.is_empty());
+
+        // With trampoline info, convergence is detected
+        let trampolines = ssa.find_trampoline_blocks(false);
+        let same_targets =
+            ControlFlowSimplificationPass::find_same_target_branches(&ssa, &trampolines);
+        assert_eq!(same_targets.len(), 1);
+        assert_eq!(same_targets[0], (0, 3));
+    }
+
+    #[test]
+    fn test_find_same_target_branches_one_trampoline() {
+        // Branch(cond, 2, 1) where 1 is a trampoline to 2
+        let ssa = SsaFunctionBuilder::new(3, 0)
+            .build_with(|f| {
+                f.block(0, |b| {
+                    let cond = b.const_true();
+                    b.branch(cond, 2, 1); // true goes direct, false via trampoline
+                });
+                f.block(1, |b| b.jump(2)); // trampoline to 2
+                f.block(2, |b| b.ret());
+            })
+            .unwrap();
+
+        let trampolines = ssa.find_trampoline_blocks(false);
+        let same_targets =
+            ControlFlowSimplificationPass::find_same_target_branches(&ssa, &trampolines);
+        assert_eq!(same_targets.len(), 1);
+        assert_eq!(same_targets[0], (0, 2));
     }
 
     #[test]

@@ -61,12 +61,15 @@ use crate::{
         capture::{
             CaptureContext, CapturedAssembly, CapturedBuffer, CapturedString, FileOperation,
         },
-        engine::{EmulationController, EmulationError, EmulationOutcome, TraceWriter},
+        engine::{EmulationController, EmulationError, EmulationOutcome},
         fakeobjects::SharedFakeObjects,
+        filesystem::VirtualFs,
         loader::{LoadedImage, MappedRegionInfo},
         memory::AddressSpace,
         process::EmulationConfig,
         runtime::RuntimeState,
+        thread::ThreadContext,
+        tracer::TraceWriter,
         EmValue, EmulationThread, StepResult, UnknownMethodBehavior,
     },
     metadata::token::Token,
@@ -215,24 +218,8 @@ pub struct EmulationProcess {
     /// Process name for identification and logging.
     pub(super) name: String,
 
-    /// Primary .NET assembly being emulated.
-    ///
-    /// Provides metadata for type resolution and method lookup.
-    pub(super) assembly: Option<Arc<CilObject>>,
-
-    /// Emulation configuration (immutable after creation).
-    pub(super) config: Arc<EmulationConfig>,
-
-    /// Virtual address space containing all mapped memory.
-    pub(super) address_space: Arc<AddressSpace>,
-
-    /// Runtime state including stubs and type information.
-    ///
-    /// Protected by RwLock for thread-safe access.
-    pub(super) runtime: Arc<RwLock<RuntimeState>>,
-
-    /// Capture context for collecting runtime data.
-    pub(super) capture: Arc<CaptureContext>,
+    /// Shared process environment (address space, runtime, capture, config, etc.).
+    pub(super) context: Arc<ThreadContext>,
 
     /// Loaded PE images (executables and DLLs).
     pub(super) loaded_images: Vec<LoadedImage>,
@@ -244,13 +231,6 @@ pub struct EmulationProcess {
     ///
     /// Atomic for lock-free updates during execution.
     pub(super) instruction_count: AtomicU64,
-
-    /// Pre-allocated fake BCL objects for consistent emulation behavior.
-    ///
-    /// These objects are allocated once and shared across all threads,
-    /// ensuring that methods like `Assembly.GetExecutingAssembly()` return
-    /// the same reference each time. This is critical for anti-tamper checks.
-    pub(super) fake_objects: SharedFakeObjects,
 
     /// Trace writer for debugging emulation.
     ///
@@ -268,9 +248,14 @@ impl EmulationProcess {
         &self.name
     }
 
+    /// Returns a reference to the shared thread context.
+    pub fn thread_context(&self) -> &Arc<ThreadContext> {
+        &self.context
+    }
+
     /// Returns `true` if a primary assembly is loaded.
     pub fn has_assembly(&self) -> bool {
-        self.assembly.is_some()
+        self.context.assembly.is_some()
     }
 
     /// Returns a reference to the primary assembly, if one was loaded.
@@ -278,14 +263,14 @@ impl EmulationProcess {
     /// The primary assembly provides metadata for type resolution and
     /// method lookup during emulation.
     pub fn assembly(&self) -> Option<&Arc<CilObject>> {
-        self.assembly.as_ref()
+        self.context.assembly.as_ref()
     }
 
     /// Returns the emulation configuration.
     ///
     /// The configuration is immutable after process creation.
     pub fn config(&self) -> &EmulationConfig {
-        &self.config
+        &self.context.config
     }
 
     /// Returns the process address space.
@@ -293,7 +278,12 @@ impl EmulationProcess {
     /// The address space contains all mapped memory regions, including
     /// PE images and raw data. Use for direct memory access when needed.
     pub fn address_space(&self) -> &Arc<AddressSpace> {
-        &self.address_space
+        &self.context.address_space
+    }
+
+    /// Returns the virtual filesystem.
+    pub fn virtual_fs(&self) -> &Arc<VirtualFs> {
+        &self.context.virtual_fs
     }
 
     /// Returns the runtime state.
@@ -301,7 +291,7 @@ impl EmulationProcess {
     /// The runtime state includes registered method stubs and type
     /// information. Access is synchronized via `RwLock`.
     pub fn runtime(&self) -> &Arc<RwLock<RuntimeState>> {
-        &self.runtime
+        &self.context.runtime
     }
 
     /// Returns the capture context.
@@ -309,7 +299,7 @@ impl EmulationProcess {
     /// Use this for advanced capture operations. For common cases,
     /// prefer the convenience methods like [`captured_assemblies`](Self::captured_assemblies).
     pub fn capture(&self) -> &Arc<CaptureContext> {
-        &self.capture
+        &self.context.capture
     }
 
     /// Returns the shared fake BCL objects.
@@ -318,7 +308,7 @@ impl EmulationProcess {
     /// `Assembly.GetExecutingAssembly()` return consistent references,
     /// which is critical for anti-tamper checks in obfuscated code.
     pub fn fake_objects(&self) -> &SharedFakeObjects {
-        &self.fake_objects
+        &self.context.fake_objects
     }
 
     /// Returns all loaded PE images.
@@ -388,16 +378,16 @@ impl EmulationProcess {
     pub fn increment_instructions(&self, count: u64) -> Result<()> {
         let new_count = self.instruction_count.fetch_add(count, Ordering::Relaxed) + count;
 
-        if self.config.limits.max_instructions > 0
-            && new_count > self.config.limits.max_instructions
+        if self.context.config.limits.max_instructions > 0
+            && new_count > self.context.config.limits.max_instructions
         {
             warn!(
                 "Emulation limit reached: {} instructions (limit: {})",
-                new_count, self.config.limits.max_instructions
+                new_count, self.context.config.limits.max_instructions
             );
             return Err(EmulationError::InstructionLimitExceeded {
                 executed: new_count,
-                limit: self.config.limits.max_instructions,
+                limit: self.context.config.limits.max_instructions,
             }
             .into());
         }
@@ -428,7 +418,7 @@ impl EmulationProcess {
     /// Returns an error if the address is invalid or the read crosses
     /// unmapped memory.
     pub fn read_memory(&self, address: u64, len: usize) -> Result<Vec<u8>> {
-        self.address_space.read(address, len)
+        self.context.address_space.read(address, len)
     }
 
     /// Writes bytes to the virtual address space.
@@ -443,7 +433,7 @@ impl EmulationProcess {
     /// Returns an error if the address is invalid or the region is
     /// not writable.
     pub fn write_memory(&self, address: u64, data: &[u8]) -> Result<()> {
-        self.address_space.write(address, data)
+        self.context.address_space.write(address, data)
     }
 
     /// Checks if a virtual address is valid (mapped and accessible).
@@ -452,7 +442,7 @@ impl EmulationProcess {
     ///
     /// * `address` - Virtual address to check
     pub fn is_valid_address(&self, address: u64) -> bool {
-        self.address_space.is_valid(address)
+        self.context.address_space.is_valid(address)
     }
 
     /// Gets the value of a static field.
@@ -463,10 +453,14 @@ impl EmulationProcess {
     ///
     /// # Returns
     ///
-    /// Returns `Some(value)` if the field has been initialized,
-    /// `None` otherwise.
-    pub fn get_static(&self, field_token: Token) -> Option<EmValue> {
-        self.address_space.get_static(field_token)
+    /// Returns `Ok(Some(value))` if the field has been initialized,
+    /// `Ok(None)` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::LockPoisoned`] if the static field storage lock is poisoned.
+    pub fn get_static(&self, field_token: Token) -> Result<Option<EmValue>> {
+        self.context.address_space.get_static(field_token)
     }
 
     /// Sets the value of a static field.
@@ -475,13 +469,17 @@ impl EmulationProcess {
     ///
     /// * `field_token` - The field's metadata token
     /// * `value` - The value to set
-    pub fn set_static(&self, field_token: Token, value: EmValue) {
-        self.address_space.set_static(field_token, value);
+    ///
+    /// # Errors
+    ///
+    /// Returns [`EmulationError::LockPoisoned`] if the static field storage lock is poisoned.
+    pub fn set_static(&self, field_token: Token, value: EmValue) -> Result<()> {
+        self.context.address_space.set_static(field_token, value)
     }
 
     /// Returns `true` if any data has been captured during emulation.
     pub fn has_captures(&self) -> bool {
-        self.capture.has_captures()
+        self.context.capture.has_captures()
     }
 
     /// Returns all captured assemblies.
@@ -498,7 +496,7 @@ impl EmulationProcess {
     /// }
     /// ```
     pub fn captured_assemblies(&self) -> Vec<CapturedAssembly> {
-        self.capture.assemblies()
+        self.context.capture.assemblies()
     }
 
     /// Returns all captured strings.
@@ -506,28 +504,28 @@ impl EmulationProcess {
     /// Strings are captured when string capture is enabled and strings
     /// are constructed or decrypted during emulation.
     pub fn captured_strings(&self) -> Vec<CapturedString> {
-        self.capture.strings()
+        self.context.capture.strings()
     }
 
     /// Returns all captured memory buffers.
     ///
     /// Buffers are captured when writes occur to monitored memory regions.
     pub fn captured_buffers(&self) -> Vec<CapturedBuffer> {
-        self.capture.buffers()
+        self.context.capture.buffers()
     }
 
     /// Returns all captured file operations.
     ///
     /// File operations are captured when file operation capture is enabled.
     pub fn captured_file_operations(&self) -> Vec<FileOperation> {
-        self.capture.file_operations()
+        self.context.capture.file_operations()
     }
 
     /// Clears all captured data.
     ///
     /// Use this to reset capture state before a new execution phase.
     pub fn clear_captures(&self) {
-        self.capture.clear();
+        self.context.capture.clear();
     }
 
     /// Converts a Relative Virtual Address (RVA) to a Virtual Address (VA).
@@ -582,7 +580,7 @@ impl EmulationProcess {
     /// }
     /// ```
     pub fn find_method(&self, type_name: &str, method_name: &str) -> Option<Token> {
-        let assembly = self.assembly.as_ref()?;
+        let assembly = self.context.assembly.as_ref()?;
 
         assembly
             .query_types()
@@ -623,7 +621,7 @@ impl EmulationProcess {
     ///
     /// Returns `Some(Token)` if an entry point is defined, `None` otherwise.
     pub fn find_entry_point(&self) -> Option<Token> {
-        let assembly = self.assembly.as_ref()?;
+        let assembly = self.context.assembly.as_ref()?;
         let entry_token_value = assembly.cor20header().entry_point_token;
         if entry_token_value != 0 {
             Some(Token::new(entry_token_value))
@@ -657,20 +655,14 @@ impl EmulationProcess {
     pub fn execute_method(&self, method: Token, args: Vec<EmValue>) -> Result<EmulationOutcome> {
         debug!("Executing method {}", method);
         let assembly = self
+            .context
             .assembly
             .as_ref()
             .ok_or_else(|| Error::Other("No assembly loaded".into()))?;
 
         // Create controller with shared infrastructure
-        let mut controller = EmulationController::new(
-            Arc::clone(&self.address_space),
-            Arc::clone(&self.runtime),
-            Arc::clone(&self.capture),
-            Arc::clone(&self.config),
-            Some(Arc::clone(assembly)),
-            self.fake_objects.clone(),
-            self.trace_writer.clone(),
-        );
+        let controller =
+            EmulationController::new(Arc::clone(&self.context), self.trace_writer.clone())?;
 
         // Execute the method
         let outcome = controller.emulate_method(method, args, Arc::clone(assembly));
@@ -714,20 +706,14 @@ impl EmulationProcess {
         F: Fn(&StepResult, &EmulationThread) -> bool,
     {
         let assembly = self
+            .context
             .assembly
             .as_ref()
             .ok_or_else(|| Error::Other("No assembly loaded".into()))?;
 
         // Create controller with shared infrastructure
-        let mut controller = EmulationController::new(
-            Arc::clone(&self.address_space),
-            Arc::clone(&self.runtime),
-            Arc::clone(&self.capture),
-            Arc::clone(&self.config),
-            Some(Arc::clone(assembly)),
-            self.fake_objects.clone(),
-            self.trace_writer.clone(),
-        );
+        let controller =
+            EmulationController::new(Arc::clone(&self.context), self.trace_writer.clone())?;
 
         // Execute with condition
         controller.emulate_until(method, args, Arc::clone(assembly), condition)
@@ -750,7 +736,8 @@ impl EmulationProcess {
     ///
     /// - [`UnknownMethodBehavior`](crate::emulation::UnknownMethodBehavior)
     pub fn set_default_behavior(&self, behavior: UnknownMethodBehavior) -> Result<()> {
-        self.runtime
+        self.context
+            .runtime
             .write()
             .map_err(|e| Error::LockError(format!("runtime write lock: {e}")))?
             .set_unknown_method_behavior(behavior);
@@ -816,37 +803,21 @@ impl EmulationProcess {
     /// // Now fork for each decryption call - very cheap!
     /// for (token, id) in decryptor_calls {
     ///     let forked = template.fork();
-    ///     let result = forked.execute_method(token, vec![EmValue::I32(id)])?;
+    ///     let result = forked?.execute_method(token, vec![EmValue::I32(id)])?;
     ///     // Collect decrypted string from forked.captured_strings()
     /// }
     /// # Ok(())
     /// # }
     /// ```
-    #[must_use]
-    pub fn fork(&self) -> Self {
-        Self {
-            // Copy name (cheap)
+    pub fn fork(&self) -> Result<Self> {
+        Ok(Self {
             name: self.name.clone(),
-            // Share assembly metadata (immutable, Arc clone is cheap)
-            assembly: self.assembly.clone(),
-            // Share config (immutable, Arc clone is cheap)
-            config: Arc::clone(&self.config),
-            // Fork address space with full CoW
-            address_space: Arc::new(self.address_space.fork()),
-            // Share runtime state (method stubs, type info)
-            runtime: Arc::clone(&self.runtime),
-            // Fresh capture context (same config, empty captures)
-            capture: Arc::new(CaptureContext::with_config(self.capture.config().clone())),
-            // Copy image/region metadata (shallow)
+            context: Arc::new(self.context.fork()?),
             loaded_images: self.loaded_images.clone(),
             mapped_regions: self.mapped_regions.clone(),
-            // Fresh instruction count
             instruction_count: AtomicU64::new(0),
-            // Share fake objects - HeapRefs remain valid in forked heap (CoW)
-            fake_objects: self.fake_objects.clone(),
-            // Share trace writer (if any)
             trace_writer: self.trace_writer.clone(),
-        }
+        })
     }
 
     /// Forks this process, preserving captured data.
@@ -859,28 +830,27 @@ impl EmulationProcess {
     ///
     /// Captures are cloned, not shared via CoW. This means modifications to
     /// captures in the fork do not affect the original, and vice versa.
-    #[must_use]
-    pub fn fork_with_captures(&self) -> Self {
+    pub fn fork_with_captures(&self) -> Result<Self> {
         // Clone all captured data
-        let capture = CaptureContext::with_config(self.capture.config().clone());
+        let capture = CaptureContext::with_config(self.context.capture.config().clone());
 
         // Copy assemblies
-        for asm in self.capture.assemblies() {
+        for asm in self.context.capture.assemblies() {
             capture.capture_assembly(asm.data, asm.source.clone(), asm.load_method, asm.name);
         }
 
         // Copy strings
-        for s in self.capture.strings() {
+        for s in self.context.capture.strings() {
             capture.capture_string_with_details(s.value, s.source.clone(), s.encrypted_data, s.key);
         }
 
         // Copy buffers
-        for b in self.capture.buffers() {
+        for b in self.context.capture.buffers() {
             capture.capture_buffer(b.data, b.source.clone(), b.buffer_source.clone(), &b.label);
         }
 
         // Copy file operations
-        for op in self.capture.file_operations() {
+        for op in self.context.capture.file_operations() {
             capture.capture_file_operation(
                 op.operation,
                 op.path,
@@ -892,25 +862,33 @@ impl EmulationProcess {
         }
 
         // Copy network operations
-        for op in self.capture.network_operations() {
+        for op in self.context.capture.network_operations() {
             capture.capture_network_operation(op);
         }
 
-        Self {
+        let virtual_fs = match self.context.virtual_fs.fork() {
+            Ok(forked) => Arc::new(forked),
+            Err(_) => Arc::clone(&self.context.virtual_fs),
+        };
+
+        let forked_context = ThreadContext::new(
+            Arc::new(self.context.address_space.fork()?),
+            Arc::clone(&self.context.runtime),
+            Arc::new(capture),
+            Arc::clone(&self.context.config),
+            self.context.assembly.clone(),
+            self.context.fake_objects.clone(),
+            virtual_fs,
+        );
+
+        Ok(Self {
             name: self.name.clone(),
-            assembly: self.assembly.clone(),
-            config: Arc::clone(&self.config),
-            address_space: Arc::new(self.address_space.fork()),
-            runtime: Arc::clone(&self.runtime),
-            capture: Arc::new(capture),
+            context: Arc::new(forked_context),
             loaded_images: self.loaded_images.clone(),
             mapped_regions: self.mapped_regions.clone(),
             instruction_count: AtomicU64::new(self.instruction_count.load(Ordering::Relaxed)),
-            // Share fake objects - HeapRefs remain valid in forked heap (CoW)
-            fake_objects: self.fake_objects.clone(),
-            // Share trace writer (if any)
             trace_writer: self.trace_writer.clone(),
-        }
+        })
     }
 
     /// Returns a summary of the process state.
@@ -929,15 +907,15 @@ impl EmulationProcess {
     pub fn summary(&self) -> ProcessSummary {
         ProcessSummary {
             name: self.name.clone(),
-            has_assembly: self.assembly.is_some(),
+            has_assembly: self.context.assembly.is_some(),
             loaded_images: self.loaded_images.len(),
             mapped_regions: self.mapped_regions.len(),
             instruction_count: self.instruction_count(),
-            captured_assemblies: self.capture.assembly_count(),
-            captured_strings: self.capture.string_count(),
-            captured_buffers: self.capture.buffer_count(),
-            captured_file_ops: self.capture.file_operation_count(),
-            captured_network_ops: self.capture.network_operation_count(),
+            captured_assemblies: self.context.capture.assembly_count(),
+            captured_strings: self.context.capture.string_count(),
+            captured_buffers: self.context.capture.buffer_count(),
+            captured_file_ops: self.context.capture.file_operation_count(),
+            captured_network_ops: self.context.capture.network_operation_count(),
         }
     }
 }
@@ -946,7 +924,7 @@ impl std::fmt::Debug for EmulationProcess {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("EmulationProcess")
             .field("name", &self.name)
-            .field("has_assembly", &self.assembly.is_some())
+            .field("has_assembly", &self.context.assembly.is_some())
             .field("loaded_images", &self.loaded_images.len())
             .field("mapped_regions", &self.mapped_regions.len())
             .field("instruction_count", &self.instruction_count())
@@ -1060,10 +1038,10 @@ mod tests {
 
         let token = Token::new(0x04000001);
 
-        assert!(process.get_static(token).is_none());
+        assert!(process.get_static(token).unwrap().is_none());
 
-        process.set_static(token, EmValue::I32(42));
-        assert_eq!(process.get_static(token), Some(EmValue::I32(42)));
+        process.set_static(token, EmValue::I32(42)).unwrap();
+        assert_eq!(process.get_static(token).unwrap(), Some(EmValue::I32(42)));
     }
 
     #[test]
@@ -1119,7 +1097,7 @@ mod tests {
             .unwrap();
 
         // Fork
-        let forked = process.fork();
+        let forked = process.fork().unwrap();
 
         // Both see the same initial data
         assert_eq!(process.read_memory(0x10000, 4).unwrap(), vec![1, 2, 3, 4]);
@@ -1141,21 +1119,21 @@ mod tests {
         let process = ProcessBuilder::new().build().unwrap();
         let field = Token::new(0x04000001);
 
-        process.set_static(field, EmValue::I32(42));
+        process.set_static(field, EmValue::I32(42)).unwrap();
 
         // Fork
-        let forked = process.fork();
+        let forked = process.fork().unwrap();
 
         // Both see the same static
-        assert_eq!(process.get_static(field), Some(EmValue::I32(42)));
-        assert_eq!(forked.get_static(field), Some(EmValue::I32(42)));
+        assert_eq!(process.get_static(field).unwrap(), Some(EmValue::I32(42)));
+        assert_eq!(forked.get_static(field).unwrap(), Some(EmValue::I32(42)));
 
         // Modify in fork
-        forked.set_static(field, EmValue::I32(100));
+        forked.set_static(field, EmValue::I32(100)).unwrap();
 
         // Original unchanged
-        assert_eq!(process.get_static(field), Some(EmValue::I32(42)));
-        assert_eq!(forked.get_static(field), Some(EmValue::I32(100)));
+        assert_eq!(process.get_static(field).unwrap(), Some(EmValue::I32(42)));
+        assert_eq!(forked.get_static(field).unwrap(), Some(EmValue::I32(100)));
     }
 
     #[test]
@@ -1171,10 +1149,10 @@ mod tests {
             .unwrap();
 
         // Fork gets fresh captures
-        let forked = process.fork();
+        let forked = process.fork().unwrap();
 
         // Capture in forked doesn't affect original
-        forked.capture.capture_assembly_load_bytes(
+        forked.capture().capture_assembly_load_bytes(
             vec![0x4D, 0x5A],
             Token::new(0x06000001),
             ThreadId::MAIN,
@@ -1194,7 +1172,7 @@ mod tests {
         assert_eq!(process.instruction_count(), 100);
 
         // Fork starts fresh
-        let forked = process.fork();
+        let forked = process.fork().unwrap();
         assert_eq!(forked.instruction_count(), 0);
 
         // Modifying fork doesn't affect original
@@ -1217,7 +1195,7 @@ mod tests {
             .unwrap();
 
         // Add capture to original
-        process.capture.capture_assembly_load_bytes(
+        process.capture().capture_assembly_load_bytes(
             vec![0x4D, 0x5A, 0x90, 0x00],
             Token::new(0x06000001),
             ThreadId::MAIN,
@@ -1227,19 +1205,19 @@ mod tests {
 
         let source = CaptureSource::new(Token::new(0x06000001), ThreadId::MAIN, 0, 0);
         process
-            .capture
+            .capture()
             .capture_string("test string".to_string(), source);
 
         assert_eq!(process.captured_assemblies().len(), 1);
         assert_eq!(process.captured_strings().len(), 1);
 
         // Fork with captures - preserves existing captures
-        let forked = process.fork_with_captures();
+        let forked = process.fork_with_captures().unwrap();
         assert_eq!(forked.captured_assemblies().len(), 1);
         assert_eq!(forked.captured_strings().len(), 1);
 
         // But adding to fork doesn't affect original
-        forked.capture.capture_assembly_load_bytes(
+        forked.capture().capture_assembly_load_bytes(
             vec![0x4D, 0x5A, 0x90, 0x00, 0x03],
             Token::new(0x06000002),
             ThreadId::MAIN,
@@ -1259,23 +1237,23 @@ mod tests {
             .unwrap();
 
         let field = Token::new(0x04000001);
-        process.set_static(field, EmValue::I32(1));
+        process.set_static(field, EmValue::I32(1)).unwrap();
 
         // Create multiple forks
-        let fork1 = process.fork();
-        let fork2 = process.fork();
+        let fork1 = process.fork().unwrap();
+        let fork2 = process.fork().unwrap();
 
         // Modify each independently
-        fork1.set_static(field, EmValue::I32(10));
+        fork1.set_static(field, EmValue::I32(10)).unwrap();
         fork1.write_memory(0x10000, &[0x11]).unwrap();
 
-        fork2.set_static(field, EmValue::I32(20));
+        fork2.set_static(field, EmValue::I32(20)).unwrap();
         fork2.write_memory(0x10000, &[0x22]).unwrap();
 
         // Each has its own state
-        assert_eq!(process.get_static(field), Some(EmValue::I32(1)));
-        assert_eq!(fork1.get_static(field), Some(EmValue::I32(10)));
-        assert_eq!(fork2.get_static(field), Some(EmValue::I32(20)));
+        assert_eq!(process.get_static(field).unwrap(), Some(EmValue::I32(1)));
+        assert_eq!(fork1.get_static(field).unwrap(), Some(EmValue::I32(10)));
+        assert_eq!(fork2.get_static(field).unwrap(), Some(EmValue::I32(20)));
 
         assert_eq!(process.read_memory(0x10000, 1).unwrap(), vec![0]);
         assert_eq!(fork1.read_memory(0x10000, 1).unwrap(), vec![0x11]);

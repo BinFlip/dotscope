@@ -1,0 +1,366 @@
+//! Generic string decryptor detection.
+//!
+//! Identifies and registers generic string decryptor methods for emulation-based
+//! decryption. Common decryptor signatures include `string(int32)`,
+//! `string(uint32)`, and `string(string)` — methods called from many sites
+//! that likely decrypt obfuscated strings.
+//!
+//! # Detection
+//!
+//! Scans for methods matching common string decryptor signatures that are called
+//! from multiple sites. Uses call-site count thresholds to avoid false positives.
+//!
+//! # Passes
+//!
+//! Does not create its own pass — uses the shared `DecryptionPass` singleton
+//! added by `create_deob_passes()`. Registers discovered decryptor methods
+//! with the analysis context during `initialize()`.
+
+use std::{any::Any, collections::HashMap};
+
+use log::debug;
+
+use crate::{
+    analysis::SsaOp,
+    cilassembly::CleanupRequest,
+    deobfuscation::{
+        context::AnalysisContext,
+        techniques::{Detection, Detections, Evidence, PassPhase, Technique, TechniqueCategory},
+        utils::build_call_site_counts,
+    },
+    emulation::EmValue,
+    metadata::{
+        signatures::{SignatureParameter, TypeSignature},
+        tables::TableId,
+        token::Token,
+        typesystem::wellknown,
+    },
+    CilObject,
+};
+
+/// Findings from generic string decryptor detection.
+#[derive(Debug)]
+pub struct StringFindings {
+    /// Tokens of detected string decryptor methods.
+    pub decryptor_methods: Vec<Token>,
+}
+
+/// Detects generic string decryptor methods.
+pub struct GenericStrings;
+
+impl GenericStrings {
+    /// Collects candidate methods matching common string decryptor signatures.
+    ///
+    /// Scans the MethodDef table for static methods returning `string` with
+    /// parameter signatures like `(int32)`, `(uint32)`, `(string)`, or
+    /// `(int32, int32)`. Excludes constructors.
+    fn collect_candidates(&self, assembly: &CilObject) -> Vec<Token> {
+        let mut candidates = Vec::new();
+
+        for method_entry in assembly.methods() {
+            let method = method_entry.value();
+
+            if !method.is_static() {
+                continue;
+            }
+            if !matches!(method.signature.return_type.base, TypeSignature::String) {
+                continue;
+            }
+            if method.name == wellknown::members::CCTOR || method.name == wellknown::members::CTOR {
+                continue;
+            }
+
+            let param_count = method.signature.params.len();
+            let matches_signature = match param_count {
+                // string(int32), string(uint32), string(string)
+                1 => matches!(
+                    method.signature.params[0].base,
+                    TypeSignature::I4 | TypeSignature::U4 | TypeSignature::String
+                ),
+                // string(int32, int32) — offset+length based
+                2 => method
+                    .signature
+                    .params
+                    .iter()
+                    .all(|p| matches!(p.base, TypeSignature::I4)),
+                _ => false,
+            };
+
+            if matches_signature {
+                candidates.push(method.token);
+            }
+        }
+
+        candidates
+    }
+
+    /// Builds default arguments for a warmup call based on parameter types.
+    ///
+    /// Returns `Some(args)` for known decryptor signatures, `None` for
+    /// unsupported signatures.
+    fn default_warmup_args(params: &[SignatureParameter]) -> Option<Vec<EmValue>> {
+        match params.len() {
+            1 => match params[0].base {
+                TypeSignature::I4 | TypeSignature::U4 => Some(vec![EmValue::I32(0)]),
+                TypeSignature::String => Some(vec![EmValue::Null]),
+                _ => None,
+            },
+            2 => {
+                if params.iter().all(|p| matches!(p.base, TypeSignature::I4)) {
+                    Some(vec![EmValue::I32(0), EmValue::I32(0)])
+                } else {
+                    None
+                }
+            }
+            _ => None,
+        }
+    }
+}
+
+impl Technique for GenericStrings {
+    fn id(&self) -> &'static str {
+        "generic.strings"
+    }
+
+    fn name(&self) -> &'static str {
+        "Generic String Decryptor Detection"
+    }
+
+    fn category(&self) -> TechniqueCategory {
+        TechniqueCategory::Value
+    }
+
+    fn detect(&self, assembly: &CilObject) -> Detection {
+        // Phase 1: collect candidates matching common string decryptor signatures.
+        let candidates = self.collect_candidates(assembly);
+
+        if candidates.is_empty() {
+            debug!("GenericStrings: no candidates matching string decryptor signatures");
+            return Detection::new_empty();
+        }
+
+        debug!("GenericStrings: {} candidates found", candidates.len());
+        for token in &candidates {
+            if let Some(method) = assembly.method(token) {
+                debug!(
+                    "  candidate {}: {}({}) → string",
+                    token,
+                    method.name,
+                    method
+                        .signature
+                        .params
+                        .iter()
+                        .map(|p| format!("{:?}", p.base))
+                        .collect::<Vec<_>>()
+                        .join(", ")
+                );
+            }
+        }
+
+        // Phase 2: count call sites for all candidates in a single pass.
+        let counts = build_call_site_counts(assembly, candidates.iter().copied());
+
+        for (token, count) in &counts {
+            debug!("  call site count for {}: {}", token, count);
+        }
+
+        // Phase 3: filter by call-site threshold.
+        let decryptors =
+            crate::deobfuscation::utils::filter_by_call_threshold(candidates, &counts, 3);
+
+        if decryptors.is_empty() {
+            debug!("GenericStrings: no candidates passed call-site threshold (≥3)");
+            return Detection::new_empty();
+        }
+
+        let count = decryptors.len();
+        let findings = StringFindings {
+            decryptor_methods: decryptors,
+        };
+
+        Detection::new_detected(
+            vec![Evidence::Structural(format!(
+                "{count} potential string decryptor methods"
+            ))],
+            Some(Box::new(findings) as Box<dyn Any + Send + Sync>),
+        )
+    }
+
+    fn detect_ssa(&self, ctx: &AnalysisContext, assembly: &CilObject) -> Detection {
+        // Phase 1: collect candidates matching string decryptor signatures.
+        let candidates = self.collect_candidates(assembly);
+        if candidates.is_empty() {
+            return Detection::new_empty();
+        }
+
+        // Phase 2: count SSA Call/CallVirt ops targeting these candidates.
+        // This catches calls that were hidden behind delegate proxies — after
+        // DelegateProxyResolutionPass resolves them, direct Call ops appear.
+        let mut counts: HashMap<Token, usize> = candidates.iter().map(|&t| (t, 0)).collect();
+        let mut memberref_cache: HashMap<Token, Option<Token>> = HashMap::new();
+
+        for entry in ctx.ssa_functions.iter() {
+            for block in entry.value().blocks() {
+                for instr in block.instructions() {
+                    let token = match instr.op() {
+                        SsaOp::Call { method, .. } | SsaOp::CallVirt { method, .. } => {
+                            method.token()
+                        }
+                        _ => continue,
+                    };
+
+                    // Direct match
+                    if let Some(c) = counts.get_mut(&token) {
+                        *c += 1;
+                        continue;
+                    }
+
+                    // MemberRef indirection
+                    if token.is_table(TableId::MemberRef) {
+                        let resolved = memberref_cache
+                            .entry(token)
+                            .or_insert_with(|| assembly.resolver().resolve_memberref_method(token));
+                        if let Some(resolved_token) = resolved {
+                            if let Some(c) = counts.get_mut(resolved_token) {
+                                *c += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 3: filter by call-site threshold.
+        let decryptors =
+            crate::deobfuscation::utils::filter_by_call_threshold(candidates, &counts, 3);
+
+        if decryptors.is_empty() {
+            return Detection::new_empty();
+        }
+
+        let count = decryptors.len();
+        debug!(
+            "GenericStrings SSA detection: {} decryptors found ({} total call sites)",
+            count,
+            decryptors
+                .iter()
+                .map(|t| counts.get(t).unwrap_or(&0))
+                .sum::<usize>()
+        );
+
+        let findings = StringFindings {
+            decryptor_methods: decryptors,
+        };
+
+        Detection::new_detected(
+            vec![Evidence::Structural(format!(
+                "{count} string decryptor methods (SSA call-site analysis)"
+            ))],
+            Some(Box::new(findings) as Box<dyn Any + Send + Sync>),
+        )
+    }
+
+    fn ssa_phase(&self) -> Option<PassPhase> {
+        Some(PassPhase::Value)
+    }
+
+    fn initialize(
+        &self,
+        ctx: &AnalysisContext,
+        assembly: &CilObject,
+        detection: &Detection,
+        _detections: &Detections,
+    ) {
+        let Some(findings) = detection.findings::<StringFindings>() else {
+            return;
+        };
+
+        for token in &findings.decryptor_methods {
+            ctx.decryptors.register(*token);
+        }
+
+        // Register .cctors for types that own decryptor methods as warmup methods.
+        // Decryptor methods often depend on static state initialized by their
+        // type's class constructor (e.g., string tables, encryption keys).
+        let types = assembly.types();
+        for entry in types.iter() {
+            let cil_type = entry.value();
+            let owns_decryptor = cil_type.methods.iter().any(|(_, method_ref)| {
+                method_ref
+                    .upgrade()
+                    .is_some_and(|m| findings.decryptor_methods.contains(&m.token))
+            });
+            if owns_decryptor {
+                for (_, method_ref) in cil_type.methods.iter() {
+                    if let Some(m) = method_ref.upgrade() {
+                        if m.is_cctor() {
+                            debug!(
+                                "GenericStrings: registering warmup .cctor 0x{:08X} for {}.{}",
+                                m.token.value(),
+                                cil_type.namespace,
+                                cil_type.name
+                            );
+                            ctx.register_warmup_method(m.token, vec![]);
+                        }
+                    }
+                }
+            }
+        }
+
+        // Register warmup calls for decryptors that lazily initialize their
+        // string table on first invocation. A single call with a default argument
+        // populates the table on the template process, so forked decryption calls
+        // skip the expensive initialization.
+        for &token in &findings.decryptor_methods {
+            if let Some(method) = assembly.method(&token) {
+                let warmup_args = Self::default_warmup_args(&method.signature.params);
+                if let Some(args) = warmup_args {
+                    debug!(
+                        "GenericStrings: registering warmup call 0x{:08X} ({})",
+                        token.value(),
+                        method.name
+                    );
+                    ctx.register_warmup_method(token, args);
+                }
+            }
+        }
+    }
+
+    fn cleanup(&self, detection: &Detection) -> Option<CleanupRequest> {
+        let findings = detection.findings::<StringFindings>()?;
+        if findings.decryptor_methods.is_empty() {
+            return None;
+        }
+        let mut req = CleanupRequest::new();
+        for &token in &findings.decryptor_methods {
+            req.add_method(token);
+        }
+        Some(req)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use crate::{deobfuscation::techniques::Technique, test::helpers::load_sample};
+
+    /// Verify detection runs without error on a protected sample.
+    ///
+    /// ConfuserEx and Obfuscar use obfuscator-specific decryptor signatures
+    /// (e.g. ConfuserEx `T Get<T>(int32)`, Obfuscar XOR string hiding) that
+    /// the more specific techniques handle. The generic technique catches
+    /// simpler `string(int32)` / `string(string)` patterns from other packers.
+    #[test]
+    fn test_detect_no_panic_on_obfuscated() {
+        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_constants.exe");
+        let technique = super::GenericStrings;
+        let _detection = technique.detect(&asm);
+    }
+
+    #[test]
+    fn test_detect_negative() {
+        let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
+        let technique = super::GenericStrings;
+        let detection = technique.detect(&asm);
+        assert!(!detection.detected);
+    }
+}

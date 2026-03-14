@@ -73,6 +73,9 @@ pub struct Interpreter {
     /// Whether an unaligned prefix is active with alignment.
     unaligned_prefix: Option<u8>,
 
+    /// Token of the constrained type for a `constrained. callvirt` sequence.
+    constrained_type: Option<Token>,
+
     /// Shared address space for memory operations (PE images, mapped data, heap, statics).
     address_space: Arc<AddressSpace>,
 
@@ -106,6 +109,7 @@ impl Interpreter {
             tail_prefix: false,
             volatile_prefix: false,
             unaligned_prefix: None,
+            constrained_type: None,
             address_space,
             pointer_size,
         }
@@ -288,12 +292,12 @@ impl Interpreter {
         self.tail_prefix = false;
         self.volatile_prefix = false;
         self.unaligned_prefix = None;
+        self.constrained_type = None;
     }
 
     /// Executes a standard (non-prefixed) opcode.
-    #[allow(clippy::unused_self)]
     pub(crate) fn execute_standard(
-        &self,
+        &mut self,
         thread: &mut EmulationThread,
         instruction: &Instruction,
     ) -> Result<StepResult> {
@@ -796,25 +800,32 @@ impl Interpreter {
             // Call Instructions (0x27, 0x28, 0x29, 0x6F)
             // ================================================================
             0x27 => {
-                // jmp - unconditional jump to method (tail call without stack)
+                // jmp - unconditional jump to method, transferring current args
                 let token = instruction
                     .get_token_operand()
                     .ok_or_else(|| Self::invalid_operand(instruction, "token"))?;
-                Ok(StepResult::TailCall {
-                    method: token,
-                    args: Vec::new(),
-                })
+                Ok(StepResult::Jmp { method: token })
             }
             0x28 => {
-                // call
+                // call (or tail. call when tail prefix is active)
                 let token = instruction
                     .get_token_operand()
                     .ok_or_else(|| Self::invalid_operand(instruction, "token"))?;
-                Ok(StepResult::Call {
-                    method: token,
-                    args: Vec::new(), // Args will be populated by controller
-                    is_virtual: false,
-                })
+                if self.tail_prefix {
+                    self.tail_prefix = false;
+                    Ok(StepResult::TailCall {
+                        method: token,
+                        is_virtual: false,
+                        constrained_type: None,
+                    })
+                } else {
+                    Ok(StepResult::Call {
+                        method: token,
+                        args: Vec::new(),
+                        is_virtual: false,
+                        constrained_type: None,
+                    })
+                }
             }
             0x29 => {
                 // calli - indirect call through function pointer
@@ -824,21 +835,32 @@ impl Interpreter {
                     .ok_or_else(|| Self::invalid_operand(instruction, "token"))?;
                 // Function pointer is on top of the stack (pushed after args by ldftn/ldvirtftn)
                 let function_pointer = thread.pop()?;
+                self.tail_prefix = false;
                 Ok(StepResult::CallIndirect {
                     signature: sig_token,
                     function_pointer,
                 })
             }
             0x6F => {
-                // callvirt
+                // callvirt (or tail. callvirt when tail prefix is active)
                 let token = instruction
                     .get_token_operand()
                     .ok_or_else(|| Self::invalid_operand(instruction, "token"))?;
-                Ok(StepResult::Call {
-                    method: token,
-                    args: Vec::new(),
-                    is_virtual: true,
-                })
+                if self.tail_prefix {
+                    self.tail_prefix = false;
+                    Ok(StepResult::TailCall {
+                        method: token,
+                        is_virtual: true,
+                        constrained_type: self.constrained_type.take(),
+                    })
+                } else {
+                    Ok(StepResult::Call {
+                        method: token,
+                        args: Vec::new(),
+                        is_virtual: true,
+                        constrained_type: self.constrained_type.take(),
+                    })
+                }
             }
 
             // ================================================================
@@ -1103,9 +1125,8 @@ impl Interpreter {
     }
 
     /// Executes an instruction with 0xFE prefix (two-byte opcodes).
-    #[allow(clippy::unused_self)]
     pub(crate) fn execute_fe_prefixed(
-        &self,
+        &mut self,
         thread: &mut EmulationThread,
         instruction: &Instruction,
     ) -> Result<StepResult> {
@@ -1290,6 +1311,35 @@ impl Interpreter {
             0xBA => Self::convert(thread, ConversionType::U8OvfUn, self.pointer_size), // conv.ovf.u8.un
             0xBB => Self::convert(thread, ConversionType::IOvfUn, self.pointer_size), // conv.ovf.i.un
             0xBC => Self::convert(thread, ConversionType::UOvfUn, self.pointer_size), // conv.ovf.u.un
+
+            // ================================================================
+            // Prefix opcodes (modify the next instruction)
+            // ================================================================
+            0x12 => {
+                // unaligned.
+                let alignment = instruction.get_u8_operand().unwrap_or(1);
+                self.unaligned_prefix = Some(alignment);
+                Ok(StepResult::Continue)
+            }
+            0x13 => {
+                // volatile.
+                self.volatile_prefix = true;
+                Ok(StepResult::Continue)
+            }
+            0x14 => {
+                // tail.
+                self.tail_prefix = true;
+                Ok(StepResult::Continue)
+            }
+            0x16 => {
+                // constrained.
+                self.constrained_type = instruction.get_token_operand();
+                Ok(StepResult::Continue)
+            }
+            0x1E => {
+                // readonly.
+                Ok(StepResult::Continue)
+            }
 
             // ================================================================
             // Unimplemented

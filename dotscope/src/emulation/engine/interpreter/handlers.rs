@@ -20,6 +20,7 @@ use crate::{
         token::Token,
         typesystem::{CilFlavor, PointerSize},
     },
+    utils::LeBytes,
     Error, Result,
 };
 
@@ -1025,14 +1026,7 @@ impl Interpreter {
             let obj = thread.get_heap_object(href)?;
             match obj {
                 HeapObject::Object { fields, .. } => {
-                    let value = fields.get(&field_token).cloned().unwrap_or_else(|| {
-                        // Return symbolic for uninitialized instance fields.
-                        // Using Object flavor since we don't know the actual type.
-                        EmValue::Symbolic(SymbolicValue::new(
-                            CilFlavor::Object,
-                            TaintSource::Field(field_token.value()),
-                        ))
-                    });
+                    let value = fields.get(&field_token).cloned().unwrap_or(EmValue::Null);
                     thread.push(value)?;
                     Ok(StepResult::Continue)
                 }
@@ -1697,7 +1691,7 @@ impl Interpreter {
                 };
 
                 // Convert value to bytes based on write_size and expected_type
-                let bytes: Vec<u8> = match (expected_type, write_size) {
+                let bytes: LeBytes = match (expected_type, write_size) {
                     // Small integer writes (1 or 2 bytes) from I32
                     (&CilFlavor::I4, 1) => {
                         let v = match &value {
@@ -1716,7 +1710,7 @@ impl Interpreter {
                                 .into());
                             }
                         };
-                        vec![v]
+                        LeBytes::from_byte(v)
                     }
                     (&CilFlavor::I4, 2) => {
                         let v = match &value {
@@ -1735,7 +1729,7 @@ impl Interpreter {
                                 .into());
                             }
                         };
-                        v.to_le_bytes().to_vec()
+                        LeBytes::from_2(v.to_le_bytes())
                     }
                     (&CilFlavor::I4, _) => {
                         let v = match &value {
@@ -1749,10 +1743,10 @@ impl Interpreter {
                                 .into());
                             }
                         };
-                        v.to_le_bytes().to_vec()
+                        LeBytes::from_4(v.to_le_bytes())
                     }
                     (&CilFlavor::I8, _) => match &value {
-                        EmValue::I64(v) => v.to_le_bytes().to_vec(),
+                        EmValue::I64(v) => LeBytes::from_8(v.to_le_bytes()),
                         _ => {
                             return Err(EmulationError::TypeMismatch {
                                 operation: "stind.i8",
@@ -1768,18 +1762,18 @@ impl Interpreter {
                                 // Intentional truncation: storing 64-bit native int to 4 bytes
                                 #[allow(clippy::cast_possible_truncation)]
                                 let truncated = *v as i32;
-                                truncated.to_le_bytes().to_vec()
+                                LeBytes::from_4(truncated.to_le_bytes())
                             }
-                            _ => v.to_le_bytes().to_vec(),
+                            _ => LeBytes::from_8(v.to_le_bytes()),
                         },
                         EmValue::NativeUInt(v) => match write_size {
                             4 => {
                                 // Intentional truncation: storing 64-bit native uint to 4 bytes
                                 #[allow(clippy::cast_possible_truncation)]
                                 let truncated = *v as u32;
-                                truncated.to_le_bytes().to_vec()
+                                LeBytes::from_4(truncated.to_le_bytes())
                             }
-                            _ => v.to_le_bytes().to_vec(),
+                            _ => LeBytes::from_8(v.to_le_bytes()),
                         },
                         _ => {
                             return Err(EmulationError::TypeMismatch {
@@ -1791,7 +1785,7 @@ impl Interpreter {
                         }
                     },
                     (&CilFlavor::R4, _) => match &value {
-                        EmValue::F32(v) => v.to_le_bytes().to_vec(),
+                        EmValue::F32(v) => LeBytes::from_4(v.to_le_bytes()),
                         _ => {
                             return Err(EmulationError::TypeMismatch {
                                 operation: "stind.r4",
@@ -1802,7 +1796,7 @@ impl Interpreter {
                         }
                     },
                     (&CilFlavor::R8, _) => match &value {
-                        EmValue::F64(v) => v.to_le_bytes().to_vec(),
+                        EmValue::F64(v) => LeBytes::from_8(v.to_le_bytes()),
                         _ => {
                             return Err(EmulationError::TypeMismatch {
                                 operation: "stind.r8",
@@ -1818,18 +1812,18 @@ impl Interpreter {
                                 // Intentional truncation: storing 64-bit pointer to 4 bytes (32-bit architecture)
                                 #[allow(clippy::cast_possible_truncation)]
                                 let truncated = *v as u32;
-                                truncated.to_le_bytes().to_vec()
+                                LeBytes::from_4(truncated.to_le_bytes())
                             }
-                            _ => v.to_le_bytes().to_vec(),
+                            _ => LeBytes::from_8(v.to_le_bytes()),
                         },
                         EmValue::NativeInt(v) => match write_size {
                             4 => {
                                 // Intentional truncation: storing 64-bit native int to 4 bytes (32-bit architecture)
                                 #[allow(clippy::cast_possible_truncation)]
                                 let truncated = *v as i32;
-                                truncated.to_le_bytes().to_vec()
+                                LeBytes::from_4(truncated.to_le_bytes())
                             }
-                            _ => v.to_le_bytes().to_vec(),
+                            _ => LeBytes::from_8(v.to_le_bytes()),
                         },
                         _ => {
                             return Err(EmulationError::TypeMismatch {

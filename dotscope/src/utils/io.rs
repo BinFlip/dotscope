@@ -1211,6 +1211,37 @@ pub fn write_prefixed_string_utf16(value: &str, buffer: &mut Vec<u8>) {
     }
 }
 
+/// Decodes a null-terminated UTF-16LE byte slice to a [`String`].
+///
+/// Reads 16-bit little-endian code units until a null terminator (`0x0000`)
+/// is reached or the data is exhausted. Requires at least 2 bytes and at
+/// least one non-null code unit.
+///
+/// # Returns
+///
+/// `Some(String)` on success, `None` if the input is too short or contains
+/// only a null terminator.
+#[must_use]
+pub fn decode_utf16le(bytes: &[u8]) -> Option<String> {
+    if bytes.len() < 2 {
+        return None;
+    }
+    let mut utf16_chars = Vec::new();
+    let mut i = 0;
+    while i + 1 < bytes.len() {
+        let ch = u16::from_le_bytes([bytes[i], bytes[i + 1]]);
+        if ch == 0 {
+            break;
+        }
+        utf16_chars.push(ch);
+        i += 2;
+    }
+    if utf16_chars.is_empty() {
+        return None;
+    }
+    String::from_utf16(&utf16_chars).ok()
+}
+
 /// Write a null-terminated UTF-8 string at a specific offset.
 ///
 /// Writes the string bytes followed by a null terminator to the buffer at the
@@ -1371,6 +1402,24 @@ pub fn read_compressed_int(data: &[u8], offset: &mut usize) -> Result<(usize, us
 pub fn read_compressed_int_at(data: &[u8], offset: usize) -> Result<(usize, usize)> {
     let mut mutable_offset = offset;
     read_compressed_int(data, &mut mutable_offset)
+}
+
+/// Reads a .NET SerString packed length (ECMA-335, Partition II, Section 23.2).
+///
+/// Thin wrapper around [`read_compressed_int_at`] that additionally handles
+/// the `0xFF` null-string sentinel and empty input. The encoding uses 1, 2,
+/// or 4 bytes for the length; `0xFF` signals a null string.
+///
+/// # Returns
+///
+/// `Some((length, bytes_consumed))` on success, `None` for null strings
+/// (`0xFF`), empty input, or truncated data.
+#[must_use]
+pub fn read_packed_len(data: &[u8]) -> Option<(usize, usize)> {
+    if data.is_empty() || data[0] == 0xFF {
+        return None;
+    }
+    read_compressed_int_at(data, 0).ok()
 }
 
 /// Reads a compressed unsigned integer from a byte buffer according to ECMA-335 specification.
@@ -2169,5 +2218,71 @@ mod tests {
         write_string_at(&mut buffer, &mut offset, "café").unwrap();
         assert_eq!(offset, 6); // 4 UTF-8 bytes + 1 null terminator
         assert_eq!(&buffer[0..6], "café\0".as_bytes());
+    }
+
+    #[test]
+    fn test_read_packed_len_empty() {
+        assert_eq!(read_packed_len(&[]), None);
+    }
+
+    #[test]
+    fn test_read_packed_len_null_sentinel() {
+        assert_eq!(read_packed_len(&[0xFF]), None);
+    }
+
+    #[test]
+    fn test_read_packed_len_one_byte() {
+        assert_eq!(read_packed_len(&[0x00]), Some((0, 1)));
+        assert_eq!(read_packed_len(&[0x03]), Some((3, 1)));
+        assert_eq!(read_packed_len(&[0x7F]), Some((127, 1)));
+    }
+
+    #[test]
+    fn test_read_packed_len_two_bytes() {
+        assert_eq!(read_packed_len(&[0x80, 0x80]), Some((0x0080, 2)));
+        assert_eq!(read_packed_len(&[0xBF, 0xFF]), Some((0x3FFF, 2)));
+    }
+
+    #[test]
+    fn test_read_packed_len_two_bytes_truncated() {
+        assert_eq!(read_packed_len(&[0x80]), None);
+    }
+
+    #[test]
+    fn test_read_packed_len_four_bytes() {
+        assert_eq!(
+            read_packed_len(&[0xC0, 0x00, 0x40, 0x00]),
+            Some((0x4000, 4))
+        );
+    }
+
+    #[test]
+    fn test_read_packed_len_four_bytes_truncated() {
+        assert_eq!(read_packed_len(&[0xC0, 0x00, 0x40]), None);
+    }
+
+    #[test]
+    fn test_decode_utf16le_basic() {
+        // "Hi" in UTF-16LE with null terminator
+        let data = [0x48, 0x00, 0x69, 0x00, 0x00, 0x00];
+        assert_eq!(decode_utf16le(&data), Some("Hi".to_string()));
+    }
+
+    #[test]
+    fn test_decode_utf16le_no_terminator() {
+        // "Hi" in UTF-16LE without null terminator
+        let data = [0x48, 0x00, 0x69, 0x00];
+        assert_eq!(decode_utf16le(&data), Some("Hi".to_string()));
+    }
+
+    #[test]
+    fn test_decode_utf16le_empty() {
+        assert_eq!(decode_utf16le(&[]), None);
+        assert_eq!(decode_utf16le(&[0x00]), None);
+    }
+
+    #[test]
+    fn test_decode_utf16le_null_only() {
+        assert_eq!(decode_utf16le(&[0x00, 0x00]), None);
     }
 }

@@ -38,8 +38,6 @@
 //!
 //! [`ControlFlowSimplificationPass`]: super::ControlFlowSimplificationPass
 
-use std::sync::Arc;
-
 use crate::{
     analysis::{ConstValue, SsaCfg, SsaEvaluator, SsaFunction, SsaOp, SsaVarId},
     compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
@@ -262,7 +260,7 @@ impl SsaPass for JumpThreadingPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        assembly: &Arc<CilObject>,
+        assembly: &CilObject,
     ) -> Result<bool> {
         let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
         let mut changes = EventLog::new();
@@ -278,13 +276,11 @@ impl SsaPass for JumpThreadingPass {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use std::sync::Arc;
 
     use crate::{
         analysis::{CallGraph, ConstValue, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
-        compiler::{CompilerContext, SsaPass},
+        compiler::{passes::threading::JumpThreadingPass, CompilerContext, SsaPass},
         metadata::token::Token,
         test::helpers::test_assembly_arc,
     };

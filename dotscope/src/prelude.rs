@@ -275,7 +275,13 @@ pub use crate::metadata::imports::ImportType;
 ///
 /// `TypeQuery` and `MethodQuery` provide a fluent API for searching and filtering
 /// types and methods in .NET assemblies without manual iteration boilerplate.
-pub use crate::metadata::query::{MethodQuery, TypeQuery};
+pub use crate::metadata::query::{FieldQuery, MethodQuery, TypeQuery};
+
+/// Cross-table token resolver for metadata normalization.
+///
+/// [`TokenResolver`] normalizes token references across metadata tables:
+/// TypeRef→TypeDef, MemberRef→MethodDef/FieldDef, MethodSpec→MethodDef.
+pub use crate::metadata::resolver::TokenResolver;
 
 /// Core type system components.
 ///
@@ -283,9 +289,10 @@ pub use crate::metadata::query::{MethodQuery, TypeQuery};
 /// type registries (`TypeRegistry`), resolution (`TypeResolver`), and all supporting
 /// types for comprehensive .NET type system analysis.
 pub use crate::metadata::typesystem::{
-    CilFlavor, CilModifier, CilPrimitive, CilPrimitiveData, CilPrimitiveKind, CilType, CilTypeList,
-    CilTypeRc, CilTypeRef, CilTypeRefList, CilTypeReference, PointerSize, TypeRegistry,
-    TypeResolver, TypeSignatureEncoder, TypeSource,
+    wellknown, ArrayDimensions, CilFlavor, CilModifier, CilPrimitive, CilPrimitiveData,
+    CilPrimitiveKind, CilType, CilTypeList, CilTypeRc, CilTypeRef, CilTypeRefList,
+    CilTypeReference, PointerSize, TypeBuilder, TypeRegistry, TypeResolver, TypeSignatureEncoder,
+    TypeSource,
 };
 
 // ================================================================================================
@@ -885,14 +892,11 @@ pub use crate::analysis::CallGraph;
 #[cfg(feature = "deobfuscation")]
 pub use crate::deobfuscation::{DeobfuscationEngine, DeobfuscationResult, EngineConfig};
 
-/// Obfuscator detection and support.
+/// Technique-based obfuscation detection and attribution.
 ///
-/// Obfuscator-based identification with confidence scoring. Create custom obfuscator
-/// implementations for detecting and handling specific obfuscators.
+/// Technique-oriented detection with confidence scoring and obfuscator attribution.
 #[cfg(feature = "deobfuscation")]
-pub use crate::deobfuscation::{
-    DetectionScore, Obfuscator, ObfuscatorDetector, ObfuscatorRegistry,
-};
+pub use crate::deobfuscation::{AttributionResult, Evidence, Technique, TechniqueRegistry};
 
 /// Pass system for SSA-based transformations.
 ///

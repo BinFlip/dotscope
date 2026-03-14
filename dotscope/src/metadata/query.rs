@@ -26,6 +26,7 @@
 
 use crate::metadata::{
     method::{Method, MethodMap, MethodRc, MethodRefList},
+    tables::{Field, FieldAttributes, FieldList, FieldRc},
     token::Token,
     typesystem::{CilType, CilTypeRc, TypeRegistry},
 };
@@ -35,6 +36,9 @@ type TypeFilter<'a> = Box<dyn Fn(&CilType) -> bool + 'a>;
 
 /// A boxed filter predicate over [`Method`] references.
 type MethodFilter<'a> = Box<dyn Fn(&Method) -> bool + 'a>;
+
+/// A boxed filter predicate over [`Field`](crate::metadata::tables::Field) references.
+type FieldFilter<'a> = Box<dyn Fn(&Field) -> bool + 'a>;
 
 /// A composable query builder for filtering types in an assembly.
 ///
@@ -509,6 +513,102 @@ impl<'b> IntoIterator for &'b MethodQuery<'_> {
 
     fn into_iter(self) -> Self::IntoIter {
         self.iter()
+    }
+}
+
+/// A composable query builder for filtering fields in a type.
+///
+/// Mirrors the [`MethodQuery`] pattern: fluent filter chains with
+/// terminal methods like [`find_all`](Self::find_all) and [`find_first`](Self::find_first).
+pub struct FieldQuery<'a> {
+    fields: &'a FieldList,
+    filters: Vec<FieldFilter<'a>>,
+}
+
+impl<'a> FieldQuery<'a> {
+    /// Creates a `FieldQuery` over a type's field list.
+    pub fn from_type(fields: &'a FieldList) -> Self {
+        Self {
+            fields,
+            filters: Vec::new(),
+        }
+    }
+
+    /// Filters to static fields.
+    #[must_use]
+    pub fn static_fields(mut self) -> Self {
+        self.filters.push(Box::new(|f| f.flags.is_static()));
+        self
+    }
+
+    /// Filters to instance (non-static) fields.
+    #[must_use]
+    pub fn instance_fields(mut self) -> Self {
+        self.filters.push(Box::new(|f| !f.flags.is_static()));
+        self
+    }
+
+    /// Filters to public fields.
+    #[must_use]
+    pub fn public(mut self) -> Self {
+        self.filters
+            .push(Box::new(|f| f.flags.access() == FieldAttributes::PUBLIC));
+        self
+    }
+
+    /// Filters to fields with the exact name.
+    #[must_use]
+    pub fn name(mut self, name: &'a str) -> Self {
+        self.filters.push(Box::new(move |f| f.name == name));
+        self
+    }
+
+    /// Applies a custom filter predicate.
+    #[must_use]
+    pub fn filter(mut self, f: impl Fn(&Field) -> bool + 'a) -> Self {
+        self.filters.push(Box::new(f));
+        self
+    }
+
+    /// Returns all matching fields.
+    #[must_use]
+    pub fn find_all(&self) -> Vec<FieldRc> {
+        self.iter().collect()
+    }
+
+    /// Returns the first matching field, short-circuiting iteration.
+    #[must_use]
+    pub fn find_first(&self) -> Option<FieldRc> {
+        self.iter().next()
+    }
+
+    /// Returns the count of matching fields.
+    #[must_use]
+    pub fn count(&self) -> usize {
+        self.iter().count()
+    }
+
+    /// Returns `true` if any field matches (short-circuits).
+    #[must_use]
+    pub fn exists(&self) -> bool {
+        self.iter().next().is_some()
+    }
+
+    /// Returns just the tokens of matching fields.
+    #[must_use]
+    pub fn tokens(&self) -> Vec<Token> {
+        self.iter().map(|f| f.token).collect()
+    }
+
+    /// Returns a lazy iterator over matching fields.
+    pub fn iter(&self) -> impl Iterator<Item = FieldRc> + '_ {
+        self.fields.iter().filter_map(move |(_, field)| {
+            if self.filters.iter().all(|f| f(field)) {
+                Some(field.clone())
+            } else {
+                None
+            }
+        })
     }
 }
 

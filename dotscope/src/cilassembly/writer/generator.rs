@@ -63,7 +63,8 @@ use crate::{
         streams::{Blob, Guid, StreamHeader, Strings, UserStrings},
         tablefields::get_heap_fields,
         tables::{
-            MethodDefRaw, RowWritable, StandAloneSigRaw, TableDataOwned, TableId, TableInfoRef,
+            ManifestResourceRaw, MethodDefRaw, RowWritable, StandAloneSigRaw, TableDataOwned,
+            TableId, TableInfoRef,
         },
         token::Token,
     },
@@ -1179,11 +1180,72 @@ impl<'a> PeGenerator<'a> {
         // Track the start of the resources section
         ctx.resource_data_offset = ctx.pos();
 
-        // Copy original resources (if any exist)
+        // Copy original resources, compacting out deleted ManifestResource entries.
+        // Each resource in the CLR resource section is: [4-byte LE length][data].
+        // ManifestResource.offset_field points to the start of the length prefix.
         if cor20.resource_rva != 0 && cor20.resource_size != 0 {
-            let resource_offset = file.rva_to_offset(cor20.resource_rva as usize)?;
-            let original_data = file.data_slice(resource_offset, cor20.resource_size as usize)?;
-            ctx.write(original_data)?;
+            let resource_file_offset = file.rva_to_offset(cor20.resource_rva as usize)?;
+            let original_data =
+                file.data_slice(resource_file_offset, cor20.resource_size as usize)?;
+
+            // Check if any ManifestResource rows have been deleted. If not, fast-path:
+            // copy everything as-is.
+            let has_deletions = view
+                .tables()
+                .and_then(|t| t.table::<ManifestResourceRaw>())
+                .is_some_and(|table| {
+                    table.iter().any(|row| {
+                        // Only embedded resources (implementation.row == 0) have data
+                        // in this section.
+                        row.implementation.row == 0
+                            && changes.is_row_deleted(TableId::ManifestResource, row.rid)
+                    })
+                });
+
+            if has_deletions {
+                // Compact: copy only surviving embedded resources.
+                if let Some(table) = view.tables().and_then(|t| t.table::<ManifestResourceRaw>()) {
+                    let mut new_offset = 0u32;
+                    for row in table {
+                        // External resources don't have data in this section
+                        if row.implementation.row != 0 {
+                            continue;
+                        }
+
+                        let old_offset = row.offset_field;
+                        let entry_start = old_offset as usize;
+
+                        // Read the 4-byte length prefix
+                        if entry_start + 4 > original_data.len() {
+                            continue;
+                        }
+                        let data_len = u32::from_le_bytes([
+                            original_data[entry_start],
+                            original_data[entry_start + 1],
+                            original_data[entry_start + 2],
+                            original_data[entry_start + 3],
+                        ]) as usize;
+                        let entry_total = 4 + data_len;
+
+                        if entry_start + entry_total > original_data.len() {
+                            continue;
+                        }
+
+                        // Skip deleted resources
+                        if changes.is_row_deleted(TableId::ManifestResource, row.rid) {
+                            continue;
+                        }
+
+                        // Write surviving resource and track offset remapping
+                        ctx.write(&original_data[entry_start..entry_start + entry_total])?;
+                        ctx.resource_offset_remap.insert(old_offset, new_offset);
+                        new_offset += entry_total as u32;
+                    }
+                }
+            } else {
+                // No deletions — copy all original resources as-is
+                ctx.write(original_data)?;
+            }
         }
 
         // Append new resources from changes
@@ -1909,6 +1971,7 @@ impl<'a> PeGenerator<'a> {
         // Clone to avoid borrow issues with ctx
         let method_body_rva_map = ctx.method_body_rva_map.clone();
         let field_data_rva_map = ctx.field_data_rva_map.clone();
+        let resource_offset_remap = ctx.resource_offset_remap.clone();
         let original_rva_delta = ctx.original_method_rva_delta;
         let needs_remapping = remapper.needs_remapping(table_id);
 
@@ -1936,6 +1999,7 @@ impl<'a> PeGenerator<'a> {
                     table_id,
                     &method_body_rva_map,
                     &field_data_rva_map,
+                    &resource_offset_remap,
                     original_rva_delta,
                 );
                 ctx.write(&buffer)?;
@@ -2037,6 +2101,7 @@ impl<'a> PeGenerator<'a> {
                         table_id,
                         &method_body_rva_map,
                         &field_data_rva_map,
+                        &resource_offset_remap,
                         original_rva_delta,
                     );
                     ctx.write(&buffer)?;
@@ -2062,6 +2127,7 @@ impl<'a> PeGenerator<'a> {
                 table_id,
                 &method_body_rva_map,
                 &field_data_rva_map,
+                &resource_offset_remap,
                 original_rva_delta,
             );
             ctx.write(&buffer)?;
@@ -2070,18 +2136,29 @@ impl<'a> PeGenerator<'a> {
         Ok(())
     }
 
-    /// Applies RVA fixups to a row buffer for MethodDef and FieldRVA tables.
+    /// Applies RVA/offset fixups to a row buffer for MethodDef, FieldRVA, and
+    /// ManifestResource tables.
     fn apply_rva_fixups(
         buffer: &mut [u8],
         table_id: TableId,
         method_body_rva_map: &HashMap<u32, u32>,
         field_data_rva_map: &HashMap<u32, u32>,
+        resource_offset_remap: &HashMap<u32, u32>,
         original_rva_delta: i32,
     ) {
         if table_id == TableId::MethodDef {
             Self::resolve_method_def_rva(buffer, method_body_rva_map, original_rva_delta);
         } else if table_id == TableId::FieldRVA {
             resolve_field_data_rva(buffer, field_data_rva_map);
+        } else if table_id == TableId::ManifestResource && !resource_offset_remap.is_empty() {
+            // ManifestResource row layout: offset_field (4 bytes) is first.
+            // Remap the offset to account for resource data compaction.
+            if buffer.len() >= 4 {
+                let old_offset = u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
+                if let Some(&new_offset) = resource_offset_remap.get(&old_offset) {
+                    buffer[..4].copy_from_slice(&new_offset.to_le_bytes());
+                }
+            }
         }
     }
 
@@ -2775,10 +2852,10 @@ impl<'a> PeGenerator<'a> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use crate::{
-        cilassembly::CilAssembly, metadata::signatures::TypeSignature, CilAssemblyView,
-        MethodBuilder,
+        cilassembly::{writer::generator::PeGenerator, CilAssembly},
+        metadata::{signatures::TypeSignature, tables::TableId},
+        CilAssemblyView, MethodBuilder,
     };
     use tempfile::NamedTempFile;
 

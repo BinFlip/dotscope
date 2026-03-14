@@ -647,6 +647,57 @@ impl CilPrimitiveKind {
         })
     }
 
+    /// Maps this primitive kind to a .NET `System.TypeCode` integer.
+    ///
+    /// Returns the `TypeCode` enum value for primitive types that have one.
+    /// Non-primitive kinds (Object, Void, IntPtr, UIntPtr, etc.) return `None`.
+    #[must_use]
+    pub fn typecode(&self) -> Option<i32> {
+        match self {
+            CilPrimitiveKind::Boolean => Some(3),
+            CilPrimitiveKind::Char => Some(4),
+            CilPrimitiveKind::I1 => Some(5),  // SByte
+            CilPrimitiveKind::U1 => Some(6),  // Byte
+            CilPrimitiveKind::I2 => Some(7),  // Int16
+            CilPrimitiveKind::U2 => Some(8),  // UInt16
+            CilPrimitiveKind::I4 => Some(9),  // Int32
+            CilPrimitiveKind::U4 => Some(10), // UInt32
+            CilPrimitiveKind::I8 => Some(11), // Int64
+            CilPrimitiveKind::U8 => Some(12), // UInt64
+            CilPrimitiveKind::R4 => Some(13), // Single
+            CilPrimitiveKind::R8 => Some(14), // Double
+            CilPrimitiveKind::String => Some(18),
+            _ => None,
+        }
+    }
+
+    /// Returns whether this primitive kind represents a .NET value type.
+    ///
+    /// All numeric types, `Boolean`, `Char`, `IntPtr`, `UIntPtr`, and
+    /// `TypedReference` are value types. `Void`, `Object`, `String`, and
+    /// structural kinds (`Class`, `ValueType`, `Var`, `MVar`, `Null`) are not.
+    #[must_use]
+    pub fn is_value_type(&self) -> bool {
+        matches!(
+            self,
+            CilPrimitiveKind::Boolean
+                | CilPrimitiveKind::Char
+                | CilPrimitiveKind::I1
+                | CilPrimitiveKind::U1
+                | CilPrimitiveKind::I2
+                | CilPrimitiveKind::U2
+                | CilPrimitiveKind::I4
+                | CilPrimitiveKind::U4
+                | CilPrimitiveKind::I8
+                | CilPrimitiveKind::U8
+                | CilPrimitiveKind::R4
+                | CilPrimitiveKind::R8
+                | CilPrimitiveKind::I
+                | CilPrimitiveKind::U
+                | CilPrimitiveKind::TypedReference
+        )
+    }
+
     /// Parse primitive type from `ELEMENT_TYPE` byte constant.
     ///
     /// Converts an `ELEMENT_TYPE` constant from ECMA-335 metadata into the corresponding

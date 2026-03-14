@@ -439,6 +439,25 @@ impl File {
         self.len() == 0
     }
 
+    /// Returns the original file path if the CowFile was opened from disk.
+    ///
+    /// Returns `None` for memory-backed assemblies or those loaded via [`from_mem`](File::from_mem).
+    #[must_use]
+    pub fn source_path(&self) -> Option<&Path> {
+        self.data.source_path()
+    }
+
+    /// Creates an independent fork of the underlying CowFile.
+    ///
+    /// For file-backed assemblies, this re-opens the original file via a new
+    /// `MAP_PRIVATE` mmap — zero-copy, OS shares physical read pages.
+    /// For memory-backed assemblies, this clones the data.
+    ///
+    /// Pending writes (PE repairs) are **not** carried over.
+    pub fn fork_cowfile(&self) -> Result<CowFile> {
+        self.data.fork().map_err(|e| Error::Other(e.to_string()))
+    }
+
     /// Returns the image base address of the loaded PE file.
     ///
     /// The image base is the preferred virtual address where the PE file
@@ -769,6 +788,59 @@ impl File {
     #[must_use]
     pub fn data(&self) -> &[u8] {
         self.data.data()
+    }
+
+    /// Consumes the `File` and returns the underlying `CowFile`.
+    #[must_use]
+    pub fn into_cowfile(self) -> CowFile {
+        self.data
+    }
+
+    /// Queues a byte patch at the given file offset.
+    ///
+    /// Uses the underlying `CowFile`'s interior-mutable pending-write log.
+    /// Patches are not visible via `data()` until `commit_pending()` is called.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the offset + data length exceeds the file size.
+    pub fn write(&self, offset: usize, data: &[u8]) -> Result<()> {
+        self.data.write(offset, data).map_err(Into::into)
+    }
+
+    /// Queues a little-endian primitive patch at the given file offset.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the offset is out of bounds.
+    pub fn write_le<T: cowfile::Primitive>(&self, offset: usize, value: T) -> Result<()> {
+        self.data.write_le(offset, value).map_err(Into::into)
+    }
+
+    /// Reads a little-endian primitive from the committed file data.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the offset is out of bounds.
+    pub fn read_le<T: cowfile::Primitive>(&self, offset: usize) -> Result<T> {
+        self.data.read_le(offset).map_err(Into::into)
+    }
+
+    /// Returns `true` if there are uncommitted pending byte patches.
+    #[must_use]
+    pub fn has_pending(&self) -> bool {
+        self.data.has_pending()
+    }
+
+    /// Applies all pending byte patches in-place to the committed data.
+    ///
+    /// After this call, `data()` reflects the patched bytes.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if a patch is out of bounds.
+    pub fn commit_pending(&mut self) -> Result<()> {
+        self.data.commit().map_err(Into::into)
     }
 
     /// Returns a slice of the file data at the given offset and length.

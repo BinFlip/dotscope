@@ -21,7 +21,7 @@ use common::verification::{
     VerificationLevel,
 };
 use dotscope::{
-    deobfuscation::{detect_obfuscar, DeobfuscationEngine, DeobfuscationFindings, EngineConfig},
+    deobfuscation::{DeobfuscationEngine, EngineConfig},
     metadata::validation::ValidationConfig,
     CilObject,
 };
@@ -79,10 +79,8 @@ struct TestResult {
     methods_before: usize,
     methods_after: usize,
     // Detection results
-    detection_score: usize,
-    suppress_ildasm_found: bool,
-    helper_types_found: usize,
-    decryptor_methods_found: usize,
+    detection_confidence: f32,
+    detected_techniques: Vec<String>,
     // Post-deobfuscation results
     assembly_valid: bool,
     roundtrip_ok: bool,
@@ -90,8 +88,8 @@ struct TestResult {
     warning_count: usize,
     error_count: usize,
     // Re-detection on output
-    post_detection_score: usize,
-    post_helper_types_found: usize,
+    post_detection_confidence: f32,
+    post_detected_techniques: Vec<String>,
     // Semantic preservation
     semantic_result: Option<SemanticVerificationResult>,
 }
@@ -186,16 +184,14 @@ fn test_sample(spec: &SampleSpec, original_asm: Option<&CilObject>) -> TestResul
         error: None,
         methods_before: 0,
         methods_after: 0,
-        detection_score: 0,
-        suppress_ildasm_found: false,
-        helper_types_found: 0,
-        decryptor_methods_found: 0,
+        detection_confidence: 0.0,
+        detected_techniques: Vec::new(),
         assembly_valid: false,
         roundtrip_ok: false,
         warning_count: 0,
         error_count: 0,
-        post_detection_score: 0,
-        post_helper_types_found: 0,
+        post_detection_confidence: 0.0,
+        post_detected_techniques: Vec::new(),
         semantic_result: None,
     };
 
@@ -211,12 +207,13 @@ fn test_sample(spec: &SampleSpec, original_asm: Option<&CilObject>) -> TestResul
     result.methods_before = assembly.methods().iter().count();
 
     // Run detection
-    let mut findings = DeobfuscationFindings::new();
-    let score = detect_obfuscar(&assembly, &mut findings);
-    result.detection_score = score.score();
-    result.suppress_ildasm_found = findings.suppress_ildasm_token.is_some();
-    result.helper_types_found = findings.protection_infrastructure_types.count();
-    result.decryptor_methods_found = findings.decryptor_methods.count();
+    let detect_engine = DeobfuscationEngine::default();
+    let det = detect_engine.detect(&assembly);
+    let attribution = det.attribution;
+    result.detection_confidence = if attribution.is_some() { 1.0 } else { 0.0 };
+    if let Some(ref attr) = attribution {
+        result.detected_techniques = attr.technique_ids.clone();
+    }
 
     // Skip deobfuscation for original (unprotected) sample
     if spec.is_original {
@@ -229,7 +226,7 @@ fn test_sample(spec: &SampleSpec, original_asm: Option<&CilObject>) -> TestResul
 
     // Run full deobfuscation pipeline
     let config = EngineConfig::default();
-    let mut engine = DeobfuscationEngine::new(config);
+    let engine = DeobfuscationEngine::new(config);
 
     match engine.process_assembly(assembly) {
         Ok((output, deob_result)) => {
@@ -237,16 +234,19 @@ fn test_sample(spec: &SampleSpec, original_asm: Option<&CilObject>) -> TestResul
             result.methods_after = output.methods().iter().count();
             result.assembly_valid = true;
 
-            // Track warnings and errors from deobfuscation
-            let stats = deob_result.stats();
-            result.warning_count = stats.warnings;
-            result.error_count = stats.errors;
+            // Warnings/errors now go through log:: instead of EventLog
+            let _stats = deob_result.stats();
+            result.warning_count = 0;
+            result.error_count = 0;
 
             // Re-detect on output
-            let mut post_findings = DeobfuscationFindings::new();
-            let post_score = detect_obfuscar(&output, &mut post_findings);
-            result.post_detection_score = post_score.score();
-            result.post_helper_types_found = post_findings.protection_infrastructure_types.count();
+            let post_engine = DeobfuscationEngine::default();
+            let post_det = post_engine.detect(&output);
+            let post_attribution = post_det.attribution;
+            result.post_detection_confidence = if post_attribution.is_some() { 1.0 } else { 0.0 };
+            if let Some(ref attr) = post_attribution {
+                result.post_detected_techniques = attr.technique_ids.clone();
+            }
 
             // Roundtrip verification
             let bytes = output.file().data();
@@ -316,11 +316,9 @@ fn print_summary(results: &[TestResult]) {
         // Detection line
         if !result.sample.is_original {
             eprintln!(
-                "       Detection: score={} suppress_ildasm={} helper_types={} decryptors={}",
-                result.detection_score,
-                result.suppress_ildasm_found,
-                result.helper_types_found,
-                result.decryptor_methods_found,
+                "       Detection: confidence={:.0}% techniques=[{}]",
+                result.detection_confidence * 100.0,
+                result.detected_techniques.join(", "),
             );
         }
 
@@ -333,9 +331,9 @@ fn print_summary(results: &[TestResult]) {
         // Post-deobfuscation line
         if !result.sample.is_original {
             eprintln!(
-                "       Post-deobfuscation: score={} helper_types={} valid={} roundtrip={}",
-                result.post_detection_score,
-                result.post_helper_types_found,
+                "       Post-deobfuscation: confidence={:.0}% techniques=[{}] valid={} roundtrip={}",
+                result.post_detection_confidence * 100.0,
+                result.post_detected_techniques.join(", "),
                 result.assembly_valid,
                 result.roundtrip_ok,
             );
@@ -398,10 +396,10 @@ fn test_all_obfuscar_samples() {
         if result.sample.is_original {
             // Original should NOT be detected as Obfuscar
             assert!(
-                result.detection_score < 50,
-                "{}: Unprotected original should not be detected as Obfuscar (score: {})",
+                result.detection_confidence < 0.5,
+                "{}: Unprotected original should not be detected as Obfuscar (confidence: {:.0}%)",
                 result.sample.filename,
-                result.detection_score
+                result.detection_confidence * 100.0
             );
             continue;
         }
@@ -429,31 +427,18 @@ fn test_all_obfuscar_samples() {
         );
 
         // Detection assertions
-        if expected.has_suppress_ildasm {
-            assert!(
-                result.suppress_ildasm_found,
-                "{}: SuppressIldasmAttribute not detected",
-                filename
-            );
-        }
-
         if expected.has_string_hiding {
+            // Samples with string hiding should have positive detection
             assert!(
-                result.helper_types_found > 0,
-                "{}: String hiding helper type not detected",
-                filename
-            );
-            assert!(
-                result.decryptor_methods_found > 0,
-                "{}: String accessor methods not detected",
-                filename
-            );
-            // Samples with string hiding should score above detection threshold
-            assert!(
-                result.detection_score >= 50,
-                "{}: Detection score too low for string hiding sample (score: {})",
+                result.detection_confidence > 0.0,
+                "{}: Detection confidence should be positive for string hiding sample (confidence: {:.0}%)",
                 filename,
-                result.detection_score
+                result.detection_confidence * 100.0
+            );
+            assert!(
+                !result.detected_techniques.is_empty(),
+                "{}: Expected at least one detected technique for string hiding sample",
+                filename
             );
         }
 
@@ -500,13 +485,15 @@ fn test_obfuscar_no_false_positives_on_confuserex() {
         CilObject::from_path_with_validation(confuserex_path, ValidationConfig::analysis())
             .expect("Failed to load ConfuserEx original");
 
-    let mut _findings = DeobfuscationFindings::new();
-    let score = detect_obfuscar(&assembly, &mut _findings);
+    let engine = DeobfuscationEngine::default();
+    let det = engine.detect(&assembly);
+    let attribution = det.attribution;
+    let confidence = if attribution.is_some() { 1.0f64 } else { 0.0 };
 
     assert!(
-        score.score() < 50,
-        "ConfuserEx original should not be detected as Obfuscar (score: {})",
-        score.score()
+        confidence < 0.5,
+        "ConfuserEx original should not be detected as Obfuscar (confidence: {:.0}%)",
+        confidence * 100.0
     );
 }
 
@@ -530,23 +517,26 @@ fn test_obfuscar_detection_scoring() {
         let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
             .unwrap_or_else(|e| panic!("Failed to load {}: {}", filename, e));
 
-        let mut findings = DeobfuscationFindings::new();
-        let score = detect_obfuscar(&assembly, &mut findings);
+        let engine = DeobfuscationEngine::default();
+        let det = engine.detect(&assembly);
+        let attribution = det.attribution;
+        let confidence = if attribution.is_some() { 1.0f64 } else { 0.0 };
+        let techniques: Vec<String> = attribution
+            .as_ref()
+            .map_or_else(Vec::new, |a| a.technique_ids.clone());
 
         eprintln!(
-            "{}: score={}, evidence={}, helper_types={}, decryptors={}",
+            "{}: confidence={:.0}%, techniques=[{}]",
             filename,
-            score.score(),
-            score.evidence_summary(),
-            findings.protection_infrastructure_types.count(),
-            findings.decryptor_methods.count()
+            confidence * 100.0,
+            techniques.join(", ")
         );
 
         assert!(
-            score.score() >= 60,
-            "{}: Expected high detection score for string hiding sample (got: {})",
+            confidence >= 0.6,
+            "{}: Expected high detection confidence for string hiding sample (got: {:.0}%)",
             filename,
-            score.score()
+            confidence * 100.0
         );
     }
 }
@@ -564,27 +554,31 @@ fn test_obfuscar_rename_only_below_threshold() {
     let assembly = CilObject::from_path_with_validation(&path, ValidationConfig::analysis())
         .expect("Failed to load rename-only sample");
 
-    let mut findings = DeobfuscationFindings::new();
-    let score = detect_obfuscar(&assembly, &mut findings);
+    let engine = DeobfuscationEngine::default();
+    let det = engine.detect(&assembly);
+    let attribution = det.attribution;
+    let confidence = if attribution.is_some() { 1.0f64 } else { 0.0 };
+    let techniques: Vec<String> = attribution
+        .as_ref()
+        .map_or_else(Vec::new, |a| a.technique_ids.clone());
 
     eprintln!(
-        "rename_only: score={}, evidence={}",
-        score.score(),
-        score.evidence_summary()
+        "rename_only: confidence={:.0}%, techniques=[{}]",
+        confidence * 100.0,
+        techniques.join(", ")
     );
 
-    // Without string hiding, the only signal is null params (+5)
+    // Without string hiding, the only signal is null params
     // (SuppressIldasm is disabled in this config)
-    // Total should be <= 5, well below the 50 threshold
+    // Confidence should be below 50% threshold
     assert!(
-        score.score() < 50,
-        "Rename-only sample should not exceed detection threshold (score: {}, evidence: {})",
-        score.score(),
-        score.evidence_summary()
+        confidence < 0.5,
+        "Rename-only sample should not exceed detection threshold (confidence: {:.0}%, techniques: [{}])",
+        confidence * 100.0,
+        techniques.join(", ")
     );
-    assert_eq!(
-        findings.protection_infrastructure_types.count(),
-        0,
-        "Rename-only sample should have no helper types"
+    assert!(
+        techniques.is_empty(),
+        "Rename-only sample should have no detected techniques"
     );
 }

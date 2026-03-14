@@ -45,7 +45,7 @@
 //! use dotscope::emulation::runtime::{HookManager, native};
 //!
 //! let manager = HookManager::new();
-//! native::register(&manager);
+//! native::register(&manager).unwrap();
 //!
 //! // VirtualProtect, IsDebuggerPresent, etc. are now hooked
 //! ```
@@ -87,10 +87,13 @@
 //! if the old protection was 0x40 (PAGE_EXECUTE_READWRITE) and skips decryption
 //! if so. By returning 0x20, the decryption path is taken.
 
-use crate::emulation::{
-    memory::MemoryProtection,
-    runtime::{Hook, HookManager, HookPriority, PreHookResult},
-    EmValue,
+use crate::{
+    emulation::{
+        memory::MemoryProtection,
+        runtime::{Hook, HookManager, HookPriority, PreHookResult},
+        EmValue,
+    },
+    Result,
 };
 
 /// Registers all default native P/Invoke hooks with the hook manager.
@@ -123,28 +126,30 @@ use crate::emulation::{
 /// **Process/Thread Handles:**
 /// - `kernel32!GetCurrentProcess`
 /// - `kernel32!GetCurrentThread`
-pub fn register(manager: &HookManager) {
+pub fn register(manager: &HookManager) -> Result<()> {
     // Memory management hooks
-    register_virtual_protect(manager);
-    register_virtual_alloc(manager);
-    register_virtual_free(manager);
+    register_virtual_protect(manager)?;
+    register_virtual_alloc(manager)?;
+    register_virtual_free(manager)?;
 
     // Module loading hooks
-    register_get_module_handle(manager);
-    register_get_proc_address(manager);
-    register_load_library(manager);
+    register_get_module_handle(manager)?;
+    register_get_proc_address(manager)?;
+    register_load_library(manager)?;
 
     // Anti-debug bypass hooks
-    register_is_debugger_present(manager);
-    register_check_remote_debugger_present(manager);
+    register_is_debugger_present(manager)?;
+    register_check_remote_debugger_present(manager)?;
 
     // Process/thread handle hooks
-    register_get_current_process(manager);
-    register_get_current_thread(manager);
+    register_get_current_process(manager)?;
+    register_get_current_thread(manager)?;
+
+    Ok(())
 }
 
 /// Registers the VirtualProtect hook.
-fn register_virtual_protect(manager: &HookManager) {
+fn register_virtual_protect(manager: &HookManager) -> Result<()> {
     manager.register(
         Hook::new("native-virtual-protect")
             .with_priority(HookPriority::HIGH)
@@ -249,11 +254,13 @@ fn register_virtual_protect(manager: &HookManager) {
                 // VirtualProtect returns BOOL (int32), 1 = success
                 PreHookResult::Bypass(Some(EmValue::I32(1)))
             }),
-    );
+    )?;
+
+    Ok(())
 }
 
 /// Registers the VirtualAlloc hook.
-fn register_virtual_alloc(manager: &HookManager) {
+fn register_virtual_alloc(manager: &HookManager) -> Result<()> {
     manager.register(
         Hook::new("native-virtual-alloc")
             .with_priority(HookPriority::HIGH)
@@ -292,11 +299,13 @@ fn register_virtual_alloc(manager: &HookManager) {
                     Err(_) => PreHookResult::Bypass(Some(EmValue::NativeInt(0))),
                 }
             }),
-    );
+    )?;
+
+    Ok(())
 }
 
 /// Registers the VirtualFree hook.
-fn register_virtual_free(manager: &HookManager) {
+fn register_virtual_free(manager: &HookManager) -> Result<()> {
     manager.register(
         Hook::new("native-virtual-free")
             .with_priority(HookPriority::HIGH)
@@ -355,11 +364,13 @@ fn register_virtual_free(manager: &HookManager) {
                 // Return success (we don't actually free memory)
                 PreHookResult::Bypass(Some(EmValue::I32(1)))
             }),
-    );
+    )?;
+
+    Ok(())
 }
 
 /// Registers GetModuleHandle hooks (both A and W variants).
-fn register_get_module_handle(manager: &HookManager) {
+fn register_get_module_handle(manager: &HookManager) -> Result<()> {
     // GetModuleHandleA
     manager.register(
         Hook::new("native-get-module-handle-a")
@@ -383,7 +394,7 @@ fn register_get_module_handle(manager: &HookManager) {
                     PreHookResult::Bypass(Some(EmValue::NativeInt(0x7FFE_0000)))
                 }
             }),
-    );
+    )?;
 
     // GetModuleHandleW
     manager.register(
@@ -404,11 +415,13 @@ fn register_get_module_handle(manager: &HookManager) {
                     PreHookResult::Bypass(Some(EmValue::NativeInt(0x7FFE_0000)))
                 }
             }),
-    );
+    )?;
+
+    Ok(())
 }
 
 /// Registers the GetProcAddress hook.
-fn register_get_proc_address(manager: &HookManager) {
+fn register_get_proc_address(manager: &HookManager) -> Result<()> {
     manager.register(
         Hook::new("native-get-proc-address")
             .with_priority(HookPriority::HIGH)
@@ -418,11 +431,13 @@ fn register_get_proc_address(manager: &HookManager) {
                 // Return a fake function pointer
                 PreHookResult::Bypass(Some(EmValue::NativeInt(0x7FFE_1000)))
             }),
-    );
+    )?;
+
+    Ok(())
 }
 
 /// Registers LoadLibrary hooks (both A and W variants).
-fn register_load_library(manager: &HookManager) {
+fn register_load_library(manager: &HookManager) -> Result<()> {
     // LoadLibraryA
     manager.register(
         Hook::new("native-load-library-a")
@@ -433,7 +448,7 @@ fn register_load_library(manager: &HookManager) {
                 // Return a fake module handle
                 PreHookResult::Bypass(Some(EmValue::NativeInt(0x7FFE_2000)))
             }),
-    );
+    )?;
 
     // LoadLibraryW
     manager.register(
@@ -441,11 +456,13 @@ fn register_load_library(manager: &HookManager) {
             .with_priority(HookPriority::HIGH)
             .match_native("kernel32", "LoadLibraryW")
             .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::NativeInt(0x7FFE_2000)))),
-    );
+    )?;
+
+    Ok(())
 }
 
 /// Registers the IsDebuggerPresent hook.
-fn register_is_debugger_present(manager: &HookManager) {
+fn register_is_debugger_present(manager: &HookManager) -> Result<()> {
     manager.register(
         Hook::new("native-is-debugger-present")
             .with_priority(HookPriority::HIGHEST) // Anti-debug bypass should have highest priority
@@ -455,11 +472,13 @@ fn register_is_debugger_present(manager: &HookManager) {
                 // Return FALSE to indicate no debugger
                 PreHookResult::Bypass(Some(EmValue::I32(0)))
             }),
-    );
+    )?;
+
+    Ok(())
 }
 
 /// Registers the CheckRemoteDebuggerPresent hook.
-fn register_check_remote_debugger_present(manager: &HookManager) {
+fn register_check_remote_debugger_present(manager: &HookManager) -> Result<()> {
     manager.register(
         Hook::new("native-check-remote-debugger-present")
             .with_priority(HookPriority::HIGHEST)
@@ -506,11 +525,13 @@ fn register_check_remote_debugger_present(manager: &HookManager) {
                 // Return TRUE for success
                 PreHookResult::Bypass(Some(EmValue::I32(1)))
             }),
-    );
+    )?;
+
+    Ok(())
 }
 
 /// Registers the GetCurrentProcess hook.
-fn register_get_current_process(manager: &HookManager) {
+fn register_get_current_process(manager: &HookManager) -> Result<()> {
     manager.register(
         Hook::new("native-get-current-process")
             .with_priority(HookPriority::HIGH)
@@ -520,11 +541,13 @@ fn register_get_current_process(manager: &HookManager) {
                 // Return pseudo-handle -1 (0xFFFFFFFFFFFFFFFF)
                 PreHookResult::Bypass(Some(EmValue::NativeInt(-1)))
             }),
-    );
+    )?;
+
+    Ok(())
 }
 
 /// Registers the GetCurrentThread hook.
-fn register_get_current_thread(manager: &HookManager) {
+fn register_get_current_thread(manager: &HookManager) -> Result<()> {
     manager.register(
         Hook::new("native-get-current-thread")
             .with_priority(HookPriority::HIGH)
@@ -534,7 +557,9 @@ fn register_get_current_thread(manager: &HookManager) {
                 // Return pseudo-handle -2 (0xFFFFFFFFFFFFFFFE)
                 PreHookResult::Bypass(Some(EmValue::NativeInt(-2)))
             }),
-    );
+    )?;
+
+    Ok(())
 }
 
 #[cfg(test)]
@@ -557,7 +582,7 @@ mod tests {
     #[test]
     fn test_native_hooks_registered() {
         let manager = HookManager::new();
-        register(&manager);
+        register(&manager).unwrap();
 
         // Should have at least 12 hooks (one for each function, with A/W variants)
         assert!(manager.len() >= 12);
@@ -566,7 +591,7 @@ mod tests {
     #[test]
     fn test_is_debugger_present_hook() {
         let manager = HookManager::new();
-        register(&manager);
+        register(&manager).unwrap();
 
         let mut thread = create_test_thread();
         let context = create_native_context("kernel32", "IsDebuggerPresent").with_args(&[]);
@@ -581,7 +606,7 @@ mod tests {
     #[test]
     fn test_get_current_process_hook() {
         let manager = HookManager::new();
-        register(&manager);
+        register(&manager).unwrap();
 
         let mut thread = create_test_thread();
         let context = create_native_context("kernel32", "GetCurrentProcess").with_args(&[]);
@@ -596,7 +621,7 @@ mod tests {
     #[test]
     fn test_get_module_handle_null() {
         let manager = HookManager::new();
-        register(&manager);
+        register(&manager).unwrap();
 
         let mut thread = create_test_thread();
         let args = [EmValue::NativeInt(0)];

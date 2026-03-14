@@ -444,6 +444,7 @@ impl ExceptionHandlerFlags {
 ///
 /// `ExceptionHandler` instances are immutable and safe to share across threads.
 /// The optional exception type reference uses a reference-counted smart pointer.
+#[derive(Clone)]
 pub struct ExceptionHandler {
     /// Exception handler type flags (EXCEPTION, FILTER, FINALLY, or FAULT).
     ///
@@ -522,6 +523,20 @@ pub struct ExceptionHandler {
     /// For type-safe access, use the [`get_filter_offset()`][Self::get_filter_offset] and
     /// [`get_class_token()`][Self::get_class_token] accessor methods.
     pub filter_offset: u32,
+}
+
+impl std::fmt::Debug for ExceptionHandler {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_struct("ExceptionHandler")
+            .field("flags", &self.flags)
+            .field("try_offset", &self.try_offset)
+            .field("try_length", &self.try_length)
+            .field("handler_offset", &self.handler_offset)
+            .field("handler_length", &self.handler_length)
+            .field("handler", &self.handler.as_ref().map(|t| t.token))
+            .field("filter_offset", &self.filter_offset)
+            .finish()
+    }
 }
 
 impl ExceptionHandler {

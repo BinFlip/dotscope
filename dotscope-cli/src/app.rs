@@ -297,5 +297,11 @@ pub enum Command {
         /// Write detailed JSON report.
         #[arg(long, value_name = "FILE")]
         report: Option<PathBuf>,
+
+        /// Use LLM-powered smart renaming with a local GGUF model.
+        /// Requires compilation with --features smart-rename.
+        #[cfg(feature = "smart-rename")]
+        #[arg(long, value_name = "MODEL")]
+        rename_ai: Option<PathBuf>,
     },
 }

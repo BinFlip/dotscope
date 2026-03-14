@@ -10,7 +10,10 @@
 //! BCL static field (via MemberRef), it needs to provide a value. This module
 //! provides known values for commonly used BCL static fields.
 
-use crate::emulation::{memory::ManagedHeap, EmValue};
+use crate::{
+    assembly::{INSTRUCTIONS, INSTRUCTIONS_FE, INSTRUCTIONS_FE_MAX, INSTRUCTIONS_MAX},
+    emulation::{memory::ManagedHeap, tokens, EmValue},
+};
 
 /// Resolves a known BCL static field value by namespace, type, and field name.
 ///
@@ -128,8 +131,69 @@ pub fn get_bcl_static_field(
         ("System", "Decimal", "One") => Some(EmValue::I64(1)),
         ("System", "Decimal", "MinusOne") => Some(EmValue::I64(-1)),
 
+        // ── System.Threading.Tasks.Task ────────────────────────────
+        ("System.Threading.Tasks", "Task", "CompletedTask") => heap
+            .alloc_object(tokens::system::TASK)
+            .ok()
+            .map(EmValue::ObjectRef),
+
+        // ── System.Reflection.Emit.OpCodes ───────────────────────
+        ("System.Reflection.Emit", "OpCodes", name) => {
+            opcode_value_from_field_name(name).map(|value| EmValue::ValueType {
+                type_token: tokens::system::OPCODE,
+                fields: vec![EmValue::I32(i32::from(value))],
+            })
+        }
+
         _ => None,
     }
+}
+
+/// Maps a .NET `OpCodes` field name (e.g. `"Ldarg_0"`) to the CIL opcode u16 value.
+///
+/// The mapping works by converting the PascalCase_Underscore field name to the
+/// lowercase dot-separated mnemonic used in the instruction tables, then searching
+/// the `INSTRUCTIONS` and `INSTRUCTIONS_FE` tables for a match.
+fn opcode_value_from_field_name(field_name: &str) -> Option<u16> {
+    // Handle special cases where .NET field names don't follow the simple conversion.
+    // Prefix instructions have a trailing dot in their mnemonic but not in the field name.
+    let mnemonic: String = match field_name {
+        "Tailcall" => "tail.".into(),
+        "Volatile" => "volatile.".into(),
+        "Unaligned" => "unaligned.".into(),
+        "Constrained" => "constrained.".into(),
+        "Readonly" => "readonly.".into(),
+        _ => {
+            // Convert PascalCase_Underscore to lowercase dot-separated mnemonic:
+            // "Ldarg_0" → "ldarg.0", "Br_S" → "br.s", "Ldc_I4_1" → "ldc.i4.1"
+            field_name
+                .chars()
+                .map(|c| {
+                    if c == '_' {
+                        '.'
+                    } else {
+                        c.to_ascii_lowercase()
+                    }
+                })
+                .collect()
+        }
+    };
+
+    // Search single-byte opcode table
+    for (idx, instr) in INSTRUCTIONS.iter().enumerate() {
+        if idx < usize::from(INSTRUCTIONS_MAX) && instr.instr == mnemonic {
+            return Some(idx as u16);
+        }
+    }
+
+    // Search two-byte (0xFE prefix) opcode table
+    for (idx, instr) in INSTRUCTIONS_FE.iter().enumerate() {
+        if idx < usize::from(INSTRUCTIONS_FE_MAX) && instr.instr == mnemonic {
+            return Some(0xFE00 | idx as u16);
+        }
+    }
+
+    None
 }
 
 #[cfg(test)]

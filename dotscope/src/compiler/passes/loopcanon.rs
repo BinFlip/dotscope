@@ -59,7 +59,7 @@
 //! - Merging phi operands when unifying latches
 //! - Creating new phi nodes where necessary to preserve value flow
 
-use std::{collections::HashMap, sync::Arc};
+use std::collections::HashMap;
 
 use crate::{
     analysis::{
@@ -482,7 +482,7 @@ impl SsaPass for LoopCanonicalizationPass {
         ssa: &mut SsaFunction,
         method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &Arc<CilObject>,
+        _assembly: &CilObject,
     ) -> Result<bool> {
         // Skip very small functions (no loops possible)
         if ssa.block_count() < 2 {
@@ -505,11 +505,9 @@ impl SsaPass for LoopCanonicalizationPass {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use crate::{
         analysis::{SsaFunctionBuilder, SsaLoopAnalysis},
-        compiler::EventLog,
+        compiler::{passes::loopcanon::LoopCanonicalizationPass, EventLog},
         metadata::token::Token,
     };
 

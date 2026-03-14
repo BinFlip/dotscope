@@ -281,6 +281,11 @@ pub struct WriteContext<'a> {
     /// Original methods keep their relative positions but the section base may shift.
     pub original_method_rva_delta: i32,
 
+    /// Mapping from original ManifestResource offset_field values to new offsets
+    /// after resource data compaction. When ManifestResource rows are deleted,
+    /// the resource data section is compacted and surviving entries get new offsets.
+    pub resource_offset_remap: HashMap<u32, u32>,
+
     /// Heap offset remapping from streaming writes. When heaps are written with
     /// deduplication, original offsets map to new offsets. Used to patch table
     /// rows that reference heap entries.
@@ -477,6 +482,7 @@ impl<'a> WriteContext<'a> {
             method_body_rva_map: HashMap::new(),
             field_data_rva_map: HashMap::new(),
             original_method_rva_delta: 0,
+            resource_offset_remap: HashMap::new(),
             heap_remapping: HeapRemapping::default(),
             token_remapping: HashMap::new(),
             typedef_rid_remap: HashMap::new(),
@@ -798,7 +804,10 @@ impl std::io::Write for WriteContext<'_> {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use crate::{
+        cilassembly::writer::{context::SectionCopyInfo, heaps::HeapRemapping},
+        file::pe::SectionTable,
+    };
 
     #[test]
     fn test_heap_remapping_has_changes() {

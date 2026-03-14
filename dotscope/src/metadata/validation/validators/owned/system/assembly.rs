@@ -498,7 +498,7 @@ impl OwnedAssemblyValidator {
         for type_entry in context.target_assembly_types() {
             let type_ref = type_entry.as_ref();
             // Only validate external type references
-            if let Some(_external) = type_ref.get_external() {
+            if let Some(_external) = type_ref.external() {
                 // Validate type reference has valid name
                 if type_ref.name.is_empty() {
                     return Err(Error::ValidationOwnedFailed {
