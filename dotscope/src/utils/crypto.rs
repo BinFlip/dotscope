@@ -22,6 +22,9 @@
 //! - **DES** (56-bit CBC mode with PKCS7 padding)
 //! - **TripleDES** (168-bit CBC mode with PKCS7 padding)
 
+#[cfg(feature = "emulation")]
+use std::iter::repeat_n;
+
 use aes::Aes128;
 use cbc::cipher::block_padding::{NoPadding, Pkcs7};
 use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyInit, KeyIvInit};
@@ -32,9 +35,9 @@ use ecb::{Decryptor as EcbDecryptor, Encryptor as EcbEncryptor};
 use hmac::{Hmac, Mac};
 #[cfg(feature = "legacy-crypto")]
 use md5::{Digest as Md5Digest, Md5};
-use pbkdf2::pbkdf2_hmac;
 #[cfg(feature = "emulation")]
-use rsa::{pkcs1v15::Pkcs1v15Sign, RsaPublicKey};
+use num_bigint::BigUint;
+use pbkdf2::pbkdf2_hmac;
 #[cfg(feature = "legacy-crypto")]
 use sha1::{Digest as Sha1Digest, Sha1};
 use sha2::{Digest as Sha2Digest, Sha256, Sha384, Sha512};
@@ -608,7 +611,13 @@ fn tdes_ecb_transform(key: &[u8], is_encryptor: bool, data: &[u8], padding: u8) 
     ecb_transform::<TdesEcbEnc, TdesEcbDec>(key, 8, is_encryptor, data, padding)
 }
 
-/// Verifies an RSA PKCS#1 v1.5 signature against a hash.
+// TODO: Replace this manual implementation with the `rsa` crate once its Marvin Attack
+// CVE (RUSTSEC-2023-0071) is fixed in a stable release (expected in rsa 0.10.0).
+/// Verifies an RSA PKCS#1 v1.5 signature against a pre-computed hash.
+///
+/// Implements RSASSA-PKCS1-v1_5 verification per RFC 8017 §8.2.2 using raw
+/// modular exponentiation, avoiding the `rsa` crate (which has an unpatched
+/// Marvin Attack CVE on PKCS#1 v1.5 decryption).
 ///
 /// Used by the emulator to implement `RSACryptoServiceProvider.VerifyHash()`.
 ///
@@ -626,7 +635,7 @@ fn tdes_ecb_transform(key: &[u8], is_encryptor: bool, data: &[u8], padding: u8) 
 ///
 /// # Feature Requirements
 ///
-/// This function requires the `emulation` feature (which brings in the `rsa` crate).
+/// This function requires the `emulation` feature.
 #[cfg(feature = "emulation")]
 pub fn verify_rsa_pkcs1v15(
     modulus: &[u8],
@@ -635,29 +644,65 @@ pub fn verify_rsa_pkcs1v15(
     signature: &[u8],
     hash_algorithm: &str,
 ) -> bool {
-    let n = rsa::BigUint::from_bytes_be(modulus);
-    let e = rsa::BigUint::from_bytes_be(exponent);
-
-    let pub_key = match RsaPublicKey::new(n, e) {
-        Ok(k) => k,
-        Err(_) => return false,
-    };
-
-    let alg = hash_algorithm.to_uppercase();
-    let alg_ref = alg.as_str();
-
-    // Map OIDs and algorithm names to the appropriate PKCS#1 v1.5 scheme.
-    // RsaPublicKey::verify takes a pre-computed hash, not raw data.
-    let scheme = match alg_ref {
-        "SHA256" | "2.16.840.1.101.3.4.2.1" => Pkcs1v15Sign::new::<sha2::Sha256>(),
-        "SHA384" | "2.16.840.1.101.3.4.2.2" => Pkcs1v15Sign::new::<sha2::Sha384>(),
-        "SHA512" | "2.16.840.1.101.3.4.2.3" => Pkcs1v15Sign::new::<sha2::Sha512>(),
+    // DER-encoded DigestInfo prefixes per RFC 8017 §9.2 Note 1.
+    let digest_prefix: &[u8] = match hash_algorithm.to_uppercase().as_str() {
+        "SHA256" | "2.16.840.1.101.3.4.2.1" => &[
+            0x30, 0x31, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x01, 0x05, 0x00, 0x04, 0x20,
+        ],
+        "SHA384" | "2.16.840.1.101.3.4.2.2" => &[
+            0x30, 0x41, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x02, 0x05, 0x00, 0x04, 0x30,
+        ],
+        "SHA512" | "2.16.840.1.101.3.4.2.3" => &[
+            0x30, 0x51, 0x30, 0x0d, 0x06, 0x09, 0x60, 0x86, 0x48, 0x01, 0x65, 0x03, 0x04, 0x02,
+            0x03, 0x05, 0x00, 0x04, 0x40,
+        ],
         #[cfg(feature = "legacy-crypto")]
-        "SHA1" | "1.3.14.3.2.26" => Pkcs1v15Sign::new::<sha1::Sha1>(),
+        "SHA1" | "1.3.14.3.2.26" => &[
+            0x30, 0x21, 0x30, 0x09, 0x06, 0x05, 0x2b, 0x0e, 0x03, 0x02, 0x1a, 0x05, 0x00, 0x04,
+            0x14,
+        ],
         _ => return false,
     };
 
-    pub_key.verify(scheme, hash, signature).is_ok()
+    let n = BigUint::from_bytes_be(modulus);
+    let e = BigUint::from_bytes_be(exponent);
+    let s = BigUint::from_bytes_be(signature);
+
+    // RFC 8017 §5.2.2: RSAVP1 — m = s^e mod n
+    if s >= n {
+        return false;
+    }
+    let m = s.modpow(&e, &n);
+
+    // Convert to big-endian bytes, zero-padded to modulus length.
+    let k = modulus.len();
+    let m_bytes = m.to_bytes_be();
+    if m_bytes.len() > k {
+        return false;
+    }
+    let mut em = vec![0u8; k];
+    em[k - m_bytes.len()..].copy_from_slice(&m_bytes);
+
+    // RFC 8017 §9.2: EMSA-PKCS1-v1.5 verification
+    // Expected: 0x00 0x01 [0xFF padding] 0x00 [DigestInfo prefix] [hash]
+    let t_len = digest_prefix.len() + hash.len();
+    if k < t_len + 11 {
+        return false;
+    }
+
+    // Build expected encoding and compare in constant position.
+    let ps_len = k - t_len - 3;
+    let mut expected = Vec::with_capacity(k);
+    expected.push(0x00);
+    expected.push(0x01);
+    expected.extend(repeat_n(0xFF, ps_len));
+    expected.push(0x00);
+    expected.extend_from_slice(digest_prefix);
+    expected.extend_from_slice(hash);
+
+    em == expected
 }
 
 #[cfg(test)]
