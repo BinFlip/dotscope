@@ -41,9 +41,12 @@
 //!   case 3 -> Exit (has Return)
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use crate::analysis::{InductionVar, LoopInfo, SsaFunction, SsaOp, SsaVarId};
+use crate::{
+    analysis::{cfg::InductionVar, LoopInfo, SsaFunction, SsaOp, SsaVarId},
+    utils::BitSet,
+};
 
 /// Semantic role of a basic block.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -218,7 +221,7 @@ pub struct SemanticAnalyzer<'a> {
     /// Cache of block semantics.
     block_cache: HashMap<usize, BlockSemantics>,
     /// Known dispatcher blocks.
-    dispatcher_blocks: HashSet<usize>,
+    dispatcher_blocks: BitSet,
 }
 
 impl<'a> SemanticAnalyzer<'a> {
@@ -228,13 +231,15 @@ impl<'a> SemanticAnalyzer<'a> {
         Self {
             ssa,
             block_cache: HashMap::new(),
-            dispatcher_blocks: HashSet::new(),
+            dispatcher_blocks: BitSet::new(ssa.block_count().max(1)),
         }
     }
 
     /// Marks a block as a known dispatcher.
     pub fn mark_dispatcher(&mut self, block: usize) {
-        self.dispatcher_blocks.insert(block);
+        if block < self.dispatcher_blocks.len() {
+            self.dispatcher_blocks.insert(block);
+        }
     }
 
     /// Analyzes a single block and returns its semantic information.
@@ -255,7 +260,7 @@ impl<'a> SemanticAnalyzer<'a> {
         };
 
         // Check if it's a known dispatcher
-        if self.dispatcher_blocks.contains(&block_idx) {
+        if block_idx < self.dispatcher_blocks.len() && self.dispatcher_blocks.contains(block_idx) {
             semantics.role = BlockRole::Dispatcher;
             semantics.confidence = 1.0;
             return semantics;
@@ -441,20 +446,7 @@ impl<'a> SemanticAnalyzer<'a> {
 
     /// Gets the constant value of a variable if it's defined by a Const instruction.
     fn get_constant_value(&self, var: SsaVarId) -> Option<i64> {
-        let variable = self.ssa.variable(var)?;
-        let def_site = variable.def_site();
-
-        if def_site.is_phi() {
-            return None;
-        }
-
-        let block = self.ssa.block(def_site.block)?;
-        let instr = block.instruction(def_site.instruction?)?;
-
-        match instr.op() {
-            SsaOp::Const { value, .. } => value.as_i64(),
-            _ => None,
-        }
+        self.ssa.try_constant_value(var).and_then(|v| v.as_i64())
     }
 
     /// Analyzes semantic structure of a loop.
@@ -468,15 +460,17 @@ impl<'a> SemanticAnalyzer<'a> {
         semantics.induction_vars = loop_info.find_induction_vars(self.ssa);
 
         // Collect induction variable update blocks
-        let iv_update_blocks: HashSet<_> = semantics
-            .induction_vars
-            .iter()
-            .map(|iv| iv.update_block.index())
-            .collect();
+        let block_count = self.ssa.block_count().max(1);
+        let mut iv_update_blocks = BitSet::new(block_count);
+        for iv in &semantics.induction_vars {
+            let idx = iv.update_block.index();
+            if idx < block_count {
+                iv_update_blocks.insert(idx);
+            }
+        }
 
         // Classify each block in the loop
-        for &block_id in &loop_info.body {
-            let block_idx = block_id.index();
+        for block_idx in loop_info.body.iter() {
             let block_sem = self.analyze_block(block_idx);
 
             match block_sem.role {
@@ -500,7 +494,7 @@ impl<'a> SemanticAnalyzer<'a> {
                 }
                 BlockRole::Entry | BlockRole::Unknown => {
                     // Classify based on induction variable updates
-                    if iv_update_blocks.contains(&block_idx) {
+                    if block_idx < block_count && iv_update_blocks.contains(block_idx) {
                         semantics.latch_blocks.push(block_idx);
                     } else if block_sem.has_side_effects {
                         semantics.body_blocks.push(block_idx);
@@ -548,17 +542,21 @@ impl<'a> SemanticAnalyzer<'a> {
         semantics: &LoopSemantics,
     ) -> Vec<usize> {
         let mut order = Vec::new();
+        let block_count = self.ssa.block_count().max(1);
+        let mut seen = BitSet::new(block_count);
 
         // 1. Init blocks first (in order found)
         for &init in &semantics.init_blocks {
-            if !order.contains(&init) {
+            if init < block_count && !seen.contains(init) {
+                seen.insert(init);
                 order.push(init);
             }
         }
 
         // 2. Condition blocks
         for &cond in &semantics.condition_blocks {
-            if !order.contains(&cond) {
+            if cond < block_count && !seen.contains(cond) {
+                seen.insert(cond);
                 order.push(cond);
             }
         }
@@ -566,14 +564,16 @@ impl<'a> SemanticAnalyzer<'a> {
         // 3. Body blocks (order by trying to follow control flow)
         let body_order = self.order_body_blocks(loop_info, &semantics.body_blocks);
         for body in body_order {
-            if !order.contains(&body) {
+            if body < block_count && !seen.contains(body) {
+                seen.insert(body);
                 order.push(body);
             }
         }
 
         // 4. Latch blocks last
         for &latch in &semantics.latch_blocks {
-            if !order.contains(&latch) {
+            if latch < block_count && !seen.contains(latch) {
+                seen.insert(latch);
                 order.push(latch);
             }
         }
@@ -587,15 +587,21 @@ impl<'a> SemanticAnalyzer<'a> {
             return Vec::new();
         }
 
-        let body_set: HashSet<_> = body_blocks.iter().copied().collect();
+        let block_count = self.ssa.block_count().max(1);
+        let mut body_set = BitSet::new(block_count);
+        for &b in body_blocks {
+            if b < block_count {
+                body_set.insert(b);
+            }
+        }
         let mut ordered = Vec::new();
-        let mut visited = HashSet::new();
+        let mut visited = BitSet::new(block_count);
 
         // Start from condition block's true target if it's a body block
         if let Some(cond) = loop_info.find_condition_in_body(self.ssa) {
             if let Some(block) = self.ssa.block(cond.index()) {
                 if let Some(SsaOp::Branch { true_target, .. }) = block.terminator_op() {
-                    if body_set.contains(true_target) {
+                    if *true_target < block_count && body_set.contains(*true_target) {
                         self.dfs_order(*true_target, &body_set, &mut visited, &mut ordered);
                     }
                 }
@@ -604,7 +610,7 @@ impl<'a> SemanticAnalyzer<'a> {
 
         // Add any remaining body blocks
         for &block in body_blocks {
-            if !visited.contains(&block) {
+            if block < block_count && !visited.contains(block) {
                 self.dfs_order(block, &body_set, &mut visited, &mut ordered);
             }
         }
@@ -616,11 +622,11 @@ impl<'a> SemanticAnalyzer<'a> {
     fn dfs_order(
         &self,
         block: usize,
-        allowed: &HashSet<usize>,
-        visited: &mut HashSet<usize>,
+        allowed: &BitSet,
+        visited: &mut BitSet,
         order: &mut Vec<usize>,
     ) {
-        if !allowed.contains(&block) || visited.contains(&block) {
+        if block >= allowed.len() || !allowed.contains(block) || visited.contains(block) {
             return;
         }
 

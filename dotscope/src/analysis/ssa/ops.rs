@@ -2616,6 +2616,7 @@ impl SsaOp {
                 ConstValue::F32(_) => SsaType::F32,
                 ConstValue::F64(_) => SsaType::F64,
                 ConstValue::String(_) | ConstValue::DecryptedString(_) => SsaType::String,
+                ConstValue::DecryptedArray { .. } => SsaType::Object,
                 ConstValue::Null => SsaType::Null,
                 ConstValue::True | ConstValue::False => SsaType::Bool,
                 ConstValue::Type(_) | ConstValue::MethodHandle(_) | ConstValue::FieldHandle(_) => {

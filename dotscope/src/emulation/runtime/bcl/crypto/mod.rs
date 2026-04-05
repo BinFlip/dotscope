@@ -64,7 +64,7 @@
 //! | `RijndaelManaged` | `.ctor`, `CreateDecryptor()`, `CreateEncryptor()` |
 //! | `DES` | `Create()` |
 //! | `TripleDES` | `Create()` |
-//! | `SymmetricAlgorithm` | `set_Key`, `set_IV`, `set_Mode`, `set_Padding` |
+//! | `SymmetricAlgorithm` | `get_Key`, `get_IV`, `set_Key`, `set_IV`, `set_Mode`, `set_Padding` |
 //!
 //! ## Transforms and Streams
 //!

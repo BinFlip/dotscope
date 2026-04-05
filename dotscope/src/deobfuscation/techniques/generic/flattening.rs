@@ -1,4 +1,4 @@
-//! Generic control flow flattening detection and reconstruction.
+//! Generic control flow flattening detection.
 //!
 //! Detects switch-based control flow flattening (CFF) dispatchers — the most
 //! common form of control flow obfuscation. In CFF, the original control flow
@@ -7,24 +7,48 @@
 //!
 //! # Detection
 //!
-//! Scans methods for switch-based dispatcher patterns: high fan-out switch
-//! blocks with state variables and loop-switch structures. Counts dispatcher
-//! methods and produces a confidence score.
+//! Detection is fully SSA-based via [`CffDetector`] — the same structural
+//! analysis engine used by [`CffReconstructionPass`]. This gives precise,
+//! junk-immune detection with confidence scoring, dominance analysis, and
+//! state variable identification. Detected dispatchers are stored in
+//! [`FlatteningFindings`] so the reconstruction pass can consume them directly
+//! without re-running detection.
+//!
+//! [`CffDetector`]: crate::deobfuscation::passes::CffDetector
+//! [`CffReconstructionPass`]: crate::deobfuscation::passes::CffReconstructionPass
 //!
 //! # Passes
 //!
-//! This technique provides detection and attribution only. The
-//! [`CffReconstructionPass`](crate::deobfuscation::CffReconstructionPass)
-//! is an infrastructure pass added by the engine's pass scheduler for all
-//! pipelines, since CFF reconstruction benefits any obfuscated assembly
-//! regardless of which obfuscator was detected.
+//! Creates a [`CffReconstructionPass`] via `create_pass()`, configured with
+//! unflattening parameters from the engine config and pre-detected dispatchers
+//! from the detection phase.
+
+use std::{collections::HashMap, sync::Arc};
 
 use crate::{
-    deobfuscation::techniques::{Detection, Evidence, PassPhase, Technique, TechniqueCategory},
+    compiler::{PassPhase, SsaPass},
+    deobfuscation::{
+        context::AnalysisContext,
+        passes::{CffDetector, CffReconstructionPass, Dispatcher, UnflattenConfig},
+        techniques::{Detection, Evidence, Technique, TechniqueCategory},
+    },
+    metadata::token::Token,
     CilObject,
 };
 
-/// Detects and reconstructs control flow flattening (CFF/switch-based dispatchers).
+/// Findings from CFF detection.
+///
+/// Contains the pre-computed dispatcher analysis for each method where CFF
+/// was detected. The [`CffReconstructionPass`](crate::deobfuscation::passes::CffReconstructionPass)
+/// can consume these directly instead of re-running detection.
+#[derive(Debug)]
+pub struct FlatteningFindings {
+    /// Pre-detected dispatchers per method token, sorted by confidence (highest first).
+    /// Only includes dispatchers that passed the confidence threshold.
+    pub dispatchers: HashMap<Token, Vec<Dispatcher>>,
+}
+
+/// Detects control flow flattening (CFF/switch-based dispatchers).
 pub struct GenericFlattening;
 
 impl Technique for GenericFlattening {
@@ -44,81 +68,112 @@ impl Technique for GenericFlattening {
         &["generic.predicates"]
     }
 
-    fn detect(&self, assembly: &CilObject) -> Detection {
-        let mut dispatcher_count = 0usize;
+    fn detect(&self, _assembly: &CilObject) -> Detection {
+        // IL-level detection is not used — all detection happens in detect_ssa()
+        // using CffDetector's structural analysis (dominance, SCCs, back-edges,
+        // state variable identification, confidence scoring).
+        Detection::new_empty()
+    }
 
-        for method_entry in assembly.methods() {
-            let method = method_entry.value();
-            let instructions: Vec<_> = method.instructions().collect();
+    fn detect_ssa(&self, ctx: &AnalysisContext, _assembly: &CilObject) -> Detection {
+        let min_confidence = UnflattenConfig::default().min_confidence;
+        let mut dispatchers_by_method: HashMap<Token, Vec<Dispatcher>> = HashMap::new();
+        let mut total_dispatchers = 0usize;
 
-            if instructions.len() < 10 {
-                continue;
-            }
+        for entry in ctx.ssa_functions.iter() {
+            let method_token = *entry.key();
+            let ssa = entry.value();
 
-            // Look for switch instructions with high fan-out (many cases)
-            let mut has_switch = false;
-            let mut max_switch_targets = 0usize;
+            // Use the same CffDetector that CffReconstructionPass uses.
+            // This gives us full structural analysis with confidence scoring,
+            // dominance verification, state variable identification, etc.
+            let mut detector = CffDetector::new(ssa);
+            let all_dispatchers = detector.detect_all_dispatchers();
 
-            for instr in &instructions {
-                if instr.mnemonic == "switch" {
-                    has_switch = true;
-                    // Count targets from operand
-                    let targets = instr.get_targets();
-                    max_switch_targets = max_switch_targets.max(targets.len());
-                }
-            }
+            // Two-tier confidence filtering: high-confidence dispatchers must
+            // meet the normal threshold. When a method HAS high-confidence CFF,
+            // also include lower-confidence dispatchers (handler CFF in exception
+            // handlers scores lower because it dominates fewer blocks). This
+            // avoids leaving handler CFF switches unresolved while the main-body
+            // CFF is reconstructed.
+            let has_high_confidence = all_dispatchers
+                .iter()
+                .any(|d| d.confidence >= min_confidence);
+            let effective_threshold = if has_high_confidence {
+                min_confidence * 0.75
+            } else {
+                min_confidence
+            };
+            let method_dispatchers: Vec<Dispatcher> = all_dispatchers
+                .into_iter()
+                .filter(|d| d.confidence >= effective_threshold)
+                .collect();
 
-            // A dispatcher typically has >= 4 switch targets in a loop structure
-            if has_switch && max_switch_targets >= 4 {
-                // Check for loop pattern: backwards branch somewhere after the switch
-                let has_backward_branch = instructions.iter().any(|instr| {
-                    if instr.mnemonic.starts_with("br") {
-                        if let Some(target) = instr.get_branch_target() {
-                            return target < instr.offset;
-                        }
-                    }
-                    false
-                });
-
-                if has_backward_branch {
-                    dispatcher_count += 1;
-                }
+            if !method_dispatchers.is_empty() {
+                total_dispatchers += method_dispatchers.len();
+                dispatchers_by_method.insert(method_token, method_dispatchers);
             }
         }
 
-        if dispatcher_count == 0 {
+        if dispatchers_by_method.is_empty() {
             return Detection::new_empty();
         }
 
+        let method_count = dispatchers_by_method.len();
+        let findings = FlatteningFindings {
+            dispatchers: dispatchers_by_method,
+        };
+
         Detection::new_detected(
             vec![Evidence::Structural(format!(
-                "{dispatcher_count} methods with switch-based dispatcher patterns"
+                "{total_dispatchers} CFF dispatchers in {method_count} methods"
             ))],
-            None,
+            Some(Box::new(findings) as Box<dyn std::any::Any + Send + Sync>),
         )
     }
 
     fn ssa_phase(&self) -> Option<PassPhase> {
         Some(PassPhase::Structure)
     }
+
+    fn create_pass(
+        &self,
+        ctx: &AnalysisContext,
+        detection: &Detection,
+        _assembly: &Arc<CilObject>,
+    ) -> Vec<Box<dyn SsaPass>> {
+        let cff_config = UnflattenConfig {
+            max_states: ctx.config.unflattening.max_states_per_case,
+            max_tree_depth: ctx.config.unflattening.max_trace_iterations,
+            ..UnflattenConfig::default()
+        };
+
+        let mut cff_pass = CffReconstructionPass::new(ctx, cff_config);
+        if let Some(findings) = detection.findings::<FlatteningFindings>() {
+            cff_pass = cff_pass.with_pre_detected(findings.dispatchers.clone());
+        }
+
+        vec![Box::new(cff_pass)]
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use crate::deobfuscation::techniques::Technique;
-    use crate::test::helpers::load_sample;
+    use crate::{deobfuscation::techniques::Technique, test::helpers::load_sample};
 
-    /// Verify detection on a sample with switch-based control flow obfuscation.
+    /// Verify that IL-level detect() is a no-op (detection is SSA-based).
     ///
-    /// ConfuserEx control flow samples use switch dispatchers that the generic
-    /// heuristic (>= 4 switch targets + backward branch) may or may not catch
-    /// depending on the number of methods and switch fan-out in the test app.
-    /// This test verifies the detection runs without error.
+    /// Positive detection is tested through the full pipeline in integration
+    /// tests and through `engine.detect()` which runs both IL + SSA phases.
     #[test]
-    fn test_detect_no_panic_on_obfuscated() {
+    fn test_detect_is_noop() {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_controlflow.exe");
         let technique = super::GenericFlattening;
-        let _detection = technique.detect(&asm);
+        let detection = technique.detect(&asm);
+        assert!(
+            !detection.is_detected(),
+            "IL-level detect() should be a no-op — detection happens in detect_ssa()"
+        );
     }
 
     #[test]
@@ -126,6 +181,6 @@ mod tests {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericFlattening;
         let detection = technique.detect(&asm);
-        assert!(!detection.detected);
+        assert!(!detection.is_detected());
     }
 }

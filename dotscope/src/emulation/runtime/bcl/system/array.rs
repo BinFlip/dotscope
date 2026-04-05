@@ -150,6 +150,13 @@ pub fn register(manager: &HookManager) -> Result<()> {
             .pre(array_index_of_pre),
     )?;
 
+    // Static factory
+    manager.register(
+        Hook::new("System.Array.CreateInstance")
+            .match_name("System", "Array", "CreateInstance")
+            .pre(array_create_instance_pre),
+    )?;
+
     // Buffer operations
     manager.register(
         Hook::new("System.Buffer.BlockCopy")
@@ -821,6 +828,58 @@ fn buffer_byte_length_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
     PreHookResult::Bypass(Some(to_i32_saturating(length).into()))
 }
 
+/// Hook for `System.Array.CreateInstance` static method.
+///
+/// # Handled Overloads
+///
+/// - `Array.CreateInstance(Type, int) -> Array`
+/// - `Array.CreateInstance(Type, int[]) -> Array` (only 1D)
+///
+/// Creates a new single-dimensional, zero-based array of the specified type and length.
+/// The element type is resolved from the `Type` argument via the emulation thread's
+/// type token resolution, which uses the assembly's metadata for accurate mapping.
+fn array_create_instance_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    if ctx.args.len() < 2 {
+        return PreHookResult::Continue;
+    }
+
+    // arg[1] = int length (or int[] for multi-dimensional, which we only handle for 1D)
+    let length = match &ctx.args[1] {
+        EmValue::I32(n) => *n as usize,
+        EmValue::I64(n) => *n as usize,
+        EmValue::NativeInt(n) => *n as usize,
+        _ => return PreHookResult::Continue,
+    };
+
+    // arg[0] = Type (ObjectRef to ReflectionType on the heap)
+    // Resolve the element type through the proper metadata path
+    let element_flavor = match &ctx.args[0] {
+        EmValue::ObjectRef(href) => {
+            match thread.heap().get_reflection_type_token(*href) {
+                Ok(Some(type_token)) => {
+                    // Use the thread's type resolution which has full assembly context
+                    thread
+                        .type_token_to_cil_flavor(type_token)
+                        .unwrap_or(CilFlavor::Object)
+                }
+                _ => return PreHookResult::Continue,
+            }
+        }
+        other => {
+            log::debug!(
+                "Array.CreateInstance: Type argument is {:?}, not ObjectRef — falling through",
+                other
+            );
+            return PreHookResult::Continue;
+        }
+    };
+
+    match thread.heap_mut().alloc_array(element_flavor, length) {
+        Ok(array_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(array_ref))),
+        Err(_) => PreHookResult::Continue,
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -834,7 +893,7 @@ mod tests {
     fn test_register_hooks() {
         let manager = HookManager::new();
         register(&manager).unwrap();
-        assert_eq!(manager.len(), 13);
+        assert_eq!(manager.len(), 14);
     }
 
     #[test]

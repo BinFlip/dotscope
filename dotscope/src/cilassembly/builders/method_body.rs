@@ -9,7 +9,10 @@ use crate::{
     assembly::InstructionAssembler,
     cilassembly::CilAssembly,
     metadata::{
-        method::{encode_exception_handlers, ExceptionHandler, ExceptionHandlerFlags},
+        method::{
+            encode_exception_handlers, encode_method_body_header, ExceptionHandler,
+            ExceptionHandlerFlags,
+        },
         signatures::{
             encode_local_var_signature, SignatureLocalVariable, SignatureLocalVariables,
             TypeSignature,
@@ -42,8 +45,6 @@ struct LabeledExceptionHandler {
 
 /// Type alias for method body implementation closures
 type ImplementationFn = Box<dyn FnOnce(&mut InstructionAssembler) -> Result<()>>;
-
-use crate::metadata::method::encode_method_body_header;
 
 /// Resolve a labeled exception handler to a regular exception handler with calculated byte offsets.
 ///

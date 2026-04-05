@@ -127,11 +127,11 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            detection.detected,
+            detection.is_detected(),
             "BitMonoPeRepair should detect PE corruption in bitmono_bitdecompiler.exe"
         );
         assert!(
-            !detection.evidence.is_empty(),
+            !detection.evidence().is_empty(),
             "Detection should include evidence"
         );
     }
@@ -144,7 +144,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "BitMonoPeRepair should not detect PE corruption in a non-BitMono assembly"
         );
     }

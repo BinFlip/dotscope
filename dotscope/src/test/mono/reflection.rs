@@ -4,10 +4,14 @@
 //! to invoke methods in dotscope-modified assemblies. This validates that methods
 //! added or modified by dotscope are correctly callable at runtime.
 
-use crate::prelude::*;
-use crate::test::mono::capabilities::{Architecture, TestCapabilities};
-use crate::test::mono::compilation::{compile, CompilationResult};
-use crate::test::mono::execution::{execute, ExecutionResult};
+use crate::{
+    prelude::*,
+    test::mono::{
+        capabilities::{Architecture, TestCapabilities},
+        compilation::{compile, CompilationResult},
+        execution::{execute, ExecutionResult},
+    },
+};
 use std::path::Path;
 
 /// Result of a reflection test

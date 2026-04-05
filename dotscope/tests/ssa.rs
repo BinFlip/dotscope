@@ -12,7 +12,7 @@ mod common;
 
 use std::collections::HashMap;
 
-use common::TestTypeProvider;
+use common::{build_cfg, build_ssa, TestTypeProvider};
 use dotscope::{
     analysis::{
         ConstValue, ControlFlowGraph, SsaConverter, SsaExceptionHandler, SsaFunction, SsaOp,
@@ -26,34 +26,13 @@ use dotscope::{
     CilObject, Result,
 };
 
-/// Build a control flow graph from assembled bytecode.
-fn build_cfg(assembler: InstructionAssembler) -> Result<ControlFlowGraph<'static>> {
-    let (bytecode, _max_stack, _) = assembler.finish()?;
-    let blocks = decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len()))?;
-    ControlFlowGraph::from_basic_blocks(blocks)
-}
-
-/// Build SSA from a control flow graph.
-fn build_ssa(
-    cfg: &ControlFlowGraph<'_>,
-    num_args: usize,
-    num_locals: usize,
-) -> Result<SsaFunction> {
-    SsaConverter::build(
-        cfg,
-        num_args,
-        num_locals,
-        &TestTypeProvider::new(num_args, num_locals),
-    )
-}
-
 /// Build SSA directly from an assembler for convenience.
 fn ssa_from_asm(
     assembler: InstructionAssembler,
     num_args: usize,
     num_locals: usize,
 ) -> Result<SsaFunction> {
-    let cfg = build_cfg(assembler)?;
+    let (_bytecode, cfg) = build_cfg(assembler)?;
     build_ssa(&cfg, num_args, num_locals)
 }
 
@@ -181,6 +160,8 @@ fn test_ssa_loop_phi_nodes() -> Result<()> {
 
     // Loop header should have a phi node for the loop variable
     // (value coming from initialization and from loop body)
+    let has_phi = (0..ssa.block_count()).any(|i| ssa.block(i).is_some_and(|b| b.phi_count() > 0));
+    assert!(has_phi, "Expected at least one phi node in loop header");
 
     Ok(())
 }
@@ -267,8 +248,7 @@ fn test_symbolic_eval_constant_folding() -> Result<()> {
         }
     }
 
-    // Even if not folded, the test passes - we're testing evaluation works
-    Ok(())
+    panic!("Expected constant 42 from symbolic evaluation of 6*7")
 }
 
 #[test]
@@ -312,7 +292,10 @@ fn test_ssa_variable_versions() -> Result<()> {
     // But actually it depends on SSA construction details
 
     // At minimum, we should have several variables
-    assert!(ssa.variable_count() >= 2);
+    assert!(
+        ssa.variable_count() >= 4,
+        "Expected at least 4 SSA variable versions from 3 stores to local0"
+    );
 
     Ok(())
 }
@@ -783,15 +766,17 @@ fn test_ssa_total_instruction_count() -> Result<()> {
 
 #[test]
 fn test_ssa_dead_variables() -> Result<()> {
-    // Load a value but don't use it (pop it)
+    // Store a value to a local but never load it back
     let mut asm = InstructionAssembler::new();
-    asm.ldc_i4(42)?.pop()?.ret()?;
+    asm.ldc_i4(42)?.stloc_0()?.ret()?;
 
-    let ssa = ssa_from_asm(asm, 0, 0)?;
+    let ssa = ssa_from_asm(asm, 0, 1)?;
 
-    // The popped constant creates a dead variable
-    // Note: dead_variable_count depends on SSA construction details
-    let _dead_count = ssa.dead_variable_count();
+    // The stored-but-never-loaded local creates a dead variable
+    assert!(
+        ssa.dead_variable_count() >= 1,
+        "Expected at least 1 dead variable from unused local store"
+    );
 
     Ok(())
 }
@@ -2496,16 +2481,15 @@ fn test_try_region_block_decoding() {
     )
     .expect("Failed to open resources sample");
 
-    // Find Main method which has a try/finally
+    // Find a method with try/finally (DemoLockAndUsing uses lock + using statements)
     for entry in assembly.methods().iter() {
         let method = entry.value();
-        if method.name == "Main" {
+        if method.name == "DemoLockAndUsing" {
             // Verify method has exception handlers
             let body = method.body.get().expect("Method has no body");
-            assert_eq!(
-                body.exception_handlers.len(),
-                1,
-                "Expected 1 exception handler"
+            assert!(
+                !body.exception_handlers.is_empty(),
+                "Expected at least one exception handler"
             );
 
             let eh = &body.exception_handlers[0];
@@ -2550,10 +2534,9 @@ fn test_try_region_block_decoding() {
                 ssa.has_exception_handlers(),
                 "SSA should have exception handlers"
             );
-            assert_eq!(
-                ssa.exception_handlers().len(),
-                1,
-                "SSA should have 1 exception handler"
+            assert!(
+                !ssa.exception_handlers().is_empty(),
+                "SSA should have exception handlers"
             );
 
             let ssa_eh = &ssa.exception_handlers()[0];

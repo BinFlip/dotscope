@@ -16,17 +16,23 @@
 //! added by `create_deob_passes()`. Registers discovered decryptor methods
 //! with the analysis context during `initialize()`.
 
-use std::{any::Any, collections::HashMap};
+use std::{
+    any::Any,
+    collections::{HashMap, HashSet},
+};
 
-use log::debug;
+use log::{debug, trace};
 
 use crate::{
     analysis::SsaOp,
     cilassembly::CleanupRequest,
+    compiler::PassPhase,
     deobfuscation::{
         context::AnalysisContext,
-        techniques::{Detection, Detections, Evidence, PassPhase, Technique, TechniqueCategory},
-        utils::build_call_site_counts,
+        techniques::{Detection, Detections, Evidence, Technique, TechniqueCategory},
+        utils::{
+            build_call_site_counts, exclude_cross_calling_candidates, filter_by_call_threshold,
+        },
     },
     emulation::EmValue,
     metadata::{
@@ -42,7 +48,7 @@ use crate::{
 #[derive(Debug)]
 pub struct StringFindings {
     /// Tokens of detected string decryptor methods.
-    pub decryptor_methods: Vec<Token>,
+    pub decryptor_methods: HashSet<Token>,
 }
 
 /// Detects generic string decryptor methods.
@@ -133,17 +139,18 @@ impl Technique for GenericStrings {
     fn detect(&self, assembly: &CilObject) -> Detection {
         // Phase 1: collect candidates matching common string decryptor signatures.
         let candidates = self.collect_candidates(assembly);
-
         if candidates.is_empty() {
-            debug!("GenericStrings: no candidates matching string decryptor signatures");
             return Detection::new_empty();
         }
 
-        debug!("GenericStrings: {} candidates found", candidates.len());
-        for token in &candidates {
+        // Phase 2: count call sites for all candidates in a single pass.
+        let counts = build_call_site_counts(assembly, candidates.iter().copied());
+
+        trace!("GenericStrings: {} candidates found", candidates.len());
+        for (token, count) in &counts {
             if let Some(method) = assembly.method(token) {
-                debug!(
-                    "  candidate {}: {}({}) → string",
+                trace!(
+                    "  candidate {}: {}({}) → string - calls: {}",
                     token,
                     method.name,
                     method
@@ -152,24 +159,18 @@ impl Technique for GenericStrings {
                         .iter()
                         .map(|p| format!("{:?}", p.base))
                         .collect::<Vec<_>>()
-                        .join(", ")
+                        .join(", "),
+                    count
                 );
             }
         }
 
-        // Phase 2: count call sites for all candidates in a single pass.
-        let counts = build_call_site_counts(assembly, candidates.iter().copied());
-
-        for (token, count) in &counts {
-            debug!("  call site count for {}: {}", token, count);
-        }
-
         // Phase 3: filter by call-site threshold.
-        let decryptors =
-            crate::deobfuscation::utils::filter_by_call_threshold(candidates, &counts, 3);
+        let decryptors = filter_by_call_threshold(candidates, &counts, 3);
 
+        // Phase 4: exclude candidates that call other candidates (consumers, not decryptors).
+        let decryptors = exclude_cross_calling_candidates(decryptors, assembly);
         if decryptors.is_empty() {
-            debug!("GenericStrings: no candidates passed call-site threshold (≥3)");
             return Detection::new_empty();
         }
 
@@ -231,9 +232,10 @@ impl Technique for GenericStrings {
         }
 
         // Phase 3: filter by call-site threshold.
-        let decryptors =
-            crate::deobfuscation::utils::filter_by_call_threshold(candidates, &counts, 3);
+        let decryptors = filter_by_call_threshold(candidates, &counts, 3);
 
+        // Phase 4: exclude candidates that call other candidates (consumers, not decryptors).
+        let decryptors = exclude_cross_calling_candidates(decryptors, assembly);
         if decryptors.is_empty() {
             return Detection::new_empty();
         }
@@ -361,6 +363,6 @@ mod tests {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericStrings;
         let detection = technique.detect(&asm);
-        assert!(!detection.detected);
+        assert!(!detection.is_detected());
     }
 }

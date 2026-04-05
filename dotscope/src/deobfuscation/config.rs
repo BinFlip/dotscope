@@ -7,20 +7,250 @@ use std::time::Duration;
 
 use crate::{deobfuscation::SmartRenameConfig, emulation::TracingConfig};
 
+/// Fixpoint iteration limits.
+#[derive(Debug, Clone)]
+pub struct IterationConfig {
+    /// Maximum iterations for the pass scheduler (default: 20).
+    pub max_ssa_iterations: usize,
+    /// Number of stable iterations before stopping (default: 2).
+    pub stable_iterations: usize,
+    /// Maximum iterations per phase before moving on (default: 10).
+    pub max_phase_iterations: usize,
+    /// Maximum number of detection re-scan rounds (default: 2).
+    pub max_detection_rounds: usize,
+    /// Maximum outer fixpoint iterations for the work queue loop (default: 10).
+    pub max_outer_iterations: usize,
+    /// Maximum pipeline-level iterations for byte-transform re-runs (default: 3).
+    ///
+    /// Each pipeline iteration rebuilds SSA from scratch, so this is intentionally
+    /// small. Increase only for assemblies that require multiple SSA↔byte-transform
+    /// cycles (e.g., layered protections that reveal new byte-transforms after SSA).
+    pub max_pipeline_iterations: usize,
+}
+
+impl Default for IterationConfig {
+    fn default() -> Self {
+        Self {
+            max_ssa_iterations: 20,
+            stable_iterations: 2,
+            max_phase_iterations: 10,
+            max_detection_rounds: 2,
+            max_outer_iterations: 10,
+            max_pipeline_iterations: 3,
+        }
+    }
+}
+
+/// SSA optimization pass toggles.
+#[derive(Debug, Clone)]
+pub struct PassConfig {
+    /// Enable string decryption pass.
+    pub string_decryption: bool,
+    /// Enable constant propagation pass.
+    pub constant_propagation: bool,
+    /// Enable dead code elimination pass.
+    pub dead_code_elimination: bool,
+    /// Enable opaque predicate removal pass.
+    pub opaque_predicate_removal: bool,
+    /// Enable copy propagation pass.
+    pub copy_propagation: bool,
+    /// Enable strength reduction pass (mul->shl, div->shr, rem->and for powers of 2).
+    pub strength_reduction: bool,
+    /// Enable control flow simplification pass.
+    pub control_flow_simplification: bool,
+    /// Enable interprocedural analysis.
+    pub interprocedural: bool,
+    /// Enable method inlining.
+    pub inlining: bool,
+    /// Maximum instruction count for inlining candidates.
+    pub inline_threshold: usize,
+    /// Maximum iterations for dead code elimination fixpoint (default: 20).
+    pub dce_max_iterations: usize,
+    /// Maximum iterations for copy propagation fixpoint (default: 15).
+    pub copy_prop_max_iterations: usize,
+    /// Maximum iterations for constant propagation fixpoint (default: 10).
+    pub const_prop_max_iterations: usize,
+    /// Maximum iterations for block merging fixpoint (default: 50).
+    pub block_merge_max_iterations: usize,
+    /// Maximum iterations for control flow simplification fixpoint (default: 20).
+    pub control_flow_max_iterations: usize,
+    /// Maximum worklist iterations for value range dataflow solver (default: 10000).
+    pub value_range_max_iterations: usize,
+}
+
+impl Default for PassConfig {
+    fn default() -> Self {
+        Self {
+            string_decryption: true,
+            constant_propagation: true,
+            dead_code_elimination: true,
+            opaque_predicate_removal: true,
+            copy_propagation: true,
+            strength_reduction: true,
+            control_flow_simplification: true,
+            interprocedural: true,
+            inlining: false,
+            inline_threshold: 20,
+            dce_max_iterations: 20,
+            copy_prop_max_iterations: 15,
+            const_prop_max_iterations: 10,
+            block_merge_max_iterations: 50,
+            control_flow_max_iterations: 20,
+            value_range_max_iterations: 10_000,
+        }
+    }
+}
+
+/// Emulation engine limits.
+#[derive(Debug, Clone)]
+pub struct EmulationConfig {
+    /// Maximum instructions for emulation per method.
+    pub max_instructions: u64,
+    /// Emulation timeout per method.
+    pub timeout: Duration,
+    /// Tracing configuration for emulation debugging.
+    pub tracing: Option<TracingConfig>,
+    /// Timeout for template pool warmup (Module.cctor + technique warmup).
+    pub warmup_timeout: Duration,
+    /// Number of retry passes for warmup methods with dependency chains.
+    pub warmup_retry_passes: usize,
+}
+
+impl Default for EmulationConfig {
+    fn default() -> Self {
+        Self {
+            max_instructions: 1_000_000,
+            timeout: Duration::from_secs(5),
+            tracing: None,
+            warmup_timeout: Duration::from_secs(60),
+            warmup_retry_passes: 5,
+        }
+    }
+}
+
+/// String decryptor heuristic thresholds.
+#[derive(Debug, Clone)]
+pub struct DecryptorHeuristics {
+    /// Maximum instruction count for string decryptor heuristic detection.
+    pub max_instructions: usize,
+    /// Maximum parameter count for string decryptor heuristic detection.
+    pub max_params: usize,
+    /// Minimum score (0-100) for a method to be considered a string decryptor.
+    pub min_score: u32,
+    /// Maximum basic blocks to traverse when resolving decryptor call targets.
+    pub max_resolution_blocks: usize,
+}
+
+impl Default for DecryptorHeuristics {
+    fn default() -> Self {
+        Self {
+            max_instructions: 200,
+            max_params: 3,
+            min_score: 45,
+            max_resolution_blocks: 50,
+        }
+    }
+}
+
+/// CFF unflattening thresholds.
+#[derive(Debug, Clone)]
+pub struct UnflatteningThresholds {
+    /// Minimum switch cases to consider as potential flattening dispatcher.
+    pub min_switch_cases: usize,
+    /// Maximum states to enumerate per case when solving dispatcher.
+    pub max_states_per_case: usize,
+    /// Maximum iterations when tracing execution through flattened CFG.
+    pub max_trace_iterations: usize,
+    /// Threshold for large constant detection in state encoding.
+    pub large_constant_threshold: i64,
+    /// Maximum BFS depth for back-edge transitive reachability check.
+    pub max_backedge_depth: usize,
+    /// Confidence scoring weights for CFF dispatcher detection.
+    pub confidence_weights: DetectionWeights,
+}
+
+impl Default for UnflatteningThresholds {
+    fn default() -> Self {
+        Self {
+            min_switch_cases: 4,
+            max_states_per_case: 15,
+            max_trace_iterations: 500,
+            large_constant_threshold: 100_000,
+            max_backedge_depth: 10,
+            confidence_weights: DetectionWeights::default(),
+        }
+    }
+}
+
+/// Confidence scoring weights for CFF dispatcher detection.
+///
+/// Each weight corresponds to a signal used in `compute_confidence()` to assess
+/// how likely a candidate basic block is a CFF dispatcher. The final score is
+/// the sum of all weighted signals, capped at 1.0.
+#[derive(Debug, Clone)]
+pub struct DetectionWeights {
+    /// Base score for having ≥3 case blocks, plus bonuses at ≥5 and ≥10.
+    pub case_count_base: f64,
+    /// Bonus per threshold tier for case count (≥5 and ≥10).
+    pub case_count_bonus: f64,
+    /// Weight for state variable with phi node present.
+    pub state_variable: f64,
+    /// Weight for state variable being updated in most case blocks.
+    pub state_update_coverage: f64,
+    /// Weight for dispatcher having many predecessors (back-edges).
+    pub predecessor_ratio: f64,
+    /// Weight for back-edge reachability ratio (cases that reach dispatcher).
+    pub back_edge_ratio: f64,
+    /// Weight for having exit blocks.
+    pub exit_blocks: f64,
+    /// Bonus for switch-based dispatcher (vs branch-based).
+    pub switch_bonus: f64,
+    /// Bonus for modulo transform presence (strong CFF indicator).
+    pub modulo_bonus: f64,
+    /// Weight for dominance ratio (dispatcher dominates case blocks).
+    pub dominance_ratio: f64,
+    /// Weight for method coverage ratio (fraction of all blocks dominated).
+    pub method_coverage: f64,
+}
+
+impl Default for DetectionWeights {
+    fn default() -> Self {
+        Self {
+            case_count_base: 0.10,
+            case_count_bonus: 0.05,
+            state_variable: 0.15,
+            state_update_coverage: 0.10,
+            predecessor_ratio: 0.10,
+            back_edge_ratio: 0.10,
+            exit_blocks: 0.05,
+            switch_bonus: 0.10,
+            modulo_bonus: 0.10,
+            dominance_ratio: 0.20,
+            method_coverage: 0.10,
+        }
+    }
+}
+
 /// Configuration for the deobfuscation engine.
 ///
 /// Controls all aspects of the deobfuscation pipeline including iteration limits,
 /// pass selection, emulation parameters, and resolution strategies.
 #[derive(Debug, Clone)]
 pub struct EngineConfig {
-    /// Maximum iterations for the pass scheduler (default: 20).
-    pub max_iterations: usize,
+    /// Fixpoint iteration limits.
+    pub iterations: IterationConfig,
 
-    /// Number of stable iterations before stopping (default: 2).
-    pub stable_iterations: usize,
+    /// SSA optimization pass toggles.
+    pub passes: PassConfig,
 
-    /// Maximum iterations per phase before moving on (default: 10).
-    pub max_phase_iterations: usize,
+    /// Emulation engine limits.
+    pub emulation: EmulationConfig,
+
+    /// String decryptor heuristic thresholds.
+    pub decryptor_heuristics: DecryptorHeuristics,
+
+    /// CFF unflattening thresholds.
+    pub unflattening: UnflatteningThresholds,
 
     /// Detection threshold for obfuscator identification (0-100, default: 20).
     pub detection_threshold: u32,
@@ -28,89 +258,17 @@ pub struct EngineConfig {
     /// Target specific obfuscator (bypasses detection).
     pub target_obfuscator: Option<String>,
 
-    /// Maximum instructions for emulation per method.
-    pub emulation_max_instructions: u64,
-
-    /// Emulation timeout per method.
-    pub emulation_timeout: Duration,
-
-    /// Enable method inlining.
-    pub enable_inlining: bool,
-
-    /// Maximum instruction count for inlining candidates.
-    pub inline_threshold: usize,
-
-    /// Enable string decryption pass.
-    pub enable_string_decryption: bool,
-
-    /// Enable constant propagation pass.
-    pub enable_constant_propagation: bool,
-
-    /// Enable dead code elimination pass.
-    pub enable_dead_code_elimination: bool,
-
-    /// Enable opaque predicate removal pass.
-    pub enable_opaque_predicate_removal: bool,
-
-    /// Enable copy propagation pass.
-    pub enable_copy_propagation: bool,
-
-    /// Enable strength reduction pass (mul→shl, div→shr, rem→and for powers of 2).
-    pub enable_strength_reduction: bool,
-
-    /// Enable control flow simplification pass.
-    pub enable_control_flow_simplification: bool,
-
-    /// Enable interprocedural analysis.
-    pub enable_interprocedural: bool,
-
-    /// Maximum instruction count for string decryptor heuristic detection.
-    pub string_decryptor_max_instructions: usize,
-
-    /// Maximum parameter count for string decryptor heuristic detection.
-    pub string_decryptor_max_params: usize,
-
-    /// Minimum score (0-100) for a method to be considered a string decryptor.
-    /// Based on heuristic analysis of return type, parameters, operations, etc.
-    pub string_decryptor_min_score: u32,
-
-    /// Minimum switch cases to consider as potential flattening dispatcher.
-    pub unflattening_min_switch_cases: usize,
-
-    /// Maximum states to enumerate per case when solving dispatcher.
-    pub unflattening_max_states_per_case: usize,
-
-    /// Maximum iterations when tracing execution through flattened CFG.
-    pub unflattening_max_trace_iterations: usize,
-
-    /// Threshold for large constant detection in state encoding (absolute value).
-    /// Constants larger than this are considered potential state values.
-    pub unflattening_large_constant_threshold: i64,
-
     /// Verify semantic preservation after passes (slow).
     pub verify_semantics: bool,
 
     /// Resolution strategies to use, in order of preference.
     pub resolution_strategies: Vec<ResolutionStrategy>,
 
+    /// NOP threshold for dead method detection in BitMono-style junk analysis.
+    pub detection_nop_threshold: usize,
+
     /// Post-deobfuscation cleanup configuration.
     pub cleanup: CleanupConfig,
-
-    /// Maximum number of detection re-scan rounds after the SSA pipeline stabilizes.
-    ///
-    /// After the initial pipeline run reaches fixpoint, the engine re-runs SSA
-    /// detection to discover techniques hidden by earlier passes (e.g., delegate
-    /// proxy resolution reveals string decryptor call sites). Each new detection
-    /// triggers initialization and an additional pipeline run.
-    ///
-    /// Default: 2 (enough for delegate → string decryptor chains).
-    pub max_detection_rounds: usize,
-
-    /// Tracing configuration for emulation debugging.
-    ///
-    /// When set, emulation processes created during deobfuscation will write
-    /// trace events to help debug decryption and other emulation-based passes.
-    pub tracing: Option<TracingConfig>,
 }
 
 /// Configuration for post-deobfuscation cleanup.
@@ -225,41 +383,21 @@ impl CleanupConfig {
 impl Default for EngineConfig {
     fn default() -> Self {
         Self {
-            max_iterations: 20,
-            stable_iterations: 2,
-            max_phase_iterations: 10,
+            iterations: IterationConfig::default(),
+            passes: PassConfig::default(),
+            emulation: EmulationConfig::default(),
+            decryptor_heuristics: DecryptorHeuristics::default(),
+            unflattening: UnflatteningThresholds::default(),
             detection_threshold: 20,
             target_obfuscator: None,
-            emulation_max_instructions: 1_000_000,
-            emulation_timeout: Duration::from_secs(5),
-            enable_inlining: false,
-            inline_threshold: 20,
-            enable_string_decryption: true,
-            enable_constant_propagation: true,
-            enable_dead_code_elimination: true,
-            enable_opaque_predicate_removal: true,
-            enable_copy_propagation: true,
-            enable_strength_reduction: true,
-            enable_control_flow_simplification: true,
-            enable_interprocedural: true,
-            // String decryption heuristics (tuned for common obfuscators)
-            string_decryptor_max_instructions: 200,
-            string_decryptor_max_params: 3,
-            string_decryptor_min_score: 45, // Requires return type + at least one other indicator
-            // Unflattening configuration (tuned for ConfuserEx-style dispatchers)
-            unflattening_min_switch_cases: 4,
-            unflattening_max_states_per_case: 15,
-            unflattening_max_trace_iterations: 500,
-            unflattening_large_constant_threshold: 100_000,
             verify_semantics: false,
             resolution_strategies: vec![
                 ResolutionStrategy::Static,
                 ResolutionStrategy::Pattern,
                 ResolutionStrategy::Emulation,
             ],
+            detection_nop_threshold: 50_000,
             cleanup: CleanupConfig::default(),
-            max_detection_rounds: 2,
-            tracing: None,
         }
     }
 }
@@ -289,14 +427,25 @@ impl EngineConfig {
     #[must_use]
     pub fn fast() -> Self {
         Self {
-            max_iterations: 5,
-            stable_iterations: 1,
-            emulation_max_instructions: 100_000,
-            emulation_timeout: Duration::from_millis(500),
-            enable_inlining: false,
-            enable_interprocedural: false,
+            iterations: IterationConfig {
+                max_ssa_iterations: 5,
+                stable_iterations: 1,
+                max_detection_rounds: 1,
+                ..Default::default()
+            },
+            passes: PassConfig {
+                interprocedural: false,
+                inlining: false,
+                ..Default::default()
+            },
+            emulation: EmulationConfig {
+                max_instructions: 100_000,
+                timeout: Duration::from_millis(500),
+                warmup_timeout: Duration::from_secs(30),
+                warmup_retry_passes: 2,
+                ..Default::default()
+            },
             resolution_strategies: vec![ResolutionStrategy::Static, ResolutionStrategy::Pattern],
-            max_detection_rounds: 1,
             ..Self::default()
         }
     }
@@ -316,13 +465,29 @@ impl EngineConfig {
     #[must_use]
     pub fn aggressive() -> Self {
         Self {
-            max_iterations: 50,
-            stable_iterations: 3,
-            emulation_max_instructions: 10_000_000,
-            emulation_timeout: Duration::from_secs(30),
-            enable_inlining: true,
-            inline_threshold: 50,
-            enable_interprocedural: true,
+            iterations: IterationConfig {
+                max_ssa_iterations: 50,
+                stable_iterations: 3,
+                max_detection_rounds: 3,
+                ..Default::default()
+            },
+            passes: PassConfig {
+                inlining: true,
+                inline_threshold: 50,
+                interprocedural: true,
+                ..Default::default()
+            },
+            emulation: EmulationConfig {
+                max_instructions: 10_000_000,
+                timeout: Duration::from_secs(30),
+                warmup_timeout: Duration::from_secs(120),
+                warmup_retry_passes: 8,
+                ..Default::default()
+            },
+            unflattening: UnflatteningThresholds {
+                max_backedge_depth: 15,
+                ..Default::default()
+            },
             resolution_strategies: vec![
                 ResolutionStrategy::Static,
                 ResolutionStrategy::Pattern,
@@ -330,7 +495,6 @@ impl EngineConfig {
                 ResolutionStrategy::Symbolic,
             ],
             cleanup: CleanupConfig::aggressive(),
-            max_detection_rounds: 3,
             ..Self::default()
         }
     }
@@ -346,7 +510,7 @@ impl EngineConfig {
     /// The modified configuration (builder pattern).
     #[must_use]
     pub fn with_max_iterations(mut self, max: usize) -> Self {
-        self.max_iterations = max;
+        self.iterations.max_ssa_iterations = max;
         self
     }
 
@@ -392,8 +556,8 @@ impl EngineConfig {
     /// The modified configuration (builder pattern).
     #[must_use]
     pub fn with_emulation_limits(mut self, max_instructions: u64, timeout: Duration) -> Self {
-        self.emulation_max_instructions = max_instructions;
-        self.emulation_timeout = timeout;
+        self.emulation.max_instructions = max_instructions;
+        self.emulation.timeout = timeout;
         self
     }
 
@@ -409,8 +573,8 @@ impl EngineConfig {
     /// The modified configuration (builder pattern).
     #[must_use]
     pub fn with_inlining(mut self, enable: bool, threshold: usize) -> Self {
-        self.enable_inlining = enable;
-        self.inline_threshold = threshold;
+        self.passes.inlining = enable;
+        self.passes.inline_threshold = threshold;
         self
     }
 
@@ -425,7 +589,7 @@ impl EngineConfig {
     /// The modified configuration (builder pattern).
     #[must_use]
     pub fn with_interprocedural(mut self, enable: bool) -> Self {
-        self.enable_interprocedural = enable;
+        self.passes.interprocedural = enable;
         self
     }
 
@@ -444,31 +608,18 @@ impl EngineConfig {
         self
     }
 
-    /// Enables or disables specific passes.
+    /// Sets the pass configuration.
     ///
     /// # Arguments
     ///
-    /// * `string_decryption` - Enable string decryption pass.
-    /// * `constant_propagation` - Enable constant propagation pass.
-    /// * `dead_code` - Enable dead code elimination pass.
-    /// * `opaque_predicates` - Enable opaque predicate removal pass.
+    /// * `passes` - The pass configuration to use.
     ///
     /// # Returns
     ///
     /// The modified configuration (builder pattern).
     #[must_use]
-    #[allow(clippy::fn_params_excessive_bools)]
-    pub fn with_passes(
-        mut self,
-        string_decryption: bool,
-        constant_propagation: bool,
-        dead_code: bool,
-        opaque_predicates: bool,
-    ) -> Self {
-        self.enable_string_decryption = string_decryption;
-        self.enable_constant_propagation = constant_propagation;
-        self.enable_dead_code_elimination = dead_code;
-        self.enable_opaque_predicate_removal = opaque_predicates;
+    pub fn with_passes(mut self, passes: PassConfig) -> Self {
+        self.passes = passes;
         self
     }
 
@@ -479,13 +630,13 @@ impl EngineConfig {
     /// `true` if all core deobfuscation passes are enabled.
     #[must_use]
     pub fn all_passes_enabled(&self) -> bool {
-        self.enable_string_decryption
-            && self.enable_constant_propagation
-            && self.enable_dead_code_elimination
-            && self.enable_opaque_predicate_removal
-            && self.enable_copy_propagation
-            && self.enable_strength_reduction
-            && self.enable_control_flow_simplification
+        self.passes.string_decryption
+            && self.passes.constant_propagation
+            && self.passes.dead_code_elimination
+            && self.passes.opaque_predicate_removal
+            && self.passes.copy_propagation
+            && self.passes.strength_reduction
+            && self.passes.control_flow_simplification
     }
 
     /// Sets the tracing configuration for emulation debugging.
@@ -502,7 +653,63 @@ impl EngineConfig {
     /// The modified configuration (builder pattern).
     #[must_use]
     pub fn with_tracing(mut self, tracing: TracingConfig) -> Self {
-        self.tracing = Some(tracing);
+        self.emulation.tracing = Some(tracing);
+        self
+    }
+
+    /// Sets the warmup timeout for template pool initialization.
+    ///
+    /// The template pool executes Module.cctor and technique warmup methods
+    /// during initialization. Complex assemblies (e.g., PureLogs with ~1.88M
+    /// instructions) may require longer timeouts.
+    ///
+    /// # Arguments
+    ///
+    /// * `timeout` - Maximum time for warmup execution.
+    ///
+    /// # Returns
+    ///
+    /// The modified configuration (builder pattern).
+    #[must_use]
+    pub fn with_warmup_timeout(mut self, timeout: Duration) -> Self {
+        self.emulation.warmup_timeout = timeout;
+        self
+    }
+
+    /// Sets the number of retry passes for warmup methods.
+    ///
+    /// Warmup methods may have dependency chains (e.g., type A's .cctor
+    /// depends on type B's .cctor). Multiple passes retry failed methods
+    /// after their dependencies have been initialized.
+    ///
+    /// # Arguments
+    ///
+    /// * `passes` - Number of retry passes (each pass retries previously failed methods).
+    ///
+    /// # Returns
+    ///
+    /// The modified configuration (builder pattern).
+    #[must_use]
+    pub fn with_warmup_retry_passes(mut self, passes: usize) -> Self {
+        self.emulation.warmup_retry_passes = passes;
+        self
+    }
+
+    /// Sets the NOP threshold for dead method detection.
+    ///
+    /// Methods in `<Module>` containing more than this many `nop` instructions
+    /// are flagged as BitMono BillionNops dead methods for removal.
+    ///
+    /// # Arguments
+    ///
+    /// * `threshold` - Minimum NOP count to classify a method as dead.
+    ///
+    /// # Returns
+    ///
+    /// The modified configuration (builder pattern).
+    #[must_use]
+    pub fn with_nop_threshold(mut self, threshold: usize) -> Self {
+        self.detection_nop_threshold = threshold;
         self
     }
 }
@@ -574,29 +781,39 @@ mod tests {
     #[test]
     fn test_default_config() {
         let config = EngineConfig::default();
-        assert_eq!(config.max_iterations, 20);
-        assert!(config.enable_string_decryption);
-        assert!(config.enable_interprocedural);
-        assert!(!config.enable_inlining); // Disabled by default
+        assert_eq!(config.iterations.max_ssa_iterations, 20);
+        assert!(config.passes.string_decryption);
+        assert!(config.passes.interprocedural);
+        assert!(!config.passes.inlining); // Disabled by default
         assert!(!config.cleanup.remove_unused_methods); // Disabled by default
+        assert_eq!(config.emulation.warmup_timeout, Duration::from_secs(60));
+        assert_eq!(config.emulation.warmup_retry_passes, 5);
+        assert_eq!(config.unflattening.max_backedge_depth, 10);
+        assert_eq!(config.decryptor_heuristics.max_resolution_blocks, 50);
+        assert_eq!(config.detection_nop_threshold, 50_000);
     }
 
     #[test]
     fn test_fast_config() {
         let config = EngineConfig::fast();
-        assert_eq!(config.max_iterations, 5);
-        assert!(!config.enable_interprocedural);
+        assert_eq!(config.iterations.max_ssa_iterations, 5);
+        assert!(!config.passes.interprocedural);
         assert_eq!(config.resolution_strategies.len(), 2);
+        assert_eq!(config.emulation.warmup_timeout, Duration::from_secs(30));
+        assert_eq!(config.emulation.warmup_retry_passes, 2);
     }
 
     #[test]
     fn test_aggressive_config() {
         let config = EngineConfig::aggressive();
-        assert_eq!(config.max_iterations, 50);
-        assert!(config.enable_inlining);
-        assert!(config.enable_interprocedural);
+        assert_eq!(config.iterations.max_ssa_iterations, 50);
+        assert!(config.passes.inlining);
+        assert!(config.passes.interprocedural);
         assert_eq!(config.resolution_strategies.len(), 4);
         assert!(config.cleanup.remove_unused_methods); // Enabled in aggressive mode
+        assert_eq!(config.emulation.warmup_timeout, Duration::from_secs(120));
+        assert_eq!(config.emulation.warmup_retry_passes, 8);
+        assert_eq!(config.unflattening.max_backedge_depth, 15);
     }
 
     #[test]
@@ -605,8 +822,29 @@ mod tests {
             .with_max_iterations(100)
             .with_target_obfuscator("confuserex");
 
-        assert_eq!(config.max_iterations, 100);
+        assert_eq!(config.iterations.max_ssa_iterations, 100);
         assert_eq!(config.target_obfuscator, Some("confuserex".to_string()));
+    }
+
+    #[test]
+    fn test_detection_weights_default() {
+        let w = DetectionWeights::default();
+        assert!((w.case_count_base - 0.10).abs() < f64::EPSILON);
+        assert!((w.state_variable - 0.15).abs() < f64::EPSILON);
+        assert!((w.dominance_ratio - 0.20).abs() < f64::EPSILON);
+        assert!((w.method_coverage - 0.10).abs() < f64::EPSILON);
+    }
+
+    #[test]
+    fn test_builder_warmup_and_nop() {
+        let config = EngineConfig::new()
+            .with_warmup_timeout(Duration::from_secs(120))
+            .with_warmup_retry_passes(10)
+            .with_nop_threshold(100_000);
+
+        assert_eq!(config.emulation.warmup_timeout, Duration::from_secs(120));
+        assert_eq!(config.emulation.warmup_retry_passes, 10);
+        assert_eq!(config.detection_nop_threshold, 100_000);
     }
 
     #[test]

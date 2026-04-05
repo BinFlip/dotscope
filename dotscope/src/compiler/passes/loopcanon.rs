@@ -63,12 +63,11 @@ use std::collections::HashMap;
 
 use crate::{
     analysis::{
-        LoopInfo, PhiNode, PhiOperand, SsaBlock, SsaFunction, SsaInstruction, SsaLoopAnalysis,
-        SsaOp, SsaVarId, VariableOrigin,
+        DefSite, LoopInfo, PhiNode, PhiOperand, SsaBlock, SsaFunction, SsaInstruction,
+        SsaLoopAnalysis, SsaOp, SsaVarId, VariableOrigin,
     },
     compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
-    utils::graph::NodeId,
     CilObject, Result,
 };
 
@@ -169,9 +168,7 @@ impl LoopCanonicalizationPass {
         for (block_idx, block) in ssa.iter_blocks() {
             if let Some(op) = block.terminator_op() {
                 let targets = Self::get_targets(op);
-                if targets.contains(&header_idx)
-                    && !loop_info.body.contains(&NodeId::new(block_idx))
-                {
+                if targets.contains(&header_idx) && !loop_info.body.contains(block_idx) {
                     non_loop_preds.push(block_idx);
                 }
             }
@@ -224,28 +221,38 @@ impl LoopCanonicalizationPass {
         // The preheader needs to forward values from non-loop predecessors.
         // We'll create phi nodes in the preheader if there are multiple non-loop preds,
         // or just forward the single value if there's only one.
-        if let Some(header) = ssa.block(header_idx) {
-            let header_phis: Vec<_> = header.phi_nodes().to_vec();
-
-            for phi in &header_phis {
-                // Collect operands from non-loop predecessors
-                let non_loop_operands: Vec<_> = phi
-                    .operands()
+        //
+        // Collect phi info first, then allocate variables (needs &mut ssa).
+        let phi_info: Vec<(VariableOrigin, Vec<PhiOperand>)> = ssa
+            .block(header_idx)
+            .map(|header| {
+                header
+                    .phi_nodes()
                     .iter()
-                    .filter(|op| non_loop_preds.contains(&op.predecessor()))
-                    .copied()
-                    .collect();
+                    .filter_map(|phi| {
+                        let non_loop_operands: Vec<_> = phi
+                            .operands()
+                            .iter()
+                            .filter(|op| non_loop_preds.contains(&op.predecessor()))
+                            .copied()
+                            .collect();
+                        if non_loop_operands.len() > 1 {
+                            Some((phi.origin(), non_loop_operands))
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
-                if non_loop_operands.len() > 1 {
-                    // Need a phi node in the preheader to merge these values
-                    let new_var = SsaVarId::PLACEHOLDER;
-                    let mut preheader_phi = PhiNode::new(new_var, phi.origin());
-                    for op in &non_loop_operands {
-                        preheader_phi.add_operand(*op);
-                    }
-                    preheader.phi_nodes_mut().push(preheader_phi);
-                }
+        for (origin, operands) in &phi_info {
+            let new_var = ssa.create_variable_for_origin(*origin, 0, DefSite::phi(preheader_idx));
+            let mut preheader_phi = PhiNode::new(new_var, *origin);
+            for op in operands {
+                preheader_phi.add_operand(*op);
             }
+            preheader.phi_nodes_mut().push(preheader_phi);
         }
 
         // Step 3: Add the preheader to the function
@@ -329,31 +336,42 @@ impl LoopCanonicalizationPass {
 
         // Step 2: If the header has phi nodes with operands from multiple latches,
         // we need to create phi nodes in the unified latch to merge those values.
+        // Collect phi info first, then allocate variables (needs &mut ssa).
         let mut latch_phi_vars: HashMap<VariableOrigin, SsaVarId> = HashMap::new();
 
-        if let Some(header) = ssa.block(header_idx) {
-            for phi in header.phi_nodes() {
-                // Collect operands from latch blocks
-                let latch_operands: Vec<_> = phi
-                    .operands()
+        let phi_info: Vec<(VariableOrigin, Vec<PhiOperand>)> = ssa
+            .block(header_idx)
+            .map(|header| {
+                header
+                    .phi_nodes()
                     .iter()
-                    .filter(|op| latches.contains(&op.predecessor()))
-                    .copied()
-                    .collect();
+                    .map(|phi| {
+                        let latch_operands: Vec<_> = phi
+                            .operands()
+                            .iter()
+                            .filter(|op| latches.contains(&op.predecessor()))
+                            .copied()
+                            .collect();
+                        (phi.origin(), latch_operands)
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
 
-                if latch_operands.len() > 1 {
-                    // Need a phi node in the unified latch
-                    let new_var = SsaVarId::PLACEHOLDER;
-                    let mut latch_phi = PhiNode::new(new_var, phi.origin());
-                    for op in &latch_operands {
-                        latch_phi.add_operand(*op);
-                    }
-                    latch_phi_vars.insert(phi.origin(), new_var);
-                    unified_latch.phi_nodes_mut().push(latch_phi);
-                } else if latch_operands.len() == 1 {
-                    // Single latch operand - just remember its value
-                    latch_phi_vars.insert(phi.origin(), latch_operands[0].value());
+        for (origin, latch_operands) in &phi_info {
+            if latch_operands.len() > 1 {
+                // Need a phi node in the unified latch — allocate a real variable
+                let new_var =
+                    ssa.create_variable_for_origin(*origin, 0, DefSite::phi(unified_latch_idx));
+                let mut latch_phi = PhiNode::new(new_var, *origin);
+                for op in latch_operands {
+                    latch_phi.add_operand(*op);
                 }
+                latch_phi_vars.insert(*origin, new_var);
+                unified_latch.phi_nodes_mut().push(latch_phi);
+            } else if latch_operands.len() == 1 {
+                // Single latch operand - just remember its value
+                latch_phi_vars.insert(*origin, latch_operands[0].value());
             }
         }
 

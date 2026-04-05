@@ -54,11 +54,14 @@
 //! let forest = detect_loops(&graph, &dominators);
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{
     analysis::{SsaFunction, SsaOp, SsaVarId},
-    utils::graph::{algorithms::DominatorTree, GraphBase, NodeId, Predecessors, Successors},
+    utils::{
+        graph::{algorithms::DominatorTree, GraphBase, NodeId, Predecessors, Successors},
+        BitSet,
+    },
 };
 
 /// Classification of loop types based on structure.
@@ -147,7 +150,7 @@ pub struct LoopInfo {
     pub header: NodeId,
 
     /// All blocks in the loop body (including header).
-    pub body: HashSet<NodeId>,
+    pub body: BitSet,
 
     /// Back edge sources (blocks that jump to the header from within the loop).
     pub latches: Vec<NodeId>,
@@ -175,9 +178,9 @@ pub struct LoopInfo {
 impl LoopInfo {
     /// Creates a new `LoopInfo` with the given header.
     #[must_use]
-    pub fn new(header: NodeId) -> Self {
-        let mut body = HashSet::new();
-        body.insert(header);
+    pub fn new(header: NodeId, node_count: usize) -> Self {
+        let mut body = BitSet::new(node_count);
+        body.insert(header.index());
         Self {
             header,
             body,
@@ -194,13 +197,13 @@ impl LoopInfo {
     /// Returns true if this loop contains the given block.
     #[must_use]
     pub fn contains(&self, node: NodeId) -> bool {
-        self.body.contains(&node)
+        self.body.contains(node.index())
     }
 
     /// Returns the number of blocks in the loop.
     #[must_use]
     pub fn size(&self) -> usize {
-        self.body.len()
+        self.body.count()
     }
 
     /// Returns true if the loop has a single latch (canonical form).
@@ -294,10 +297,10 @@ impl LoopInfo {
     /// - `None` - No conditional branch found in the loop body
     #[must_use]
     pub fn find_condition_in_body(&self, ssa: &SsaFunction) -> Option<NodeId> {
-        for &block_id in &self.body {
-            if let Some(block) = ssa.block(block_id.index()) {
+        for block_idx in self.body.iter() {
+            if let Some(block) = ssa.block(block_idx) {
                 if matches!(block.terminator_op(), Some(SsaOp::Branch { .. })) {
-                    return Some(block_id);
+                    return Some(NodeId::new(block_idx));
                 }
             }
         }
@@ -312,11 +315,11 @@ impl LoopInfo {
     pub fn find_all_conditions_in_body(&self, ssa: &SsaFunction) -> Vec<NodeId> {
         self.body
             .iter()
-            .filter(|&&block_id| {
-                ssa.block(block_id.index())
+            .filter(|&block_idx| {
+                ssa.block(block_idx)
                     .is_some_and(|b| matches!(b.terminator_op(), Some(SsaOp::Branch { .. })))
             })
-            .copied()
+            .map(NodeId::new)
             .collect()
     }
 
@@ -353,7 +356,7 @@ impl LoopInfo {
             // Find operands from inside vs outside the loop
             let (inside_ops, outside_ops): (Vec<&_>, Vec<&_>) = operands
                 .iter()
-                .partition(|op| self.body.contains(&NodeId::new(op.predecessor())));
+                .partition(|op| self.body.contains(op.predecessor()));
 
             // Classic induction variable: 1 init from outside, 1+ updates from inside
             if outside_ops.len() == 1 && !inside_ops.is_empty() {
@@ -415,21 +418,21 @@ impl LoopInfo {
                 // Check if one operand is the phi result
                 if *left == phi_result || *right == phi_result {
                     let other = if *left == phi_result { *right } else { *left };
-                    let stride = Self::try_get_constant(ssa, other);
+                    let stride = ssa.try_constant_value(other).and_then(|v| v.as_i64());
                     return (InductionUpdateKind::Add, stride);
                 }
             }
             SsaOp::Sub { left, right, .. } => {
                 // For subtraction, left should be phi_result
                 if *left == phi_result {
-                    let stride = Self::try_get_constant(ssa, *right);
+                    let stride = ssa.try_constant_value(*right).and_then(|v| v.as_i64());
                     return (InductionUpdateKind::Sub, stride);
                 }
             }
             SsaOp::Mul { left, right, .. } => {
                 if *left == phi_result || *right == phi_result {
                     let other = if *left == phi_result { *right } else { *left };
-                    let stride = Self::try_get_constant(ssa, other);
+                    let stride = ssa.try_constant_value(other).and_then(|v| v.as_i64());
                     return (InductionUpdateKind::Mul, stride);
                 }
             }
@@ -437,25 +440,6 @@ impl LoopInfo {
         }
 
         (InductionUpdateKind::Unknown, None)
-    }
-
-    /// Attempts to get a constant value from a variable.
-    fn try_get_constant(ssa: &SsaFunction, var: SsaVarId) -> Option<i64> {
-        let variable = ssa.variable(var)?;
-        let def_site = variable.def_site();
-
-        if def_site.is_phi() {
-            return None;
-        }
-
-        let block = ssa.block(def_site.block)?;
-        let instr_idx = def_site.instruction?;
-        let instr = block.instruction(instr_idx)?;
-
-        match instr.op() {
-            SsaOp::Const { value, .. } => value.as_i64(),
-            _ => None,
-        }
     }
 }
 
@@ -485,8 +469,7 @@ impl LoopForest {
         let loop_idx = self.loops.len();
 
         // Update block-to-loop mapping for all blocks in this loop
-        for &block in &loop_info.body {
-            let block_idx = block.index();
+        for block_idx in loop_info.body.iter() {
             if block_idx < self.block_to_loop.len() {
                 // Only update if this is a more deeply nested loop
                 if let Some(existing_idx) = self.block_to_loop[block_idx] {
@@ -628,7 +611,7 @@ where
 
                 let loop_info = loops_by_header
                     .entry(header)
-                    .or_insert_with(|| LoopInfo::new(header));
+                    .or_insert_with(|| LoopInfo::new(header, block_count));
 
                 loop_info.latches.push(node);
                 expand_loop_body(graph, loop_info, node);
@@ -707,17 +690,17 @@ fn expand_loop_body<G>(graph: &G, loop_info: &mut LoopInfo, latch: NodeId)
 where
     G: Predecessors,
 {
-    if loop_info.body.contains(&latch) {
+    if loop_info.body.contains(latch.index()) {
         return;
     }
 
     let mut worklist = vec![latch];
 
     while let Some(node) = worklist.pop() {
-        if loop_info.body.insert(node) {
+        if loop_info.body.insert(node.index()) {
             // Node wasn't in body yet, add its predecessors
             for pred in graph.predecessors(node) {
-                if pred != loop_info.header && !loop_info.body.contains(&pred) {
+                if pred != loop_info.header && !loop_info.body.contains(pred.index()) {
                     worklist.push(pred);
                 }
             }
@@ -736,7 +719,7 @@ where
     let mut non_loop_preds: Vec<NodeId> = Vec::new();
 
     for pred in graph.predecessors(loop_info.header) {
-        if !loop_info.body.contains(&pred) {
+        if !loop_info.body.contains(pred.index()) {
             non_loop_preds.push(pred);
         }
     }
@@ -758,9 +741,10 @@ where
 {
     loop_info.exits.clear();
 
-    for &body_block in &loop_info.body {
+    for body_block_idx in loop_info.body.iter() {
+        let body_block = NodeId::new(body_block_idx);
         for succ in graph.successors(body_block) {
-            if !loop_info.body.contains(&succ) {
+            if !loop_info.body.contains(succ.index()) {
                 loop_info.exits.push(LoopExit {
                     exiting_block: body_block,
                     exit_block: succ,
@@ -830,7 +814,7 @@ fn compute_nesting(loops: &mut [LoopInfo]) {
 
         // Find all loops that contain this loop's header (except itself)
         let mut candidates: Vec<usize> = (0..n)
-            .filter(|&j| j != i && loops[j].body.contains(&header))
+            .filter(|&j| j != i && loops[j].body.contains(header.index()))
             .collect();
 
         // Parent is the smallest containing loop
@@ -873,7 +857,7 @@ mod tests {
     #[test]
     fn test_loop_info_creation() {
         let header = NodeId::new(0);
-        let loop_info = LoopInfo::new(header);
+        let loop_info = LoopInfo::new(header, 10);
 
         assert_eq!(loop_info.header, header);
         assert!(loop_info.contains(header));
@@ -886,7 +870,7 @@ mod tests {
     #[test]
     fn test_loop_info_canonical() {
         let header = NodeId::new(1);
-        let mut loop_info = LoopInfo::new(header);
+        let mut loop_info = LoopInfo::new(header, 10);
 
         loop_info.preheader = Some(NodeId::new(0));
         loop_info.latches.push(NodeId::new(2));
@@ -900,13 +884,13 @@ mod tests {
     fn test_loop_forest() {
         let mut forest = LoopForest::new(10);
 
-        let mut outer_loop = LoopInfo::new(NodeId::new(1));
-        outer_loop.body.insert(NodeId::new(2));
-        outer_loop.body.insert(NodeId::new(3));
+        let mut outer_loop = LoopInfo::new(NodeId::new(1), 10);
+        outer_loop.body.insert(2);
+        outer_loop.body.insert(3);
         outer_loop.depth = 0;
 
-        let mut inner_loop = LoopInfo::new(NodeId::new(2));
-        inner_loop.body.insert(NodeId::new(3));
+        let mut inner_loop = LoopInfo::new(NodeId::new(2), 10);
+        inner_loop.body.insert(3);
         inner_loop.depth = 1;
 
         forest.add_loop(outer_loop);

@@ -37,7 +37,7 @@ pub use queries::{MethodPurity, ReturnInfo};
 pub use transforms::TrivialPhiOptions;
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, BTreeSet},
     fmt,
 };
 
@@ -96,14 +96,14 @@ pub struct SsaFunction {
     ///
     /// This enables O(1) lookup of all versions of a given origin
     /// (e.g., "all versions of Local(3)") without scanning all variables.
-    origin_versions: HashMap<VariableOrigin, Vec<SsaVarId>>,
+    origin_versions: BTreeMap<VariableOrigin, Vec<SsaVarId>>,
 
     /// Maps each variable origin to its canonical type.
     ///
     /// Populated during SSA construction from method signatures and instruction
     /// type inference. Used by [`create_variable_for_origin()`](Self::create_variable_for_origin)
     /// to ensure new variable versions always get proper types.
-    origin_types: HashMap<VariableOrigin, SsaType>,
+    origin_types: BTreeMap<VariableOrigin, SsaType>,
 
     /// Number of method arguments.
     num_args: usize,
@@ -117,7 +117,7 @@ pub struct SsaFunction {
     /// Variables that control input-dependent control flow.
     /// Switches using these variables should not be simplified to jumps
     /// even if the value appears to be constant on some paths.
-    preserved_dispatch_vars: HashSet<SsaVarId>,
+    preserved_dispatch_vars: BTreeSet<SsaVarId>,
 
     /// Original local variable types from the method signature.
     /// These are preserved during SSA construction so they can be used
@@ -161,12 +161,12 @@ impl SsaFunction {
             blocks: Vec::new(),
             variables: Vec::new(),
             var_allocator: FunctionVarAllocator::new(),
-            origin_versions: HashMap::new(),
-            origin_types: HashMap::new(),
+            origin_versions: BTreeMap::new(),
+            origin_types: BTreeMap::new(),
             num_args,
             num_locals,
             original_num_locals: num_locals,
-            preserved_dispatch_vars: HashSet::new(),
+            preserved_dispatch_vars: BTreeSet::new(),
             original_local_types: None,
             exception_handlers: Vec::new(),
             rename_groups: Vec::new(),
@@ -196,12 +196,12 @@ impl SsaFunction {
             blocks: Vec::with_capacity(block_capacity),
             variables: Vec::with_capacity(var_capacity),
             var_allocator: FunctionVarAllocator::new(),
-            origin_versions: HashMap::new(),
-            origin_types: HashMap::new(),
+            origin_versions: BTreeMap::new(),
+            origin_types: BTreeMap::new(),
             num_args,
             num_locals,
             original_num_locals: num_locals,
-            preserved_dispatch_vars: HashSet::new(),
+            preserved_dispatch_vars: BTreeSet::new(),
             original_local_types: None,
             exception_handlers: Vec::new(),
             rename_groups: Vec::with_capacity(var_capacity),
@@ -406,6 +406,43 @@ impl SsaFunction {
         self.variables.len()
     }
 
+    /// Returns the minimum BitSet capacity needed to index all variable IDs
+    /// that appear in this function (in the variables vec, block instructions,
+    /// and phi nodes).
+    ///
+    /// This handles cases where variable IDs don't match their position in
+    /// the variables vector (e.g., in test code using `SsaVarId::from_index`
+    /// without registering via `create_variable`).
+    #[must_use]
+    pub fn var_id_capacity(&self) -> usize {
+        let from_vars = self
+            .variables
+            .iter()
+            .map(|v| v.id().index() + 1)
+            .max()
+            .unwrap_or(0);
+        let from_blocks = self
+            .blocks
+            .iter()
+            .flat_map(|b| {
+                let phi_ids = b.phi_nodes().iter().flat_map(|p| {
+                    std::iter::once(p.result().index())
+                        .chain(p.operands().iter().map(|op| op.value().index()))
+                });
+                let instr_ids = b.instructions().iter().flat_map(|i| {
+                    i.op()
+                        .dest()
+                        .into_iter()
+                        .chain(i.op().uses())
+                        .map(|v| v.index())
+                });
+                phi_ids.chain(instr_ids)
+            })
+            .max()
+            .map_or(0, |m| m + 1);
+        from_vars.max(from_blocks).max(self.variables.len())
+    }
+
     /// Returns all variable IDs for a given origin, ordered by creation.
     ///
     /// This is O(1) via the version registry. For example,
@@ -587,7 +624,7 @@ impl SsaFunction {
 
     /// Returns the origin type registry.
     #[must_use]
-    pub fn origin_types(&self) -> &HashMap<VariableOrigin, SsaType> {
+    pub fn origin_types(&self) -> &BTreeMap<VariableOrigin, SsaType> {
         &self.origin_types
     }
 
@@ -610,8 +647,8 @@ impl SsaFunction {
     /// the dense indexing invariant (`variables[i].id().index() == i`).
     ///
     /// Returns a mapping from old IDs to new IDs for updating references.
-    fn reassign_dense_ids(&mut self) -> HashMap<SsaVarId, SsaVarId> {
-        let mut remap = HashMap::new();
+    fn reassign_dense_ids(&mut self) -> BTreeMap<SsaVarId, SsaVarId> {
+        let mut remap = BTreeMap::new();
         let old_groups = std::mem::take(&mut self.rename_groups);
         self.var_allocator = FunctionVarAllocator::starting_from(self.variables.len());
         let mut new_groups = vec![u32::MAX; self.variables.len()];
@@ -633,7 +670,7 @@ impl SsaFunction {
 
     /// Remaps all variable ID references in blocks (instructions, phi nodes, terminators)
     /// using the given old-to-new ID mapping.
-    fn remap_var_ids_in_blocks(&mut self, remap: &HashMap<SsaVarId, SsaVarId>) {
+    fn remap_var_ids_in_blocks(&mut self, remap: &BTreeMap<SsaVarId, SsaVarId>) {
         if remap.is_empty() {
             return;
         }
@@ -657,7 +694,7 @@ impl SsaFunction {
             }
         }
         // Remap preserved_dispatch_vars
-        let remapped_dispatch: HashSet<SsaVarId> = self
+        let remapped_dispatch: BTreeSet<SsaVarId> = self
             .preserved_dispatch_vars
             .iter()
             .map(|id| resolve(*id))

@@ -163,6 +163,10 @@ pub use builders::{
 };
 pub use changes::{AssemblyChanges, ChangeRef, ChangeRefKind, ChangeRefRc, HeapChanges};
 pub use cleanup::CleanupRequest;
+pub(crate) use cleanup::{
+    compute_entry_points, expand_type_tokens, extract_local_var_sig_rid, find_unreferenced_types,
+    with_method_body,
+};
 pub use modifications::TableModifications;
 pub use operation::{Operation, TableOperation};
 pub use resolver::LastWriteWinsResolver;

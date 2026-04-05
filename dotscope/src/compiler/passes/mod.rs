@@ -59,6 +59,7 @@
 //! |------|-------------|
 //! | [`DeadMethodEliminationPass`] | Identifies and marks methods with no live callers |
 //! | [`LicmPass`] | Loop-invariant code motion optimization |
+//! | [`ProxyDevirtualizationPass`] | Devirtualizes proxy forwarding methods and eliminates no-op calls |
 //! | [`ValueRangePropagationPass`] | Propagates value range information |
 //!
 //! # Pass Execution
@@ -87,6 +88,7 @@ mod inlining;
 mod licm;
 mod loopcanon;
 mod predicates;
+mod proxy;
 mod ranges;
 mod reassociate;
 mod strength;
@@ -105,6 +107,7 @@ pub use self::inlining::InliningPass;
 pub use self::licm::LicmPass;
 pub use self::loopcanon::LoopCanonicalizationPass;
 pub use self::predicates::{OpaquePredicatePass, PredicateResult};
+pub use self::proxy::ProxyDevirtualizationPass;
 pub use self::ranges::ValueRangePropagationPass;
 pub use self::reassociate::ReassociationPass;
 pub use self::strength::StrengthReductionPass;

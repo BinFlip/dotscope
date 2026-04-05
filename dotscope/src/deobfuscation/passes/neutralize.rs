@@ -283,6 +283,29 @@ impl<'a> NeutralizationPass<'a> {
         for &(block_idx, instr_idx) in taint.tainted_instructions() {
             if let Some(block) = ssa.block(block_idx) {
                 if let Some(instr) = block.instructions().get(instr_idx) {
+                    // Never neutralize DecryptedString constants — they are recovered
+                    // user data, not protection infrastructure. The taint may reach them
+                    // via bidirectional propagation through shared data flow (e.g., a
+                    // String.Concat that uses both a decrypted string and an undecrypted
+                    // value from a removed decryptor), but the string itself is legitimate.
+                    if matches!(
+                        instr.op(),
+                        SsaOp::Const {
+                            value: crate::analysis::ConstValue::DecryptedString(_),
+                            ..
+                        }
+                    ) {
+                        continue;
+                    }
+
+                    // Also protect instructions whose ONLY tainted inputs are
+                    // DecryptedString variables — they're consumers of user data,
+                    // not protection code. For example, String.Concat(decrypted, tainted)
+                    // should not be neutralized if the decrypted side is legitimate.
+                    // We skip this for now and only protect the constants themselves,
+                    // since the second pipeline run (after neutralization) will re-run
+                    // DCE which correctly handles liveness.
+
                     let action = if instr.is_terminator() {
                         match instr.op() {
                             SsaOp::Branch {

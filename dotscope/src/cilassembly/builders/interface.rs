@@ -5,7 +5,7 @@
 //! low-level builders to provide a fluent, high-level API for interface creation.
 
 use crate::{
-    cilassembly::{ChangeRefRc, CilAssembly},
+    cilassembly::{builders::property::PropertyBuilder, ChangeRefRc, CilAssembly},
     metadata::{
         method::{MethodAccessFlags, MethodModifiers},
         signatures::{encode_method_signature, SignatureMethod, SignatureParameter, TypeSignature},
@@ -17,8 +17,6 @@ use crate::{
     },
     Error, Result,
 };
-
-use super::property::PropertyBuilder;
 
 /// Method signature definition for the interface builder.
 struct InterfaceMethodDefinition {

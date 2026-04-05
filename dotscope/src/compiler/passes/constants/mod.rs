@@ -33,24 +33,22 @@
 //! v5 = 0           // absorbing element
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
 
 use crate::{
     analysis::{
-        simplify_op, CmpKind, ConstValue, ConstantPropagation, SccpResult, SimplifyResult, SsaCfg,
-        SsaFunction, SsaOp, SsaType, SsaVarId,
+        simplify_op, CmpKind, ConstValue, ConstantPropagation, MethodRef, SccpResult,
+        SimplifyResult, SsaCfg, SsaEvaluator, SsaFunction, SsaOp, SsaType, SsaVarId,
     },
     compiler::{
         pass::{ModificationScope, SsaPass},
         CompilerContext, EventKind, EventLog,
     },
+    deobfuscation::utils::is_method_on_type,
     metadata::{token::Token, typesystem::PointerSize},
+    utils::BitSet,
     CilObject, Result,
 };
-
-/// Maximum number of iterations for the fixed-point optimization loop.
-/// This handles cases where one optimization enables another.
-const MAX_ITERATIONS: usize = 10;
 
 /// Result of checking an algebraic identity.
 ///
@@ -106,27 +104,46 @@ enum ConvTransform {
     },
 }
 
+/// Recognized string operation that can be folded when all arguments are constants.
+#[derive(Debug, Clone, Copy)]
+enum StringFoldOp {
+    /// `String.Concat(String, String)` — static, 2 args.
+    Concat2,
+    /// `String.Concat(String, String, String)` — static, 3 args.
+    Concat3,
+    /// `String.Concat(String, String, String, String)` — static, 4 args.
+    Concat4,
+    /// `String.Substring(Int32)` — instance, args = [this, start].
+    SubstringFrom,
+    /// `String.Substring(Int32, Int32)` — instance, args = [this, start, len].
+    SubstringRange,
+    /// `String.Replace(String, String)` — instance, args = [this, old, new].
+    Replace,
+    /// `String.ToLower()` — instance, args = [this].
+    ToLower,
+    /// `String.ToUpper()` — instance, args = [this].
+    ToUpper,
+}
+
 /// Constant propagation and folding pass.
 ///
 /// This pass combines the SCCP analysis with additional optimizations
 /// for identity operations, absorbing elements, and type conversions.
-pub struct ConstantPropagationPass;
-
-impl Default for ConstantPropagationPass {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct ConstantPropagationPass {
+    /// Maximum fixpoint iterations before stopping.
+    max_iterations: usize,
 }
 
 impl ConstantPropagationPass {
     /// Creates a new constant propagation pass.
     ///
-    /// # Returns
+    /// # Arguments
     ///
-    /// A new `ConstantPropagationPass` instance.
+    /// * `max_iterations` - Maximum fixpoint iterations for the internal optimization
+    ///   loop (SCCP + algebraic simplification). The default config value is 10.
     #[must_use]
-    pub fn new() -> Self {
-        Self
+    pub fn new(max_iterations: usize) -> Self {
+        Self { max_iterations }
     }
 
     /// Runs the constant propagation pass on an SSA function.
@@ -138,6 +155,8 @@ impl ConstantPropagationPass {
     /// * `ssa` - The SSA function to analyze and transform.
     /// * `method_token` - The method token for change tracking.
     /// * `changes` - The change set to record modifications.
+    /// * `ptr_size` - Pointer size for the target architecture.
+    /// * `max_iterations` - Maximum fixpoint iterations for the optimization loop.
     ///
     /// # Returns
     ///
@@ -147,10 +166,12 @@ impl ConstantPropagationPass {
         method_token: Token,
         changes: &mut EventLog,
         ptr_size: PointerSize,
-    ) -> HashMap<SsaVarId, ConstValue> {
+        max_iterations: usize,
+        assembly: &CilObject,
+    ) -> BTreeMap<SsaVarId, ConstValue> {
         let block_count = ssa.block_count();
         if block_count == 0 {
-            return HashMap::new();
+            return BTreeMap::new();
         }
 
         // Recompute use tracking before SCCP analysis.
@@ -161,16 +182,42 @@ impl ConstantPropagationPass {
         // Build CFG from SSA and run SCCP analysis using the dataflow framework
         let cfg = SsaCfg::from_ssa(ssa);
         let mut sccp = ConstantPropagation::new(ptr_size);
-        let sccp_result = sccp.analyze(ssa, &cfg);
+        let mut sccp_result = sccp.analyze(ssa, &cfg);
 
         // Collect constants from SCCP result
-        let mut constants: HashMap<SsaVarId, ConstValue> = sccp_result
+        let mut constants: BTreeMap<SsaVarId, ConstValue> = sccp_result
             .constants()
             .map(|(var, c)| (var, c.clone()))
             .collect();
 
+        // Resolve calls to pure methods with all-constant arguments.
+        // This enables constant propagation through converted x86 stubs
+        // (ConfuserEx CFF state computation calls). If calls are folded,
+        // re-run SCCP so the new constants propagate through dependent
+        // operations (e.g., rem.un → switch in handler CFF dispatchers).
+        let pre_fold_count = constants.len();
+        Self::fold_pure_calls(
+            ssa,
+            &mut constants,
+            method_token,
+            changes,
+            assembly,
+            ptr_size,
+        );
+        if constants.len() > pre_fold_count {
+            ssa.recompute_uses();
+            let cfg = SsaCfg::from_ssa(ssa);
+            let mut sccp2 = ConstantPropagation::new(ptr_size);
+            let sccp_result2 = sccp2.analyze(ssa, &cfg);
+            for (var, c) in sccp_result2.constants() {
+                constants.entry(var).or_insert_with(|| c.clone());
+            }
+            // Update the sccp_result for downstream use
+            sccp_result = sccp_result2;
+        }
+
         // Apply additional optimizations iteratively
-        for _ in 0..MAX_ITERATIONS {
+        for _ in 0..max_iterations {
             let prev_count = constants.len();
 
             // Run identity and absorbing element optimizations
@@ -187,6 +234,9 @@ impl ConstantPropagationPass {
 
             // Run overflow-checked operation folding
             Self::fold_overflow_checked_ops(ssa, &mut constants, method_token, changes, ptr_size);
+
+            // Run string operation folding (Concat, Substring, Replace, etc.)
+            Self::fold_string_operations(ssa, &mut constants, method_token, changes, assembly);
 
             // If no new constants discovered, we're done
             if constants.len() == prev_count {
@@ -220,7 +270,7 @@ impl ConstantPropagationPass {
     /// * `changes` - The change set to record modifications.
     fn optimize_algebraic_identities(
         ssa: &mut SsaFunction,
-        constants: &mut HashMap<SsaVarId, ConstValue>,
+        constants: &mut BTreeMap<SsaVarId, ConstValue>,
         method_token: Token,
         changes: &mut EventLog,
     ) {
@@ -284,7 +334,7 @@ impl ConstantPropagationPass {
     /// Uses the shared `simplify_op` function for common patterns.
     fn check_algebraic_identity(
         op: &SsaOp,
-        constants: &HashMap<SsaVarId, ConstValue>,
+        constants: &BTreeMap<SsaVarId, ConstValue>,
     ) -> Option<AlgebraicResult> {
         let dest = op.dest()?;
         match simplify_op(op, constants) {
@@ -308,7 +358,7 @@ impl ConstantPropagationPass {
     #[allow(clippy::cast_possible_wrap)]
     fn fold_conversions(
         ssa: &mut SsaFunction,
-        constants: &mut HashMap<SsaVarId, ConstValue>,
+        constants: &mut BTreeMap<SsaVarId, ConstValue>,
         method_token: Token,
         changes: &mut EventLog,
         ptr_size: PointerSize,
@@ -390,7 +440,7 @@ impl ConstantPropagationPass {
     ) {
         // Build a map of variable definitions: var_id -> (block_idx, instr_idx, SsaOp)
         // We need the full op to analyze Conv chains
-        let mut definitions: HashMap<SsaVarId, ConvInfo> = HashMap::new();
+        let mut definitions: BTreeMap<SsaVarId, ConvInfo> = BTreeMap::new();
 
         // First pass: collect all Conv definitions and variable types
         for (block_idx, block) in ssa.iter_blocks() {
@@ -672,7 +722,7 @@ impl ConstantPropagationPass {
     #[allow(clippy::cast_possible_truncation)]
     fn fold_overflow_checked_ops(
         ssa: &mut SsaFunction,
-        constants: &mut HashMap<SsaVarId, ConstValue>,
+        constants: &mut BTreeMap<SsaVarId, ConstValue>,
         method_token: Token,
         changes: &mut EventLog,
         ptr_size: PointerSize,
@@ -714,7 +764,7 @@ impl ConstantPropagationPass {
     #[allow(clippy::cast_sign_loss, clippy::cast_possible_wrap)] // Intentional bit reinterpretation for overflow checking
     fn check_overflow_op(
         op: &SsaOp,
-        constants: &HashMap<SsaVarId, ConstValue>,
+        constants: &BTreeMap<SsaVarId, ConstValue>,
         ptr_size: PointerSize,
     ) -> Option<(SsaVarId, ConstValue)> {
         match op {
@@ -803,6 +853,391 @@ impl ConstantPropagationPass {
         }
     }
 
+    /// Folds calls to pure methods with all-constant arguments.
+    ///
+    /// This enables interprocedural constant propagation for simple helper methods,
+    /// particularly converted x86 native stubs from ConfuserEx CFF. When all arguments
+    /// to a call are known constants and the callee is a MethodDef in the same assembly
+    /// with a CIL body, the callee is evaluated and the call is replaced with the result.
+    fn fold_pure_calls(
+        ssa: &mut SsaFunction,
+        constants: &mut BTreeMap<SsaVarId, ConstValue>,
+        method_token: Token,
+        changes: &mut EventLog,
+        assembly: &CilObject,
+        ptr_size: PointerSize,
+    ) {
+        let mut replacements: Vec<(usize, usize, SsaVarId, ConstValue)> = Vec::new();
+
+        for (block_idx, block) in ssa.iter_blocks() {
+            for (instr_idx, instr) in block.instructions().iter().enumerate() {
+                let (dest, callee_token, args) = match instr.op() {
+                    SsaOp::Call {
+                        dest: Some(dest),
+                        method,
+                        args,
+                    } => (*dest, method.token(), args),
+                    _ => continue,
+                };
+
+                // Only handle MethodDef tokens (same-assembly methods)
+                if !callee_token.is_table(crate::metadata::tables::TableId::MethodDef) {
+                    continue;
+                }
+
+                // Check if all arguments are known constants.
+                let concrete_args: Option<Vec<ConstValue>> = args
+                    .iter()
+                    .map(|&a| {
+                        constants
+                            .get(&a)
+                            .cloned()
+                            .or_else(|| match ssa.get_definition(a) {
+                                Some(SsaOp::Const { value, .. }) => Some(value.clone()),
+                                _ => None,
+                            })
+                    })
+                    .collect();
+
+                let Some(concrete_args) = concrete_args else {
+                    continue;
+                };
+
+                // Try to evaluate the callee
+                let Some(result) =
+                    Self::evaluate_pure_call(assembly, callee_token, &concrete_args, ptr_size)
+                else {
+                    continue;
+                };
+
+                replacements.push((block_idx, instr_idx, dest, result));
+            }
+        }
+
+        for (block_idx, instr_idx, dest, value) in replacements {
+            constants.insert(dest, value.clone());
+            if let Some(block) = ssa.block_mut(block_idx) {
+                if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                    instr.set_op(SsaOp::Const { dest, value });
+                    changes
+                        .record(EventKind::ConstantFolded)
+                        .at(method_token, block_idx * 1000 + instr_idx)
+                        .message("folded pure call with constant arguments");
+                }
+            }
+        }
+
+        // Forward-propagate folded call results through simple arithmetic in the
+        // same block (e.g., rem.un used for CFF switch dispatch). This is needed
+        // because SCCP doesn't visit exception handler blocks, so constants from
+        // folded x86 calls wouldn't otherwise reach the switch variable.
+        if !constants.is_empty() {
+            Self::propagate_folded_arithmetic(ssa, constants, method_token, changes);
+        }
+    }
+
+    /// Propagates known constants through arithmetic operations.
+    ///
+    /// After folding pure calls, some operations (like `rem.un`) may have both
+    /// operands as constants but haven't been folded yet (SCCP ran before the calls
+    /// were folded). This pass finds and folds such operations.
+    fn propagate_folded_arithmetic(
+        ssa: &mut SsaFunction,
+        constants: &mut BTreeMap<SsaVarId, ConstValue>,
+        method_token: Token,
+        changes: &mut EventLog,
+    ) {
+        let mut new_constants: Vec<(usize, usize, SsaVarId, ConstValue)> = Vec::new();
+
+        for (block_idx, block) in ssa.iter_blocks() {
+            for (instr_idx, instr) in block.instructions().iter().enumerate() {
+                if let SsaOp::Rem {
+                    dest,
+                    left,
+                    right,
+                    unsigned,
+                } = instr.op()
+                {
+                    let lval = constants
+                        .get(left)
+                        .or_else(|| match ssa.get_definition(*left) {
+                            Some(SsaOp::Const { value, .. }) => Some(value),
+                            _ => None,
+                        })
+                        .and_then(ConstValue::as_i64);
+                    let rval = constants
+                        .get(right)
+                        .or_else(|| match ssa.get_definition(*right) {
+                            Some(SsaOp::Const { value, .. }) => Some(value),
+                            _ => None,
+                        })
+                        .and_then(ConstValue::as_i64);
+
+                    if let (Some(l), Some(r)) = (lval, rval) {
+                        if r != 0 {
+                            #[allow(clippy::cast_sign_loss)]
+                            let result = if *unsigned {
+                                ((l as u64) % (r as u64)) as i64
+                            } else if l != i64::MIN || r != -1 {
+                                l % r
+                            } else {
+                                0
+                            };
+                            #[allow(clippy::cast_possible_truncation)]
+                            let value = ConstValue::I32(result as i32);
+                            new_constants.push((block_idx, instr_idx, *dest, value));
+                        }
+                    }
+                }
+            }
+        }
+
+        for (block_idx, instr_idx, dest, value) in new_constants {
+            constants.insert(dest, value.clone());
+            if let Some(block) = ssa.block_mut(block_idx) {
+                if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                    instr.set_op(SsaOp::Const { dest, value });
+                    changes
+                        .record(EventKind::ConstantFolded)
+                        .at(method_token, block_idx * 1000 + instr_idx)
+                        .message("folded arithmetic with constant operands");
+                }
+            }
+        }
+    }
+
+    /// Evaluates a pure method call with concrete arguments.
+    ///
+    /// Builds SSA for the callee, executes it with the given arguments using
+    /// the SSA evaluator, and returns the result if execution completes.
+    fn evaluate_pure_call(
+        assembly: &CilObject,
+        callee_token: Token,
+        args: &[ConstValue],
+        ptr_size: PointerSize,
+    ) -> Option<ConstValue> {
+        let method = assembly.method(&callee_token)?;
+        let callee_ssa = method.ssa(assembly).ok()?;
+
+        let mut eval = SsaEvaluator::new(&callee_ssa, ptr_size);
+        for (var, value) in callee_ssa.argument_variables().zip(args) {
+            eval.set_concrete(var.id(), value.clone());
+        }
+
+        let trace = eval.execute(0, None, 50);
+        if !trace.is_complete() {
+            return None;
+        }
+
+        let last_block_idx = trace.last_block()?;
+        let last_block = callee_ssa.block(last_block_idx)?;
+
+        for instr in last_block.instructions() {
+            if let SsaOp::Return {
+                value: Some(ret_var),
+            } = instr.op()
+            {
+                return eval.get_concrete(*ret_var).cloned();
+            }
+        }
+
+        None
+    }
+
+    /// Folds string method calls with constant arguments into `DecryptedString` constants.
+    ///
+    /// Scans all `Call`/`CallVirt` instructions for recognized `System.String` methods
+    /// (Concat, Substring, Replace, ToLower, ToUpper) where every argument resolves to
+    /// a known string constant. Matching calls are replaced with `SsaOp::Const` holding
+    /// the folded `ConstValue::DecryptedString`.
+    ///
+    /// # Arguments
+    ///
+    /// * `ssa` - The SSA function to scan and transform.
+    /// * `constants` - Map of known constants; newly folded strings are inserted here.
+    /// * `method_token` - Method token for event logging.
+    /// * `changes` - Event log for recording transformations.
+    /// * `assembly` - Assembly metadata for resolving method tokens and `#US` heap strings.
+    fn fold_string_operations(
+        ssa: &mut SsaFunction,
+        constants: &mut BTreeMap<SsaVarId, ConstValue>,
+        method_token: Token,
+        changes: &mut EventLog,
+        assembly: &CilObject,
+    ) {
+        let mut new_constants: Vec<(SsaVarId, ConstValue, usize, usize)> = Vec::new();
+
+        for (block_idx, block) in ssa.iter_blocks() {
+            for (instr_idx, instr) in block.instructions().iter().enumerate() {
+                let folded = match instr.op() {
+                    SsaOp::Call {
+                        dest: Some(dest),
+                        method,
+                        args,
+                    }
+                    | SsaOp::CallVirt {
+                        dest: Some(dest),
+                        method,
+                        args,
+                    } => Self::try_fold_string_call(*dest, method, args, constants, assembly),
+                    _ => None,
+                };
+                if let Some((dest, value)) = folded {
+                    new_constants.push((dest, value, block_idx, instr_idx));
+                }
+            }
+        }
+
+        for (dest, value, block_idx, instr_idx) in new_constants {
+            constants.insert(dest, value.clone());
+
+            if let Some(block) = ssa.block_mut(block_idx) {
+                let instr = &mut block.instructions_mut()[instr_idx];
+                let old_op_str = format!("{}", instr.op());
+
+                instr.set_op(SsaOp::Const {
+                    dest,
+                    value: value.clone(),
+                });
+
+                changes
+                    .record(EventKind::ConstantFolded)
+                    .at(method_token, instr_idx)
+                    .message(format!("{old_op_str} → {value} (string fold)"));
+            }
+        }
+    }
+
+    /// Identifies a recognized `System.String` method that can be constant-folded.
+    ///
+    /// Resolves the method token through assembly metadata to check both the
+    /// declaring type (`System.String`) and method name. Returns `None` if the
+    /// method is not a foldable string operation or cannot be resolved.
+    ///
+    /// # Arguments
+    ///
+    /// * `method` - The SSA method reference to check.
+    /// * `args_len` - Number of arguments (used to disambiguate overloads).
+    /// * `assembly` - Assembly metadata for token resolution.
+    ///
+    /// # Returns
+    ///
+    /// The identified [`StringFoldOp`], or `None` if not a recognized operation.
+    fn identify_string_op(
+        method: &MethodRef,
+        args_len: usize,
+        assembly: &CilObject,
+    ) -> Option<StringFoldOp> {
+        let token = method.token();
+        if !is_method_on_type(assembly, token, "String") {
+            return None;
+        }
+        let name = assembly.resolve_method_name(token)?;
+        match (name.as_str(), args_len) {
+            ("Concat", 2) => Some(StringFoldOp::Concat2),
+            ("Concat", 3) => Some(StringFoldOp::Concat3),
+            ("Concat", 4) => Some(StringFoldOp::Concat4),
+            ("Substring", 2) => Some(StringFoldOp::SubstringFrom),
+            ("Substring", 3) => Some(StringFoldOp::SubstringRange),
+            ("Replace", 3) => Some(StringFoldOp::Replace),
+            ("ToLower", 1) => Some(StringFoldOp::ToLower),
+            ("ToUpper", 1) => Some(StringFoldOp::ToUpper),
+            ("ToLowerInvariant", 1) => Some(StringFoldOp::ToLower),
+            ("ToUpperInvariant", 1) => Some(StringFoldOp::ToUpper),
+            _ => None,
+        }
+    }
+
+    /// Attempts to fold a single string method call with constant arguments.
+    ///
+    /// If the method is a recognized `System.String` operation and all arguments
+    /// are known string constants, evaluates the operation and returns the result
+    /// as a `DecryptedString`. Returns `None` if any argument is non-constant,
+    /// the method is unrecognized, or the operation cannot be safely evaluated
+    /// (e.g., non-ASCII strings for `Substring`).
+    ///
+    /// # Arguments
+    ///
+    /// * `dest` - The SSA variable that receives the call result.
+    /// * `method` - The method being called.
+    /// * `args` - SSA variables for the call arguments.
+    /// * `constants` - Map of known constant values for argument lookup.
+    /// * `assembly` - Assembly metadata for method resolution and heap access.
+    ///
+    /// # Returns
+    ///
+    /// `Some((dest, folded_value))` if successfully folded, `None` otherwise.
+    fn try_fold_string_call(
+        dest: SsaVarId,
+        method: &MethodRef,
+        args: &[SsaVarId],
+        constants: &BTreeMap<SsaVarId, ConstValue>,
+        assembly: &CilObject,
+    ) -> Option<(SsaVarId, ConstValue)> {
+        let string_op = Self::identify_string_op(method, args.len(), assembly)?;
+        match string_op {
+            StringFoldOp::Concat2 | StringFoldOp::Concat3 | StringFoldOp::Concat4 => {
+                let strings: Option<Vec<String>> = args
+                    .iter()
+                    .map(|arg| {
+                        constants
+                            .get(arg)
+                            .and_then(|v| v.as_string_content(assembly))
+                    })
+                    .collect();
+                let result = strings?.concat();
+                Some((dest, ConstValue::DecryptedString(result)))
+            }
+            StringFoldOp::SubstringFrom => {
+                let this_str = constants.get(&args[0])?.as_string_content(assembly)?;
+                // Bail on non-ASCII: .NET uses UTF-16 char indices, Rust uses bytes.
+                if !this_str.is_ascii() {
+                    return None;
+                }
+                let start = constants.get(&args[1])?.as_i32()? as usize;
+                if start > this_str.len() {
+                    return None;
+                }
+                Some((
+                    dest,
+                    ConstValue::DecryptedString(this_str[start..].to_string()),
+                ))
+            }
+            StringFoldOp::SubstringRange => {
+                let this_str = constants.get(&args[0])?.as_string_content(assembly)?;
+                if !this_str.is_ascii() {
+                    return None;
+                }
+                let start = constants.get(&args[1])?.as_i32()? as usize;
+                let len = constants.get(&args[2])?.as_i32()? as usize;
+                if start.saturating_add(len) > this_str.len() {
+                    return None;
+                }
+                Some((
+                    dest,
+                    ConstValue::DecryptedString(this_str[start..start + len].to_string()),
+                ))
+            }
+            StringFoldOp::Replace => {
+                let this_str = constants.get(&args[0])?.as_string_content(assembly)?;
+                let old = constants.get(&args[1])?.as_string_content(assembly)?;
+                let new = constants.get(&args[2])?.as_string_content(assembly)?;
+                Some((
+                    dest,
+                    ConstValue::DecryptedString(this_str.replace(&old, &new)),
+                ))
+            }
+            StringFoldOp::ToLower => {
+                let this_str = constants.get(&args[0])?.as_string_content(assembly)?;
+                Some((dest, ConstValue::DecryptedString(this_str.to_lowercase())))
+            }
+            StringFoldOp::ToUpper => {
+                let this_str = constants.get(&args[0])?.as_string_content(assembly)?;
+                Some((dest, ConstValue::DecryptedString(this_str.to_uppercase())))
+            }
+        }
+    }
+
     /// Applies constant folding transformations to the SSA function.
     ///
     /// This replaces non-constant operations with constant loads when
@@ -818,7 +1253,7 @@ impl ConstantPropagationPass {
     #[allow(clippy::cast_possible_truncation)]
     fn apply_constant_folding(
         ssa: &mut SsaFunction,
-        constants: &HashMap<SsaVarId, ConstValue>,
+        constants: &BTreeMap<SsaVarId, ConstValue>,
         sccp_result: &SccpResult,
         method_token: Token,
         changes: &mut EventLog,
@@ -839,6 +1274,14 @@ impl ConstantPropagationPass {
                     // Check if this instruction's result is a known constant
                     if let Some(dest) = op.dest() {
                         if let Some(value) = constants.get(&dest) {
+                            // Skip DecryptedArray: arrays are mutable reference types.
+                            // Propagating them materializes a fresh array at each use
+                            // site, breaking in-place modifications (e.g., XOR loops
+                            // that modify the array and then read the result).
+                            if matches!(value, ConstValue::DecryptedArray { .. }) {
+                                continue;
+                            }
+
                             let old_op_str = format!("{op}");
 
                             instr.set_op(SsaOp::Const {
@@ -878,8 +1321,8 @@ impl ConstantPropagationPass {
     /// 4. Apply the appropriate transform based on chain parity.
     fn simplify_involutory_ops(ssa: &mut SsaFunction, method_token: Token, changes: &mut EventLog) {
         // Step 1: Build definition map and use counts
-        let mut definitions: HashMap<SsaVarId, (usize, usize)> = HashMap::new();
-        let mut use_counts: HashMap<SsaVarId, usize> = HashMap::new();
+        let mut definitions: BTreeMap<SsaVarId, (usize, usize)> = BTreeMap::new();
+        let mut use_counts: BTreeMap<SsaVarId, usize> = BTreeMap::new();
 
         for (block_idx, instr_idx, instr) in ssa.iter_instructions() {
             if let Some(dest) = instr.op().dest() {
@@ -897,15 +1340,15 @@ impl ConstantPropagationPass {
 
         // Step 2: Identify outermost Neg/Not instructions.
         // A Neg is outermost if its dest is NOT used as the operand of another Neg.
-        let mut neg_operands: HashSet<SsaVarId> = HashSet::new();
-        let mut not_operands: HashSet<SsaVarId> = HashSet::new();
+        let mut neg_operands = BitSet::new(ssa.var_id_capacity());
+        let mut not_operands = BitSet::new(ssa.var_id_capacity());
         for (_, _, instr) in ssa.iter_instructions() {
             match instr.op() {
                 SsaOp::Neg { operand, .. } => {
-                    neg_operands.insert(*operand);
+                    neg_operands.insert(operand.index());
                 }
                 SsaOp::Not { operand, .. } => {
-                    not_operands.insert(*operand);
+                    not_operands.insert(operand.index());
                 }
                 _ => {}
             }
@@ -921,7 +1364,7 @@ impl ConstantPropagationPass {
             is_neg: bool,
         }
 
-        let mut processed: HashSet<SsaVarId> = HashSet::new();
+        let mut processed = BitSet::new(ssa.var_id_capacity());
         let mut transforms: Vec<ChainTransform> = Vec::new();
 
         for (block_idx, instr_idx, instr) in ssa.iter_instructions() {
@@ -931,15 +1374,15 @@ impl ConstantPropagationPass {
                 _ => continue,
             };
 
-            if processed.contains(&dest) {
+            if processed.contains(dest.index()) {
                 continue;
             }
 
             // Only start chains from outermost instructions
             let is_outermost = if is_neg {
-                !neg_operands.contains(&dest)
+                !neg_operands.contains(dest.index())
             } else {
-                !not_operands.contains(&dest)
+                !not_operands.contains(dest.index())
             };
             if !is_outermost {
                 continue;
@@ -985,7 +1428,7 @@ impl ConstantPropagationPass {
 
             // Mark all chain members as processed
             for d in &chain_dests {
-                processed.insert(*d);
+                processed.insert(d.index());
             }
 
             let chain_len = chain_locations.len();
@@ -1052,6 +1495,63 @@ impl ConstantPropagationPass {
         }
     }
 
+    /// Checks if a block is a loop header by detecting back-edges.
+    ///
+    /// A block is a loop header if any block with a higher index targets it,
+    /// indicating a back-edge in the CFG. Switch folding must be skipped for
+    /// loop headers because the switch value (which appears constant on the
+    /// initial iteration) may take different values on subsequent iterations
+    /// via the PHI at the loop header.
+    fn is_loop_header(ssa: &SsaFunction, block_idx: usize) -> bool {
+        // Check the block itself for self-targeting terminators (self-loops).
+        // After jump threading, a switch case that originally targeted a
+        // trampoline may be threaded to the switch block itself. These
+        // self-loops won't be caught by the higher-index scan below.
+        if let Some(block) = ssa.block(block_idx) {
+            if let Some(op) = block.terminator_op() {
+                let self_targets = match op {
+                    SsaOp::Switch {
+                        targets, default, ..
+                    } => targets.contains(&block_idx) || *default == block_idx,
+                    _ => false,
+                };
+                if self_targets {
+                    return true;
+                }
+            }
+        }
+
+        // Check for back-edges from blocks with higher indices.
+        for bi in (block_idx + 1)..ssa.block_count() {
+            if let Some(block) = ssa.block(bi) {
+                if let Some(op) = block.terminator_op() {
+                    let targets_block = match op {
+                        SsaOp::Jump { target } => *target == block_idx,
+                        SsaOp::Leave { target } => *target == block_idx,
+                        SsaOp::Branch {
+                            true_target,
+                            false_target,
+                            ..
+                        } => *true_target == block_idx || *false_target == block_idx,
+                        SsaOp::BranchCmp {
+                            true_target,
+                            false_target,
+                            ..
+                        } => *true_target == block_idx || *false_target == block_idx,
+                        SsaOp::Switch {
+                            targets, default, ..
+                        } => targets.contains(&block_idx) || *default == block_idx,
+                        _ => false,
+                    };
+                    if targets_block {
+                        return true;
+                    }
+                }
+            }
+        }
+        false
+    }
+
     /// Simplifies control flow based on constant conditions.
     ///
     /// Converts branches and switches with known conditions to unconditional jumps.
@@ -1065,7 +1565,7 @@ impl ConstantPropagationPass {
     /// * `changes` - The change set to record modifications.
     fn simplify_control_flow(
         ssa: &mut SsaFunction,
-        constants: &HashMap<SsaVarId, ConstValue>,
+        constants: &BTreeMap<SsaVarId, ConstValue>,
         sccp_result: &SccpResult,
         method_token: Token,
         changes: &mut EventLog,
@@ -1103,6 +1603,15 @@ impl ConstantPropagationPass {
                             // Skip simplification for preserved dispatch variables
                             // These control input-dependent control flow that must be preserved
                             if ssa.is_preserved_dispatch_var(*value) {
+                                None
+                            } else if Self::is_loop_header(ssa, block_idx) {
+                                // Don't fold switches at loop headers. A switch whose
+                                // value is constant on the initial iteration may take
+                                // different values on subsequent iterations (via the
+                                // PHI at the loop header). Folding it would make all
+                                // non-initial-state switch cases unreachable, which is
+                                // incorrect for CFF inner state machines (e.g.,
+                                // JIEJIE.NET nested dispatchers within using blocks).
                                 None
                             } else if let Some(c) = constants.get(value) {
                                 if let Some(idx) = c.as_i32() {
@@ -1224,7 +1733,14 @@ impl SsaPass for ConstantPropagationPass {
         let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
 
         // Run constant propagation and transformation
-        let constants = Self::run_constant_propagation(ssa, method_token, &mut changes, ptr_size);
+        let constants = Self::run_constant_propagation(
+            ssa,
+            method_token,
+            &mut changes,
+            ptr_size,
+            self.max_iterations,
+            assembly,
+        );
 
         // Cache the constants we found for other passes
         for (var, value) in &constants {

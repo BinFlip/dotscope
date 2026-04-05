@@ -146,6 +146,7 @@ use std::{any::Any, collections::HashSet, sync::Arc};
 
 use crate::{
     cilassembly::CleanupRequest,
+    compiler::PassPhase,
     deobfuscation::{
         context::AnalysisContext,
         techniques::{
@@ -157,7 +158,7 @@ use crate::{
                 },
                 tamper::AntiTamperFindings,
             },
-            Detection, Detections, Evidence, PassPhase, Technique, TechniqueCategory,
+            Detection, Detections, Evidence, Technique, TechniqueCategory,
         },
     },
     metadata::{
@@ -171,7 +172,11 @@ use crate::{
 /// Minimum call-site count for a method to be considered a decryptor.
 const MIN_CALL_SITES: usize = 3;
 
-/// LZMA magic byte found at the start of compressed FieldRVA data.
+/// LZMA properties byte found at the start of compressed FieldRVA data.
+///
+/// This is the default LZMA properties byte (`lc=3, lp=0, pb=2`) used by
+/// ConfuserEx and most LZMA compressors. A fork using different LZMA settings
+/// would produce a different properties byte and require updating this constant.
 const LZMA_MAGIC: u8 = 0x5D;
 
 /// Findings from constants protection detection.
@@ -193,6 +198,9 @@ pub struct ConstantsFindings {
     pub backing_type_tokens: Vec<Token>,
     /// CFGCtx value type token (present when CFG mode is detected).
     pub cfgctx_type_token: Option<Token>,
+    /// `<Module>` fields used by decryptor infrastructure (runtime state byte[], etc.).
+    /// These are non-FieldRVA fields referenced by decryptor/initializer methods.
+    pub module_state_fields: Vec<Token>,
 }
 
 /// Detects ConfuserEx constants protection (string/number/array encryption).
@@ -349,6 +357,11 @@ impl Technique for ConfuserExConstants {
         }
 
         // Phase 6: Find parent types of LZMA data fields (backing types).
+        // Only mark a backing type for deletion if ALL its fields are LZMA data fields.
+        // Types like <PrivateImplementationDetails> may also contain legitimate field
+        // initialization data (e.g., __StaticArrayInitTypeSize fields used by
+        // RuntimeHelpers.InitializeArray) — deleting the entire type would destroy
+        // that data and break reconstructed array initializers.
         let data_field_set: HashSet<Token> = data_field_tokens.iter().copied().collect();
         let infra_set: HashSet<Token> = infrastructure_types.iter().copied().collect();
         let mut backing_type_tokens = Vec::new();
@@ -361,11 +374,17 @@ impl Technique for ConfuserExConstants {
                 if infra_set.contains(&cil_type.token) {
                     continue;
                 }
-                let has_data_field = cil_type
+                let field_count = cil_type.fields.iter().count();
+                let lzma_field_count = cil_type
                     .fields
                     .iter()
-                    .any(|(_, field)| data_field_set.contains(&field.token));
-                if has_data_field {
+                    .filter(|(_, field)| data_field_set.contains(&field.token))
+                    .count();
+                // Only delete the type if ALL its fields are LZMA data fields.
+                // Types with no fields (like <PrivateImplementationDetails> which is
+                // just a container for nested sized-struct types) are preserved — codegen
+                // may add new fields to them for RuntimeHelpers.InitializeArray.
+                if field_count > 0 && lzma_field_count == field_count {
                     backing_type_tokens.push(cil_type.token);
                 }
             }
@@ -374,7 +393,19 @@ impl Technique for ConfuserExConstants {
         // Phase 7: Find constants initializer method.
         let initializer_token = find_constants_initializer(assembly);
 
-        // Phase 8: Detect CFGCtx type for cleanup.
+        // Phase 8: Collect <Module> state fields referenced by decryptor infrastructure.
+        // The runtime decryptor stores decrypted constants in a static byte[] field on
+        // <Module> (the `b` field in Confuser.Runtime/Constant.cs). After SSA/codegen
+        // rewrites decryptor method bodies, the original field references may be lost,
+        // preventing cascade removal. Explicitly collecting these fields ensures cleanup.
+        let module_state_fields = collect_module_state_fields(
+            assembly,
+            &decryptor_tokens,
+            initializer_token,
+            &data_field_set,
+        );
+
+        // Phase 9: Detect CFGCtx type for cleanup.
         let cfgctx_type_token = if uses_cfg_mode {
             detect_cfgctx_semantics(assembly).and_then(|s| s.type_token)
         } else {
@@ -409,6 +440,7 @@ impl Technique for ConfuserExConstants {
             data_field_tokens,
             backing_type_tokens,
             cfgctx_type_token,
+            module_state_fields,
         };
 
         Detection::new_detected(
@@ -447,6 +479,11 @@ impl Technique for ConfuserExConstants {
 
         // Add LZMA FieldRVA data fields.
         for token in &findings.data_field_tokens {
+            request.add_field(*token);
+        }
+
+        // Add <Module> state fields (runtime byte[] buffer, etc.).
+        for token in &findings.module_state_fields {
             request.add_field(*token);
         }
 
@@ -623,6 +660,62 @@ fn register_methodspec_mappings(
     }
 }
 
+/// Collects `<Module>` fields referenced by decryptor infrastructure methods.
+///
+/// The ConfuserEx runtime stores decrypted constants in a `static byte[] b` field
+/// on `<Module>`. After SSA/codegen rewrites the decryptor method bodies, the
+/// original `ldsfld`/`stsfld` references may be lost, preventing cascade removal
+/// during cleanup. This function scans the original IL of decryptor and initializer
+/// methods to find all `<Module>` field references, excluding FieldRVA data fields
+/// (which are handled separately).
+fn collect_module_state_fields(
+    assembly: &CilObject,
+    decryptor_tokens: &[Token],
+    initializer_token: Option<Token>,
+    data_field_set: &HashSet<Token>,
+) -> Vec<Token> {
+    // Build the set of <Module> field tokens
+    let mut module_fields = HashSet::new();
+    for entry in assembly.types().iter() {
+        if entry.value().is_module_type() {
+            for field in entry.value().fields() {
+                module_fields.insert(field.token);
+            }
+            break;
+        }
+    }
+
+    if module_fields.is_empty() {
+        return Vec::new();
+    }
+
+    // Scan IL of decryptor and initializer methods for field references
+    let mut state_fields = HashSet::new();
+    let method_tokens: Vec<Token> = decryptor_tokens
+        .iter()
+        .copied()
+        .chain(initializer_token)
+        .collect();
+
+    for method_token in &method_tokens {
+        let Some(method) = assembly.method(method_token) else {
+            continue;
+        };
+        for instr in method.instructions() {
+            if let Some(token) = instr.get_token_operand() {
+                if token.table() == 0x04
+                    && module_fields.contains(&token)
+                    && !data_field_set.contains(&token)
+                {
+                    state_fields.insert(token);
+                }
+            }
+        }
+    }
+
+    state_fields.into_iter().collect()
+}
+
 /// Attempts to resolve a `MemberRef` token to a known decryptor `MethodDef`.
 ///
 /// Resolves the `MemberRef` via [`CilObject::member_ref`] and checks whether
@@ -676,11 +769,11 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            detection.detected,
+            detection.is_detected(),
             "ConfuserExConstants should detect constants protection in mkaring_constants.exe"
         );
         assert!(
-            !detection.evidence.is_empty(),
+            !detection.evidence().is_empty(),
             "Detection should have evidence"
         );
 
@@ -702,7 +795,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "ConfuserExConstants should not detect constants protection in original.exe"
         );
     }

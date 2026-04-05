@@ -277,10 +277,10 @@ impl CallResolver {
             })?;
         for i in 0..state.app_domain().parsed_assembly_count() {
             let Some(asm) = state.app_domain().get_parsed_assembly(i) else {
-                return Ok(None);
+                continue;
             };
             let Some(cil_type) = asm.types().get_by_fullname(&fullname, true) else {
-                return Ok(None);
+                continue;
             };
             if let Some(method) = cil_type.find_method(method_name) {
                 debug!(
@@ -584,6 +584,116 @@ impl CallResolver {
                     } else {
                         method_sig.param_count as usize
                     };
+
+                    // Virtual dispatch hook retry: when a `callvirt` targets a base class
+                    // MemberRef (e.g., TextReader.ReadToEnd) but the runtime object is a
+                    // derived type (e.g., StreamReader), the initial hook lookup fails
+                    // because hooks are registered under the derived type name. Retry the
+                    // hook lookup using the runtime type of `this`.
+                    if is_virtual && method_sig.has_this && total_args > 0 {
+                        let args = thread.peek_args(total_args)?;
+                        let this_arg = &args[0];
+
+                        if let EmValue::ObjectRef(heap_ref) = this_arg {
+                            if let Ok(runtime_type_token) = thread.heap().get_type_token(*heap_ref)
+                            {
+                                if let Some(runtime_type) = context.get_type(runtime_type_token) {
+                                    let rt_namespace = if runtime_type.namespace.is_empty() {
+                                        runtime_type
+                                            .enclosing_type()
+                                            .map(|enc| enc.namespace.clone())
+                                            .filter(|ns| !ns.is_empty())
+                                            .unwrap_or_default()
+                                    } else {
+                                        runtime_type.namespace.clone()
+                                    };
+                                    let rt_type_name = &runtime_type.name;
+
+                                    // Only retry if the runtime type differs from the declared type
+                                    let declared_type_info =
+                                        EmulationContext::get_member_ref_type_info(&member_ref);
+                                    let types_differ =
+                                        !declared_type_info.as_ref().is_some_and(|(dns, dtn)| {
+                                            dns == &rt_namespace && dtn == rt_type_name.as_str()
+                                        });
+
+                                    if types_differ {
+                                        let param_types =
+                                            context.get_parameter_types(method_token).ok();
+                                        let param_types_ref: Option<&[CilFlavor]> =
+                                            param_types.as_deref();
+                                        let return_type =
+                                            context.get_return_type(method_token).ok().flatten();
+
+                                        let (this_ref, method_args): (
+                                            Option<&EmValue>,
+                                            &[EmValue],
+                                        ) = (Some(&args[0]), &args[1..]);
+
+                                        let hook_context = HookContext::new(
+                                            method_token,
+                                            &rt_namespace,
+                                            rt_type_name,
+                                            &member_ref.name,
+                                            self.config.pointer_size,
+                                        )
+                                        .with_this(this_ref)
+                                        .with_args(method_args)
+                                        .with_param_types(param_types_ref)
+                                        .with_return_type(return_type);
+
+                                        let outcome =
+                                            self.hooks.execute(&hook_context, thread, |_| None)?;
+
+                                        match outcome {
+                                            HookOutcome::Handled(value) => {
+                                                // Hook matched — pop the arguments
+                                                thread.pop_args(total_args)?;
+                                                if self.trace_stubs_enabled() {
+                                                    self.trace(TraceEvent::HookInvoke {
+                                                        method: method_token,
+                                                        hook_name: format!(
+                                                            "{}.{}.{} [virtual dispatch]",
+                                                            rt_namespace,
+                                                            rt_type_name,
+                                                            member_ref.name
+                                                        ),
+                                                        bypassed: true,
+                                                        return_value: value
+                                                            .as_ref()
+                                                            .map(|v| format!("{v}")),
+                                                    });
+                                                }
+                                                return Ok(CallResolution::HookedBypass {
+                                                    return_value: value,
+                                                });
+                                            }
+                                            HookOutcome::ThrewException {
+                                                exception_type,
+                                                message,
+                                            } => {
+                                                thread.pop_args(total_args)?;
+                                                return Ok(CallResolution::ThrowException {
+                                                    exception_type,
+                                                    message,
+                                                });
+                                            }
+                                            HookOutcome::ReflectionInvoke { .. } => {
+                                                // Unlikely for virtual dispatch, but handle
+                                                thread.pop_args(total_args)?;
+                                                return Ok(CallResolution::HookedBypass {
+                                                    return_value: None,
+                                                });
+                                            }
+                                            HookOutcome::NoMatch => {
+                                                // Still no match — fall through to Symbolic
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
 
                     // Pop arguments from stack
                     for _ in 0..total_args {

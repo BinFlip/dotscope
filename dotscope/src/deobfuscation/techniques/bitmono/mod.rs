@@ -35,5 +35,5 @@ pub use junk::BitMonoJunk;
 pub use nops::BitMonoNops;
 pub use pe::BitMonoPeRepair;
 pub use renamer::BitMonoRenamer;
-pub use strings::BitMonoStrings;
+pub use strings::{BitMonoStrings, StringFindings};
 pub use unmanaged::BitMonoUnmanaged;

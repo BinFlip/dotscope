@@ -31,7 +31,6 @@ use crate::{
     analysis::ssa::{ConstEvaluator, ConstValue, PhiAnalyzer, SsaEvaluator, SsaFunction, SsaVarId},
     metadata::typesystem::PointerSize,
 };
-
 #[cfg(feature = "compiler")]
 use crate::{compiler::CompilerContext, metadata::token::Token};
 

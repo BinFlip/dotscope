@@ -140,7 +140,7 @@ impl Technique for ConfuserExNativeHelpers {
 
         // Mark native helper methods for cleanup.
         for token in &helpers {
-            detection.cleanup.add_method(*token);
+            detection.cleanup_mut().add_method(*token);
         }
 
         detection
@@ -254,11 +254,11 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            detection.detected,
+            detection.is_detected(),
             "ConfuserExNativeHelpers should detect native helpers in mkaring_constants_x86.exe"
         );
         assert!(
-            !detection.evidence.is_empty(),
+            !detection.evidence().is_empty(),
             "Detection should have evidence"
         );
 
@@ -280,7 +280,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "ConfuserExNativeHelpers should not detect native helpers in original.exe"
         );
     }

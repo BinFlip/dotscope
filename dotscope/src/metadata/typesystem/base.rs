@@ -1345,7 +1345,14 @@ impl CilFlavor {
 
             // Stack normalization: CIL stack uses I4/I8/F for all smaller types
             // stelem.i1/i2 expect I4 on stack and truncate during store
-            (CilFlavor::I4, CilFlavor::I1 | CilFlavor::U1 | CilFlavor::I2 | CilFlavor::U2) => true,
+            // Char is a 2-byte unsigned value, equivalent to U2 for storage purposes
+            (
+                CilFlavor::I4,
+                CilFlavor::I1 | CilFlavor::U1 | CilFlavor::I2 | CilFlavor::U2 | CilFlavor::Char,
+            ) => true,
+
+            // Bool is a 1-byte value, I4 on the stack
+            (CilFlavor::I4, CilFlavor::Boolean) => true,
 
             // Integer widening: smaller -> larger
             (CilFlavor::I1 | CilFlavor::U1, CilFlavor::I2 | CilFlavor::I4 | CilFlavor::I8) => true,

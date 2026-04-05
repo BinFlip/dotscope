@@ -8,6 +8,7 @@
 use std::{
     collections::{HashMap, HashSet},
     hash::{Hash, Hasher},
+    path::Path,
     sync::Arc,
 };
 
@@ -366,20 +367,16 @@ impl MethodSemantics {
     /// use proxy/wrapper methods that call BCL methods indirectly. These proxies may
     /// not be inlined by the deobfuscator, but the semantic behavior is unchanged.
     pub fn preserves_semantics_of(&self, original: &MethodSemantics) -> bool {
-        // All original strings must appear in deobfuscated (most important check)
-        let strings_preserved = original.strings.is_subset(&self.strings);
-
-        // For constants, we're lenient - deobfuscation may fold/eliminate some
-        // but important ones (non-trivial values) should remain
-        let significant_consts: HashSet<_> = original
-            .integer_constants
-            .iter()
-            .filter(|&&c| c != 0 && c != 1 && c != -1)
-            .copied()
-            .collect();
-        let deob_consts: HashSet<_> = self.integer_constants.iter().copied().collect();
-        let consts_preserved =
-            significant_consts.is_empty() || significant_consts.is_subset(&deob_consts);
+        // All original strings must appear in deobfuscated (most important check).
+        // Strings are content — they should never be optimized away.
+        // Constants are NOT required for preservation. Valid optimizations
+        // legitimately remove them:
+        // - Constant folding: `tab == 9` → `true` (constant 9 disappears)
+        // - Strength reduction: `x * 2` → `x << 1` (constant 2 disappears)
+        // - Dead code elimination: unused constants removed
+        //
+        // Constants still contribute to the similarity score (see `similarity()`),
+        // so methods with many missing constants will have lower similarity.
 
         // External calls and field reads are NOT required because obfuscators often
         // use proxy methods that wrap BCL calls. The deobfuscator may not inline these
@@ -387,7 +384,7 @@ impl MethodSemantics {
         //
         // We still track them for similarity scoring, but don't require preservation.
 
-        strings_preserved && consts_preserved
+        original.strings.is_subset(&self.strings)
     }
 }
 
@@ -738,7 +735,6 @@ pub fn verify_semantic_preservation(
 
             // Find best matching candidate by signature + fingerprint + semantics
             let mut best_match: Option<(f64, &MethodSemantics)> = None;
-
             for (cand_method, _cand_ssa, cand_semantics, cand_fingerprint) in &deob_candidates {
                 // Check signature match first
                 let cand_is_instance = !cand_method
@@ -1125,4 +1121,213 @@ pub fn is_external_field_token(token: Token) -> bool {
     // MemberRef (0x0A) = external field reference
     // Field (0x04) = internal field definition
     table_id == 0x0A
+}
+
+/// Structural statistics of a .NET assembly for comparing deobfuscated
+/// output against the original baseline.
+#[derive(Debug, Clone)]
+pub struct AssemblyStats {
+    /// File size in bytes.
+    pub file_size: u64,
+    /// User-defined type names (fully qualified, excluding compiler infrastructure).
+    pub type_names: HashSet<String>,
+    /// Number of user-defined methods (across all user types).
+    pub method_count: usize,
+    /// Number of user-defined fields (across all user types).
+    pub field_count: usize,
+    /// Embedded resource names.
+    pub resource_names: HashSet<String>,
+}
+
+/// Names of types that are compiler/runtime infrastructure, not user code.
+/// These are excluded from structural comparison.
+const INFRASTRUCTURE_TYPE_PREFIXES: &[&str] = &["<Module>"];
+
+const INFRASTRUCTURE_TYPE_NAMES: &[&str] = &[
+    "System.Runtime.CompilerServices.RefSafetyRulesAttribute",
+    "Microsoft.CodeAnalysis.EmbeddedAttribute",
+    "System.Runtime.CompilerServices.NullableAttribute",
+    "System.Runtime.CompilerServices.NullableContextAttribute",
+];
+
+/// Returns true if a type name is compiler/runtime infrastructure.
+fn is_infrastructure_type(name: &str) -> bool {
+    for prefix in INFRASTRUCTURE_TYPE_PREFIXES {
+        if name.starts_with(prefix) {
+            return true;
+        }
+    }
+    INFRASTRUCTURE_TYPE_NAMES.contains(&name)
+}
+
+impl AssemblyStats {
+    /// Collects structural statistics from an assembly.
+    pub fn from_assembly(assembly: &CilObject, file_size: u64) -> Self {
+        let types = assembly.types();
+        let mut type_names = HashSet::new();
+        let mut method_count = 0usize;
+        let mut field_count = 0usize;
+
+        for entry in types.iter() {
+            let token: Token = *entry.key();
+            let cil_type = entry.value();
+
+            // Only count TypeDef tokens (table 0x02), not TypeRef/TypeSpec
+            if token.table() != 0x02 {
+                continue;
+            }
+
+            let fullname = cil_type.fullname();
+
+            // Skip infrastructure types
+            if is_infrastructure_type(&fullname) {
+                continue;
+            }
+
+            type_names.insert(fullname);
+
+            // Count methods and fields on this type
+            method_count += cil_type.methods().count();
+            field_count += cil_type.fields().count();
+        }
+
+        // Collect resource names
+        let mut resource_names = HashSet::new();
+        for entry in assembly.resources().iter() {
+            resource_names.insert(entry.key().clone());
+        }
+
+        Self {
+            file_size,
+            type_names,
+            method_count,
+            field_count,
+            resource_names,
+        }
+    }
+
+    /// Collects stats from a file path.
+    pub fn from_file(path: &Path) -> Self {
+        let file_size = std::fs::metadata(path).map(|m| m.len()).unwrap_or(0);
+        let assembly = CilObject::from_path(path).expect("failed to load assembly for stats");
+        Self::from_assembly(&assembly, file_size)
+    }
+}
+
+/// Configuration for structural assertions.
+#[derive(Debug, Clone)]
+pub struct StructuralConfig {
+    /// Maximum allowed file size increase from original (0.10 = +10%).
+    /// Smaller output is always accepted (obfuscator artifacts removed).
+    pub size_tolerance: f64,
+    /// Whether to check that type names match original.
+    pub check_type_names: bool,
+    /// Whether to check that resource names match original.
+    pub check_resources: bool,
+}
+
+impl Default for StructuralConfig {
+    fn default() -> Self {
+        Self {
+            size_tolerance: 0.10,
+            check_type_names: true,
+            check_resources: true,
+        }
+    }
+}
+
+/// Asserts that the deobfuscated assembly matches the original's structure.
+///
+/// Checks:
+/// 1. File size within tolerance
+/// 2. All original types present (no missing user types)
+/// 3. No extra types (obfuscator artifacts should be cleaned)
+/// 4. Resource names match
+///
+/// Prints a diagnostic summary to stderr before asserting, so failures
+/// show exactly what's wrong.
+pub fn assert_structural_match(
+    original: &AssemblyStats,
+    deobfuscated: &AssemblyStats,
+    filename: &str,
+    config: &StructuralConfig,
+) {
+    let mut failures: Vec<String> = Vec::new();
+
+    // File size check — only flag if output is LARGER than tolerance.
+    // Smaller output is expected (obfuscator artifacts removed).
+    let size_ratio = deobfuscated.file_size as f64 / original.file_size as f64;
+    let size_pct = (size_ratio - 1.0) * 100.0;
+    if size_ratio > (1.0 + config.size_tolerance) {
+        failures.push(format!(
+            "file size: {} bytes ({:+.1}% vs original {}), tolerance +{:.0}%",
+            deobfuscated.file_size,
+            size_pct,
+            original.file_size,
+            config.size_tolerance * 100.0
+        ));
+    }
+
+    if config.check_type_names {
+        // Missing types (in original but not in deobfuscated)
+        let missing: Vec<_> = original
+            .type_names
+            .difference(&deobfuscated.type_names)
+            .cloned()
+            .collect();
+        if !missing.is_empty() {
+            failures.push(format!("missing types: {:?}", missing));
+        }
+
+        // Extra types (in deobfuscated but not in original = obfuscator artifacts)
+        let extra: Vec<_> = deobfuscated
+            .type_names
+            .difference(&original.type_names)
+            .cloned()
+            .collect();
+        if !extra.is_empty() {
+            failures.push(format!("extra types (artifacts not cleaned): {:?}", extra));
+        }
+    }
+
+    if config.check_resources {
+        let missing_res: Vec<_> = original
+            .resource_names
+            .difference(&deobfuscated.resource_names)
+            .cloned()
+            .collect();
+        let extra_res: Vec<_> = deobfuscated
+            .resource_names
+            .difference(&original.resource_names)
+            .cloned()
+            .collect();
+        if !missing_res.is_empty() {
+            failures.push(format!("missing resources: {:?}", missing_res));
+        }
+        if !extra_res.is_empty() {
+            failures.push(format!("extra resources: {:?}", extra_res));
+        }
+    }
+
+    // Print diagnostic summary
+    eprintln!(
+        "  Structural: size={} ({:+.1}%), types={}/{}, methods={}/{}, fields={}/{}, resources={}/{}{}",
+        deobfuscated.file_size,
+        size_pct,
+        deobfuscated.type_names.len(),
+        original.type_names.len(),
+        deobfuscated.method_count,
+        original.method_count,
+        deobfuscated.field_count,
+        original.field_count,
+        deobfuscated.resource_names.len(),
+        original.resource_names.len(),
+        if failures.is_empty() { " ✓" } else { " ✗" }
+    );
+
+    assert!(
+        failures.is_empty(),
+        "{filename}: structural mismatch:\n  {}",
+        failures.join("\n  ")
+    );
 }

@@ -45,13 +45,14 @@
 //! }
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{
     analysis::ssa::{
         evaluator::SsaEvaluator, symbolic::SymbolicExpr, ConstValue, SsaFunction, SsaOp, SsaVarId,
     },
     metadata::typesystem::PointerSize,
+    utils::BitSet,
 };
 
 /// Detects common obfuscation patterns in SSA form.
@@ -155,7 +156,8 @@ impl<'a> PatternDetector<'a> {
     ///
     /// Uses BFS with a depth limit to avoid infinite loops.
     fn reaches_block(&self, from_block: usize, target_block: usize) -> bool {
-        let mut visited = HashSet::new();
+        let block_count = self.ssa.block_count().max(1);
+        let mut visited = BitSet::new(block_count);
         let mut queue = vec![from_block];
         let max_depth = 50; // Prevent infinite loops
         let mut depth = 0;
@@ -168,7 +170,7 @@ impl<'a> PatternDetector<'a> {
                     return true;
                 }
 
-                if !visited.insert(block_idx) {
+                if block_idx >= block_count || !visited.insert(block_idx) {
                     continue;
                 }
 
@@ -236,15 +238,16 @@ impl<'a> PatternDetector<'a> {
         let reaching_blocks = self.find_reaching_blocks(dispatcher.block);
 
         reaching_blocks
-            .into_iter()
+            .iter()
             .filter(|&block_idx| block_idx != dispatcher.block)
             .filter_map(|block_idx| self.analyze_source_block(block_idx, dispatcher))
             .collect()
     }
 
     /// Finds all blocks that can reach the dispatcher block.
-    fn find_reaching_blocks(&self, dispatcher_block: usize) -> HashSet<usize> {
-        let mut reaching = HashSet::new();
+    fn find_reaching_blocks(&self, dispatcher_block: usize) -> BitSet {
+        let block_count = self.ssa.block_count().max(1);
+        let mut reaching = BitSet::new(block_count);
 
         // Build reverse CFG (predecessors)
         let mut predecessors: HashMap<usize, Vec<usize>> = HashMap::new();
@@ -259,7 +262,7 @@ impl<'a> PatternDetector<'a> {
         // BFS backwards from dispatcher
         let mut queue = vec![dispatcher_block];
         while let Some(block_idx) = queue.pop() {
-            if !reaching.insert(block_idx) {
+            if block_idx >= block_count || !reaching.insert(block_idx) {
                 continue;
             }
 

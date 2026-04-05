@@ -837,8 +837,10 @@ pub fn evaluate_binary_typed(
 mod tests {
     use std::collections::HashMap;
 
+    use super::*;
+
     use crate::{
-        analysis::ssa::{ConstValue, SsaVarId, SymbolicExpr, SymbolicOp},
+        analysis::ssa::{ConstValue, SsaVarId},
         metadata::typesystem::PointerSize,
     };
 

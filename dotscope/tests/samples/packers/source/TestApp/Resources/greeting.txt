@@ -1,0 +1,3 @@
+Hello from embedded resource!
+This is a test resource file used to verify resource encryption and decryption.
+Line 3: The quick brown fox jumps over the lazy dog.

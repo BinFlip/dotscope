@@ -246,13 +246,13 @@ impl Technique for BitMonoHooks {
         // Mark infrastructure type for cleanup so post-deobfuscation
         // re-detection doesn't re-trigger.
         if let Some(infra_token) = infrastructure_type {
-            detection.cleanup.add_type(infra_token);
+            detection.cleanup_mut().add_type(infra_token);
         }
 
         // Mark dummy methods and init methods for cleanup.
         // These live in <Module> and won't cascade from the infrastructure type.
-        detection.cleanup.add_methods(dummy_methods);
-        detection.cleanup.add_methods(init_methods);
+        detection.cleanup_mut().add_methods(dummy_methods);
+        detection.cleanup_mut().add_methods(init_methods);
 
         detection
     }
@@ -909,11 +909,11 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            detection.detected,
+            detection.is_detected(),
             "BitMonoHooks should detect DotNetHook infrastructure in bitmono_dotnethook.exe"
         );
         assert!(
-            !detection.evidence.is_empty(),
+            !detection.evidence().is_empty(),
             "Detection should include evidence"
         );
     }
@@ -926,7 +926,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "BitMonoHooks should not detect DotNetHook in a non-BitMono assembly"
         );
     }

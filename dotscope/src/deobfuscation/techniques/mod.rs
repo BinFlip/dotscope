@@ -16,48 +16,66 @@
 //! - **SSA pass**: [`Technique::ssa_phase`] + [`Technique::create_pass`] — optional
 //! - **Initialization**: [`Technique::initialize`] — optional, registers decryptors/hooks
 //! - **Cleanup**: [`Technique::cleanup`] — optional, contributes tokens to remove
+//! - **Capabilities**: [`Technique::capabilities`] — declares the technique's pattern
+//!
+//! # Implementation Patterns
+//!
+//! ## Pattern A — Technique-owned SSA pass
+//!
+//! `ssa_phase()` returns `Some(phase)` and `create_pass()` returns `Some(pass)`.
+//! The technique owns and controls its SSA transformation.
+//!
+//! Examples: `bitmono.calli` (calli reversal), `generic.opaquefields` (opaque predicate removal)
+//!
+//! ## Pattern B — Shared infrastructure contributor
+//!
+//! `ssa_phase()` returns `Some(phase)` and `create_pass()` returns `None`.
+//! The technique registers decryptors or hooks in `initialize()` that feed
+//! a shared pass like `DecryptionPass`.
+//!
+//! Examples: `generic.strings`, `confuserex.constants`, `obfuscar.strings`
+//!
+//! ## Pattern C — Byte-only transform
+//!
+//! `byte_transform()` returns `Some(...)`, `ssa_phase()` returns `None`.
+//! Used for PE/metadata patching without SSA involvement.
+//!
+//! Examples: `bitmono.pe` (PE header repair), `confuserex.tamper` (anti-tamper decryption)
+//!
+//! ## Pattern D — Detection only
+//!
+//! Neither byte transform nor SSA pass. Provides detection for attribution
+//! and may contribute cleanup tokens.
+//!
+//! Examples: `confuserex.marker` (marker attribute detection)
 
 mod assembly;
 mod bitmono;
 mod confuserex;
 mod detection;
 mod generic;
+mod jiejienet;
 mod obfuscar;
 mod registry;
 mod result;
 
 pub use assembly::WorkingAssembly;
 pub use detection::{AttributionResult, Detection, Detections, Evidence};
-pub use registry::{ObfuscatorSignature, TechniqueRegistry};
+pub use registry::{ObfuscatorMatcher, ObfuscatorSignature, TechniqueRegistry};
 pub use result::TechniqueResult;
+pub(crate) use result::TechniqueResults;
+
+// Re-export findings types needed by infrastructure passes and the engine.
+pub(crate) use bitmono::StringFindings as BitMonoStringFindings;
 
 use std::sync::Arc;
 
 use crate::{
     cilassembly::CleanupRequest,
-    compiler::{EventLog, SsaPass},
+    compiler::{EventLog, PassPhase, SsaPass},
     deobfuscation::{config::EngineConfig, context::AnalysisContext},
     CilObject, Result,
 };
-
-/// Execution phase for an SSA pass.
-///
-/// Determines when in the deobfuscation pipeline a pass runs.
-/// The engine groups passes by phase and executes them in order:
-/// `Structure` → `Value` → `Simplify` → `Inline` → `Normalize`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PassPhase {
-    /// Structural transformations (e.g., control flow unflattening).
-    Structure,
-    /// Value-level transformations (e.g., constant decryption, string decryption).
-    Value,
-    /// Simplification passes (e.g., proxy resolution, anti-debug neutralization).
-    Simplify,
-    /// Inlining passes (e.g., delegate inlining).
-    Inline,
-    /// Normalization passes (e.g., nop removal, dead code elimination).
-    Normalize,
-}
 
 /// Broad category for a technique, used for ordering and grouping.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -74,6 +92,40 @@ pub enum TechniqueCategory {
     Call,
     /// Neutralization of obfuscation infrastructure.
     Neutralization,
+}
+
+/// Declares a capability pattern that a technique provides.
+///
+/// Used by the engine to understand which lifecycle methods are meaningful
+/// for each technique. Techniques implement [`Technique::capabilities()`]
+/// to declare their pattern:
+///
+/// - **ByteTransform**: Modifies raw PE bytes before SSA construction.
+///   Engine calls `byte_transform()` and optionally `requires_regeneration()`.
+///   Examples: `bitmono.pe` (PE header repair), `confuserex.tamper` (anti-tamper decryption).
+///
+/// - **SsaPass**: Creates a technique-owned SSA pass for the scheduler.
+///   Engine calls `initialize()` + `create_pass()` + `cleanup()`.
+///   Examples: `bitmono.calli` (calli reversal), `generic.opaquefields` (opaque predicate removal).
+///
+/// - **Infrastructure**: Contributes to shared passes (e.g., registers decryptors
+///   with `DecryptorContext`). Engine calls `initialize()` but the technique
+///   returns `None` from `create_pass()`.
+///   Examples: `generic.strings`, `confuserex.constants` — both feed `DecryptionPass`.
+///
+/// - **DetectionOnly**: Provides detection and attribution only. No byte transform,
+///   no SSA pass. May contribute cleanup tokens.
+///   Examples: `confuserex.marker` (marker attribute detection).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum TechniqueCapability {
+    /// Modifies raw PE bytes before SSA construction.
+    ByteTransform,
+    /// Creates a technique-owned SSA pass for the scheduler.
+    SsaPass,
+    /// Contributes to shared infrastructure (decryptors, hooks) without owning a pass.
+    Infrastructure,
+    /// Provides detection and attribution only.
+    DetectionOnly,
 }
 
 /// Unified trait for all deobfuscation techniques.
@@ -96,8 +148,8 @@ pub enum TechniqueCategory {
 ///
 /// `ssa_phase()` returns `Some(phase)` and `create_pass()` returns `Some(pass)`.
 /// Used when the SSA transform is specific to this technique, e.g.:
-/// - `bitmono.calli` (`BitMonoCalli`): creates `CalltocalliReversalPass`
 /// - `generic.opaquefields` (`GenericOpaquePredicates`): creates `OpaqueFieldPredicatePass`
+/// - `generic.delegates` (`GenericDelegateProxy`): creates `DelegateProxyResolutionPass`
 ///
 /// ## Pattern B — Contributes to shared infrastructure
 ///
@@ -111,8 +163,6 @@ pub enum TechniqueCategory {
 /// `byte_transform()` returns `Some(...)`, `ssa_phase()` returns `None`.
 /// Used for PE/metadata patching without SSA involvement.
 pub trait Technique: Send + Sync {
-    // === Required ===
-
     /// Unique identifier (e.g. `"confuserex.constants"`).
     fn id(&self) -> &'static str;
 
@@ -124,8 +174,6 @@ pub trait Technique: Send + Sync {
 
     /// Detect whether this technique's target pattern is present in raw IL.
     fn detect(&self, assembly: &CilObject) -> Detection;
-
-    // === Ordering (all default) ===
 
     /// IDs of techniques that must run before this one.
     fn requires(&self) -> &[&'static str] {
@@ -142,8 +190,6 @@ pub trait Technique: Send + Sync {
         true
     }
 
-    // === SSA-level detection — default: no-op ===
-
     /// Optional detection that runs after all methods' SSA is built.
     ///
     /// Returns a non-empty [`Detection`] if the technique found additional
@@ -155,8 +201,6 @@ pub trait Technique: Send + Sync {
     fn detect_ssa(&self, _ctx: &AnalysisContext, _assembly: &CilObject) -> Detection {
         Detection::new_empty()
     }
-
-    // === Byte-level transform — default: None (no byte transform) ===
 
     /// Apply a byte-level transform on the raw assembly bytes.
     ///
@@ -178,8 +222,6 @@ pub trait Technique: Send + Sync {
     fn requires_regeneration(&self) -> bool {
         false
     }
-
-    // === SSA-level — all default: None / no-op ===
 
     /// Which scheduler phase this technique's pass runs in. `None` = no SSA pass.
     fn ssa_phase(&self) -> Option<PassPhase> {
@@ -213,18 +255,46 @@ pub trait Technique: Send + Sync {
     ///
     /// # Returns
     ///
-    /// `Some(pass)` if this technique owns a pass, `None` for Pattern B techniques.
+    /// A vec of passes owned by this technique, empty for Pattern B techniques.
+    /// Most techniques return 0 or 1 passes; techniques that detect multiple
+    /// patterns (e.g., `GenericDelegateProxy`) may return multiple passes.
     fn create_pass(
         &self,
         _ctx: &AnalysisContext,
         _detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Option<Box<dyn SsaPass>> {
-        None
+    ) -> Vec<Box<dyn SsaPass>> {
+        Vec::new()
     }
 
     /// Tokens / sections to clean up after all passes complete.
     fn cleanup(&self, _detection: &Detection) -> Option<CleanupRequest> {
         None
+    }
+
+    /// Declares the technique's capability patterns.
+    ///
+    /// The engine uses this to understand which lifecycle methods are
+    /// meaningful. Defaults to inferring from `ssa_phase()`:
+    /// - If `ssa_phase()` is `Some` → `[SsaPass]`
+    /// - Otherwise → `[DetectionOnly]`
+    ///
+    /// Techniques with byte transforms or infrastructure patterns should
+    /// override this method.
+    fn capabilities(&self) -> Vec<TechniqueCapability> {
+        if self.ssa_phase().is_some() {
+            vec![TechniqueCapability::SsaPass]
+        } else {
+            vec![TechniqueCapability::DetectionOnly]
+        }
+    }
+
+    /// Called at the start of each outer loop iteration, after work items have
+    /// been applied but before the pass scheduler runs.
+    ///
+    /// Allows techniques to react to assembly changes (e.g., re-extract bytecode
+    /// offsets from a reloaded assembly). The default implementation is a no-op.
+    fn on_iteration_start(&self, _ctx: &AnalysisContext, _assembly: &CilObject) -> Result<()> {
+        Ok(())
     }
 }

@@ -16,16 +16,25 @@
 //! `create_deob_passes()`. Registers discovered decryptor methods with the
 //! analysis context during `initialize()`.
 
-use std::any::Any;
+use std::{
+    any::Any,
+    collections::{HashMap, HashSet},
+};
+
+use log::debug;
 
 use crate::{
+    analysis::SsaOp,
     cilassembly::CleanupRequest,
+    compiler::PassPhase,
     deobfuscation::{
         context::AnalysisContext,
-        techniques::{Detection, Detections, Evidence, PassPhase, Technique, TechniqueCategory},
-        utils::{build_call_site_counts, filter_by_call_threshold},
+        techniques::{Detection, Detections, Evidence, Technique, TechniqueCategory},
+        utils::{
+            build_call_site_counts, exclude_cross_calling_candidates, filter_by_call_threshold,
+        },
     },
-    metadata::{signatures::TypeSignature, token::Token, typesystem::wellknown},
+    metadata::{signatures::TypeSignature, tables::TableId, token::Token, typesystem::wellknown},
     CilObject,
 };
 
@@ -33,27 +42,22 @@ use crate::{
 #[derive(Debug)]
 pub struct ConstantFindings {
     /// Tokens of detected constant decryptor methods.
-    pub decryptor_methods: Vec<Token>,
+    pub decryptor_methods: HashSet<Token>,
 }
 
 /// Detects generic constant decryptor methods.
 pub struct GenericConstants;
 
-impl Technique for GenericConstants {
-    fn id(&self) -> &'static str {
-        "generic.constants"
-    }
-
-    fn name(&self) -> &'static str {
-        "Generic Constant Decryptor Detection"
-    }
-
-    fn category(&self) -> TechniqueCategory {
-        TechniqueCategory::Value
-    }
-
-    fn detect(&self, assembly: &CilObject) -> Detection {
-        // Phase 1: collect candidates matching constant decryptor signatures.
+impl GenericConstants {
+    /// Collects candidate methods matching common constant decryptor signatures.
+    ///
+    /// Scans the MethodDef table for static methods with `int32(int32)` or
+    /// `object(int32)` signatures. Excludes constructors.
+    ///
+    /// # Arguments
+    ///
+    /// * `assembly` - The assembly to scan for candidate methods.
+    fn collect_candidates(&self, assembly: &CilObject) -> Vec<Token> {
         let mut candidates = Vec::new();
 
         for method_entry in assembly.methods() {
@@ -78,21 +82,62 @@ impl Technique for GenericConstants {
                 && matches!(method.signature.params[0].base, TypeSignature::I4)
                 && matches!(method.signature.return_type.base, TypeSignature::Object);
 
-            if is_int_accessor || is_obj_accessor {
+            if !is_int_accessor && !is_obj_accessor {
+                continue;
+            }
+
+            // Exclude methods that call other user-defined methods (MethodDef).
+            // Real constant decryptors are leaf functions: they do table lookups
+            // or arithmetic on their argument, without calling into user code.
+            // Methods like sqlite3StatusValue that call wsdStatInit() are utility
+            // functions, not decryptors, and their dependencies often fail to
+            // emulate (e.g., .cctor failures).
+            let calls_user_methods = method.instructions().any(|instr| {
+                if instr.mnemonic != "call" && instr.mnemonic != "callvirt" {
+                    return false;
+                }
+                instr
+                    .get_token_operand()
+                    .is_some_and(|t| t.is_table(TableId::MethodDef))
+            });
+
+            if !calls_user_methods {
                 candidates.push(method.token);
             }
         }
 
+        candidates
+    }
+}
+
+impl Technique for GenericConstants {
+    fn id(&self) -> &'static str {
+        "generic.constants"
+    }
+
+    fn name(&self) -> &'static str {
+        "Generic Constant Decryptor Detection"
+    }
+
+    fn category(&self) -> TechniqueCategory {
+        TechniqueCategory::Value
+    }
+
+    fn detect(&self, assembly: &CilObject) -> Detection {
+        // Phase 1: collect candidates matching constant decryptor signatures.
+        let candidates = self.collect_candidates(assembly);
         if candidates.is_empty() {
             return Detection::new_empty();
         }
 
-        // Phase 2: count call sites for all candidates in a single pass.
+        // Phase 2: count call sites for all candidates in a single IL pass.
         let counts = build_call_site_counts(assembly, candidates.iter().copied());
 
         // Phase 3: filter by call-site threshold.
         let decryptors = filter_by_call_threshold(candidates, &counts, 3);
 
+        // Phase 4: exclude candidates that call other candidates (consumers, not decryptors).
+        let decryptors = exclude_cross_calling_candidates(decryptors, assembly);
         if decryptors.is_empty() {
             return Detection::new_empty();
         }
@@ -105,6 +150,81 @@ impl Technique for GenericConstants {
         Detection::new_detected(
             vec![Evidence::Structural(format!(
                 "{count} potential constant decryptor methods"
+            ))],
+            Some(Box::new(findings) as Box<dyn Any + Send + Sync>),
+        )
+    }
+
+    fn detect_ssa(&self, ctx: &AnalysisContext, assembly: &CilObject) -> Detection {
+        // Phase 1: collect candidates matching constant decryptor signatures.
+        let candidates = self.collect_candidates(assembly);
+        if candidates.is_empty() {
+            return Detection::new_empty();
+        }
+
+        // Phase 2: count SSA Call/CallVirt ops targeting candidates.
+        // This catches calls hidden behind delegate proxies — after
+        // DelegateProxyResolutionPass resolves them, direct Call ops appear.
+        let mut counts: HashMap<Token, usize> = candidates.iter().map(|&t| (t, 0)).collect();
+        let mut memberref_cache: HashMap<Token, Option<Token>> = HashMap::new();
+
+        for entry in ctx.ssa_functions.iter() {
+            for block in entry.value().blocks() {
+                for instr in block.instructions() {
+                    let token = match instr.op() {
+                        SsaOp::Call { method, .. } | SsaOp::CallVirt { method, .. } => {
+                            method.token()
+                        }
+                        _ => continue,
+                    };
+
+                    // Direct match
+                    if let Some(c) = counts.get_mut(&token) {
+                        *c += 1;
+                        continue;
+                    }
+
+                    // MemberRef indirection
+                    if token.is_table(TableId::MemberRef) {
+                        let resolved = memberref_cache
+                            .entry(token)
+                            .or_insert_with(|| assembly.resolver().resolve_memberref_method(token));
+                        if let Some(resolved_token) = resolved {
+                            if let Some(c) = counts.get_mut(resolved_token) {
+                                *c += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Phase 3: filter by call-site threshold.
+        let decryptors = filter_by_call_threshold(candidates, &counts, 3);
+
+        // Phase 4: exclude candidates that call other candidates (consumers, not decryptors).
+        let decryptors = exclude_cross_calling_candidates(decryptors, assembly);
+        if decryptors.is_empty() {
+            return Detection::new_empty();
+        }
+
+        let count = decryptors.len();
+        debug!(
+            "GenericConstants SSA detection: {} decryptors found ({} total call sites)",
+            count,
+            decryptors
+                .iter()
+                .map(|t| counts.get(t).unwrap_or(&0))
+                .sum::<usize>()
+        );
+
+        let findings = ConstantFindings {
+            decryptor_methods: decryptors,
+        };
+
+        Detection::new_detected(
+            vec![Evidence::Structural(format!(
+                "{count} constant decryptor methods (SSA call-site analysis)"
             ))],
             Some(Box::new(findings) as Box<dyn Any + Send + Sync>),
         )
@@ -164,6 +284,6 @@ mod tests {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericConstants;
         let detection = technique.detect(&asm);
-        assert!(!detection.detected);
+        assert!(!detection.is_detected());
     }
 }

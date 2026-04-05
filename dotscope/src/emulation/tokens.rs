@@ -25,11 +25,13 @@
 //! Tables 0x7F, 0xEF, 0xF1, and 0xFF do not exist in ECMA-335, so these tokens
 //! can never collide with real metadata tokens from a loaded assembly.
 //!
-//! # Known Issues
+//! # Token Ranges
 //!
-//! - **`COMPRESSED_STREAM` / `ASSEMBLY_NAME` collision**: Both currently map to
-//!   `0x7F00_0014`. `COMPRESSED_STREAM` should be reassigned to `0x7F00_0017`
-//!   once all call sites are migrated (Phase 1, Step 17).
+//! - `0x7F00_00xx`: Emulation heap object type tokens
+//! - `0x7F00_10xx`: Placeholder type tokens (heap streaming)
+//! - `0x7F01_00xx`: Synthetic exception hierarchy tokens
+//! - `0x7F02_xxxx`: Synthetic method tokens (DynamicMethod)
+//! - `0xF100_xxxx`: Generic instantiation tokens
 
 use crate::metadata::token::Token;
 
@@ -80,10 +82,7 @@ pub mod io {
     /// `System.Security.Cryptography.CryptoStream` object.
     pub const CRYPTO_STREAM: Token = Token::new(0x7F00_0009);
     /// `System.IO.Compression.DeflateStream` / `GZipStream` object.
-    ///
-    /// **COLLISION**: Currently shares value `0x7F00_0014` with
-    /// [`reflection::ASSEMBLY_NAME`]. Should be reassigned to `0x7F00_0017`.
-    pub const COMPRESSED_STREAM: Token = Token::new(0x7F00_0014);
+    pub const COMPRESSED_STREAM: Token = Token::new(0x7F00_0017);
 }
 
 /// Collection types — `System.Collections.Generic` heap objects.
@@ -279,6 +278,19 @@ pub mod ranges {
 
     /// Mask for isolating the range prefix of generic instantiation tokens.
     pub const GENERIC_INSTANTIATION_MASK: u32 = 0xFF00_0000;
+
+    /// Base address for SzArray primitive tokens.
+    ///
+    /// Encodes "SzArray of primitive type" as `SZARRAY_PRIMITIVE_BASE | element_kind_id`.
+    /// For example, `byte[]` is `SZARRAY_PRIMITIVE_BASE | 5` (U1=5 from CilPrimitiveKind).
+    ///
+    /// These tokens are produced by `type_signature_to_token` for `SzArray(T)` when `T`
+    /// is a primitive type. The `GetTypeFromHandle` and `GetElementType` hooks recognize
+    /// this range and handle the array/element relationship correctly.
+    pub const SZARRAY_PRIMITIVE_BASE: u32 = 0xF000_0100;
+
+    /// Mask for detecting SzArray primitive tokens.
+    pub const SZARRAY_PRIMITIVE_MASK: u32 = 0xFFFF_FF00;
 }
 
 /// Returns `true` if the token is a synthetic exception type (`0x7F01_xxxx`).
@@ -309,6 +321,27 @@ pub fn is_synthetic_method(token: Token) -> bool {
 #[must_use]
 pub fn is_generic_instantiation(token: Token) -> bool {
     token.value() & ranges::GENERIC_INSTANTIATION_MASK == ranges::GENERIC_INSTANTIATION_BASE
+}
+
+/// Returns `true` if the token represents an SzArray of a primitive type.
+#[must_use]
+pub fn is_szarray_primitive(token: Token) -> bool {
+    token.value() & ranges::SZARRAY_PRIMITIVE_MASK == ranges::SZARRAY_PRIMITIVE_BASE
+}
+
+/// Extracts the element type token from an SzArray primitive token.
+///
+/// Returns `Some(element_token)` where element_token is the `CilPrimitiveKind::token()`
+/// of the array's element type. Returns `None` if the token is not an SzArray primitive.
+#[must_use]
+pub fn szarray_element_token(token: Token) -> Option<Token> {
+    if !is_szarray_primitive(token) {
+        return None;
+    }
+    // The element kind ID is in the low byte
+    let kind_id = token.value() & 0xFF;
+    // Reconstruct the primitive token: 0xF000_0000 | kind_id
+    Some(Token::new(0xF000_0000 | kind_id))
 }
 
 /// Returns `true` if the token belongs to any synthetic range used by the emulator.
@@ -429,7 +462,7 @@ mod tests {
             crypto::CRYPTO_TRANSFORM,
             io::STREAM,
             io::CRYPTO_STREAM,
-            // io::COMPRESSED_STREAM intentionally excluded — known collision
+            io::COMPRESSED_STREAM,
             collections::DICTIONARY,
             collections::LIST,
             collections::STACK,

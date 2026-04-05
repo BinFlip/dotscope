@@ -4,13 +4,14 @@
 //! that combine multiple metadata objects in meaningful ways. These scenarios
 //! help test complex interactions and edge cases.
 
-use crate::metadata::{
-    method::MethodRc,
-    tables::{AssemblyRefRc, ModuleRefRc},
-    typesystem::CilTypeRc,
+use crate::{
+    metadata::{
+        method::MethodRc,
+        tables::{AssemblyRefRc, ModuleRefRc},
+        typesystem::CilTypeRc,
+    },
+    test::builders::{AssemblyRefBuilder, CilTypeBuilder, MethodBuilder, ModuleRefBuilder},
 };
-
-use super::builders::{AssemblyRefBuilder, CilTypeBuilder, MethodBuilder, ModuleRefBuilder};
 
 /// Create a basic class hierarchy: BaseClass -> DerivedClass
 pub fn create_inheritance_scenario() -> (CilTypeRc, CilTypeRc) {

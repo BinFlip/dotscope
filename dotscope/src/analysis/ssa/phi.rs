@@ -73,6 +73,14 @@ impl PhiOperand {
     pub const fn predecessor(&self) -> usize {
         self.predecessor
     }
+
+    /// Updates the predecessor block index.
+    ///
+    /// Used when block merging redirects edges, requiring phi operands
+    /// to reference the new predecessor instead of the eliminated trampoline.
+    pub fn set_predecessor(&mut self, predecessor: usize) {
+        self.predecessor = predecessor;
+    }
 }
 
 impl fmt::Display for PhiOperand {

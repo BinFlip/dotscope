@@ -227,7 +227,9 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
         self.in_states[block_idx] = input.clone();
 
         // Apply transfer function
-        let block = ssa.block(block_idx).expect("block should exist");
+        let Some(block) = ssa.block(block_idx) else {
+            return false;
+        };
         let output = self.analysis.transfer(block_idx, block, &input, ssa);
 
         // Check if output changed
@@ -275,7 +277,9 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
         self.out_states[block_idx] = output.clone();
 
         // Apply transfer function (backward: input = transfer(output))
-        let block = ssa.block(block_idx).expect("block should exist");
+        let Some(block) = ssa.block(block_idx) else {
+            return false;
+        };
         let input = self.analysis.transfer(block_idx, block, &output, ssa);
 
         // Check if input changed

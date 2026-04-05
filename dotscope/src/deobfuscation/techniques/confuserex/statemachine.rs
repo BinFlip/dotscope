@@ -31,7 +31,7 @@
 //! decryptor call as either Normal mode (direct constant key) or CFG mode
 //! (key computed via XOR with state machine output).
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{hash_map::Entry, HashMap, HashSet, VecDeque};
 
 use dashmap::DashSet;
 
@@ -254,8 +254,15 @@ impl StateMachineProvider for ConfuserExStateMachine {
                     continue;
                 }
 
-                // Check if argument comes from XOR
-                let Some(SsaOp::Xor { left, right, .. }) = ssa.get_definition(args[0]) else {
+                // Check if argument comes from XOR, possibly through a
+                // conversion (conv.i4, conv.u4) that the SSA builder may insert.
+                let arg_def = ssa.get_definition(args[0]);
+                let xor_def = match arg_def {
+                    Some(SsaOp::Xor { .. }) => arg_def,
+                    Some(SsaOp::Conv { operand, .. }) => ssa.get_definition(*operand),
+                    _ => None,
+                };
+                let Some(SsaOp::Xor { left, right, .. }) = xor_def else {
                     continue;
                 };
 
@@ -290,10 +297,16 @@ impl StateMachineProvider for ConfuserExStateMachine {
         call_site: &StateMachineCallSite,
         all_updates: &[StateUpdateCall],
         cfg_info: &CfgInfo<'_>,
+        seed_block: Option<usize>,
     ) -> Vec<usize> {
         let feeding_update = &all_updates[call_site.feeding_update_idx];
 
-        // Group state update calls by block for efficient lookup
+        let target_block = feeding_update.block_idx;
+        if target_block >= cfg_info.node_count {
+            return Vec::new();
+        }
+
+        // Group state update calls by block, sorted by instruction index
         let mut updates_by_block: HashMap<usize, Vec<usize>> = HashMap::new();
         for (idx, update) in all_updates.iter().enumerate() {
             updates_by_block
@@ -301,104 +314,145 @@ impl StateMachineProvider for ConfuserExStateMachine {
                 .or_default()
                 .push(idx);
         }
-
-        // Sort each block's updates by instruction index
         for indices in updates_by_block.values_mut() {
             indices.sort_by_key(|&idx| all_updates[idx].instr_idx);
         }
 
-        // Collect state updates that are GUARANTEED to execute before the feeding update:
-        // 1. All updates in blocks that DOMINATE the feeding update's block
-        // 2. Updates in the SAME block that come BEFORE the feeding update
-        let mut relevant_updates: Vec<usize> = Vec::new();
+        // Find a path from entry to the feeding update's block.
+        //
+        // ConfuserEx's KeySequence.ComputeKeys() uses a max-propagation fixpoint
+        // that ensures all paths to a merge point produce the same CFGCtx state.
+        // Therefore ANY single complete path from entry to the target block yields
+        // the correct update sequence. We use backward BFS to find such a path.
+        let path = find_path_to_block(cfg_info, target_block);
 
-        for (block_idx, update_indices) in &updates_by_block {
-            // Skip blocks that are out of bounds
-            if *block_idx >= cfg_info.node_count || feeding_update.block_idx >= cfg_info.node_count
-            {
+        // Map block → position on path (for execution-order sorting)
+        let block_position: HashMap<usize, usize> = path
+            .iter()
+            .enumerate()
+            .map(|(pos, &block)| (block, pos))
+            .collect();
+
+        // Determine the minimum path position for seed-block filtering.
+        // Updates before the seed's position on the path are irrelevant because
+        // the seed reinitializes the state machine. We use path position (not
+        // block index) because SSA block indices don't reflect execution order.
+        let seed_path_pos = seed_block.and_then(|sb| block_position.get(&sb).copied());
+
+        // Collect updates from blocks on the path, at or after the seed position
+        let mut relevant_updates: Vec<usize> = Vec::new();
+        for (&block_idx, update_indices) in &updates_by_block {
+            let Some(&pos) = block_position.get(&block_idx) else {
                 continue;
+            };
+
+            // Skip blocks before the seed's position on the path
+            if let Some(seed_pos) = seed_path_pos {
+                if pos < seed_pos {
+                    continue;
+                }
             }
 
-            if *block_idx == feeding_update.block_idx {
-                // Same block - include only updates BEFORE the feeding one
+            if block_idx == target_block {
+                // Same block: only updates BEFORE the feeding update
                 for &idx in update_indices {
                     if all_updates[idx].instr_idx < feeding_update.instr_idx {
                         relevant_updates.push(idx);
                     }
                 }
-            } else if cfg_info.dom_tree.strictly_dominates(
-                NodeId::new(*block_idx),
-                NodeId::new(feeding_update.block_idx),
-            ) {
-                // This block dominates the feeding update's block - include ALL its updates
+            } else {
                 relevant_updates.extend(update_indices.iter().copied());
             }
         }
 
-        // FALLBACK for merge blocks: if no dominating updates found and the block
-        // has multiple predecessors, trace back through predecessors to find a path.
-        if relevant_updates.is_empty() && feeding_update.block_idx < cfg_info.predecessors.len() {
-            let block_preds = &cfg_info.predecessors[feeding_update.block_idx];
-            if block_preds.len() > 1 {
-                // Merge block with multiple predecessors - trace back through ONE path
-                let mut best_path: Vec<usize> = Vec::new();
-
-                for &pred in block_preds {
-                    let mut path_updates: Vec<usize> = Vec::new();
-                    let mut current = pred;
-                    let mut visited: HashSet<usize> = HashSet::new();
-
-                    // Trace back from predecessor to entry, collecting updates
-                    while current != cfg_info.entry.index() && visited.insert(current) {
-                        if let Some(indices) = updates_by_block.get(&current) {
-                            path_updates.extend(indices.iter().copied());
-                        }
-
-                        // Move to the immediate dominator (guaranteed path to entry)
-                        if current < cfg_info.node_count
-                            && cfg_info
-                                .dom_tree
-                                .dominates(cfg_info.entry, NodeId::new(current))
-                        {
-                            if let Some(idom) =
-                                cfg_info.dom_tree.immediate_dominator(NodeId::new(current))
-                            {
-                                current = idom.index();
-                            } else {
-                                break;
-                            }
-                        } else {
-                            break;
-                        }
-                    }
-
-                    // Prefer paths with more updates (more likely to be the "full" path)
-                    if path_updates.len() > best_path.len() {
-                        best_path = path_updates;
-                    }
-                }
-
-                relevant_updates = best_path;
-            }
-        }
-
-        // Sort relevant updates by execution order (dominator depth, then block, then instruction)
+        // Sort by path position (entry first), then instruction index
         relevant_updates.sort_by_key(|&idx| {
             let update = &all_updates[idx];
-            let depth = if update.block_idx < cfg_info.node_count
-                && cfg_info
-                    .dom_tree
-                    .dominates(cfg_info.entry, NodeId::new(update.block_idx))
-            {
-                cfg_info.dom_tree.depth(NodeId::new(update.block_idx))
-            } else {
-                usize::MAX // Unreachable - sort last
-            };
-            (depth, update.block_idx, update.instr_idx)
+            let pos = block_position
+                .get(&update.block_idx)
+                .copied()
+                .unwrap_or(usize::MAX);
+            (pos, update.instr_idx)
         });
 
         relevant_updates
     }
+}
+
+/// Finds a path from CFG entry to `target` via backward BFS through predecessors.
+///
+/// Returns block indices in forward order (entry first, target last).
+/// BFS finds the shortest path, naturally avoiding loop back-edges.
+///
+/// ConfuserEx's `KeySequence.ComputeKeys()` ensures all paths to a merge
+/// point produce the same CFGCtx state, so any single path is correct.
+fn find_path_to_block(cfg_info: &CfgInfo<'_>, target: usize) -> Vec<usize> {
+    let entry = cfg_info.entry.index();
+    if target == entry {
+        return vec![entry];
+    }
+
+    // Backward BFS from target to entry.
+    // parent[block] = the child block that discovered it (one step toward target).
+    let mut parent: HashMap<usize, usize> = HashMap::new();
+    parent.insert(target, usize::MAX);
+    let mut queue = VecDeque::new();
+    queue.push_back(target);
+
+    let mut found = false;
+    while let Some(block) = queue.pop_front() {
+        if block == entry {
+            found = true;
+            break;
+        }
+        if block >= cfg_info.predecessors.len() {
+            continue;
+        }
+        for &pred in &cfg_info.predecessors[block] {
+            if let Entry::Vacant(e) = parent.entry(pred) {
+                e.insert(block);
+                queue.push_back(pred);
+            }
+        }
+    }
+
+    if !found {
+        // Fallback for exception handler blocks that lack normal CFG predecessor
+        // edges: walk the dominator tree from target to entry.
+        let mut path = vec![target];
+        let mut current = target;
+        let mut visited = HashSet::new();
+        visited.insert(target);
+        while current != entry {
+            if current >= cfg_info.node_count {
+                break;
+            }
+            match cfg_info.dom_tree.immediate_dominator(NodeId::new(current)) {
+                Some(idom) if visited.insert(idom.index()) => {
+                    path.push(idom.index());
+                    current = idom.index();
+                }
+                _ => break,
+            }
+        }
+        path.reverse();
+        return path;
+    }
+
+    // Reconstruct forward path: entry → ... → target
+    let mut path = Vec::new();
+    let mut current = entry;
+    loop {
+        path.push(current);
+        if current == target {
+            break;
+        }
+        match parent.get(&current) {
+            Some(&child) if child != usize::MAX => current = child,
+            _ => break,
+        }
+    }
+    path
 }
 
 /// Detects CFGCtx state machine semantics from the assembly.

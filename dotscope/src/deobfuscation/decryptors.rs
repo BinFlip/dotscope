@@ -93,6 +93,12 @@ pub struct DecryptorContext {
     /// This is needed because generic decryptors like `T Get<T>(int32)` are
     /// called via MethodSpec tokens that instantiate the generic.
     methodspec_to_decryptor: DashMap<Token, Token>,
+
+    /// Secondary index for O(1) permanent failure lookups, keyed by (caller, location).
+    permanent_failure_index: DashSet<(Token, usize)>,
+
+    /// Secondary index for O(1) successful decryption lookups, keyed by (caller, location).
+    decrypted_index: DashSet<(Token, usize)>,
 }
 
 /// Record of a successfully decrypted call.
@@ -161,10 +167,14 @@ impl std::fmt::Display for FailureReason {
     }
 }
 
-/// Cache key for decrypted values.
+/// Cache key combining a decryptor token with a string representation of its arguments.
 ///
 /// Uses a string representation of arguments since `ConstValue` may contain
 /// floats which don't implement `Hash`/`Eq`.
+///
+/// **Stability contract**: The cache key depends on `ConstValue`'s `Debug` formatting
+/// for argument serialization. If `Debug` changes, existing cache entries become unreachable
+/// (causing redundant emulation, not incorrect results).
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CacheKey {
     /// The decryptor method token.
@@ -184,6 +194,9 @@ impl CacheKey {
     }
 
     /// Converts arguments to a string representation for hashing.
+    ///
+    /// See [`CacheKey`] stability contract — correctness depends on `ConstValue::Debug`
+    /// producing deterministic output for equal values.
     fn args_to_string(args: &[ConstValue]) -> String {
         args.iter()
             .map(|arg| format!("{arg:?}"))
@@ -242,6 +255,24 @@ impl DecryptorContext {
     #[must_use]
     pub fn registered_tokens(&self) -> HashSet<Token> {
         self.registered.iter().map(|r| *r).collect()
+    }
+
+    /// Returns all tokens that resolve to registered decryptors.
+    ///
+    /// This includes:
+    /// - Directly registered MethodDef tokens
+    /// - MethodSpec tokens mapped to registered decryptors
+    ///
+    /// Use this when you need to match call targets against decryptors
+    /// in a set-based check (e.g., in `find_decryptor_call_sites`).
+    pub fn all_resolvable_tokens(&self) -> HashSet<Token> {
+        let mut tokens = self.registered_tokens();
+        for entry in self.methodspec_to_decryptor.iter() {
+            if self.registered.contains(entry.value()) {
+                tokens.insert(*entry.key());
+            }
+        }
+        tokens
     }
 
     /// Maps a MethodSpec token to its base MethodDef decryptor.
@@ -413,6 +444,7 @@ impl DecryptorContext {
                 location,
                 value,
             });
+        self.decrypted_index.insert((caller, location));
     }
 
     /// Records a failed decryption attempt.
@@ -430,11 +462,15 @@ impl DecryptorContext {
         location: usize,
         reason: FailureReason,
     ) {
+        let is_permanent = reason.is_permanent();
         self.failed.entry(decryptor).or_default().push(FailedCall {
             caller,
             location,
             reason,
         });
+        if is_permanent {
+            self.permanent_failure_index.insert((caller, location));
+        }
     }
 
     /// Gets all successful decryptions for a decryptor.
@@ -470,17 +506,7 @@ impl DecryptorContext {
     /// `true` if a permanent failure was recorded for this call site.
     #[must_use]
     pub fn has_permanent_failure(&self, caller: Token, location: usize) -> bool {
-        for entry in &self.failed {
-            for (_, failure) in entry.value() {
-                if failure.caller == caller
-                    && failure.location == location
-                    && failure.reason.is_permanent()
-                {
-                    return true;
-                }
-            }
-        }
-        false
+        self.permanent_failure_index.contains(&(caller, location))
     }
 
     /// Checks if a call site has already been successfully decrypted.
@@ -498,14 +524,7 @@ impl DecryptorContext {
     /// `true` if a successful decryption was recorded for this call site.
     #[must_use]
     pub fn is_already_decrypted(&self, caller: Token, location: usize) -> bool {
-        for entry in &self.decrypted {
-            for (_, call) in entry.value() {
-                if call.caller == caller && call.location == location {
-                    return true;
-                }
-            }
-        }
-        false
+        self.decrypted_index.contains(&(caller, location))
     }
 
     /// Returns the total number of successful decryptions.
@@ -589,6 +608,8 @@ impl DecryptorContext {
         self.decrypted.clear();
         self.failed.clear();
         self.cache.clear();
+        self.permanent_failure_index.clear();
+        self.decrypted_index.clear();
     }
 
     /// Clears everything including registrations.
@@ -598,6 +619,8 @@ impl DecryptorContext {
         self.failed.clear();
         self.cache.clear();
         self.methodspec_to_decryptor.clear();
+        self.permanent_failure_index.clear();
+        self.decrypted_index.clear();
     }
 }
 

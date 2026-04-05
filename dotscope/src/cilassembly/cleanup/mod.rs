@@ -96,6 +96,7 @@
 //! - ManifestResource entries referencing the deleted scope
 //! - File entries no longer referenced by surviving ExportedType/ManifestResource
 
+mod analysis;
 mod compaction;
 mod executor;
 mod orphans;
@@ -104,8 +105,9 @@ mod request;
 mod stats;
 mod utils;
 
+pub use analysis::{compute_entry_points, expand_type_tokens, find_unreferenced_types};
 pub(crate) use compaction::mark_unreferenced_heap_entries;
 pub use executor::execute_cleanup;
-pub(crate) use references::PreDeletionRefs;
 pub use request::CleanupRequest;
 pub use stats::CleanupStats;
+pub(crate) use utils::{extract_local_var_sig_rid, with_method_body};

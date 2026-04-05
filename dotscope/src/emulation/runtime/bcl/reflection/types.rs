@@ -597,7 +597,19 @@ fn type_get_type_from_handle_pre(
         }
     };
 
-    match thread.heap_mut().alloc_reflection_type(type_token, None) {
+    // Detect SzArray primitive tokens (e.g., byte[] = 0xF000_0105) and create
+    // a ReflectionType with SzArray wrapper so GetElementType works correctly.
+    let (effective_token, wrapper) = if tokens::is_szarray_primitive(type_token) {
+        let elem_token = tokens::szarray_element_token(type_token).unwrap_or(type_token);
+        (elem_token, Some(TypeWrapper::SzArray))
+    } else {
+        (type_token, None)
+    };
+
+    match thread
+        .heap_mut()
+        .alloc_reflection_type(effective_token, wrapper)
+    {
         Ok(type_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(type_ref))),
         Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
     }
@@ -1324,7 +1336,9 @@ fn type_get_methods_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
                     for (_, method_weak) in cil_type.methods.iter() {
                         if let Some(method) = method_weak.upgrade() {
                             // Skip constructors — GetMethods() doesn't include them
-                            if method.name == ".ctor" || method.name == ".cctor" {
+                            if method.name == wellknown::members::CTOR
+                                || method.name == wellknown::members::CCTOR
+                            {
                                 continue;
                             }
                             match thread.heap_mut().alloc_reflection_method(method.token) {

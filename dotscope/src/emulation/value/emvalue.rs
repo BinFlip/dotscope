@@ -773,6 +773,7 @@ impl From<&ConstValue> for EmValue {
             // Boolean and null
             ConstValue::Null
             | ConstValue::DecryptedString(_)
+            | ConstValue::DecryptedArray { .. }
             | ConstValue::Type(_)
             | ConstValue::MethodHandle(_)
             | ConstValue::FieldHandle(_) => EmValue::Null,

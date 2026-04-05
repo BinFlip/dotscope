@@ -41,6 +41,7 @@
 //! ```
 
 use std::{
+    collections::VecDeque,
     fs::{File, OpenOptions},
     io::{BufWriter, Write},
     mem,
@@ -62,7 +63,7 @@ pub struct TraceWriter {
     /// File writer if file-based tracing is enabled.
     file: Option<Mutex<BufWriter<File>>>,
     /// In-memory buffer if memory-based tracing is enabled.
-    buffer: Option<Mutex<Vec<TraceEvent>>>,
+    buffer: Option<Mutex<VecDeque<TraceEvent>>>,
     /// Maximum buffer size (0 = unlimited).
     max_entries: usize,
     /// Number of events written.
@@ -112,7 +113,7 @@ impl TraceWriter {
     pub fn new_memory(max_entries: usize, context: Option<String>) -> Self {
         Self {
             file: None,
-            buffer: Some(Mutex::new(Vec::with_capacity(max_entries.min(10_000)))),
+            buffer: Some(Mutex::new(VecDeque::with_capacity(max_entries.min(10_000)))),
             max_entries,
             event_count: AtomicU64::new(0),
             context_prefix: context,
@@ -162,9 +163,9 @@ impl TraceWriter {
             if let Ok(mut buf) = buffer.lock() {
                 // Enforce max entries limit
                 if self.max_entries > 0 && buf.len() >= self.max_entries {
-                    buf.remove(0);
+                    buf.pop_front();
                 }
-                buf.push(event);
+                buf.push_back(event);
             }
         }
     }
@@ -195,12 +196,12 @@ impl TraceWriter {
         self.event_count.load(Ordering::Relaxed)
     }
 
-    /// Takes the in-memory buffer, replacing it with an empty `Vec`.
+    /// Takes the in-memory buffer, replacing it with an empty `VecDeque`.
     ///
     /// Returns `Some(events)` for memory-based writers, `None` for file-based
     /// writers. After this call, the buffer is empty and new events will
     /// accumulate from scratch.
-    pub fn take_buffer(&self) -> Option<Vec<TraceEvent>> {
+    pub fn take_buffer(&self) -> Option<VecDeque<TraceEvent>> {
         self.buffer
             .as_ref()
             .and_then(|buf| buf.lock().ok().map(|mut b| mem::take(&mut *b)))
@@ -307,6 +308,7 @@ mod tests {
             mnemonic: "nop".to_string(),
             operand: None,
             stack_depth: 0,
+            stack_values: None,
         });
 
         // Both listener and buffer received the event
@@ -328,6 +330,7 @@ mod tests {
             mnemonic: "nop".to_string(),
             operand: None,
             stack_depth: 0,
+            stack_values: None,
         });
 
         // Both listeners received the event (we can verify via event_count)

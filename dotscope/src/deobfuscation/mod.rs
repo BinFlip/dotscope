@@ -25,12 +25,16 @@
 //! │  • PE regeneration between transforms                                   │
 //! │           │                                                             │
 //! │           ▼                                                             │
-//! │  Phase 2.5: Re-detect SSA Techniques                                    │
+//! │  Phase 2.5: Post-transform IL Re-detection                               │
 //! │  • Byte transforms may reveal new patterns in decrypted method bodies   │
 //! │           │                                                             │
 //! │           ▼                                                             │
-//! │  Phase 3: SSA Pipeline (Technique::ssa_phase + create_pass)             │
-//! │  • Build SSA, interprocedural analysis                                  │
+//! │  Phase 3: SSA Construction                                              │
+//! │  • Build call graph, SSA representations, interprocedural analysis      │
+//! │           │                                                             │
+//! │           ▼                                                             │
+//! │  Phase 3.5: SSA Detection + Technique Initialization                    │
+//! │  • SSA-level detection via Technique::detect_ssa()                      │
 //! │  • Technique initialization (register decryptors, hooks, etc.)          │
 //! │  • Technique-provided passes + compiler passes in fixpoint scheduler    │
 //! │           │                                                             │
@@ -85,51 +89,51 @@
 //! use dotscope::deobfuscation::{DeobfuscationEngine, EngineConfig};
 //!
 //! let config = EngineConfig::default();
-//! let mut engine = DeobfuscationEngine::new(config);
+//! let engine = DeobfuscationEngine::new(config);
 //!
 //! let (deobfuscated, result) = engine.process_file("obfuscated.dll")?;
 //! println!("{}", result.summary());
 //! ```
 
-// Infrastructure
 mod cleanup;
 mod config;
 mod context;
 mod decryptors;
+mod engine;
+mod passes;
+mod processcell;
 mod renamer;
 mod result;
 mod statemachine;
+mod techniques;
 mod template;
 pub(crate) mod utils;
+mod workqueue;
 
-// Deobfuscation-specific SSA passes
-mod passes;
-
-// Engine
-mod engine;
-
-// Technique-centric framework
-mod techniques;
-
-// Core types
-pub use cleanup::execute_cleanup;
-pub use config::{CleanupConfig, EngineConfig, ResolutionStrategy};
+// Public API — used by CLI, tests, examples, and external consumers
+pub use config::{
+    CleanupConfig, DecryptorHeuristics, DetectionWeights, EmulationConfig, EngineConfig,
+    IterationConfig, PassConfig, UnflatteningThresholds,
+};
 pub use context::{AnalysisContext, HookFactory};
 pub use decryptors::{CacheKey, DecryptedCall, DecryptorContext, FailedCall, FailureReason};
 pub use engine::DeobfuscationEngine;
 pub use passes::{
-    CffReconstructionPass, ConversionStats, DecryptionPass, NativeMethodConversionPass,
-    NeutralizationPass, TraceTree, UnflattenConfig,
+    CffReconstructionPass, DecryptionPass, DelegateProxyResolutionPass, DelegateTypeInfo,
+    NativeMethodConversionPass, NeutralizationPass, OpaqueFieldPredicatePass, UnflattenConfig,
 };
 pub use renamer::SmartRenameConfig;
 pub use result::DeobfuscationResult;
-pub use statemachine::{
-    CfgInfo, SsaOpKind, StateMachineCallSite, StateMachineProvider, StateMachineSemantics,
-    StateMachineState, StateSlotOperation, StateUpdateCall,
-};
 pub use techniques::{
-    AttributionResult, Detection, Detections, Evidence, ObfuscatorSignature, PassPhase, Technique,
-    TechniqueCategory, TechniqueRegistry, TechniqueResult, WorkingAssembly,
+    AttributionResult, Detection, Detections, Evidence, ObfuscatorMatcher, ObfuscatorSignature,
+    Technique, TechniqueCategory, TechniqueRegistry, TechniqueResult, WorkingAssembly,
+};
+
+// Crate-internal re-exports (only items that are actually imported via this path)
+pub(crate) use processcell::ProcessCell;
+pub(crate) use statemachine::{
+    CfgInfo, StateMachineCallSite, StateMachineProvider, StateMachineSemantics, StateMachineState,
+    StateSlotOperation, StateUpdateCall,
 };
 pub(crate) use template::EmulationTemplatePool;
 
@@ -145,7 +149,7 @@ mod tests {
     fn test_process_file_api() -> crate::Result<()> {
         let path = "tests/samples/packers/confuserex/1.6.0/original.exe";
 
-        let mut engine = DeobfuscationEngine::new(EngineConfig::default());
+        let engine = DeobfuscationEngine::new(EngineConfig::default());
         let (deobfuscated, result) = engine.process_file(path)?;
 
         assert!(deobfuscated.module().is_some());
@@ -175,7 +179,7 @@ mod tests {
         let path = "tests/samples/packers/confuserex/1.6.0/original.exe";
         let bytes = std::fs::read(path)?;
 
-        let mut engine = DeobfuscationEngine::new(EngineConfig::default());
+        let engine = DeobfuscationEngine::new(EngineConfig::default());
         let (deobfuscated, result) = engine.process_bytes(bytes)?;
 
         assert!(deobfuscated.module().is_some());

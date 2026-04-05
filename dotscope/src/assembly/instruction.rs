@@ -804,6 +804,40 @@ impl Instruction {
         }
     }
 
+    /// Returns the `i32` value for any `ldc.i4*` instruction.
+    ///
+    /// Handles all forms:
+    /// - `ldc.i4.m1` → `Some(-1)`
+    /// - `ldc.i4.0` through `ldc.i4.8` → `Some(0)` through `Some(8)`
+    /// - `ldc.i4.s` → sign-extended i8 operand
+    /// - `ldc.i4` → i32 operand
+    ///
+    /// Returns `None` if the instruction is not an `ldc.i4*` variant.
+    #[must_use]
+    pub fn get_ldc_i4_value(&self) -> Option<i32> {
+        match self.mnemonic {
+            "ldc.i4.m1" => Some(-1),
+            "ldc.i4.0" => Some(0),
+            "ldc.i4.1" => Some(1),
+            "ldc.i4.2" => Some(2),
+            "ldc.i4.3" => Some(3),
+            "ldc.i4.4" => Some(4),
+            "ldc.i4.5" => Some(5),
+            "ldc.i4.6" => Some(6),
+            "ldc.i4.7" => Some(7),
+            "ldc.i4.8" => Some(8),
+            "ldc.i4.s" => match &self.operand {
+                Operand::Immediate(Immediate::Int8(v)) => Some(i32::from(*v)),
+                _ => None,
+            },
+            "ldc.i4" => match &self.operand {
+                Operand::Immediate(Immediate::Int32(v)) => Some(*v),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     /// Returns whether this instruction is a prefix instruction.
     ///
     /// Prefix instructions modify the behavior of the following instruction

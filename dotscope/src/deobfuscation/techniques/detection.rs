@@ -31,13 +31,13 @@ pub enum Evidence {
 /// Result of a single technique's detection phase.
 pub struct Detection {
     /// Whether the technique's target pattern was found.
-    pub detected: bool,
+    detected: bool,
     /// Evidence items supporting the detection.
-    pub evidence: Vec<Evidence>,
+    evidence: Vec<Evidence>,
     /// Opaque, technique-specific findings (e.g. decryptor tokens, field maps).
-    pub findings: Option<Box<dyn Any + Send + Sync>>,
+    findings: Option<Box<dyn Any + Send + Sync>>,
     /// Cleanup contributions from detection (tokens/sections to remove).
-    pub cleanup: CleanupRequest,
+    cleanup: CleanupRequest,
 }
 
 impl Detection {
@@ -71,6 +71,12 @@ impl Detection {
         self.findings = Some(findings);
     }
 
+    /// Returns a reference to the raw opaque findings, if any.
+    #[must_use]
+    pub fn raw_findings(&self) -> Option<&(dyn Any + Send + Sync)> {
+        self.findings.as_deref()
+    }
+
     /// Downcast the opaque findings to a concrete type.
     #[must_use]
     pub fn findings<T: 'static>(&self) -> Option<&T> {
@@ -94,6 +100,39 @@ impl Detection {
         }
         self
     }
+
+    /// Returns whether the technique's target pattern was found.
+    #[must_use]
+    pub fn is_detected(&self) -> bool {
+        self.detected
+    }
+
+    /// Returns the evidence items supporting the detection.
+    #[must_use]
+    pub fn evidence(&self) -> &[Evidence] {
+        &self.evidence
+    }
+
+    /// Returns a reference to the cleanup request.
+    #[must_use]
+    pub fn cleanup(&self) -> &CleanupRequest {
+        &self.cleanup
+    }
+
+    /// Returns a mutable reference to the cleanup request.
+    pub fn cleanup_mut(&mut self) -> &mut CleanupRequest {
+        &mut self.cleanup
+    }
+
+    /// Takes the evidence vector, leaving an empty vector in its place.
+    pub fn take_evidence(&mut self) -> Vec<Evidence> {
+        std::mem::take(&mut self.evidence)
+    }
+
+    /// Takes the cleanup request, leaving a default (empty) one in its place.
+    pub fn take_cleanup(&mut self) -> CleanupRequest {
+        std::mem::take(&mut self.cleanup)
+    }
 }
 
 /// Aggregated detection results across all techniques.
@@ -102,6 +141,13 @@ pub struct Detections {
     entries: HashMap<String, Detection>,
     /// Technique IDs that have been successfully transformed.
     transformed: HashSet<String>,
+    /// Technique IDs whose `detect_ssa` already returned a positive result
+    /// for the current SSA state. Cleared each pipeline iteration (new assembly
+    /// → new SSA → potentially different results).
+    ssa_detected: HashSet<String>,
+    /// Monotonically increasing generation counter. Incremented on any mutation
+    /// that could change the output of `sorted_techniques()`.
+    generation: u64,
 }
 
 impl Detections {
@@ -111,12 +157,25 @@ impl Detections {
         Self {
             entries: HashMap::new(),
             transformed: HashSet::new(),
+            ssa_detected: HashSet::new(),
+            generation: 0,
         }
+    }
+
+    /// Returns the current generation counter.
+    ///
+    /// Incremented on any mutation that could affect technique sorting
+    /// (insert, merge, merge_all). Used by [`TechniqueRegistry`] to
+    /// invalidate its sorted cache.
+    #[must_use]
+    pub fn generation(&self) -> u64 {
+        self.generation
     }
 
     /// Inserts a detection result for a technique.
     pub fn insert(&mut self, id: impl Into<String>, detection: Detection) {
         self.entries.insert(id.into(), detection);
+        self.generation += 1;
     }
 
     /// Gets the detection result for a technique.
@@ -148,6 +207,24 @@ impl Detections {
         self.transformed.insert(id.into());
     }
 
+    /// Records that `detect_ssa` returned a positive result for this technique.
+    pub fn mark_ssa_detected(&mut self, id: impl Into<String>) {
+        self.ssa_detected.insert(id.into());
+    }
+
+    /// Returns `true` if `detect_ssa` already returned positive for this technique
+    /// in the current SSA state.
+    #[must_use]
+    pub fn is_ssa_detected(&self, id: &str) -> bool {
+        self.ssa_detected.contains(id)
+    }
+
+    /// Resets the SSA-detected set. Called at the start of each pipeline iteration
+    /// because a new assembly means new SSA and potentially different results.
+    pub fn clear_ssa_detected(&mut self) {
+        self.ssa_detected.clear();
+    }
+
     /// Merges a detection result, never downgrading an existing positive detection.
     ///
     /// - New not detected → no change (existing positive detection is preserved).
@@ -164,6 +241,7 @@ impl Detections {
         if !detection.detected {
             return;
         }
+        self.generation += 1;
         let id = id.into();
         match self.entries.get_mut(&id) {
             Some(existing) if existing.detected => {
@@ -178,6 +256,21 @@ impl Detections {
             }
             None => {
                 self.entries.insert(id, detection);
+            }
+        }
+    }
+
+    /// Merges all entries from another `Detections` into this one.
+    ///
+    /// Uses [`merge`](Self::merge) semantics for each entry: never downgrades
+    /// an existing positive detection.
+    pub fn merge_all(&mut self, other: Detections) {
+        self.generation += 1;
+        for (id, detection) in other.entries {
+            if detection.detected {
+                self.merge(id, detection);
+            } else {
+                self.entries.entry(id).or_insert(detection);
             }
         }
     }

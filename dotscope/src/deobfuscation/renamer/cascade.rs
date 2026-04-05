@@ -1133,7 +1133,7 @@ mod tests {
                     build_param_owner_map, generate_phase_label_from_context, CascadeRenamer,
                 },
                 context::{IdentifierKind, OpcodeProfile, PhaseInfo, RenameContext},
-                features, phases,
+                features, phases, prompt,
                 providers::SimpleProvider,
                 RenameProvider, SmartRenameConfig,
             },
@@ -1637,14 +1637,14 @@ mod tests {
             }
         }
 
-        assert_eq!(obfuscated_count, 17, "Expected 17 obfuscated methods");
+        assert_eq!(obfuscated_count, 25, "Expected 25 obfuscated methods");
         assert_eq!(
-            obfuscated_with_ssa, 17,
-            "All 17 methods should have SSA (code intact, only names obfuscated)"
+            obfuscated_with_ssa, 25,
+            "All 25 methods should have SSA (code intact, only names obfuscated)"
         );
         assert!(
-            obfuscated_with_context >= 10,
-            "At least 10/17 methods should have call targets, skeleton, or strings — got {obfuscated_with_context}"
+            obfuscated_with_context >= 15,
+            "At least 15/25 methods should have call targets, skeleton, or strings — got {obfuscated_with_context}"
         );
     }
 
@@ -1653,8 +1653,6 @@ mod tests {
     /// This guards against the bug where context was collected but not rendered.
     #[test]
     fn test_bitmono_renamer_prompt_text_contains_context() {
-        use crate::deobfuscation::renamer::prompt;
-
         let assembly = load_sample(RENAMER_SAMPLE);
 
         let provider = SimpleProvider::new();
@@ -1721,8 +1719,6 @@ mod tests {
     /// Verify parameter context has parent method info and type info populated.
     #[test]
     fn test_bitmono_renamer_param_context_populated() {
-        use crate::metadata::tables::ParamRaw;
-
         let assembly = load_sample(RENAMER_SAMPLE);
 
         let provider = SimpleProvider::new();
@@ -1768,10 +1764,10 @@ mod tests {
             }
         }
 
-        assert_eq!(obfuscated_params, 19, "Expected 19 obfuscated params");
+        assert_eq!(obfuscated_params, 23, "Expected 23 obfuscated params");
         assert!(
-            params_with_type >= 15,
-            "Most params should have dotnet_type resolved — got {params_with_type}/19"
+            params_with_type >= 18,
+            "Most params should have dotnet_type resolved — got {params_with_type}/23"
         );
         assert!(
             params_with_parent_or_calls >= 5,

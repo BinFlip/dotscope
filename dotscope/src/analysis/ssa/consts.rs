@@ -23,11 +23,12 @@
 //! let constants = evaluator.into_results();
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{
     analysis::ssa::{ConstValue, SsaFunction, SsaOp, SsaVarId},
     metadata::typesystem::PointerSize,
+    utils::BitSet,
 };
 
 /// Evaluates SSA operations to constant values.
@@ -51,7 +52,7 @@ pub struct ConstEvaluator<'a> {
     cache: HashMap<SsaVarId, Option<ConstValue>>,
 
     /// Variables currently being evaluated (for cycle detection).
-    visiting: HashSet<SsaVarId>,
+    visiting: BitSet,
 
     /// Maximum recursion depth.
     max_depth: usize,
@@ -87,7 +88,7 @@ impl<'a> ConstEvaluator<'a> {
         Self {
             ssa,
             cache: HashMap::new(),
-            visiting: HashSet::new(),
+            visiting: BitSet::new(ssa.variable_count().max(1)),
             max_depth,
             pointer_size: ptr_size,
         }
@@ -135,12 +136,14 @@ impl<'a> ConstEvaluator<'a> {
         }
 
         // Cycle detection
-        if self.visiting.contains(&var) {
+        if var.index() < self.visiting.len() && self.visiting.contains(var.index()) {
             return None;
         }
 
         // Mark as visiting
-        self.visiting.insert(var);
+        if var.index() < self.visiting.len() {
+            self.visiting.insert(var.index());
+        }
 
         // Get definition and evaluate
         let result = self
@@ -149,7 +152,9 @@ impl<'a> ConstEvaluator<'a> {
             .and_then(|op| self.evaluate_op_depth(op, depth));
 
         // Remove from visiting set
-        self.visiting.remove(&var);
+        if var.index() < self.visiting.len() {
+            self.visiting.remove(var.index());
+        }
 
         // Cache the result
         self.cache.insert(var, result.clone());
@@ -177,165 +182,14 @@ impl<'a> ConstEvaluator<'a> {
             return None;
         }
 
-        match op {
-            // Direct constant
-            SsaOp::Const { value, .. } => Some(value.clone()),
-
-            // Copy - trace through to source
-            SsaOp::Copy { src, .. } => self.evaluate_var_depth(*src, depth + 1),
-
-            SsaOp::Xor { left, right, .. } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.bitwise_xor(&r, self.pointer_size)
-            }
-            SsaOp::And { left, right, .. } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.bitwise_and(&r, self.pointer_size)
-            }
-            SsaOp::Or { left, right, .. } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.bitwise_or(&r, self.pointer_size)
-            }
-            SsaOp::Add { left, right, .. } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.add(&r, self.pointer_size)
-            }
-            SsaOp::Sub { left, right, .. } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.sub(&r, self.pointer_size)
-            }
-            SsaOp::Mul { left, right, .. } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.mul(&r, self.pointer_size)
-            }
-            SsaOp::Div { left, right, .. } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.div(&r, self.pointer_size)
-            }
-            SsaOp::Rem { left, right, .. } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.rem(&r, self.pointer_size)
-            }
-            SsaOp::Shl { value, amount, .. } => {
-                let v = self.evaluate_var_depth(*value, depth + 1)?;
-                let a = self.evaluate_var_depth(*amount, depth + 1)?;
-                v.shl(&a, self.pointer_size)
-            }
-            SsaOp::Shr {
-                value,
-                amount,
-                unsigned,
-                ..
-            } => {
-                let v = self.evaluate_var_depth(*value, depth + 1)?;
-                let a = self.evaluate_var_depth(*amount, depth + 1)?;
-                v.shr(&a, *unsigned, self.pointer_size)
-            }
-
-            // Unary operations
-            SsaOp::Neg { operand, .. } => {
-                let v = self.evaluate_var_depth(*operand, depth + 1)?;
-                v.negate(self.pointer_size)
-            }
-            SsaOp::Not { operand, .. } => {
-                let v = self.evaluate_var_depth(*operand, depth + 1)?;
-                v.bitwise_not(self.pointer_size)
-            }
-
-            // Comparison operations - use typed ConstValue methods
-            SsaOp::Ceq { left, right, .. } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.ceq(&r)
-            }
-            SsaOp::Clt {
-                left,
-                right,
-                unsigned,
-                ..
-            } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                if *unsigned {
-                    l.clt_un(&r)
-                } else {
-                    l.clt(&r)
-                }
-            }
-            SsaOp::Cgt {
-                left,
-                right,
-                unsigned,
-                ..
-            } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                if *unsigned {
-                    l.cgt_un(&r)
-                } else {
-                    l.cgt(&r)
-                }
-            }
-
-            // Overflow-checked arithmetic operations
-            SsaOp::AddOvf {
-                left,
-                right,
-                unsigned,
-                ..
-            } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.add_checked(&r, *unsigned, self.pointer_size)
-            }
-            SsaOp::SubOvf {
-                left,
-                right,
-                unsigned,
-                ..
-            } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.sub_checked(&r, *unsigned, self.pointer_size)
-            }
-            SsaOp::MulOvf {
-                left,
-                right,
-                unsigned,
-                ..
-            } => {
-                let l = self.evaluate_var_depth(*left, depth + 1)?;
-                let r = self.evaluate_var_depth(*right, depth + 1)?;
-                l.mul_checked(&r, *unsigned, self.pointer_size)
-            }
-
-            // Type conversion
-            SsaOp::Conv {
-                operand,
-                target,
-                overflow_check,
-                unsigned,
-                ..
-            } => {
-                let v = self.evaluate_var_depth(*operand, depth + 1)?;
-                if *overflow_check {
-                    v.convert_to_checked(target, *unsigned, self.pointer_size)
-                } else {
-                    v.convert_to(target, *unsigned, self.pointer_size)
-                }
-            }
-
-            // All other operations cannot be evaluated to constants
-            _ => None,
+        // Copy needs recursive evaluation that the shared helper cannot provide,
+        // because it resolves a variable rather than performing arithmetic.
+        if let SsaOp::Copy { src, .. } = op {
+            return self.evaluate_var_depth(*src, depth + 1);
         }
+
+        let ptr_size = self.pointer_size;
+        evaluate_const_op(op, |var| self.evaluate_var_depth(var, depth + 1), ptr_size)
     }
 
     /// Returns all computed constants.
@@ -362,6 +216,195 @@ impl<'a> ConstEvaluator<'a> {
     /// cached results are no longer valid.
     pub fn clear_cache(&mut self) {
         self.cache.clear();
+    }
+}
+
+/// Evaluates an SSA operation to a constant value using the provided operand resolver.
+///
+/// This is the shared arithmetic dispatch for constant evaluation. It handles all
+/// pure arithmetic, bitwise, comparison, overflow-checked, and conversion operations.
+/// Callers provide a `get_const` closure that resolves an [`SsaVarId`] to its constant
+/// value (if known).
+///
+/// # Operations not handled
+///
+/// - `Copy` — requires variable-level resolution (trace-through), not arithmetic.
+///   Callers should handle `Copy` before calling this function.
+/// - Calls, loads, stores, and other side-effecting operations — always returns `None`.
+///
+/// # Arguments
+///
+/// * `op` - The SSA operation to evaluate.
+/// * `get_const` - Closure that resolves a variable to its constant value.
+/// * `ptr_size` - Target pointer size for native int/uint masking.
+///
+/// # Returns
+///
+/// The constant result if all operands resolve and the operation succeeds, `None` otherwise.
+pub fn evaluate_const_op(
+    op: &SsaOp,
+    mut get_const: impl FnMut(SsaVarId) -> Option<ConstValue>,
+    ptr_size: PointerSize,
+) -> Option<ConstValue> {
+    match op {
+        SsaOp::Const { value, .. } => Some(value.clone()),
+
+        // Binary arithmetic
+        SsaOp::Add { left, right, .. } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            l.add(&r, ptr_size)
+        }
+        SsaOp::Sub { left, right, .. } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            l.sub(&r, ptr_size)
+        }
+        SsaOp::Mul { left, right, .. } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            l.mul(&r, ptr_size)
+        }
+        SsaOp::Div { left, right, .. } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            l.div(&r, ptr_size)
+        }
+        SsaOp::Rem { left, right, .. } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            l.rem(&r, ptr_size)
+        }
+
+        // Bitwise
+        SsaOp::Xor { left, right, .. } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            l.bitwise_xor(&r, ptr_size)
+        }
+        SsaOp::And { left, right, .. } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            l.bitwise_and(&r, ptr_size)
+        }
+        SsaOp::Or { left, right, .. } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            l.bitwise_or(&r, ptr_size)
+        }
+
+        // Shifts
+        SsaOp::Shl { value, amount, .. } => {
+            let v = get_const(*value)?;
+            let a = get_const(*amount)?;
+            v.shl(&a, ptr_size)
+        }
+        SsaOp::Shr {
+            value,
+            amount,
+            unsigned,
+            ..
+        } => {
+            let v = get_const(*value)?;
+            let a = get_const(*amount)?;
+            v.shr(&a, *unsigned, ptr_size)
+        }
+
+        // Unary
+        SsaOp::Neg { operand, .. } => {
+            let v = get_const(*operand)?;
+            v.negate(ptr_size)
+        }
+        SsaOp::Not { operand, .. } => {
+            let v = get_const(*operand)?;
+            v.bitwise_not(ptr_size)
+        }
+
+        // Comparisons
+        SsaOp::Ceq { left, right, .. } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            l.ceq(&r)
+        }
+        SsaOp::Clt {
+            left,
+            right,
+            unsigned,
+            ..
+        } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            if *unsigned {
+                l.clt_un(&r)
+            } else {
+                l.clt(&r)
+            }
+        }
+        SsaOp::Cgt {
+            left,
+            right,
+            unsigned,
+            ..
+        } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            if *unsigned {
+                l.cgt_un(&r)
+            } else {
+                l.cgt(&r)
+            }
+        }
+
+        // Overflow-checked arithmetic
+        SsaOp::AddOvf {
+            left,
+            right,
+            unsigned,
+            ..
+        } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            l.add_checked(&r, *unsigned, ptr_size)
+        }
+        SsaOp::SubOvf {
+            left,
+            right,
+            unsigned,
+            ..
+        } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            l.sub_checked(&r, *unsigned, ptr_size)
+        }
+        SsaOp::MulOvf {
+            left,
+            right,
+            unsigned,
+            ..
+        } => {
+            let l = get_const(*left)?;
+            let r = get_const(*right)?;
+            l.mul_checked(&r, *unsigned, ptr_size)
+        }
+
+        // Type conversion
+        SsaOp::Conv {
+            operand,
+            target,
+            overflow_check,
+            unsigned,
+            ..
+        } => {
+            let v = get_const(*operand)?;
+            if *overflow_check {
+                v.convert_to_checked(target, *unsigned, ptr_size)
+            } else {
+                v.convert_to(target, *unsigned, ptr_size)
+            }
+        }
+
+        // All other operations cannot be evaluated to constants
+        _ => None,
     }
 }
 

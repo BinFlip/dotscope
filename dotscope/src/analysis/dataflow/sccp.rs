@@ -46,15 +46,18 @@
 //!
 //! Wegman & Zadeck, "Constant Propagation with Conditional Branches", 1991.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::{
     analysis::{
-        dataflow::lattice::MeetSemiLattice, ConstValue, PhiNode, SsaBlock, SsaFunction, SsaOp,
-        SsaVarId,
+        dataflow::lattice::MeetSemiLattice, ssa::evaluate_const_op, ConstValue, PhiNode, SsaBlock,
+        SsaFunction, SsaOp, SsaVarId,
     },
     metadata::typesystem::PointerSize,
-    utils::graph::{NodeId, RootedGraph, Successors},
+    utils::{
+        graph::{NodeId, RootedGraph, Successors},
+        BitSet,
+    },
 };
 
 /// Sparse Conditional Constant Propagation analysis.
@@ -77,18 +80,18 @@ use crate::{
 /// ```
 pub struct ConstantPropagation {
     /// Current value for each SSA variable.
-    values: HashMap<SsaVarId, ScalarValue>,
+    values: BTreeMap<SsaVarId, ScalarValue>,
     /// Executable CFG edges.
-    executable_edges: HashSet<(usize, usize)>,
+    executable_edges: BTreeSet<(usize, usize)>,
     /// Blocks that have been marked executable.
-    executable_blocks: HashSet<usize>,
+    executable_blocks: BitSet,
     /// SSA worklist: variables whose values have changed.
     ssa_worklist: VecDeque<SsaVarId>,
     /// CFG worklist: edges that have become executable.
     cfg_worklist: VecDeque<(usize, usize)>,
     /// Back edges: edges where the target was already executable when the edge was added.
     /// These represent loop back edges and their values should be treated as unknown.
-    back_edges: HashSet<(usize, usize)>,
+    back_edges: BTreeSet<(usize, usize)>,
     /// Target pointer size for native int/uint masking.
     pointer_size: PointerSize,
 }
@@ -102,12 +105,12 @@ impl ConstantPropagation {
     #[must_use]
     pub fn new(ptr_size: PointerSize) -> Self {
         Self {
-            values: HashMap::new(),
-            executable_edges: HashSet::new(),
-            executable_blocks: HashSet::new(),
+            values: BTreeMap::new(),
+            executable_edges: BTreeSet::new(),
+            executable_blocks: BitSet::new(0),
             ssa_worklist: VecDeque::new(),
             cfg_worklist: VecDeque::new(),
-            back_edges: HashSet::new(),
+            back_edges: BTreeSet::new(),
             pointer_size: ptr_size,
         }
     }
@@ -142,7 +145,7 @@ impl ConstantPropagation {
     {
         self.values.clear();
         self.executable_edges.clear();
-        self.executable_blocks.clear();
+        self.executable_blocks = BitSet::new(ssa.block_count());
         self.ssa_worklist.clear();
         self.cfg_worklist.clear();
         self.back_edges.clear();
@@ -199,7 +202,7 @@ impl ConstantPropagation {
                     // when this edge is being added, it's a back edge (loop).
                     // PHI operands from back edges represent values that change
                     // across loop iterations and should be treated as unknown.
-                    if self.executable_blocks.contains(&to) {
+                    if self.executable_blocks.contains(to) {
                         self.back_edges.insert((from, to));
                     }
                     // This edge became executable
@@ -229,7 +232,7 @@ impl ConstantPropagation {
     where
         G: RootedGraph + Successors,
     {
-        let first_visit = !self.executable_blocks.contains(&to);
+        let first_visit = !self.executable_blocks.contains(to);
 
         if first_visit {
             self.executable_blocks.insert(to);
@@ -284,7 +287,7 @@ impl ConstantPropagation {
                 let block_id = use_site.block;
 
                 // Skip if block is not executable
-                if !self.executable_blocks.contains(&block_id) {
+                if !self.executable_blocks.contains(block_id) {
                     continue;
                 }
 
@@ -472,102 +475,38 @@ impl ConstantPropagation {
     ///
     /// This performs abstract interpretation of the instruction, computing
     /// what value the result would have given the current lattice values
-    /// of the operands.
+    /// of the operands. Delegates to [`evaluate_const_op`] for arithmetic
+    /// dispatch, while handling lattice Top/Bottom propagation locally.
     fn evaluate_instruction(&self, op: &SsaOp) -> ScalarValue {
-        match op {
-            SsaOp::Const { value, .. } => ScalarValue::Constant(value.clone()),
-
-            SsaOp::Copy { src, .. } => self.get_value(*src),
-
-            SsaOp::Add { left, right, .. } => {
-                self.evaluate_binary(*left, *right, |a, b| a.add(b, self.pointer_size))
-            }
-
-            SsaOp::Sub { left, right, .. } => {
-                self.evaluate_binary(*left, *right, |a, b| a.sub(b, self.pointer_size))
-            }
-
-            SsaOp::Mul { left, right, .. } => {
-                self.evaluate_binary(*left, *right, |a, b| a.mul(b, self.pointer_size))
-            }
-
-            SsaOp::Div { left, right, .. } => {
-                self.evaluate_binary(*left, *right, |a, b| a.div(b, self.pointer_size))
-            }
-
-            SsaOp::Rem { left, right, .. } => {
-                self.evaluate_binary(*left, *right, |a, b| a.rem(b, self.pointer_size))
-            }
-
-            SsaOp::And { left, right, .. } => {
-                self.evaluate_binary(*left, *right, |a, b| a.bitwise_and(b, self.pointer_size))
-            }
-
-            SsaOp::Or { left, right, .. } => {
-                self.evaluate_binary(*left, *right, |a, b| a.bitwise_or(b, self.pointer_size))
-            }
-
-            SsaOp::Xor { left, right, .. } => {
-                self.evaluate_binary(*left, *right, |a, b| a.bitwise_xor(b, self.pointer_size))
-            }
-
-            SsaOp::Shl { value, amount, .. } => {
-                self.evaluate_binary(*value, *amount, |a, b| a.shl(b, self.pointer_size))
-            }
-
-            SsaOp::Shr {
-                value,
-                amount,
-                unsigned,
-                ..
-            } => {
-                let unsigned = *unsigned;
-                self.evaluate_binary(*value, *amount, |l, r| {
-                    l.shr(r, unsigned, self.pointer_size)
-                })
-            }
-
-            SsaOp::Ceq { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::ceq),
-
-            SsaOp::Clt { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::clt),
-
-            SsaOp::Cgt { left, right, .. } => self.evaluate_binary(*left, *right, ConstValue::cgt),
-
-            SsaOp::Neg { operand, .. } => match self.get_value(*operand) {
-                ScalarValue::Top => ScalarValue::Top,
-                ScalarValue::Constant(c) => c
-                    .negate(self.pointer_size)
-                    .map_or(ScalarValue::Bottom, ScalarValue::Constant),
-                ScalarValue::Bottom => ScalarValue::Bottom,
-            },
-
-            SsaOp::Not { operand, .. } => match self.get_value(*operand) {
-                ScalarValue::Top => ScalarValue::Top,
-                ScalarValue::Constant(c) => c
-                    .bitwise_not(self.pointer_size)
-                    .map_or(ScalarValue::Bottom, ScalarValue::Constant),
-                ScalarValue::Bottom => ScalarValue::Bottom,
-            },
-
-            // All other operations produce non-constant results (calls, loads, etc.)
-            _ => ScalarValue::Bottom,
+        // Copy propagates the source's lattice value directly.
+        if let SsaOp::Copy { src, .. } = op {
+            return self.get_value(*src);
         }
-    }
 
-    /// Evaluates a binary operation.
-    fn evaluate_binary<F>(&self, left: SsaVarId, right: SsaVarId, f: F) -> ScalarValue
-    where
-        F: FnOnce(&ConstValue, &ConstValue) -> Option<ConstValue>,
-    {
-        let left_val = self.get_value(left);
-        let right_val = self.get_value(right);
+        // Delegate arithmetic to the shared constant evaluator.
+        // Track whether any operand was Top (unknown) vs Bottom (varying)
+        // so the lattice result is correct.
+        let mut saw_top = false;
+        let ptr_size = self.pointer_size;
+        let result = evaluate_const_op(
+            op,
+            |var| match self.get_value(var) {
+                ScalarValue::Constant(c) => Some(c),
+                ScalarValue::Top => {
+                    saw_top = true;
+                    None
+                }
+                ScalarValue::Bottom => None,
+            },
+            ptr_size,
+        );
 
-        match (&left_val, &right_val) {
-            (ScalarValue::Top, _) | (_, ScalarValue::Top) => ScalarValue::Top,
-            (ScalarValue::Constant(l), ScalarValue::Constant(r)) => {
-                f(l, r).map_or(ScalarValue::Bottom, ScalarValue::Constant)
-            }
-            _ => ScalarValue::Bottom,
+        match result {
+            Some(c) => ScalarValue::Constant(c),
+            // If the shared evaluator returned None but an operand was Top,
+            // the result is still unknown (Top), not varying (Bottom).
+            None if saw_top => ScalarValue::Top,
+            None => ScalarValue::Bottom,
         }
     }
 
@@ -659,9 +598,9 @@ impl MeetSemiLattice for ScalarValue {
 #[derive(Debug, Clone)]
 pub struct SccpResult {
     /// Value for each SSA variable.
-    values: HashMap<SsaVarId, ScalarValue>,
+    values: BTreeMap<SsaVarId, ScalarValue>,
     /// Blocks determined to be executable.
-    executable_blocks: HashSet<usize>,
+    executable_blocks: BitSet,
 }
 
 impl SccpResult {
@@ -671,8 +610,8 @@ impl SccpResult {
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            values: HashMap::new(),
-            executable_blocks: HashSet::new(),
+            values: BTreeMap::new(),
+            executable_blocks: BitSet::new(0),
         }
     }
 
@@ -702,7 +641,7 @@ impl SccpResult {
     /// Returns `true` if a block is executable (reachable).
     #[must_use]
     pub fn is_block_executable(&self, block: usize) -> bool {
-        self.executable_blocks.contains(&block)
+        self.executable_blocks.contains(block)
     }
 
     /// Returns an iterator over all constant variables.
@@ -715,7 +654,7 @@ impl SccpResult {
 
     /// Returns an iterator over all executable blocks.
     pub fn executable_blocks(&self) -> impl Iterator<Item = usize> + '_ {
-        self.executable_blocks.iter().copied()
+        self.executable_blocks.iter()
     }
 
     /// Returns the number of variables found to be constant.
@@ -730,13 +669,13 @@ impl SccpResult {
     /// Returns the number of executable blocks.
     #[must_use]
     pub fn executable_block_count(&self) -> usize {
-        self.executable_blocks.len()
+        self.executable_blocks.count()
     }
 }
 
 #[cfg(test)]
 mod tests {
-    use std::collections::{HashMap, HashSet};
+    use std::collections::BTreeMap;
 
     use super::*;
 
@@ -797,12 +736,12 @@ mod tests {
         let v1 = SsaVarId::from_index(1);
         let v2 = SsaVarId::from_index(2);
 
-        let mut values = HashMap::new();
+        let mut values = BTreeMap::new();
         values.insert(v0, ScalarValue::Constant(ConstValue::I32(42)));
         values.insert(v1, ScalarValue::Bottom);
         values.insert(v2, ScalarValue::Top);
 
-        let mut executable_blocks = HashSet::new();
+        let mut executable_blocks = BitSet::new(3);
         executable_blocks.insert(0);
         executable_blocks.insert(1);
 

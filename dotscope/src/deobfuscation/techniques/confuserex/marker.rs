@@ -139,8 +139,10 @@ impl Technique for ConfuserExMarker {
         );
 
         // Register marker attribute tokens and typedef tokens for cleanup
-        detection.cleanup.add_attributes(attr_tokens_for_cleanup);
-        detection.cleanup.add_types(typedef_tokens);
+        detection
+            .cleanup_mut()
+            .add_attributes(attr_tokens_for_cleanup);
+        detection.cleanup_mut().add_types(typedef_tokens);
 
         detection
     }
@@ -233,11 +235,11 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            detection.detected,
+            detection.is_detected(),
             "ConfuserExMarker should detect markers in mkaring_normal.exe"
         );
         assert!(
-            !detection.evidence.is_empty(),
+            !detection.evidence().is_empty(),
             "Detection should have evidence"
         );
     }
@@ -250,7 +252,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "ConfuserExMarker should not detect markers in original.exe"
         );
     }
@@ -262,7 +264,7 @@ mod tests {
         let technique = ConfuserExMarker;
         let detection = technique.detect(&assembly);
 
-        assert!(detection.detected);
+        assert!(detection.is_detected());
 
         let findings = detection
             .findings::<MarkerFindings>()
@@ -281,7 +283,7 @@ mod tests {
 
         // If a version was extracted, evidence should mention it
         if findings.version.is_some() {
-            let has_version_evidence = detection.evidence.iter().any(|e| {
+            let has_version_evidence = detection.evidence().iter().any(|e| {
                 if let Evidence::Attribute(s) = e {
                     s.contains("version")
                 } else {

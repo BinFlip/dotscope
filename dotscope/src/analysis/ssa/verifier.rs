@@ -10,13 +10,16 @@
 //! invariant violations early, preventing silent corruption that would
 //! manifest as broken codegen or incorrect deobfuscation.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
 use crate::{
     analysis::ssa::{cfg::SsaCfg, DefSite, SsaFunction, SsaVarId},
-    utils::graph::{
-        algorithms::{compute_dominators, DominatorTree},
-        NodeId, RootedGraph,
+    utils::{
+        graph::{
+            algorithms::{compute_dominators, DominatorTree},
+            NodeId, RootedGraph,
+        },
+        BitSet,
     },
 };
 
@@ -229,13 +232,11 @@ impl<'a> SsaVerifier<'a> {
             self.check_phi_operands(&cfg);
             self.check_defined_before_use(&definitions);
             self.check_registered_variables();
-        }
 
-        if level >= VerifyLevel::Full {
-            let cfg = SsaCfg::from_ssa(self.ssa);
-            let dom_tree = compute_dominators(&cfg, cfg.entry());
-            let definitions = self.collect_definitions();
-            self.check_dominance(&cfg, &dom_tree, &definitions);
+            if level >= VerifyLevel::Full {
+                let dom_tree = compute_dominators(&cfg, cfg.entry());
+                self.check_dominance(&cfg, &dom_tree, &definitions);
+            }
         }
 
         self.errors
@@ -359,8 +360,24 @@ impl<'a> SsaVerifier<'a> {
     /// - No operands from non-predecessor blocks
     /// - No phis in the entry block (which has no predecessors)
     fn check_phi_operands(&mut self, cfg: &SsaCfg<'_>) {
+        let block_count = self.ssa.block_count();
         for (block_idx, block) in self.ssa.blocks().iter().enumerate() {
-            let preds: HashSet<usize> = cfg.block_predecessors(block_idx).iter().copied().collect();
+            let pred_list = cfg.block_predecessors(block_idx);
+            // Capacity must cover both actual predecessors and phi operand predecessors
+            // (which may reference non-existent blocks in malformed SSA)
+            let max_phi_pred = block
+                .phi_nodes()
+                .iter()
+                .flat_map(|phi| phi.operands().iter().map(|op| op.predecessor()))
+                .max()
+                .unwrap_or(0);
+            let capacity = block_count.max(max_phi_pred + 1).max(1);
+            let mut preds = BitSet::new(capacity);
+            for &p in pred_list {
+                if p < capacity {
+                    preds.insert(p);
+                }
+            }
 
             for (phi_idx, phi) in block.phi_nodes().iter().enumerate() {
                 // Entry block should not have phis (no predecessors)
@@ -372,12 +389,15 @@ impl<'a> SsaVerifier<'a> {
                     continue;
                 }
 
-                let operand_preds: HashSet<usize> =
-                    phi.operands().iter().map(|op| op.predecessor()).collect();
+                let mut operand_preds = BitSet::new(capacity);
+                for op in phi.operands() {
+                    let pred = op.predecessor();
+                    operand_preds.insert(pred);
+                }
 
                 // Check for missing predecessors
-                for &pred in &preds {
-                    if !operand_preds.contains(&pred) {
+                for pred in preds.iter() {
+                    if !operand_preds.contains(pred) {
                         self.errors.push(VerifierError::MissingPhiOperand {
                             block: block_idx,
                             phi_idx,
@@ -387,8 +407,8 @@ impl<'a> SsaVerifier<'a> {
                 }
 
                 // Check for extra (non-predecessor) operands
-                for &op_pred in &operand_preds {
-                    if !preds.contains(&op_pred) {
+                for op_pred in operand_preds.iter() {
+                    if !preds.contains(op_pred) {
                         self.errors.push(VerifierError::ExtraPhiOperand {
                             block: block_idx,
                             phi_idx,
@@ -420,19 +440,51 @@ impl<'a> SsaVerifier<'a> {
 
     /// Checks that every variable used in blocks is registered in the variables vec.
     fn check_registered_variables(&mut self) {
-        let registered: HashSet<SsaVarId> = self.ssa.variables().iter().map(|v| v.id()).collect();
+        let variable_count = self.ssa.variable_count();
+        // Capacity must cover all variable IDs that appear in blocks (may exceed variable_count)
+        let max_block_var = self
+            .ssa
+            .blocks()
+            .iter()
+            .flat_map(|b| {
+                let phi_ids = b.phi_nodes().iter().map(|p| p.result().index());
+                let instr_ids = b
+                    .instructions()
+                    .iter()
+                    .filter_map(|i| i.op().dest().map(|d| d.index()));
+                phi_ids.chain(instr_ids)
+            })
+            .max()
+            .unwrap_or(0);
+        let max_reg_var = self
+            .ssa
+            .variables()
+            .iter()
+            .map(|v| v.id().index())
+            .max()
+            .unwrap_or(0);
+        let capacity = (max_block_var + 1)
+            .max(max_reg_var + 1)
+            .max(variable_count)
+            .max(1);
+        let mut registered = BitSet::new(capacity);
+        for v in self.ssa.variables() {
+            registered.insert(v.id().index());
+        }
 
         // Check variables defined in blocks but not in variables vec
         for block in self.ssa.blocks() {
             for phi in block.phi_nodes() {
-                if !registered.contains(&phi.result()) {
+                let idx = phi.result().index();
+                if idx >= capacity || !registered.contains(idx) {
                     self.errors
                         .push(VerifierError::UnregisteredVariable { var: phi.result() });
                 }
             }
             for instr in block.instructions() {
                 if let Some(dest) = instr.op().dest() {
-                    if !registered.contains(&dest) {
+                    let idx = dest.index();
+                    if idx >= capacity || !registered.contains(idx) {
                         self.errors
                             .push(VerifierError::UnregisteredVariable { var: dest });
                     }
@@ -441,14 +493,20 @@ impl<'a> SsaVerifier<'a> {
         }
 
         // Check for orphan variables (in variables vec but not defined in any block)
-        let mut block_defined: HashSet<SsaVarId> = HashSet::new();
+        let mut block_defined = BitSet::new(capacity);
         for block in self.ssa.blocks() {
             for phi in block.phi_nodes() {
-                block_defined.insert(phi.result());
+                let idx = phi.result().index();
+                if idx < capacity {
+                    block_defined.insert(idx);
+                }
             }
             for instr in block.instructions() {
                 if let Some(dest) = instr.op().dest() {
-                    block_defined.insert(dest);
+                    let idx = dest.index();
+                    if idx < capacity {
+                        block_defined.insert(idx);
+                    }
                 }
             }
         }
@@ -460,7 +518,7 @@ impl<'a> SsaVerifier<'a> {
             if var.version() == 0 && var.def_site().instruction.is_none() {
                 continue;
             }
-            if !block_defined.contains(&var.id()) {
+            if !block_defined.contains(var.id().index()) {
                 self.errors
                     .push(VerifierError::OrphanVariable { var: var.id() });
             }
@@ -535,12 +593,13 @@ impl<'a> SsaVerifier<'a> {
         definitions: &HashMap<SsaVarId, (usize, DefSite)>,
     ) {
         // Compute reachable blocks
-        let mut reachable: HashSet<usize> = HashSet::new();
+        let block_count = self.ssa.block_count().max(1);
+        let mut reachable = BitSet::new(block_count);
         let mut worklist = vec![0usize];
         while let Some(block_idx) = worklist.pop() {
-            if reachable.insert(block_idx) {
+            if block_idx < block_count && reachable.insert(block_idx) {
                 for &succ in cfg.block_successors(block_idx) {
-                    if succ < self.ssa.block_count() {
+                    if succ < block_count {
                         worklist.push(succ);
                     }
                 }
@@ -549,14 +608,14 @@ impl<'a> SsaVerifier<'a> {
 
         // Check instruction uses
         for (block_idx, block) in self.ssa.blocks().iter().enumerate() {
-            if !reachable.contains(&block_idx) {
+            if !reachable.contains(block_idx) {
                 continue;
             }
 
             for instr in block.instructions() {
                 for used_var in instr.op().uses() {
                     if let Some(&(def_block, _)) = definitions.get(&used_var) {
-                        if !reachable.contains(&def_block) {
+                        if !reachable.contains(def_block) {
                             continue;
                         }
                         // Definition must dominate use block
@@ -582,7 +641,7 @@ impl<'a> SsaVerifier<'a> {
                     let used_var = operand.value();
                     let pred_block = operand.predecessor();
                     if let Some(&(def_block, _)) = definitions.get(&used_var) {
-                        if !reachable.contains(&def_block) || !reachable.contains(&pred_block) {
+                        if !reachable.contains(def_block) || !reachable.contains(pred_block) {
                             continue;
                         }
                         // Definition must dominate the predecessor block

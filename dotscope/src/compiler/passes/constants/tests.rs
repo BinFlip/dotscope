@@ -1,7 +1,7 @@
-use std::{collections::HashMap, sync::Arc};
+use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
-    analysis::{CallGraph, ConstValue, SsaFunctionBuilder, SsaOp, SsaType, SsaVarId},
+    analysis::{CallGraph, ConstValue, MethodRef, SsaFunctionBuilder, SsaOp, SsaType, SsaVarId},
     compiler::{
         passes::constants::{AlgebraicResult, ConstantPropagationPass},
         CompilerContext, EventLog, SsaPass,
@@ -18,14 +18,14 @@ fn test_context() -> CompilerContext {
 
 #[test]
 fn test_pass_creation() {
-    let pass = ConstantPropagationPass::new();
+    let pass = ConstantPropagationPass::new(10);
     assert_eq!(pass.name(), "constant-propagation");
     assert!(!pass.description().is_empty());
 }
 
 #[test]
 fn test_pass_default() {
-    let pass = ConstantPropagationPass;
+    let pass = ConstantPropagationPass::new(10);
     assert_eq!(pass.name(), "constant-propagation");
 }
 
@@ -176,7 +176,7 @@ fn test_conv_char() {
 
 #[test]
 fn test_identity_add_zero() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -202,7 +202,7 @@ fn test_identity_add_zero() {
 
 #[test]
 fn test_identity_mul_one() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -227,7 +227,7 @@ fn test_identity_mul_one() {
 
 #[test]
 fn test_identity_and_minus_one() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -252,7 +252,7 @@ fn test_identity_and_minus_one() {
 
 #[test]
 fn test_absorbing_mul_zero() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -277,7 +277,7 @@ fn test_absorbing_mul_zero() {
 
 #[test]
 fn test_absorbing_and_zero() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -302,7 +302,7 @@ fn test_absorbing_and_zero() {
 
 #[test]
 fn test_absorbing_or_minus_one() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -327,7 +327,7 @@ fn test_absorbing_or_minus_one() {
 
 #[test]
 fn test_add_ovf_no_overflow() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -347,7 +347,7 @@ fn test_add_ovf_no_overflow() {
 
 #[test]
 fn test_mul_ovf_with_zero() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -368,7 +368,7 @@ fn test_mul_ovf_with_zero() {
 
 #[test]
 fn test_pass_empty_function() {
-    let pass = ConstantPropagationPass::new();
+    let pass = ConstantPropagationPass::new(10);
     let mut ssa = SsaFunctionBuilder::new(0, 0).build_with(|_f| {}).unwrap();
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
@@ -380,7 +380,7 @@ fn test_pass_empty_function() {
 
 #[test]
 fn test_pass_simple_folding() {
-    let pass = ConstantPropagationPass::new();
+    let pass = ConstantPropagationPass::new(10);
     // Create a block with: v0 = 5, v1 = 3, v2 = add v0, v1
     let mut ssa = SsaFunctionBuilder::new(0, 0)
         .build_with(|f| {
@@ -415,7 +415,7 @@ fn test_pass_simple_folding() {
 
 #[test]
 fn test_pass_branch_simplification() {
-    let pass = ConstantPropagationPass::new();
+    let pass = ConstantPropagationPass::new(10);
     // Block 0: v0 = true, branch v0, B1, B2
     let mut ssa = SsaFunctionBuilder::new(0, 0)
         .build_with(|f| {
@@ -445,7 +445,7 @@ fn test_pass_branch_simplification() {
 
 #[test]
 fn test_pass_switch_simplification() {
-    let pass = ConstantPropagationPass::new();
+    let pass = ConstantPropagationPass::new(10);
     // Block 0: v0 = 1, switch v0, [B1, B2, B3], default=B4
     let mut ssa = SsaFunctionBuilder::new(0, 0)
         .build_with(|f| {
@@ -478,7 +478,7 @@ fn test_pass_switch_simplification() {
 
 #[test]
 fn test_constants_cached_in_context() {
-    let pass = ConstantPropagationPass::new();
+    let pass = ConstantPropagationPass::new(10);
     let (mut ssa, v0) = {
         let mut v0_out = SsaVarId::from_index(0);
         let ssa = SsaFunctionBuilder::new(0, 0)
@@ -505,7 +505,7 @@ fn test_constants_cached_in_context() {
 
 #[test]
 fn test_identity_shl_zero() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -530,7 +530,7 @@ fn test_identity_shl_zero() {
 
 #[test]
 fn test_identity_shr_zero() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -556,7 +556,7 @@ fn test_identity_shr_zero() {
 
 #[test]
 fn test_identity_xor_zero() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -581,7 +581,7 @@ fn test_identity_xor_zero() {
 
 #[test]
 fn test_identity_div_one() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -607,7 +607,7 @@ fn test_identity_div_one() {
 
 #[test]
 fn test_identity_sub_zero() {
-    let mut constants = HashMap::new();
+    let mut constants = BTreeMap::new();
     let v0 = SsaVarId::from_index(0);
     let v1 = SsaVarId::from_index(1);
     let v2 = SsaVarId::from_index(2);
@@ -632,7 +632,7 @@ fn test_identity_sub_zero() {
 
 #[test]
 fn test_chained_constant_folding() {
-    let pass = ConstantPropagationPass::new();
+    let pass = ConstantPropagationPass::new(10);
     // v0 = 2, v1 = 3, v2 = v0 + v1, v3 = 2, v4 = v2 * v3, v5 = 0, v6 = v4 + v5
     let (mut ssa, v4) = {
         let mut v4_out = SsaVarId::from_index(0);
@@ -667,7 +667,7 @@ fn test_chained_constant_folding() {
 
 #[test]
 fn test_branch_false_condition() {
-    let pass = ConstantPropagationPass::new();
+    let pass = ConstantPropagationPass::new(10);
     // Block 0: v0 = false, branch v0, B1, B2
     let mut ssa = SsaFunctionBuilder::new(0, 0)
         .build_with(|f| {
@@ -697,7 +697,7 @@ fn test_branch_false_condition() {
 
 #[test]
 fn test_switch_out_of_range_uses_default() {
-    let pass = ConstantPropagationPass::new();
+    let pass = ConstantPropagationPass::new(10);
     // Block 0: v0 = 100 (out of range), switch v0, [B1, B2, B3], default=B4
     let mut ssa = SsaFunctionBuilder::new(0, 0)
         .build_with(|f| {
@@ -1142,4 +1142,106 @@ fn test_float_widening_not_eliminated() {
     } else {
         panic!("Expected Conv instruction");
     }
+}
+
+#[test]
+fn test_try_fold_concat2_decrypted_strings() {
+    let assembly = test_assembly_arc();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+
+    let mut constants = BTreeMap::new();
+    constants.insert(v0, ConstValue::DecryptedString("Hello".to_string()));
+    constants.insert(v1, ConstValue::DecryptedString(", World".to_string()));
+
+    // Use a fake token — identify_string_op will fail to resolve it through the
+    // assembly, so we test the folding logic indirectly through fold_string_operations.
+    // Instead, test the concat logic directly.
+    let strings: Option<Vec<String>> = [v0, v1]
+        .iter()
+        .map(|arg| {
+            constants
+                .get(arg)
+                .and_then(|v| v.as_string_content(&assembly))
+        })
+        .collect();
+    let result = strings.unwrap().concat();
+    assert_eq!(result, "Hello, World");
+}
+
+#[test]
+fn test_try_fold_concat_with_non_constant_arg() {
+    let assembly = test_assembly_arc();
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+
+    let mut constants = BTreeMap::new();
+    constants.insert(v0, ConstValue::DecryptedString("Hello".to_string()));
+    // v1 is NOT in constants — simulates a non-constant argument
+
+    let strings: Option<Vec<String>> = [v0, v1]
+        .iter()
+        .map(|arg| {
+            constants
+                .get(arg)
+                .and_then(|v| v.as_string_content(&assembly))
+        })
+        .collect();
+    assert!(strings.is_none(), "Should fail when an arg is not constant");
+}
+
+#[test]
+fn test_fold_string_operations_with_decrypted_concat() {
+    let assembly = test_assembly_arc();
+    let method_token = Token::new(0x06000001);
+
+    let v0 = SsaVarId::from_index(0);
+    let v1 = SsaVarId::from_index(1);
+    let v2 = SsaVarId::from_index(2);
+
+    // Build an SSA with two DecryptedString consts and a call to an unknown method
+    // (the call won't resolve through the test assembly, but we still test the
+    // infrastructure doesn't crash)
+    let mut ssa = SsaFunctionBuilder::new(0, 0)
+        .build_with(|f| {
+            f.block(0, |b| {
+                b.op(SsaOp::Const {
+                    dest: v0,
+                    value: ConstValue::DecryptedString("Sys".to_string()),
+                });
+                b.op(SsaOp::Const {
+                    dest: v1,
+                    value: ConstValue::DecryptedString("tem".to_string()),
+                });
+                b.op(SsaOp::Call {
+                    dest: Some(v2),
+                    method: MethodRef::new(Token::new(0x0A000099)), // fake MemberRef
+                    args: vec![v0, v1],
+                });
+                b.ret();
+            });
+        })
+        .unwrap();
+
+    let mut constants = BTreeMap::new();
+    constants.insert(v0, ConstValue::DecryptedString("Sys".to_string()));
+    constants.insert(v1, ConstValue::DecryptedString("tem".to_string()));
+
+    let mut changes = EventLog::new();
+
+    // This won't actually fold (the fake token won't resolve through assembly),
+    // but it exercises the code path without panicking.
+    ConstantPropagationPass::fold_string_operations(
+        &mut ssa,
+        &mut constants,
+        method_token,
+        &mut changes,
+        &assembly,
+    );
+
+    // v2 should NOT be in constants (fake method token didn't resolve to System.String)
+    assert!(
+        !constants.contains_key(&v2),
+        "Unresolvable method should not fold"
+    );
 }

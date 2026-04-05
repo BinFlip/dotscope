@@ -3,8 +3,10 @@
 //! This module provides the test runner infrastructure that coordinates compilation,
 //! execution, and verification of .NET assemblies across supported architectures.
 
-use crate::prelude::*;
-use crate::test::mono::capabilities::{Architecture, TestCapabilities};
+use crate::{
+    prelude::*,
+    test::mono::capabilities::{Architecture, TestCapabilities},
+};
 use std::path::{Path, PathBuf};
 use tempfile::TempDir;
 

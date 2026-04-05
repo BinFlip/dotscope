@@ -70,11 +70,13 @@
 //! - Type loading and assembly isolation
 //! - Cross-assembly type reference resolution
 
-use crate::metadata::tables::AssemblyHashAlgorithm;
 #[cfg(feature = "legacy-crypto")]
 use crate::utils::{compute_md5, compute_sha1};
-use crate::utils::{compute_sha256, compute_sha384, compute_sha512, read_le};
-use crate::Result;
+use crate::{
+    metadata::tables::AssemblyHashAlgorithm,
+    utils::{compute_sha256, compute_sha384, compute_sha512, read_le},
+    Result,
+};
 
 /// Assembly identity representation for .NET CIL assemblies.
 ///

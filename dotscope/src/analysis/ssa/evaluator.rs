@@ -63,7 +63,7 @@
 //! }
 //! ```
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::{
     analysis::ssa::{
@@ -281,13 +281,13 @@ pub struct SsaEvaluator<'a> {
     /// Reference to the SSA function being evaluated.
     ssa: &'a SsaFunction,
     /// Tracked values for variables. Missing entries represent unknown values.
-    values: HashMap<SsaVarId, SymbolicExpr>,
+    values: BTreeMap<SsaVarId, SymbolicExpr>,
     /// Current predecessor block for path-aware phi evaluation.
     /// When set, phi nodes will select the operand from this predecessor.
     predecessor: Option<usize>,
     /// Constraints on variable values derived from branch conditions.
     /// Used to detect dead code and propagate information after branches.
-    constraints: HashMap<SsaVarId, Vec<Constraint>>,
+    constraints: BTreeMap<SsaVarId, Vec<Constraint>>,
     /// Evaluator configuration controlling behavior.
     config: EvaluatorConfig,
     /// Execution path (sequence of visited blocks). Only populated if `config.track_path`.
@@ -299,11 +299,11 @@ pub struct SsaEvaluator<'a> {
     /// Current value of CIL local variables, indexed by local_index.
     /// Updated whenever a variable with `Local(N)` origin receives a value,
     /// and read by `LoadLocal` instructions.
-    local_state: HashMap<u16, SymbolicExpr>,
+    local_state: BTreeMap<u16, SymbolicExpr>,
     /// Current value of CIL arguments, indexed by arg_index.
     /// Updated whenever a variable with `Argument(N)` origin receives a value,
     /// and read by `LoadArg` instructions.
-    arg_state: HashMap<u16, SymbolicExpr>,
+    arg_state: BTreeMap<u16, SymbolicExpr>,
 }
 
 impl<'a> SsaEvaluator<'a> {
@@ -336,15 +336,15 @@ impl<'a> SsaEvaluator<'a> {
     ) -> Self {
         Self {
             ssa,
-            values: HashMap::new(),
+            values: BTreeMap::new(),
             predecessor: None,
-            constraints: HashMap::new(),
+            constraints: BTreeMap::new(),
             config,
             path: Vec::new(),
             memory: MemoryState::new(),
             pointer_size: ptr_size,
-            local_state: HashMap::new(),
-            arg_state: HashMap::new(),
+            local_state: BTreeMap::new(),
+            arg_state: BTreeMap::new(),
         }
     }
 
@@ -375,7 +375,7 @@ impl<'a> SsaEvaluator<'a> {
     #[must_use]
     pub fn with_values(
         ssa: &'a SsaFunction,
-        values: HashMap<SsaVarId, ConstValue>,
+        values: BTreeMap<SsaVarId, ConstValue>,
         ptr_size: PointerSize,
     ) -> Self {
         let exprs = values
@@ -386,13 +386,13 @@ impl<'a> SsaEvaluator<'a> {
             ssa,
             values: exprs,
             predecessor: None,
-            constraints: HashMap::new(),
+            constraints: BTreeMap::new(),
             config: EvaluatorConfig::default(),
             path: Vec::new(),
             memory: MemoryState::new(),
             pointer_size: ptr_size,
-            local_state: HashMap::new(),
-            arg_state: HashMap::new(),
+            local_state: BTreeMap::new(),
+            arg_state: BTreeMap::new(),
         }
     }
 
@@ -515,7 +515,7 @@ impl<'a> SsaEvaluator<'a> {
 
     /// Returns all tracked values as expressions.
     #[must_use]
-    pub fn values(&self) -> &HashMap<SsaVarId, SymbolicExpr> {
+    pub fn values(&self) -> &BTreeMap<SsaVarId, SymbolicExpr> {
         &self.values
     }
 
@@ -524,7 +524,7 @@ impl<'a> SsaEvaluator<'a> {
     /// This is useful for compatibility with code that expects `HashMap<SsaVarId, i64>`.
     /// Values that can't be converted to i64 are skipped.
     #[must_use]
-    pub fn concrete_values(&self) -> HashMap<SsaVarId, i64> {
+    pub fn concrete_values(&self) -> BTreeMap<SsaVarId, i64> {
         self.values
             .iter()
             .filter_map(|(k, v)| v.as_i64().map(|c| (*k, c)))
@@ -533,7 +533,7 @@ impl<'a> SsaEvaluator<'a> {
 
     /// Returns all concrete values as typed `ConstValue`.
     #[must_use]
-    pub fn const_values(&self) -> HashMap<SsaVarId, ConstValue> {
+    pub fn const_values(&self) -> BTreeMap<SsaVarId, ConstValue> {
         self.values
             .iter()
             .filter_map(|(k, v)| v.as_constant().map(|c| (*k, c.clone())))
@@ -1021,7 +1021,7 @@ impl<'a> SsaEvaluator<'a> {
 
         for iteration in 0..max_iterations {
             // Snapshot current values
-            let snapshot: HashMap<SsaVarId, SymbolicExpr> = self.values.clone();
+            let snapshot: BTreeMap<SsaVarId, SymbolicExpr> = self.values.clone();
 
             // Evaluate all loop blocks
             for (i, &block_idx) in loop_blocks.iter().enumerate() {
@@ -1046,7 +1046,7 @@ impl<'a> SsaEvaluator<'a> {
     }
 
     /// Checks if current values match a snapshot.
-    fn values_match(&self, snapshot: &HashMap<SsaVarId, SymbolicExpr>) -> bool {
+    fn values_match(&self, snapshot: &BTreeMap<SsaVarId, SymbolicExpr>) -> bool {
         self.values == *snapshot
     }
 
@@ -1352,6 +1352,31 @@ impl<'a> SsaEvaluator<'a> {
                 None
             }
 
+            // Address-of-local/arg: the address is taken, meaning external code
+            // can write to this local/arg through the pointer. Invalidate the
+            // tracked state so subsequent LoadLocal/LoadArg returns Unknown
+            // instead of the stale pre-address-taken value.
+            //
+            // This is critical for patterns like `Monitor.Enter(obj, ref bool)`
+            // where the CLR writes `true` to the bool via the by-reference
+            // parameter. Without invalidation, the evaluator would see the
+            // initial value (false/0) and incorrectly fold branches that check
+            // the lock flag.
+            SsaOp::LoadLocalAddr {
+                dest, local_index, ..
+            } => {
+                self.values.remove(dest);
+                self.local_state.remove(local_index);
+                None
+            }
+            SsaOp::LoadArgAddr {
+                dest, arg_index, ..
+            } => {
+                self.values.remove(dest);
+                self.arg_state.remove(arg_index);
+                None
+            }
+
             // Operations with SsaVarId dest that produce unknown results
             SsaOp::NewObj { dest, .. }
             | SsaOp::NewArr { dest, .. }
@@ -1363,8 +1388,6 @@ impl<'a> SsaEvaluator<'a> {
             | SsaOp::CastClass { dest, .. }
             | SsaOp::IsInst { dest, .. }
             | SsaOp::ArrayLength { dest, .. }
-            | SsaOp::LoadArgAddr { dest, .. }
-            | SsaOp::LoadLocalAddr { dest, .. }
             | SsaOp::LoadToken { dest, .. }
             | SsaOp::SizeOf { dest, .. }
             | SsaOp::Ckfinite { dest, .. }
@@ -2180,7 +2203,7 @@ mod tests {
 
         let v0 = SsaVarId::from_index(0);
         let v1 = SsaVarId::from_index(1);
-        let mut initial = HashMap::new();
+        let mut initial = BTreeMap::new();
         initial.insert(v0, ConstValue::I64(42));
         initial.insert(v1, ConstValue::I64(100));
 

@@ -85,9 +85,12 @@ use std::{any::Any, collections::HashSet, sync::Arc};
 use crate::{
     cilassembly::GeneratorConfig,
     compiler::{EventKind, EventLog},
-    deobfuscation::techniques::{
-        confuserex::helpers, Detection, Detections, Evidence, Technique, TechniqueCategory,
-        WorkingAssembly,
+    deobfuscation::{
+        techniques::{
+            confuserex::helpers, Detection, Detections, Evidence, Technique, TechniqueCategory,
+            WorkingAssembly,
+        },
+        utils::find_methods_calling_apis,
     },
     emulation::{EmulationOutcome, ProcessBuilder},
     error::Error,
@@ -139,58 +142,44 @@ impl Technique for ConfuserExAntiTamper {
             return Detection::new_empty();
         };
 
-        let mut initializer_token = None;
         let mut encrypted_count = 0usize;
+
+        // Pattern indices for find_methods_calling_apis results.
+        const PAT_VIRTUAL_PROTECT: usize = 0;
+        const PAT_GET_HINSTANCE: usize = 1;
+        const PAT_GET_MODULE: usize = 2;
+        const PAT_MARSHAL_COPY: usize = 3;
+
+        let api_hits = find_methods_calling_apis(
+            assembly,
+            &[
+                "VirtualProtect",
+                "GetHINSTANCE",
+                "get_Module",
+                "Marshal.Copy",
+            ],
+        );
 
         // Build a set of MethodDef tokens that have P/Invoke mappings to
         // VirtualProtect. The ImplMap table's import_name field holds the
         // real DLL export name, which is never renamed by obfuscators.
-        let virtualprotect_tokens = helpers::resolve_pinvoke_tokens(assembly, "VirtualProtect");
+        let pinvoke_vp_tokens = helpers::resolve_pinvoke_tokens(assembly, "VirtualProtect");
+        let pinvoke_callers = helpers::find_methods_calling_tokens(assembly, &pinvoke_vp_tokens);
 
         // Phase 1: Find anti-tamper initializer method.
         // Look for a method that calls GetHINSTANCE + VirtualProtect + get_Module
         // but NOT Marshal.Copy (that would be anti-dump).
-        for method_entry in assembly.methods() {
-            let method = method_entry.value();
-
-            let mut has_gethinstance = false;
-            let mut has_virtualprotect = false;
-            let mut has_get_module = false;
-            let mut has_marshal_copy = false;
-
-            for instr in method.instructions() {
-                if let Some(token) = instr.get_token_operand() {
-                    // Check if this call targets a VirtualProtect P/Invoke,
-                    // using the ImplMap import name (not the renamed MethodDef name).
-                    if virtualprotect_tokens.contains(&token) {
-                        has_virtualprotect = true;
-                    }
-
-                    if let Some(name) = assembly.resolve_method_name(token) {
-                        if name.contains("GetHINSTANCE") {
-                            has_gethinstance = true;
-                        }
-                        // Also check by MemberRef name as fallback for
-                        // non-obfuscated assemblies.
-                        if name.contains("VirtualProtect") {
-                            has_virtualprotect = true;
-                        }
-                        if name.contains("get_Module") {
-                            has_get_module = true;
-                        }
-                        if name.contains("Marshal") && name.contains("Copy") {
-                            has_marshal_copy = true;
-                        }
-                    }
-                }
-            }
-
-            // Anti-tamper: GetHINSTANCE + VirtualProtect + get_Module, NOT Marshal.Copy
-            if has_gethinstance && has_virtualprotect && has_get_module && !has_marshal_copy {
-                initializer_token = Some(method.token);
-                break;
-            }
-        }
+        let initializer_token = api_hits
+            .iter()
+            .find(|(token, indices)| {
+                let has_virtualprotect =
+                    indices.contains(&PAT_VIRTUAL_PROTECT) || pinvoke_callers.contains(token);
+                let has_gethinstance = indices.contains(&PAT_GET_HINSTANCE);
+                let has_get_module = indices.contains(&PAT_GET_MODULE);
+                let has_marshal_copy = indices.contains(&PAT_MARSHAL_COPY);
+                has_virtualprotect && has_gethinstance && has_get_module && !has_marshal_copy
+            })
+            .map(|(token, _)| *token);
 
         // Phase 2: Count encrypted method bodies.
         // ConfuserEx anti-tamper moves method bodies to a custom PE section.
@@ -245,37 +234,11 @@ impl Technique for ConfuserExAntiTamper {
             return Detection::new_empty();
         }
 
-        // Phase 3: Find FieldRVA entries in encrypted sections.
-        // ConfuserEx constants protection stores LZMA-compressed data in FieldRVA
-        // fields within the encrypted section. These must be cleaned up because:
-        // (a) the data is inaccessible after section removal
-        // (b) they often have class-typed fields with FieldRVA, which is invalid
-        //     per ECMA-335 and crashes mono at runtime
-        let mut encrypted_field_tokens = Vec::new();
-        if !encrypted_section_names.is_empty() {
-            if let Some(fieldrva_table) = tables.table::<FieldRvaRaw>() {
-                let file = assembly.file();
-                let sections = file.sections();
-                for row in fieldrva_table {
-                    if row.rva == 0 {
-                        continue;
-                    }
-                    let rva = row.rva as usize;
-                    for section in sections {
-                        let sec_start = section.virtual_address as usize;
-                        let sec_end = sec_start + section.virtual_size as usize;
-                        if rva >= sec_start
-                            && rva < sec_end
-                            && encrypted_section_names.contains(&section.name)
-                        {
-                            encrypted_field_tokens
-                                .push(Token::from_parts(TableId::Field, row.field));
-                            break;
-                        }
-                    }
-                }
-            }
-        }
+        // Note: FieldRVA entries in encrypted sections are NOT marked for deletion
+        // here. The byte transform extracts and re-stores all decrypted FieldRVA
+        // data (including legitimate <PrivateImplementationDetails> array initializers).
+        // LZMA artifact fields are handled by the ConfuserEx constants technique
+        // when that protection is also detected.
 
         let mut evidence = Vec::new();
 
@@ -317,17 +280,12 @@ impl Technique for ConfuserExAntiTamper {
 
         // Mark anti-tamper initializer method for cleanup.
         if let Some(token) = initializer_token {
-            detection.cleanup.add_method(token);
-        }
-
-        // Mark FieldRVA-backed fields in encrypted sections for cleanup.
-        for token in &encrypted_field_tokens {
-            detection.cleanup.add_field(*token);
+            detection.cleanup_mut().add_method(token);
         }
 
         // Mark artifact PE sections for exclusion from output.
         for name in &encrypted_section_names {
-            detection.cleanup.exclude_section(name);
+            detection.cleanup_mut().exclude_section(name);
         }
 
         detection
@@ -646,11 +604,11 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            detection.detected,
+            detection.is_detected(),
             "ConfuserExAntiTamper should detect anti-tamper in mkaring_antitamper.exe"
         );
         assert!(
-            !detection.evidence.is_empty(),
+            !detection.evidence().is_empty(),
             "Detection should have evidence"
         );
 
@@ -672,7 +630,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "ConfuserExAntiTamper should not detect anti-tamper in original.exe"
         );
     }

@@ -24,9 +24,10 @@
 //! achieving O(V α(V)) time complexity where α is the inverse Ackermann function
 //! (effectively constant for all practical inputs).
 
-use std::collections::HashSet;
-
-use crate::utils::graph::{NodeId, RootedGraph, Successors};
+use crate::utils::{
+    graph::{NodeId, RootedGraph, Successors},
+    BitSet,
+};
 
 /// Result of dominator tree computation.
 ///
@@ -503,27 +504,40 @@ impl LengauerTarjan {
         self.best[v.index()]
     }
 
-    /// Path compression for the forest.
+    /// Path compression for the forest (iterative).
+    ///
+    /// Collects the ancestor chain from `v` up to the forest root, then walks
+    /// back down to update `best` and `ancestor` for every node on the path.
+    /// This avoids O(V) recursion depth that can overflow the stack on large
+    /// CFF-obfuscated CFGs (500+ blocks).
     fn compress(&mut self, v: NodeId) {
         let sentinel = NodeId::new(usize::MAX);
-        let ancestor_v = self.ancestor[v.index()];
 
-        if self.ancestor[ancestor_v.index()] == sentinel {
-            return;
+        // Phase 1: collect the path from v upward until we reach a node
+        // whose ancestor is the forest root (ancestor == sentinel).
+        let mut path = Vec::new();
+        let mut u = v;
+        while self.ancestor[self.ancestor[u.index()].index()] != sentinel {
+            path.push(u);
+            u = self.ancestor[u.index()];
         }
 
-        self.compress(ancestor_v);
+        // Phase 2: walk the path in reverse (top-down) to propagate best
+        // values and flatten ancestor pointers — same semantics as the
+        // recursive version's post-order updates.
+        for &node in path.iter().rev() {
+            let ancestor_node = self.ancestor[node.index()];
+            let best_ancestor = self.best[ancestor_node.index()];
+            let best_node = self.best[node.index()];
 
-        let best_ancestor = self.best[ancestor_v.index()];
-        let best_v = self.best[v.index()];
+            if self.dfnum[self.semi[best_ancestor.index()].index()]
+                < self.dfnum[self.semi[best_node.index()].index()]
+            {
+                self.best[node.index()] = best_ancestor;
+            }
 
-        if self.dfnum[self.semi[best_ancestor.index()].index()]
-            < self.dfnum[self.semi[best_v.index()].index()]
-        {
-            self.best[v.index()] = best_ancestor;
+            self.ancestor[node.index()] = self.ancestor[ancestor_node.index()];
         }
-
-        self.ancestor[v.index()] = self.ancestor[ancestor_v.index()];
     }
 }
 
@@ -570,16 +584,16 @@ impl LengauerTarjan {
 /// let frontiers = compute_dominance_frontiers(&graph, &dom_tree);
 ///
 /// // The dominance frontier of 'left' includes 'join' (where paths merge)
-/// assert!(frontiers[left.index()].contains(&join));
+/// assert!(frontiers[left.index()].contains(join.index()));
 /// // The dominance frontier of 'right' includes 'join'
-/// assert!(frontiers[right.index()].contains(&join));
+/// assert!(frontiers[right.index()].contains(join.index()));
 /// ```
-pub fn compute_dominance_frontiers<G>(graph: &G, dom_tree: &DominatorTree) -> Vec<HashSet<NodeId>>
+pub fn compute_dominance_frontiers<G>(graph: &G, dom_tree: &DominatorTree) -> Vec<BitSet>
 where
     G: Successors,
 {
     let n = graph.node_count();
-    let mut frontiers: Vec<HashSet<NodeId>> = vec![HashSet::new(); n];
+    let mut frontiers: Vec<BitSet> = vec![BitSet::new(n); n];
 
     // Pre-compute predecessors in a single O(V+E) pass
     let all_preds = precompute_predecessors(graph);
@@ -600,7 +614,7 @@ where
             let mut runner = pred;
             // Guard against unreachable nodes (their index may be invalid/sentinel)
             while Some(runner) != idom_node && runner != dom_tree.entry() && runner.index() < n {
-                frontiers[runner.index()].insert(node);
+                frontiers[runner.index()].insert(node.index());
                 if let Some(idom) = dom_tree.immediate_dominator(runner) {
                     // Check for sentinel value (unreachable node)
                     if idom.index() >= n {
@@ -613,7 +627,7 @@ where
             }
             // Also check entry if needed (guard against invalid index)
             if Some(runner) != idom_node && runner == dom_tree.entry() && runner.index() < n {
-                frontiers[runner.index()].insert(node);
+                frontiers[runner.index()].insert(node.index());
             }
         }
     }
@@ -874,12 +888,12 @@ mod tests {
         assert!(frontiers[entry.index()].is_empty());
 
         // left's dominance frontier is {join}
-        assert!(frontiers[left.index()].contains(&join));
-        assert_eq!(frontiers[left.index()].len(), 1);
+        assert!(frontiers[left.index()].contains(join.index()));
+        assert_eq!(frontiers[left.index()].count(), 1);
 
         // right's dominance frontier is {join}
-        assert!(frontiers[right.index()].contains(&join));
-        assert_eq!(frontiers[right.index()].len(), 1);
+        assert!(frontiers[right.index()].contains(join.index()));
+        assert_eq!(frontiers[right.index()].count(), 1);
 
         // join has no dominance frontier (no successors)
         assert!(frontiers[join.index()].is_empty());
@@ -903,7 +917,7 @@ mod tests {
         let frontiers = compute_dominance_frontiers(&graph, &dom_tree);
 
         // body's dominance frontier includes header (the loop header)
-        assert!(frontiers[body.index()].contains(&header));
+        assert!(frontiers[body.index()].contains(header.index()));
     }
 
     #[test]
@@ -946,12 +960,12 @@ mod tests {
         let frontiers = compute_dominance_frontiers(&graph, &dom_tree);
 
         // c and d have join1 in their dominance frontier
-        assert!(frontiers[c.index()].contains(&join1));
-        assert!(frontiers[d.index()].contains(&join1));
+        assert!(frontiers[c.index()].contains(join1.index()));
+        assert!(frontiers[d.index()].contains(join1.index()));
 
         // join1 and e have join2 in their dominance frontier
-        assert!(frontiers[join1.index()].contains(&join2));
-        assert!(frontiers[e.index()].contains(&join2));
+        assert!(frontiers[join1.index()].contains(join2.index()));
+        assert!(frontiers[e.index()].contains(join2.index()));
     }
 
     #[test]

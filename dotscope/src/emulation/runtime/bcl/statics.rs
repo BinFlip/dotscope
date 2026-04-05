@@ -38,106 +38,65 @@ pub fn get_bcl_static_field(
     heap: &ManagedHeap,
 ) -> Option<EmValue> {
     match (namespace, type_name, field_name) {
-        // ── System.BitConverter ────────────────────────────────────
         ("System", "BitConverter", "IsLittleEndian") => {
             Some(EmValue::Bool(cfg!(target_endian = "little")))
         }
-
-        // ── System.String ──────────────────────────────────────────
         ("System", "String", "Empty") => heap.alloc_string("").ok().map(EmValue::ObjectRef),
-
-        // ── System.IntPtr ──────────────────────────────────────────
         ("System", "IntPtr", "Zero") => Some(EmValue::NativeInt(0)),
         ("System", "IntPtr", "Size") => Some(EmValue::I32(8)),
-
-        // ── System.UIntPtr ─────────────────────────────────────────
         ("System", "UIntPtr", "Zero") => Some(EmValue::NativeUInt(0)),
         ("System", "UIntPtr", "Size") => Some(EmValue::I32(8)),
-
-        // ── System.Environment ─────────────────────────────────────
         ("System", "Environment", "NewLine") => {
             heap.alloc_string("\r\n").ok().map(EmValue::ObjectRef)
         }
-
-        // ── System.Type ────────────────────────────────────────────
         ("System", "Type", "EmptyTypes") => heap
             .alloc_array_with_values(crate::metadata::typesystem::CilFlavor::Object, Vec::new())
             .ok()
             .map(EmValue::ObjectRef),
-
-        // ── System.Byte ────────────────────────────────────────────
         ("System", "Byte", "MaxValue") => Some(EmValue::I32(255)),
         ("System", "Byte", "MinValue") => Some(EmValue::I32(0)),
-
-        // ── System.SByte ───────────────────────────────────────────
         ("System", "SByte", "MaxValue") => Some(EmValue::I32(127)),
         ("System", "SByte", "MinValue") => Some(EmValue::I32(-128)),
-
-        // ── System.Int16 ───────────────────────────────────────────
         ("System", "Int16", "MaxValue") => Some(EmValue::I32(i32::from(i16::MAX))),
         ("System", "Int16", "MinValue") => Some(EmValue::I32(i32::from(i16::MIN))),
-
-        // ── System.UInt16 ──────────────────────────────────────────
         ("System", "UInt16", "MaxValue") => Some(EmValue::I32(i32::from(u16::MAX))),
         ("System", "UInt16", "MinValue") => Some(EmValue::I32(0)),
-
-        // ── System.Int32 ───────────────────────────────────────────
         ("System", "Int32", "MaxValue") => Some(EmValue::I32(i32::MAX)),
         ("System", "Int32", "MinValue") => Some(EmValue::I32(i32::MIN)),
-
-        // ── System.UInt32 ──────────────────────────────────────────
         // Bit pattern: 0xFFFFFFFF stored as i32(-1)
         ("System", "UInt32", "MaxValue") => Some(EmValue::I32(-1)),
         ("System", "UInt32", "MinValue") => Some(EmValue::I32(0)),
-
-        // ── System.Int64 ───────────────────────────────────────────
         ("System", "Int64", "MaxValue") => Some(EmValue::I64(i64::MAX)),
         ("System", "Int64", "MinValue") => Some(EmValue::I64(i64::MIN)),
-
-        // ── System.UInt64 ──────────────────────────────────────────
         ("System", "UInt64", "MaxValue") => Some(EmValue::I64(-1)), // bit pattern
         ("System", "UInt64", "MinValue") => Some(EmValue::I64(0)),
-
-        // ── System.Double ──────────────────────────────────────────
         ("System", "Double", "NaN") => Some(EmValue::F64(f64::NAN)),
         ("System", "Double", "PositiveInfinity") => Some(EmValue::F64(f64::INFINITY)),
         ("System", "Double", "NegativeInfinity") => Some(EmValue::F64(f64::NEG_INFINITY)),
         ("System", "Double", "MaxValue") => Some(EmValue::F64(f64::MAX)),
         ("System", "Double", "MinValue") => Some(EmValue::F64(f64::MIN)),
         ("System", "Double", "Epsilon") => Some(EmValue::F64(f64::EPSILON)),
-
-        // ── System.Single ──────────────────────────────────────────
         ("System", "Single", "NaN") => Some(EmValue::F32(f32::NAN)),
         ("System", "Single", "PositiveInfinity") => Some(EmValue::F32(f32::INFINITY)),
         ("System", "Single", "NegativeInfinity") => Some(EmValue::F32(f32::NEG_INFINITY)),
         ("System", "Single", "MaxValue") => Some(EmValue::F32(f32::MAX)),
         ("System", "Single", "MinValue") => Some(EmValue::F32(f32::MIN)),
         ("System", "Single", "Epsilon") => Some(EmValue::F32(f32::EPSILON)),
-
-        // ── System.Boolean ─────────────────────────────────────────
         ("System", "Boolean", "TrueString") => {
             heap.alloc_string("True").ok().map(EmValue::ObjectRef)
         }
         ("System", "Boolean", "FalseString") => {
             heap.alloc_string("False").ok().map(EmValue::ObjectRef)
         }
-
-        // ── System.Char ────────────────────────────────────────────
         ("System", "Char", "MaxValue") => Some(EmValue::Char(char::MAX)),
         ("System", "Char", "MinValue") => Some(EmValue::Char('\0')),
-
-        // ── System.Decimal ─────────────────────────────────────────
         ("System", "Decimal", "Zero") => Some(EmValue::I64(0)),
         ("System", "Decimal", "One") => Some(EmValue::I64(1)),
         ("System", "Decimal", "MinusOne") => Some(EmValue::I64(-1)),
-
-        // ── System.Threading.Tasks.Task ────────────────────────────
         ("System.Threading.Tasks", "Task", "CompletedTask") => heap
             .alloc_object(tokens::system::TASK)
             .ok()
             .map(EmValue::ObjectRef),
-
-        // ── System.Reflection.Emit.OpCodes ───────────────────────
         ("System.Reflection.Emit", "OpCodes", name) => {
             opcode_value_from_field_name(name).map(|value| EmValue::ValueType {
                 type_token: tokens::system::OPCODE,

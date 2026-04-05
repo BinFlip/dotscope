@@ -31,11 +31,14 @@
 //! All types in this module are `Send` and `Sync`.
 
 use std::{
-    collections::{HashMap, HashSet, VecDeque},
+    collections::{HashMap, VecDeque},
     fmt,
 };
 
-use crate::analysis::ssa::{PhiNode, PhiOperand, SsaInstruction, SsaOp, SsaVarId};
+use crate::{
+    analysis::ssa::{PhiNode, PhiOperand, SsaInstruction, SsaOp, SsaVarId},
+    utils::BitSet,
+};
 
 /// Result of a variable replacement operation.
 ///
@@ -575,7 +578,17 @@ impl SsaBlock {
         }
 
         // Also include phi node definitions as "available from the start"
-        let phi_defs: HashSet<SsaVarId> = self.phi_nodes.iter().map(PhiNode::result).collect();
+        // Find max variable index for BitSet sizing
+        let max_phi_var = self
+            .phi_nodes
+            .iter()
+            .map(|phi| phi.result().index())
+            .max()
+            .map_or(0, |m| m + 1);
+        let mut phi_defs = BitSet::new(max_phi_var);
+        for phi in &self.phi_nodes {
+            phi_defs.insert(phi.result().index());
+        }
 
         // Build dependency graph for non-terminator instructions only
         // Map from original index to position in non_terminator_indices
@@ -586,8 +599,8 @@ impl SsaBlock {
             .collect();
 
         let n = non_terminator_indices.len();
-        let mut deps: Vec<HashSet<usize>> = vec![HashSet::new(); n];
-        let mut rdeps: Vec<HashSet<usize>> = vec![HashSet::new(); n]; // reverse
+        let mut deps: Vec<BitSet> = (0..n).map(|_| BitSet::new(n)).collect();
+        let mut rdeps: Vec<BitSet> = (0..n).map(|_| BitSet::new(n)).collect();
 
         // Track the previous side-effecting instruction position to preserve ordering.
         // Side-effecting operations (Call, CallVirt, Stfld, etc.) must execute in their
@@ -600,7 +613,7 @@ impl SsaBlock {
             // Add data dependencies (def-use chains)
             for used in &instr.uses() {
                 // Skip if defined by phi (always available)
-                if phi_defs.contains(used) {
+                if used.index() < phi_defs.len() && phi_defs.contains(used.index()) {
                     continue;
                 }
                 // Skip if not defined in this block
@@ -629,7 +642,7 @@ impl SsaBlock {
         }
 
         // Kahn's algorithm: process instructions with no unsatisfied dependencies
-        let mut in_degree: Vec<usize> = deps.iter().map(HashSet::len).collect();
+        let mut in_degree: Vec<usize> = deps.iter().map(BitSet::count).collect();
         let mut ready: VecDeque<usize> = VecDeque::new();
 
         // Find instructions with no dependencies (in_degree == 0)
@@ -645,7 +658,7 @@ impl SsaBlock {
             sorted_positions.push(pos);
 
             // Reduce in_degree for dependents
-            for &dep_pos in &rdeps[pos] {
+            for dep_pos in rdeps[pos].iter() {
                 in_degree[dep_pos] -= 1;
                 if in_degree[dep_pos] == 0 {
                     ready.push_back(dep_pos);

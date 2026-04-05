@@ -11,7 +11,9 @@
 //!
 //! Based on LLVM's mem2reg `ComputeLiveInBlocks()` approach.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
+
+use crate::utils::BitSet;
 
 /// Computes live-in blocks for each variable group.
 ///
@@ -27,12 +29,12 @@ use std::collections::{HashMap, HashSet};
 /// # Returns
 /// For each group ID, the set of blocks where the variable is live-in.
 pub fn compute_live_in_blocks(
-    defs: &HashMap<u32, HashSet<usize>>,
-    uses: &HashMap<u32, HashSet<usize>>,
+    defs: &BTreeMap<u32, BitSet>,
+    uses: &BTreeMap<u32, BitSet>,
     successors: &[Vec<usize>],
     block_count: usize,
-) -> HashMap<u32, HashSet<usize>> {
-    let mut live_in: HashMap<u32, HashSet<usize>> = HashMap::new();
+) -> BTreeMap<u32, BitSet> {
+    let mut live_in: BTreeMap<u32, BitSet> = BTreeMap::new();
 
     // Pre-compute predecessors from successors (avoids recomputation per group)
     let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); block_count];
@@ -52,7 +54,7 @@ pub fn compute_live_in_blocks(
         };
 
         // Backward dataflow: start from use blocks, propagate backward
-        let mut live_in_set: HashSet<usize> = HashSet::new();
+        let mut live_in_set = BitSet::new(block_count);
         let mut worklist: Vec<usize> = Vec::new();
 
         // Seed: blocks that contain a use and don't define the variable before the use.
@@ -66,7 +68,7 @@ pub fn compute_live_in_blocks(
         // instruction ordering here, we conservatively mark use-only blocks as live-in
         // and blocks that both use and define as live-in (slightly over-approximate
         // but safe — may place a few extra phis that trivial phi elimination removes).
-        for &use_block in use_blocks {
+        for use_block in use_blocks.iter() {
             if live_in_set.insert(use_block) {
                 worklist.push(use_block);
             }
@@ -80,7 +82,7 @@ pub fn compute_live_in_blocks(
                 // If predecessor defines the variable, liveness doesn't propagate further
                 // (the definition satisfies the use). But the predecessor itself is NOT
                 // live-in for this variable (the def originates here).
-                if def_blocks.contains(&pred) {
+                if def_blocks.contains(pred) {
                     continue;
                 }
                 if live_in_set.insert(pred) {
@@ -97,9 +99,19 @@ pub fn compute_live_in_blocks(
 
 #[cfg(test)]
 mod tests {
-    use super::*;
+    use std::collections::BTreeMap;
 
-    use std::collections::{HashMap, HashSet};
+    use crate::utils::BitSet;
+
+    use super::compute_live_in_blocks;
+
+    fn bitset_from(cap: usize, indices: &[usize]) -> BitSet {
+        let mut bs = BitSet::new(cap);
+        for &i in indices {
+            bs.insert(i);
+        }
+        bs
+    }
 
     /// Diamond CFG:
     ///   0 → 1, 2
@@ -109,12 +121,12 @@ mod tests {
     /// def at 0, use at 3 → live through 1 and 2
     #[test]
     fn test_diamond_liveness() {
-        let mut defs = HashMap::new();
-        let mut uses = HashMap::new();
+        let mut defs = BTreeMap::new();
+        let mut uses = BTreeMap::new();
         let group: u32 = 0;
 
-        defs.insert(group, HashSet::from([0]));
-        uses.insert(group, HashSet::from([3]));
+        defs.insert(group, bitset_from(4, &[0]));
+        uses.insert(group, bitset_from(4, &[3]));
 
         let successors = vec![
             vec![1, 2], // block 0
@@ -126,10 +138,10 @@ mod tests {
         let live_in = compute_live_in_blocks(&defs, &uses, &successors, 4);
 
         let live = live_in.get(&group).unwrap();
-        assert!(live.contains(&3), "use block should be live-in");
-        assert!(live.contains(&1), "path block 1 should be live-in");
-        assert!(live.contains(&2), "path block 2 should be live-in");
-        assert!(!live.contains(&0), "def block should NOT be live-in");
+        assert!(live.contains(3), "use block should be live-in");
+        assert!(live.contains(1), "path block 1 should be live-in");
+        assert!(live.contains(2), "path block 2 should be live-in");
+        assert!(!live.contains(0), "def block should NOT be live-in");
     }
 
     /// Loop CFG:
@@ -141,12 +153,12 @@ mod tests {
     /// def at 0 and 2, use at 1 → live in 1 and 2
     #[test]
     fn test_loop_liveness() {
-        let mut defs = HashMap::new();
-        let mut uses = HashMap::new();
+        let mut defs = BTreeMap::new();
+        let mut uses = BTreeMap::new();
         let group: u32 = 0;
 
-        defs.insert(group, HashSet::from([0, 2]));
-        uses.insert(group, HashSet::from([1]));
+        defs.insert(group, bitset_from(4, &[0, 2]));
+        uses.insert(group, bitset_from(4, &[1]));
 
         let successors = vec![
             vec![1],    // block 0
@@ -158,19 +170,19 @@ mod tests {
         let live_in = compute_live_in_blocks(&defs, &uses, &successors, 4);
 
         let live = live_in.get(&group).unwrap();
-        assert!(live.contains(&1), "use/header block should be live-in");
-        assert!(!live.contains(&0), "def block 0 should NOT be live-in");
-        assert!(!live.contains(&2), "def block 2 should NOT be live-in");
+        assert!(live.contains(1), "use/header block should be live-in");
+        assert!(!live.contains(0), "def block 0 should NOT be live-in");
+        assert!(!live.contains(2), "def block 2 should NOT be live-in");
     }
 
     /// No uses → no liveness entry at all
     #[test]
     fn test_no_uses() {
-        let mut defs = HashMap::new();
-        let uses = HashMap::new();
+        let mut defs = BTreeMap::new();
+        let uses = BTreeMap::new();
         let group: u32 = 0;
 
-        defs.insert(group, HashSet::from([0]));
+        defs.insert(group, bitset_from(2, &[0]));
 
         let successors = vec![vec![1], vec![]];
 
@@ -192,12 +204,12 @@ mod tests {
     /// def at 1 and 2, use at 5
     #[test]
     fn test_nested_if_liveness() {
-        let mut defs = HashMap::new();
-        let mut uses = HashMap::new();
+        let mut defs = BTreeMap::new();
+        let mut uses = BTreeMap::new();
         let group: u32 = 0;
 
-        defs.insert(group, HashSet::from([1, 2]));
-        uses.insert(group, HashSet::from([5]));
+        defs.insert(group, bitset_from(6, &[1, 2]));
+        uses.insert(group, bitset_from(6, &[5]));
 
         let successors = vec![
             vec![1, 2], // block 0
@@ -211,16 +223,16 @@ mod tests {
         let live_in = compute_live_in_blocks(&defs, &uses, &successors, 6);
 
         let live = live_in.get(&group).unwrap();
-        assert!(live.contains(&5), "use block should be live-in");
+        assert!(live.contains(5), "use block should be live-in");
         assert!(
-            live.contains(&3),
+            live.contains(3),
             "block 3 should be live-in (no def, on path)"
         );
         assert!(
-            live.contains(&4),
+            live.contains(4),
             "block 4 should be live-in (no def, on path)"
         );
-        assert!(!live.contains(&1), "def block 1 should NOT be live-in");
-        assert!(!live.contains(&2), "def block 2 should NOT be live-in");
+        assert!(!live.contains(1), "def block 1 should NOT be live-in");
+        assert!(!live.contains(2), "def block 2 should NOT be live-in");
     }
 }

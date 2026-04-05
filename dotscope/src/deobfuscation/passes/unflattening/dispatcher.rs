@@ -119,6 +119,86 @@ impl Dispatcher {
         }
     }
 
+    /// Refreshes variable IDs against the current SSA.
+    ///
+    /// Earlier passes (opaque field predicates, etc.) trigger `rebuild_ssa()` which
+    /// reindexes variables, making the original `SsaVarId` values stale. This method
+    /// keeps the stable structural data (block indices, transform, confidence) and
+    /// re-derives `switch_var` and `state_phi` from the current SSA block.
+    ///
+    /// Returns `None` if the dispatcher block no longer contains a valid switch.
+    #[must_use]
+    pub fn refresh(&self, ssa: &SsaFunction) -> Option<Self> {
+        let block_count = ssa.block_count();
+        if self.block >= block_count {
+            return None;
+        }
+        let block = ssa.block(self.block)?;
+
+        // Find the Switch instruction to get the current switch_var
+        let switch_var = block
+            .instructions()
+            .iter()
+            .find_map(|instr| match instr.op() {
+                SsaOp::Switch { value, .. } => Some(*value),
+                _ => None,
+            })?;
+
+        // Find the state phi: the phi whose result feeds into the switch value
+        // (directly or through a short chain of copies/arithmetic in the block)
+        let state_phi = block
+            .phi_nodes()
+            .iter()
+            .find(|phi| {
+                if phi.result() == switch_var {
+                    return true;
+                }
+                // Trace switch_var backwards through block-local definitions
+                let mut current = switch_var;
+                for _ in 0..5 {
+                    if let Some(def_instr) = block
+                        .instructions()
+                        .iter()
+                        .find(|i| i.op().dest().is_some_and(|d| d == current))
+                    {
+                        if let Some(&src) = def_instr.op().uses().first() {
+                            if src == phi.result() {
+                                return true;
+                            }
+                            current = src;
+                            continue;
+                        }
+                    }
+                    break;
+                }
+                false
+            })
+            .map(|phi| phi.result());
+
+        let mut refreshed = Self::new(
+            self.block,
+            switch_var,
+            self.cases
+                .iter()
+                .copied()
+                .filter(|&c| c < block_count)
+                .collect(),
+            if self.default < block_count {
+                self.default
+            } else {
+                self.block
+            },
+        );
+        if let Some(phi) = state_phi {
+            refreshed = refreshed.with_state_phi(phi);
+        }
+        refreshed = refreshed
+            .with_transform(self.transform.clone())
+            .with_confidence(self.confidence);
+
+        Some(refreshed)
+    }
+
     /// Converts to DispatcherInfo for compatibility.
     #[must_use]
     pub fn to_info(&self) -> DispatcherInfo {

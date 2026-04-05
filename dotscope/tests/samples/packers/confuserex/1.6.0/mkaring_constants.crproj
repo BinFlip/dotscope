@@ -1,0 +1,6 @@
+<project outputDir="./protected" baseDir="." xmlns="http://confuser.codeplex.com">
+  <rule pattern="true" preset="none" inherit="false">
+    <protection id="constants" />
+  </rule>
+  <module path="TestApp.exe" />
+</project>

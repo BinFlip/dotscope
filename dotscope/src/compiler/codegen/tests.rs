@@ -5,7 +5,7 @@ use crate::{
     },
     assembly::decode_stream,
     compiler::codegen::{SsaCodeGenerator, VarStorage},
-    deobfuscation::{DeobfuscationEngine, EngineConfig},
+    deobfuscation::{DeobfuscationEngine, EngineConfig, PassConfig},
     metadata::{
         method::MethodBody, tables::MethodDefRaw, token::Token, validation::ValidationConfig,
     },
@@ -2191,24 +2191,30 @@ fn test_fibonacci_pass_combinations() {
         (
             "copy_prop_only",
             EngineConfig {
-                enable_dead_code_elimination: false,
-                enable_copy_propagation: true,
-                enable_constant_propagation: false,
-                enable_strength_reduction: false,
-                enable_control_flow_simplification: false,
-                enable_opaque_predicate_removal: false,
+                passes: PassConfig {
+                    dead_code_elimination: false,
+                    copy_propagation: true,
+                    constant_propagation: false,
+                    strength_reduction: false,
+                    control_flow_simplification: false,
+                    opaque_predicate_removal: false,
+                    ..Default::default()
+                },
                 ..EngineConfig::default()
             },
         ),
         (
             "dce_copy_prop",
             EngineConfig {
-                enable_dead_code_elimination: true,
-                enable_copy_propagation: true,
-                enable_constant_propagation: false,
-                enable_strength_reduction: false,
-                enable_control_flow_simplification: false,
-                enable_opaque_predicate_removal: false,
+                passes: PassConfig {
+                    dead_code_elimination: true,
+                    copy_propagation: true,
+                    constant_propagation: false,
+                    strength_reduction: false,
+                    control_flow_simplification: false,
+                    opaque_predicate_removal: false,
+                    ..Default::default()
+                },
                 ..EngineConfig::default()
             },
         ),

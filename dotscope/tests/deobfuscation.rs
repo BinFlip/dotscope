@@ -16,12 +16,10 @@ mod common;
 
 use std::sync::Arc;
 
-use common::TestTypeProvider;
+use common::{build_cfg, build_ssa};
 use dotscope::{
-    analysis::{CallGraph, ControlFlowGraph, SsaConverter, SsaFunction},
-    assembly::{
-        decode_blocks, decode_stream, Immediate, Instruction, InstructionAssembler, Operand,
-    },
+    analysis::{CallGraph, SsaFunction},
+    assembly::{decode_stream, Immediate, Instruction, InstructionAssembler, Operand},
     compiler::{DerivedStats, SsaCodeGenerator},
     deobfuscation::{AnalysisContext, DeobfuscationEngine, EngineConfig},
     metadata::token::Token,
@@ -312,28 +310,6 @@ macro_rules! instr {
     (any_ldc_i4) => {
         ExpectedInstruction::any_ldc_i4()
     };
-}
-
-/// Build CFG from assembler output.
-fn build_cfg(assembler: InstructionAssembler) -> Result<(Vec<u8>, ControlFlowGraph<'static>)> {
-    let (bytecode, _max_stack, _) = assembler.finish()?;
-    let blocks = decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len()))?;
-    let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
-    Ok((bytecode, cfg))
-}
-
-/// Build SSA from CFG.
-fn build_ssa(
-    cfg: &ControlFlowGraph<'_>,
-    num_args: usize,
-    num_locals: usize,
-) -> Result<SsaFunction> {
-    SsaConverter::build(
-        cfg,
-        num_args,
-        num_locals,
-        &TestTypeProvider::new(num_args, num_locals),
-    )
 }
 
 /// Generate CIL from SSA.
@@ -3312,15 +3288,13 @@ fn test_loop_diamond_pattern() -> Result<()> {
     // point loads from that local.
     //
     // Code generator may invert branch condition and swap blocks for optimization.
-    // The phi coalescing can sometimes eliminate the temp for one branch, allowing
-    // it to store directly to the phi result local.
+    // The phi coalescing eliminates the temp variable — both branches store directly
+    // to the phi result local.
     //
     // Output pattern (with brtrue and swapped blocks):
     //   ldarg.0              ; test condition
     //   brtrue.s true_branch ; branch if true
     //   ldc.i4.2             ; false: load 2
-    //   stloc.1              ; false: store to temp
-    //   ldloc.1              ; false: load temp
     //   stloc.0              ; false: store to phi result
     //   ldloc.0              ; merge: load phi result
     //   ret                  ; return
@@ -3335,8 +3309,6 @@ fn test_loop_diamond_pattern() -> Result<()> {
             instr!("ldarg.0"),
             instr!(any_conditional_branch), // may be brfalse or brtrue
             instr!("ldc.i4.2"),             // false branch: load constant 2
-            instr!(any_stloc),              // false branch: store to temp
-            instr!(any_ldloc),              // false branch: load temp
             instr!(any_stloc),              // false branch: store to phi result
             instr!(any_ldloc),              // merge: load phi result
             instr!("ret"),
@@ -3903,7 +3875,7 @@ fn test_aggressive_inlining_original_exe() {
     // Now run deobfuscation with aggressive config (inlining enabled)
     let config = EngineConfig::aggressive();
     assert!(
-        config.enable_inlining,
+        config.passes.inlining,
         "Aggressive config should enable inlining"
     );
     assert!(
@@ -3911,7 +3883,7 @@ fn test_aggressive_inlining_original_exe() {
         "Aggressive config should enable unused method removal"
     );
 
-    let mut engine = DeobfuscationEngine::new(config);
+    let engine = DeobfuscationEngine::new(config);
     let result = engine.process_file(Path::new(
         "tests/samples/packers/confuserex/1.6.0/original.exe",
     ));

@@ -40,7 +40,7 @@
 //! - **Assembly Layer**: CIL instruction processing with complete disassembly and assembly capabilities
 //! - **Analysis Layer**: SSA form, control flow graphs, data flow analysis, and call graphs
 //! - **Compiler Layer**: SSA optimization passes, code generation (SSA → CIL), and pass scheduling
-//! - **Deobfuscation Layer**: Technique-based detection and transformation with ConfuserEx, BitMono, and Obfuscar support
+//! - **Deobfuscation Layer**: Technique-based detection and transformation with ConfuserEx, BitMono, JIEJIE.NET, and Obfuscar support
 //! - **Emulation Layer**: CIL bytecode interpreter with BCL stubs for runtime value computation
 //! - **Validation Layer**: Configurable validation and integrity checking
 //!
@@ -64,7 +64,7 @@
 //! - **Memory safe** - Built in Rust with comprehensive error handling
 //! - **Rich type system** - Full support for generics, signatures, and complex .NET types
 //! - **Static analysis** - SSA form, control flow graphs, data flow analysis, call graphs
-//! - **Deobfuscation** - 21 passes, 30 techniques, ConfuserEx/BitMono/Obfuscar support, string decryption, control flow recovery
+//! - **Deobfuscation** - 30 passes, 35 techniques, ConfuserEx/BitMono/JIEJIE.NET/Obfuscar support, string decryption, control flow recovery
 //! - **CIL emulation** - Bytecode interpreter with 600+ BCL stubs and copy-on-write memory
 //! - **Extensible architecture** - Modular design for custom analysis and tooling
 //!
@@ -455,7 +455,7 @@ pub mod analysis;
 /// This module provides infrastructure for detecting and removing code obfuscation
 /// from .NET assemblies. It combines an SSA-based pass architecture with a
 /// technique-based detection and transformation system that supports multiple
-/// obfuscators including ConfuserEx, BitMono, and Obfuscar.
+/// obfuscators including ConfuserEx, BitMono, JIEJIE.NET, and Obfuscar.
 ///
 /// # Key Components
 ///
@@ -466,7 +466,7 @@ pub mod analysis;
 /// - [`crate::deobfuscation::AnalysisContext`] - Shared interprocedural analysis data
 ///
 /// ## Technique System
-/// - [`crate::deobfuscation::Technique`] - Unified trait for detection and transformation (30 built-in techniques)
+/// - [`crate::deobfuscation::Technique`] - Unified trait for detection and transformation (35 built-in techniques)
 /// - [`crate::deobfuscation::TechniqueRegistry`] - Manages registered techniques with confidence-scored detection
 /// - [`crate::deobfuscation::TechniqueCategory`] - Categorization (anti-debug, anti-dump, string encryption, etc.)
 /// - [`crate::deobfuscation::Detection`] / [`crate::deobfuscation::Evidence`] - Detection results with evidence
@@ -501,7 +501,7 @@ pub mod analysis;
 ///
 /// let mut assembly = CilObject::from_path(std::path::Path::new("obfuscated.exe"))?;
 /// let config = EngineConfig::default();
-/// let mut engine = DeobfuscationEngine::new(config);
+/// let engine = DeobfuscationEngine::new(config);
 ///
 /// let result = engine.process_file(&mut assembly)?;
 /// println!("{}", result.summary());

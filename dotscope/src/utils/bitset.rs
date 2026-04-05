@@ -33,7 +33,7 @@
 ///
 /// This is commonly used for analyses that track sets of definitions,
 /// variables, or other entities identified by small integers.
-#[derive(Clone, PartialEq, Eq, Hash)]
+#[derive(Clone, Default, PartialEq, Eq, Hash)]
 pub struct BitSet {
     /// The bits, stored as a vector of words.
     words: Vec<u64>,
@@ -85,14 +85,19 @@ impl BitSet {
 
     /// Sets the bit at the given index.
     ///
+    /// Returns `true` if the bit was newly set (was previously unset).
+    ///
     /// # Panics
     ///
     /// Panics if `index >= self.len()`.
-    pub fn insert(&mut self, index: usize) {
+    pub fn insert(&mut self, index: usize) -> bool {
         assert!(index < self.len, "index out of bounds");
         let word = index / 64;
         let bit = index % 64;
-        self.words[word] |= 1u64 << bit;
+        let mask = 1u64 << bit;
+        let was_set = self.words[word] & mask != 0;
+        self.words[word] |= mask;
+        !was_set
     }
 
     /// Clears the bit at the given index.

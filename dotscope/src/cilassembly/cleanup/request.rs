@@ -108,6 +108,16 @@ pub struct CleanupRequest {
     /// When true, types with no remaining methods or fields after cleanup
     /// are also removed.
     remove_empty_types: bool,
+
+    /// Tokens that must not be deleted by any cleanup phase.
+    ///
+    /// Protected tokens are exempt from explicit deletion, cascade removal,
+    /// and empty-type elimination. This is used to preserve metadata entries
+    /// created by code generation (e.g., FieldDef + TypeDef entries for
+    /// `RuntimeHelpers.InitializeArray` patterns) that would otherwise be
+    /// removed as orphans because they were created after the cleanup request
+    /// was built.
+    protected_tokens: HashSet<Token>,
 }
 
 impl Default for CleanupRequest {
@@ -124,6 +134,7 @@ impl Default for CleanupRequest {
             excluded_sections: HashSet::new(),
             remove_orphans: true,
             remove_empty_types: true,
+            protected_tokens: HashSet::new(),
         }
     }
 }
@@ -382,6 +393,28 @@ impl CleanupRequest {
         self.remove_empty_types
     }
 
+    /// Marks a token as protected from all cleanup phases.
+    ///
+    /// Protected tokens will not be deleted by explicit deletion, cascade
+    /// removal, or empty-type elimination. Use this for metadata entries
+    /// created by code generation that must survive cleanup.
+    pub fn protect_token(&mut self, token: Token) -> &mut Self {
+        self.protected_tokens.insert(token);
+        self
+    }
+
+    /// Marks multiple tokens as protected from all cleanup phases.
+    pub fn protect_tokens(&mut self, tokens: impl IntoIterator<Item = Token>) -> &mut Self {
+        self.protected_tokens.extend(tokens);
+        self
+    }
+
+    /// Returns whether a token is protected from cleanup.
+    #[must_use]
+    pub fn is_protected(&self, token: Token) -> bool {
+        self.protected_tokens.contains(&token)
+    }
+
     /// Returns true if this request has no deletions or modifications specified.
     #[must_use]
     pub fn is_empty(&self) -> bool {
@@ -417,8 +450,12 @@ impl CleanupRequest {
     /// Checks if a specific token is marked for deletion.
     ///
     /// This checks all token sets (types, methods, methodspecs, fields, attributes).
+    /// Protected tokens are never considered deleted.
     #[must_use]
     pub fn is_deleted(&self, token: Token) -> bool {
+        if self.protected_tokens.contains(&token) {
+            return false;
+        }
         self.types.contains(&token)
             || self.methods.contains(&token)
             || self.methodspecs.contains(&token)
@@ -479,6 +516,8 @@ impl CleanupRequest {
             .extend(other.rewrite_orphaned_tokens.iter().copied());
         self.excluded_sections
             .extend(other.excluded_sections.iter().cloned());
+        self.protected_tokens
+            .extend(other.protected_tokens.iter().copied());
         self
     }
 

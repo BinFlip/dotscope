@@ -169,6 +169,6 @@ mod tests {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericHandlers;
         let detection = technique.detect(&asm);
-        assert!(!detection.detected);
+        assert!(!detection.is_detected());
     }
 }

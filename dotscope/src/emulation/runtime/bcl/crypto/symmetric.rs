@@ -11,7 +11,7 @@
 //!
 //! - **AES/Rijndael**: `Aes.Create()`, `RijndaelManaged..ctor`, `CreateDecryptor()`, `CreateEncryptor()`
 //! - **DES** (`legacy-crypto`): `DES.Create()`, `TripleDES.Create()`
-//! - **SymmetricAlgorithm**: `set_Key`, `set_IV`, `set_Mode`, `set_Padding`
+//! - **SymmetricAlgorithm**: `get_Key`, `get_IV`, `set_Key`, `set_IV`, `set_Mode`, `set_Padding`
 //!
 //! ## Asymmetric Algorithms
 //!
@@ -124,6 +124,27 @@ pub fn register(manager: &HookManager) -> Result<()> {
                 "set_IV",
             )
             .pre(set_iv_pre),
+    )?;
+
+    // SymmetricAlgorithm property getters
+    manager.register(
+        Hook::new("System.Security.Cryptography.SymmetricAlgorithm.get_Key")
+            .match_name(
+                "System.Security.Cryptography",
+                "SymmetricAlgorithm",
+                "get_Key",
+            )
+            .pre(get_key_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Security.Cryptography.SymmetricAlgorithm.get_IV")
+            .match_name(
+                "System.Security.Cryptography",
+                "SymmetricAlgorithm",
+                "get_IV",
+            )
+            .pre(get_iv_pre),
     )?;
 
     manager.register(
@@ -465,9 +486,16 @@ fn set_key_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookRe
                 thread.current_offset().unwrap_or(0),
                 0,
             );
-            thread
-                .capture()
-                .capture_buffer(key_bytes, source, BufferSource::Unknown, "crypto_key");
+            thread.capture().capture_buffer(
+                key_bytes.clone(),
+                source,
+                BufferSource::Unknown,
+                "crypto_key",
+            );
+
+            if let Some(EmValue::ObjectRef(algo_ref)) = ctx.this {
+                let _ = thread.heap().set_symmetric_key(*algo_ref, key_bytes);
+            }
         }
     }
     PreHookResult::Bypass(None)
@@ -493,12 +521,57 @@ fn set_iv_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookRes
                 thread.current_offset().unwrap_or(0),
                 0,
             );
-            thread
-                .capture()
-                .capture_buffer(iv_bytes, source, BufferSource::Unknown, "crypto_iv");
+            thread.capture().capture_buffer(
+                iv_bytes.clone(),
+                source,
+                BufferSource::Unknown,
+                "crypto_iv",
+            );
+
+            if let Some(EmValue::ObjectRef(algo_ref)) = ctx.this {
+                let _ = thread.heap().set_symmetric_iv(*algo_ref, iv_bytes);
+            }
         }
     }
     PreHookResult::Bypass(None)
+}
+
+/// Hook for `System.Security.Cryptography.SymmetricAlgorithm.get_Key` property getter.
+///
+/// Returns the stored key from the `SymmetricAlgorithm` heap object as a byte array.
+///
+/// # Handled Overloads
+///
+/// - `SymmetricAlgorithm.get_Key() -> Byte[]`
+fn get_key_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    if let Some(EmValue::ObjectRef(algo_ref)) = ctx.this {
+        if let Some((_, Some(key), _, _, _)) =
+            try_hook!(thread.heap().get_symmetric_algorithm_info(*algo_ref))
+        {
+            let array_ref = try_hook!(thread.heap().alloc_byte_array(&key));
+            return PreHookResult::Bypass(Some(EmValue::ObjectRef(array_ref)));
+        }
+    }
+    PreHookResult::Bypass(Some(EmValue::Null))
+}
+
+/// Hook for `System.Security.Cryptography.SymmetricAlgorithm.get_IV` property getter.
+///
+/// Returns the stored IV from the `SymmetricAlgorithm` heap object as a byte array.
+///
+/// # Handled Overloads
+///
+/// - `SymmetricAlgorithm.get_IV() -> Byte[]`
+fn get_iv_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    if let Some(EmValue::ObjectRef(algo_ref)) = ctx.this {
+        if let Some((_, _, Some(iv), _, _)) =
+            try_hook!(thread.heap().get_symmetric_algorithm_info(*algo_ref))
+        {
+            let array_ref = try_hook!(thread.heap().alloc_byte_array(&iv));
+            return PreHookResult::Bypass(Some(EmValue::ObjectRef(array_ref)));
+        }
+    }
+    PreHookResult::Bypass(Some(EmValue::Null))
 }
 
 /// Hook for `System.Security.Cryptography.SymmetricAlgorithm.set_Mode` property setter.

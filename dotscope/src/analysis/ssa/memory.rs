@@ -55,12 +55,14 @@
 //! - Chow et al., "Effective Representation of Aliases and Indirect Memory
 //!   Operations in SSA Form", CC 1996
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet, VecDeque};
 
-use crate::analysis::ssa::{FieldRef, SsaCfg, SsaFunction, SsaOp, SsaVarId};
-use crate::utils::graph::{
-    algorithms::{compute_dominance_frontiers, compute_dominators},
-    GraphBase, NodeId, RootedGraph, Successors,
+use crate::{
+    analysis::ssa::{FieldRef, SsaCfg, SsaFunction, SsaOp, SsaVarId},
+    utils::graph::{
+        algorithms::{compute_dominance_frontiers, compute_dominators},
+        GraphBase, NodeId, RootedGraph, Successors,
+    },
 };
 
 /// Represents an abstract memory location.
@@ -393,7 +395,7 @@ pub struct MemorySsa {
 
     /// Memory phi nodes at each block.
     /// Key is block index, value is list of memory phi nodes.
-    memory_phis: HashMap<usize, Vec<MemoryPhi>>,
+    memory_phis: BTreeMap<usize, Vec<MemoryPhi>>,
 
     /// Definition sites for each memory version.
     definitions: HashMap<MemoryVersion, MemoryDefSite>,
@@ -419,7 +421,7 @@ impl MemorySsa {
     pub fn new() -> Self {
         Self {
             next_version: HashMap::new(),
-            memory_phis: HashMap::new(),
+            memory_phis: BTreeMap::new(),
             definitions: HashMap::new(),
             entry_versions: HashMap::new(),
             exit_versions: HashMap::new(),
@@ -638,7 +640,7 @@ impl MemorySsa {
         let frontiers = compute_dominance_frontiers(cfg, &dom_tree);
 
         // For each memory location, find blocks that define it (stores)
-        let mut def_blocks: HashMap<MemoryLocation, HashSet<usize>> = HashMap::new();
+        let mut def_blocks: HashMap<MemoryLocation, BTreeSet<usize>> = HashMap::new();
         for op in &self.operations {
             if op.is_store() {
                 def_blocks
@@ -650,9 +652,9 @@ impl MemorySsa {
 
         // Standard phi placement algorithm (iterated dominance frontier)
         for (location, defs) in def_blocks {
-            let mut phi_blocks: HashSet<usize> = HashSet::new();
+            let mut phi_blocks: BTreeSet<usize> = BTreeSet::new();
             let mut worklist: VecDeque<usize> = defs.iter().copied().collect();
-            let mut processed: HashSet<usize> = HashSet::new();
+            let mut processed: BTreeSet<usize> = BTreeSet::new();
 
             while let Some(block) = worklist.pop_front() {
                 if !processed.insert(block) {
@@ -664,8 +666,7 @@ impl MemorySsa {
                     continue;
                 }
 
-                for &frontier_node in &frontiers[node_id.index()] {
-                    let frontier_block = frontier_node.index();
+                for frontier_block in frontiers[node_id.index()].iter() {
                     if phi_blocks.insert(frontier_block) {
                         // Add phi at frontier
                         let version = self.allocate_version(&location);
@@ -942,6 +943,7 @@ impl Default for MemoryState {
 
 /// Alias analysis result for a pair of memory locations.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[allow(clippy::enum_variant_names)]
 pub enum AliasResult {
     /// The locations definitely do not alias.
     NoAlias,

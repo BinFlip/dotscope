@@ -25,7 +25,7 @@
 //!
 //! - [`ConstantPropagation`](crate::analysis::ConstantPropagation) - Sparse Conditional Constant Propagation (SCCP)
 //! - [`LiveVariables`](crate::analysis::LiveVariables) / [`LivenessResult`](crate::analysis::LivenessResult) - Liveness analysis
-//! - [`ReachingDefinitions`](crate::analysis::ReachingDefinitions) / [`ReachingDefsResult`](crate::analysis::ReachingDefsResult) - Reaching definitions
+//! - [`ReachingDefinitions`](crate::analysis::ReachingDefinitions) - Reaching definitions
 //! - [`DataFlowSolver`](crate::analysis::DataFlowSolver) / [`DataFlowAnalysis`](crate::analysis::DataFlowAnalysis) - Generic fixpoint solver framework
 //!
 //! ## Call Graph
@@ -81,44 +81,36 @@ mod taint;
 #[cfg(feature = "x86")]
 mod x86;
 
-// Re-export primary types at module level
+// Re-export primary public types at module level
 pub use crate::utils::graph::NodeId;
 pub use algebraic::{simplify_op, SimplifyResult};
 pub use callgraph::{
     CallGraph, CallGraphNode, CallGraphStats, CallResolver, CallSite, CallTarget, CallType,
     ResolverStats,
 };
-pub use cfg::{
-    BlockRole, BlockSemantics, CfgEdge, CfgEdgeKind, ControlFlowGraph, InductionUpdateKind,
-    InductionVar, LoopAnalyzer, LoopExit, LoopForest, LoopInfo, LoopSemantics, LoopType,
-    SemanticAnalyzer, SsaLoopAnalysis,
-};
+pub use cfg::{CfgEdge, CfgEdgeKind, ControlFlowGraph, LoopAnalyzer, LoopForest, LoopInfo};
 pub use dataflow::{
-    AnalysisResults, ConstantPropagation, DataFlowAnalysis, DataFlowCfg, DataFlowSolver, Direction,
-    JoinSemiLattice, Lattice, LiveVariables, LivenessResult, MeetSemiLattice, ReachingDefinitions,
-    ReachingDefsResult, ScalarValue, SccpResult,
+    AnalysisResults, ConstantPropagation, DataFlowAnalysis, DataFlowSolver, Direction,
+    LiveVariables, LivenessResult, ReachingDefinitions, ScalarValue, SccpResult,
 };
 pub use defuse::{DefUseIndex, Location};
-pub use range::{IntervalRange, ValueRange};
+pub use range::ValueRange;
 #[cfg(feature = "z3")]
 pub use ssa::Z3Solver;
 pub use ssa::{
-    analyze_alias, AbstractValue, AliasResult, ArrayIndex, BinaryOpInfo, BinaryOpKind, CmpKind,
-    ComputedOp, ComputedValue, ConstEvaluator, ConstValue, Constraint, ControlFlow, DefSite,
-    DispatcherPattern, EvaluatorConfig, ExecutionTrace, FieldRef, FnPtrSig, FunctionVarAllocator,
-    MemoryDefSite, MemoryLocation, MemoryOp, MemoryPhi, MemoryPhiOperand, MemorySsa,
-    MemorySsaStats, MemoryState, MemoryVersion, MethodPurity, MethodRef, PathConstraint,
-    PatternDetector, PhiAnalyzer, PhiNode, PhiOperand, ReplaceResult, ReturnInfo, SigRef,
-    SimulationResult, SourceBlock, SsaBlock, SsaBlockBuilder, SsaCfg, SsaConverter, SsaEvaluator,
-    SsaExceptionHandler, SsaFunction, SsaFunctionBuilder, SsaFunctionContext, SsaInstruction,
-    SsaOp, SsaType, SsaVarId, SsaVariable, StackSimulator, SymbolicEvaluator, SymbolicExpr,
-    SymbolicOp, TypeClass, TypeContext, TypeProvider, TypeRef, UnaryOpInfo, UnaryOpKind, UseSite,
-    ValueResolver, VariableOrigin,
+    AbstractValue, BinaryOpKind, CmpKind, ConstValue, DefSite, FieldRef, MethodPurity, MethodRef,
+    PhiAnalyzer, PhiNode, PhiOperand, ReturnInfo, SsaBlock, SsaCfg, SsaConverter, SsaEvaluator,
+    SsaExceptionHandler, SsaFunction, SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId,
+    SsaVariable, SymbolicEvaluator, SymbolicExpr, TypeClass, TypeContext, TypeProvider, TypeRef,
+    UnaryOpKind, UseSite, ValueResolver, VariableOrigin,
 };
 pub use taint::{
-    cff_taint_config, find_blocks_jumping_to, find_token_dependencies, PhiTaintMode, TaintAnalysis,
-    TaintConfig, TaintStats, TokenTaintBuilder,
+    cff_taint_config, find_token_dependencies, PhiTaintMode, TaintAnalysis, TaintConfig,
+    TokenTaintBuilder,
 };
+
+// Re-export crate-internal types (used by other crate modules via crate::analysis::X)
+pub(crate) use cfg::SsaLoopAnalysis;
 
 #[cfg(feature = "x86")]
 pub use x86::{
@@ -578,10 +570,13 @@ mod tests {
 
         let outer_loop = loops.iter().find(|l| l.depth == 0).unwrap();
         let inner_loop = loops.iter().find(|l| l.depth == 1).unwrap();
-        assert!(outer_loop.body.contains(&inner_loop.header));
+        assert!(outer_loop.body.contains(inner_loop.header.index()));
 
-        for &node in &inner_loop.body {
-            assert_eq!(cfg.innermost_loop(node).unwrap().header, inner_loop.header);
+        for node_idx in inner_loop.body.iter() {
+            assert_eq!(
+                cfg.innermost_loop(NodeId::new(node_idx)).unwrap().header,
+                inner_loop.header
+            );
         }
 
         let ssa = build_ssa(&cfg, 2, 2);

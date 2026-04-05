@@ -18,7 +18,11 @@ use std::collections::HashSet;
 
 use crate::{
     cilassembly::CleanupRequest,
-    deobfuscation::techniques::{Detection, Evidence, PassPhase, Technique, TechniqueCategory},
+    compiler::PassPhase,
+    deobfuscation::{
+        techniques::{Detection, Evidence, Technique, TechniqueCategory},
+        utils::find_methods_calling_apis,
+    },
     metadata::token::Token,
     CilObject,
 };
@@ -47,15 +51,19 @@ impl Technique for GenericAntiDebug {
     }
 
     fn detect(&self, assembly: &CilObject) -> Detection {
-        let patterns = &[
-            "get_IsAttached",
-            "FailFast",
-            "GetCurrentProcess",
-            "IsDebuggerPresent",
-            "IsLogging",
+        // Patterns use qualified names (declaring type prefix) where possible to
+        // avoid matching user methods that happen to share the same name. The
+        // matching uses `contains()`, so "Debugger.get_IsAttached" matches
+        // "System.Diagnostics.Debugger.get_IsAttached" from MemberRef resolution.
+        let patterns: &[&str] = &[
+            "Debugger.get_IsAttached",
+            "Environment.FailFast",
+            "Process.GetCurrentProcess",
+            "IsDebuggerPresent", // P/Invoke — no managed declaring type
+            "Debugger.IsLogging",
         ];
 
-        let matches = crate::deobfuscation::utils::find_methods_calling_apis(assembly, patterns);
+        let matches = find_methods_calling_apis(assembly, patterns);
         if matches.is_empty() {
             return Detection::new_empty();
         }
@@ -71,10 +79,10 @@ impl Technique for GenericAntiDebug {
         );
 
         for token in &method_tokens {
-            detection.cleanup.add_method(*token);
+            detection.cleanup_mut().add_method(*token);
         }
 
-        detection.findings = Some(Box::new(AntiDebugFindings { method_tokens }));
+        detection.set_findings(Box::new(AntiDebugFindings { method_tokens }));
 
         detection
     }
@@ -106,8 +114,8 @@ mod tests {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe");
         let technique = super::GenericAntiDebug;
         let detection = technique.detect(&asm);
-        assert!(detection.detected);
-        assert!(!detection.evidence.is_empty());
+        assert!(detection.is_detected());
+        assert!(!detection.evidence().is_empty());
     }
 
     #[test]
@@ -115,6 +123,6 @@ mod tests {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericAntiDebug;
         let detection = technique.detect(&asm);
-        assert!(!detection.detected);
+        assert!(!detection.is_detected());
     }
 }

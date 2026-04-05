@@ -30,7 +30,7 @@
 //! These simplifications are essential for deobfuscation because obfuscators
 //! often insert redundant operations like `x xor x xor y` to compute `y`.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::{
     analysis::{simplify_op, ConstValue, SimplifyResult, SsaFunction, SsaOp, SsaVarId},
@@ -88,7 +88,7 @@ impl AlgebraicSimplificationPass {
     /// Identifies simplification candidates in the SSA function.
     fn find_candidates(
         ssa: &SsaFunction,
-        constants: &HashMap<SsaVarId, ConstValue>,
+        constants: &BTreeMap<SsaVarId, ConstValue>,
     ) -> Vec<SimplificationCandidate> {
         let mut candidates = Vec::new();
 
@@ -108,7 +108,7 @@ impl AlgebraicSimplificationPass {
         op: &SsaOp,
         block_idx: usize,
         instr_idx: usize,
-        constants: &HashMap<SsaVarId, ConstValue>,
+        constants: &BTreeMap<SsaVarId, ConstValue>,
     ) -> Option<SimplificationCandidate> {
         let dest = op.dest()?;
         match simplify_op(op, constants) {
@@ -201,7 +201,7 @@ impl SsaPass for AlgebraicSimplificationPass {
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     use crate::{
         analysis::{ConstValue, SsaOp, SsaVarId},
@@ -213,7 +213,7 @@ mod tests {
         let left = SsaVarId::from_index(0);
         let right = SsaVarId::from_index(1);
         let dest = SsaVarId::from_index(2);
-        let constants: HashMap<SsaVarId, ConstValue> = [(right, ConstValue::I32(1))].into();
+        let constants: BTreeMap<SsaVarId, ConstValue> = [(right, ConstValue::I32(1))].into();
         let op = SsaOp::Div {
             dest,
             left,
@@ -231,7 +231,7 @@ mod tests {
         let left = SsaVarId::from_index(0);
         let right = SsaVarId::from_index(1);
         let dest = SsaVarId::from_index(2);
-        let constants: HashMap<SsaVarId, ConstValue> = [(right, ConstValue::I32(1))].into();
+        let constants: BTreeMap<SsaVarId, ConstValue> = [(right, ConstValue::I32(1))].into();
         let op = SsaOp::Rem {
             dest,
             left,
@@ -251,7 +251,7 @@ mod tests {
     fn test_ceq_same_var() {
         let x = SsaVarId::from_index(0);
         let dest = SsaVarId::from_index(1);
-        let constants: HashMap<SsaVarId, ConstValue> = HashMap::new();
+        let constants: BTreeMap<SsaVarId, ConstValue> = BTreeMap::new();
         let op = SsaOp::Ceq {
             dest,
             left: x,
@@ -270,7 +270,7 @@ mod tests {
     fn test_clt_same_var() {
         let x = SsaVarId::from_index(0);
         let dest = SsaVarId::from_index(1);
-        let constants: HashMap<SsaVarId, ConstValue> = HashMap::new();
+        let constants: BTreeMap<SsaVarId, ConstValue> = BTreeMap::new();
         let op = SsaOp::Clt {
             dest,
             left: x,
@@ -290,7 +290,7 @@ mod tests {
     fn test_cgt_same_var() {
         let x = SsaVarId::from_index(0);
         let dest = SsaVarId::from_index(1);
-        let constants: HashMap<SsaVarId, ConstValue> = HashMap::new();
+        let constants: BTreeMap<SsaVarId, ConstValue> = BTreeMap::new();
         let op = SsaOp::Cgt {
             dest,
             left: x,

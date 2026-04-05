@@ -115,28 +115,7 @@ impl EventKind {
     /// Returns true if this event represents a code transformation.
     #[must_use]
     pub fn is_transformation(&self) -> bool {
-        matches!(
-            self,
-            Self::StringDecrypted
-                | Self::ConstantDecrypted
-                | Self::ConstantFolded
-                | Self::BranchSimplified
-                | Self::InstructionRemoved
-                | Self::BlockRemoved
-                | Self::MethodInlined
-                | Self::PhiSimplified
-                | Self::ValueResolved
-                | Self::MethodMarkedDead
-                | Self::ControlFlowRestructured
-                | Self::OpaquePredicateRemoved
-                | Self::CopyPropagated
-                | Self::ArrayDecrypted
-                | Self::StrengthReduced
-                | Self::VariablesCompacted
-                | Self::MethodBodyDecrypted
-                | Self::AntiTamperRemoved
-                | Self::ArtifactRemoved
-        )
+        !matches!(self, Self::CodeRegenerated)
     }
 }
 
@@ -331,14 +310,7 @@ impl EventLog {
         EventBuilder::new(self, kind)
     }
 
-    /// Merges another event log into this one by reference.
-    pub fn merge_ref(&self, other: &EventLog) {
-        for (_, event) in &other.events {
-            self.events.push(event.clone());
-        }
-    }
-
-    /// Merges another event log into this one by value.
+    /// Merges another event log into this one.
     pub fn merge(&self, other: &EventLog) {
         for (_, event) in &other.events {
             self.events.push(event.clone());
@@ -413,6 +385,21 @@ impl EventLog {
         let mut counts = HashMap::new();
         for (_, event) in &self.events {
             *counts.entry(event.kind).or_insert(0) += 1;
+        }
+        counts
+    }
+
+    /// Counts events grouped by kind, starting from the given offset.
+    ///
+    /// Used by the scheduler to compute per-pass event deltas without
+    /// iterating the entire log.
+    #[must_use]
+    pub fn count_by_kind_since(&self, offset: usize) -> HashMap<EventKind, usize> {
+        let mut counts = HashMap::new();
+        for (idx, event) in &self.events {
+            if idx >= offset {
+                *counts.entry(event.kind).or_insert(0) += 1;
+            }
         }
         counts
     }
@@ -667,7 +654,14 @@ pub fn truncate_string(s: &str, max_len: usize) -> String {
     if s.len() <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
+        let end = max_len.saturating_sub(3);
+        let split = s
+            .char_indices()
+            .map(|(i, _)| i)
+            .take_while(|&i| i <= end)
+            .last()
+            .unwrap_or(0);
+        format!("{}...", &s[..split])
     }
 }
 
@@ -745,7 +739,7 @@ mod tests {
         log1.record(EventKind::StringDecrypted).at(method, 0x10);
         log2.record(EventKind::ConstantFolded).at(method, 0x20);
 
-        log1.merge_ref(&log2);
+        log1.merge(&log2);
 
         assert_eq!(log1.len(), 2);
         assert!(log1.has(EventKind::StringDecrypted));
@@ -779,6 +773,31 @@ mod tests {
         assert_eq!(counts.get(&EventKind::StringDecrypted), Some(&2));
         assert_eq!(counts.get(&EventKind::ConstantFolded), Some(&1));
         assert_eq!(counts.get(&EventKind::BlockRemoved), None);
+    }
+
+    #[test]
+    fn test_count_by_kind_since() {
+        let log = EventLog::new();
+        let method = Token::new(0x06000001);
+
+        log.record(EventKind::StringDecrypted).at(method, 0x10);
+        log.record(EventKind::StringDecrypted).at(method, 0x20);
+
+        let offset = log.len();
+
+        log.record(EventKind::ConstantFolded).at(method, 0x30);
+        log.record(EventKind::ConstantFolded).at(method, 0x40);
+        log.record(EventKind::StringDecrypted).at(method, 0x50);
+
+        let counts = log.count_by_kind_since(offset);
+        assert_eq!(counts.get(&EventKind::ConstantFolded), Some(&2));
+        assert_eq!(counts.get(&EventKind::StringDecrypted), Some(&1));
+        assert_eq!(counts.get(&EventKind::BlockRemoved), None);
+
+        // Offset 0 should count everything
+        let all = log.count_by_kind_since(0);
+        assert_eq!(all.get(&EventKind::StringDecrypted), Some(&3));
+        assert_eq!(all.get(&EventKind::ConstantFolded), Some(&2));
     }
 
     #[test]

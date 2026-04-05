@@ -1,36 +1,35 @@
-//! Delegate proxy detection via SSA analysis.
+//! Call indirection detection via SSA analysis.
 //!
-//! Detects delegate-based call indirection where every method call is hidden
-//! behind a delegate proxy class. Each proxy class:
+//! Detects two categories of call indirection:
+//!
+//! ## Delegate Proxies
+//!
+//! Delegate-based call indirection where every method call is hidden behind a
+//! delegate proxy class. Each proxy class:
 //!
 //! 1. Inherits from `System.MulticastDelegate`
 //! 2. Has a static singleton field of its own type
 //! 3. Has a static wrapper method that takes `N+1` args (last is the delegate)
 //!    and internally `callvirt`s the delegate's `Invoke()`
 //!
-//! The call pattern in SSA:
+//! Creates a [`DelegateProxyResolutionPass`] with pre-computed findings from
+//! detection, which emulates delegate `.cctor`s and resolves target methods.
 //!
-//! ```text
-//! v_delegate = LoadStaticField(singleton_field)
-//! v_result   = Call(wrapper_method, arg0, arg1, ..., v_delegate)
-//! ```
+//! ## Reflection Call Indirection
 //!
-//! By emulating delegate type `.cctor`s, the actual target method bound to
-//! each delegate singleton is extracted and the indirect call is replaced
-//! with a direct `Call` or `CallVirt`.
+//! Reflection-based call indirection where direct calls are hidden behind
+//! `Module.ResolveMethod`, `Type.GetMethod`, `MethodInfo.Invoke`,
+//! `Activator.CreateInstance`, or `FieldInfo.GetValue/SetValue`.
 //!
-//! # Detection
+//! Produces [`ReflectionFindings`] consumed by the engine-owned
+//! [`ReflectionDevirtualizationPass`](crate::deobfuscation::passes::ReflectionDevirtualizationPass).
+//!
+//! ## Detection
 //!
 //! Detection uses `detect_ssa()` to:
 //! 1. Pre-scan assembly types for delegate types with static fields
-//! 2. Verify wrapper methods via their SSA structure (follows def-use chains,
-//!    immune to junk code insertions)
-//! 3. Scan SSA functions for matching `LoadStaticField → Call(wrapper)` chains
-//!
-//! # Passes
-//!
-//! Creates a [`DelegateProxyResolutionPass`] with pre-computed findings from
-//! detection, which emulates delegate `.cctor`s and resolves target methods.
+//! 2. Verify wrapper methods via their SSA structure
+//! 3. Scan SSA functions for delegate proxy and reflection call patterns
 
 use std::{
     any::Any,
@@ -43,12 +42,15 @@ use log::debug;
 use crate::{
     analysis::{SsaFunction, SsaOp, SsaVarId},
     cilassembly::CleanupRequest,
-    compiler::SsaPass,
+    compiler::{PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
-        passes::{DelegateProxyResolutionPass, DelegateTypeInfo},
-        techniques::PassPhase,
+        passes::{
+            count_resolve_method_calli_sites, DelegateProxyResolutionPass, DelegateTypeInfo,
+            ReflectionDevirtualizationPass,
+        },
         techniques::{Detection, Evidence, Technique, TechniqueCategory},
+        utils::is_method_named,
     },
     metadata::token::Token,
     CilObject,
@@ -61,6 +63,29 @@ pub struct DelegateProxyFindings {
     pub delegate_types: HashMap<Token, DelegateTypeInfo>,
     /// Method tokens containing at least one delegate proxy call.
     pub affected_methods: HashSet<Token>,
+}
+
+/// Findings from reflection call indirection detection.
+#[derive(Debug, Default)]
+pub struct ReflectionFindings {
+    /// Method tokens containing reflection call sites.
+    pub affected_methods: HashSet<Token>,
+    /// Total number of reflection sites detected.
+    pub site_count: usize,
+}
+
+/// Combined findings from delegate proxy AND reflection detection.
+///
+/// `GenericDelegateProxy::detect_ssa()` produces this because both analyses
+/// share the same SSA scanning pass. The engine extracts [`ReflectionFindings`]
+/// to create [`ReflectionDevirtualizationPass`](crate::deobfuscation::passes::ReflectionDevirtualizationPass);
+/// the technique uses [`DelegateProxyFindings`] for [`DelegateProxyResolutionPass`].
+#[derive(Debug)]
+pub struct CallIndirectionFindings {
+    /// Delegate proxy detection results.
+    pub delegate: DelegateProxyFindings,
+    /// Reflection call indirection results.
+    pub reflection: ReflectionFindings,
 }
 
 /// Traces a variable backwards through def-use chains to check if it
@@ -272,36 +297,66 @@ impl Technique for GenericDelegateProxy {
             delegate_count, has_static_field, has_static_method, has_ssa, is_wrapper
         );
 
-        if delegate_types.is_empty() {
-            return Detection::new_empty();
-        }
-
-        // Phase 2: Scan SSA functions for Call sites targeting wrapper methods.
-        let mut affected_methods: HashSet<Token> = HashSet::new();
+        // Phase 2: Scan SSA functions for delegate proxy calls AND reflection patterns.
+        let mut delegate_affected: HashSet<Token> = HashSet::new();
+        let mut reflection_affected: HashSet<Token> = HashSet::new();
+        let mut reflection_site_count = 0usize;
 
         for entry in ctx.ssa_functions.iter() {
             let method_token = *entry.key();
             let ssa = entry.value();
 
-            if has_delegate_proxy_calls(ssa, &wrapper_to_delegate) {
-                affected_methods.insert(method_token);
+            // Delegate proxy calls
+            if !delegate_types.is_empty() && has_delegate_proxy_calls(ssa, &wrapper_to_delegate) {
+                delegate_affected.insert(method_token);
+            }
+
+            // Reflection patterns: CallIndirect with ResolveMethod chain (P1)
+            let calli_count = count_resolve_method_calli_sites(ssa, assembly);
+            if calli_count > 0 {
+                reflection_affected.insert(method_token);
+                reflection_site_count += calli_count;
+            }
+
+            // Reflection patterns: Call/CallVirt to reflection APIs (P2, P3, P5, P6)
+            let api_count = count_reflection_api_calls(ssa, assembly);
+            if api_count > 0 {
+                reflection_affected.insert(method_token);
+                reflection_site_count += api_count;
             }
         }
 
-        if affected_methods.is_empty() {
+        let has_delegates = !delegate_types.is_empty() && !delegate_affected.is_empty();
+        let has_reflection = !reflection_affected.is_empty();
+
+        if !has_delegates && !has_reflection {
             return Detection::new_empty();
         }
 
-        let type_count = delegate_types.len();
-        let method_count = affected_methods.len();
+        let mut evidence = Vec::new();
+        if has_delegates {
+            let type_count = delegate_types.len();
+            let method_count = delegate_affected.len();
+            evidence.push(Evidence::Structural(format!(
+                "{type_count} delegate proxy types affecting {method_count} methods"
+            )));
+        }
+        if has_reflection {
+            let method_count = reflection_affected.len();
+            evidence.push(Evidence::Structural(format!(
+                "{reflection_site_count} reflection call indirection sites in {method_count} methods"
+            )));
+        }
 
-        let evidence = vec![Evidence::Structural(format!(
-            "{type_count} delegate proxy types affecting {method_count} methods"
-        ))];
-
-        let findings = DelegateProxyFindings {
-            delegate_types,
-            affected_methods,
+        let findings = CallIndirectionFindings {
+            delegate: DelegateProxyFindings {
+                delegate_types,
+                affected_methods: delegate_affected,
+            },
+            reflection: ReflectionFindings {
+                affected_methods: reflection_affected,
+                site_count: reflection_site_count,
+            },
         };
 
         Detection::new_detected(
@@ -319,36 +374,108 @@ impl Technique for GenericDelegateProxy {
         ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Option<Box<dyn SsaPass>> {
-        let pool = ctx.template_pool.get()?.clone();
-        let findings = detection.findings::<DelegateProxyFindings>()?;
-        Some(Box::new(DelegateProxyResolutionPass::new(
-            pool,
-            findings.delegate_types.clone(),
-            findings.affected_methods.clone(),
-        )))
+    ) -> Vec<Box<dyn SsaPass>> {
+        let Some(combined) = detection.findings::<CallIndirectionFindings>() else {
+            return Vec::new();
+        };
+
+        let mut passes: Vec<Box<dyn SsaPass>> = Vec::new();
+
+        // Delegate proxy resolution pass (emulation-based)
+        let delegate = &combined.delegate;
+        if !delegate.delegate_types.is_empty() {
+            if let Some(pool) = ctx.template_pool.get().cloned() {
+                passes.push(Box::new(DelegateProxyResolutionPass::new(
+                    pool,
+                    delegate.delegate_types.clone(),
+                    delegate.affected_methods.clone(),
+                )));
+            }
+        }
+
+        // Reflection devirtualization pass (SSA chain tracing)
+        let reflection = &combined.reflection;
+        if !reflection.affected_methods.is_empty() {
+            passes.push(Box::new(ReflectionDevirtualizationPass::with_methods(
+                reflection.affected_methods.clone(),
+            )));
+        }
+
+        passes
     }
 
     fn cleanup(&self, detection: &Detection) -> Option<CleanupRequest> {
-        let findings = detection.findings::<DelegateProxyFindings>()?;
-        if findings.delegate_types.is_empty() {
+        let combined = detection.findings::<CallIndirectionFindings>()?;
+        let delegate = &combined.delegate;
+        if delegate.delegate_types.is_empty() {
             return None;
         }
 
         let mut request = CleanupRequest::new();
-        for &type_token in findings.delegate_types.keys() {
+        for &type_token in delegate.delegate_types.keys() {
             request.add_type(type_token);
         }
         Some(request)
     }
 }
 
+/// Counts reflection API call sites in an SSA function (P2, P3, P5, P6).
+///
+/// Matches `Call`/`CallVirt` to `MethodInfo.Invoke`, `Activator.CreateInstance`,
+/// `FieldInfo.GetValue`, and `FieldInfo.SetValue` where the target comes from
+/// a traceable reflection chain.
+fn count_reflection_api_calls(ssa: &SsaFunction, assembly: &CilObject) -> usize {
+    let mut count = 0;
+    for block in ssa.blocks() {
+        for instr in block.instructions() {
+            let (method_token, arg_count) = match instr.op() {
+                SsaOp::Call { method, args, .. } | SsaOp::CallVirt { method, args, .. } => {
+                    (method.token(), args.len())
+                }
+                _ => continue,
+            };
+
+            let Some(name) = assembly.resolve_method_name(method_token) else {
+                continue;
+            };
+
+            // P2/P3: MethodInfo.Invoke with 3 args (this, obj, params[])
+            if name == "Invoke" && arg_count == 3 {
+                // Verify this is MethodBase/MethodInfo.Invoke, not Delegate.Invoke
+                if is_method_named(assembly, method_token, "MethodBase")
+                    || is_method_named(assembly, method_token, "MethodInfo")
+                {
+                    count += 1;
+                    continue;
+                }
+            }
+
+            // P5: Activator.CreateInstance
+            if name.contains("CreateInstance")
+                && is_method_named(assembly, method_token, "Activator")
+            {
+                count += 1;
+                continue;
+            }
+
+            // P6: FieldInfo.GetValue / SetValue
+            if (name == "GetValue" || name == "SetValue")
+                && is_method_named(assembly, method_token, "FieldInfo")
+            {
+                count += 1;
+            }
+        }
+    }
+    count
+}
+
 #[cfg(test)]
 mod tests {
     use crate::{
+        compiler::PassPhase,
         deobfuscation::techniques::{
-            generic::delegates::{DelegateProxyFindings, GenericDelegateProxy},
-            PassPhase, Technique, TechniqueCategory,
+            generic::delegates::{CallIndirectionFindings, GenericDelegateProxy},
+            Technique, TechniqueCategory,
         },
         test::helpers::load_sample,
     };
@@ -361,15 +488,15 @@ mod tests {
         let detection = technique.detect(&asm);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "GenericDelegateProxy should not detect anything in a ConfuserEx original sample"
         );
         assert!(
-            detection.evidence.is_empty(),
+            detection.evidence().is_empty(),
             "No evidence should be present for a non-obfuscated sample"
         );
         assert!(
-            detection.findings::<DelegateProxyFindings>().is_none(),
+            detection.findings::<CallIndirectionFindings>().is_none(),
             "No findings should be present for a non-obfuscated sample"
         );
     }
@@ -382,7 +509,7 @@ mod tests {
         let detection = technique.detect(&asm);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "GenericDelegateProxy should not detect anything in an Obfuscar sample"
         );
     }

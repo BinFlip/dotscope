@@ -40,15 +40,19 @@
 //! jump B1
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
 
 use crate::{
     analysis::{
         ConstValue, DefUseIndex, SsaEvaluator, SsaFunction, SsaInstruction, SsaOp, SsaVarId,
         ValueRange,
     },
-    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
+    compiler::{
+        pass::{PassCapability, SsaPass},
+        CompilerContext, EventKind, EventLog,
+    },
     metadata::{token::Token, typesystem::PointerSize},
+    utils::BitSet,
     CilObject, Result,
 };
 
@@ -65,6 +69,10 @@ pub enum PredicateResult {
 
 impl PredicateResult {
     /// Converts to an optional boolean.
+    ///
+    /// # Returns
+    ///
+    /// `Some(true)` for `AlwaysTrue`, `Some(false)` for `AlwaysFalse`, `None` for `Unknown`.
     #[must_use]
     pub fn as_bool(self) -> Option<bool> {
         match self {
@@ -75,6 +83,8 @@ impl PredicateResult {
     }
 
     /// Negates the predicate result.
+    ///
+    /// `AlwaysTrue` becomes `AlwaysFalse` and vice versa. `Unknown` stays `Unknown`.
     #[must_use]
     pub fn negate(self) -> Self {
         match self {
@@ -102,38 +112,59 @@ enum ComparisonSimplification {
     },
 }
 
-/// Cached definition information for efficient lookup.
+/// Cached definition information for efficient predicate analysis.
 ///
-/// Uses `DefUseIndex` for basic definition lookups, with additional
-/// tracking for phi nodes, non-null variables, and value ranges.
+/// Wraps [`DefUseIndex`] for basic definition lookups and augments it with
+/// specialized tracking that `DefUseIndex` does not provide: phi-defined
+/// variables, non-null provenance (from `NewObj`/`NewArr`/`Box`/`LoadToken`),
+/// array-length provenance, and computed [`ValueRange`]s for constant and
+/// non-negative variables.
 struct DefinitionCache {
     /// Index for definition lookups (block, instruction, operation).
     index: DefUseIndex,
     /// Variables defined by phi nodes.
-    phi_defs: HashSet<SsaVarId>,
-    /// Variables that are known to be non-null (after newobj, etc.).
-    non_null_vars: HashSet<SsaVarId>,
-    /// Variables that come from array length operations.
-    array_length_vars: HashSet<SsaVarId>,
-    /// Computed value ranges for variables.
-    ranges: HashMap<SsaVarId, ValueRange>,
+    phi_defs: BitSet,
+    /// Variables that are known to be non-null (produced by `NewObj`, `NewArr`, `Box`, or `LoadToken`).
+    non_null_vars: BitSet,
+    /// Variables that come from `ArrayLength` operations.
+    array_length_vars: BitSet,
+    /// Computed value ranges for variables (constants get exact ranges, array lengths get non-negative).
+    ranges: BTreeMap<SsaVarId, ValueRange>,
 }
 
 impl DefinitionCache {
     /// Builds the definition cache from an SSA function.
+    ///
+    /// Performs a single pass over all blocks to populate:
+    /// - `index`: delegated to [`DefUseIndex::build_with_ops`] for var-to-op mapping.
+    /// - `phi_defs`: bitset of variables defined by phi nodes (not tracked by `DefUseIndex`).
+    /// - `non_null_vars`: bitset of variables produced by `NewObj`, `NewArr`, `Box`, or `LoadToken`.
+    /// - `array_length_vars`: bitset of variables from `ArrayLength` ops.
+    /// - `ranges`: [`ValueRange::constant`] for `Const` ops, [`ValueRange::non_negative`] for
+    ///   `ArrayLength` ops.
+    ///
+    /// # Arguments
+    ///
+    /// * `ssa` - The SSA function to build the cache from.
+    ///
+    /// # Returns
+    ///
+    /// A fully populated `DefinitionCache` with definition index, phi-def tracking,
+    /// non-null provenance, array-length provenance, and value ranges.
     fn build(ssa: &SsaFunction) -> Self {
         // Use DefUseIndex for basic definition tracking
         let index = DefUseIndex::build_with_ops(ssa);
 
-        let mut phi_defs = HashSet::new();
-        let mut non_null_vars = HashSet::new();
-        let mut array_length_vars = HashSet::new();
-        let mut ranges = HashMap::new();
+        let var_count = ssa.variable_count();
+        let mut phi_defs = BitSet::new(var_count);
+        let mut non_null_vars = BitSet::new(var_count);
+        let mut array_length_vars = BitSet::new(var_count);
+        let mut ranges = BTreeMap::new();
 
         for (_block_idx, block) in ssa.iter_blocks() {
             // Process phi nodes (not covered by DefUseIndex)
             for phi in block.phi_nodes() {
-                phi_defs.insert(phi.result());
+                phi_defs.insert(phi.result().index());
             }
 
             // Process instructions for specialized tracking
@@ -147,10 +178,10 @@ impl DefinitionCache {
                         | SsaOp::Box { .. }
                         | SsaOp::LoadToken { .. } => {
                             // Non-null tracked separately (not a numeric range)
-                            non_null_vars.insert(dest);
+                            non_null_vars.insert(dest.index());
                         }
                         SsaOp::ArrayLength { .. } => {
-                            array_length_vars.insert(dest);
+                            array_length_vars.insert(dest.index());
                             ranges.insert(dest, ValueRange::non_negative());
                         }
                         SsaOp::Const { value, .. } => {
@@ -180,12 +211,12 @@ impl DefinitionCache {
 
     /// Checks if a variable is defined by a phi node.
     fn is_phi_defined(&self, var: SsaVarId) -> bool {
-        self.phi_defs.contains(&var)
+        self.phi_defs.contains(var.index())
     }
 
     /// Checks if a variable is known to be non-null.
     fn is_non_null(&self, var: SsaVarId) -> bool {
-        self.non_null_vars.contains(&var)
+        self.non_null_vars.contains(var.index())
     }
 
     /// Gets the value range for a variable.
@@ -210,14 +241,44 @@ impl OpaquePredicatePass {
         Self
     }
 
-    /// Analyzes a predicate operation with full context.
+    /// Maximum recursion depth for nested predicate analysis.
+    ///
+    /// Each level corresponds to one SSA instruction defining a comparison result
+    /// that feeds into another comparison. 16 levels handles deeply nested opaque
+    /// predicates from advanced obfuscators (e.g., PureLogs multi-level chains)
+    /// while preventing stack overflow on pathological inputs.
+    const MAX_PREDICATE_DEPTH: usize = 16;
+
+    /// Analyzes a predicate operation with full context, dispatching by `SsaOp` kind.
+    ///
+    /// Pattern-matching cascade:
+    /// 1. **Self-comparison** (`Ceq`/`Clt`/`Cgt` where `left == right`): immediate result.
+    /// 2. **Equality analysis** (`Ceq`): delegates to [`analyze_equality`](Self::analyze_equality)
+    ///    for XOR==0, SUB==0, MUL*0==0, AND&0==0, number-theoretic, constant, null, and nested patterns.
+    /// 3. **Less-than / greater-than** (`Clt`/`Cgt`): delegates to range-based and constant analysis.
+    /// 4. **Zero-producing ops** (`Xor`/`Sub` with `left==right`): returns `Unknown` since the
+    ///    result only becomes meaningful when used in a comparison (handled at that level).
+    /// 5. **Remainder / Multiplication / And**: delegates to specialized analyzers.
+    ///
+    /// Supports recursion up to [`MAX_PREDICATE_DEPTH`](Self::MAX_PREDICATE_DEPTH) for nested
+    /// predicates (e.g., `ceq(ceq(x, x), 1)`).
+    ///
+    /// # Arguments
+    ///
+    /// * `op` - The SSA operation to analyze (typically a comparison or arithmetic op).
+    /// * `cache` - Pre-built definition cache for efficient variable resolution.
+    /// * `depth` - Current recursion depth (0 at the top level).
+    ///
+    /// # Returns
+    ///
+    /// [`PredicateResult::AlwaysTrue`] or [`AlwaysFalse`](PredicateResult::AlwaysFalse) if the
+    /// predicate can be statically determined, [`Unknown`](PredicateResult::Unknown) otherwise.
     fn analyze_predicate_with_cache(
         op: &SsaOp,
         cache: &DefinitionCache,
         depth: usize,
     ) -> PredicateResult {
-        // Prevent infinite recursion
-        if depth > 10 {
+        if depth > Self::MAX_PREDICATE_DEPTH {
             return PredicateResult::Unknown;
         }
 
@@ -277,7 +338,31 @@ impl OpaquePredicatePass {
         }
     }
 
-    /// Analyzes an equality comparison.
+    /// Analyzes an equality comparison (`Ceq`) for opaque predicate patterns.
+    ///
+    /// Checks the following patterns (each with symmetric left/right variants):
+    /// - `(x ^ x) == 0` -- XOR self-cancellation, always true.
+    /// - `(x - x) == 0` -- subtraction self-cancellation, always true.
+    /// - `(x * 0) == 0` or `(0 * x) == 0` -- zero-producing multiplication, always true.
+    /// - `(x & 0) == 0` or `(0 & x) == 0` -- zero-producing AND, always true.
+    /// - Number-theoretic: `(x*(x+1)) % 2 == 0` and factored forms, always true.
+    /// - Constant equality: both sides are constants with known values.
+    /// - Null checks: non-null variable (from `NewObj` etc.) compared to null, always false.
+    /// - **Nested analysis fallback**: if the left operand is itself a predicate (comparison),
+    ///   recursively analyzes it. If the result is known and compared to 1, returns that result;
+    ///   if compared to 0, returns the negation.
+    ///
+    /// # Arguments
+    ///
+    /// * `left` - Left operand of the `Ceq`.
+    /// * `right` - Right operand of the `Ceq`.
+    /// * `cache` - Definition cache for resolving variable definitions.
+    /// * `depth` - Current recursion depth for nested predicate analysis.
+    ///
+    /// # Returns
+    ///
+    /// [`PredicateResult::AlwaysTrue`] or [`AlwaysFalse`](PredicateResult::AlwaysFalse) if the
+    /// equality can be statically determined, [`Unknown`](PredicateResult::Unknown) otherwise.
     fn analyze_equality(
         left: SsaVarId,
         right: SsaVarId,
@@ -387,8 +472,10 @@ impl OpaquePredicatePass {
             }
         }
 
-        // Check for number-theoretic predicates: (x * (x + 1)) % 2 == 0
-        if Self::is_consecutive_product_mod2(left_def, cache) {
+        // Check for number-theoretic predicates that always evaluate to zero:
+        //   (x * (x + 1)) % 2 == 0    — consecutive integer product is always even
+        //   (x * x - x) % 2 == 0      — x²-x = x(x-1), consecutive product factored
+        if Self::is_always_even_expression(left_def, cache) {
             if let Some(r) = right_def {
                 if Self::is_zero_constant(r) {
                     return PredicateResult::AlwaysTrue;
@@ -444,7 +531,30 @@ impl OpaquePredicatePass {
         PredicateResult::Unknown
     }
 
-    /// Analyzes a less-than comparison.
+    /// Analyzes a less-than comparison (`Clt`) for opaque predicate patterns.
+    ///
+    /// Checks in order:
+    /// 1. **Constant comparison**: both operands are constants, evaluate directly (signed or unsigned).
+    /// 2. **Range-based**: if both operands have known [`ValueRange`]s, checks whether
+    ///    `left.max < right.min` (always true) or `left.min >= right.max` (always false).
+    /// 3. **Left range vs. constant right**: uses [`ValueRange::always_less_than`].
+    /// 4. **Unsigned bounds**: `x <.un 0` is always false (no unsigned value is less than zero).
+    /// 5. **Non-negative check**: if `left` is known non-negative (e.g., `ArrayLength`),
+    ///    then `left < 0` is always false.
+    ///
+    /// # Arguments
+    ///
+    /// * `left` - Left operand of the comparison.
+    /// * `right` - Right operand of the comparison.
+    /// * `unsigned` - Whether this is an unsigned comparison (`clt.un`).
+    /// * `cache` - Definition cache for resolving variable definitions and ranges.
+    /// * `_depth` - Unused (less-than analysis is non-recursive).
+    ///
+    /// # Returns
+    ///
+    /// [`PredicateResult::AlwaysTrue`] or [`AlwaysFalse`](PredicateResult::AlwaysFalse) if the
+    /// less-than comparison can be statically determined,
+    /// [`Unknown`](PredicateResult::Unknown) otherwise.
     fn analyze_less_than(
         left: SsaVarId,
         right: SsaVarId,
@@ -530,7 +640,30 @@ impl OpaquePredicatePass {
         PredicateResult::Unknown
     }
 
-    /// Analyzes a greater-than comparison.
+    /// Analyzes a greater-than comparison (`Cgt`) for opaque predicate patterns.
+    ///
+    /// Checks in order:
+    /// 1. **Constant comparison**: both operands are constants, evaluate directly (signed or unsigned).
+    /// 2. **Range-based**: if both operands have known [`ValueRange`]s, checks whether
+    ///    `left.min > right.max` (always true) or `left.max <= right.min` (always false).
+    /// 3. **Left range vs. constant right**: uses [`ValueRange::always_greater_than`].
+    /// 4. **Unsigned bounds**: `0 >.un x` is always false (zero is never greater than any unsigned value).
+    /// 5. **Non-negative vs. negative**: if `left` is known non-negative and `right` is a
+    ///    negative constant, returns always true.
+    ///
+    /// # Arguments
+    ///
+    /// * `left` - Left operand of the comparison.
+    /// * `right` - Right operand of the comparison.
+    /// * `unsigned` - Whether this is an unsigned comparison (`cgt.un`).
+    /// * `cache` - Definition cache for resolving variable definitions and ranges.
+    /// * `_depth` - Unused (greater-than analysis is non-recursive).
+    ///
+    /// # Returns
+    ///
+    /// [`PredicateResult::AlwaysTrue`] or [`AlwaysFalse`](PredicateResult::AlwaysFalse) if the
+    /// greater-than comparison can be statically determined,
+    /// [`Unknown`](PredicateResult::Unknown) otherwise.
     fn analyze_greater_than(
         left: SsaVarId,
         right: SsaVarId,
@@ -616,7 +749,22 @@ impl OpaquePredicatePass {
         PredicateResult::Unknown
     }
 
-    /// Analyzes a remainder operation.
+    /// Analyzes a remainder operation (`Rem`) for `x % 1` which always produces zero.
+    ///
+    /// Returns `Unknown` rather than `AlwaysTrue`/`AlwaysFalse` because the zero result
+    /// is only meaningful when subsequently compared (handled by the equality analysis).
+    ///
+    /// # Arguments
+    ///
+    /// * `_left` - Left operand of the remainder (unused; any value mod 1 is zero).
+    /// * `right` - Right operand of the remainder (checked for constant 1).
+    /// * `cache` - Definition cache for resolving variable definitions.
+    /// * `_depth` - Unused (remainder analysis is non-recursive).
+    ///
+    /// # Returns
+    ///
+    /// Always returns [`PredicateResult::Unknown`] because the zero result is only
+    /// meaningful when used in a subsequent comparison.
     fn analyze_remainder(
         _left: SsaVarId,
         right: SsaVarId,
@@ -633,7 +781,22 @@ impl OpaquePredicatePass {
         PredicateResult::Unknown
     }
 
-    /// Analyzes a multiplication for zero-producing patterns.
+    /// Analyzes a multiplication (`Mul`) for zero-producing patterns (`x * 0` or `0 * x`).
+    ///
+    /// Returns `Unknown` because the zero result is only meaningful when subsequently
+    /// compared (handled by the equality analysis at the comparison level).
+    ///
+    /// # Arguments
+    ///
+    /// * `left` - Left operand of the multiplication.
+    /// * `right` - Right operand of the multiplication.
+    /// * `cache` - Definition cache for resolving variable definitions.
+    /// * `_depth` - Unused (multiplication analysis is non-recursive).
+    ///
+    /// # Returns
+    ///
+    /// Always returns [`PredicateResult::Unknown`] because the zero result is only
+    /// meaningful when used in a subsequent comparison.
     fn analyze_multiplication(
         left: SsaVarId,
         right: SsaVarId,
@@ -654,7 +817,22 @@ impl OpaquePredicatePass {
         PredicateResult::Unknown
     }
 
-    /// Analyzes a bitwise AND for zero-producing patterns.
+    /// Analyzes a bitwise AND (`And`) for zero-producing patterns (`x & 0` or `0 & x`).
+    ///
+    /// Returns `Unknown` because the zero result is only meaningful when subsequently
+    /// compared (handled by the equality analysis at the comparison level).
+    ///
+    /// # Arguments
+    ///
+    /// * `left` - Left operand of the AND.
+    /// * `right` - Right operand of the AND.
+    /// * `cache` - Definition cache for resolving variable definitions.
+    /// * `_depth` - Unused (AND analysis is non-recursive).
+    ///
+    /// # Returns
+    ///
+    /// Always returns [`PredicateResult::Unknown`] because the zero result is only
+    /// meaningful when used in a subsequent comparison.
     fn analyze_and(
         left: SsaVarId,
         right: SsaVarId,
@@ -695,7 +873,16 @@ impl OpaquePredicatePass {
         matches!(op, SsaOp::Const { value, .. } if value.is_minus_one())
     }
 
-    /// Checks if a multiplication produces zero.
+    /// Returns `true` if the operation is a `Mul` where either operand is a constant zero.
+    ///
+    /// # Arguments
+    ///
+    /// * `op` - The operation to check, or `None` if the variable has no definition.
+    /// * `cache` - Definition cache for resolving the multiplication operands.
+    ///
+    /// # Returns
+    ///
+    /// `true` if `op` is a `Mul` with at least one constant-zero operand, `false` otherwise.
     fn is_zero_producing_mul(op: Option<&SsaOp>, cache: &DefinitionCache) -> bool {
         if let Some(SsaOp::Mul { left, right, .. }) = op {
             if let Some(l) = cache.get_definition(*left) {
@@ -712,7 +899,16 @@ impl OpaquePredicatePass {
         false
     }
 
-    /// Checks if an AND produces zero.
+    /// Returns `true` if the operation is an `And` where either operand is a constant zero.
+    ///
+    /// # Arguments
+    ///
+    /// * `op` - The operation to check, or `None` if the variable has no definition.
+    /// * `cache` - Definition cache for resolving the AND operands.
+    ///
+    /// # Returns
+    ///
+    /// `true` if `op` is an `And` with at least one constant-zero operand, `false` otherwise.
     fn is_zero_producing_and(op: Option<&SsaOp>, cache: &DefinitionCache) -> bool {
         if let Some(SsaOp::And { left, right, .. }) = op {
             if let Some(l) = cache.get_definition(*left) {
@@ -729,39 +925,113 @@ impl OpaquePredicatePass {
         false
     }
 
-    /// Checks if an operation is (x * (x + 1)) % 2, which is always 0.
-    /// This detects the classic number-theoretic opaque predicate.
-    fn is_consecutive_product_mod2(op: Option<&SsaOp>, cache: &DefinitionCache) -> bool {
-        // Look for: (something) % 2 where something is x * (x + 1)
-        if let Some(SsaOp::Rem {
+    /// Checks if an operation is an expression modulo 2 that always evaluates to 0.
+    ///
+    /// Detects number-theoretic opaque predicates based on the mathematical
+    /// property that the product of two consecutive integers is always even:
+    ///
+    /// - `(x * (x + 1)) % 2` — direct consecutive product
+    /// - `(x * (x - 1)) % 2` — reversed consecutive product
+    /// - `(x * x - x) % 2` — factored form: x^2-x = x(x-1)
+    /// - `(x * x + x) % 2` — factored form: x^2+x = x(x+1)
+    ///
+    /// # Arguments
+    ///
+    /// * `op` - The operation to check, or `None` if the variable has no definition.
+    /// * `cache` - Definition cache for resolving operand definitions.
+    ///
+    /// # Returns
+    ///
+    /// `true` if the expression is a `Rem` by 2 whose dividend is always even, `false` otherwise.
+    fn is_always_even_expression(op: Option<&SsaOp>, cache: &DefinitionCache) -> bool {
+        let Some(SsaOp::Rem {
             left: rem_left,
             right: rem_right,
             ..
         }) = op
-        {
-            // Check if divisor is 2
-            if let Some(SsaOp::Const { value: rval, .. }) = cache.get_definition(*rem_right) {
-                if rval.as_i64() != Some(2) {
-                    return false;
-                }
-            } else {
-                return false;
-            }
+        else {
+            return false;
+        };
 
-            // Check if dividend is a multiplication
-            if let Some(SsaOp::Mul {
-                left: mul_left,
-                right: mul_right,
-                ..
-            }) = cache.get_definition(*rem_left)
-            {
-                return Self::is_consecutive_pair(*mul_left, *mul_right, cache);
+        // Divisor must be 2
+        let is_mod2 = cache
+            .get_definition(*rem_right)
+            .is_some_and(|d| matches!(d, SsaOp::Const { value, .. } if value.as_i64() == Some(2)));
+        if !is_mod2 {
+            return false;
+        }
+
+        let dividend_def = cache.get_definition(*rem_left);
+
+        // Pattern 1: x * (x +/- 1) — consecutive product
+        if let Some(SsaOp::Mul {
+            left: mul_left,
+            right: mul_right,
+            ..
+        }) = dividend_def
+        {
+            if Self::is_consecutive_pair(*mul_left, *mul_right, cache) {
+                return true;
             }
         }
+
+        // Pattern 2: (x * x) -/+ x — factored consecutive product
+        // x^2-x = x(x-1), x^2+x = x(x+1), both always even
+        if let Some(SsaOp::Sub {
+            left: op_left,
+            right: op_right,
+            ..
+        })
+        | Some(SsaOp::Add {
+            left: op_left,
+            right: op_right,
+            ..
+        }) = dividend_def
+        {
+            if Self::is_self_square(*op_left, *op_right, cache)
+                || Self::is_self_square(*op_right, *op_left, cache)
+            {
+                return true;
+            }
+        }
+
         false
     }
 
-    /// Checks if two values form a consecutive pair (x and x+1 or x-1 and x).
+    /// Checks if `square_var` is defined as `other * other` (i.e., `other^2`).
+    ///
+    /// # Arguments
+    ///
+    /// * `square_var` - The variable suspected to be a square.
+    /// * `other` - The variable that should appear as both operands of the multiplication.
+    /// * `cache` - Definition cache for resolving the definition of `square_var`.
+    ///
+    /// # Returns
+    ///
+    /// `true` if `square_var` is defined as `Mul { left: other, right: other }`, `false` otherwise.
+    fn is_self_square(square_var: SsaVarId, other: SsaVarId, cache: &DefinitionCache) -> bool {
+        matches!(
+            cache.get_definition(square_var),
+            Some(SsaOp::Mul { left, right, .. }) if *left == other && *right == other
+        )
+    }
+
+    /// Checks if two variables form a consecutive integer pair (`n` and `n+1`).
+    ///
+    /// Performs three symmetric checks:
+    /// - `b = a + 1` (either operand order of the `Add`).
+    /// - `a = b + 1` (symmetric: `a` is the incremented one).
+    /// - `b = a - (-1)` (subtraction of -1 is equivalent to adding 1).
+    ///
+    /// # Arguments
+    ///
+    /// * `a` - First variable of the potential consecutive pair.
+    /// * `b` - Second variable of the potential consecutive pair.
+    /// * `cache` - Definition cache for resolving variable definitions.
+    ///
+    /// # Returns
+    ///
+    /// `true` if one variable is defined as the other plus one, `false` otherwise.
     fn is_consecutive_pair(a: SsaVarId, b: SsaVarId, cache: &DefinitionCache) -> bool {
         // Check if b = a + 1
         if let Some(SsaOp::Add {
@@ -828,17 +1098,38 @@ impl OpaquePredicatePass {
         false
     }
 
-    /// Analyzes a branch condition.
+    /// Analyzes a branch condition variable to determine if it is an opaque predicate.
+    ///
+    /// Follows `Copy` chains iteratively with a [`BitSet`]-based cycle detector to handle
+    /// SSA copies from phi nodes or obfuscated control flow. At each step:
+    /// 1. If the variable has no definition in `DefUseIndex` but is phi-defined, checks
+    ///    range info for a constant-zero equivalence (all-zero phi = always false).
+    /// 2. Delegates to [`analyze_predicate_with_cache`](Self::analyze_predicate_with_cache) for
+    ///    comparison operations.
+    /// 3. For `Copy` ops, advances to the source variable and continues the loop.
+    /// 4. For all other operations, falls back to [`analyze_branch_op`](Self::analyze_branch_op)
+    ///    which checks direct truthiness of arithmetic and constant operations.
+    ///
+    /// # Arguments
+    ///
+    /// * `condition` - The SSA variable used as the branch condition.
+    /// * `cache` - Definition cache for resolving the condition's definition chain.
+    ///
+    /// # Returns
+    ///
+    /// [`PredicateResult::AlwaysTrue`] if the branch always takes the true path,
+    /// [`AlwaysFalse`](PredicateResult::AlwaysFalse) if it always takes the false path,
+    /// [`Unknown`](PredicateResult::Unknown) if the condition cannot be statically resolved.
     fn analyze_branch(condition: SsaVarId, cache: &DefinitionCache) -> PredicateResult {
         // Follow Copy chain iteratively with cycle detection to prevent infinite recursion.
         // This is needed because SSA can have Copy cycles (e.g., from phi nodes or
         // obfuscated control flow patterns).
         let mut current = condition;
-        let mut visited = HashSet::new();
+        let mut visited = BitSet::new(cache.phi_defs.len());
 
         loop {
             // Cycle detection: if we've seen this variable before, bail out
-            if !visited.insert(current) {
+            if !visited.insert(current.index()) {
                 return PredicateResult::Unknown;
             }
 
@@ -877,7 +1168,26 @@ impl OpaquePredicatePass {
         }
     }
 
-    /// Analyzes a branch condition operation (after Copy chain has been resolved).
+    /// Analyzes a non-Copy, non-comparison operation for direct truthiness in a branch.
+    ///
+    /// Called after the `Copy` chain has been resolved by [`analyze_branch`](Self::analyze_branch).
+    /// Checks:
+    /// - `x ^ x` = 0 (always false in `brtrue`).
+    /// - `x - x` = 0 (always false).
+    /// - `x & 0` or `x * 0` = 0 (always false).
+    /// - `x | -1` = all-bits-set (always true).
+    /// - `Const`: zero/null/false is always false; non-zero numeric or `true` is always true.
+    ///
+    /// # Arguments
+    ///
+    /// * `cond_op` - The resolved operation producing the branch condition value.
+    /// * `cache` - Definition cache for resolving operands of the condition operation.
+    ///
+    /// # Returns
+    ///
+    /// [`PredicateResult::AlwaysTrue`] if the operation always produces a non-zero value,
+    /// [`AlwaysFalse`](PredicateResult::AlwaysFalse) if it always produces zero,
+    /// [`Unknown`](PredicateResult::Unknown) if the truthiness cannot be determined.
     fn analyze_branch_op(cond_op: &SsaOp, cache: &DefinitionCache) -> PredicateResult {
         // Check operations that produce known zero values
         match cond_op {
@@ -945,6 +1255,16 @@ impl OpaquePredicatePass {
     /// - `(x - y) > 0` → `x > y`
     /// - `(x ^ y) == 0` → `x == y`
     /// - `(cmp) == 1` → `cmp`
+    ///
+    /// # Arguments
+    ///
+    /// * `op` - The SSA comparison operation to analyze (`Ceq`, `Clt`, or `Cgt`).
+    /// * `cache` - Definition cache for resolving operand definitions.
+    ///
+    /// # Returns
+    ///
+    /// `Some(ComparisonSimplification)` if the comparison can be algebraically simplified,
+    /// `None` if no simplification applies or the operation is not a comparison.
     fn analyze_comparison_simplification(
         op: &SsaOp,
         cache: &DefinitionCache,
@@ -981,7 +1301,24 @@ impl OpaquePredicatePass {
         cache.get_definition(var).is_some_and(Self::is_one_constant)
     }
 
-    /// Analyzes a Ceq operation for simplification.
+    /// Analyzes a `Ceq` operation for algebraic simplification.
+    ///
+    /// Detects three patterns:
+    /// - `(x - y) == 0` simplifies to `x == y` (subtraction-zero, skip self-subtraction).
+    /// - `(x ^ y) == 0` simplifies to `x == y` (XOR-zero, skip self-XOR).
+    /// - `(cmp) == 1` simplifies to `Copy(cmp)` when the other operand is a `Ceq`/`Clt`/`Cgt`
+    ///   result, since CIL comparisons already produce 0 or 1.
+    ///
+    /// # Arguments
+    ///
+    /// * `dest` - Destination variable of the `Ceq` (preserved in the simplified op).
+    /// * `left` - Left operand of the `Ceq`.
+    /// * `right` - Right operand of the `Ceq`.
+    /// * `cache` - Definition cache for resolving operand definitions.
+    ///
+    /// # Returns
+    ///
+    /// `Some(ComparisonSimplification)` if a simplification pattern matches, `None` otherwise.
     fn analyze_ceq_simplification(
         dest: SsaVarId,
         left: SsaVarId,
@@ -1069,7 +1406,23 @@ impl OpaquePredicatePass {
         None
     }
 
-    /// Analyzes a Clt operation for simplification.
+    /// Analyzes a `Clt` operation for algebraic simplification.
+    ///
+    /// Detects `(x - y) < 0` and simplifies to `x < y` (signed only; unsigned subtraction
+    /// has different overflow semantics). Self-subtraction is skipped since it is handled
+    /// as a constant predicate (`AlwaysFalse`).
+    ///
+    /// # Arguments
+    ///
+    /// * `dest` - Destination variable of the `Clt` (preserved in the simplified op).
+    /// * `left` - Left operand of the `Clt`.
+    /// * `right` - Right operand of the `Clt`.
+    /// * `unsigned` - Whether this is an unsigned comparison; if `true`, no simplification is attempted.
+    /// * `cache` - Definition cache for resolving operand definitions.
+    ///
+    /// # Returns
+    ///
+    /// `Some(ComparisonSimplification::SimplerOp)` if `(x - y) < 0` is detected, `None` otherwise.
     fn analyze_clt_simplification(
         dest: SsaVarId,
         left: SsaVarId,
@@ -1109,7 +1462,23 @@ impl OpaquePredicatePass {
         None
     }
 
-    /// Analyzes a Cgt operation for simplification.
+    /// Analyzes a `Cgt` operation for algebraic simplification.
+    ///
+    /// Detects `(x - y) > 0` and simplifies to `x > y` (signed only; unsigned subtraction
+    /// has different overflow semantics). Self-subtraction is skipped since it is handled
+    /// as a constant predicate (`AlwaysFalse`).
+    ///
+    /// # Arguments
+    ///
+    /// * `dest` - Destination variable of the `Cgt` (preserved in the simplified op).
+    /// * `left` - Left operand of the `Cgt`.
+    /// * `right` - Right operand of the `Cgt`.
+    /// * `unsigned` - Whether this is an unsigned comparison; if `true`, no simplification is attempted.
+    /// * `cache` - Definition cache for resolving operand definitions.
+    ///
+    /// # Returns
+    ///
+    /// `Some(ComparisonSimplification::SimplerOp)` if `(x - y) > 0` is detected, `None` otherwise.
     fn analyze_cgt_simplification(
         dest: SsaVarId,
         left: SsaVarId,
@@ -1148,11 +1517,28 @@ impl OpaquePredicatePass {
         None
     }
 
-    /// Attempts to evaluate a branch condition using the SsaEvaluator.
+    /// Fallback evaluator for branch conditions that pattern matching cannot resolve.
     ///
-    /// This is used as a fallback when pattern matching returns Unknown.
-    /// The SsaEvaluator can propagate values through operations and
-    /// determine branch conditions that require dataflow analysis.
+    /// Creates an [`SsaEvaluator`] and runs a forward pass over all blocks from 0 through
+    /// `block_idx`, accumulating concrete values via dataflow propagation. If the condition
+    /// variable resolves to a constant after evaluation, returns `AlwaysTrue` (non-zero) or
+    /// `AlwaysFalse` (zero).
+    ///
+    /// This catches predicates that require multi-step constant propagation across blocks
+    /// (e.g., a value computed in block 0 that flows through assignments to block 5's branch).
+    ///
+    /// # Arguments
+    ///
+    /// * `ssa` - The SSA function to evaluate.
+    /// * `condition` - The branch condition variable to resolve.
+    /// * `block_idx` - The block containing the branch (evaluation covers blocks 0..=block_idx).
+    /// * `ptr_size` - Pointer size for the evaluator (affects address arithmetic).
+    ///
+    /// # Returns
+    ///
+    /// [`PredicateResult::AlwaysTrue`] or [`AlwaysFalse`](PredicateResult::AlwaysFalse) if the
+    /// evaluator resolves the condition to a constant. [`Unknown`](PredicateResult::Unknown) if
+    /// the value depends on runtime inputs, loops, or unresolvable phi operands.
     fn evaluate_with_tracked(
         ssa: &SsaFunction,
         condition: SsaVarId,
@@ -1183,9 +1569,24 @@ impl OpaquePredicatePass {
         }
     }
 
-    /// Analyzes phi nodes where all operands are the same constant.
-    fn analyze_phi_constants(ssa: &SsaFunction) -> HashMap<SsaVarId, ConstValue> {
-        let mut phi_constants = HashMap::new();
+    /// Detects phi nodes where every operand resolves to the same constant value.
+    ///
+    /// Iterates over all phi nodes in all blocks. For each phi, looks up each operand's
+    /// defining operation: if all are `Const` with identical values, records the mapping
+    /// from the phi result variable to that constant. These entries are later used to
+    /// replace the phi with a `Const` instruction and to resolve branch conditions that
+    /// depend on phi-defined variables.
+    ///
+    /// # Arguments
+    ///
+    /// * `ssa` - The SSA function whose phi nodes are analyzed.
+    ///
+    /// # Returns
+    ///
+    /// A map from phi result variable to the constant value that all operands agree on.
+    /// Empty if no phi nodes have all-constant, all-identical operands.
+    fn analyze_phi_constants(ssa: &SsaFunction) -> BTreeMap<SsaVarId, ConstValue> {
+        let mut phi_constants = BTreeMap::new();
 
         for block in ssa.blocks() {
             for phi in block.phi_nodes() {
@@ -1241,6 +1642,48 @@ impl SsaPass for OpaquePredicatePass {
         "Detects and removes opaque predicates (always-true/false conditions)"
     }
 
+    fn provides(&self) -> &[PassCapability] {
+        &[PassCapability::SimplifiedPredicates]
+    }
+
+    fn requires(&self) -> &[PassCapability] {
+        &[PassCapability::RestoredControlFlow]
+    }
+
+    /// Runs opaque predicate detection and removal on a single method.
+    ///
+    /// Operates in two phases:
+    ///
+    /// **Collection phase** (read-only scan of all blocks):
+    /// 1. **Branch simplifications**: for each `Branch` terminator, checks phi-constants first,
+    ///    then pattern-matching via [`analyze_branch`](OpaquePredicatePass::analyze_branch), then
+    ///    [`evaluate_with_tracked`](OpaquePredicatePass::evaluate_with_tracked) as a dataflow fallback.
+    /// 2. **Comparison replacements**: comparison instructions (`Ceq`/`Clt`/`Cgt`) that are
+    ///    opaque predicates get replaced with `Const(true)` or `Const(false)`.
+    /// 3. **Comparison simplifications**: algebraic rewrites like `(x-y)==0` to `x==y`.
+    /// 4. **Phi replacements**: phi nodes where all operands are the same constant.
+    ///
+    /// **Apply phase** (mutates the SSA in collected order):
+    /// - Branch terminators become `Jump` to the always-taken target.
+    /// - Comparison instructions become `Const` or `Copy` operations.
+    /// - Phi nodes become `Const` instructions (inserted at block start, phi removed).
+    ///
+    /// # Arguments
+    ///
+    /// * `ssa` - The SSA function to analyze and mutate.
+    /// * `method_token` - Token of the method (for event logging).
+    /// * `ctx` - Compiler context for event recording.
+    /// * `assembly` - Assembly reference for pointer size detection (used by `SsaEvaluator`).
+    ///
+    /// # Returns
+    ///
+    /// `Ok(true)` if structural changes were made (branches simplified, comparisons resolved).
+    /// `Ok(false)` if only phi-only changes occurred or no changes at all. Phi-only changes
+    /// return `false` to avoid triggering an immediate SSA rebuild that would recreate the phi.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if SSA mutation fails (should not occur in practice).
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,

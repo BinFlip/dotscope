@@ -92,6 +92,7 @@ pub(crate) use crypto::{
 };
 #[cfg(feature = "legacy-crypto")]
 pub(crate) use crypto::{compute_md5, compute_sha1};
+pub(crate) use crypto::{derive_key_iv, CryptoParameters};
 
 #[allow(unused_imports)]
 pub(crate) use decompress::{

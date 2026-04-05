@@ -62,7 +62,10 @@ use crate::{
         EmValue, SymbolicValue, TaintSource, ThreadId,
     },
     metadata::{
-        signatures::TypeSignature, tables::StandAloneSignature, token::Token, typesystem::CilFlavor,
+        signatures::TypeSignature,
+        tables::{StandAloneSignature, TableId, TypeSpecRaw},
+        token::Token,
+        typesystem::CilFlavor,
     },
     CilObject, Result,
 };
@@ -202,6 +205,50 @@ impl EmulationController {
     #[must_use]
     pub fn assembly(&self) -> Option<&Arc<CilObject>> {
         self.context.assembly.as_ref()
+    }
+
+    /// Resolves generic type parameters in `ldtoken` tokens.
+    ///
+    /// When `ldtoken !!0` is encountered inside a generic method instantiation
+    /// (e.g., `Get<byte[]>(int)`), the operand is a TypeSpec encoding
+    /// `ELEMENT_TYPE_MVAR` with a parameter index. This method resolves it to
+    /// the actual type argument from the current call frame's MethodSpec.
+    ///
+    /// Returns `Some(resolved_token)` if the token was a generic parameter that
+    /// was successfully resolved, `None` if no resolution was needed or possible.
+    fn resolve_ldtoken_generic(
+        token: Token,
+        thread: &EmulationThread,
+        context: &EmulationContext,
+    ) -> Option<Token> {
+        // Only TypeSpec tokens can encode generic parameters
+        if !token.is_table(TableId::TypeSpec) {
+            return None;
+        }
+
+        // Parse the TypeSpec signature using the existing signature parser
+        let assembly = context.assembly();
+        let typespec_row = assembly
+            .tables()
+            .and_then(|t| t.table::<TypeSpecRaw>())
+            .and_then(|table| table.get(token.row()))?;
+
+        let blob = assembly.blob()?;
+        let parsed = typespec_row.to_owned(blob).ok()?;
+
+        match &parsed.signature.base {
+            TypeSignature::GenericParamMethod(index) => {
+                let frame = thread.current_frame()?;
+                let type_args = frame.method_type_args()?;
+                type_args.get(*index as usize).copied()
+            }
+            TypeSignature::GenericParamType(index) => {
+                let frame = thread.current_frame()?;
+                let type_args = frame.type_type_args()?;
+                type_args.get(*index as usize).copied()
+            }
+            _ => None,
+        }
     }
 
     /// Returns the execution limits.
@@ -386,17 +433,39 @@ impl EmulationController {
         method_token: Token,
         args: Vec<EmValue>,
     ) -> Result<EmulationThread> {
-        // Get method info
-        let is_instance = !context.is_static_method(method_token)?;
-        let local_types = context.get_local_types(method_token)?;
+        // Resolve MethodSpec tokens to their underlying MethodDef for metadata lookup,
+        // while preserving the generic type arguments for ldtoken resolution.
+        let (effective_token, method_type_args) = if method_token.is_table(TableId::MethodSpec) {
+            if let Some(method_spec) = context.get_method_spec(method_token) {
+                let underlying = EmulationContext::resolve_method_spec_to_token(&method_spec);
+                let type_args: Vec<Token> = method_spec
+                    .instantiation
+                    .generic_args
+                    .iter()
+                    .filter_map(|sig| {
+                        context.type_signature_to_token(sig, None, None, &self.generics)
+                    })
+                    .collect();
+                let args_opt = if type_args.is_empty() {
+                    None
+                } else {
+                    Some(type_args)
+                };
+                (underlying.unwrap_or(method_token), args_opt)
+            } else {
+                (method_token, None)
+            }
+        } else {
+            (method_token, None)
+        };
 
-        // Local types are already Vec<CilFlavor>
+        // Get method info using the resolved MethodDef token
+        let is_instance = !context.is_static_method(effective_token)?;
+        let local_types = context.get_local_types(effective_token)?;
         let local_cil_flavors = local_types;
 
-        // Get argument types from method signature
-        let param_types = context.get_parameter_types(method_token)?;
+        let param_types = context.get_parameter_types(effective_token)?;
         let arg_types: Vec<CilFlavor> = if is_instance {
-            // Instance methods have 'this' as first argument
             let mut types = vec![CilFlavor::Object];
             types.extend(param_types);
             types
@@ -404,14 +473,19 @@ impl EmulationController {
             param_types
         };
 
-        // Create the thread with the shared context
         let mut thread = EmulationThread::new(ThreadId::MAIN, Arc::clone(&self.context));
 
-        // Combine args with their types
         let args_with_types: Vec<(EmValue, CilFlavor)> = args.into_iter().zip(arg_types).collect();
 
-        // Start the method - this pushes the initial ThreadCallFrame
-        thread.start_method(method_token, local_cil_flavors, args_with_types, false);
+        // Start the method using the resolved MethodDef token
+        thread.start_method(effective_token, local_cil_flavors, args_with_types, false);
+
+        // Set generic type arguments on the frame so ldtoken !!0 can resolve them
+        if let Some(type_args) = method_type_args {
+            if let Some(frame) = thread.current_frame_mut() {
+                frame.set_method_type_args(type_args);
+            }
+        }
 
         Ok(thread)
     }
@@ -521,24 +595,24 @@ impl EmulationController {
             let instruction =
                 context.get_instruction_at(current_method, interpreter.ip().offset())?;
 
-            // Trace instruction if enabled
-            if self.trace_instructions_enabled() {
+            // Capture pre-execution instruction info for tracing
+            let trace_info = if self.trace_instructions_enabled() {
                 let offset = interpreter.ip().offset();
                 let opcode = if instruction.prefix == 0xFE {
                     u16::from(instruction.prefix) << 8 | u16::from(instruction.opcode)
                 } else {
                     u16::from(instruction.opcode)
                 };
-
-                self.trace(TraceEvent::Instruction {
-                    method: current_method,
+                Some((
                     offset,
                     opcode,
-                    mnemonic: instruction.mnemonic.to_string(),
-                    operand: instruction.operand.as_string(),
-                    stack_depth: thread.stack().depth(),
-                });
-            }
+                    instruction.mnemonic.to_string(),
+                    instruction.operand.as_string(),
+                    thread.stack().depth(),
+                ))
+            } else {
+                None
+            };
 
             // Capture array store info before execution if tracing
             let array_store_info = if self.trace_array_ops_enabled() {
@@ -572,6 +646,33 @@ impl EmulationController {
                     }
                 }
             };
+
+            // Emit instruction trace AFTER execution (captures post-execution stack values)
+            if let Some((offset, opcode, mnemonic, operand, pre_depth)) = trace_info {
+                let stack_values = if self.context.config.tracing.trace_stack_values {
+                    let depth = thread.stack().depth();
+                    let count = depth.min(3);
+                    let mut vals = Vec::with_capacity(count);
+                    for i in 0..count {
+                        if let Ok(v) = thread.stack().peek_at(i) {
+                            vals.push(format!("{v:?}"));
+                        }
+                    }
+                    Some(vals)
+                } else {
+                    None
+                };
+
+                self.trace(TraceEvent::Instruction {
+                    method: current_method,
+                    offset,
+                    opcode,
+                    mnemonic,
+                    operand,
+                    stack_depth: pre_depth,
+                    stack_values,
+                });
+            }
 
             // Check condition before handling result
             if condition(&step_result, thread) {
@@ -863,7 +964,12 @@ impl EmulationController {
                 }
 
                 StepResult::LoadToken { token } => {
-                    thread.push(EmValue::NativeInt(i64::from(token.value())))?;
+                    // Resolve generic type parameters (!!0, !!1, etc.) in ldtoken.
+                    // TypeSpec tokens encoding ELEMENT_TYPE_MVAR need to be resolved
+                    // to the actual type argument from the current MethodSpec.
+                    let resolved =
+                        Self::resolve_ldtoken_generic(token, thread, context).unwrap_or(token);
+                    thread.push(EmValue::NativeInt(i64::from(resolved.value())))?;
                     interpreter.ip_mut().advance_current();
                     LoopAction::Continue
                 }

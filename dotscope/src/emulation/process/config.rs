@@ -420,6 +420,16 @@ pub struct TracingConfig {
     /// Records when method stubs are called and their return values.
     pub trace_stubs: bool,
 
+    /// Include stack values in instruction trace events.
+    ///
+    /// When enabled together with `trace_instructions`, each instruction event
+    /// includes the top stack values AFTER execution. This reveals the actual
+    /// computed values at each step, essential for debugging arithmetic
+    /// divergences between the emulator and the .NET runtime.
+    ///
+    /// Extreme overhead — use with targeted method filters.
+    pub trace_stack_values: bool,
+
     /// Log array element access operations.
     ///
     /// Records stelem/ldelem operations with index and value information.
@@ -783,6 +793,7 @@ impl TracingConfig {
             trace_heap: true,
             trace_exceptions: true,
             trace_stubs: true,
+            trace_stack_values: true,
             trace_array_ops: true,
             max_trace_entries: 0, // Unlimited for file-based
             output_path: Some(path.into()),
@@ -803,6 +814,7 @@ impl TracingConfig {
             trace_heap: false,
             trace_exceptions: true,
             trace_stubs: true,
+            trace_stack_values: false,
             trace_array_ops: false,
             max_trace_entries: 0,
             output_path: Some(path.into()),
@@ -855,6 +867,7 @@ impl Default for TracingConfig {
             trace_heap: false,
             trace_exceptions: true,
             trace_stubs: false,
+            trace_stack_values: false,
             trace_array_ops: false,
             max_trace_entries: 10_000,
             output_path: None,

@@ -8,8 +8,6 @@
 //! The [`FE_PREFIX`] constant holds the shared first byte `0xFE`.
 #![allow(missing_docs)]
 
-// ── Single-byte opcodes (0x00 – 0xE0) ──────────────────────────────────────
-
 // Misc
 pub const NOP: u8 = 0x00;
 pub const BREAK: u8 = 0x01;
@@ -263,7 +261,7 @@ pub const LEAVE_S: u8 = 0xDE;
 pub const STIND_I: u8 = 0xDF;
 pub const CONV_U: u8 = 0xE0;
 
-// ── Two-byte opcodes (0xFE prefix) ─────────────────────────────────────────
+// Two-byte opcodes (0xFE prefix)
 //
 // The first byte is always FE_PREFIX; the constants below are the second byte.
 

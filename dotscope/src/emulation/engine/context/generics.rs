@@ -4,7 +4,10 @@
 //! generic type/method parameters in method signatures.
 
 use crate::{
-    emulation::engine::{context::EmulationContext, generics::GenericRegistry},
+    emulation::{
+        engine::{context::EmulationContext, generics::GenericRegistry},
+        tokens,
+    },
     metadata::{
         signatures::{SignatureMethod, SignatureParameter, TypeSignature},
         token::Token,
@@ -86,9 +89,24 @@ impl EmulationContext {
                 Some(generics.get_or_create_type(base_token, arg_tokens))
             }
 
-            // SzArray (T[]) → use element type token directly for now
+            // SzArray (T[]) → encode as an SzArray primitive token that preserves
+            // the array-ness. For primitive element types (byte, int, etc.), the token
+            // is SZARRAY_PRIMITIVE_BASE | element_kind_id. This allows GetTypeFromHandle
+            // and GetElementType to correctly handle typeof(byte[]).GetElementType()→byte.
             TypeSignature::SzArray(sz_array) => {
-                self.type_signature_to_token(&sz_array.base, type_args, method_args, generics)
+                let elem_token =
+                    self.type_signature_to_token(&sz_array.base, type_args, method_args, generics)?;
+                // For primitive element types (0xF000_00xx), encode as SzArray primitive
+                let elem_value = elem_token.value();
+                if elem_value & 0xFFFF_FF00 == 0xF000_0000 {
+                    let kind_id = elem_value & 0xFF;
+                    Some(Token::new(tokens::ranges::SZARRAY_PRIMITIVE_BASE | kind_id))
+                } else {
+                    // Non-primitive array types (e.g., object[]) — register in
+                    // GenericRegistry with a well-known sentinel base
+                    let sentinel = Token::new(tokens::ranges::SZARRAY_PRIMITIVE_BASE);
+                    Some(generics.get_or_create_type(sentinel, vec![elem_token]))
+                }
             }
 
             // ByRef — unwrap and return inner token
