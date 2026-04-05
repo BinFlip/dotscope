@@ -7,19 +7,23 @@
 use std::{
     collections::HashSet,
     ops::Deref,
-    sync::{Arc, OnceLock},
+    sync::{atomic::AtomicBool, Arc, OnceLock},
 };
 
 use dashmap::DashSet;
 
 use crate::{
-    compiler::CompilerContext,
+    compiler::{CompilerContext, ProcessingState},
     deobfuscation::{
-        config::EngineConfig, decryptors::DecryptorContext, statemachine::StateMachineProvider,
+        config::EngineConfig,
+        decryptors::DecryptorContext,
+        statemachine::StateMachineProvider,
+        workqueue::{DrainedWorkItems, WorkItem, WorkQueue},
         EmulationTemplatePool,
     },
     emulation::{EmValue, Hook},
     metadata::token::Token,
+    Result,
 };
 
 /// A named factory that creates a new [`Hook`] instance.
@@ -98,13 +102,13 @@ pub struct AnalysisContext {
     ///
     /// Prevents double-initialization when detection re-scan discovers a technique
     /// that was already initialized in an earlier round. Keyed by technique ID.
-    pub initialized_techniques: DashSet<String>,
+    pub initialized_techniques: DashSet<&'static str>,
 
     /// Tracks which techniques have had their SSA passes created and added to the scheduler.
     ///
     /// Prevents duplicate pass instances when the detection loop re-discovers techniques
     /// that were already set up in earlier rounds. Keyed by technique ID.
-    pub passes_created: DashSet<String>,
+    pub passes_created: DashSet<&'static str>,
 
     /// Shared emulation template pool for all passes needing emulation.
     ///
@@ -112,6 +116,16 @@ pub struct AnalysisContext {
     /// access it through [`template_pool()`](Self::template_pool) to get O(1) CoW forks
     /// instead of independently creating and warming up emulation processes.
     pub template_pool: OnceLock<Arc<EmulationTemplatePool>>,
+
+    /// Work item queue for the unified work queue loop.
+    pub work_queue: WorkQueue,
+
+    /// Dirty tracking state for fixpoint iteration.
+    pub processing_state: ProcessingState,
+
+    /// Set by the engine when a newly-detected technique requires a byte transform.
+    /// Checked after SSA fixpoint returns to determine if the pipeline should loop.
+    pub needs_byte_transform: AtomicBool,
 }
 
 impl Deref for AnalysisContext {
@@ -142,6 +156,9 @@ impl AnalysisContext {
             initialized_techniques: DashSet::new(),
             passes_created: DashSet::new(),
             template_pool: OnceLock::new(),
+            work_queue: WorkQueue::new(),
+            processing_state: ProcessingState::new(),
+            needs_byte_transform: AtomicBool::new(false),
         }
     }
 
@@ -194,7 +211,7 @@ impl AnalysisContext {
     /// Returns the emulation max instructions limit from config.
     #[must_use]
     pub fn emulation_max_instructions(&self) -> u64 {
-        self.config.emulation_max_instructions
+        self.config.emulation.max_instructions
     }
 
     /// Registers a method to be executed during emulation template warmup.
@@ -273,6 +290,16 @@ impl AnalysisContext {
             methods.extend(provider.methods());
         }
         methods
+    }
+
+    /// Submits a single work item to the work queue.
+    pub fn submit_work_item(&self, item: WorkItem) -> Result<()> {
+        self.work_queue.submit(item)
+    }
+
+    /// Drains all pending work items from the work queue.
+    pub fn drain_work_items(&self) -> DrainedWorkItems {
+        self.work_queue.drain()
     }
 }
 

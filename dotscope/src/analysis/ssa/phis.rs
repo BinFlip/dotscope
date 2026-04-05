@@ -26,14 +26,14 @@
 //! }
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     analysis::ssa::{
         ConstEvaluator, ConstValue, PhiNode, PhiOperand, SsaBlock, SsaFunction, SsaOp, SsaVarId,
         VariableOrigin,
     },
-    utils::graph::NodeId,
+    utils::{graph::NodeId, BitSet},
 };
 
 /// Analyzes PHI nodes for various patterns.
@@ -97,7 +97,7 @@ impl<'a> PhiAnalyzer<'a> {
         let result = phi.result();
 
         // Collect non-self-referential operands
-        let unique_sources: HashSet<SsaVarId> = phi
+        let unique_sources: BTreeSet<SsaVarId> = phi
             .operands()
             .iter()
             .map(PhiOperand::value)
@@ -198,7 +198,7 @@ impl<'a> PhiAnalyzer<'a> {
     #[must_use]
     pub fn find_all_trivial(
         &self,
-        reachable: &HashSet<usize>,
+        reachable: &BTreeSet<usize>,
     ) -> Vec<(usize, usize, Option<SsaVarId>)> {
         let mut trivial = Vec::new();
 
@@ -240,8 +240,8 @@ impl<'a> PhiAnalyzer<'a> {
     /// // Returns: {v1 → v0, v2 → v0, v3 → v0}
     /// ```
     #[must_use]
-    pub fn collect_all_copies(&self) -> HashMap<SsaVarId, SsaVarId> {
-        let mut copies = HashMap::new();
+    pub fn collect_all_copies(&self) -> BTreeMap<SsaVarId, SsaVarId> {
+        let mut copies = BTreeMap::new();
 
         for block in self.ssa.blocks() {
             // Collect explicit copy instructions
@@ -365,10 +365,10 @@ pub(crate) type LeaveTargetFn<'a> = dyn Fn(usize, &[SsaBlock]) -> Option<usize> 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn place_pruned_phis(
     blocks: &mut [SsaBlock],
-    defs: &HashMap<u32, HashSet<usize>>,
-    live_in: &HashMap<u32, HashSet<usize>>,
-    dominance_frontiers: &[HashSet<NodeId>],
-    reachable: Option<&HashSet<usize>>,
+    defs: &BTreeMap<u32, BitSet>,
+    live_in: &BTreeMap<u32, BitSet>,
+    dominance_frontiers: &[BitSet],
+    reachable: Option<&BitSet>,
     group_filter: &dyn Fn(u32) -> bool,
     group_to_origin: &dyn Fn(u32) -> VariableOrigin,
     leave_target_fn: Option<&LeaveTargetFn<'_>>,
@@ -382,15 +382,14 @@ pub(crate) fn place_pruned_phis(
         }
 
         // Compute iterated dominance frontier
-        let mut phi_blocks: HashSet<usize> = HashSet::new();
-        let mut worklist: Vec<usize> = def_blocks.iter().copied().collect();
+        let mut phi_blocks = BitSet::new(block_count);
+        let mut worklist: Vec<usize> = def_blocks.iter().collect();
 
         while let Some(block_idx) = worklist.pop() {
             let node_id = NodeId::new(block_idx);
             if node_id.index() < dominance_frontiers.len() {
-                for &frontier_node in &dominance_frontiers[node_id.index()] {
-                    let frontier_idx = frontier_node.index();
-                    let is_reachable = reachable.is_none_or(|r| r.contains(&frontier_idx));
+                for frontier_idx in dominance_frontiers[node_id.index()].iter() {
+                    let is_reachable = reachable.is_none_or(|r| r.contains(frontier_idx));
                     if frontier_idx < block_count && is_reachable && phi_blocks.insert(frontier_idx)
                     {
                         worklist.push(frontier_idx);
@@ -401,7 +400,7 @@ pub(crate) fn place_pruned_phis(
             // For exception handler blocks, use Leave targets as phi placement points
             if let Some(leave_fn) = leave_target_fn {
                 if let Some(target) = leave_fn(block_idx, blocks) {
-                    let is_reachable = reachable.is_none_or(|r| r.contains(&target));
+                    let is_reachable = reachable.is_none_or(|r| r.contains(target));
                     if target < block_count && is_reachable && phi_blocks.insert(target) {
                         worklist.push(target);
                     }
@@ -414,9 +413,9 @@ pub(crate) fn place_pruned_phis(
         // converter for Stack origins that don't have liveness tracking).
         let group_live_in = live_in.get(&group);
 
-        for &phi_block_idx in &phi_blocks {
+        for phi_block_idx in phi_blocks.iter() {
             if let Some(live_set) = group_live_in {
-                if !live_set.contains(&phi_block_idx) {
+                if !live_set.contains(phi_block_idx) {
                     continue;
                 }
             }
@@ -437,7 +436,7 @@ pub(crate) fn place_pruned_phis(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::BTreeSet;
 
     use crate::{
         analysis::ssa::{
@@ -818,7 +817,7 @@ mod tests {
         ssa.add_block(block1);
 
         let analyzer = PhiAnalyzer::new(&ssa);
-        let reachable: HashSet<usize> = [0, 1].iter().copied().collect();
+        let reachable: BTreeSet<usize> = [0, 1].iter().copied().collect();
 
         let trivial = analyzer.find_all_trivial(&reachable);
 

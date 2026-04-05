@@ -3,8 +3,7 @@
 //! Contains helper methods migrated from file source files
 //! for creating and verifying test data related to file operations.
 
-use crate::file::File;
-use crate::DataDirectoryType;
+use crate::{file::File, DataDirectoryType};
 use goblin::pe::header::DOS_MAGIC;
 
 /// Verifies the correctness of a loaded [`crate::file::File`] instance.

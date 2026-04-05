@@ -3,8 +3,10 @@
 //! This module handles execution of .NET assemblies using the detected runtime
 //! from TestCapabilities.
 
-use crate::prelude::*;
-use crate::test::mono::capabilities::{Runtime, TestCapabilities};
+use crate::{
+    prelude::*,
+    test::mono::capabilities::{Runtime, TestCapabilities},
+};
 use std::path::Path;
 use std::process::{Command, Output};
 use std::time::Duration;

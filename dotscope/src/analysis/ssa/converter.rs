@@ -34,7 +34,7 @@
 //! }
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
 
 use crate::{
     analysis::{
@@ -53,7 +53,10 @@ use crate::{
         token::Token,
         typesystem::CilTypeReference,
     },
-    utils::graph::{algorithms::DominatorTree, NodeId},
+    utils::{
+        graph::{algorithms::DominatorTree, NodeId},
+        BitSet,
+    },
     CilObject, Error, Result,
 };
 
@@ -88,27 +91,27 @@ pub struct SsaConverter<'a, 'cfg> {
     /// The SSA function being built.
     function: SsaFunction,
 
-    /// Definitions of each variable (by group ID) -> list of defining blocks.
+    /// Definitions of each variable (by group ID) -> set of defining blocks.
     /// Used for phi placement.
-    defs: HashMap<u32, HashSet<usize>>,
+    defs: BTreeMap<u32, BitSet>,
 
-    /// Uses of each variable (by group ID) -> list of using blocks.
+    /// Uses of each variable (by group ID) -> set of using blocks.
     /// Used for pruned SSA phi placement (liveness filtering).
-    uses: HashMap<u32, HashSet<usize>>,
+    uses: BTreeMap<u32, BitSet>,
 
     /// Current version stack for each variable during renaming.
     /// Maps group ID -> stack of (version, `SsaVarId`).
-    version_stacks: HashMap<u32, Vec<(u32, SsaVarId)>>,
+    version_stacks: BTreeMap<u32, Vec<(u32, SsaVarId)>>,
 
     /// Next version number for each group ID.
-    next_version: HashMap<u32, u32>,
+    next_version: BTreeMap<u32, u32>,
 
     /// Variables (by group ID) that have had their address taken.
-    address_taken: HashSet<u32>,
+    address_taken: BitSet,
 
     /// Maps group ID -> VariableOrigin for the group.
     /// Used to look up the origin when creating variables from a group.
-    group_origins: HashMap<u32, VariableOrigin>,
+    group_origins: BTreeMap<u32, VariableOrigin>,
 
     /// Maps simulation variable IDs to their load origin (for ldloc/ldarg).
     ///
@@ -116,32 +119,43 @@ pub struct SsaConverter<'a, 'cfg> {
     /// During SSA rename, this allows us to resolve the variable to the
     /// correct reaching definition (phi result) instead of the stale
     /// simulation variable from a non-dominating block.
-    load_origins: HashMap<SsaVarId, VariableOrigin>,
+    load_origins: BTreeMap<SsaVarId, VariableOrigin>,
 
     /// Stack state at the exit of each block (with source tracking).
     ///
     /// Maps block index -> list of StackSlot values containing both the variable ID
     /// and source information (Defined vs Inherited). This is used during phi operand
     /// filling to detect self-referential operands and trace values properly.
-    exit_stacks: HashMap<usize, Vec<StackSlot>>,
+    exit_stacks: BTreeMap<usize, Vec<StackSlot>>,
 
     /// Stack state at the entry of each block (after reset_stack_to_depth).
     ///
     /// Maps block index -> list of placeholder variables created for block entry.
     /// This is needed to map placeholder variables to PHI results during rename.
-    entry_stacks: HashMap<usize, Vec<SsaVarId>>,
+    entry_stacks: BTreeMap<usize, Vec<SsaVarId>>,
 
     /// Indirect stores discovered during simulation (initobj/stind via ldloca/ldarga).
     ///
     /// Maps (block_idx, instr_idx) -> VariableOrigin for indirect stores.
     /// Used during rename phase to track definitions through pointers.
-    indirect_stores: HashMap<(usize, usize), VariableOrigin>,
+    indirect_stores: BTreeMap<(usize, usize), VariableOrigin>,
 
     /// Maps simulation variable IDs to their stack depth positions.
     ///
     /// Used during rename to assign correct stack-derived origins for temporary
     /// variables (those not covered by `infer_origin`, e.g. add, box, call results).
-    var_stack_positions: HashMap<SsaVarId, usize>,
+    var_stack_positions: BTreeMap<SsaVarId, usize>,
+
+    /// Version stack snapshots at try_start_block entries.
+    ///
+    /// Saved during the main rename pass so that handler blocks can inherit
+    /// the reaching definitions from their try scope. Without this, handler
+    /// blocks get renamed with empty version stacks and resolve locals to
+    /// their initial (null/0) values instead of the values stored by the
+    /// try setup code.
+    ///
+    /// Maps handler_start_block → snapshot of current_def for each group.
+    handler_scope_defs: BTreeMap<usize, BTreeMap<u32, SsaVarId>>,
 
     /// Type provider for assigning types during SSA construction.
     ///
@@ -276,6 +290,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 ConstValue::F32(_) => SsaType::F32,
                 ConstValue::F64(_) => SsaType::F64,
                 ConstValue::String(_) | ConstValue::DecryptedString(_) => SsaType::String,
+                ConstValue::DecryptedArray { .. } => SsaType::Object,
                 ConstValue::Null => SsaType::Null,
                 ConstValue::True | ConstValue::False => SsaType::Bool,
                 // Runtime handle types (ldtoken results)
@@ -493,7 +508,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         block_idx: usize,
         slot: usize,
         placeholder: SsaVarId,
-        rename_map: &mut HashMap<SsaVarId, SsaVarId>,
+        rename_map: &mut BTreeMap<SsaVarId, SsaVarId>,
     ) {
         let origin = self.stack_slot_origin(slot);
 
@@ -573,17 +588,18 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             num_args,
             num_locals,
             function: SsaFunction::with_capacity(num_args, num_locals, block_count, 0),
-            defs: HashMap::new(),
-            uses: HashMap::new(),
-            version_stacks: HashMap::new(),
-            next_version: HashMap::new(),
-            address_taken: HashSet::new(),
-            group_origins: HashMap::new(),
-            load_origins: HashMap::new(),
-            exit_stacks: HashMap::new(),
-            entry_stacks: HashMap::new(),
-            indirect_stores: HashMap::new(),
-            var_stack_positions: HashMap::new(),
+            defs: BTreeMap::new(),
+            uses: BTreeMap::new(),
+            version_stacks: BTreeMap::new(),
+            next_version: BTreeMap::new(),
+            address_taken: BitSet::new(num_args + num_locals),
+            group_origins: BTreeMap::new(),
+            load_origins: BTreeMap::new(),
+            exit_stacks: BTreeMap::new(),
+            entry_stacks: BTreeMap::new(),
+            indirect_stores: BTreeMap::new(),
+            var_stack_positions: BTreeMap::new(),
+            handler_scope_defs: BTreeMap::new(),
             type_provider,
         };
 
@@ -624,11 +640,15 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
         // Collect exception handler entry blocks that may not be in normal RPO
         // (handler blocks are only reachable via exception flow, not normal control flow)
-        let rpo_set: HashSet<_> = rpo.iter().map(|n| n.index()).collect();
+        let block_count = self.cfg.block_count();
+        let mut rpo_set = BitSet::new(block_count);
+        for n in &rpo {
+            rpo_set.insert(n.index());
+        }
         let mut handler_entry_blocks: Vec<usize> = Vec::new();
         for node_id in self.cfg.node_ids() {
             if let Some(block) = self.cfg.block(node_id) {
-                if block.handler_entry.is_some() && !rpo_set.contains(&node_id.index()) {
+                if block.handler_entry.is_some() && !rpo_set.contains(node_id.index()) {
                     handler_entry_blocks.push(node_id.index());
                 }
             }
@@ -638,7 +658,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         // This is important because handlers may have internal control flow
         // (e.g., branches within the handler) that creates additional blocks
         // which are not handler entries but are only reachable via exception flow.
-        let mut handler_reachable: HashSet<usize> = HashSet::new();
+        let mut handler_reachable = BitSet::new(block_count);
         let mut worklist: Vec<usize> = handler_entry_blocks.clone();
         while let Some(block_idx) = worklist.pop() {
             if !handler_reachable.insert(block_idx) {
@@ -647,7 +667,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             // Add all successors that aren't in normal RPO
             if let Some(block) = self.cfg.block(NodeId::new(block_idx)) {
                 for &succ in &block.successors {
-                    if !rpo_set.contains(&succ) && !handler_reachable.contains(&succ) {
+                    if !rpo_set.contains(succ) && !handler_reachable.contains(succ) {
                         worklist.push(succ);
                     }
                 }
@@ -655,10 +675,11 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         }
 
         // Convert handler reachable set to sorted vector for deterministic iteration
-        let mut handler_blocks: Vec<usize> = handler_reachable.into_iter().collect();
+        let mut handler_blocks: Vec<usize> = handler_reachable.iter().collect();
         handler_blocks.sort_unstable();
 
-        for i in 0..self.cfg.block_count() {
+        let block_count = self.cfg.block_count();
+        for i in 0..block_count {
             self.function.add_block(SsaBlock::new(i));
         }
 
@@ -667,13 +688,19 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             let group = self.arg_group(idx);
             self.group_origins
                 .insert(group, VariableOrigin::Argument(idx));
-            self.defs.entry(group).or_default().insert(0);
+            self.defs
+                .entry(group)
+                .or_insert_with(|| BitSet::new(block_count))
+                .insert(0);
         }
         for i in 0..self.num_locals {
             let idx = Self::idx_to_u16(i)?;
             let group = self.local_group(idx);
             self.group_origins.insert(group, VariableOrigin::Local(idx));
-            self.defs.entry(group).or_default().insert(0);
+            self.defs
+                .entry(group)
+                .or_insert_with(|| BitSet::new(block_count))
+                .insert(0);
         }
 
         // First pass: compute stack depths at block exits (including all handler-reachable blocks)
@@ -703,11 +730,19 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
         // Store load_origins for use during rename phase.
         // This maps simulation variables from ldloc/ldarg to their origins.
-        self.load_origins = simulator.load_origins().clone();
+        self.load_origins = simulator
+            .load_origins()
+            .iter()
+            .map(|(&k, &v)| (k, v))
+            .collect();
 
         // Store stack positions for use during rename phase.
         // Maps simulation variable IDs to their stack depth at allocation time.
-        self.var_stack_positions = simulator.var_stack_positions().clone();
+        self.var_stack_positions = simulator
+            .var_stack_positions()
+            .iter()
+            .map(|(&k, &v)| (k, v))
+            .collect();
 
         // num_locals stays at the original declared count — stack temps use
         // Phi origin and are grouped by rename_groups, not by Local index.
@@ -730,11 +765,11 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         &self,
         rpo: &[NodeId],
         assembly: Option<&CilObject>,
-    ) -> Result<HashMap<usize, usize>> {
+    ) -> Result<BTreeMap<usize, usize>> {
         // Limit iterations to prevent infinite loops in malformed CIL.
         const MAX_ITERATIONS: usize = 10;
 
-        let mut exit_depths: HashMap<usize, usize> = HashMap::new();
+        let mut exit_depths: BTreeMap<usize, usize> = BTreeMap::new();
 
         // Iterate until fixed-point to correctly handle back edges.
         // In the first iteration, back-edge predecessors won't be in exit_depths.
@@ -846,7 +881,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
     /// Exception handler entry blocks have special handling:
     /// - Catch/filter handlers: stack depth = 1 (exception object on stack)
     /// - Finally/fault handlers: stack depth = 0 (empty stack)
-    fn compute_entry_depth(&self, block_idx: usize, exit_depths: &HashMap<usize, usize>) -> usize {
+    fn compute_entry_depth(&self, block_idx: usize, exit_depths: &BTreeMap<usize, usize>) -> usize {
         // Entry block always starts with empty stack
         if block_idx == self.cfg.entry().index() {
             return 0;
@@ -889,6 +924,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         simulator: &mut StackSimulator,
         assembly: Option<&CilObject>,
     ) -> Result<()> {
+        let block_count = self.cfg.block_count();
         let node_id = NodeId::new(block_idx);
         let cfg_block = self
             .cfg
@@ -950,7 +986,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     VariableOrigin::Local(idx) => self.local_group(idx),
                     VariableOrigin::Phi => continue,
                 };
-                self.defs.entry(group).or_default().insert(block_idx);
+                self.defs
+                    .entry(group)
+                    .or_insert_with(|| BitSet::new(block_count))
+                    .insert(block_idx);
             }
 
             // Record loads (ldloc/ldarg) as uses for pruned SSA liveness
@@ -960,7 +999,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     VariableOrigin::Local(idx) => self.local_group(idx),
                     VariableOrigin::Phi => continue,
                 };
-                self.uses.entry(use_group).or_default().insert(block_idx);
+                self.uses
+                    .entry(use_group)
+                    .or_insert_with(|| BitSet::new(block_count))
+                    .insert(block_idx);
             }
 
             // Record indirect stores (initobj/stind via ldloca/ldarga) as definitions
@@ -972,7 +1014,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     VariableOrigin::Local(idx) => self.local_group(idx),
                     VariableOrigin::Phi => continue,
                 };
-                self.defs.entry(store_group).or_default().insert(block_idx);
+                self.defs
+                    .entry(store_group)
+                    .or_insert_with(|| BitSet::new(block_count))
+                    .insert(block_idx);
                 // Also store for rename phase
                 self.indirect_stores
                     .insert((block_idx, instr_idx), store_target);
@@ -1000,13 +1045,13 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         for i in 0..self.num_args {
             if simulator.is_arg_address_taken(i) {
                 let idx = Self::idx_to_u16(i)?;
-                self.address_taken.insert(self.arg_group(idx));
+                self.address_taken.insert(self.arg_group(idx) as usize);
             }
         }
         for i in 0..self.num_locals {
             if simulator.is_local_address_taken(i) {
                 let idx = Self::idx_to_u16(i)?;
-                self.address_taken.insert(self.local_group(idx));
+                self.address_taken.insert(self.local_group(idx) as usize);
             }
         }
 
@@ -1477,7 +1522,13 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 .collect();
 
             // Find slots that have DEFINED values on at least one predecessor
-            let mut slots_with_data: HashSet<usize> = HashSet::new();
+            let max_stack_len = pred_stacks
+                .iter()
+                .filter_map(|s| s.as_ref().map(|v| v.len()))
+                .chain(self.entry_stacks.get(&block_idx).map(|e| e.len()))
+                .max()
+                .unwrap_or(0);
+            let mut slots_with_data = BitSet::new(max_stack_len);
             for stack in pred_stacks.iter().flatten() {
                 for (slot, s) in stack.iter().enumerate() {
                     if matches!(s.source, StackSlotSource::Defined { .. }) {
@@ -1494,7 +1545,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             }
 
             // Create PHI nodes for slots with actual data flow
-            for slot in slots_with_data {
+            for slot in slots_with_data.iter() {
                 // Check if ALL predecessors carry values from the same Local/Arg
                 // origin for this slot. If so, the existing Local/Arg PHI handles
                 // the merge and a redundant Stack PHI is not needed.
@@ -1601,7 +1652,18 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         // no longer inflated, stack groups need explicit v0 entries so that
         // phi operands from predecessors without definitions can resolve.
         // Scan placed phi nodes to find which stack groups exist.
-        let mut stack_groups_needing_v0: HashSet<u32> = HashSet::new();
+        // Compute max group ID across all phi nodes to size the BitSet
+        let max_phi_group = self
+            .function
+            .blocks()
+            .iter()
+            .flat_map(|b| b.phi_nodes())
+            .map(|phi| self.function.rename_group(phi.result()))
+            .filter(|&g| g != u32::MAX)
+            .max()
+            .unwrap_or(0) as usize;
+        let group_capacity = max_phi_group + 1;
+        let mut stack_groups_needing_v0 = BitSet::new(group_capacity);
         for block in self.function.blocks() {
             for phi in block.phi_nodes() {
                 let group = self.function.rename_group(phi.result());
@@ -1609,11 +1671,12 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     && self.is_stack_group(group)
                     && !self.version_stacks.contains_key(&group)
                 {
-                    stack_groups_needing_v0.insert(group);
+                    stack_groups_needing_v0.insert(group as usize);
                 }
             }
         }
-        for group in stack_groups_needing_v0 {
+        for group_idx in stack_groups_needing_v0.iter() {
+            let group = group_idx as u32;
             let origin = VariableOrigin::Phi;
             let var_type = SsaType::Unknown;
             let initial_var = self
@@ -1626,7 +1689,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
         // Start renaming from entry block
         let dom_tree = self.cfg.dominators();
-        let mut rename_map = HashMap::new();
+        let mut rename_map = BTreeMap::new();
         self.rename_block(self.cfg.entry().index(), dom_tree, &mut rename_map)?;
 
         // Also rename exception handler blocks that aren't reachable via dominator tree.
@@ -1654,7 +1717,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
         // Process all blocks reachable from handler entries that weren't reached
         // from the main entry point. Use BFS to ensure we visit all reachable blocks.
-        let mut visited: HashSet<usize> = HashSet::new();
+        let mut visited = BitSet::new(self.cfg.block_count());
 
         // Mark blocks reachable from main entry as visited (they were already processed)
         let mut main_reachable: Vec<usize> = vec![entry_idx];
@@ -1667,12 +1730,27 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             }
         }
 
-        // Now process handler regions - blocks that aren't reachable from main entry
+        // Now process handler regions - blocks that aren't reachable from main entry.
+        // Before renaming each handler, push the try-scope version stacks so that
+        // handler blocks resolve locals to the correct reaching definitions.
         for handler_entry in handler_entries {
+            // Push try-scope version stacks for this handler entry
+            let scope_defs = self.handler_scope_defs.get(&handler_entry).cloned();
+            let mut scope_pushed: BTreeMap<u32, usize> = BTreeMap::new();
+            if let Some(ref defs) = scope_defs {
+                for (&group, &var_id) in defs {
+                    self.version_stacks
+                        .entry(group)
+                        .or_default()
+                        .push((0, var_id));
+                    *scope_pushed.entry(group).or_insert(0) += 1;
+                }
+            }
+
             // BFS through all blocks reachable from this handler
             let mut worklist: Vec<usize> = vec![handler_entry];
             while let Some(block_idx) = worklist.pop() {
-                if visited.contains(&block_idx) {
+                if visited.contains(block_idx) {
                     continue;
                 }
                 visited.insert(block_idx);
@@ -1682,8 +1760,17 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
                 // Add successors to worklist
                 for succ_id in self.cfg.successors(NodeId::new(block_idx)) {
-                    if !visited.contains(&succ_id.index()) {
+                    if !visited.contains(succ_id.index()) {
                         worklist.push(succ_id.index());
+                    }
+                }
+            }
+
+            // Pop the try-scope definitions
+            for (group, count) in scope_pushed {
+                if let Some(stack) = self.version_stacks.get_mut(&group) {
+                    for _ in 0..count {
+                        stack.pop();
                     }
                 }
             }
@@ -1800,7 +1887,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         // All variables in the same rename group represent the same logical value
         // and should share the same type. Find the known type per group, then apply.
         let var_count = self.function.variables().len();
-        let mut group_types: HashMap<u32, SsaType> = HashMap::new();
+        let mut group_types: BTreeMap<u32, SsaType> = BTreeMap::new();
 
         // Collect known types per group
         for var_idx in 0..var_count {
@@ -1854,7 +1941,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             }
 
             // Build old→new index remapping for non-Nop instructions
-            let mut index_remap: HashMap<usize, usize> = HashMap::new();
+            let mut index_remap: BTreeMap<usize, usize> = BTreeMap::new();
             let mut new_idx = 0usize;
             for (old_idx, instr) in instructions.iter().enumerate() {
                 if !matches!(instr.op(), SsaOp::Nop) {
@@ -1951,7 +2038,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         slot: u32,
         phi_result: SsaVarId,
         exit_stack: Option<&Vec<StackSlot>>,
-        rename_map: &HashMap<SsaVarId, SsaVarId>,
+        rename_map: &BTreeMap<SsaVarId, SsaVarId>,
     ) -> SsaVarId {
         let origin = self.stack_slot_origin(slot as usize);
         let group = self.stack_group(slot as usize);
@@ -2034,7 +2121,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         &mut self,
         stack_var: SsaVarId,
         origin: VariableOrigin,
-        rename_map: &HashMap<SsaVarId, SsaVarId>,
+        rename_map: &BTreeMap<SsaVarId, SsaVarId>,
     ) -> SsaVarId {
         if let Some(&already_renamed) = rename_map.get(&stack_var) {
             self.ensure_or_create(already_renamed, origin)
@@ -2057,7 +2144,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
     fn resolve_use(
         &mut self,
         use_var: SsaVarId,
-        rename_map: &HashMap<SsaVarId, SsaVarId>,
+        rename_map: &BTreeMap<SsaVarId, SsaVarId>,
     ) -> SsaVarId {
         if let Some(&mapped) = rename_map.get(&use_var) {
             self.resolve_mapped_use(mapped)
@@ -2165,7 +2252,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         slot: usize,
         origin: VariableOrigin,
         idom_exit_stack: &Option<Vec<StackSlot>>,
-        rename_map: &HashMap<SsaVarId, SsaVarId>,
+        rename_map: &BTreeMap<SsaVarId, SsaVarId>,
     ) -> Option<SsaVarId> {
         // Try direct predecessors first (most accurate for stack values)
         for pred_id in self.cfg.predecessors(NodeId::new(block_idx)) {
@@ -2199,12 +2286,12 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         &mut self,
         entry_block_idx: usize,
         dom_tree: &DominatorTree,
-        rename_map: &mut HashMap<SsaVarId, SsaVarId>,
+        rename_map: &mut BTreeMap<SsaVarId, SsaVarId>,
     ) -> Result<()> {
         // Work stack: Enter processes a block, Exit pops its version stack entries
         enum RenameAction {
             Enter(usize),
-            Exit(HashMap<u32, usize>),
+            Exit(BTreeMap<u32, usize>),
         }
 
         let mut work_stack = vec![RenameAction::Enter(entry_block_idx)];
@@ -2249,9 +2336,32 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
         &mut self,
         block_idx: usize,
         dom_tree: &DominatorTree,
-        rename_map: &mut HashMap<SsaVarId, SsaVarId>,
-    ) -> Result<HashMap<u32, usize>> {
-        let mut pushed_counts: HashMap<u32, usize> = HashMap::new();
+        rename_map: &mut BTreeMap<SsaVarId, SsaVarId>,
+    ) -> Result<BTreeMap<u32, usize>> {
+        // Save version stack snapshot for exception handler blocks.
+        // Handler blocks are renamed separately (they're not in the dominator
+        // tree), so they need the version stacks from the try scope to correctly
+        // resolve locals. We save the snapshot for each handler entry that this
+        // block can reach via exception dispatch.
+        //
+        // Last block wins: each try-body block overwrites the previous snapshot.
+        // The dominator tree traversal processes deeper blocks last, so the
+        // deepest reaching definitions (e.g., from inside CFF case blocks that
+        // modify the state variable) are captured. This ensures handler blocks
+        // see the state variable from the CFF dispatcher scope (via its phi),
+        // not just the initial value from the try entry.
+        if let Some(cfg_block) = self.cfg.block(NodeId::new(block_idx)) {
+            for &handler_idx in &cfg_block.exception_successors {
+                let snapshot: BTreeMap<u32, SsaVarId> = self
+                    .version_stacks
+                    .iter()
+                    .filter_map(|(&group, stack)| stack.last().map(|(_, var_id)| (group, *var_id)))
+                    .collect();
+                self.handler_scope_defs.insert(handler_idx, snapshot);
+            }
+        }
+
+        let mut pushed_counts: BTreeMap<u32, usize> = BTreeMap::new();
 
         // Step 1: Process phi nodes - they define new versions
         let phi_count = self
@@ -2260,7 +2370,9 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             .map_or(0, SsaBlock::phi_count);
 
         let entry_stack = self.entry_stacks.get(&block_idx).cloned();
-        let mut slots_with_phis: HashSet<u32> = HashSet::new();
+        // Capacity: at least entry_stack length, plus one for slot 0
+        let slots_capacity = entry_stack.as_ref().map_or(1, |e| e.len().max(1));
+        let mut slots_with_phis = BitSet::new(slots_capacity);
 
         for phi_idx in 0..phi_count {
             if let Some(block) = self.function.block(block_idx) {
@@ -2286,8 +2398,9 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                     *pushed_counts.entry(group).or_insert(0) += 1;
 
                     if let Some(slot) = self.stack_slot_from_group(group) {
-                        #[allow(clippy::cast_possible_truncation)]
-                        slots_with_phis.insert(slot as u32);
+                        if slot < slots_capacity {
+                            slots_with_phis.insert(slot);
+                        }
                         if let Some(ref entry) = entry_stack {
                             if let Some(&placeholder) = entry.get(slot) {
                                 rename_map.insert(placeholder, new_var);
@@ -2345,9 +2458,7 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 
         if let Some(ref entry) = entry_stack {
             for (slot, &placeholder) in entry.iter().enumerate() {
-                #[allow(clippy::cast_possible_truncation)]
-                let slot_u32 = slot as u32;
-                if slots_with_phis.contains(&slot_u32) {
+                if slot < slots_capacity && slots_with_phis.contains(slot) {
                     continue;
                 }
                 let origin = self.stack_slot_origin(slot);
@@ -2414,12 +2525,16 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 // modified through pointers, so the reaching definition is
                 // unsound.
                 if let Some(ref origin) = load_target {
-                    let group = match origin {
-                        VariableOrigin::Argument(idx) => self.arg_group(*idx),
-                        VariableOrigin::Local(idx) => self.local_group(*idx),
-                        _ => u32::MAX,
+                    let is_address_taken = match origin {
+                        VariableOrigin::Argument(idx) => {
+                            self.address_taken.contains(self.arg_group(*idx) as usize)
+                        }
+                        VariableOrigin::Local(idx) => {
+                            self.address_taken.contains(self.local_group(*idx) as usize)
+                        }
+                        _ => false,
                     };
-                    if self.address_taken.contains(&group) {
+                    if is_address_taken {
                         load_target = None;
                     }
                 }
@@ -3230,7 +3345,7 @@ mod tests {
             .expect("SSA construction failed");
 
         // For each phi node, verify all operand values reference valid variables
-        let var_ids: std::collections::HashSet<_> =
+        let var_ids: std::collections::BTreeSet<_> =
             ssa.variables().iter().map(|v| v.id()).collect();
 
         for phi in ssa.all_phi_nodes() {
@@ -3731,8 +3846,8 @@ mod tests {
             .expect("SSA construction failed");
 
         // Collect all variables used in the SSA
-        let mut all_uses = std::collections::HashSet::new();
-        let mut all_defs = std::collections::HashSet::new();
+        let mut all_uses = std::collections::BTreeSet::new();
+        let mut all_defs = std::collections::BTreeSet::new();
 
         for block in ssa.blocks() {
             for instr in block.instructions() {

@@ -8,4 +8,9 @@
     <LangVersion>latest</LangVersion>
   </PropertyGroup>
 
+  <ItemGroup>
+    <EmbeddedResource Include="Resources\greeting.txt" />
+    <EmbeddedResource Include="Resources\data.bin" />
+  </ItemGroup>
+
 </Project>

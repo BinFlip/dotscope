@@ -92,7 +92,7 @@ impl Technique for GenericIldasm {
                         vec![Evidence::Attribute(format!("{namespace}.{name}"))],
                         Some(Box::new(findings) as Box<dyn Any + Send + Sync>),
                     );
-                    detection.cleanup.add_attribute(attr.token);
+                    detection.cleanup_mut().add_attribute(attr.token);
                     return detection;
                 }
             }
@@ -137,8 +137,8 @@ mod tests {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/mkaring_normal.exe");
         let technique = super::GenericIldasm;
         let detection = technique.detect(&asm);
-        assert!(detection.detected);
-        assert!(!detection.evidence.is_empty());
+        assert!(detection.is_detected());
+        assert!(!detection.evidence().is_empty());
     }
 
     #[test]
@@ -146,6 +146,6 @@ mod tests {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericIldasm;
         let detection = technique.detect(&asm);
-        assert!(!detection.detected);
+        assert!(!detection.is_detected());
     }
 }

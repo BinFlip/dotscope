@@ -31,24 +31,26 @@
 //!
 //! # SSA Pass
 //!
-//! [`UnmanagedStringReversalPass`] replaces `call <native>` + `newobj
-//! string::.ctor(ptr)` patterns with `DecryptedString` constants, which the
-//! codegen pipeline emits as `ldstr` instructions.
+//! The reversal pass lives in [`crate::deobfuscation::passes::bitmono::unmanaged`]
+//! and replaces `call <native>` + `newobj string::.ctor(ptr)` patterns with
+//! `DecryptedString` constants, which the codegen pipeline emits as `ldstr`
+//! instructions.
 
 use std::{any::Any, collections::HashMap, sync::Arc};
 
 use crate::{
-    analysis::{x86_native_body_size, ConstValue, SsaFunction, SsaOp, SsaVarId},
+    analysis::x86_native_body_size,
     cilassembly::CleanupRequest,
-    compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
+    compiler::{PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
-        techniques::{Detection, Evidence, PassPhase, Technique, TechniqueCategory},
+        passes::bitmono::UnmanagedStringReversalPass,
+        techniques::{Detection, Evidence, Technique, TechniqueCategory},
         utils::is_guid_name,
     },
     metadata::token::Token,
     utils::decode_utf16le,
-    CilObject, Result,
+    CilObject,
 };
 
 /// Findings from BitMono UnmanagedString detection.
@@ -56,7 +58,7 @@ use crate::{
 pub struct UnmanagedFindings {
     /// Tokens of fake native methods in `<Module>` containing embedded strings.
     pub native_methods: Vec<Token>,
-    /// Extracted native_token → decrypted_string mapping.
+    /// Extracted native_token -> decrypted_string mapping.
     pub string_map: Vec<(Token, String)>,
 }
 
@@ -68,7 +70,7 @@ pub struct UnmanagedFindings {
 /// string::.ctor(ptr)` patterns at usage sites.
 ///
 /// The detection phase also extracts the embedded strings from the native method
-/// bodies so that [`create_pass`](SsaTechnique::create_pass) can build a fully
+/// bodies so that [`create_pass`](Technique::create_pass) can build a fully
 /// populated [`UnmanagedStringReversalPass`] without needing additional
 /// byte-level preparation.
 pub struct BitMonoUnmanaged;
@@ -159,17 +161,19 @@ impl Technique for BitMonoUnmanaged {
         _ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Option<Box<dyn SsaPass>> {
-        let findings = detection.findings::<UnmanagedFindings>()?;
+    ) -> Vec<Box<dyn SsaPass>> {
+        let Some(findings) = detection.findings::<UnmanagedFindings>() else {
+            return Vec::new();
+        };
         if findings.string_map.is_empty() {
-            return None;
+            return Vec::new();
         }
         let native_string_map: HashMap<Token, String> = findings
             .string_map
             .iter()
             .map(|(token, s)| (*token, s.clone()))
             .collect();
-        Some(Box::new(UnmanagedStringReversalPass { native_string_map }))
+        vec![Box::new(UnmanagedStringReversalPass { native_string_map })]
     }
 
     fn cleanup(&self, detection: &Detection) -> Option<CleanupRequest> {
@@ -184,177 +188,6 @@ impl Technique for BitMonoUnmanaged {
         }
         Some(request)
     }
-}
-
-/// SSA pass that replaces UnmanagedString call+newobj patterns with string constants.
-///
-/// For each method, scans for the pattern:
-/// ```text
-/// v1 = Call { method: <fake_native_token>, args: [] }
-/// v2 = NewObj { ctor: <string_ctor_token>, args: [v1] }
-/// ```
-/// and replaces with:
-/// ```text
-/// Nop  (was Call)
-/// v2 = Const { value: DecryptedString("...") }  (was NewObj)
-/// ```
-///
-/// The codegen pipeline handles `DecryptedString` constants by pre-interning them
-/// to the #US heap and emitting proper `ldstr` instructions.
-struct UnmanagedStringReversalPass {
-    /// Maps fake native method tokens to their decrypted string values.
-    native_string_map: HashMap<Token, String>,
-}
-
-impl SsaPass for UnmanagedStringReversalPass {
-    fn name(&self) -> &'static str {
-        "BitMonoUnmanagedString"
-    }
-
-    fn description(&self) -> &'static str {
-        "Replaces calls to fake native string methods with ldstr constants"
-    }
-
-    fn modification_scope(&self) -> ModificationScope {
-        ModificationScope::InstructionsOnly
-    }
-
-    fn run_on_method(
-        &self,
-        ssa: &mut SsaFunction,
-        _method_token: Token,
-        ctx: &CompilerContext,
-        _assembly: &CilObject,
-    ) -> Result<bool> {
-        let mut changed = false;
-
-        for block_idx in 0..ssa.blocks().len() {
-            let sites = find_unmanaged_string_sites(ssa, block_idx, &self.native_string_map);
-            if sites.is_empty() {
-                continue;
-            }
-
-            // Apply in reverse order to keep indices valid
-            let block = match ssa.block_mut(block_idx) {
-                Some(b) => b,
-                None => continue,
-            };
-
-            for site in sites.iter().rev() {
-                // Replace NewObj with DecryptedString constant
-                if let Some(instr) = block.instruction_mut(site.newobj_idx) {
-                    instr.set_op(SsaOp::Const {
-                        dest: site.newobj_dest,
-                        value: ConstValue::DecryptedString(site.decrypted.clone()),
-                    });
-                }
-
-                // NOP the Call instruction
-                if let Some(instr) = block.instruction_mut(site.call_idx) {
-                    instr.set_op(SsaOp::Nop);
-                }
-
-                changed = true;
-            }
-
-            if !sites.is_empty() {
-                ctx.events
-                    .record(EventKind::StringDecrypted)
-                    .message(format!(
-                        "BitMonoUnmanagedString: reversed {} call+newobj sites in block {}",
-                        sites.len(),
-                        block_idx,
-                    ));
-            }
-        }
-
-        Ok(changed)
-    }
-}
-
-/// A detected call+newobj site for UnmanagedString reversal.
-struct UnmanagedStringSite {
-    /// Index of the `Call` instruction in the block.
-    call_idx: usize,
-    /// Index of the `NewObj` instruction in the block.
-    newobj_idx: usize,
-    /// SSA variable defined by the NewObj (destination of the string value).
-    newobj_dest: SsaVarId,
-    /// The decrypted string value.
-    decrypted: String,
-}
-
-/// Finds `call <native>` + `newobj string::.ctor(ptr)` patterns in a block.
-///
-/// Scans a single SSA block for pairs where a `Call` targets a known fake native
-/// method token and is immediately consumed by a `NewObj` string constructor.
-/// Returns one [`UnmanagedStringSite`] per matched pair.
-///
-/// # Arguments
-///
-/// * `ssa` - The SSA function graph containing the block.
-/// * `block_idx` - Index of the block to scan.
-/// * `native_map` - Map from fake native method token to its decrypted string.
-///
-/// # Returns
-///
-/// A [`Vec`] of detected sites, in forward order within the block. Empty if
-/// no matching patterns exist in the block.
-fn find_unmanaged_string_sites(
-    ssa: &SsaFunction,
-    block_idx: usize,
-    native_map: &HashMap<Token, String>,
-) -> Vec<UnmanagedStringSite> {
-    let mut sites = Vec::new();
-
-    let Some(block) = ssa.block(block_idx) else {
-        return sites;
-    };
-
-    let instructions = block.instructions();
-
-    for (i, instr) in instructions.iter().enumerate() {
-        // Look for Call to a fake native method
-        let (call_dest, call_token) = match instr.op() {
-            SsaOp::Call { dest, method, .. } => {
-                let Some(d) = dest else { continue };
-                (*d, method.token())
-            }
-            _ => continue,
-        };
-
-        // Check if this call targets a known fake native method
-        let Some(decrypted) = native_map.get(&call_token) else {
-            continue;
-        };
-
-        // Look for NewObj in subsequent instructions that uses the call result
-        for (j, next) in instructions.iter().enumerate().skip(i + 1) {
-            match next.op() {
-                SsaOp::NewObj { dest, args, .. } => {
-                    // The NewObj should have exactly one argument: the call result
-                    if args.len() == 1 && args[0] == call_dest {
-                        sites.push(UnmanagedStringSite {
-                            call_idx: i,
-                            newobj_idx: j,
-                            newobj_dest: *dest,
-                            decrypted: decrypted.clone(),
-                        });
-                        break;
-                    }
-                }
-                // Stop searching if we hit a branch or another use of call_dest
-                _ => {
-                    // Check if this instruction uses call_dest -- if so, stop
-                    if next.op().uses().contains(&call_dest) {
-                        break;
-                    }
-                }
-            }
-        }
-    }
-
-    sites
 }
 
 /// Extracts the embedded string from a fake native method body.
@@ -442,8 +275,10 @@ fn extract_native_string(
 
 #[cfg(test)]
 mod tests {
-    use crate::test::helpers::load_sample;
-    use crate::{analysis::x86_native_body_size, deobfuscation::techniques::Technique};
+    use crate::{
+        analysis::x86_native_body_size, deobfuscation::techniques::Technique,
+        test::helpers::load_sample,
+    };
 
     #[test]
     fn test_x86_body_size_x64_pattern() {
@@ -522,11 +357,11 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            detection.detected,
+            detection.is_detected(),
             "BitMonoUnmanaged should detect fake native methods in bitmono_unmanagedstring.exe"
         );
         assert!(
-            !detection.evidence.is_empty(),
+            !detection.evidence().is_empty(),
             "Detection should include evidence"
         );
     }
@@ -539,7 +374,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "BitMonoUnmanaged should not detect fake native methods in a non-BitMono assembly"
         );
     }

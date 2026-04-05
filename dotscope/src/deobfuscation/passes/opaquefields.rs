@@ -41,10 +41,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, RwLock, RwLockReadGuard,
-    },
+    sync::Arc,
 };
 
 use dashmap::DashSet;
@@ -52,11 +49,11 @@ use log::debug;
 
 use crate::{
     analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
-    compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
-    deobfuscation::EmulationTemplatePool,
-    emulation::{EmValue, EmulationProcess},
+    compiler::{CompilerContext, EventKind, ModificationScope, PassCapability, SsaPass},
+    deobfuscation::{utils::build_def_map, EmulationTemplatePool, ProcessCell},
+    emulation::{EmValue, EmulationProcess, HeapRef},
     metadata::token::Token,
-    CilObject, Error, Result,
+    CilObject, Result,
 };
 
 /// Removes opaque predicates based on static field chains resolved via emulation.
@@ -74,12 +71,9 @@ use crate::{
 /// The emulation process is cleared in `finalize()` to release its `Arc<CilObject>`
 /// reference before code generation needs to unwrap the assembly.
 pub struct OpaqueFieldPredicatePass {
-    /// Emulation process with initialized static state.
-    /// Populated lazily on first `run_on_method()` call via pool fork + targeted warmup.
+    /// Lazily-initialized emulation process (pool fork + targeted warmup).
     /// Cleared in `finalize()` to release the assembly reference.
-    process: RwLock<Option<EmulationProcess>>,
-    /// Whether initialization has been attempted (success or failure).
-    initialized: AtomicBool,
+    lazy_process: ProcessCell,
     /// Shared emulation template pool for O(1) forks with pre-warmed state.
     template_pool: Arc<EmulationTemplatePool>,
     /// Static field tokens found during SSA scan that appear in opaque predicates.
@@ -91,8 +85,6 @@ pub struct OpaqueFieldPredicatePass {
     /// Methods already successfully processed. Prevents redundant re-processing
     /// across pipeline iterations when the same pass instance is reused.
     processed_methods: DashSet<Token>,
-    /// Counter for reporting total removed predicates.
-    removed_count: AtomicUsize,
     /// Sentinel method token → sentinel field token (Variant B).
     /// The method body is `ldsfld → ldnull → ceq → ret`.
     sentinel_methods: HashMap<Token, Token>,
@@ -128,13 +120,11 @@ impl OpaqueFieldPredicatePass {
             affected.insert(*token);
         }
         Self {
-            process: RwLock::new(None),
-            initialized: AtomicBool::new(false),
+            lazy_process: ProcessCell::new("opaque field"),
             template_pool,
             needed_static_fields: needed,
             affected_methods: affected,
             processed_methods: DashSet::new(),
-            removed_count: AtomicUsize::new(0),
             sentinel_methods,
         }
     }
@@ -198,144 +188,144 @@ impl OpaqueFieldPredicatePass {
 
     /// Ensures the emulation process is initialized, returning a read guard.
     ///
-    /// Uses double-checked locking via the `initialized` atomic flag. The first
-    /// caller acquires a write lock, forks from the pool with targeted warmup,
-    /// and sets the flag. Subsequent callers skip the write lock entirely.
-    fn ensure_initialized(&self) -> RwLockReadGuard<'_, Option<EmulationProcess>> {
-        if !self.initialized.load(Ordering::Acquire) {
-            let mut guard = self.process.write().unwrap();
-            if !self.initialized.load(Ordering::Relaxed) {
-                *guard = self.create_process_from_pool();
-                self.initialized.store(true, Ordering::Release);
-            }
-        }
-        self.process.read().unwrap()
+    /// Delegates to [`ProcessCell::ensure_initialized`] with a fork +
+    /// targeted warmup closure.
+    fn ensure_initialized(
+        &self,
+    ) -> Result<std::sync::RwLockReadGuard<'_, Option<EmulationProcess>>> {
+        self.lazy_process
+            .ensure_initialized(|| self.create_process_from_pool(), |_| {})
+    }
+}
+
+/// Resolves emulated field values with automatic MemberRef → FieldDef fallback.
+///
+/// Bundles the `(&EmulationProcess, &CilObject)` pair into a lightweight context
+/// that provides field lookup methods with transparent token resolution. All opaque
+/// predicate resolution (chain walking, sentinel checks, constant injection) goes
+/// through this resolver.
+///
+/// Created once per `run_on_method` call and shared across all resolution operations
+/// within that method.
+struct FieldResolver<'a> {
+    process: &'a EmulationProcess,
+    assembly: &'a CilObject,
+}
+
+impl<'a> FieldResolver<'a> {
+    /// Creates a new field resolver.
+    ///
+    /// # Arguments
+    ///
+    /// * `process` - The emulation process with initialized static state.
+    /// * `assembly` - The assembly for MemberRef → FieldDef resolution.
+    fn new(process: &'a EmulationProcess, assembly: &'a CilObject) -> Self {
+        Self { process, assembly }
     }
 
-    /// Resolves a static field -> instance field chain to a boolean value.
+    /// Gets a static field value with MemberRef → FieldDef fallback.
     ///
-    /// Handles two cases:
-    /// 1. Static field is a direct primitive (I32/I64/Bool) -- check CIL truthiness
-    /// 2. Static field is an object reference -- read instance field from the
-    ///    emulated heap and check CIL truthiness of the result
+    /// # Arguments
     ///
-    /// For both static and instance field lookups, if the direct token lookup fails
-    /// and the token is a MemberRef (table 0x0A), the function resolves it to the
-    /// corresponding FieldDef token (table 0x04) and retries. This handles the common
-    /// case where opaque predicate methods reference fields via MemberRef but the
-    /// emulator stores values under FieldDef tokens from the initializer code.
+    /// * `token` - The static field token (may be MemberRef or FieldDef).
     ///
-    /// Returns `None` if the static field is not populated or if the instance
-    /// field cannot be read from the heap.
-    fn resolve_field_chain(
-        process: &EmulationProcess,
-        assembly: &CilObject,
-        static_field_token: Token,
-        instance_field_token: Token,
-    ) -> Result<Option<bool>> {
-        // Try direct static field lookup, then MemberRef→FieldDef fallback
-        let static_val = match process.get_static(static_field_token)? {
-            Some(val) => val,
-            None => {
-                let Some(resolved) = assembly.resolver().resolve_field(static_field_token) else {
-                    return Ok(None);
-                };
-                match process.get_static(resolved)? {
-                    Some(val) => val,
-                    None => return Ok(None),
-                }
-            }
-        };
-
-        match static_val {
-            // Direct primitive in static field
-            EmValue::I32(_) | EmValue::I64(_) | EmValue::Bool(_) => {
-                Ok(Some(static_val.to_bool_cil()))
-            }
-            // Object reference → read instance field from heap
-            EmValue::ObjectRef(heap_ref) => {
-                // Try direct instance field lookup, then MemberRef→FieldDef fallback
-                let field_val = match process
-                    .address_space()
-                    .get_field(heap_ref, instance_field_token)
-                {
-                    Ok(val) => val,
-                    Err(_) => {
-                        let Some(resolved) =
-                            assembly.resolver().resolve_field(instance_field_token)
-                        else {
-                            return Ok(None);
-                        };
-                        match process.address_space().get_field(heap_ref, resolved) {
-                            Ok(val) => val,
-                            Err(_) => return Ok(None),
-                        }
-                    }
-                };
-                Ok(Some(field_val.to_bool_cil()))
-            }
-            _ => Ok(None),
+    /// # Returns
+    ///
+    /// `Some(EmValue)` if the field is populated, `None` if not found.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the emulator's static field table is inaccessible.
+    fn get_static(&self, token: Token) -> Result<Option<EmValue>> {
+        if let Some(val) = self.process.get_static(token)? {
+            return Ok(Some(val));
         }
+        if let Some(resolved) = self.assembly.resolver().resolve_field(token) {
+            return self.process.get_static(resolved);
+        }
+        Ok(None)
     }
 
-    /// Resolves a static field -> instance field chain to a [`ConstValue`].
+    /// Gets a heap object field value with MemberRef → FieldDef fallback.
     ///
-    /// Same field lookup logic as [`resolve_field_chain`] but returns the raw
-    /// constant value instead of a boolean. Used for field constant injection
-    /// where `LoadField` instructions are replaced with `Const` instructions.
+    /// # Arguments
     ///
-    /// Returns `None` if the field chain cannot be resolved or the value
-    /// cannot be represented as a `ConstValue` (e.g., object references).
-    fn resolve_field_value(
-        process: &EmulationProcess,
-        assembly: &CilObject,
-        static_field_token: Token,
-        instance_field_token: Token,
-    ) -> Result<Option<ConstValue>> {
-        // Try direct static field lookup, then MemberRef→FieldDef fallback
-        let static_val = match process.get_static(static_field_token)? {
-            Some(val) => val,
-            None => {
-                let Some(resolved) = assembly.resolver().resolve_field(static_field_token) else {
-                    return Ok(None);
-                };
-                match process.get_static(resolved)? {
-                    Some(val) => val,
-                    None => return Ok(None),
+    /// * `heap_ref` - The heap reference of the object containing the field.
+    /// * `token` - The instance field token (may be MemberRef or FieldDef).
+    ///
+    /// # Returns
+    ///
+    /// `Some(EmValue)` if the field is readable, `None` if the lookup fails.
+    fn get_field(&self, heap_ref: HeapRef, token: Token) -> Option<EmValue> {
+        match self.process.address_space().get_field(heap_ref, token) {
+            Ok(val) => return Some(val),
+            Err(e) => {
+                debug!(
+                    "OpaqueFields: field access failed for 0x{:08X} on heap ref: {e}",
+                    token.value()
+                );
+            }
+        }
+        if let Some(resolved) = self.assembly.resolver().resolve_field(token) {
+            match self.process.address_space().get_field(heap_ref, resolved) {
+                Ok(val) => return Some(val),
+                Err(e) => {
+                    debug!(
+                        "OpaqueFields: field access failed for resolved 0x{:08X} on heap ref: {e}",
+                        resolved.value()
+                    );
                 }
             }
+        }
+        None
+    }
+
+    /// Resolves a nested field chain to a raw [`EmValue`].
+    ///
+    /// Walks a chain of `[field1, field2, ..., fieldN]` starting from the static
+    /// field, following `ObjectRef` hops through the emulated heap at each level.
+    /// Callers convert the result as needed (e.g., `.to_bool_cil()` for branch
+    /// predicates, `.to_const_value()` for constant injection).
+    ///
+    /// # Arguments
+    ///
+    /// * `static_token` - Token of the root static field.
+    /// * `field_chain` - Ordered list of instance field tokens to traverse.
+    ///
+    /// # Returns
+    ///
+    /// `Some(EmValue)` with the final field's value, or `None` if any hop fails
+    /// (field not populated, non-object at a non-terminal hop, etc.).
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the emulator's static field table is inaccessible.
+    fn resolve_chain(&self, static_token: Token, field_chain: &[Token]) -> Result<Option<EmValue>> {
+        if field_chain.is_empty() {
+            return Ok(None);
+        }
+
+        let Some(static_val) = self.get_static(static_token)? else {
+            return Ok(None);
         };
 
-        match static_val {
-            // Direct primitive in static field → convert to ConstValue
-            EmValue::I32(_)
-            | EmValue::I64(_)
-            | EmValue::Bool(_)
-            | EmValue::F32(_)
-            | EmValue::F64(_) => Ok(static_val.to_const_value()),
-            // Object reference → read instance field from heap
-            EmValue::ObjectRef(heap_ref) => {
-                let field_val = match process
-                    .address_space()
-                    .get_field(heap_ref, instance_field_token)
-                {
-                    Ok(val) => val,
-                    Err(_) => {
-                        let Some(resolved) =
-                            assembly.resolver().resolve_field(instance_field_token)
-                        else {
-                            return Ok(None);
-                        };
-                        match process.address_space().get_field(heap_ref, resolved) {
-                            Ok(val) => val,
-                            Err(_) => return Ok(None),
-                        }
-                    }
-                };
-                Ok(field_val.to_const_value())
+        let mut current_val = static_val;
+        for (i, &field_token) in field_chain.iter().enumerate() {
+            let is_last = i == field_chain.len() - 1;
+
+            match &current_val {
+                EmValue::ObjectRef(heap_ref) => {
+                    let Some(field_val) = self.get_field(*heap_ref, field_token) else {
+                        return Ok(None);
+                    };
+                    current_val = field_val;
+                }
+                _ if !is_last => return Ok(None),
+                _ => {}
             }
-            _ => Ok(None),
         }
+
+        Ok(Some(current_val))
     }
 
     /// Resolves a sentinel null-check field to a boolean value.
@@ -344,30 +334,66 @@ impl OpaqueFieldPredicatePass {
     /// `true` if the field value is null. For unset static fields, the ECMA-335
     /// default is null (reference types), so the result is `true`.
     ///
-    /// Uses the same MemberRef → FieldDef fallback as `resolve_field_chain`.
-    fn resolve_sentinel_field(
-        process: &EmulationProcess,
-        assembly: &CilObject,
-        sentinel_field_token: Token,
-    ) -> Result<Option<bool>> {
-        let val = match process.get_static(sentinel_field_token)? {
+    /// # Arguments
+    ///
+    /// * `sentinel_field_token` - Token of the sentinel static field.
+    ///
+    /// # Returns
+    ///
+    /// `Some(bool)` — `true` if the field is null (or unset), `false` otherwise.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the emulator's static field table is inaccessible.
+    fn resolve_sentinel(&self, sentinel_field_token: Token) -> Result<Option<bool>> {
+        let val = match self.get_static(sentinel_field_token)? {
             Some(val) => val,
-            None => {
-                // Try MemberRef → FieldDef fallback
-                let Some(resolved) = assembly.resolver().resolve_field(sentinel_field_token) else {
-                    // Field not found at all — default to null (never written)
-                    return Ok(Some(true));
-                };
-                match process.get_static(resolved)? {
-                    Some(val) => val,
-                    // Not in emulator statics — reference type default is null
-                    None => EmValue::Null,
-                }
-            }
+            None => EmValue::Null, // Unset reference field defaults to null
         };
-        // ceq(val, null): returns true if field is null
         Ok(Some(val.is_null()))
     }
+}
+
+/// Traces a `LoadField` chain backward through SSA definitions to find the root
+/// `LoadStaticField` and all intermediate instance field tokens.
+///
+/// Returns `Some((static_field_token, [field_token1, ..., field_tokenN]))` where
+/// `field_token1` is the first instance field after the static, and `field_tokenN`
+/// is the field from the starting `LoadField` instruction.
+///
+/// Returns `None` if the chain doesn't terminate at a `LoadStaticField` or exceeds
+/// the maximum depth (10 hops — more than any known obfuscator uses).
+///
+/// # Arguments
+///
+/// * `starting_op` - The SSA operation to trace from (must be `LoadField`).
+/// * `defs` - Map from SSA variable ID to its defining operation.
+fn trace_field_chain(
+    starting_op: &SsaOp,
+    defs: &HashMap<SsaVarId, &SsaOp>,
+) -> Option<(Token, Vec<Token>)> {
+    const MAX_CHAIN_DEPTH: usize = 10;
+
+    let mut chain: Vec<Token> = Vec::new();
+    let mut current_op = starting_op;
+
+    for _ in 0..MAX_CHAIN_DEPTH {
+        match current_op {
+            SsaOp::LoadField { object, field, .. } => {
+                chain.push(field.token());
+                // Follow the object back to its definition
+                current_op = defs.get(object)?;
+            }
+            SsaOp::LoadStaticField { field, .. } => {
+                // Reached the root — reverse chain so it's in traversal order
+                chain.reverse();
+                return Some((field.token(), chain));
+            }
+            _ => return None,
+        }
+    }
+
+    None // Exceeded max depth
 }
 
 impl SsaPass for OpaqueFieldPredicatePass {
@@ -381,6 +407,10 @@ impl SsaPass for OpaqueFieldPredicatePass {
 
     fn modification_scope(&self) -> ModificationScope {
         ModificationScope::CfgModifying
+    }
+
+    fn provides(&self) -> &[PassCapability] {
+        &[PassCapability::ResolvedStaticFields]
     }
 
     fn should_run(&self, method_token: Token, _ctx: &CompilerContext) -> bool {
@@ -409,20 +439,14 @@ impl SsaPass for OpaqueFieldPredicatePass {
         ctx: &CompilerContext,
         assembly: &CilObject,
     ) -> Result<bool> {
-        let guard = self.ensure_initialized();
+        let guard = self.ensure_initialized()?;
         let Some(process) = guard.as_ref() else {
             return Ok(false);
         };
+        let resolver = FieldResolver::new(process, assembly);
 
         // Build def map: SsaVarId → defining SsaOp
-        let mut defs: HashMap<SsaVarId, &SsaOp> = HashMap::new();
-        for block in ssa.blocks() {
-            for instr in block.instructions() {
-                if let Some(dest) = instr.op().dest() {
-                    defs.insert(dest, instr.op());
-                }
-            }
-        }
+        let defs = build_def_map(ssa);
 
         // Find and resolve opaque predicates (Variant A: field chain + Variant B: sentinel)
         // Each entry: (block_idx, jump_target, dropped_target)
@@ -447,36 +471,28 @@ impl SsaPass for OpaqueFieldPredicatePass {
                 continue;
             };
 
-            // --- Variant A: LoadStaticField → LoadField → Branch ---
-            if let SsaOp::LoadField { object, field, .. } = cond_def {
-                if let Some(SsaOp::LoadStaticField {
-                    field: static_field,
-                    ..
-                }) = defs.get(object)
+            // --- Variant A: LoadStaticField → LoadField+ → Branch ---
+            // Trace backward through nested LoadField chains (supports arbitrary depth).
+            // PureLogs uses multi-level chains: static → instance → instance → condition.
+            if let Some((static_token, field_chain)) = trace_field_chain(cond_def, &defs) {
+                if let Some(is_truthy) = resolver
+                    .resolve_chain(static_token, &field_chain)?
+                    .map(|v| v.to_bool_cil())
                 {
-                    if let Some(is_truthy) = Self::resolve_field_chain(
-                        process,
-                        assembly,
-                        static_field.token(),
-                        field.token(),
-                    )? {
-                        let (target, dropped) = if is_truthy {
-                            (true_target, false_target)
-                        } else {
-                            (false_target, true_target)
-                        };
-                        replacements.push((block_idx, target, dropped));
-                        continue;
-                    }
+                    let (target, dropped) = if is_truthy {
+                        (true_target, false_target)
+                    } else {
+                        (false_target, true_target)
+                    };
+                    replacements.push((block_idx, target, dropped));
+                    continue;
                 }
             }
 
             // --- Variant B: Call(sentinel_method) → Branch ---
             if let SsaOp::Call { method, .. } = cond_def {
                 if let Some(sentinel_field) = self.sentinel_methods.get(&method.token()) {
-                    if let Some(is_truthy) =
-                        Self::resolve_sentinel_field(process, assembly, *sentinel_field)?
-                    {
+                    if let Some(is_truthy) = resolver.resolve_sentinel(*sentinel_field)? {
                         let (target, dropped) = if is_truthy {
                             (true_target, false_target)
                         } else {
@@ -506,9 +522,7 @@ impl SsaPass for OpaqueFieldPredicatePass {
                     let Some(sentinel_field) = self.sentinel_methods.get(&method.token()) else {
                         continue;
                     };
-                    if let Some(is_truthy) =
-                        Self::resolve_sentinel_field(process, assembly, *sentinel_field)?
-                    {
+                    if let Some(is_truthy) = resolver.resolve_sentinel(*sentinel_field)? {
                         let value = if is_truthy {
                             ConstValue::I32(1)
                         } else {
@@ -524,37 +538,30 @@ impl SsaPass for OpaqueFieldPredicatePass {
             }
         }
 
-        // --- Field constant injection: LoadField → Const ---
+        // --- Field constant injection: LoadField+ → Const ---
+        // For each LoadField, trace the chain back to a LoadStaticField and
+        // resolve the value from the emulated heap. Supports nested chains.
         let mut const_replacements: Vec<(usize, usize, SsaOp)> = Vec::new();
         let mut replaced_object_vars: HashSet<SsaVarId> = HashSet::new();
 
         for (block_idx, block) in ssa.blocks().iter().enumerate() {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                let SsaOp::LoadField {
-                    dest,
-                    object,
-                    field,
-                } = instr.op()
+                let SsaOp::LoadField { dest, object, .. } = instr.op() else {
+                    continue;
+                };
+
+                // Build the chain: this LoadField's field is the last element,
+                // preceded by any intermediate LoadField hops back to LoadStaticField.
+                let load_field_op: SsaOp = instr.op().clone();
+                let Some((static_token, field_chain)) = trace_field_chain(&load_field_op, &defs)
                 else {
                     continue;
                 };
 
-                // Trace object → LoadStaticField
-                let Some(SsaOp::LoadStaticField {
-                    field: static_field,
-                    ..
-                }) = defs.get(object)
-                else {
-                    continue;
-                };
-
-                // Try to resolve the field value from emulated state
-                let Some(const_val) = Self::resolve_field_value(
-                    process,
-                    assembly,
-                    static_field.token(),
-                    field.token(),
-                )?
+                // Resolve the nested chain to a constant value
+                let Some(const_val) = resolver
+                    .resolve_chain(static_token, &field_chain)?
+                    .and_then(|v| v.to_const_value())
                 else {
                     continue;
                 };
@@ -662,12 +669,6 @@ impl SsaPass for OpaqueFieldPredicatePass {
         let changed = !replacements.is_empty()
             || !const_replacements.is_empty()
             || !sentinel_call_replacements.is_empty();
-        if changed {
-            self.removed_count.fetch_add(
-                replacements.len() + const_replacements.len() + sentinel_call_replacements.len(),
-                Ordering::Relaxed,
-            );
-        }
         // Mark as processed to prevent redundant re-processing in subsequent
         // pipeline iterations. Even if no changes were made, the SSA was scanned
         // and won't yield different results with the same emulation state.
@@ -676,16 +677,8 @@ impl SsaPass for OpaqueFieldPredicatePass {
     }
 
     fn finalize(&mut self, _ctx: &CompilerContext) -> Result<()> {
-        let count = self.removed_count.load(Ordering::Relaxed);
-        if count > 0 {
-            debug!("Opaque field predicate removal: replaced {count} predicates");
-        }
         // Clear the emulation process to release its Arc<CilObject> reference.
         // This is needed so the assembly can be unwrapped for code generation.
-        *self
-            .process
-            .write()
-            .map_err(|e| Error::LockError(format!("opaque field process write lock: {e}")))? = None;
-        Ok(())
+        self.lazy_process.clear()
     }
 }

@@ -32,9 +32,10 @@ use std::any::Any;
 
 use crate::{
     cilassembly::CleanupRequest,
+    compiler::PassPhase,
     deobfuscation::{
         context::AnalysisContext,
-        techniques::{Detection, Detections, Evidence, PassPhase, Technique, TechniqueCategory},
+        techniques::{Detection, Detections, Evidence, Technique, TechniqueCategory},
     },
     metadata::{
         signatures::TypeSignature, tables::TypeAttributes, token::Token, typesystem::wellknown,
@@ -163,6 +164,11 @@ impl Technique for ObfuscarStrings {
                 evidence.push(Evidence::BytecodePattern(format!(
                     "XOR decryption loop in .cctor (key=0x{key:02X})"
                 )));
+            } else if cctor_token.is_some() {
+                log::warn!(
+                    "Obfuscar: failed to extract XOR key from .cctor — \
+                     .cctor layout may differ from expected xor/ldc.i4/xor pattern"
+                );
             }
 
             if accessor_methods.len() >= 5 {
@@ -190,9 +196,9 @@ impl Technique for ObfuscarStrings {
             );
 
             // Pre-populate cleanup with infrastructure tokens
-            detection.cleanup.add_type(cil_type.token);
+            detection.cleanup_mut().add_type(cil_type.token);
             for token in &nested_type_tokens {
-                detection.cleanup.add_type(*token);
+                detection.cleanup_mut().add_type(*token);
             }
 
             return detection;
@@ -312,11 +318,11 @@ mod tests {
         let detection = technique.detect(&asm);
 
         assert!(
-            detection.detected,
+            detection.is_detected(),
             "ObfuscarStrings should detect string hiding in obfuscar_strings_only.exe"
         );
         assert!(
-            !detection.evidence.is_empty(),
+            !detection.evidence().is_empty(),
             "Detection should include evidence"
         );
 
@@ -347,11 +353,11 @@ mod tests {
         let detection = technique.detect(&asm);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "ObfuscarStrings should not detect anything in a ConfuserEx original sample"
         );
         assert!(
-            detection.evidence.is_empty(),
+            detection.evidence().is_empty(),
             "No evidence should be present for a non-Obfuscar sample"
         );
         assert!(

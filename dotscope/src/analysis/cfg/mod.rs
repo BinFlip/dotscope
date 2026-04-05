@@ -91,9 +91,5 @@ mod semantics;
 pub use analyzer::{LoopAnalyzer, SsaLoopAnalysis};
 pub use edge::{CfgEdge, CfgEdgeKind};
 pub use graph::ControlFlowGraph;
-#[allow(unused_imports)]
-pub use loops::has_back_edges;
-pub use loops::{
-    detect_loops, InductionUpdateKind, InductionVar, LoopExit, LoopForest, LoopInfo, LoopType,
-};
-pub use semantics::{BlockRole, BlockSemantics, LoopSemantics, SemanticAnalyzer};
+pub use loops::{detect_loops, has_back_edges, InductionVar, LoopForest, LoopInfo};
+pub use semantics::{BlockSemantics, LoopSemantics, SemanticAnalyzer};

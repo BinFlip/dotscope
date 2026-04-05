@@ -29,10 +29,7 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::{
-        atomic::{AtomicBool, AtomicUsize, Ordering},
-        Arc, RwLock, RwLockReadGuard,
-    },
+    sync::Arc,
 };
 
 use dashmap::{DashMap, DashSet};
@@ -42,10 +39,10 @@ use crate::{
     analysis::{MethodRef as SsaMethodRef, SsaFunction, SsaOp, SsaVarId},
     assembly::{FlowType, Instruction, Operand},
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
-    deobfuscation::EmulationTemplatePool,
+    deobfuscation::{utils::build_def_map, EmulationTemplatePool, ProcessCell},
     emulation::{tokens, EmValue, EmulationProcess, HeapObject},
     metadata::token::Token,
-    CilObject, Error, Result,
+    CilObject, Result,
 };
 
 /// Information about a detected delegate proxy type.
@@ -75,12 +72,9 @@ struct ResolvedTarget {
 /// The emulation process is cleared in `finalize()` to release its `Arc<CilObject>`
 /// reference before code generation needs to unwrap the assembly.
 pub struct DelegateProxyResolutionPass {
-    /// Emulation process with initialized static state.
-    /// Populated lazily on first `run_on_method()` call via pool fork + targeted warmup.
+    /// Lazily-initialized emulation process (pool fork + targeted warmup).
     /// Cleared in `finalize()` to release the assembly reference.
-    process: RwLock<Option<EmulationProcess>>,
-    /// Whether initialization has been attempted (success or failure).
-    initialized: AtomicBool,
+    lazy_process: ProcessCell,
     /// Shared emulation template pool for O(1) forks with pre-warmed state.
     template_pool: Arc<EmulationTemplatePool>,
     /// delegate_type_token → DelegateTypeInfo from detection.
@@ -94,8 +88,6 @@ pub struct DelegateProxyResolutionPass {
     /// Methods already successfully processed. Prevents redundant re-processing
     /// across pipeline iterations when the same pass instance is reused.
     processed_methods: DashSet<Token>,
-    /// Counter for reporting total resolved proxy calls.
-    resolved_count: AtomicUsize,
 }
 
 impl DelegateProxyResolutionPass {
@@ -127,15 +119,13 @@ impl DelegateProxyResolutionPass {
         }
 
         Self {
-            process: RwLock::new(None),
-            initialized: AtomicBool::new(false),
+            lazy_process: ProcessCell::new("delegate proxy"),
             template_pool,
             delegate_types,
             wrapper_to_delegate,
             resolved_targets: DashMap::new(),
             affected_methods: affected,
             processed_methods: DashSet::new(),
-            resolved_count: AtomicUsize::new(0),
         }
     }
 
@@ -169,30 +159,27 @@ impl DelegateProxyResolutionPass {
     fn create_process_from_pool(&self) -> Option<EmulationProcess> {
         let assembly = self.template_pool.assembly()?;
         let cctors = Self::find_delegate_cctors(&assembly, &self.delegate_types);
-        self.template_pool.fork_for_targeted_warmup(&cctors)
+        let process = self.template_pool.fork_for_targeted_warmup(&cctors);
+        if process.is_none() {
+            log::warn!(
+                "DelegateProxyResolution: failed to create emulation process — pass will be a no-op"
+            );
+        }
+        process
     }
 
     /// Ensures the emulation process is initialized and targets are extracted.
     ///
-    /// Uses double-checked locking via the `initialized` atomic flag. The first
-    /// caller acquires a write lock, forks from the pool with targeted warmup,
-    /// extracts delegate targets, and sets the flag. Subsequent callers skip
-    /// the write lock.
-    fn ensure_initialized(&self) -> RwLockReadGuard<'_, Option<EmulationProcess>> {
-        if !self.initialized.load(Ordering::Acquire) {
-            let mut guard = self.process.write().unwrap();
-            if !self.initialized.load(Ordering::Relaxed) {
-                *guard = self.create_process_from_pool();
-
-                // Extract delegate targets from emulated state
-                if let Some(process) = guard.as_ref() {
-                    self.extract_targets(process);
-                }
-
-                self.initialized.store(true, Ordering::Release);
-            }
-        }
-        self.process.read().unwrap()
+    /// Delegates to [`ProcessCell::ensure_initialized`] with a fork +
+    /// targeted warmup closure and a post-init callback that extracts delegate
+    /// targets from the emulated state.
+    fn ensure_initialized(
+        &self,
+    ) -> Result<std::sync::RwLockReadGuard<'_, Option<EmulationProcess>>> {
+        self.lazy_process.ensure_initialized(
+            || self.create_process_from_pool(),
+            |process| self.extract_targets(process),
+        )
     }
 
     /// Extracts delegate targets from the emulated static state.
@@ -241,8 +228,13 @@ impl DelegateProxyResolutionPass {
                                 process.thread_context().synthetic_methods.clone();
                             let mut current = method_token;
                             let mut result = None;
-                            // Follow chains (synthetic → synthetic → real) up to 5 levels
-                            for _ in 0..5 {
+                            let mut visited = HashSet::new();
+                            // Follow chains (synthetic → synthetic → real) with cycle detection
+                            loop {
+                                if !visited.insert(current) {
+                                    // Cycle detected — stop traversal
+                                    break;
+                                }
                                 if let Some(body) = synthetic_methods.get(&current) {
                                     if let Some((real_token, is_virt)) =
                                         resolve_synthetic_target(&body.instructions)
@@ -297,6 +289,73 @@ impl DelegateProxyResolutionPass {
             self.delegate_types.len()
         );
     }
+}
+
+/// Resolves a delegate argument variable to its `LoadStaticField` field token.
+///
+/// Follows one level of `Copy` or `Phi` indirection to handle cases where the
+/// delegate singleton passes through SSA variable merging before reaching the
+/// call site.
+///
+/// For phi nodes, all operands must resolve to `LoadStaticField` of the **same**
+/// field token — if different fields merge at a phi, the delegate target is
+/// ambiguous and resolution returns `None`.
+///
+/// # Arguments
+///
+/// * `var` - The SSA variable used as the delegate argument.
+/// * `defs` - Map from SSA variable ID to its defining operation.
+/// * `ssa` - The SSA function, for phi node lookups.
+///
+/// # Returns
+///
+/// The singleton field token if resolution succeeds, `None` if the variable
+/// doesn't trace back to a single consistent `LoadStaticField`.
+fn resolve_delegate_field(
+    var: SsaVarId,
+    defs: &HashMap<SsaVarId, &SsaOp>,
+    ssa: &SsaFunction,
+) -> Option<Token> {
+    // Direct: LoadStaticField
+    if let Some(SsaOp::LoadStaticField { field, .. }) = defs.get(&var) {
+        return Some(field.token());
+    }
+
+    // Copy indirection: Copy { src } → recurse on src
+    if let Some(SsaOp::Copy { src, .. }) = defs.get(&var) {
+        if let Some(SsaOp::LoadStaticField { field, .. }) = defs.get(src) {
+            return Some(field.token());
+        }
+    }
+
+    // Phi indirection: all operands must resolve to the same LoadStaticField
+    for block in ssa.blocks() {
+        for phi in block.phi_nodes() {
+            if phi.result() != var {
+                continue;
+            }
+            let mut common_token: Option<Token> = None;
+            for operand in phi.operands() {
+                let operand_token = match defs.get(&operand.value()) {
+                    Some(SsaOp::LoadStaticField { field, .. }) => field.token(),
+                    // Operand is a Copy → follow one more level
+                    Some(SsaOp::Copy { src, .. }) => match defs.get(src) {
+                        Some(SsaOp::LoadStaticField { field, .. }) => field.token(),
+                        _ => return None,
+                    },
+                    _ => return None,
+                };
+                match common_token {
+                    None => common_token = Some(operand_token),
+                    Some(t) if t == operand_token => {}
+                    Some(_) => return None, // Different fields → ambiguous
+                }
+            }
+            return common_token;
+        }
+    }
+
+    None
 }
 
 /// Inspects a synthetic method's IL to extract the real method token it wraps.
@@ -390,20 +449,13 @@ impl SsaPass for DelegateProxyResolutionPass {
         ctx: &CompilerContext,
         _assembly: &CilObject,
     ) -> Result<bool> {
-        let guard = self.ensure_initialized();
+        let guard = self.ensure_initialized()?;
         let Some(_process) = guard.as_ref() else {
             return Ok(false);
         };
 
         // Build def map: SsaVarId → defining SsaOp
-        let mut defs: HashMap<SsaVarId, &SsaOp> = HashMap::new();
-        for block in ssa.blocks() {
-            for instr in block.instructions() {
-                if let Some(dest) = instr.op().dest() {
-                    defs.insert(dest, instr.op());
-                }
-            }
-        }
+        let defs = build_def_map(ssa);
 
         // Find delegate proxy calls and collect replacements.
         // Each replacement: (block_idx, instr_idx, new_op)
@@ -431,16 +483,15 @@ impl SsaPass for DelegateProxyResolutionPass {
                 };
 
                 // The last argument should be the delegate instance loaded from
-                // a static field. Trace it back to LoadStaticField.
+                // a static field. Trace it back through phis/copies to LoadStaticField.
                 let Some(&delegate_var) = args.last() else {
                     continue;
                 };
 
-                let Some(SsaOp::LoadStaticField { field, .. }) = defs.get(&delegate_var) else {
+                let Some(singleton_field_token) = resolve_delegate_field(delegate_var, &defs, ssa)
+                else {
                     continue;
                 };
-
-                let singleton_field_token = field.token();
 
                 // Look up the resolved target for this singleton field
                 let target = self
@@ -540,10 +591,6 @@ impl SsaPass for DelegateProxyResolutionPass {
         }
 
         let changed = !replacements.is_empty();
-        if changed {
-            self.resolved_count
-                .fetch_add(replacements.len(), Ordering::Relaxed);
-        }
         // Mark as processed to prevent redundant re-processing in subsequent
         // pipeline iterations. The delegate targets are frozen after emulation
         // initialization, so re-scanning the same method yields identical results.
@@ -552,16 +599,7 @@ impl SsaPass for DelegateProxyResolutionPass {
     }
 
     fn finalize(&mut self, _ctx: &CompilerContext) -> Result<()> {
-        let count = self.resolved_count.load(Ordering::Relaxed);
-        if count > 0 {
-            debug!("Delegate proxy resolution: resolved {count} proxy calls");
-        }
         // Clear the emulation process to release its Arc<CilObject> reference.
-        *self
-            .process
-            .write()
-            .map_err(|e| Error::LockError(format!("delegate proxy process write lock: {e}")))? =
-            None;
-        Ok(())
+        self.lazy_process.clear()
     }
 }

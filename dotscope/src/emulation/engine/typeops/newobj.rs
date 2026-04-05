@@ -11,7 +11,7 @@ use crate::{
         memory::{DelegateEntry, HeapObject},
         runtime::{HookContext, HookManager, HookOutcome},
         thread::EmulationThread,
-        EmValue,
+        EmValue, HeapRef,
     },
     metadata::{
         tables::{MemberRefSignature, TableId},
@@ -246,6 +246,11 @@ fn resolve_newobj_memberref(
 
     let obj_ref = if type_name_only == "DynamicMethod" && namespace == "System.Reflection.Emit" {
         thread.heap_mut().alloc_dynamic_method()?
+    } else if type_name_only == "String" && namespace == "System" {
+        // System.String constructors: create a proper string object from args.
+        // The CLR has several String constructors; the most common in obfuscated
+        // code is String(char[]) which builds a string from a character array.
+        create_string_from_ctor_args(thread, &args)?
     } else {
         thread
             .heap_mut()
@@ -356,4 +361,78 @@ pub fn is_delegate_type(cil_type: &CilType) -> bool {
         }
     }
     false
+}
+
+/// Creates a `System.String` from constructor arguments.
+///
+/// Supports the common string constructor overloads:
+/// - `String(char[])` — builds string from character array
+/// - `String(char[], int, int)` — builds string from char array slice
+///
+/// Falls back to an empty string for unrecognized overloads.
+fn create_string_from_ctor_args(thread: &mut EmulationThread, args: &[EmValue]) -> Result<HeapRef> {
+    match args {
+        // String(char[])
+        [EmValue::ObjectRef(array_ref)] => {
+            let s = read_string_from_char_array(thread, *array_ref)?;
+            thread.heap_mut().alloc_string(&s)
+        }
+        // String(char[], int startIndex, int length)
+        [EmValue::ObjectRef(array_ref), EmValue::I32(start), EmValue::I32(len)] => {
+            let full = read_string_from_char_array(thread, *array_ref)?;
+            let start = *start as usize;
+            let len = *len as usize;
+            let chars: Vec<char> = full.chars().collect();
+            let slice: String = chars
+                .get(start..start.saturating_add(len))
+                .unwrap_or(&[])
+                .iter()
+                .collect();
+            thread.heap_mut().alloc_string(&slice)
+        }
+        // String(char, int count) — repeats a character
+        [EmValue::I32(ch), EmValue::I32(count)] => {
+            if *count < 0 {
+                return Err(EmulationError::InvalidStringOperation {
+                    description: format!(
+                        "String(char, int) constructor: count must be non-negative, got {count}"
+                    ),
+                }
+                .into());
+            }
+            let c = char::from_u32(*ch as u32).unwrap_or('\0');
+            let s: String = std::iter::repeat_n(c, *count as usize).collect();
+            thread.heap_mut().alloc_string(&s)
+        }
+        // Fallback: empty string
+        _ => {
+            debug!(
+                "String constructor with {} args not fully handled, creating empty string",
+                args.len()
+            );
+            thread.heap_mut().alloc_string("")
+        }
+    }
+}
+
+/// Reads a `char[]` array from the managed heap and converts it to a Rust `String`.
+fn read_string_from_char_array(thread: &EmulationThread, array_ref: HeapRef) -> Result<String> {
+    let heap = thread.heap();
+    let length = heap.get_array_length(array_ref)?;
+    let mut chars = Vec::with_capacity(length);
+
+    for i in 0..length {
+        let elem = heap.get_array_element(array_ref, i)?;
+        let ch = match elem {
+            EmValue::I32(v) =>
+            {
+                #[allow(clippy::cast_sign_loss)]
+                char::from_u32(v as u32).unwrap_or('\0')
+            }
+            _ => '\0',
+        };
+        chars.push(ch);
+    }
+
+    Ok(chars.into_iter().collect())
 }

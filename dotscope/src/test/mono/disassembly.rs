@@ -3,8 +3,10 @@
 //! This module handles disassembly of .NET assemblies using the detected
 //! disassembler from TestCapabilities.
 
-use crate::prelude::*;
-use crate::test::mono::capabilities::{Disassembler, TestCapabilities};
+use crate::{
+    prelude::*,
+    test::mono::capabilities::{Disassembler, TestCapabilities},
+};
 use std::path::Path;
 use std::process::Command;
 

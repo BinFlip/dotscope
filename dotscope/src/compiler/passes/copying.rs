@@ -40,21 +40,19 @@
 //!
 //! In practice, the algorithm converges quickly (usually 1-3 iterations).
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::{
-    analysis::{PhiAnalyzer, SsaFunction, SsaType, SsaVarId, VariableOrigin},
+    analysis::{PhiAnalyzer, SsaFunction, SsaOp, SsaType, SsaVarId, VariableOrigin},
     compiler::{
         pass::{ModificationScope, SsaPass},
         passes::utils::resolve_chain,
         CompilerContext, EventKind, EventLog,
     },
     metadata::token::Token,
+    utils::BitSet,
     CilObject, Result,
 };
-
-/// Maximum iterations for the fixed-point algorithm to prevent infinite loops.
-const MAX_ITERATIONS: usize = 100;
 
 /// Copy propagation pass.
 ///
@@ -68,23 +66,113 @@ const MAX_ITERATIONS: usize = 100;
 /// - Trivial phi nodes: `v1 = phi(v0, v0, v0)` (all operands identical)
 /// - Self-referential phis: `v1 = phi(v0, v1)` → `v1 = v0`
 /// - Copy chains: `v2 = v1; v1 = v0` → both map to `v0`
-pub struct CopyPropagationPass;
-
-impl Default for CopyPropagationPass {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct CopyPropagationPass {
+    /// Maximum fixpoint iterations before stopping.
+    max_iterations: usize,
 }
 
 impl CopyPropagationPass {
     /// Creates a new copy propagation pass.
     ///
-    /// # Returns
+    /// # Arguments
     ///
-    /// A new `CopyPropagationPass` instance.
+    /// * `max_iterations` - Maximum fixpoint iterations before stopping. Copy chains
+    ///   converge in ~3 iterations; the default config value is 15.
     #[must_use]
-    pub fn new() -> Self {
-        Self
+    pub fn new(max_iterations: usize) -> Self {
+        Self { max_iterations }
+    }
+
+    /// Removes copies from the map when they are the sole instruction-based
+    /// definition of a local or argument group and the source is in a different
+    /// group.
+    ///
+    /// After CFF unflattening, `stloc.0` becomes a Copy from a stack-temp
+    /// variable to a Local(0) variable. If copy propagation eliminates this
+    /// Copy, Local(0)'s group loses its only definition. Subsequent
+    /// `rebuild_ssa` calls then assign the entry value (null) to all uses
+    /// of Local(0), corrupting the data flow.
+    fn protect_sole_local_defs(ssa: &SsaFunction, copies: &mut BTreeMap<SsaVarId, SsaVarId>) {
+        let real_local_limit = (ssa.num_args() + ssa.num_locals()) as u32;
+
+        // Count instruction-based definitions per local/argument group.
+        let mut group_def_count: BTreeMap<u32, usize> = BTreeMap::new();
+        for block in ssa.blocks() {
+            for instr in block.instructions() {
+                if let Some(dest) = instr.op().dest() {
+                    let group = ssa.rename_group(dest);
+                    if group < real_local_limit {
+                        *group_def_count.entry(group).or_insert(0) += 1;
+                    }
+                }
+            }
+        }
+
+        // Identify local/arg groups whose variables appear as phi operands.
+        // These are the groups at risk: after copy-prop eliminates the bridging
+        // Copy, rebuild_ssa's rename may not be able to reconstruct the correct
+        // reaching definition through phi chains.
+        let group_bound = ssa.num_locals() + ssa.num_args() + 1;
+        let mut groups_in_phis = BitSet::new(group_bound);
+        for block in ssa.blocks() {
+            for phi in block.phi_nodes() {
+                for operand in phi.operands() {
+                    let group = ssa.rename_group(operand.value());
+                    if group < real_local_limit {
+                        groups_in_phis.insert(group as usize);
+                    }
+                }
+                let result_group = ssa.rename_group(phi.result());
+                if result_group < real_local_limit {
+                    groups_in_phis.insert(result_group as usize);
+                }
+            }
+        }
+
+        // Identify address-taken local groups (locals accessed via ldloca).
+        // These locals are read through pointers, not through SSA variables.
+        // If copy-prop eliminates the stloc Copy, the local is never
+        // initialized and reads through the pointer see the default value
+        // (0/null) instead of the stored constant.
+        let mut address_taken_groups = BitSet::new(group_bound);
+        for block in ssa.blocks() {
+            for instr in block.instructions() {
+                if let SsaOp::LoadLocalAddr { local_index, .. } = instr.op() {
+                    let group = ssa.num_args() as u32 + *local_index as u32;
+                    if group < real_local_limit {
+                        address_taken_groups.insert(group as usize);
+                    }
+                }
+            }
+        }
+
+        // Collect copy dests to protect: dest is in a local/arg group with
+        // exactly 1 instruction def, the source is in a different group,
+        // AND the group either participates in phi nodes (cross-block flow)
+        // or is address-taken (accessed via ldloca — the store is the only
+        // way to initialize the local's value).
+        let mut protected = BitSet::new(ssa.var_id_capacity());
+        for (&dest, &src) in copies.iter() {
+            let dest_group = ssa.rename_group(dest);
+            if dest_group >= real_local_limit {
+                continue; // Not a local/arg group
+            }
+            let src_group = ssa.rename_group(src);
+            if src_group == dest_group {
+                continue; // Same group — safe to propagate
+            }
+            let def_count = group_def_count.get(&dest_group).copied().unwrap_or(0);
+            if def_count <= 1
+                && (groups_in_phis.contains(dest_group as usize)
+                    || address_taken_groups.contains(dest_group as usize))
+            {
+                protected.insert(dest.index());
+            }
+        }
+
+        if !protected.is_empty() {
+            copies.retain(|dest, _| !protected.contains(dest.index()));
+        }
     }
 
     /// Resolves all copy chains to their ultimate sources.
@@ -99,7 +187,7 @@ impl CopyPropagationPass {
     /// # Returns
     ///
     /// Map of each copy destination to its ultimate source.
-    fn resolve_chains(copies: &HashMap<SsaVarId, SsaVarId>) -> HashMap<SsaVarId, SsaVarId> {
+    fn resolve_chains(copies: &BTreeMap<SsaVarId, SsaVarId>) -> BTreeMap<SsaVarId, SsaVarId> {
         copies
             .iter()
             .map(|(&dest, &src)| (dest, resolve_chain(copies, src)))
@@ -125,11 +213,24 @@ impl CopyPropagationPass {
         assembly: &CilObject,
     ) -> usize {
         // Step 1: Collect all copy-like operations
-        let copies = PhiAnalyzer::new(ssa).collect_all_copies();
+        let mut copies = PhiAnalyzer::new(ssa).collect_all_copies();
 
         if copies.is_empty() {
             return 0;
         }
+
+        // Step 1b: Protect cross-group copies that are the sole definition
+        // of a local/argument group. Without this, propagating the copy
+        // replaces all uses of the local-group variable with the source
+        // (from a different group), and DCE removes the now-dead Copy.
+        // Subsequent rebuild_ssa then finds the local group has no
+        // instruction-based definitions, producing the entry value (null/0)
+        // instead of the actual stored value.
+        //
+        // This specifically prevents the JIEJIE.NET Issue 13 pattern where
+        // `stloc.0` creates a Copy bridging a stack-temp group to Local(0),
+        // and propagating it disconnects the local from its value.
+        Self::protect_sole_local_defs(ssa, &mut copies);
 
         // Step 2: Resolve chains to ultimate sources
         let resolved = Self::resolve_chains(&copies);
@@ -140,12 +241,13 @@ impl CopyPropagationPass {
         // Step 4: Apply propagations and record events
         let result = ssa.propagate_copies(&resolved);
 
-        for dest in result
+        for dest_idx in result
             .fully_propagated
             .iter()
             .chain(result.partially_propagated.iter())
         {
-            if let Some(src) = resolved.get(dest) {
+            let dest = SsaVarId::from_index(dest_idx);
+            if let Some(src) = resolved.get(&dest) {
                 changes
                     .record(EventKind::CopyPropagated)
                     .method(method_token)
@@ -154,8 +256,8 @@ impl CopyPropagationPass {
         }
 
         // Step 5: Neutralize dead Copy instructions whose dests were fully propagated
-        for dest in &result.fully_propagated {
-            ssa.nop_copy_defining(*dest);
+        for dest_idx in result.fully_propagated.iter() {
+            ssa.nop_copy_defining(SsaVarId::from_index(dest_idx));
         }
 
         result.total_replaced
@@ -173,7 +275,7 @@ impl CopyPropagationPass {
     /// preserved through optimization.
     fn propagate_local_types(
         ssa: &mut SsaFunction,
-        resolved: &HashMap<SsaVarId, SsaVarId>,
+        resolved: &BTreeMap<SsaVarId, SsaVarId>,
         assembly: &CilObject,
     ) {
         // Get the original local types from the SSA function
@@ -256,7 +358,7 @@ impl SsaPass for CopyPropagationPass {
         let mut changes = EventLog::new();
 
         // Iterate until fixed point
-        for _ in 0..MAX_ITERATIONS {
+        for _ in 0..self.max_iterations {
             let replaced = Self::run_iteration(ssa, method_token, &mut changes, assembly);
 
             if replaced == 0 {
@@ -274,7 +376,7 @@ impl SsaPass for CopyPropagationPass {
 
 #[cfg(test)]
 mod tests {
-    use std::{collections::HashMap, sync::Arc};
+    use std::{collections::BTreeMap, sync::Arc};
 
     use crate::{
         analysis::{
@@ -475,7 +577,7 @@ mod tests {
         let v0 = SsaVarId::from_index(0);
         let v1 = SsaVarId::from_index(1);
         let v2 = SsaVarId::from_index(2);
-        let mut copies = HashMap::new();
+        let mut copies = BTreeMap::new();
         // v2 → v1 → v0
         copies.insert(v2, v1);
         copies.insert(v1, v0);
@@ -494,7 +596,7 @@ mod tests {
         let v2 = SsaVarId::from_index(2);
         let v3 = SsaVarId::from_index(3);
         let v4 = SsaVarId::from_index(4);
-        let mut copies = HashMap::new();
+        let mut copies = BTreeMap::new();
         // v4 → v3 → v2 → v1 → v0
         copies.insert(v4, v3);
         copies.insert(v3, v2);
@@ -514,7 +616,7 @@ mod tests {
     fn test_resolve_cycle() {
         let v1 = SsaVarId::from_index(0);
         let v2 = SsaVarId::from_index(1);
-        let mut copies = HashMap::new();
+        let mut copies = BTreeMap::new();
         // v1 → v2 → v1 (cycle)
         copies.insert(v1, v2);
         copies.insert(v2, v1);
@@ -534,7 +636,7 @@ mod tests {
         let v3 = SsaVarId::from_index(3);
         let v4 = SsaVarId::from_index(4);
         let v5 = SsaVarId::from_index(5);
-        let mut copies = HashMap::new();
+        let mut copies = BTreeMap::new();
         // Chain 1: v2 → v1 → v0
         copies.insert(v2, v1);
         copies.insert(v1, v0);
@@ -650,7 +752,7 @@ mod tests {
         };
 
         // Run pass
-        let pass = CopyPropagationPass::new();
+        let pass = CopyPropagationPass::new(15);
         let ctx = test_context();
         let changed = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -698,7 +800,7 @@ mod tests {
         };
 
         // Run pass
-        let pass = CopyPropagationPass::new();
+        let pass = CopyPropagationPass::new(15);
         let ctx = test_context();
         let _changes = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -742,7 +844,7 @@ mod tests {
         };
 
         // Run pass
-        let pass = CopyPropagationPass::new();
+        let pass = CopyPropagationPass::new(15);
         let ctx = test_context();
         let changed = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -771,7 +873,7 @@ mod tests {
             .unwrap();
 
         // Run pass
-        let pass = CopyPropagationPass::new();
+        let pass = CopyPropagationPass::new(15);
         let ctx = test_context();
         let changed = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -806,7 +908,7 @@ mod tests {
         };
 
         // Run pass
-        let pass = CopyPropagationPass::new();
+        let pass = CopyPropagationPass::new(15);
         let ctx = test_context();
         let result =
             pass.run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc());
@@ -852,7 +954,7 @@ mod tests {
         };
 
         // Run pass
-        let pass = CopyPropagationPass::new();
+        let pass = CopyPropagationPass::new(15);
         let ctx = test_context();
         let _changes = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -906,7 +1008,7 @@ mod tests {
         };
 
         // Run pass
-        let pass = CopyPropagationPass::new();
+        let pass = CopyPropagationPass::new(15);
         let ctx = test_context();
         let _changes = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())

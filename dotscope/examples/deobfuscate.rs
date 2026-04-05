@@ -100,24 +100,22 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         move || -> Result<(CilObject, DeobfuscationResult), dotscope::Error> {
             let mut config = if aggressive {
                 // Aggressive mode: inlining enabled, unused method removal enabled
-                EngineConfig {
-                    max_iterations,
-                    ..EngineConfig::aggressive()
-                }
+                let mut c = EngineConfig::aggressive();
+                c.iterations.max_ssa_iterations = max_iterations;
+                c
             } else {
                 // Default mode: preserve original structure for analysis
-                EngineConfig {
-                    max_iterations,
-                    ..Default::default()
-                }
+                let mut c = EngineConfig::default();
+                c.iterations.max_ssa_iterations = max_iterations;
+                c
             };
 
             // Configure tracing if --trace was specified
             if let Some(path) = trace_path {
-                config.tracing = Some(TracingConfig::full_trace(path));
+                config.emulation.tracing = Some(TracingConfig::full_trace(path));
             }
 
-            let mut engine = DeobfuscationEngine::new(config);
+            let engine = DeobfuscationEngine::new(config);
             engine.process_file(&input_path)
         },
     );

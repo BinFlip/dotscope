@@ -59,13 +59,16 @@
 //! call Console::WriteLine(v0)
 //! ```
 
-use std::sync::{Arc, Mutex};
+use std::{
+    collections::HashSet,
+    sync::{Arc, Mutex},
+};
 
 use rayon::prelude::*;
 
 use crate::{
     analysis::{ConstValue, SsaCfg, SsaFunction, SsaOp, SsaVarId, ValueResolver},
-    compiler::{CompilerContext, EventKind, EventLog, ModificationScope, SsaPass},
+    compiler::{CompilerContext, EventKind, EventLog, ModificationScope, PassCapability, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         decryptors::{DecryptorContext, FailureReason},
@@ -74,7 +77,11 @@ use crate::{
     emulation::{
         EmValue, EmulationError, EmulationOutcome, EmulationProcess, EmulationThread, StepResult,
     },
-    metadata::{token::Token, typesystem::PointerSize},
+    metadata::{
+        tables::TypeRefRaw,
+        token::Token,
+        typesystem::{CilFlavor, CilPrimitive, CilPrimitiveKind, PointerSize},
+    },
     utils::graph::{
         algorithms::{compute_dominators, DominatorTree},
         GraphBase, NodeId, RootedGraph,
@@ -159,7 +166,7 @@ impl DecryptionPass {
             template_pool: ctx.template_pool.get().cloned(),
             decryptors: Arc::clone(&ctx.decryptors),
             statemachine_providers: Arc::clone(&ctx.statemachine_providers),
-            emulation_max_instructions: ctx.config.emulation_max_instructions,
+            emulation_max_instructions: ctx.config.emulation.max_instructions,
         }
     }
 
@@ -206,6 +213,7 @@ impl DecryptionPass {
     fn try_decrypt_at_call(
         &self,
         decryptor: Token,
+        call_target: Token,
         args: &[ConstValue],
     ) -> (Option<ConstValue>, Option<FailureReason>) {
         if let Some(cached) = self
@@ -215,7 +223,9 @@ impl DecryptionPass {
             return (Some(cached), None);
         }
 
-        let (result, failure) = self.emulate_call(decryptor, args);
+        // Use the original call target (which may be a MethodSpec) for emulation
+        // so that generic type arguments are preserved for ldtoken resolution.
+        let (result, failure) = self.emulate_call(call_target, args);
 
         if let Some(ref value) = result {
             self.decryptors.cache_value(decryptor, args, value.clone());
@@ -254,8 +264,26 @@ impl DecryptionPass {
             }
         };
 
-        // Convert ConstValue arguments to EmValue
-        let em_args: Vec<EmValue> = args.iter().map(EmValue::from).collect();
+        // Convert ConstValue arguments to EmValue.
+        // ConstValue::String holds a #US heap offset — resolve it to an actual
+        // string from the assembly's UserStrings heap and allocate on the
+        // emulation heap so the decryptor receives a proper ObjectRef.
+        let em_args: Vec<EmValue> = args
+            .iter()
+            .map(|cv| match cv {
+                ConstValue::String(us_offset) => {
+                    let resolved = process.assembly().and_then(|asm| {
+                        let us = asm.userstrings()?;
+                        let u16str = us.get(*us_offset as usize).ok()?;
+                        let s = u16str.to_string_lossy();
+                        let href = process.address_space().alloc_string(&s).ok()?;
+                        Some(EmValue::ObjectRef(href))
+                    });
+                    resolved.unwrap_or_else(|| EmValue::from(cv))
+                }
+                _ => EmValue::from(cv),
+            })
+            .collect();
 
         // Use thread-safe container to capture the return value
         let captured_value: Arc<Mutex<Option<ConstValue>>> = Arc::new(Mutex::new(None));
@@ -344,6 +372,34 @@ impl DecryptionPass {
         }
     }
 
+    /// Resolves a `CilFlavor` to a real TypeRef/TypeDef token using the assembly's
+    /// type registry and the existing `CilPrimitiveData::clr_full_name()` mapping.
+    /// Resolves a `CilFlavor` to a real TypeRef token from the assembly's metadata.
+    ///
+    /// Searches the TypeRef table for the .NET type name matching the flavor
+    /// (e.g., `U1` → TypeRef for `System.Byte`). Returns `None` if the assembly
+    /// doesn't reference this type.
+    fn resolve_flavor_to_typeref(flavor: &CilFlavor, thread: &EmulationThread) -> Option<Token> {
+        let kind = CilPrimitiveKind::try_from(flavor.clone()).ok()?;
+        let primitive = CilPrimitive::new(kind);
+        let namespace = primitive.namespace();
+        let name = primitive.name();
+
+        let asm = thread.assembly()?;
+        let tables = asm.tables()?;
+        let strings = asm.strings()?;
+        let type_refs = tables.table::<TypeRefRaw>()?;
+
+        for row in type_refs {
+            let row_name = strings.get(row.type_name as usize).ok()?;
+            let row_ns = strings.get(row.type_namespace as usize).ok()?;
+            if row_name == name && row_ns == namespace {
+                return Some(row.token);
+            }
+        }
+        None
+    }
+
     /// Converts an EmValue to a ConstValue for decryption purposes.
     ///
     /// Handles primitive types via [`EmValue::to_const_value`] and additionally
@@ -354,9 +410,11 @@ impl DecryptionPass {
     /// (e.g., wrong key leading to out-of-bounds array access). Accepting null
     /// would silence actual decryption failures.
     fn emvalue_to_constvalue(em_value: &EmValue, thread: &EmulationThread) -> Option<ConstValue> {
-        // CRITICAL: Reject Null - it means decryption failed (wrong key, etc.)
-        // Null should NOT be treated as a successful decryption result.
+        // Reject Null — typically means decryption failed (wrong key, OOB access, etc.).
+        // Some decryptors may legitimately return null for conditional paths; if this
+        // becomes an issue, the caller should distinguish emulation-error from returned-null.
         if matches!(em_value, EmValue::Null) {
+            log::debug!("Decryption: emulation returned Null — treating as failure");
             return None;
         }
 
@@ -365,10 +423,30 @@ impl DecryptionPass {
             return Some(cv);
         }
 
-        // Handle ObjectRef specially - try to get string from heap
+        // Handle ObjectRef specially - try string, unbox, or array from heap
         if let EmValue::ObjectRef(href) = em_value {
             if let Ok(s) = thread.heap().get_string(*href) {
                 return Some(ConstValue::DecryptedString(s.to_string()));
+            }
+            // Try to unbox a boxed primitive value from the heap
+            if let Ok(unboxed) = thread.heap().unbox(*href) {
+                if let Some(cv) = unboxed.to_const_value() {
+                    return Some(cv);
+                }
+            }
+            // Try to extract array data as bytes
+            if let Ok(Some(bytes)) = thread.heap().get_array_as_bytes(*href, PointerSize::Bit32) {
+                if let Ok(elem_flavor) = thread.heap().get_array_element_type(*href) {
+                    let elem_size = elem_flavor.byte_size(PointerSize::Bit32).unwrap_or(1);
+                    // Resolve the element CilFlavor to a real TypeRef token from the assembly
+                    if let Some(token) = Self::resolve_flavor_to_typeref(&elem_flavor, thread) {
+                        return Some(ConstValue::DecryptedArray {
+                            data: bytes,
+                            element_type_token: token,
+                            element_size: elem_size,
+                        });
+                    }
+                }
             }
         }
 
@@ -475,8 +553,11 @@ impl DecryptionPass {
         // Build CFG info for path-sensitive analysis
         let cfg_info = Self::build_cfg_info(ssa);
 
-        // Find decryptor call sites using the provider's pattern matching
-        let decryptor_tokens = self.decryptors.registered_tokens();
+        // Find decryptor call sites using the provider's pattern matching.
+        // Use all_resolvable_tokens() to include MethodSpec tokens that map to
+        // registered decryptors via MemberRef — these are needed for generic
+        // instantiations like Get<int32>() that may use MemberRef indirection.
+        let decryptor_tokens = self.decryptors.all_resolvable_tokens();
         let call_sites =
             provider.find_decryptor_call_sites(ssa, &state_updates, &decryptor_tokens, assembly);
 
@@ -512,21 +593,45 @@ impl DecryptionPass {
             // Initialize fresh state machine from seed
             let mut state = StateMachineState::from_seed_u32(seed, Arc::clone(&semantics));
 
-            // Collect relevant updates using the provider's algorithm
-            let relevant_updates =
-                provider.collect_updates_for_call(call_site, &state_updates, &cfg_info.as_ref());
+            // Find the seed's block location for filtering.
+            let seed_block = all_seeds
+                .iter()
+                .filter(|(_, _, val)| *val == seed)
+                .map(|(block, _, _)| *block)
+                .min();
+
+            // Collect relevant updates using the provider's BFS path algorithm.
+            // Seed-block filtering is now done inside collect_updates_for_call
+            // using path position (not block index) for correct execution ordering.
+            let relevant_updates = provider.collect_updates_for_call(
+                call_site,
+                &state_updates,
+                &cfg_info.as_ref(),
+                seed_block,
+            );
 
             // Construct ValueResolver for this iteration (reborrow ssa as shared)
             let mut resolver = ValueResolver::new(&*ssa, ptr_size).with_path_aware_fallback();
             resolver.load_known_values(ctx, method_token);
 
-            // Simulate the relevant state updates in order
-            Self::simulate_state_updates(
+            // Simulate the relevant state updates in order.
+            // If any prior update can't be resolved, the state machine is
+            // desynchronized — skip this call site for now (retriable).
+            let simulation_ok = Self::simulate_state_updates(
                 &mut state,
                 &relevant_updates,
                 &state_updates,
                 &mut resolver,
             );
+
+            if !simulation_ok {
+                failures.push((
+                    call_site.decryptor,
+                    location,
+                    FailureReason::NonConstantArgs,
+                ));
+                continue;
+            }
 
             // Simulate the feeding update call itself
             let feeding_update = &state_updates[call_site.feeding_update_idx];
@@ -573,8 +678,8 @@ impl DecryptionPass {
 
             // Decrypt using the computed key
             let args = vec![ConstValue::I32(actual_key)];
-            let (result, failure) = self.try_decrypt_at_call(call_site.decryptor, &args);
-
+            let (result, failure) =
+                self.try_decrypt_at_call(call_site.decryptor, call_site.call_target, &args);
             if let Some(value) = result {
                 self.decryptors.record_success(
                     call_site.decryptor,
@@ -628,11 +733,50 @@ impl DecryptionPass {
             );
         }
 
-        // Replace state update calls with Const operations
-        Self::cleanup_state_updates(ssa, &state_updates, method_token, &changes, &mut changed);
+        // Only clean up state machine instructions when ALL call sites have been
+        // resolved (successfully decrypted or permanently failed). If retriable
+        // failures remain, preserve the state update calls so the next fixpoint
+        // iteration can retry with more constants resolved.
+        let all_resolved = call_sites.iter().all(|cs| {
+            let loc = cs.location();
+            self.decryptors.is_already_decrypted(method_token, loc)
+                || self.decryptors.has_permanent_failure(method_token, loc)
+        });
 
-        // Remove state machine initialization calls (constructor)
-        Self::cleanup_state_initialization(ssa, &all_seeds, method_token, &changes, &mut changed);
+        if all_resolved {
+            // Replace state update calls with Const operations.
+            // IMPORTANT: Only clean up the state updates that directly feed
+            // decryptor call sites (those whose results are consumed by
+            // the XOR+call pattern). Non-feeding updates ("padding") may
+            // have their results used as stack values (e.g. popped by the
+            // original IL), but replacing them with Const changes the
+            // stack-observable behavior when the dest variable is live.
+            let feeding_indices: HashSet<usize> =
+                call_sites.iter().map(|cs| cs.feeding_update_idx).collect();
+            let feeding_updates: Vec<StateUpdateCall> = state_updates
+                .iter()
+                .enumerate()
+                .filter(|(i, _)| feeding_indices.contains(i))
+                .map(|(_, u)| u.clone())
+                .collect();
+
+            Self::cleanup_state_updates(
+                ssa,
+                &feeding_updates,
+                method_token,
+                &changes,
+                &mut changed,
+            );
+
+            // Remove state machine initialization calls (constructor)
+            Self::cleanup_state_initialization(
+                ssa,
+                &all_seeds,
+                method_token,
+                &changes,
+                &mut changed,
+            );
+        }
 
         (changed, changes)
     }
@@ -657,12 +801,17 @@ impl DecryptionPass {
     }
 
     /// Simulates state updates in order, advancing the state machine.
+    ///
+    /// Returns `true` if all updates were successfully resolved and applied.
+    /// Returns `false` if any update's flag or increment could not be resolved,
+    /// which means the state machine is desynchronized and all subsequent
+    /// values would be wrong.
     fn simulate_state_updates(
         state: &mut StateMachineState,
         relevant_updates: &[usize],
         all_updates: &[StateUpdateCall],
         resolver: &mut ValueResolver<'_>,
-    ) {
+    ) -> bool {
         for &idx in relevant_updates {
             let update = &all_updates[idx];
 
@@ -680,8 +829,11 @@ impl DecryptionPass {
 
             if let (Some(flag), Some(inc)) = (flag, inc) {
                 let _ = state.next_u32(flag, inc);
+            } else {
+                return false;
             }
         }
+        true
     }
 
     /// Replaces state update calls with Const operations.
@@ -754,6 +906,10 @@ impl SsaPass for DecryptionPass {
         ModificationScope::InstructionsOnly
     }
 
+    fn provides(&self) -> &[PassCapability] {
+        &[PassCapability::DecryptedStrings]
+    }
+
     fn initialize(&mut self, _ctx: &CompilerContext) -> Result<()> {
         // This pass relies on DecryptorContext being populated by obfuscator
         // detection before it runs. No additional setup needed.
@@ -777,20 +933,14 @@ impl SsaPass for DecryptionPass {
             return Ok(false);
         }
 
-        // Early exit if warmup explicitly failed
-        if self
-            .template_pool
-            .as_ref()
-            .is_some_and(|pool| pool.warmup_failed())
-        {
-            return Ok(false);
-        }
-
         let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
+
+        // Track whether any mode made changes
+        let mut any_changed = false;
 
         // Check if this method uses a state machine (CFG mode) - requires sequential processing
         if let Some(provider) = self.get_statemachine_provider_for_method(method_token) {
-            let (changed, sm_changes) = self.process_state_machine_mode(
+            let (sm_changed, sm_changes) = self.process_state_machine_mode(
                 ssa,
                 method_token,
                 ctx,
@@ -798,13 +948,18 @@ impl SsaPass for DecryptionPass {
                 &*provider,
                 ptr_size,
             );
+            if sm_changed {
+                any_changed = true;
+            }
             if !sm_changes.is_empty() {
                 ctx.events.merge(&sm_changes);
             }
-            // CFG mode methods: all decryptor calls use the state machine pattern.
-            // Do not fall through to normal mode, as it would use wrong arguments
-            // (e.g., encoded constants that haven't been XORed with the state).
-            return Ok(changed);
+            // Fall through to normal-mode processing to catch any remaining
+            // decryptor calls not matched by the CFG XOR pattern. In CFG-mode
+            // methods, some calls may have pre-folded arguments that appear as
+            // direct constants (the XOR was computed at IL generation time).
+            // Normal-mode processing handles these correctly since the constant
+            // IS the correct key.
         }
 
         let changes = EventLog::new();
@@ -813,9 +968,8 @@ impl SsaPass for DecryptionPass {
         resolver.load_known_values(ctx, method_token);
 
         // Phase 1: Collect decryption candidates (sequential)
-        // Tuple: (block_idx, instr_idx, dest, decryptor, location, args)
-        let mut candidates: Vec<(usize, usize, SsaVarId, Token, usize, Vec<ConstValue>)> =
-            Vec::new();
+        type DecryptionCandidate = (usize, usize, SsaVarId, Token, Token, usize, Vec<ConstValue>);
+        let mut candidates: Vec<DecryptionCandidate> = Vec::new();
         let mut failures: Vec<(Token, usize, FailureReason)> = Vec::new();
 
         for (block_idx, block) in ssa.iter_blocks() {
@@ -854,6 +1008,7 @@ impl SsaPass for DecryptionPass {
                     instr_idx,
                     dest,
                     decryptor,
+                    call_target,
                     location,
                     arg_constants,
                 ));
@@ -866,22 +1021,24 @@ impl SsaPass for DecryptionPass {
 
         let successes: Vec<_> = candidates
             .into_par_iter()
-            .filter_map(|(block_idx, instr_idx, dest, decryptor, location, args)| {
-                let (result, failure) = self.try_decrypt_at_call(decryptor, &args);
+            .filter_map(
+                |(block_idx, instr_idx, dest, decryptor, call_target, location, args)| {
+                    let (result, failure) = self.try_decrypt_at_call(decryptor, call_target, &args);
 
-                if let Some(value) = result {
-                    Some((block_idx, instr_idx, dest, decryptor, location, value))
-                } else {
-                    if let Ok(mut guard) = parallel_failures.lock() {
-                        guard.push((
-                            decryptor,
-                            location,
-                            failure.unwrap_or(FailureReason::InvalidReturnValue),
-                        ));
+                    if let Some(value) = result {
+                        Some((block_idx, instr_idx, dest, decryptor, location, value))
+                    } else {
+                        if let Ok(mut guard) = parallel_failures.lock() {
+                            guard.push((
+                                decryptor,
+                                location,
+                                failure.unwrap_or(FailureReason::InvalidReturnValue),
+                            ));
+                        }
+                        None
                     }
-                    None
-                }
-            })
+                },
+            )
             .collect();
 
         // Merge parallel failures into main failures vec
@@ -928,11 +1085,11 @@ impl SsaPass for DecryptionPass {
         }
 
         // Determine if actual transformations were made
-        let changed = changes.iter().any(|e| e.kind.is_transformation());
+        let normal_changed = changes.iter().any(|e| e.kind.is_transformation());
         if !changes.is_empty() {
             ctx.events.merge(&changes);
         }
-        Ok(changed)
+        Ok(any_changed || normal_changed)
     }
 }
 
@@ -1223,7 +1380,7 @@ mod tests {
         const CONSTANTS_PATH: &str = "tests/samples/packers/confuserex/1.6.0/mkaring_constants.exe";
 
         // Run full deobfuscation pipeline (ConfuserEx is auto-registered)
-        let mut engine = DeobfuscationEngine::new(EngineConfig::default());
+        let engine = DeobfuscationEngine::new(EngineConfig::default());
         let result = engine.process_file(CONSTANTS_PATH);
 
         match result {

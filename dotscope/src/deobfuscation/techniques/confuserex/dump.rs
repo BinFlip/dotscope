@@ -60,10 +60,28 @@ use std::collections::HashSet;
 
 use crate::{
     cilassembly::CleanupRequest,
-    deobfuscation::techniques::{Detection, Evidence, PassPhase, Technique, TechniqueCategory},
+    compiler::PassPhase,
+    deobfuscation::{
+        techniques::{Detection, Evidence, Technique, TechniqueCategory},
+        utils::find_methods_calling_apis,
+    },
     metadata::token::Token,
     CilObject,
 };
+
+/// Pattern indices for [`find_methods_calling_apis`] results.
+const PAT_VIRTUAL_PROTECT: usize = 0;
+const PAT_GET_HINSTANCE: usize = 1;
+const PAT_GET_MODULE: usize = 2;
+const PAT_MARSHAL_COPY: usize = 3;
+
+/// API name patterns used for anti-dump detection.
+const API_PATTERNS: &[&str] = &[
+    "VirtualProtect",
+    "GetHINSTANCE",
+    "get_Module",
+    "Marshal.Copy",
+];
 
 /// Findings from ConfuserEx anti-dump detection.
 #[derive(Debug)]
@@ -99,57 +117,34 @@ impl Technique for ConfuserExAntiDump {
     }
 
     fn detect(&self, assembly: &CilObject) -> Detection {
-        let mut method_tokens = HashSet::new();
+        let api_hits = find_methods_calling_apis(assembly, API_PATTERNS);
 
         // Resolve VirtualProtect P/Invoke tokens from the ImplMap table.
-        // The real DLL export name is never renamed by obfuscators.
-        let virtualprotect_tokens =
-            super::helpers::resolve_pinvoke_tokens(assembly, "VirtualProtect");
+        // The real DLL export name is never renamed by obfuscators, so this
+        // catches renamed MethodDef wrappers that the name-based scan misses.
+        let pinvoke_vp_tokens = super::helpers::resolve_pinvoke_tokens(assembly, "VirtualProtect");
+        let pinvoke_callers =
+            super::helpers::find_methods_calling_tokens(assembly, &pinvoke_vp_tokens);
 
-        for method_entry in assembly.methods() {
-            let method = method_entry.value();
-
-            let mut has_virtualprotect = false;
-            let mut has_gethinstance = false;
-            let mut has_get_module = false;
-            let mut has_marshal_copy = false;
-
-            for instr in method.instructions() {
-                if let Some(token) = instr.get_token_operand() {
-                    // Check P/Invoke import name for renamed VirtualProtect.
-                    if virtualprotect_tokens.contains(&token) {
-                        has_virtualprotect = true;
-                    }
-
-                    if let Some(name) = assembly.resolve_method_name(token) {
-                        if name.contains("VirtualProtect") {
-                            has_virtualprotect = true;
-                        }
-                        if name.contains("GetHINSTANCE") {
-                            has_gethinstance = true;
-                        }
-                        if name.contains("get_Module") {
-                            has_get_module = true;
-                        }
-                        if name.contains("Marshal") && name.contains("Copy") {
-                            has_marshal_copy = true;
-                        }
-                    }
-                }
-            }
-
-            // Anti-dump: all four must be present.
-            // Marshal.Copy is the key differentiator from anti-tamper.
-            if has_virtualprotect && has_gethinstance && has_get_module && has_marshal_copy {
-                method_tokens.insert(method.token);
-            }
-        }
+        // Anti-dump: all four must be present.
+        // Marshal.Copy is the key differentiator from anti-tamper.
+        let method_tokens: HashSet<Token> = api_hits
+            .into_iter()
+            .filter(|(token, indices)| {
+                let has_virtualprotect =
+                    indices.contains(&PAT_VIRTUAL_PROTECT) || pinvoke_callers.contains(token);
+                let has_gethinstance = indices.contains(&PAT_GET_HINSTANCE);
+                let has_get_module = indices.contains(&PAT_GET_MODULE);
+                let has_marshal_copy = indices.contains(&PAT_MARSHAL_COPY);
+                has_virtualprotect && has_gethinstance && has_get_module && has_marshal_copy
+            })
+            .map(|(token, _)| token)
+            .collect();
 
         if method_tokens.is_empty() {
             return Detection::new_empty();
         }
 
-        let include_module_cctor = !method_tokens.is_empty();
         let count = method_tokens.len();
 
         let mut detection = Detection::new_detected(
@@ -160,12 +155,12 @@ impl Technique for ConfuserExAntiDump {
         );
 
         for token in &method_tokens {
-            detection.cleanup.add_method(*token);
+            detection.cleanup_mut().add_method(*token);
         }
 
-        detection.findings = Some(Box::new(AntiDumpFindings {
+        detection.set_findings(Box::new(AntiDumpFindings {
             method_tokens,
-            include_module_cctor,
+            include_module_cctor: true,
         }));
 
         detection
@@ -213,9 +208,9 @@ mod tests {
         // Anti-dump may not be detectable on anti-tamper-encrypted samples
         // because the method bodies containing Marshal.Copy are encrypted.
         // If detected, verify findings structure.
-        if detection.detected {
+        if detection.is_detected() {
             assert!(
-                !detection.evidence.is_empty(),
+                !detection.evidence().is_empty(),
                 "Detection should have evidence"
             );
 
@@ -240,7 +235,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "ConfuserExAntiDump should not false-positive on anti-debug-only sample"
         );
     }
@@ -253,7 +248,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "ConfuserExAntiDump should not detect anti-dump in original.exe"
         );
     }

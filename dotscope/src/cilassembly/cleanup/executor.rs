@@ -17,7 +17,10 @@ use crate::{
         cleanup::{
             compaction::mark_unreferenced_heap_entries,
             orphans::{self, DeletionContext},
-            references::{collect_pre_deletion_references, scan_method_body_tokens},
+            references::{
+                collect_pre_deletion_references, collect_typedefs_from_field_signatures,
+                scan_method_body_tokens,
+            },
             utils::{is_cctor_method, list_range, try_remove},
             CleanupRequest, CleanupStats,
         },
@@ -25,8 +28,8 @@ use crate::{
     },
     metadata::{
         tables::{
-            CustomAttributeRaw, FieldRaw, MethodDefRaw, MethodImplRaw, MethodSemanticsRaw,
-            MethodSpecRaw, TableId, TypeDefRaw,
+            CustomAttributeRaw, FieldRaw, InterfaceImplRaw, MethodDefRaw, MethodImplRaw,
+            MethodSemanticsRaw, MethodSpecRaw, TableId, TypeDefRaw,
         },
         token::Token,
     },
@@ -134,6 +137,9 @@ pub fn execute_cleanup(
 
     // 2a: Remove methods (in descending RID order to avoid shifting issues)
     for method_token in all_methods.iter().rev() {
+        if request.is_protected(*method_token) {
+            continue;
+        }
         if try_remove(assembly, TableId::MethodDef, method_token.row()) {
             removed_methods.insert(*method_token);
             stats.add(TableId::MethodDef, 1);
@@ -142,6 +148,9 @@ pub fn execute_cleanup(
 
     // 2b: Remove MethodSpecs (in descending RID order)
     for spec_token in request.methodspecs() {
+        if request.is_protected(*spec_token) {
+            continue;
+        }
         if try_remove(assembly, TableId::MethodSpec, spec_token.row()) {
             stats.add(TableId::MethodSpec, 1);
         }
@@ -149,6 +158,9 @@ pub fn execute_cleanup(
 
     // 2c: Remove fields (in descending RID order)
     for field_token in all_fields.iter().rev() {
+        if request.is_protected(*field_token) {
+            continue;
+        }
         if try_remove(assembly, TableId::Field, field_token.row()) {
             removed_fields.insert(*field_token);
             stats.add(TableId::Field, 1);
@@ -173,12 +185,62 @@ pub fn execute_cleanup(
 
     // 2d: Remove types (in descending RID order)
     for type_token in request.types() {
+        if request.is_protected(*type_token) {
+            continue;
+        }
         if sig_referenced_typedefs.contains(&type_token.row()) {
             continue;
         }
         if try_remove(assembly, TableId::TypeDef, type_token.row()) {
             removed_types.insert(*type_token);
             stats.add(TableId::TypeDef, 1);
+        }
+    }
+
+    // 2d+: Cascade-delete nested types whose enclosing type was deleted.
+    // Without this, nested types survive as orphaned TypeDefs after their
+    // enclosing type is removed. Their members (methods, fields) must also
+    // be removed.
+    let orphaned_nested = orphans::collect_orphaned_nested_types(
+        assembly,
+        &DeletionContext::new(&removed_types, &removed_methods, &removed_fields),
+    );
+    if !orphaned_nested.is_empty() {
+        // Expand nested types to their members
+        let (nested_methods, nested_fields) = {
+            let mut nested_request = CleanupRequest::new();
+            for &t in &orphaned_nested {
+                nested_request.add_type(t);
+            }
+            expand_type_members(assembly, &nested_request)
+        };
+
+        // Remove nested type members (descending RID)
+        let mut nested_methods_sorted: Vec<_> = nested_methods.into_iter().collect();
+        nested_methods_sorted.sort_by(|a, b| b.cmp(a));
+        for method_token in &nested_methods_sorted {
+            if try_remove(assembly, TableId::MethodDef, method_token.row()) {
+                removed_methods.insert(*method_token);
+                stats.add(TableId::MethodDef, 1);
+            }
+        }
+        let mut nested_fields_sorted: Vec<_> = nested_fields.into_iter().collect();
+        nested_fields_sorted.sort_by(|a, b| b.cmp(a));
+        for field_token in &nested_fields_sorted {
+            if try_remove(assembly, TableId::Field, field_token.row()) {
+                removed_fields.insert(*field_token);
+                stats.add(TableId::Field, 1);
+            }
+        }
+
+        // Remove the nested TypeDefs themselves (descending RID)
+        let mut sorted_nested: Vec<_> = orphaned_nested.clone();
+        sorted_nested.sort_by_key(|t| std::cmp::Reverse(t.row()));
+        for type_token in &sorted_nested {
+            if try_remove(assembly, TableId::TypeDef, type_token.row()) {
+                removed_types.insert(*type_token);
+                stats.add(TableId::TypeDef, 1);
+            }
         }
     }
 
@@ -246,6 +308,7 @@ pub fn execute_cleanup(
                 // Safety: never cascade-remove .cctor methods — they are
                 // invoked by the runtime on first type access, not via IL.
                 .filter(|t| !is_cctor_method(assembly, t.row()))
+                .filter(|t| !request.is_protected(**t))
                 .copied()
                 .collect();
 
@@ -261,6 +324,7 @@ pub fn execute_cleanup(
                 .filter(|t| !alive_fields.contains(t))
                 .filter(|t| !removed_fields.contains(t))
                 .filter(|t| !assembly.changes().is_row_deleted(TableId::Field, t.row()))
+                .filter(|t| !request.is_protected(**t))
                 .copied()
                 .collect();
 
@@ -318,7 +382,8 @@ pub fn execute_cleanup(
     // TypeRef/AssemblyRef entries referenced only by empty types (e.g.,
     // System.ValueType for empty structs) are properly cascade-removed.
     if request.remove_empty_types() {
-        let (empty_removed, empty_type_tokens) = remove_empty_types(assembly, &body_tokens);
+        let (empty_removed, empty_type_tokens) =
+            remove_empty_types(assembly, &body_tokens, request);
         stats.add(TableId::TypeDef, empty_removed);
 
         if !empty_type_tokens.is_empty() {
@@ -436,14 +501,28 @@ fn expand_type_members(
 fn remove_empty_types(
     assembly: &mut CilAssembly,
     body_tokens: &HashSet<Token>,
+    request: &CleanupRequest,
 ) -> (usize, HashSet<Token>) {
     // Collect all TypeDef RIDs referenced in method bodies — these must not be removed
     // even if they have no methods/fields (e.g., value types used with newarr/box/unbox).
-    let referenced_typedefs: HashSet<u32> = body_tokens
+    let mut referenced_typedefs: HashSet<u32> = body_tokens
         .iter()
         .filter(|t| t.is_table(TableId::TypeDef))
         .map(|t| t.row())
         .collect();
+
+    // Also collect TypeDef RIDs referenced by surviving field signatures.
+    // Types like `__StaticArrayInitTypeSize=N` have no methods/fields of their
+    // own but are referenced from FieldDef signature blobs (e.g., for
+    // RuntimeHelpers.InitializeArray backing fields). Without this, they'd be
+    // incorrectly removed as "empty types", leaving dangling blob references.
+    let field_sig_refs = collect_typedefs_from_field_signatures(assembly);
+    referenced_typedefs.extend(
+        field_sig_refs
+            .iter()
+            .filter(|t| t.is_table(TableId::TypeDef))
+            .map(|t| t.row()),
+    );
 
     // Collect empty type RIDs
     let empty_types: Vec<u32> = {
@@ -473,10 +552,22 @@ fn remove_empty_types(
                 continue;
             }
 
-            // Skip types that are still referenced in method bodies
+            // Skip protected types — these were created by code generation
+            // and must survive cleanup regardless of whether they appear empty.
+            if request.is_protected(Token::from_parts(TableId::TypeDef, type_rid)) {
+                continue;
+            }
+
+            // Skip types that are still referenced in method bodies.
+            // ClassLayout types (explicit-size value types) are also protected
+            // when referenced — they exist to provide memory layout for array
+            // init data (e.g., `__StaticArrayInitTypeSize=N` backing types).
             if referenced_typedefs.contains(&type_rid) {
                 continue;
             }
+            // Unreferenced ClassLayout types are safe to remove — they're
+            // infrastructure whose consumers have already been deleted.
+            // Note: referenced ClassLayout types are already protected above.
 
             // Calculate method count for this type — only count non-deleted rows.
             // Using the raw range (next_type.method_list - this_type.method_list) is
@@ -497,8 +588,39 @@ fn remove_empty_types(
                 .filter(|&rid| !assembly.changes().is_row_deleted(TableId::Field, rid))
                 .count();
 
-            // Type is empty if it has no surviving methods and no surviving fields
+            // Type is empty if it has no surviving methods and no surviving fields,
+            // AND is not an interface or abstract class that legitimately has none.
             if live_method_count == 0 && live_field_count == 0 {
+                // Skip interface types — they legitimately have no members in metadata
+                // when all their members are inherited or defined elsewhere.
+                // ECMA-335 §II.23.1.15: Interface = 0x20
+                if typedef.flags & 0x20 != 0 {
+                    continue;
+                }
+
+                // Skip types that are base classes of other surviving types.
+                // Abstract base classes may have no direct members but provide
+                // type hierarchy structure that must be preserved.
+                let is_base_class = typedef_table.iter().any(|other| {
+                    other.rid != type_rid
+                        && !empty.contains(&other.rid)
+                        && other.extends.tag == TableId::TypeDef
+                        && other.extends.row == type_rid
+                });
+                if is_base_class {
+                    continue;
+                }
+
+                // Skip types that appear in InterfaceImpl as the interface being implemented.
+                if let Some(iface_impl) = tables.table::<InterfaceImplRaw>() {
+                    let is_implemented = iface_impl.iter().any(|row| {
+                        row.interface.tag == TableId::TypeDef && row.interface.row == type_rid
+                    });
+                    if is_implemented {
+                        continue;
+                    }
+                }
+
                 empty.push(type_rid);
             }
         }

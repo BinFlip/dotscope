@@ -490,10 +490,10 @@ mod tests {
             .filter(|e| e.table_id == TableId::Param)
             .count();
 
-        assert_eq!(types, 5, "TypeDef entries");
-        assert_eq!(methods, 17, "MethodDef entries");
-        assert_eq!(fields, 1, "Field entries");
-        assert_eq!(params, 19, "Param entries");
+        assert_eq!(types, 8, "TypeDef entries");
+        assert_eq!(methods, 25, "MethodDef entries");
+        assert_eq!(fields, 9, "Field entries");
+        assert_eq!(params, 23, "Param entries");
     }
 
     /// Sequential type names: SimpleProvider → validate → PascalCase produces A, B, C, D, E.
@@ -508,12 +508,15 @@ mod tests {
             .map(|e| e.new_name.as_str())
             .collect();
 
-        assert_eq!(type_names.len(), 5);
+        assert_eq!(type_names.len(), 8);
         assert_eq!(type_names[0], "A");
         assert_eq!(type_names[1], "B");
         assert_eq!(type_names[2], "C");
         assert_eq!(type_names[3], "D");
         assert_eq!(type_names[4], "E");
+        assert_eq!(type_names[5], "F");
+        assert_eq!(type_names[6], "G");
+        assert_eq!(type_names[7], "H");
     }
 
     /// All field entries should be prefixed with `f_`, all param entries with `p_`.

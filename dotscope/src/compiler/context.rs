@@ -4,6 +4,7 @@
 //! optimization passes, containing the fields that compiler passes require.
 
 use std::{
+    collections::{BTreeMap, BTreeSet},
     sync::Arc,
     time::{Duration, Instant},
 };
@@ -12,7 +13,7 @@ use dashmap::{DashMap, DashSet};
 use rayon::prelude::*;
 
 use crate::{
-    analysis::{CallGraph, ConstValue, SsaFunction, SsaVarId, ValueRange},
+    analysis::{CallGraph, ConstValue, SsaFunction, SsaOp, SsaVarId, ValueRange},
     compiler::{
         events::EventLog,
         summary::{CallSiteInfo, MethodSummary},
@@ -64,6 +65,12 @@ pub struct CompilerContext {
     /// Methods that were inlined at least once during the inlining pass.
     pub inlined_methods: DashSet<Token>,
 
+    /// Methods whose delegate dispatch was resolved and the delegate proxy deleted.
+    /// These are the backing methods (delegate targets) that become orphaned when
+    /// the strong proxy stub is removed — they were only reachable through the
+    /// delegate's Invoke dispatch, never called directly.
+    pub devirtualized_methods: DashSet<Token>,
+
     /// Metadata tokens neutralized by SSA passes (Call/CallVirt targets that were
     /// NOP'd or replaced). Used by cleanup to cascade-remove orphaned MemberRef,
     /// TypeRef, and AssemblyRef entries that are no longer referenced.
@@ -97,6 +104,7 @@ impl CompilerContext {
             entry_points: DashSet::new(),
             no_inline: DashSet::new(),
             inlined_methods: DashSet::new(),
+            devirtualized_methods: DashSet::new(),
             neutralized_tokens: DashSet::new(),
             known_values: DashMap::new(),
             known_ranges: DashMap::new(),
@@ -142,6 +150,17 @@ impl CompilerContext {
     #[must_use]
     pub fn was_inlined(&self, token: Token) -> bool {
         self.inlined_methods.contains(&token)
+    }
+
+    /// Marks a method as a devirtualized delegate target.
+    pub fn mark_devirtualized(&self, token: Token) {
+        self.devirtualized_methods.insert(token);
+    }
+
+    /// Checks if a method was marked as a devirtualized delegate target.
+    #[must_use]
+    pub fn was_devirtualized(&self, token: Token) -> bool {
+        self.devirtualized_methods.contains(&token)
     }
 
     /// Executes a closure with a reference to the method summary.
@@ -435,5 +454,42 @@ impl CompilerContext {
     #[must_use]
     pub fn has_local_remapping(&self, token: Token) -> bool {
         self.local_remappings.contains_key(&token)
+    }
+
+    /// Builds a live call graph from actual SSA instructions.
+    ///
+    /// Scans all SSA functions for `Call`, `CallVirt`, `NewObj`,
+    /// `LoadFunctionPtr`, and `LoadVirtFunctionPtr` instructions and records
+    /// the caller → callee edges. This accounts for inlining and other
+    /// transformations that may have removed or added calls since the
+    /// initial static call graph was built.
+    ///
+    /// Used by both dead method elimination and cleanup request building.
+    #[must_use]
+    pub fn build_ssa_call_graph(&self) -> BTreeMap<Token, BTreeSet<Token>> {
+        let mut call_graph = BTreeMap::new();
+        for entry in &self.ssa_functions {
+            let caller_token = *entry.key();
+            let ssa = entry.value();
+            let mut callees = BTreeSet::new();
+            for block in ssa.blocks() {
+                for instr in block.instructions() {
+                    match instr.op() {
+                        SsaOp::Call { method, .. }
+                        | SsaOp::CallVirt { method, .. }
+                        | SsaOp::LoadFunctionPtr { method, .. }
+                        | SsaOp::LoadVirtFunctionPtr { method, .. } => {
+                            callees.insert(method.token());
+                        }
+                        SsaOp::NewObj { ctor, .. } => {
+                            callees.insert(ctor.token());
+                        }
+                        _ => {}
+                    }
+                }
+            }
+            call_graph.insert(caller_token, callees);
+        }
+        call_graph
     }
 }

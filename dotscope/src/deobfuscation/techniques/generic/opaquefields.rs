@@ -54,12 +54,12 @@ use std::{
 use crate::{
     analysis::{SsaFunction, SsaOp, SsaVarId},
     cilassembly::CleanupRequest,
-    compiler::SsaPass,
+    compiler::{PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::OpaqueFieldPredicatePass,
-        techniques::PassPhase,
         techniques::{Detection, Detections, Evidence, Technique, TechniqueCategory},
+        utils::build_def_map,
     },
     emulation::{EmValue, Hook, HookPriority, PreHookResult},
     metadata::{tables::TableId, token::Token},
@@ -73,14 +73,7 @@ use crate::{
 /// backwards through `LoadField` and `LoadStaticField` to extract the static
 /// field tokens. Returns the set of all such tokens found in the function.
 fn collect_predicate_static_fields(ssa: &SsaFunction) -> HashSet<Token> {
-    let mut defs: HashMap<SsaVarId, &SsaOp> = HashMap::new();
-    for block in ssa.blocks() {
-        for instr in block.instructions() {
-            if let Some(dest) = instr.op().dest() {
-                defs.insert(dest, instr.op());
-            }
-        }
-    }
+    let defs = build_def_map(ssa);
 
     let mut static_fields = HashSet::new();
     for block in ssa.blocks() {
@@ -116,14 +109,7 @@ fn collect_predicate_static_fields(ssa: &SsaFunction) -> HashSet<Token> {
 /// terminators, this function scans every instruction. It captures both
 /// opaque predicate fields AND string encryption XOR key fields.
 fn collect_field_load_sources(ssa: &SsaFunction) -> HashSet<Token> {
-    let mut defs: HashMap<SsaVarId, &SsaOp> = HashMap::new();
-    for block in ssa.blocks() {
-        for instr in block.instructions() {
-            if let Some(dest) = instr.op().dest() {
-                defs.insert(dest, instr.op());
-            }
-        }
-    }
+    let defs = build_def_map(ssa);
 
     let mut static_fields = HashSet::new();
     for block in ssa.blocks() {
@@ -442,18 +428,22 @@ impl Technique for GenericOpaquePredicates {
         ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Option<Box<dyn SsaPass>> {
-        let pool = ctx.template_pool.get()?.clone();
-        let findings = detection.findings::<OpaquePredicateFindings>()?;
+    ) -> Vec<Box<dyn SsaPass>> {
+        let Some(pool) = ctx.template_pool.get().cloned() else {
+            return Vec::new();
+        };
+        let Some(findings) = detection.findings::<OpaquePredicateFindings>() else {
+            return Vec::new();
+        };
         let needed_static_fields: HashSet<Token> =
             findings.affected_field_tokens.iter().copied().collect();
         let affected_methods: HashSet<Token> = findings.affected_methods.iter().copied().collect();
-        Some(Box::new(OpaqueFieldPredicatePass::new(
+        vec![Box::new(OpaqueFieldPredicatePass::new(
             pool,
             needed_static_fields,
             affected_methods,
             findings.sentinel_methods.clone(),
-        )))
+        ))]
     }
 
     fn cleanup(&self, detection: &Detection) -> Option<CleanupRequest> {
@@ -484,9 +474,10 @@ impl Technique for GenericOpaquePredicates {
 #[cfg(test)]
 mod tests {
     use crate::{
+        compiler::PassPhase,
         deobfuscation::techniques::{
             generic::opaquefields::{GenericOpaquePredicates, OpaquePredicateFindings},
-            PassPhase, Technique, TechniqueCategory,
+            Technique, TechniqueCategory,
         },
         test::helpers::load_sample,
     };
@@ -499,11 +490,11 @@ mod tests {
         let detection = technique.detect(&asm);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "GenericOpaquePredicates should not detect anything in a ConfuserEx original sample"
         );
         assert!(
-            detection.evidence.is_empty(),
+            detection.evidence().is_empty(),
             "No evidence should be present for a non-obfuscated sample"
         );
         assert!(
@@ -521,7 +512,7 @@ mod tests {
 
         // Obfuscar does not use opaque field predicates
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "GenericOpaquePredicates should not detect anything in an Obfuscar sample"
         );
     }

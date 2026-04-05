@@ -71,11 +71,16 @@
 //! | `mkaring_normal.exe` | Yes | Safe | Normal preset |
 //! | `mkaring_maximum.exe` | Yes | Safe | Maximum preset |
 
-use std::collections::HashSet;
+use std::{collections::HashSet, sync::Arc};
 
 use crate::{
     cilassembly::CleanupRequest,
-    deobfuscation::techniques::{Detection, Evidence, PassPhase, Technique, TechniqueCategory},
+    compiler::{PassPhase, SsaPass},
+    deobfuscation::{
+        context::AnalysisContext,
+        passes::{SentinelCondition, SentinelTaintRemovalPass},
+        techniques::{Detection, Evidence, Technique, TechniqueCategory},
+    },
     metadata::token::Token,
     CilObject,
 };
@@ -220,10 +225,10 @@ impl Technique for ConfuserExAntiDebug {
         );
 
         for token in &method_tokens {
-            detection.cleanup.add_method(*token);
+            detection.cleanup_mut().add_method(*token);
         }
 
-        detection.findings = Some(Box::new(AntiDebugFindings {
+        detection.set_findings(Box::new(AntiDebugFindings {
             method_tokens,
             include_module_cctor,
             mode,
@@ -234,6 +239,52 @@ impl Technique for ConfuserExAntiDebug {
 
     fn ssa_phase(&self) -> Option<PassPhase> {
         Some(PassPhase::Simplify)
+    }
+
+    fn create_pass(
+        &self,
+        _ctx: &AnalysisContext,
+        detection: &Detection,
+        _assembly: &Arc<CilObject>,
+    ) -> Vec<Box<dyn SsaPass>> {
+        let Some(findings) = detection.findings::<AntiDebugFindings>() else {
+            return Vec::new();
+        };
+        if findings.method_tokens.is_empty() {
+            return Vec::new();
+        }
+
+        // Select sentinel patterns based on the detected mode.
+        // Safe mode: all three managed APIs must co-occur.
+        // Win32 mode: native APIs — any single one is sufficient since
+        // target_methods already filters to known anti-debug methods.
+        let (sentinels, condition): (Vec<&'static str>, SentinelCondition) = match findings.mode {
+            CxAntiDebugMode::Safe => (
+                vec!["get_IsAttached", "IsLogging", "FailFast"],
+                SentinelCondition::All,
+            ),
+            CxAntiDebugMode::Win32 => (
+                vec![
+                    "IsDebuggerPresent",
+                    "NtQueryInformationProcess",
+                    "GetCurrentProcess",
+                    "FailFast",
+                ],
+                SentinelCondition::AtLeast(2),
+            ),
+            _ => (
+                vec!["get_IsAttached", "IsLogging", "FailFast"],
+                SentinelCondition::All,
+            ),
+        };
+
+        vec![Box::new(SentinelTaintRemovalPass::new(
+            "ConfuserExAntiDebug",
+            "Removes ConfuserEx anti-debug checks via taint analysis",
+            findings.method_tokens.clone(),
+            sentinels,
+            condition,
+        ))]
     }
 
     fn cleanup(&self, detection: &Detection) -> Option<CleanupRequest> {
@@ -268,11 +319,11 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            detection.detected,
+            detection.is_detected(),
             "ConfuserExAntiDebug should detect anti-debug in mkaring_maximum.exe"
         );
         assert!(
-            !detection.evidence.is_empty(),
+            !detection.evidence().is_empty(),
             "Detection should have evidence"
         );
 
@@ -294,7 +345,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "ConfuserExAntiDebug should not detect anti-debug in original.exe"
         );
     }

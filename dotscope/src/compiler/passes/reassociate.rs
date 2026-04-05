@@ -35,7 +35,7 @@
 //!
 //! The SCCP pass will then fold the combined constants in the next iteration.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::{
     analysis::{ConstValue, DefUseIndex, SsaFunction, SsaOp, SsaVarId},
@@ -234,9 +234,9 @@ impl ReassociationPass {
     /// Finds reassociation candidates.
     fn find_candidates(
         ssa: &SsaFunction,
-        constants: &HashMap<SsaVarId, ConstValue>,
+        constants: &BTreeMap<SsaVarId, ConstValue>,
         index: &DefUseIndex,
-        uses: &HashMap<SsaVarId, usize>,
+        uses: &BTreeMap<SsaVarId, usize>,
     ) -> Vec<ReassociationCandidate> {
         let mut candidates = Vec::new();
 
@@ -256,9 +256,9 @@ impl ReassociationPass {
         op: &SsaOp,
         block_idx: usize,
         instr_idx: usize,
-        constants: &HashMap<SsaVarId, ConstValue>,
+        constants: &BTreeMap<SsaVarId, ConstValue>,
         index: &DefUseIndex,
-        uses: &HashMap<SsaVarId, usize>,
+        uses: &BTreeMap<SsaVarId, usize>,
     ) -> Option<ReassociationCandidate> {
         // Get the outer operation's kind and operands
         let (outer_kind, dest, outer_left, outer_right) = Self::get_op_kind(op)?;

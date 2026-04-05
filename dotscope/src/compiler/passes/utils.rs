@@ -3,7 +3,7 @@
 //! This module contains common functionality used by multiple passes to avoid
 //! code duplication and ensure consistent behavior.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 /// Follows a chain of mappings to find the ultimate target.
 ///
@@ -28,19 +28,19 @@ use std::collections::{HashMap, HashSet};
 /// # Example
 ///
 /// ```ignore
-/// let mut trampolines = HashMap::new();
+/// let mut trampolines = BTreeMap::new();
 /// trampolines.insert(1, 2);
 /// trampolines.insert(2, 3);
 /// // 1 -> 2 -> 3
 /// assert_eq!(resolve_chain(&trampolines, 1), 3);
 /// ```
 #[must_use]
-pub fn resolve_chain<K>(map: &HashMap<K, K>, start: K) -> K
+pub fn resolve_chain<K>(map: &BTreeMap<K, K>, start: K) -> K
 where
-    K: Copy + std::hash::Hash + Eq,
+    K: Copy + Ord,
 {
     let mut current = start;
-    let mut visited = HashSet::new();
+    let mut visited = BTreeSet::new();
 
     while let Some(&next) = map.get(&current) {
         if !visited.insert(current) {
@@ -59,7 +59,7 @@ mod tests {
 
     #[test]
     fn test_resolve_chain_follows_mappings() {
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert(1, 2);
         map.insert(2, 3);
         map.insert(3, 4);
@@ -74,7 +74,7 @@ mod tests {
 
     #[test]
     fn test_resolve_chain_handles_cycles() {
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert(1, 2);
         map.insert(2, 1); // Cycle: 1 -> 2 -> 1
 
@@ -85,7 +85,7 @@ mod tests {
 
     #[test]
     fn test_resolve_chain_single_step() {
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert(5, 10);
 
         assert_eq!(resolve_chain(&map, 5), 10);
@@ -93,14 +93,14 @@ mod tests {
 
     #[test]
     fn test_resolve_chain_empty_map() {
-        let map: HashMap<usize, usize> = HashMap::new();
+        let map: BTreeMap<usize, usize> = BTreeMap::new();
         // Value not in map returns itself
         assert_eq!(resolve_chain(&map, 42), 42);
     }
 
     #[test]
     fn test_resolve_chain_self_loop() {
-        let mut map = HashMap::new();
+        let mut map = BTreeMap::new();
         map.insert(1, 1); // Self-loop
 
         // Should terminate

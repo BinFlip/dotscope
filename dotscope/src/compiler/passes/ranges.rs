@@ -40,7 +40,10 @@ use crate::{
         CompilerContext, EventKind, EventLog,
     },
     metadata::token::Token,
-    utils::graph::{NodeId, RootedGraph, Successors},
+    utils::{
+        graph::{NodeId, RootedGraph, Successors},
+        BitSet,
+    },
     CilObject, Result,
 };
 
@@ -49,19 +52,21 @@ use crate::{
 /// Performs dataflow-based range analysis to strengthen opaque predicate
 /// detection and simplify comparisons that can be proven always-true or
 /// always-false based on value ranges.
-pub struct ValueRangePropagationPass;
-
-impl Default for ValueRangePropagationPass {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct ValueRangePropagationPass {
+    /// Maximum worklist iterations for the dataflow solver.
+    max_iterations: usize,
 }
 
 impl ValueRangePropagationPass {
     /// Creates a new value range propagation pass.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_iterations` - Maximum worklist iterations for the dataflow solver.
+    ///   In practice analysis converges quickly; the default config value is 10,000.
     #[must_use]
-    pub fn new() -> Self {
-        Self
+    pub fn new(max_iterations: usize) -> Self {
+        Self { max_iterations }
     }
 }
 
@@ -86,7 +91,7 @@ impl SsaPass for ValueRangePropagationPass {
         _assembly: &CilObject,
     ) -> Result<bool> {
         // Run range analysis
-        let mut analysis = RangeAnalysis::new();
+        let mut analysis = RangeAnalysis::new(self.max_iterations);
         let result = analysis.analyze(ssa);
 
         // Collect transformations to apply
@@ -286,22 +291,29 @@ struct RangeAnalysis {
     /// Executable CFG edges.
     executable_edges: HashSet<(usize, usize)>,
     /// Blocks that have been marked executable.
-    executable_blocks: HashSet<usize>,
+    executable_blocks: BitSet,
     /// SSA worklist: variables whose ranges have changed.
     ssa_worklist: VecDeque<SsaVarId>,
     /// CFG worklist: edges that have become executable.
     cfg_worklist: VecDeque<(usize, usize)>,
+    /// Maximum worklist iterations for the dataflow solver.
+    max_iterations: usize,
 }
 
 impl RangeAnalysis {
     /// Creates a new range analysis.
-    fn new() -> Self {
+    ///
+    /// # Arguments
+    ///
+    /// * `max_iterations` - Maximum worklist iterations for the dataflow solver.
+    fn new(max_iterations: usize) -> Self {
         Self {
             ranges: HashMap::new(),
             executable_edges: HashSet::new(),
-            executable_blocks: HashSet::new(),
+            executable_blocks: BitSet::new(0),
             ssa_worklist: VecDeque::new(),
             cfg_worklist: VecDeque::new(),
+            max_iterations,
         }
     }
 
@@ -323,7 +335,7 @@ impl RangeAnalysis {
     {
         self.ranges.clear();
         self.executable_edges.clear();
-        self.executable_blocks.clear();
+        self.executable_blocks = BitSet::new(ssa.block_count());
         self.ssa_worklist.clear();
         self.cfg_worklist.clear();
 
@@ -355,12 +367,11 @@ impl RangeAnalysis {
         // Iteration limit to prevent infinite loops with widening ranges.
         // In practice, analysis should converge quickly for most methods.
         // If we hit this limit, we still have valid (possibly imprecise) results.
-        const MAX_ITERATIONS: usize = 10000;
         let mut iterations = 0;
 
         loop {
             iterations += 1;
-            if iterations > MAX_ITERATIONS {
+            if iterations > self.max_iterations {
                 // Hit iteration limit - return with current results.
                 // This can happen with unbounded widening in loops.
                 break;
@@ -387,7 +398,7 @@ impl RangeAnalysis {
     where
         G: RootedGraph + Successors,
     {
-        let first_visit = !self.executable_blocks.contains(&to);
+        let first_visit = !self.executable_blocks.contains(to);
 
         if first_visit {
             self.executable_blocks.insert(to);
@@ -434,7 +445,7 @@ impl RangeAnalysis {
             for use_site in ssa_var.uses() {
                 let block_id = use_site.block;
 
-                if !self.executable_blocks.contains(&block_id) {
+                if !self.executable_blocks.contains(block_id) {
                     continue;
                 }
 
@@ -731,7 +742,7 @@ mod tests {
 
     #[test]
     fn test_pass_metadata() {
-        let pass = ValueRangePropagationPass::new();
+        let pass = ValueRangePropagationPass::new(10_000);
         assert_eq!(pass.name(), "value-range-propagation");
         assert!(!pass.description().is_empty());
     }
@@ -751,7 +762,7 @@ mod tests {
             (ssa, v0_out)
         };
 
-        let mut analysis = RangeAnalysis::new();
+        let mut analysis = RangeAnalysis::new(10_000);
         let result = analysis.analyze(&ssa);
 
         let range = result.get_range(v0).unwrap();
@@ -776,7 +787,7 @@ mod tests {
             (ssa, v2_out)
         };
 
-        let mut analysis = RangeAnalysis::new();
+        let mut analysis = RangeAnalysis::new(10_000);
         let result = analysis.analyze(&ssa);
 
         let range = result.get_range(v2).unwrap();
@@ -800,7 +811,7 @@ mod tests {
             (ssa, v2_out)
         };
 
-        let mut analysis = RangeAnalysis::new();
+        let mut analysis = RangeAnalysis::new(10_000);
         let result = analysis.analyze(&ssa);
 
         let range = result.get_range(v2).unwrap();
@@ -824,7 +835,7 @@ mod tests {
             (ssa, v2_out)
         };
 
-        let mut analysis = RangeAnalysis::new();
+        let mut analysis = RangeAnalysis::new(10_000);
         let result = analysis.analyze(&ssa);
 
         let range = result.get_range(v2).unwrap();
@@ -849,7 +860,7 @@ mod tests {
             (ssa, v1_out)
         };
 
-        let mut analysis = RangeAnalysis::new();
+        let mut analysis = RangeAnalysis::new(10_000);
         let result = analysis.analyze(&ssa);
 
         let range = result.get_range(v1).unwrap();
@@ -873,7 +884,7 @@ mod tests {
             (ssa, v2_out)
         };
 
-        let mut analysis = RangeAnalysis::new();
+        let mut analysis = RangeAnalysis::new(10_000);
         let result = analysis.analyze(&ssa);
 
         let range = result.get_range(v2).unwrap();

@@ -134,11 +134,11 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            detection.detected,
+            detection.is_detected(),
             "BitMonoJunk should detect junk prefix in bitmono_junk.exe"
         );
         assert!(
-            !detection.evidence.is_empty(),
+            !detection.evidence().is_empty(),
             "Detection should include evidence"
         );
     }
@@ -151,7 +151,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "BitMonoJunk should not detect junk prefix in a non-BitMono assembly"
         );
     }

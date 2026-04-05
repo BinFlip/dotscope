@@ -84,7 +84,7 @@ pub fn run(path: &Path, method_filter: &str, format: &str, show_loops: bool) -> 
                     loop_infos
                         .iter()
                         .map(|li| {
-                            let mut body: Vec<usize> = li.body.iter().map(|n| n.index()).collect();
+                            let mut body: Vec<usize> = li.body.iter().collect();
                             body.sort_unstable();
                             let loop_exits: Vec<usize> =
                                 li.exits.iter().map(|e| e.exit_block.index()).collect();
@@ -194,8 +194,7 @@ pub fn run(path: &Path, method_filter: &str, format: &str, show_loops: bool) -> 
                 } else {
                     println!("Loops: {}", loops.len());
                     for (i, loop_info) in loops.iter().enumerate() {
-                        let mut body: Vec<usize> =
-                            loop_info.body.iter().map(|n| n.index()).collect();
+                        let mut body: Vec<usize> = loop_info.body.iter().collect();
                         body.sort_unstable();
                         let body_str: Vec<String> = body.iter().map(|b| format!("B{b}")).collect();
 

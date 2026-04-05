@@ -741,49 +741,70 @@ impl EmValue {
         }
     }
 
+    /// Applies a bitwise operation with mixed-type and ObjectRef support.
+    ///
+    /// Handles all integer type combinations (I32, I64, NativeInt, NativeUInt)
+    /// and coerces ObjectRef/UnmanagedPtr to their underlying integer values.
+    /// This is needed for obfuscator decryption routines that use pointer
+    /// values in bitwise key computations.
+    fn bitwise_op<F>(&self, other: &Self, op_fn: F, op_name: &str) -> Result<Self>
+    where
+        F: Fn(u64, u64) -> u64,
+    {
+        // Coerce a value to u64 for bitwise operations.
+        // ObjectRef → heap ID, UnmanagedPtr → address, integers → widened.
+        let coerce = |v: &EmValue| -> Option<u64> {
+            match v {
+                EmValue::I32(x) => Some(*x as u64),
+                EmValue::I64(x) | EmValue::NativeInt(x) => Some(*x as u64),
+                EmValue::NativeUInt(x) | EmValue::UnmanagedPtr(x) => Some(*x),
+                EmValue::ObjectRef(href) => Some(href.id()),
+                _ => None,
+            }
+        };
+
+        // Fast path: exact same-type matches preserve the original result type
+        match (self, other) {
+            (EmValue::I32(a), EmValue::I32(b)) => {
+                return Ok(EmValue::I32(op_fn(*a as u64, *b as u64) as i32));
+            }
+            (EmValue::I64(a), EmValue::I64(b)) => {
+                return Ok(EmValue::I64(op_fn(*a as u64, *b as u64) as i64));
+            }
+            (EmValue::NativeInt(a), EmValue::NativeInt(b)) => {
+                return Ok(EmValue::NativeInt(op_fn(*a as u64, *b as u64) as i64));
+            }
+            (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => {
+                return Ok(EmValue::NativeUInt(op_fn(*a, *b)));
+            }
+            _ => {}
+        }
+
+        // Slow path: mixed types — coerce both to u64, apply, return NativeUInt
+        if let (Some(a), Some(b)) = (coerce(self), coerce(other)) {
+            Ok(EmValue::NativeUInt(op_fn(a, b)))
+        } else {
+            Err(EmulationError::InvalidOperationTypes {
+                operation: op_name.to_string(),
+                operand_types: format!("{}, {}", self.cil_flavor(), other.cil_flavor()),
+            }
+            .into())
+        }
+    }
+
     /// Bitwise AND (`and` instruction).
     fn bitand(&self, other: &Self) -> Result<Self> {
-        match (self, other) {
-            (EmValue::I32(a), EmValue::I32(b)) => Ok(EmValue::I32(a & b)),
-            (EmValue::I64(a), EmValue::I64(b)) => Ok(EmValue::I64(a & b)),
-            (EmValue::NativeInt(a), EmValue::NativeInt(b)) => Ok(EmValue::NativeInt(a & b)),
-            (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => Ok(EmValue::NativeUInt(a & b)),
-            (a, b) => Err(EmulationError::InvalidOperationTypes {
-                operation: "and".to_string(),
-                operand_types: format!("{}, {}", a.cil_flavor(), b.cil_flavor()),
-            }
-            .into()),
-        }
+        self.bitwise_op(other, |a, b| a & b, "and")
     }
 
     /// Bitwise OR (`or` instruction).
     fn bitor(&self, other: &Self) -> Result<Self> {
-        match (self, other) {
-            (EmValue::I32(a), EmValue::I32(b)) => Ok(EmValue::I32(a | b)),
-            (EmValue::I64(a), EmValue::I64(b)) => Ok(EmValue::I64(a | b)),
-            (EmValue::NativeInt(a), EmValue::NativeInt(b)) => Ok(EmValue::NativeInt(a | b)),
-            (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => Ok(EmValue::NativeUInt(a | b)),
-            (a, b) => Err(EmulationError::InvalidOperationTypes {
-                operation: "or".to_string(),
-                operand_types: format!("{}, {}", a.cil_flavor(), b.cil_flavor()),
-            }
-            .into()),
-        }
+        self.bitwise_op(other, |a, b| a | b, "or")
     }
 
     /// Bitwise XOR (`xor` instruction).
     fn bitxor(&self, other: &Self) -> Result<Self> {
-        match (self, other) {
-            (EmValue::I32(a), EmValue::I32(b)) => Ok(EmValue::I32(a ^ b)),
-            (EmValue::I64(a), EmValue::I64(b)) => Ok(EmValue::I64(a ^ b)),
-            (EmValue::NativeInt(a), EmValue::NativeInt(b)) => Ok(EmValue::NativeInt(a ^ b)),
-            (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => Ok(EmValue::NativeUInt(a ^ b)),
-            (a, b) => Err(EmulationError::InvalidOperationTypes {
-                operation: "xor".to_string(),
-                operand_types: format!("{}, {}", a.cil_flavor(), b.cil_flavor()),
-            }
-            .into()),
-        }
+        self.bitwise_op(other, |a, b| a ^ b, "xor")
     }
 
     /// Left shift (`shl` instruction). Shift amount is masked to type width.
@@ -1146,5 +1167,53 @@ mod tests {
         let a = EmValue::I32(3);
         let b = EmValue::NativeInt(5);
         assert_eq!(a.add_ovf(&b, false).unwrap(), EmValue::NativeInt(8));
+    }
+
+    #[test]
+    fn test_bitwise_and_same_type() {
+        let a = EmValue::I32(0xFF00);
+        let b = EmValue::I32(0x0FF0);
+        assert_eq!(
+            a.binary_op(&b, BinaryOp::And, PointerSize::Bit64).unwrap(),
+            EmValue::I32(0x0F00)
+        );
+    }
+
+    #[test]
+    fn test_bitwise_and_objectref_i32() {
+        use crate::emulation::value::HeapRef;
+        let obj = EmValue::ObjectRef(HeapRef::new(0xDEAD_BEEF));
+        let mask = EmValue::I32(0x0000_FFFF_u32 as i32);
+        let result = obj
+            .binary_op(&mask, BinaryOp::And, PointerSize::Bit64)
+            .unwrap();
+        assert_eq!(result, EmValue::NativeUInt(0xBEEF));
+    }
+
+    #[test]
+    fn test_bitwise_or_mixed_int_types() {
+        let a = EmValue::I32(0x00FF);
+        let b = EmValue::NativeInt(0xFF00);
+        let result = a.binary_op(&b, BinaryOp::Or, PointerSize::Bit64).unwrap();
+        assert_eq!(result, EmValue::NativeUInt(0xFFFF));
+    }
+
+    #[test]
+    fn test_bitwise_xor_objectref_i32() {
+        use crate::emulation::value::HeapRef;
+        let obj = EmValue::ObjectRef(HeapRef::new(42));
+        let key = EmValue::I32(99);
+        let result = obj
+            .binary_op(&key, BinaryOp::Xor, PointerSize::Bit64)
+            .unwrap();
+        assert_eq!(result, EmValue::NativeUInt(42 ^ 99));
+    }
+
+    #[test]
+    fn test_bitwise_and_native_uint_i32() {
+        let a = EmValue::NativeUInt(0xFFFF_FFFF_FFFF_0000);
+        let b = EmValue::I32(-1); // -1i32 as u64 = 0xFFFF_FFFF_FFFF_FFFF (sign-extended)
+        let result = a.binary_op(&b, BinaryOp::And, PointerSize::Bit64).unwrap();
+        assert_eq!(result, EmValue::NativeUInt(0xFFFF_FFFF_FFFF_0000));
     }
 }

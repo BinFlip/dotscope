@@ -3,11 +3,14 @@
 //! These methods analyze SSA functions without modifying them, providing
 //! information about variables, control flow, return behavior, and purity.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
 
-use crate::analysis::ssa::{
-    ConstValue, PhiNode, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId, SsaVariable,
-    VariableOrigin,
+use crate::{
+    analysis::ssa::{
+        ConstValue, PhiNode, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId, SsaVariable,
+        VariableOrigin,
+    },
+    utils::BitSet,
 };
 
 /// What a method returns.
@@ -457,11 +460,11 @@ impl SsaFunction {
         &self,
         source: SsaVarId,
         result: SsaVarId,
-        var_def_block: &HashMap<SsaVarId, usize>,
-        reachable: &HashSet<usize>,
+        var_def_block: &BTreeMap<SsaVarId, usize>,
+        reachable: &BitSet,
     ) -> bool {
         if let Some(&def_block) = var_def_block.get(&source) {
-            if reachable.contains(&def_block) {
+            if reachable.contains(def_block) {
                 return self.would_create_self_reference(source, result);
             }
         }
@@ -500,6 +503,37 @@ impl SsaFunction {
     pub fn get_var_constant(&self, var: SsaVarId) -> Option<&ConstValue> {
         match self.get_definition(var) {
             Some(SsaOp::Const { value, .. }) => Some(value),
+            _ => None,
+        }
+    }
+
+    /// Returns the constant value of a variable if it was defined by a `Const` operation.
+    ///
+    /// Uses the variable's [`DefSite`] for O(1) lookup without a fallback scan.
+    /// Returns `None` for phi-defined variables or non-constant definitions.
+    ///
+    /// # Arguments
+    ///
+    /// * `var` - The SSA variable to check.
+    ///
+    /// # Returns
+    ///
+    /// The constant value if the variable is defined by a `Const` instruction,
+    /// `None` otherwise.
+    #[must_use]
+    pub fn try_constant_value(&self, var: SsaVarId) -> Option<ConstValue> {
+        let variable = self.variable(var)?;
+        let def_site = variable.def_site();
+
+        if def_site.is_phi() {
+            return None;
+        }
+
+        let block = self.block(def_site.block)?;
+        let instr = block.instruction(def_site.instruction?)?;
+
+        match instr.op() {
+            SsaOp::Const { value, .. } => Some(value.clone()),
             _ => None,
         }
     }
@@ -759,19 +793,22 @@ impl SsaFunction {
     /// # Returns
     ///
     /// `true` if there is a path from `from` to `to`, `false` otherwise.
-    fn block_reaches(from: usize, to: usize, successor_map: &HashMap<usize, Vec<usize>>) -> bool {
+    fn block_reaches(from: usize, to: usize, successor_map: &BTreeMap<usize, Vec<usize>>) -> bool {
         if from == to {
             return true;
         }
 
-        let mut visited: HashSet<usize> = HashSet::new();
+        // Determine block count from successor map keys
+        let block_count = successor_map.keys().copied().max().map_or(0, |m| m + 1);
+        let block_count = block_count.max(from + 1).max(to + 1);
+        let mut visited = BitSet::new(block_count);
         let mut worklist = vec![from];
 
         while let Some(block_idx) = worklist.pop() {
             if block_idx == to {
                 return true;
             }
-            if !visited.insert(block_idx) {
+            if block_idx >= block_count || !visited.insert(block_idx) {
                 continue;
             }
             if let Some(succs) = successor_map.get(&block_idx) {
@@ -797,17 +834,20 @@ impl SsaFunction {
     /// The parameter index if this is a parameter variable, `None` otherwise.
     #[must_use]
     pub fn is_parameter_variable(&self, var: SsaVarId) -> Option<usize> {
-        self.is_parameter_variable_impl(var, &mut HashSet::new())
+        let variable_count = self.var_id_capacity();
+        self.is_parameter_variable_impl(var, &mut BitSet::new(variable_count), variable_count)
     }
 
     /// Internal implementation with visited set to prevent infinite recursion on cycles.
     fn is_parameter_variable_impl(
         &self,
         var: SsaVarId,
-        visited: &mut HashSet<SsaVarId>,
+        visited: &mut BitSet,
+        variable_count: usize,
     ) -> Option<usize> {
         // Prevent infinite recursion on cycles
-        if !visited.insert(var) {
+        let idx = var.index();
+        if idx >= variable_count || !visited.insert(idx) {
             return None;
         }
 
@@ -834,7 +874,7 @@ impl SsaFunction {
                     // Check for patterns like copy from parameter variable
                     if let SsaOp::Copy { src, .. } = op {
                         // Recursively check if source is a parameter
-                        return self.is_parameter_variable_impl(*src, visited);
+                        return self.is_parameter_variable_impl(*src, visited, variable_count);
                     }
                 }
             }
@@ -863,8 +903,8 @@ impl SsaFunction {
     /// }
     /// ```
     #[must_use]
-    pub fn count_uses(&self) -> HashMap<SsaVarId, usize> {
-        let mut counts = HashMap::new();
+    pub fn count_uses(&self) -> BTreeMap<SsaVarId, usize> {
+        let mut counts = BTreeMap::new();
 
         for block in self.blocks() {
             // Count phi node operands
@@ -908,7 +948,7 @@ impl SsaFunction {
     /// }
     /// ```
     #[must_use]
-    pub fn find_trampoline_blocks(&self, skip_entry: bool) -> HashMap<usize, usize> {
+    pub fn find_trampoline_blocks(&self, skip_entry: bool) -> BTreeMap<usize, usize> {
         self.iter_blocks()
             .filter(|&(block_idx, _)| !skip_entry || block_idx != 0)
             .filter_map(|(block_idx, block)| {
@@ -935,8 +975,8 @@ impl SsaFunction {
     /// }
     /// ```
     #[must_use]
-    pub fn find_constants(&self) -> HashMap<SsaVarId, ConstValue> {
-        let mut constants = HashMap::new();
+    pub fn find_constants(&self) -> BTreeMap<SsaVarId, ConstValue> {
+        let mut constants = BTreeMap::new();
 
         for block in self.blocks() {
             for instr in block.instructions() {

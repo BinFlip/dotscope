@@ -34,17 +34,25 @@ mod reconstruction;
 mod statevar;
 mod tracer;
 
-pub use reconstruction::{apply_patch_plan, extract_patch_plan};
-pub use tracer::{trace_method_tree, TraceTree};
+pub use detection::CffDetector;
+pub use dispatcher::Dispatcher;
+pub use reconstruction::{apply_patch_plan, extract_patch_plan, merge_patch_plans};
 
 use std::sync::Arc;
 
 use dashmap::DashSet;
+use rayon::prelude::*;
+
+use std::collections::HashMap;
 
 use crate::{
     analysis::SsaFunction,
-    compiler::{CompilerContext, SsaPass},
-    deobfuscation::context::AnalysisContext,
+    compiler::{CompilerContext, PassCapability, SsaPass},
+    deobfuscation::{
+        config::DetectionWeights,
+        context::AnalysisContext,
+        passes::unflattening::tracer::{trace_for_dispatcher, TracedDispatcher},
+    },
     metadata::{token::Token, typesystem::PointerSize},
     CilObject, Result,
 };
@@ -52,40 +60,119 @@ use crate::{
 /// High-level API: Unflatten a method using tree-based tracing and patching.
 ///
 /// This is the main entry point for the trace-based unflattening approach.
-/// It traces the method, builds a tree of execution paths, and patches
-/// the original SSA in place to remove CFF machinery.
+/// It detects ALL CFF dispatchers in the method (there may be independent
+/// dispatchers in different exception handler regions), traces each one
+/// independently, merges the patch plans, and applies them all at once
+/// before a single `rebuild_ssa()`. This avoids the block renumbering
+/// corruption that occurs when dispatchers are processed iteratively
+/// with intermediate SSA rebuilds.
 ///
 /// # Arguments
 ///
-/// * `ssa` - The SSA function to unflatten
-/// * `config` - Configuration controlling tracing limits and behavior
+/// * `ssa` - The SSA function to unflatten.
+/// * `config` - Configuration controlling tracing limits and behavior.
+/// * `assembly` - Optional assembly for predicate method resolution during tracing.
 ///
 /// # Returns
-/// - `Ok(Some(ssa))` if unflattening succeeded (patched clone)
-/// - `Ok(None)` if method doesn't appear to be CFF-protected
-/// - `Err(...)` if an error occurred
-pub fn unflatten_with_tree(
+/// - `Some(ssa)` if unflattening succeeded (patched clone)
+/// - `None` if method doesn't appear to be CFF-protected
+pub fn unflatten(
     ssa: &SsaFunction,
     config: &UnflattenConfig,
     assembly: Option<&CilObject>,
 ) -> Option<SsaFunction> {
-    // Step 1: Trace the method into a tree
-    let tree = trace_method_tree(ssa, config, assembly);
+    let mut detector = CffDetector::with_config(ssa, config);
+    let dispatchers: Vec<_> = detector
+        .detect_all_dispatchers()
+        .into_iter()
+        .filter(|d| d.confidence >= config.min_confidence)
+        .collect();
 
-    // Step 2: Check if we found a dispatcher
-    tree.dispatcher.as_ref()?;
+    unflatten_with_dispatchers(ssa, config, assembly, dispatchers)
+}
 
-    // Step 3: Extract patch plan from the tree
-    let plan = extract_patch_plan(&tree)?;
-
-    // Step 4: Only proceed if there are state transitions to remove
-    if plan.state_transitions_removed == 0 {
+/// Unflatten a method using pre-detected dispatchers.
+///
+/// Like [`unflatten`], but skips the detection phase and uses the provided
+/// dispatchers directly. This is used when the [`GenericFlattening`] technique
+/// has already run [`CffDetector`] during `detect_ssa()` and stored the results
+/// in [`FlatteningFindings`].
+///
+/// [`GenericFlattening`]: crate::deobfuscation::techniques::generic::GenericFlattening
+/// [`FlatteningFindings`]: crate::deobfuscation::techniques::generic::flattening::FlatteningFindings
+///
+/// # Arguments
+///
+/// * `ssa` - The SSA function to unflatten.
+/// * `config` - Configuration controlling tracing limits and behavior.
+/// * `assembly` - Optional assembly for predicate method resolution during tracing.
+/// * `dispatchers` - Pre-detected dispatchers (already confidence-filtered).
+///
+/// # Returns
+/// - `Some(ssa)` if unflattening succeeded (patched clone)
+/// - `None` if no dispatchers provided or tracing produced no changes
+pub fn unflatten_with_dispatchers(
+    ssa: &SsaFunction,
+    config: &UnflattenConfig,
+    assembly: Option<&CilObject>,
+    dispatchers: Vec<Dispatcher>,
+) -> Option<SsaFunction> {
+    if dispatchers.is_empty() {
         return None;
     }
 
-    // Step 5: Clone the SSA and apply patches
+    // Trace dispatchers in parallel and extract patch plans.
+    // Each dispatcher trace is independent (shared &SsaFunction, own evaluator).
+    // Pass other dispatcher block indices so forks at foreign dispatchers
+    // don't consume tree depth budget (Problem A from §15.5).
+    let all_dispatcher_blocks: Vec<usize> = dispatchers.iter().map(|d| d.block).collect();
+
+    let plans: Vec<_> = dispatchers
+        .par_iter()
+        .filter_map(|d| {
+            let traced = TracedDispatcher {
+                block: d.block,
+                switch_var: d.switch_var,
+                targets: d.cases.clone(),
+                default: d.default,
+                state_var: d.state_phi,
+            };
+
+            let others: Vec<usize> = all_dispatcher_blocks
+                .iter()
+                .copied()
+                .filter(|&b| b != d.block)
+                .collect();
+            let tree = trace_for_dispatcher(ssa, config, assembly, traced, &others);
+
+            tree.dispatcher.as_ref()?;
+
+            extract_patch_plan(&tree).filter(|plan| plan.state_transitions_removed > 0)
+        })
+        .collect();
+
+    if plans.is_empty() {
+        return None;
+    }
+
+    // Step 3: Merge all patch plans into a single combined plan
+    let merged = merge_patch_plans(plans);
+
+    if merged.state_transitions_removed == 0 {
+        return None;
+    }
+
+    // Step 4: Clone the SSA and apply the combined patches once
     let mut patched = ssa.clone();
-    let _result = apply_patch_plan(&mut patched, &plan);
+    let _result = apply_patch_plan(&mut patched, &merged);
+
+    // Note: we do NOT reject based on dispatcher_still_needed. With multiple
+    // dispatchers, some may be fully resolved while others are only partial
+    // (e.g., handler CFF that depends on the outer CFF state). apply_patch_plan
+    // already handles this correctly: it only clears dispatchers that are fully
+    // resolved, leaving partial ones intact for later passes or as harmless
+    // residual. Rejecting the entire result would prevent the fully-resolved
+    // main body CFF from being applied.
 
     Some(patched)
 }
@@ -123,6 +210,15 @@ pub struct UnflattenConfig {
     /// evaluating state values.
     pub max_eval_depth: usize,
 
+    /// Maximum BFS depth for back-edge transitive reachability check.
+    ///
+    /// Used in confidence scoring to determine if case blocks can
+    /// transitively reach the dispatcher through intermediate blocks.
+    pub max_backedge_depth: usize,
+
+    /// Confidence scoring weights for CFF dispatcher detection.
+    pub confidence_weights: DetectionWeights,
+
     /// Maximum number of blocks to visit during tracing.
     ///
     /// Prevents infinite loops when tracing through the CFG. If exceeded,
@@ -150,9 +246,11 @@ impl Default for UnflattenConfig {
             solver_timeout_ms: 100,
             min_confidence: 0.6,
             max_eval_depth: 30,
-            max_block_visits: 10000,
-            max_tree_depth: 100,
+            max_block_visits: 50000,
+            max_tree_depth: 500,
             pointer_size: PointerSize::Bit32,
+            max_backedge_depth: 10,
+            confidence_weights: DetectionWeights::default(),
         }
     }
 }
@@ -178,6 +276,8 @@ impl UnflattenConfig {
             max_block_visits: 5000,
             max_tree_depth: 75,
             pointer_size: PointerSize::Bit32,
+            max_backedge_depth: 10,
+            confidence_weights: DetectionWeights::default(),
         }
     }
 
@@ -202,6 +302,8 @@ impl UnflattenConfig {
             max_block_visits: 20000,
             max_tree_depth: 150,
             pointer_size: PointerSize::Bit32,
+            max_backedge_depth: 15,
+            confidence_weights: DetectionWeights::default(),
         }
     }
 }
@@ -211,12 +313,22 @@ impl UnflattenConfig {
 /// This pass detects and reverses control flow flattening, a common
 /// obfuscation technique that converts structured control flow into
 /// a state machine.
+///
+/// When [`FlatteningFindings`] are available from the detection phase,
+/// the pass uses pre-computed dispatchers directly instead of re-running
+/// detection. This avoids duplicate structural analysis (dominance, SCCs,
+/// confidence scoring) for methods already analyzed during `detect_ssa()`.
+///
+/// [`FlatteningFindings`]: crate::deobfuscation::techniques::generic::flattening::FlatteningFindings
 pub struct CffReconstructionPass {
     config: UnflattenConfig,
     /// Successfully unflattened dispatcher methods (shared with deob engine).
     unflattened_dispatchers: Arc<DashSet<Token>>,
     /// All detected dispatcher methods (shared with deob engine).
     dispatchers: Arc<DashSet<Token>>,
+    /// Pre-detected dispatchers from the detection phase (method → dispatchers).
+    /// When populated, `run_on_method` uses these instead of re-running detection.
+    pre_detected: HashMap<Token, Vec<Dispatcher>>,
 }
 
 impl Default for CffReconstructionPass {
@@ -225,6 +337,7 @@ impl Default for CffReconstructionPass {
             config: UnflattenConfig::default(),
             unflattened_dispatchers: Arc::new(DashSet::new()),
             dispatchers: Arc::new(DashSet::new()),
+            pre_detected: HashMap::new(),
         }
     }
 }
@@ -250,7 +363,22 @@ impl CffReconstructionPass {
             config,
             unflattened_dispatchers: Arc::clone(&ctx.unflattened_dispatchers),
             dispatchers: Arc::clone(&ctx.dispatchers),
+            pre_detected: HashMap::new(),
         }
+    }
+
+    /// Sets the pre-detected dispatchers from the detection phase.
+    ///
+    /// When set, `run_on_method` uses these dispatchers directly instead of
+    /// re-running [`CffDetector`] analysis, avoiding duplicate work.
+    ///
+    /// # Arguments
+    ///
+    /// * `pre_detected` - Map from method token to pre-detected dispatchers.
+    #[must_use]
+    pub fn with_pre_detected(mut self, pre_detected: HashMap<Token, Vec<Dispatcher>>) -> Self {
+        self.pre_detected = pre_detected;
+        self
     }
 
     /// Creates a pass with default configuration and standalone state.
@@ -277,6 +405,24 @@ impl SsaPass for CffReconstructionPass {
         "Recovers original control flow from flattened state machine patterns"
     }
 
+    fn provides(&self) -> &[PassCapability] {
+        &[PassCapability::RestoredControlFlow]
+    }
+
+    fn requires(&self) -> &[PassCapability] {
+        &[PassCapability::ResolvedStaticFields]
+    }
+
+    fn should_run(&self, method_token: Token, _ctx: &CompilerContext) -> bool {
+        // Skip methods already unflattened and also skip methods that were never
+        // detected as having dispatchers.
+        !self.unflattened_dispatchers.contains(&method_token)
+            && self
+                .pre_detected
+                .get(&method_token)
+                .is_some_and(|d| !d.is_empty())
+    }
+
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
@@ -284,20 +430,20 @@ impl SsaPass for CffReconstructionPass {
         ctx: &CompilerContext,
         assembly: &CilObject,
     ) -> Result<bool> {
-        // Use the new tree-based patch approach for CFF unflattening.
-        // This traces execution paths, builds a tree of all possibilities,
-        // then patches the original SSA in place by:
-        // 1. Redirecting jumps that go to the dispatcher to their actual targets
-        // 2. Filtering out state-tainted instructions (CFF machinery)
-        //
-        // This approach is more reliable than the old reconstruction because:
-        // - It preserves the original SSA structure (variables, phi nodes)
-        // - It handles user branches correctly (non-state-dependent conditions)
-        // - DCE naturally cleans up unreachable dispatcher code
         let mut config = self.config.clone();
         config.pointer_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
 
-        match unflatten_with_tree(ssa, &config, Some(assembly)) {
+        // Use pre-detected dispatcher block indices from detect_ssa phase, but
+        // refresh variable IDs from the current SSA. Earlier passes (opaque field
+        // predicates, etc.) trigger rebuild_ssa() which reindexes variables, making
+        // the original SsaVarId values stale.
+        let dispatchers: Vec<Dispatcher> = self
+            .pre_detected
+            .get(&method_token)
+            .map(|pre| pre.iter().filter_map(|d| d.refresh(ssa)).collect())
+            .unwrap_or_default();
+
+        match unflatten_with_dispatchers(ssa, &config, Some(assembly), dispatchers) {
             Some(mut patched) => {
                 // After CFF unflattening, the CFG structure has changed significantly.
                 // Rebuild SSA form to ensure PHI nodes are correct for the new CFG.

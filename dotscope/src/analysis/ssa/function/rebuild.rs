@@ -9,7 +9,7 @@
 //! intermediate state stored in `SsaRebuilder`. This makes the pipeline
 //! individually testable and easier to debug.
 
-use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 use crate::{
     analysis::ssa::{
@@ -19,9 +19,12 @@ use crate::{
         DefSite, PhiOperand, SsaBlock, SsaCfg, SsaFunction, SsaOp, SsaType, SsaVarId,
         TrivialPhiOptions, VariableOrigin,
     },
-    utils::graph::{
-        algorithms::{compute_dominance_frontiers, compute_dominators, DominatorTree},
-        NodeId, RootedGraph,
+    utils::{
+        graph::{
+            algorithms::{compute_dominance_frontiers, compute_dominators, DominatorTree},
+            NodeId, RootedGraph,
+        },
+        BitSet,
     },
     Error, Result,
 };
@@ -33,22 +36,22 @@ use crate::{
 /// unchanged through recursive calls.
 struct RenameContext<'a> {
     /// Maps variable IDs to their origins (Argument, Local, Phi)
-    var_origins: &'a HashMap<SsaVarId, VariableOrigin>,
+    var_origins: &'a BTreeMap<SsaVarId, VariableOrigin>,
     /// Maps group IDs to their SSA types (for preserving type information)
-    group_types: &'a HashMap<u32, SsaType>,
+    group_types: &'a BTreeMap<u32, SsaType>,
     /// Maps group IDs to their VariableOrigin (for creating variables)
-    group_origins: &'a HashMap<u32, VariableOrigin>,
+    group_origins: &'a BTreeMap<u32, VariableOrigin>,
     /// Maps variable IDs to their types (per-variable, for stack-derived locals
     /// where different variables at the same origin can have different types)
-    var_types: &'a HashMap<SsaVarId, SsaType>,
+    var_types: &'a BTreeMap<SsaVarId, SsaType>,
     /// CFG successor map for filling PHI operands
-    successor_map: &'a HashMap<usize, Vec<usize>>,
+    successor_map: &'a BTreeMap<usize, Vec<usize>>,
     /// Dominator tree children for recursive traversal
-    dom_children: &'a HashMap<usize, Vec<usize>>,
+    dom_children: &'a BTreeMap<usize, Vec<usize>>,
     /// Maps block index to ordered list of rename groups for its phi nodes.
     /// Built from `place_pruned_phis` return values so rename can associate
     /// each phi with its group (needed when multiple groups share `Phi` origin).
-    phi_groups: &'a HashMap<usize, Vec<u32>>,
+    phi_groups: &'a BTreeMap<usize, Vec<u32>>,
     /// Number of method arguments (for group ID computation)
     num_args: usize,
 }
@@ -62,31 +65,31 @@ pub(crate) struct SsaRebuilder<'a> {
     ssa: &'a mut SsaFunction,
 
     // Phase 1 output: variable origins and types
-    var_origins: HashMap<SsaVarId, VariableOrigin>,
+    var_origins: BTreeMap<SsaVarId, VariableOrigin>,
     /// Maps group ID to SSA type (for preserving type information)
-    group_types: HashMap<u32, SsaType>,
+    group_types: BTreeMap<u32, SsaType>,
     /// Maps group ID to its VariableOrigin (for creating phi nodes)
-    group_origins: HashMap<u32, VariableOrigin>,
+    group_origins: BTreeMap<u32, VariableOrigin>,
     /// Per-variable types: preserves the exact type of each variable across rebuild.
     /// This is needed because stack-derived locals at the same origin can have different
     /// types at different definition points.
-    var_types: HashMap<SsaVarId, SsaType>,
+    var_types: BTreeMap<SsaVarId, SsaType>,
 
     // Phase 2 output: CFG analysis
-    reachable: HashSet<usize>,
-    dominance_frontiers: Vec<HashSet<NodeId>>,
-    successor_map: HashMap<usize, Vec<usize>>,
-    dom_children: HashMap<usize, Vec<usize>>,
+    reachable: BitSet,
+    dominance_frontiers: Vec<BitSet>,
+    successor_map: BTreeMap<usize, Vec<usize>>,
+    dom_children: BTreeMap<usize, Vec<usize>>,
 
     // Phase 3 output: definition sites (keyed by group ID)
     defs: BTreeMap<u32, BTreeSet<usize>>,
 
     // Phase 3b output: liveness (keyed by group ID)
-    live_in: HashMap<u32, HashSet<usize>>,
+    live_in: BTreeMap<u32, BitSet>,
 
     // Phase 4 output: per-block phi group mapping
     /// Maps block index to ordered list of rename groups for its phi nodes.
-    phi_groups: HashMap<usize, Vec<u32>>,
+    phi_groups: BTreeMap<usize, Vec<u32>>,
 
     /// Next auto-incrementing group ID for orphans
     next_group: u32,
@@ -95,31 +98,33 @@ pub(crate) struct SsaRebuilder<'a> {
 impl<'a> SsaRebuilder<'a> {
     pub fn new(ssa: &'a mut SsaFunction) -> Self {
         let next_group = ssa.num_args as u32 + ssa.num_locals as u32;
+        let block_count = ssa.blocks.len();
         Self {
             ssa,
-            var_origins: HashMap::new(),
-            group_types: HashMap::new(),
-            group_origins: HashMap::new(),
-            var_types: HashMap::new(),
-            reachable: HashSet::new(),
+            var_origins: BTreeMap::new(),
+            group_types: BTreeMap::new(),
+            group_origins: BTreeMap::new(),
+            var_types: BTreeMap::new(),
+            reachable: BitSet::new(block_count),
             dominance_frontiers: Vec::new(),
-            successor_map: HashMap::new(),
-            dom_children: HashMap::new(),
+            successor_map: BTreeMap::new(),
+            dom_children: BTreeMap::new(),
             defs: BTreeMap::new(),
-            live_in: HashMap::new(),
-            phi_groups: HashMap::new(),
+            live_in: BTreeMap::new(),
+            phi_groups: BTreeMap::new(),
             next_group,
         }
     }
 
     /// Computes the set of reachable block indices via BFS from entry + exception handler roots.
-    fn compute_reachable_blocks(ssa: &SsaFunction, cfg: &SsaCfg<'_>) -> HashSet<usize> {
-        let mut reachable = HashSet::new();
+    fn compute_reachable_blocks(ssa: &SsaFunction, cfg: &SsaCfg<'_>) -> BitSet {
+        let block_count = ssa.blocks.len();
+        let mut reachable = BitSet::new(block_count);
         let mut worklist = vec![0usize];
         while let Some(block_idx) = worklist.pop() {
             if reachable.insert(block_idx) {
                 for &succ in cfg.block_successors(block_idx) {
-                    if succ < ssa.blocks.len() {
+                    if succ < block_count {
                         worklist.push(succ);
                     }
                 }
@@ -132,12 +137,12 @@ impl<'a> SsaRebuilder<'a> {
                 .into_iter()
                 .flatten()
             {
-                if block < ssa.blocks.len() && !reachable.contains(&block) {
+                if block < block_count && !reachable.contains(block) {
                     worklist.push(block);
                     while let Some(b) = worklist.pop() {
                         if reachable.insert(b) {
                             for &succ in cfg.block_successors(b) {
-                                if succ < ssa.blocks.len() {
+                                if succ < block_count {
                                     worklist.push(succ);
                                 }
                             }
@@ -152,27 +157,27 @@ impl<'a> SsaRebuilder<'a> {
 
     /// Runs the full SSA rebuild pipeline.
     pub fn rebuild(&mut self) -> Result<()> {
-        // ── Stage 1: Pre-clean ──────────────────────────────────
+        // Stage 1: Pre-clean
         self.pre_clean_unreachable(); // Phase 1
         self.recompute_groups_from_connectivity(); // Phase 2
 
-        // ── Stage 2: Type & origin collection ───────────────────
+        // Stage 2: Type & origin collection
         self.collect_origins(); // Phase 3
         self.propagate_types(); // Phase 4
         self.propagate_instruction_types(); // Phase 5
         self.assign_orphan_origins(); // Phase 6
 
-        // ── Stage 3: CFG analysis ───────────────────────────────
+        // Stage 3: CFG analysis
         self.compute_cfg(); // Phase 7
         self.collect_defs(); // Phase 8
         self.collect_uses_and_liveness(); // Phase 9
 
-        // ── Stage 4: Phi placement & rename ─────────────────────
+        // Stage 4: Phi placement & rename
         self.clear_all_phis(); // Phase 10
         self.place_phis(); // Phase 11
         self.rename(); // Phase 12
 
-        // ── Stage 5: Cleanup & compaction ───────────────────────
+        // Stage 5: Cleanup & compaction
         self.eliminate_trivial_phis(); // Phase 13
         self.ssa.strip_nops(); // Phase 14
         self.ssa.compact_variables(); // Phase 15
@@ -182,7 +187,7 @@ impl<'a> SsaRebuilder<'a> {
         self.eliminate_trivial_phis(); // Phase 18
         self.ssa.shrink_num_locals(); // Phase 19
 
-        // ── Verification ────────────────────────────────────────
+        // Verification
         self.verify()
     }
 
@@ -214,7 +219,7 @@ impl<'a> SsaRebuilder<'a> {
                     VerifierError::OrphanVariable { .. } => return false,
                 };
                 // Keep errors for reachable blocks (or block-independent errors)
-                block.is_none_or(|b| self.reachable.contains(&b))
+                block.is_none_or(|b| self.reachable.contains(b))
             })
             .collect();
 
@@ -249,7 +254,7 @@ impl<'a> SsaRebuilder<'a> {
 
         // Clear unreachable blocks
         for block_idx in 0..self.ssa.blocks.len() {
-            if !reachable.contains(&block_idx) {
+            if !reachable.contains(block_idx) {
                 self.ssa.blocks[block_idx].instructions_mut().clear();
                 self.ssa.blocks[block_idx].phi_nodes_mut().clear();
             }
@@ -259,14 +264,14 @@ impl<'a> SsaRebuilder<'a> {
         // trivial phi replacements (phi with 0 or 1 unique operand)
         let mut replacements: Vec<(SsaVarId, SsaVarId)> = Vec::new();
         for block_idx in 0..self.ssa.blocks.len() {
-            if !reachable.contains(&block_idx) {
+            if !reachable.contains(block_idx) {
                 continue;
             }
             let block = &mut self.ssa.blocks[block_idx];
 
             // Remove operands from unreachable predecessors
             for phi in block.phi_nodes_mut().iter_mut() {
-                phi.retain_operands(|pred| reachable.contains(&pred));
+                phi.retain_operands(|pred| reachable.contains(pred));
             }
 
             // Inline trivial phis (0 or 1 unique operand value)
@@ -290,7 +295,7 @@ impl<'a> SsaRebuilder<'a> {
 
         // Apply replacements: substitute phi result uses with the single operand
         if !replacements.is_empty() {
-            let replacement_map: HashMap<SsaVarId, SsaVarId> = replacements.into_iter().collect();
+            let replacement_map: BTreeMap<SsaVarId, SsaVarId> = replacements.into_iter().collect();
             for block in &mut self.ssa.blocks {
                 for instr in block.instructions_mut() {
                     for (&old_var, &new_var) in &replacement_map {
@@ -359,20 +364,47 @@ impl<'a> SsaRebuilder<'a> {
         };
 
         // Build a mapping from SsaVarId to index in the variables array
-        let mut var_to_idx: HashMap<SsaVarId, usize> = HashMap::with_capacity(num_vars);
+        let mut var_to_idx: BTreeMap<SsaVarId, usize> = BTreeMap::new();
         for (idx, var) in self.ssa.variables.iter().enumerate() {
             var_to_idx.insert(var.id(), idx);
         }
 
-        // NOTE: We intentionally do NOT union phi connections here. Phis are
-        // placed by the rebuilder based on group assignments — using them to
-        // determine groups creates a circular dependency. Stale phis (from
-        // previous rebuilds based on stale groups, e.g., CFF local slot reuse
-        // or constants encryption storing multiple values in the same local)
-        // would create false connectivity, preventing the split of groups that
-        // contain unrelated values (even same-type values like different strings).
-        // Only instruction-level connections (copies, loads) represent genuine
-        // data flow that must be preserved.
+        // Union phi operands with their phi result to maintain group connectivity.
+        //
+        // We only process phis in REACHABLE blocks — unreachable blocks were
+        // cleaned in pre_clean_unreachable (Phase 1), so any remaining phis
+        // are genuine. This is critical: block-merging's trampoline elimination
+        // updates phi operands to reference new predecessors, but the new
+        // operand variables may be in different rename groups than the phi
+        // result. Without unconditional union here, the group splits, causing
+        // phi placement to skip the entry-only group → switch phis collapse
+        // → CFF dispatchers are incorrectly constant-folded.
+        //
+        // The original same-group restriction was added to avoid false
+        // connectivity from stale phis. Phase 1's unreachable block cleanup
+        // eliminates stale phis, making the restriction unnecessary for
+        // reachable blocks.
+        let cfg_for_reach = SsaCfg::from_ssa(self.ssa);
+        let reachable_here = Self::compute_reachable_blocks(self.ssa, &cfg_for_reach);
+        for block in &self.ssa.blocks {
+            let block_idx = block.id();
+            if !reachable_here.contains(block_idx) {
+                continue;
+            }
+            for phi in block.phi_nodes() {
+                let phi_result = phi.result();
+                if self.ssa.rename_group(phi_result) == u32::MAX {
+                    continue;
+                }
+                if let Some(&result_idx) = var_to_idx.get(&phi_result) {
+                    for operand in phi.operands() {
+                        if let Some(&operand_idx) = var_to_idx.get(&operand.value()) {
+                            union(&mut parent, &mut rank, result_idx, operand_idx);
+                        }
+                    }
+                }
+            }
+        }
 
         // Union copy sources with their destinations
         for block in &self.ssa.blocks {
@@ -390,7 +422,7 @@ impl<'a> SsaRebuilder<'a> {
         // Union LoadLocal/LoadArg destinations with their respective arg/local
         // group representatives, so loads from the same slot stay connected.
         let num_args = self.ssa.num_args;
-        let mut arg_local_reps: HashMap<u32, usize> = HashMap::new();
+        let mut arg_local_reps: BTreeMap<u32, usize> = BTreeMap::new();
         for (idx, var) in self.ssa.variables.iter().enumerate() {
             match var.origin() {
                 VariableOrigin::Argument(ai) => {
@@ -429,7 +461,7 @@ impl<'a> SsaRebuilder<'a> {
         }
 
         // Collect variables by their CURRENT rename group
-        let mut group_members: HashMap<u32, Vec<usize>> = HashMap::new();
+        let mut group_members: BTreeMap<u32, Vec<usize>> = BTreeMap::new();
         for (idx, var) in self.ssa.variables.iter().enumerate() {
             let group = self.ssa.rename_group(var.id());
             if group != u32::MAX {
@@ -456,7 +488,7 @@ impl<'a> SsaRebuilder<'a> {
             }
 
             // Find the distinct connected components within this group
-            let mut component_roots: HashMap<usize, Vec<usize>> = HashMap::new();
+            let mut component_roots: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
             for &idx in members {
                 let root = find(&mut parent, idx);
                 component_roots.entry(root).or_default().push(idx);
@@ -487,11 +519,19 @@ impl<'a> SsaRebuilder<'a> {
                 }
             }
 
-            // If no canonical root found, pick the largest component
+            // If no canonical root found, pick the largest component.
+            // Break ties deterministically by the smallest variable index
+            // within each component to avoid nondeterministic grouping.
             let canonical_root = canonical_root.unwrap_or_else(|| {
                 *component_roots
                     .iter()
-                    .max_by_key(|(_, members)| members.len())
+                    .max_by(|(_, members_a), (_, members_b)| {
+                        members_a.len().cmp(&members_b.len()).then_with(|| {
+                            let min_a = members_a.iter().copied().min().unwrap_or(usize::MAX);
+                            let min_b = members_b.iter().copied().min().unwrap_or(usize::MAX);
+                            min_b.cmp(&min_a)
+                        })
+                    })
                     .map(|(root, _)| root)
                     .unwrap()
             });
@@ -530,7 +570,8 @@ impl<'a> SsaRebuilder<'a> {
 
             let has_canonical_origin = !canonical_origin_types.is_empty();
 
-            // For the Phi-only fallback, precompute the canonical type once.
+            // Precompute the canonical component's type for type-based
+            // split decisions (Tier 2 and stack temp groups).
             let canonical_type: Option<SsaType> = if !has_canonical_origin {
                 component_roots
                     .get(&canonical_root)
@@ -818,7 +859,7 @@ impl<'a> SsaRebuilder<'a> {
         // causes incorrect dominator computation and stale variable references
         // during rename.
         for block_idx in 0..self.ssa.blocks.len() {
-            if !self.reachable.contains(&block_idx) {
+            if !self.reachable.contains(block_idx) {
                 self.ssa.blocks[block_idx].instructions_mut().clear();
                 self.ssa.blocks[block_idx].phi_nodes_mut().clear();
             }
@@ -833,21 +874,21 @@ impl<'a> SsaRebuilder<'a> {
             self.dominance_frontiers = compute_dominance_frontiers(&cfg, &dom_tree);
 
             // Extract successor map (only for reachable blocks)
-            for &i in &self.reachable {
+            for i in self.reachable.iter() {
                 self.successor_map
                     .insert(i, cfg.block_successors(i).to_vec());
             }
 
             // Extract dominator tree children (only for reachable blocks)
             let entry_node = cfg.entry();
-            for &i in &self.reachable {
+            for i in self.reachable.iter() {
                 self.dom_children.insert(
                     i,
                     dom_tree
                         .children(NodeId::new(i))
                         .iter()
                         .filter(|n| {
-                            n.index() < self.ssa.blocks.len() && self.reachable.contains(&n.index())
+                            n.index() < self.ssa.blocks.len() && self.reachable.contains(n.index())
                         })
                         .map(|n| n.index())
                         .collect(),
@@ -872,12 +913,13 @@ impl<'a> SsaRebuilder<'a> {
         // main dom tree. If it did, the handler's local dom tree could create
         // parent→child relationships that conflict with the main tree, introducing
         // cycles in dom_children and causing rename_block_recursive to loop forever.
-        let main_dom_blocks: HashSet<usize> = self
-            .reachable
-            .iter()
-            .copied()
-            .filter(|&b| dom_tree.dominates(entry, NodeId::new(b)))
-            .collect();
+        let block_count = self.ssa.blocks.len();
+        let mut main_dom_blocks = BitSet::new(block_count);
+        for b in self.reachable.iter() {
+            if dom_tree.dominates(entry, NodeId::new(b)) {
+                main_dom_blocks.insert(b);
+            }
+        }
 
         let mut handler_roots: Vec<usize> = Vec::new();
         for handler in &self.ssa.exception_handlers {
@@ -885,9 +927,9 @@ impl<'a> SsaRebuilder<'a> {
                 .into_iter()
                 .flatten()
             {
-                if block < self.ssa.blocks.len()
-                    && self.reachable.contains(&block)
-                    && !main_dom_blocks.contains(&block)
+                if block < block_count
+                    && self.reachable.contains(block)
+                    && !main_dom_blocks.contains(block)
                 {
                     handler_roots.push(block);
                 }
@@ -900,14 +942,14 @@ impl<'a> SsaRebuilder<'a> {
 
             // Collect handler-reachable blocks via BFS from root, stopping at
             // blocks already in the main dom tree to prevent cycle creation.
-            let mut handler_reachable: HashSet<usize> = HashSet::new();
+            let mut handler_reachable = BitSet::new(block_count);
             let mut wl = vec![root];
             while let Some(b) = wl.pop() {
                 if handler_reachable.insert(b) {
                     for &succ in cfg.block_successors(b) {
-                        if succ < self.ssa.blocks.len()
-                            && self.reachable.contains(&succ)
-                            && !main_dom_blocks.contains(&succ)
+                        if succ < block_count
+                            && self.reachable.contains(succ)
+                            && !main_dom_blocks.contains(succ)
                         {
                             wl.push(succ);
                         }
@@ -916,13 +958,11 @@ impl<'a> SsaRebuilder<'a> {
             }
 
             // Merge dom_children (only for handler-reachable blocks)
-            for &b in &handler_reachable {
+            for b in handler_reachable.iter() {
                 let children: Vec<usize> = local_dom
                     .children(NodeId::new(b))
                     .iter()
-                    .filter(|n| {
-                        n.index() < self.ssa.blocks.len() && handler_reachable.contains(&n.index())
-                    })
+                    .filter(|n| n.index() < block_count && handler_reachable.contains(n.index()))
                     .map(|n| n.index())
                     .collect();
                 if !children.is_empty() {
@@ -931,12 +971,13 @@ impl<'a> SsaRebuilder<'a> {
             }
 
             // Merge dominance frontiers
-            for &b in &handler_reachable {
+            for b in handler_reachable.iter() {
                 if b < local_df.len() {
                     if b >= self.dominance_frontiers.len() {
-                        self.dominance_frontiers.resize(b + 1, HashSet::new());
+                        self.dominance_frontiers
+                            .resize(b + 1, BitSet::new(block_count));
                     }
-                    self.dominance_frontiers[b].extend(local_df[b].iter().copied());
+                    self.dominance_frontiers[b].union_with(&local_df[b]);
                 }
             }
         }
@@ -959,7 +1000,7 @@ impl<'a> SsaRebuilder<'a> {
         // Collect defs from instructions using group IDs.
         for block in &self.ssa.blocks {
             let block_idx = block.id();
-            if !self.reachable.contains(&block_idx) {
+            if !self.reachable.contains(block_idx) {
                 continue;
             }
             for instr in block.instructions() {
@@ -975,46 +1016,58 @@ impl<'a> SsaRebuilder<'a> {
 
     /// Collects use sites and computes liveness for pruned SSA phi placement.
     fn collect_uses_and_liveness(&mut self) {
+        let block_count = self.ssa.blocks.len();
+        let variable_count = self.ssa.var_id_capacity();
+
         // Pre-compute which variables are consumed by non-Nop instructions.
-        let mut consumed_vars: HashSet<SsaVarId> = HashSet::new();
+        let mut consumed_vars = BitSet::new(variable_count);
         for block in &self.ssa.blocks {
-            if !self.reachable.contains(&block.id()) {
+            if !self.reachable.contains(block.id()) {
                 continue;
             }
             for instr in block.instructions() {
                 if !matches!(instr.op(), SsaOp::Nop) {
                     for &use_var in instr.uses().iter() {
-                        consumed_vars.insert(use_var);
+                        consumed_vars.insert(use_var.index());
                     }
                 }
             }
         }
 
-        let mut use_sites: HashMap<u32, HashSet<usize>> = HashMap::new();
+        let mut use_sites: BTreeMap<u32, BitSet> = BTreeMap::new();
         for block in &self.ssa.blocks {
             let block_idx = block.id();
-            if !self.reachable.contains(&block_idx) {
+            if !self.reachable.contains(block_idx) {
                 continue;
             }
             for instr in block.instructions() {
                 for use_var in instr.uses().iter().copied() {
                     let group = self.ssa.rename_group(use_var);
                     if group != u32::MAX {
-                        use_sites.entry(group).or_default().insert(block_idx);
+                        use_sites
+                            .entry(group)
+                            .or_insert_with(|| BitSet::new(block_count))
+                            .insert(block_idx);
                     }
                 }
                 // Track implicit uses from LoadLocal/LoadArg
                 match instr.op() {
                     SsaOp::LoadLocal { dest, local_index } => {
-                        if consumed_vars.contains(dest) {
+                        if consumed_vars.contains(dest.index()) {
                             let group = self.ssa.num_args as u32 + *local_index as u32;
-                            use_sites.entry(group).or_default().insert(block_idx);
+                            use_sites
+                                .entry(group)
+                                .or_insert_with(|| BitSet::new(block_count))
+                                .insert(block_idx);
                         }
                     }
                     SsaOp::LoadArg { dest, arg_index } => {
-                        if consumed_vars.contains(dest) {
+                        if consumed_vars.contains(dest.index()) {
                             let group = *arg_index as u32;
-                            use_sites.entry(group).or_default().insert(block_idx);
+                            use_sites
+                                .entry(group)
+                                .or_insert_with(|| BitSet::new(block_count))
+                                .insert(block_idx);
                         }
                     }
                     _ => {}
@@ -1023,22 +1076,28 @@ impl<'a> SsaRebuilder<'a> {
         }
 
         // Build successors list for liveness analysis
-        let successors_list: Vec<Vec<usize>> = (0..self.ssa.blocks.len())
+        let successors_list: Vec<Vec<usize>> = (0..block_count)
             .map(|i| self.successor_map.get(&i).cloned().unwrap_or_default())
             .collect();
 
-        // Convert defs to HashMap for liveness
-        let defs_for_liveness: HashMap<u32, HashSet<usize>> = self
+        // Convert defs to BTreeMap<u32, BitSet> for liveness
+        let defs_for_liveness: BTreeMap<u32, BitSet> = self
             .defs
             .iter()
-            .map(|(group, blocks)| (*group, blocks.iter().copied().collect()))
+            .map(|(group, blocks)| {
+                let mut bs = BitSet::new(block_count);
+                for &b in blocks {
+                    bs.insert(b);
+                }
+                (*group, bs)
+            })
             .collect();
 
         self.live_in = liveness::compute_live_in_blocks(
             &defs_for_liveness,
             &use_sites,
             &successors_list,
-            self.ssa.blocks.len(),
+            block_count,
         );
     }
 
@@ -1061,12 +1120,20 @@ impl<'a> SsaRebuilder<'a> {
                 })
         };
 
-        // Convert defs to HashMap and filter to skip single-entry-only groups
-        let filtered_defs: HashMap<u32, HashSet<usize>> = self
+        let block_count = self.ssa.blocks.len();
+
+        // Convert defs to BTreeMap<u32, BitSet> and filter to skip single-entry-only groups
+        let filtered_defs: BTreeMap<u32, BitSet> = self
             .defs
             .iter()
             .filter(|(_, def_blocks)| !(def_blocks.len() == 1 && def_blocks.contains(&0)))
-            .map(|(k, v)| (*k, v.iter().copied().collect()))
+            .map(|(k, v)| {
+                let mut bs = BitSet::new(block_count);
+                for &b in v {
+                    bs.insert(b);
+                }
+                (*k, bs)
+            })
             .collect();
 
         let group_origins = self.group_origins.clone();
@@ -1112,8 +1179,8 @@ impl<'a> SsaRebuilder<'a> {
         };
 
         // Version stacks: for each group, track the current reaching definition
-        let mut version_stacks: HashMap<u32, Vec<SsaVarId>> = HashMap::new();
-        let mut next_version: HashMap<u32, u32> = HashMap::new();
+        let mut version_stacks: BTreeMap<u32, Vec<SsaVarId>> = BTreeMap::new();
+        let mut next_version: BTreeMap<u32, u32> = BTreeMap::new();
 
         // Initialize with arguments and locals version 0 from existing variables.
         // Only use version-0 variables that have an entry-point def_site (no specific
@@ -1161,7 +1228,7 @@ impl<'a> SsaRebuilder<'a> {
             }
         }
 
-        let mut rename_map: HashMap<SsaVarId, SsaVarId> = HashMap::new();
+        let mut rename_map: BTreeMap<SsaVarId, SsaVarId> = BTreeMap::new();
 
         // Rename from entry block — the dom tree now covers handler blocks
         // via local dom trees computed in compute_cfg().
@@ -1177,7 +1244,8 @@ impl<'a> SsaRebuilder<'a> {
         // Rename handler roots that are not reachable from the entry's dom tree.
         // With the augmented dom tree, handler body blocks are dom_children of their
         // handler root, so rename_block_recursive from the root covers them.
-        let mut dom_tree_reachable: HashSet<usize> = HashSet::new();
+        let block_count = self.ssa.blocks.len();
+        let mut dom_tree_reachable = BitSet::new(block_count);
         let mut dom_stack = vec![0usize];
         while let Some(block_idx) = dom_stack.pop() {
             if dom_tree_reachable.insert(block_idx) {
@@ -1192,7 +1260,7 @@ impl<'a> SsaRebuilder<'a> {
                 .into_iter()
                 .flatten()
             {
-                if self.reachable.contains(&block) && !dom_tree_reachable.contains(&block) {
+                if self.reachable.contains(block) && !dom_tree_reachable.contains(block) {
                     Self::rename_block_recursive(
                         self.ssa,
                         block,
@@ -1232,11 +1300,13 @@ impl<'a> SsaRebuilder<'a> {
                     }
                     if let Some(block) = self.ssa.block(block_idx) {
                         for (phi_idx, phi) in block.phi_nodes().iter().enumerate() {
-                            let existing: HashSet<usize> =
-                                phi.operands().iter().map(|op| op.predecessor()).collect();
+                            let mut existing = BitSet::new(block_count);
+                            for op in phi.operands() {
+                                existing.insert(op.predecessor());
+                            }
                             let group = self.ssa.rename_group(phi.result());
                             for &pred in &preds {
-                                if !existing.contains(&pred) {
+                                if !existing.contains(pred) {
                                     if let Some(&v0) =
                                         version_stacks.get(&group).and_then(|stack| stack.first())
                                     {
@@ -1262,12 +1332,19 @@ impl<'a> SsaRebuilder<'a> {
 
         // Final cleanup: Remove Pop instructions that use undefined variables
         {
-            let defined_vars: HashSet<SsaVarId> =
-                self.ssa.variables.iter().map(|v| v.id()).collect();
+            let variable_count = self.ssa.var_id_capacity();
+            let mut defined_vars = BitSet::new(variable_count);
+            for v in &self.ssa.variables {
+                let idx = v.id().index();
+                if idx < variable_count {
+                    defined_vars.insert(idx);
+                }
+            }
             for block in &mut self.ssa.blocks {
                 block.instructions_mut().retain(|instr| {
                     if let SsaOp::Pop { value } = instr.op() {
-                        return defined_vars.contains(value);
+                        let idx = value.index();
+                        return idx < variable_count && defined_vars.contains(idx);
                     }
                     true
                 });
@@ -1299,15 +1376,22 @@ impl<'a> SsaRebuilder<'a> {
     /// Removes Pop instructions that reference variables removed by
     /// `eliminate_trivial_phis` or `compact_variables`.
     fn remove_orphan_pops(&mut self) {
-        let defined_vars: HashSet<SsaVarId> = {
-            let mut d = HashSet::new();
+        let variable_count = self.ssa.var_id_capacity();
+        let defined_vars: BitSet = {
+            let mut d = BitSet::new(variable_count);
             for b in self.ssa.blocks() {
                 for phi in b.phi_nodes() {
-                    d.insert(phi.result());
+                    let idx = phi.result().index();
+                    if idx < variable_count {
+                        d.insert(idx);
+                    }
                 }
                 for instr in b.instructions() {
                     if let Some(dest) = instr.op().dest() {
-                        d.insert(dest);
+                        let idx = dest.index();
+                        if idx < variable_count {
+                            d.insert(idx);
+                        }
                     }
                 }
             }
@@ -1316,19 +1400,23 @@ impl<'a> SsaRebuilder<'a> {
 
         // Collect exception/filter handler entry blocks — their Pop instructions
         // consume the runtime-pushed exception object which has no SSA definition.
-        let handler_entry_blocks: HashSet<usize> = self
-            .ssa
-            .exception_handlers
-            .iter()
-            .flat_map(|h| {
-                h.handler_start_block
-                    .into_iter()
-                    .chain(h.filter_start_block)
-            })
-            .collect();
+        let block_count = self.ssa.blocks.len();
+        let mut handler_entry_blocks = BitSet::new(block_count);
+        for h in &self.ssa.exception_handlers {
+            if let Some(b) = h.handler_start_block {
+                if b < block_count {
+                    handler_entry_blocks.insert(b);
+                }
+            }
+            if let Some(b) = h.filter_start_block {
+                if b < block_count {
+                    handler_entry_blocks.insert(b);
+                }
+            }
+        }
 
         for block in &mut self.ssa.blocks {
-            let is_handler_entry = handler_entry_blocks.contains(&block.id());
+            let is_handler_entry = handler_entry_blocks.contains(block.id());
             block.instructions_mut().retain(|instr| {
                 if let SsaOp::Pop { value } = instr.op() {
                     // Preserve Pops in handler entry blocks — the exception object
@@ -1336,7 +1424,8 @@ impl<'a> SsaRebuilder<'a> {
                     if is_handler_entry {
                         return true;
                     }
-                    return defined_vars.contains(value);
+                    let idx = value.index();
+                    return idx < variable_count && defined_vars.contains(idx);
                 }
                 true
             });
@@ -1348,17 +1437,17 @@ impl<'a> SsaRebuilder<'a> {
         ssa: &mut SsaFunction,
         entry_block_idx: usize,
         ctx: &RenameContext<'_>,
-        version_stacks: &mut HashMap<u32, Vec<SsaVarId>>,
-        next_version: &mut HashMap<u32, u32>,
-        rename_map: &mut HashMap<SsaVarId, SsaVarId>,
+        version_stacks: &mut BTreeMap<u32, Vec<SsaVarId>>,
+        next_version: &mut BTreeMap<u32, u32>,
+        rename_map: &mut BTreeMap<SsaVarId, SsaVarId>,
     ) {
         enum RenameAction {
             Enter(usize),
-            Exit(HashMap<u32, usize>),
+            Exit(BTreeMap<u32, usize>),
         }
 
         let mut work_stack = vec![RenameAction::Enter(entry_block_idx)];
-        let mut visited = HashSet::new();
+        let mut visited = BitSet::new(ssa.blocks.len());
 
         while let Some(action) = work_stack.pop() {
             match action {
@@ -1409,11 +1498,11 @@ impl<'a> SsaRebuilder<'a> {
         ssa: &mut SsaFunction,
         block_idx: usize,
         ctx: &RenameContext<'_>,
-        version_stacks: &mut HashMap<u32, Vec<SsaVarId>>,
-        next_version: &mut HashMap<u32, u32>,
-        rename_map: &mut HashMap<SsaVarId, SsaVarId>,
-    ) -> HashMap<u32, usize> {
-        let mut pushed_counts: HashMap<u32, usize> = HashMap::new();
+        version_stacks: &mut BTreeMap<u32, Vec<SsaVarId>>,
+        next_version: &mut BTreeMap<u32, u32>,
+        rename_map: &mut BTreeMap<SsaVarId, SsaVarId>,
+    ) -> BTreeMap<u32, usize> {
+        let mut pushed_counts: BTreeMap<u32, usize> = BTreeMap::new();
 
         Self::rename_phis(
             ssa,
@@ -1443,10 +1532,10 @@ impl<'a> SsaRebuilder<'a> {
         ssa: &mut SsaFunction,
         block_idx: usize,
         ctx: &RenameContext<'_>,
-        version_stacks: &mut HashMap<u32, Vec<SsaVarId>>,
-        next_version: &mut HashMap<u32, u32>,
-        rename_map: &mut HashMap<SsaVarId, SsaVarId>,
-        pushed_counts: &mut HashMap<u32, usize>,
+        version_stacks: &mut BTreeMap<u32, Vec<SsaVarId>>,
+        next_version: &mut BTreeMap<u32, u32>,
+        rename_map: &mut BTreeMap<SsaVarId, SsaVarId>,
+        pushed_counts: &mut BTreeMap<u32, usize>,
     ) {
         // Look up the group for each phi from the phi_groups mapping built during placement.
         let phi_info: Vec<(u32, VariableOrigin, SsaVarId)> = {
@@ -1510,10 +1599,10 @@ impl<'a> SsaRebuilder<'a> {
         ssa: &mut SsaFunction,
         block_idx: usize,
         ctx: &RenameContext<'_>,
-        version_stacks: &mut HashMap<u32, Vec<SsaVarId>>,
-        next_version: &mut HashMap<u32, u32>,
-        rename_map: &mut HashMap<SsaVarId, SsaVarId>,
-        pushed_counts: &mut HashMap<u32, usize>,
+        version_stacks: &mut BTreeMap<u32, Vec<SsaVarId>>,
+        next_version: &mut BTreeMap<u32, u32>,
+        rename_map: &mut BTreeMap<SsaVarId, SsaVarId>,
+        pushed_counts: &mut BTreeMap<u32, usize>,
     ) {
         // Collect instruction info including load targets for LoadArg/LoadLocal.
         // A load_target of Some(group) means the instruction is a LoadArg/LoadLocal
@@ -1647,7 +1736,7 @@ impl<'a> SsaRebuilder<'a> {
         ssa: &mut SsaFunction,
         block_idx: usize,
         ctx: &RenameContext<'_>,
-        version_stacks: &mut HashMap<u32, Vec<SsaVarId>>,
+        version_stacks: &mut BTreeMap<u32, Vec<SsaVarId>>,
     ) {
         let successors = ctx
             .successor_map
@@ -1708,14 +1797,14 @@ impl<'a> SsaRebuilder<'a> {
     }
 
     /// Applies the rename map to all variable uses in the function.
-    fn apply_rename_map(ssa: &mut SsaFunction, rename_map: &HashMap<SsaVarId, SsaVarId>) {
+    fn apply_rename_map(ssa: &mut SsaFunction, rename_map: &BTreeMap<SsaVarId, SsaVarId>) {
         if rename_map.is_empty() {
             return;
         }
 
         let resolve = |var: SsaVarId| -> SsaVarId {
             let mut current = var;
-            let mut visited = HashSet::new();
+            let mut visited = BTreeSet::new();
             while let Some(&new_var) = rename_map.get(&current) {
                 if !visited.insert(current) {
                     break;
@@ -1753,7 +1842,7 @@ impl<'a> SsaRebuilder<'a> {
         for block in &ssa.blocks {
             let block_idx = block.id();
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                let mut seen = std::collections::HashSet::new();
+                let mut seen = std::collections::BTreeSet::new();
                 for &old_use in &instr.uses() {
                     if seen.insert(old_use) {
                         let new_use = resolve(old_use);

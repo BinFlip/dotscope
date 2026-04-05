@@ -705,6 +705,74 @@ pub fn verify_rsa_pkcs1v15(
     em == expected
 }
 
+/// PBKDF2 / symmetric cipher parameters for key derivation and decryption.
+///
+/// Encapsulates the parameters needed to derive key material via PBKDF2 and
+/// split the output into a symmetric key and IV. These parameters are typically
+/// extracted from an obfuscator's decryptor method body by resolving constant
+/// arguments to `Rfc2898DeriveBytes::.ctor()` and `GetBytes()` in SSA form.
+///
+/// When extraction fails for a specific parameter, the [`Default`] implementation
+/// provides values matching .NET's `Rfc2898DeriveBytes` defaults (SHA1, 1000
+/// iterations) and AES-256-CBC (32-byte key, 16-byte IV).
+#[derive(Debug, Clone)]
+pub struct CryptoParameters {
+    /// PBKDF2 iteration count.
+    pub iterations: u32,
+    /// Symmetric key size in bytes (e.g., 32 for AES-256).
+    pub key_size: usize,
+    /// IV size in bytes (e.g., 16 for AES block size).
+    pub iv_size: usize,
+    /// HMAC hash algorithm name for PBKDF2 (e.g., `"SHA1"`, `"SHA256"`).
+    pub hash_algorithm: &'static str,
+}
+
+impl Default for CryptoParameters {
+    /// Returns defaults matching .NET's `Rfc2898DeriveBytes` default constructor
+    /// (SHA1, 1000 iterations) and AES-256-CBC (32-byte key, 16-byte IV).
+    fn default() -> Self {
+        Self {
+            iterations: 1000,
+            key_size: 32,
+            iv_size: 16,
+            hash_algorithm: "SHA1",
+        }
+    }
+}
+
+/// Derives a symmetric key and IV from password and salt using PBKDF2.
+///
+/// Wraps [`derive_pbkdf2_key`] with the parameters from a [`CryptoParameters`]
+/// struct, splitting the output into `(key, iv)` based on the configured sizes.
+///
+/// # Arguments
+///
+/// * `password` - Raw key material (e.g., from a FieldRVA entry).
+/// * `salt` - Raw salt (e.g., from a FieldRVA entry).
+/// * `params` - PBKDF2 and cipher parameters (iterations, key/IV sizes, hash algorithm).
+///
+/// # Returns
+///
+/// A tuple `(key, iv)` of the derived key material.
+pub fn derive_key_iv(
+    password: &[u8],
+    salt: &[u8],
+    params: &CryptoParameters,
+) -> (Vec<u8>, Vec<u8>) {
+    let output_len = params.key_size + params.iv_size;
+    let derived = derive_pbkdf2_key(
+        password,
+        salt,
+        params.iterations,
+        output_len,
+        params.hash_algorithm,
+    );
+    (
+        derived[..params.key_size].to_vec(),
+        derived[params.key_size..output_len].to_vec(),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use crate::utils::crypto::derive_pbkdf2_key;

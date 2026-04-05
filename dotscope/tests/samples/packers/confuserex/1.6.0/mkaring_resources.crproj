@@ -3,5 +3,5 @@
     <!-- Resource protection - encrypts embedded resources -->
     <protection id="resources" />
   </rule>
-  <module path="ResourceTestApp.exe" />
+  <module path="TestApp.exe" />
 </project>

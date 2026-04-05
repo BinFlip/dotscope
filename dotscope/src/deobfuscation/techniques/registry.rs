@@ -1,6 +1,9 @@
 //! Technique registry for managing available deobfuscation techniques.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet, VecDeque},
+    sync::Mutex,
+};
 
 use crate::deobfuscation::techniques::{
     bitmono::{
@@ -17,6 +20,9 @@ use crate::deobfuscation::techniques::{
         GenericDelegateProxy, GenericFlattening, GenericHandlers, GenericIldasm, GenericMetadata,
         GenericOpaquePredicates, GenericStrings,
     },
+    jiejienet::{
+        JiejieNetArrays, JiejieNetConstants, JiejieNetResources, JiejieNetStrings, JiejieNetTypeOf,
+    },
     obfuscar::ObfuscarStrings,
     AttributionResult, Detections, Technique,
 };
@@ -31,9 +37,9 @@ pub struct ObfuscatorSignature {
     /// Obfuscator name returned in [`AttributionResult`].
     pub name: &'static str,
     /// Technique IDs that must **all** be detected for attribution.
-    pub required: &'static [&'static str],
+    pub required: Vec<&'static str>,
     /// Technique IDs that boost ranking when also detected.
-    pub supporting: &'static [&'static str],
+    pub supporting: Vec<&'static str>,
 }
 
 /// Registry of all available deobfuscation techniques.
@@ -43,11 +49,13 @@ pub struct ObfuscatorSignature {
 /// topological sorting for execution order based on `requires()` and
 /// `supersedes()` declarations.
 ///
-/// The registry also holds [`ObfuscatorSignature`] entries that define
-/// which combination of techniques uniquely identifies each obfuscator.
+/// Attribution logic (matching detections to known obfuscator signatures) is
+/// handled by the separate [`ObfuscatorMatcher`].
 pub struct TechniqueRegistry {
     techniques: Vec<Box<dyn Technique>>,
-    signatures: Vec<ObfuscatorSignature>,
+    /// Cache for `sorted_techniques()`: `(detection_generation, sorted_indices)`.
+    /// Invalidated when the detection generation counter changes.
+    sorted_cache: Mutex<(u64, Vec<usize>)>,
 }
 
 impl TechniqueRegistry {
@@ -56,7 +64,7 @@ impl TechniqueRegistry {
     pub fn new() -> Self {
         Self {
             techniques: Vec::new(),
-            signatures: Vec::new(),
+            sorted_cache: Mutex::new((u64::MAX, Vec::new())),
         }
     }
 
@@ -68,14 +76,22 @@ impl TechniqueRegistry {
     /// ConfuserEx:  marker, metadata, tamper, resources, natives
     /// BitMono:     pe, hooks, junk
     ///
-    /// # SSA-capable techniques (18)
+    /// # SSA-capable techniques (17+5)
     ///
     /// Generic:     flattening, strings, constants, debug, dump, opaquefields, delegates
-    /// ConfuserEx:  constants, proxy, debug, dump
+    /// ConfuserEx:  constants, debug, dump
     /// BitMono:     calli, strings, unmanaged, debug, nops, renamer
+    /// JIEJIE.NET:  constants, strings, typeof, arrays, resources
     /// Obfuscar:    strings
     #[must_use]
     pub fn with_defaults() -> Self {
+        Self::with_config(50_000)
+    }
+
+    /// Creates a registry pre-populated with all built-in techniques
+    /// using the given configuration values.
+    #[must_use]
+    pub fn with_config(nop_threshold: usize) -> Self {
         let mut registry = Self::new();
 
         // === Generic techniques ===
@@ -110,179 +126,18 @@ impl TechniqueRegistry {
         registry.register(Box::new(BitMonoStrings));
         registry.register(Box::new(BitMonoUnmanaged));
         registry.register(Box::new(BitMonoAntiDebug));
-        registry.register(Box::new(BitMonoNops));
+        registry.register(Box::new(BitMonoNops::new(nop_threshold)));
         registry.register(Box::new(BitMonoRenamer));
+
+        // === JIEJIE.NET techniques ===
+        registry.register(Box::new(JiejieNetConstants));
+        registry.register(Box::new(JiejieNetStrings));
+        registry.register(Box::new(JiejieNetTypeOf));
+        registry.register(Box::new(JiejieNetArrays));
+        registry.register(Box::new(JiejieNetResources));
 
         // === Obfuscar techniques ===
         registry.register(Box::new(ObfuscarStrings));
-
-        // === Obfuscator signatures ===
-        //
-        // ConfuserEx: definitive signal is the marker attribute it stamps on every
-        // protected assembly. All other techniques add supporting evidence.
-        registry.signatures.push(ObfuscatorSignature {
-            name: "ConfuserEx",
-            required: &["confuserex.marker"],
-            supporting: &[
-                "confuserex.constants",
-                "confuserex.proxy",
-                "confuserex.debug",
-                "confuserex.dump",
-                "confuserex.tamper",
-                "confuserex.resources",
-                "confuserex.metadata",
-                "confuserex.natives",
-            ],
-        });
-
-        // BitMono: space-containing names (FullRenamer) combined with the br.s
-        // junk prefix (BitMethodDotnet) are together highly specific to BitMono.
-        registry.signatures.push(ObfuscatorSignature {
-            name: "BitMono",
-            required: &["bitmono.renamer", "bitmono.junk"],
-            supporting: &[
-                "bitmono.strings",
-                "bitmono.calli",
-                "bitmono.debug",
-                "bitmono.hooks",
-                "bitmono.nops",
-                "bitmono.unmanaged",
-                "bitmono.pe",
-            ],
-        });
-
-        // BitMono IL-level: each individual IL technique is specific enough to
-        // BitMono's protection suite that detecting any one of them is sufficient
-        // for attribution.  These fire on single-protection samples where the
-        // high-confidence renamer+junk or pe signatures cannot match.
-        //
-        // Supporting lists are intentionally symmetric so that the sorting step
-        // always promotes the signature with the most corroborating evidence.
-        registry.signatures.push(ObfuscatorSignature {
-            name: "BitMono",
-            required: &["bitmono.strings"],
-            supporting: &[
-                "bitmono.calli",
-                "bitmono.debug",
-                "bitmono.hooks",
-                "bitmono.nops",
-                "bitmono.unmanaged",
-                "bitmono.junk",
-                "bitmono.renamer",
-                "bitmono.pe",
-            ],
-        });
-        registry.signatures.push(ObfuscatorSignature {
-            name: "BitMono",
-            required: &["bitmono.calli"],
-            supporting: &[
-                "bitmono.strings",
-                "bitmono.debug",
-                "bitmono.hooks",
-                "bitmono.nops",
-                "bitmono.unmanaged",
-                "bitmono.junk",
-                "bitmono.renamer",
-                "bitmono.pe",
-            ],
-        });
-        registry.signatures.push(ObfuscatorSignature {
-            name: "BitMono",
-            required: &["bitmono.hooks"],
-            supporting: &[
-                "bitmono.strings",
-                "bitmono.calli",
-                "bitmono.debug",
-                "bitmono.nops",
-                "bitmono.unmanaged",
-                "bitmono.junk",
-                "bitmono.renamer",
-                "bitmono.pe",
-            ],
-        });
-        registry.signatures.push(ObfuscatorSignature {
-            name: "BitMono",
-            required: &["bitmono.unmanaged"],
-            supporting: &[
-                "bitmono.strings",
-                "bitmono.calli",
-                "bitmono.debug",
-                "bitmono.hooks",
-                "bitmono.nops",
-                "bitmono.junk",
-                "bitmono.renamer",
-                "bitmono.pe",
-            ],
-        });
-        registry.signatures.push(ObfuscatorSignature {
-            name: "BitMono",
-            required: &["bitmono.debug"],
-            supporting: &[
-                "bitmono.strings",
-                "bitmono.calli",
-                "bitmono.hooks",
-                "bitmono.nops",
-                "bitmono.unmanaged",
-                "bitmono.junk",
-                "bitmono.renamer",
-                "bitmono.pe",
-            ],
-        });
-        registry.signatures.push(ObfuscatorSignature {
-            name: "BitMono",
-            required: &["bitmono.junk"],
-            supporting: &[
-                "bitmono.strings",
-                "bitmono.calli",
-                "bitmono.debug",
-                "bitmono.hooks",
-                "bitmono.nops",
-                "bitmono.unmanaged",
-                "bitmono.renamer",
-                "bitmono.pe",
-            ],
-        });
-        registry.signatures.push(ObfuscatorSignature {
-            name: "BitMono",
-            required: &["bitmono.nops"],
-            supporting: &[
-                "bitmono.strings",
-                "bitmono.calli",
-                "bitmono.debug",
-                "bitmono.hooks",
-                "bitmono.unmanaged",
-                "bitmono.junk",
-                "bitmono.renamer",
-                "bitmono.pe",
-            ],
-        });
-
-        // BitMono PE-level: the PE corruption patterns (BitDotNet, BitDecompiler,
-        // Packer) are unique to BitMono and sufficient for attribution on their own,
-        // even when IL-level protections such as FullRenamer or BitMethodDotnet
-        // are absent.  The PE repairs are detected before byte transforms consume
-        // them, so this signature fires even after the headers have been repaired.
-        registry.signatures.push(ObfuscatorSignature {
-            name: "BitMono",
-            required: &["bitmono.pe"],
-            supporting: &[
-                "bitmono.renamer",
-                "bitmono.junk",
-                "bitmono.strings",
-                "bitmono.calli",
-                "bitmono.debug",
-                "bitmono.hooks",
-                "bitmono.nops",
-                "bitmono.unmanaged",
-            ],
-        });
-
-        // Obfuscar: custom string decryption scheme is the primary identifier.
-        registry.signatures.push(ObfuscatorSignature {
-            name: "Obfuscar",
-            required: &["obfuscar.strings"],
-            supporting: &[],
-        });
 
         registry
     }
@@ -312,7 +167,241 @@ impl TechniqueRegistry {
         !self.techniques.is_empty()
     }
 
-    /// Computes obfuscator attribution from technique detections.
+    /// Returns techniques sorted by dependency order, filtered by supersedes.
+    ///
+    /// Uses Kahn's algorithm (topological sort) to order techniques so that
+    /// every technique's `requires()` dependencies appear before it. Techniques
+    /// superseded by a currently-detected technique are excluded entirely.
+    ///
+    /// If a dependency cycle is detected, the remaining techniques are appended
+    /// in arbitrary order with a warning.
+    ///
+    /// # Arguments
+    ///
+    /// * `detections` - Detection results used to determine which techniques
+    ///   are active and which are superseded.
+    ///
+    /// # Returns
+    ///
+    /// An ordered vec of technique references ready for sequential execution.
+    #[must_use]
+    pub fn sorted_techniques(&self, detections: &Detections) -> Vec<&dyn Technique> {
+        let gen = detections.generation();
+
+        // Check cache: if the detection generation hasn't changed, reuse indices.
+        if let Ok(cache) = self.sorted_cache.lock() {
+            if cache.0 == gen {
+                return cache.1.iter().map(|&i| &*self.techniques[i]).collect();
+            }
+        }
+
+        // Cache miss — recompute.
+        let sorted_indices = self.compute_sorted_indices(detections);
+        let result: Vec<&dyn Technique> = sorted_indices
+            .iter()
+            .map(|&i| &*self.techniques[i])
+            .collect();
+
+        if let Ok(mut cache) = self.sorted_cache.lock() {
+            *cache = (gen, sorted_indices);
+        }
+
+        result
+    }
+
+    /// Computes sorted technique indices via topological sort (Kahn's algorithm).
+    ///
+    /// Returns indices into `self.techniques` in dependency order, excluding
+    /// techniques superseded by currently-detected techniques.
+    fn compute_sorted_indices(&self, detections: &Detections) -> Vec<usize> {
+        // 1. Build superseded set
+        let mut superseded: HashSet<&str> = HashSet::new();
+        for tech in &self.techniques {
+            if detections.is_detected(tech.id()) {
+                for s in tech.supersedes() {
+                    superseded.insert(s);
+                }
+            }
+        }
+
+        // 2. Filter to eligible techniques (track original indices)
+        let eligible: Vec<(usize, &dyn Technique)> = self
+            .techniques
+            .iter()
+            .enumerate()
+            .filter(|(_, t)| !superseded.contains(t.id()))
+            .map(|(i, t)| (i, &**t))
+            .collect();
+
+        // 3. Build adjacency: map technique ID -> index in eligible list
+        let id_to_idx: HashMap<&str, usize> = eligible
+            .iter()
+            .enumerate()
+            .map(|(i, (_, t))| (t.id(), i))
+            .collect();
+        let n = eligible.len();
+
+        // 4. Build in-degree counts and adjacency lists
+        let mut in_degree = vec![0usize; n];
+        let mut dependents: Vec<Vec<usize>> = vec![Vec::new(); n];
+
+        for (idx, (_, tech)) in eligible.iter().enumerate() {
+            for &req_id in tech.requires() {
+                if let Some(&req_idx) = id_to_idx.get(req_id) {
+                    // req_idx -> idx (req must come before this technique)
+                    dependents[req_idx].push(idx);
+                    in_degree[idx] += 1;
+                }
+                // Missing dependency -> treat as satisfied (may be from a different phase)
+            }
+        }
+
+        // 5. Kahn's algorithm: BFS from techniques with 0 in-degree
+        let mut queue: VecDeque<usize> = VecDeque::new();
+        for (idx, &deg) in in_degree.iter().enumerate() {
+            if deg == 0 {
+                queue.push_back(idx);
+            }
+        }
+
+        let mut sorted: Vec<usize> = Vec::with_capacity(n);
+        while let Some(idx) = queue.pop_front() {
+            sorted.push(eligible[idx].0);
+            for &dep_idx in &dependents[idx] {
+                in_degree[dep_idx] -= 1;
+                if in_degree[dep_idx] == 0 {
+                    queue.push_back(dep_idx);
+                }
+            }
+        }
+
+        // 6. Handle cycles: if remaining > 0, log warning and append
+        if sorted.len() < n {
+            log::warn!(
+                "Technique dependency cycle detected: {} techniques could not be topologically sorted",
+                n - sorted.len()
+            );
+            let sorted_set: HashSet<usize> = sorted.iter().copied().collect();
+            for &(orig_idx, _) in &eligible {
+                if !sorted_set.contains(&orig_idx) {
+                    sorted.push(orig_idx);
+                }
+            }
+        }
+
+        sorted
+    }
+}
+
+impl Default for TechniqueRegistry {
+    fn default() -> Self {
+        Self::with_defaults()
+    }
+}
+
+/// Matches technique detections to known obfuscator signatures.
+///
+/// Separated from [`TechniqueRegistry`] to decouple attribution logic
+/// from technique storage and lifecycle management.
+pub struct ObfuscatorMatcher {
+    signatures: Vec<ObfuscatorSignature>,
+}
+
+impl ObfuscatorMatcher {
+    /// Creates an empty matcher.
+    #[must_use]
+    pub fn new() -> Self {
+        Self {
+            signatures: Vec::new(),
+        }
+    }
+
+    /// Creates a matcher with all built-in obfuscator signatures.
+    #[must_use]
+    pub fn with_defaults() -> Self {
+        let mut matcher = Self::new();
+
+        // ConfuserEx: definitive signal is the marker attribute it stamps on every
+        // protected assembly. All other techniques add supporting evidence.
+        matcher.add_signature(ObfuscatorSignature {
+            name: "ConfuserEx",
+            required: vec!["confuserex.marker"],
+            supporting: vec![
+                "confuserex.constants",
+                "confuserex.proxy",
+                "confuserex.debug",
+                "confuserex.dump",
+                "confuserex.tamper",
+                "confuserex.resources",
+                "confuserex.metadata",
+                "confuserex.natives",
+            ],
+        });
+
+        // BitMono: space-containing names (FullRenamer) combined with the br.s
+        // junk prefix (BitMethodDotnet) are together highly specific to BitMono.
+        matcher.add_signature(ObfuscatorSignature {
+            name: "BitMono",
+            required: vec!["bitmono.renamer", "bitmono.junk"],
+            supporting: vec![
+                "bitmono.strings",
+                "bitmono.calli",
+                "bitmono.debug",
+                "bitmono.hooks",
+                "bitmono.nops",
+                "bitmono.unmanaged",
+                "bitmono.pe",
+            ],
+        });
+
+        // BitMono single-technique signatures: each individual technique is
+        // specific enough to BitMono's protection suite that detecting any one
+        // of them is sufficient for attribution.
+        let bitmono_ids: &[&str] = &[
+            "bitmono.strings",
+            "bitmono.calli",
+            "bitmono.hooks",
+            "bitmono.unmanaged",
+            "bitmono.debug",
+            "bitmono.junk",
+            "bitmono.nops",
+            "bitmono.pe",
+        ];
+        for sig in single_technique_signatures("BitMono", bitmono_ids, &[]) {
+            matcher.add_signature(sig);
+        }
+
+        // JIEJIE.NET: any single technique is sufficient for attribution.
+        // Each technique's structural pattern is specific enough to JIEJIE.NET
+        // that detecting one is a reliable signal. generic.flattening is a
+        // common co-occurrence.
+        let jiejie_ids: &[&str] = &[
+            "jiejienet.constants",
+            "jiejienet.strings",
+            "jiejienet.typeof",
+            "jiejienet.arrays",
+            "jiejienet.resources",
+        ];
+        for sig in single_technique_signatures("JIEJIE.NET", jiejie_ids, &["generic.flattening"]) {
+            matcher.add_signature(sig);
+        }
+
+        // Obfuscar: custom string decryption scheme is the primary identifier.
+        matcher.add_signature(ObfuscatorSignature {
+            name: "Obfuscar",
+            required: vec!["obfuscar.strings"],
+            supporting: vec![],
+        });
+
+        matcher
+    }
+
+    /// Adds an obfuscator signature.
+    pub fn add_signature(&mut self, sig: ObfuscatorSignature) {
+        self.signatures.push(sig);
+    }
+
+    /// Computes the best obfuscator attribution from technique detections.
     ///
     /// For each registered [`ObfuscatorSignature`], checks whether all
     /// `required` techniques are detected. Fully matched signatures are
@@ -335,7 +424,7 @@ impl TechniqueRegistry {
 
                 let mut technique_ids: Vec<String> =
                     sig.required.iter().map(|s| s.to_string()).collect();
-                for id in sig.supporting {
+                for id in &sig.supporting {
                     if detections.is_detected(id) {
                         technique_ids.push(id.to_string());
                     }
@@ -377,7 +466,7 @@ impl TechniqueRegistry {
 
             let mut technique_ids: Vec<String> =
                 sig.required.iter().map(|s| s.to_string()).collect();
-            for id in sig.supporting {
+            for id in &sig.supporting {
                 if detections.is_detected(id) {
                     technique_ids.push(id.to_string());
                 }
@@ -402,54 +491,48 @@ impl TechniqueRegistry {
         result.sort_by(|a, b| b.supporting_matched.cmp(&a.supporting_matched));
         result
     }
+}
 
-    /// Returns techniques sorted by dependency order, filtered by supersedes.
-    ///
-    /// Techniques with `requires()` dependencies are placed after their
-    /// dependencies. Techniques superseded by a currently-detected technique
-    /// are excluded entirely.
-    ///
-    /// # Arguments
-    ///
-    /// * `detections` - Detection results used to determine which techniques
-    ///   are active and which are superseded.
-    ///
-    /// # Returns
-    ///
-    /// An ordered vec of technique references ready for sequential execution.
-    #[must_use]
-    pub fn sorted_techniques(&self, detections: &Detections) -> Vec<&dyn Technique> {
-        let mut superseded: HashSet<&str> = HashSet::new();
-        for tech in &self.techniques {
-            if detections.is_detected(tech.id()) {
-                for s in tech.supersedes() {
-                    superseded.insert(s);
-                }
-            }
-        }
-
-        let mut eligible: Vec<&dyn Technique> = self
-            .techniques
-            .iter()
-            .filter(|t| !superseded.contains(t.id()))
-            .map(|t| &**t)
-            .collect();
-
-        eligible.sort_by_key(|t| t.requires().len());
-        eligible
+impl Default for ObfuscatorMatcher {
+    fn default() -> Self {
+        Self::with_defaults()
     }
 }
 
-impl Default for TechniqueRegistry {
-    fn default() -> Self {
-        Self::new()
-    }
+/// Generates single-technique obfuscator signatures for a set of technique IDs.
+///
+/// For each ID in `all_ids`, creates a signature where that ID is the sole
+/// required technique and all other IDs (plus `extra_supporting`) are supporting.
+/// This pattern is used when each individual technique is specific enough for
+/// attribution on its own.
+fn single_technique_signatures(
+    name: &'static str,
+    all_ids: &[&'static str],
+    extra_supporting: &[&'static str],
+) -> Vec<ObfuscatorSignature> {
+    all_ids
+        .iter()
+        .map(|&required_id| {
+            let mut supporting: Vec<&'static str> = all_ids
+                .iter()
+                .filter(|&&id| id != required_id)
+                .copied()
+                .collect();
+            supporting.extend_from_slice(extra_supporting);
+            ObfuscatorSignature {
+                name,
+                required: vec![required_id],
+                supporting,
+            }
+        })
+        .collect()
 }
 
 #[cfg(test)]
 mod tests {
     use crate::deobfuscation::techniques::{
-        Detection, Detections, ObfuscatorSignature, Technique, TechniqueCategory, TechniqueRegistry,
+        Detection, Detections, ObfuscatorMatcher, ObfuscatorSignature, Technique,
+        TechniqueCategory, TechniqueRegistry,
     };
 
     /// Minimal mock technique for registry tests.
@@ -506,6 +589,8 @@ mod tests {
         }
     }
 
+    // === TechniqueRegistry tests ===
+
     #[test]
     fn test_registry_new_is_empty() {
         let r = TechniqueRegistry::new();
@@ -533,110 +618,6 @@ mod tests {
     }
 
     #[test]
-    fn test_compute_attribution_no_match() {
-        let mut r = TechniqueRegistry::new();
-        r.register(Box::new(MockTechnique::new("test.a")));
-        r.signatures.push(ObfuscatorSignature {
-            name: "TestObfuscator",
-            required: &["test.a"],
-            supporting: &[],
-        });
-
-        let ds = Detections::new();
-        assert!(r.compute_attribution(&ds).is_none());
-    }
-
-    #[test]
-    fn test_compute_attribution_required_match() {
-        let mut r = TechniqueRegistry::new();
-        r.register(Box::new(MockTechnique::new("test.a")));
-        r.signatures.push(ObfuscatorSignature {
-            name: "TestObfuscator",
-            required: &["test.a"],
-            supporting: &["test.b"],
-        });
-
-        let mut ds = Detections::new();
-        ds.insert("test.a", Detection::new_detected(vec![], None));
-
-        let attr = r.compute_attribution(&ds).unwrap();
-        assert_eq!(attr.obfuscator_name, "TestObfuscator");
-        assert_eq!(attr.supporting_matched, 0);
-    }
-
-    #[test]
-    fn test_compute_attribution_with_supporting() {
-        let mut r = TechniqueRegistry::new();
-        r.register(Box::new(MockTechnique::new("test.a")));
-        r.register(Box::new(MockTechnique::new("test.b")));
-        r.signatures.push(ObfuscatorSignature {
-            name: "TestObfuscator",
-            required: &["test.a"],
-            supporting: &["test.b", "test.c"],
-        });
-
-        let mut ds = Detections::new();
-        ds.insert("test.a", Detection::new_detected(vec![], None));
-        ds.insert("test.b", Detection::new_detected(vec![], None));
-
-        let attr = r.compute_attribution(&ds).unwrap();
-        assert_eq!(attr.supporting_matched, 1);
-        assert!(attr.technique_ids.contains(&"test.a".to_string()));
-        assert!(attr.technique_ids.contains(&"test.b".to_string()));
-    }
-
-    #[test]
-    fn test_compute_attribution_best_match_wins() {
-        let mut r = TechniqueRegistry::new();
-        r.signatures.push(ObfuscatorSignature {
-            name: "Weak",
-            required: &["weak.a"],
-            supporting: &[],
-        });
-        r.signatures.push(ObfuscatorSignature {
-            name: "Strong",
-            required: &["strong.a"],
-            supporting: &["strong.b", "strong.c"],
-        });
-
-        let mut ds = Detections::new();
-        ds.insert("weak.a", Detection::new_detected(vec![], None));
-        ds.insert("strong.a", Detection::new_detected(vec![], None));
-        ds.insert("strong.b", Detection::new_detected(vec![], None));
-        ds.insert("strong.c", Detection::new_detected(vec![], None));
-
-        let attr = r.compute_attribution(&ds).unwrap();
-        assert_eq!(attr.obfuscator_name, "Strong");
-        assert_eq!(attr.supporting_matched, 2);
-    }
-
-    #[test]
-    fn test_compute_attributions_all() {
-        let mut r = TechniqueRegistry::new();
-        r.signatures.push(ObfuscatorSignature {
-            name: "Alpha",
-            required: &["alpha.a"],
-            supporting: &[],
-        });
-        r.signatures.push(ObfuscatorSignature {
-            name: "Beta",
-            required: &["beta.a"],
-            supporting: &["beta.b"],
-        });
-
-        let mut ds = Detections::new();
-        ds.insert("alpha.a", Detection::new_detected(vec![], None));
-        ds.insert("beta.a", Detection::new_detected(vec![], None));
-        ds.insert("beta.b", Detection::new_detected(vec![], None));
-
-        let attrs = r.compute_attributions_all(&ds);
-        assert_eq!(attrs.len(), 2);
-        // Beta has more supporting matches, should come first
-        assert_eq!(attrs[0].obfuscator_name, "Beta");
-        assert_eq!(attrs[1].obfuscator_name, "Alpha");
-    }
-
-    #[test]
     fn test_sorted_techniques_dependency_order() {
         let mut r = TechniqueRegistry::new();
         r.register(Box::new(MockTechnique::with_requires("b", &["a"])));
@@ -647,6 +628,44 @@ mod tests {
         let ids: Vec<&str> = sorted.iter().map(|t| t.id()).collect();
         // "a" has 0 requires, "b" has 1 — so "a" comes first
         assert_eq!(ids, vec!["a", "b"]);
+    }
+
+    #[test]
+    fn test_sorted_techniques_topological_diamond() {
+        // Diamond: A -> B, A -> C, B -> D, C -> D
+        let mut r = TechniqueRegistry::new();
+        r.register(Box::new(MockTechnique::with_requires("d", &["b", "c"])));
+        r.register(Box::new(MockTechnique::with_requires("b", &["a"])));
+        r.register(Box::new(MockTechnique::with_requires("c", &["a"])));
+        r.register(Box::new(MockTechnique::new("a")));
+
+        let ds = Detections::new();
+        let sorted = r.sorted_techniques(&ds);
+        let ids: Vec<&str> = sorted.iter().map(|t| t.id()).collect();
+
+        // "a" must come before "b" and "c", both must come before "d"
+        let pos = |id: &str| ids.iter().position(|&x| x == id).unwrap();
+        assert!(pos("a") < pos("b"));
+        assert!(pos("a") < pos("c"));
+        assert!(pos("b") < pos("d"));
+        assert!(pos("c") < pos("d"));
+    }
+
+    #[test]
+    fn test_sorted_techniques_missing_dependency() {
+        // "b" requires "nonexistent" — should still be included
+        let mut r = TechniqueRegistry::new();
+        r.register(Box::new(MockTechnique::new("a")));
+        r.register(Box::new(MockTechnique::with_requires(
+            "b",
+            &["nonexistent"],
+        )));
+
+        let ds = Detections::new();
+        let sorted = r.sorted_techniques(&ds);
+        let ids: Vec<&str> = sorted.iter().map(|t| t.id()).collect();
+        assert!(ids.contains(&"a"));
+        assert!(ids.contains(&"b"));
     }
 
     #[test]
@@ -682,6 +701,138 @@ mod tests {
     #[test]
     fn test_registry_default() {
         let r = TechniqueRegistry::default();
-        assert!(!r.has_techniques());
+        assert!(r.has_techniques());
+        assert!(r.techniques().len() >= 30);
+    }
+
+    // === ObfuscatorMatcher tests ===
+
+    #[test]
+    fn test_compute_attribution_no_match() {
+        let mut m = ObfuscatorMatcher::new();
+        m.add_signature(ObfuscatorSignature {
+            name: "TestObfuscator",
+            required: vec!["test.a"],
+            supporting: vec![],
+        });
+
+        let ds = Detections::new();
+        assert!(m.compute_attribution(&ds).is_none());
+    }
+
+    #[test]
+    fn test_compute_attribution_required_match() {
+        let mut m = ObfuscatorMatcher::new();
+        m.add_signature(ObfuscatorSignature {
+            name: "TestObfuscator",
+            required: vec!["test.a"],
+            supporting: vec!["test.b"],
+        });
+
+        let mut ds = Detections::new();
+        ds.insert("test.a", Detection::new_detected(vec![], None));
+
+        let attr = m.compute_attribution(&ds).unwrap();
+        assert_eq!(attr.obfuscator_name, "TestObfuscator");
+        assert_eq!(attr.supporting_matched, 0);
+    }
+
+    #[test]
+    fn test_compute_attribution_with_supporting() {
+        let mut m = ObfuscatorMatcher::new();
+        m.add_signature(ObfuscatorSignature {
+            name: "TestObfuscator",
+            required: vec!["test.a"],
+            supporting: vec!["test.b", "test.c"],
+        });
+
+        let mut ds = Detections::new();
+        ds.insert("test.a", Detection::new_detected(vec![], None));
+        ds.insert("test.b", Detection::new_detected(vec![], None));
+
+        let attr = m.compute_attribution(&ds).unwrap();
+        assert_eq!(attr.supporting_matched, 1);
+        assert!(attr.technique_ids.contains(&"test.a".to_string()));
+        assert!(attr.technique_ids.contains(&"test.b".to_string()));
+    }
+
+    #[test]
+    fn test_compute_attribution_best_match_wins() {
+        let mut m = ObfuscatorMatcher::new();
+        m.add_signature(ObfuscatorSignature {
+            name: "Weak",
+            required: vec!["weak.a"],
+            supporting: vec![],
+        });
+        m.add_signature(ObfuscatorSignature {
+            name: "Strong",
+            required: vec!["strong.a"],
+            supporting: vec!["strong.b", "strong.c"],
+        });
+
+        let mut ds = Detections::new();
+        ds.insert("weak.a", Detection::new_detected(vec![], None));
+        ds.insert("strong.a", Detection::new_detected(vec![], None));
+        ds.insert("strong.b", Detection::new_detected(vec![], None));
+        ds.insert("strong.c", Detection::new_detected(vec![], None));
+
+        let attr = m.compute_attribution(&ds).unwrap();
+        assert_eq!(attr.obfuscator_name, "Strong");
+        assert_eq!(attr.supporting_matched, 2);
+    }
+
+    #[test]
+    fn test_compute_attributions_all() {
+        let mut m = ObfuscatorMatcher::new();
+        m.add_signature(ObfuscatorSignature {
+            name: "Alpha",
+            required: vec!["alpha.a"],
+            supporting: vec![],
+        });
+        m.add_signature(ObfuscatorSignature {
+            name: "Beta",
+            required: vec!["beta.a"],
+            supporting: vec!["beta.b"],
+        });
+
+        let mut ds = Detections::new();
+        ds.insert("alpha.a", Detection::new_detected(vec![], None));
+        ds.insert("beta.a", Detection::new_detected(vec![], None));
+        ds.insert("beta.b", Detection::new_detected(vec![], None));
+
+        let attrs = m.compute_attributions_all(&ds);
+        assert_eq!(attrs.len(), 2);
+        // Beta has more supporting matches, should come first
+        assert_eq!(attrs[0].obfuscator_name, "Beta");
+        assert_eq!(attrs[1].obfuscator_name, "Alpha");
+    }
+
+    #[test]
+    fn test_matcher_default() {
+        let m = ObfuscatorMatcher::default();
+        assert!(m.compute_attribution(&Detections::new()).is_none());
+    }
+
+    #[test]
+    fn test_matcher_with_defaults_has_signatures() {
+        let m = ObfuscatorMatcher::with_defaults();
+
+        // Verify ConfuserEx attribution works
+        let mut ds = Detections::new();
+        ds.insert("confuserex.marker", Detection::new_detected(vec![], None));
+        let attr = m.compute_attribution(&ds).unwrap();
+        assert_eq!(attr.obfuscator_name, "ConfuserEx");
+
+        // Verify BitMono attribution works (single technique)
+        let mut ds = Detections::new();
+        ds.insert("bitmono.strings", Detection::new_detected(vec![], None));
+        let attr = m.compute_attribution(&ds).unwrap();
+        assert_eq!(attr.obfuscator_name, "BitMono");
+
+        // Verify JIEJIE.NET attribution works (single technique)
+        let mut ds = Detections::new();
+        ds.insert("jiejienet.constants", Detection::new_detected(vec![], None));
+        let attr = m.compute_attribution(&ds).unwrap();
+        assert_eq!(attr.obfuscator_name, "JIEJIE.NET");
     }
 }

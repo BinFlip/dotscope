@@ -10,7 +10,11 @@
 //! discards pending byte patches and replaces the entire assembly.
 
 use crate::{
-    metadata::{cilassemblyview::CilAssemblyView, validation::ValidationConfig},
+    metadata::{
+        cilassemblyview::CilAssemblyView,
+        tables::{FieldRvaRaw, TableDataOwned, TableId},
+        validation::ValidationConfig,
+    },
     CilObject, Error, Result,
 };
 
@@ -133,6 +137,60 @@ impl WorkingAssembly {
     /// byte-level patching is insufficient.
     pub fn replace_assembly(&mut self, assembly: CilObject) {
         self.cilobject = Some(assembly);
+    }
+
+    /// Stores decrypted FieldRVA data through the assembly changes system.
+    ///
+    /// This is the correct way to persist decrypted field data across PE
+    /// regeneration iterations. Unlike `file.write()` (which is transient),
+    /// this stores the data in `AssemblyChanges` and updates the FieldRVA
+    /// table row with a placeholder RVA. The PE writer then uses the stored
+    /// data instead of the original encrypted bytes.
+    ///
+    /// Temporarily takes ownership of the `CilObject`, converts to
+    /// `CilAssembly` for mutation, then rebuilds the `CilObject`.
+    pub fn store_field_data(&mut self, entries: Vec<(u32, Vec<u8>)>) -> Result<()> {
+        if entries.is_empty() {
+            return Ok(());
+        }
+
+        let co = self
+            .cilobject
+            .take()
+            .ok_or_else(|| Error::Other("WorkingAssembly: assembly unavailable".into()))?;
+        let mut cil = co.into_assembly();
+
+        for (fieldrva_rid, data) in entries {
+            let placeholder_rva = cil.store_field_data(data);
+
+            let existing_row = cil
+                .view()
+                .tables()
+                .and_then(|t| t.table::<FieldRvaRaw>())
+                .and_then(|table| table.get(fieldrva_rid))
+                .ok_or_else(|| Error::Other(format!("FieldRVA row {fieldrva_rid} not found")))?;
+
+            let updated_row = FieldRvaRaw {
+                rid: existing_row.rid,
+                token: existing_row.token,
+                offset: existing_row.offset,
+                rva: placeholder_rva,
+                field: existing_row.field,
+            };
+
+            cil.table_row_update(
+                TableId::FieldRVA,
+                fieldrva_rid,
+                TableDataOwned::FieldRVA(updated_row),
+            )?;
+        }
+
+        // Regenerate the PE to persist the changes. into_view() would
+        // discard changes, so we must go through full PE regeneration.
+        let new_co = cil.into_cilobject_with(ValidationConfig::analysis(), Default::default())?;
+        self.cilobject = Some(new_co);
+
+        Ok(())
     }
 
     /// Returns a reference to the current metadata view.

@@ -63,12 +63,15 @@
 //! }
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::analysis::ssa::{DefSite, SsaFunction, SsaOp, SsaVarId, UseSite};
+use crate::{
+    analysis::ssa::{DefSite, SsaFunction, SsaOp, SsaVarId, UseSite},
+    utils::BitSet,
+};
 
 /// Location in the SSA function (block + instruction).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct Location {
     /// Block index.
     pub block: usize,
@@ -106,34 +109,34 @@ impl Location {
 #[derive(Debug, Clone, Default)]
 pub struct DefUseIndex {
     /// Map from variable ID to its definition site.
-    definitions: HashMap<SsaVarId, DefSite>,
+    definitions: BTreeMap<SsaVarId, DefSite>,
 
     /// Map from variable ID to its use sites.
-    uses: HashMap<SsaVarId, Vec<UseSite>>,
+    uses: BTreeMap<SsaVarId, Vec<UseSite>>,
 
     /// Map from location to variables defined there.
     /// Key: (block_idx, instr_idx), Value: variables defined at that instruction.
-    defs_at_location: HashMap<Location, Vec<SsaVarId>>,
+    defs_at_location: BTreeMap<Location, Vec<SsaVarId>>,
 
     /// Map from location to variables used there.
     /// Key: (block_idx, instr_idx), Value: variables used at that instruction.
-    uses_at_location: HashMap<Location, Vec<SsaVarId>>,
+    uses_at_location: BTreeMap<Location, Vec<SsaVarId>>,
 
     /// Variables defined in each block (including phi nodes).
-    defs_in_block: HashMap<usize, Vec<SsaVarId>>,
+    defs_in_block: BTreeMap<usize, Vec<SsaVarId>>,
 
     /// Variables defined by phi nodes.
-    phi_defs: HashSet<SsaVarId>,
+    phi_defs: BitSet,
 
     /// Variables with no uses (dead variables).
-    unused_vars: HashSet<SsaVarId>,
+    unused_vars: BitSet,
 
     /// Total variable count.
     var_count: usize,
 
     /// Optional: defining operations for each variable.
     /// Populated when built with [`build_with_ops`](Self::build_with_ops).
-    def_ops: Option<HashMap<SsaVarId, SsaOp>>,
+    def_ops: Option<BTreeMap<SsaVarId, SsaOp>>,
 }
 
 impl DefUseIndex {
@@ -151,12 +154,20 @@ impl DefUseIndex {
     /// A new `DefUseIndex` with all relationships computed.
     #[must_use]
     pub fn build(ssa: &SsaFunction) -> Self {
-        let mut definitions = HashMap::new();
-        let mut uses: HashMap<SsaVarId, Vec<UseSite>> = HashMap::new();
-        let mut defs_at_location: HashMap<Location, Vec<SsaVarId>> = HashMap::new();
-        let mut uses_at_location: HashMap<Location, Vec<SsaVarId>> = HashMap::new();
-        let mut defs_in_block: HashMap<usize, Vec<SsaVarId>> = HashMap::new();
-        let mut phi_defs = HashSet::new();
+        let mut definitions = BTreeMap::new();
+        let mut uses: BTreeMap<SsaVarId, Vec<UseSite>> = BTreeMap::new();
+        let mut defs_at_location: BTreeMap<Location, Vec<SsaVarId>> = BTreeMap::new();
+        let mut uses_at_location: BTreeMap<Location, Vec<SsaVarId>> = BTreeMap::new();
+        let mut defs_in_block: BTreeMap<usize, Vec<SsaVarId>> = BTreeMap::new();
+        let variable_count = ssa.variable_count();
+        let max_var_idx = ssa
+            .variables()
+            .iter()
+            .map(|v| v.id().index() + 1)
+            .max()
+            .unwrap_or(0);
+        let bitset_capacity = max_var_idx.max(variable_count);
+        let mut phi_defs = BitSet::new(bitset_capacity);
 
         // Collect from SsaVariables (the authoritative source)
         for var in ssa.variables() {
@@ -167,7 +178,7 @@ impl DefUseIndex {
 
             // Track phi definitions
             if def_site.is_phi() {
-                phi_defs.insert(var_id);
+                phi_defs.insert(var_id.index());
             }
 
             // Track definitions by location
@@ -190,11 +201,12 @@ impl DefUseIndex {
         }
 
         // Identify unused variables
-        let unused_vars: HashSet<SsaVarId> = uses
-            .iter()
-            .filter(|(_, use_sites)| use_sites.is_empty())
-            .map(|(var_id, _)| *var_id)
-            .collect();
+        let mut unused_vars = BitSet::new(bitset_capacity);
+        for (var_id, use_sites) in &uses {
+            if use_sites.is_empty() {
+                unused_vars.insert(var_id.index());
+            }
+        }
 
         Self {
             definitions,
@@ -204,7 +216,7 @@ impl DefUseIndex {
             defs_in_block,
             phi_defs,
             unused_vars,
-            var_count: ssa.variable_count(),
+            var_count: variable_count,
             def_ops: None,
         }
     }
@@ -249,7 +261,7 @@ impl DefUseIndex {
         let mut index = Self::build(ssa);
 
         // Collect defining operations
-        let mut def_ops = HashMap::new();
+        let mut def_ops = BTreeMap::new();
         for (_block_idx, _instr_idx, instr) in ssa.iter_instructions() {
             let op = instr.op();
             if let Some(dest) = op.dest() {
@@ -275,7 +287,7 @@ impl DefUseIndex {
     ///
     /// A tuple of (`DefUseIndex`, operation map).
     #[must_use]
-    pub fn build_with_ops_map(ssa: &SsaFunction) -> (Self, HashMap<SsaVarId, SsaOp>) {
+    pub fn build_with_ops_map(ssa: &SsaFunction) -> (Self, BTreeMap<SsaVarId, SsaOp>) {
         let index = Self::build_with_ops(ssa);
         let ops = index.def_ops.clone().unwrap_or_default();
         (index, ops)
@@ -415,7 +427,7 @@ impl DefUseIndex {
     /// `true` if the variable has no uses.
     #[must_use]
     pub fn is_unused(&self, var: SsaVarId) -> bool {
-        self.unused_vars.contains(&var)
+        var.index() < self.unused_vars.len() && self.unused_vars.contains(var.index())
     }
 
     /// Checks if a variable is defined by a phi node.
@@ -429,7 +441,7 @@ impl DefUseIndex {
     /// `true` if the variable is defined by a phi node.
     #[must_use]
     pub fn is_phi_def(&self, var: SsaVarId) -> bool {
-        self.phi_defs.contains(&var)
+        var.index() < self.phi_defs.len() && self.phi_defs.contains(var.index())
     }
 
     /// Returns variables defined at a specific location.
@@ -488,7 +500,7 @@ impl DefUseIndex {
     ///
     /// A reference to the set of unused variable IDs.
     #[must_use]
-    pub fn unused_variables(&self) -> &HashSet<SsaVarId> {
+    pub fn unused_variables(&self) -> &BitSet {
         &self.unused_vars
     }
 
@@ -498,7 +510,7 @@ impl DefUseIndex {
     ///
     /// A reference to the set of phi-defined variable IDs.
     #[must_use]
-    pub fn phi_definitions(&self) -> &HashSet<SsaVarId> {
+    pub fn phi_definitions(&self) -> &BitSet {
         &self.phi_defs
     }
 
@@ -511,7 +523,7 @@ impl DefUseIndex {
     /// Returns the number of unused variables.
     #[must_use]
     pub fn unused_count(&self) -> usize {
-        self.unused_vars.len()
+        self.unused_vars.count()
     }
 
     /// Checks if a variable has a single use.
@@ -558,12 +570,12 @@ impl DefUseIndex {
     ///
     /// A set of variable IDs used anywhere in the block.
     #[must_use]
-    pub fn uses_in_block(&self, block: usize) -> HashSet<SsaVarId> {
-        let mut result = HashSet::new();
-        for (loc, vars) in &self.uses_at_location {
-            if loc.block == block {
-                result.extend(vars.iter().copied());
-            }
+    pub fn uses_in_block(&self, block: usize) -> BTreeSet<SsaVarId> {
+        let mut result = BTreeSet::new();
+        let start = Location::new(block, 0);
+        let end = Location::new(block, usize::MAX);
+        for (_loc, vars) in self.uses_at_location.range(start..=end) {
+            result.extend(vars.iter().copied());
         }
         result
     }
@@ -587,12 +599,12 @@ impl DefUseIndex {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
-
     use crate::analysis::ssa::{
-        ConstValue, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable,
-        VariableOrigin,
+        ConstValue, DefSite, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId,
+        SsaVariable, UseSite, VariableOrigin,
     };
+
+    use super::DefUseIndex;
 
     /// Helper to create test SSA and return variable IDs for assertions
     fn make_test_ssa() -> (SsaFunction, SsaVarId, SsaVarId) {
@@ -792,7 +804,7 @@ mod tests {
         assert!(index.is_unused(v0_id));
         assert!(!index.is_unused(v1_id));
         assert_eq!(index.unused_count(), 1);
-        assert!(index.unused_variables().contains(&v0_id));
+        assert!(index.unused_variables().contains(v0_id.index()));
     }
 
     #[test]
@@ -847,7 +859,7 @@ mod tests {
 
         assert!(index.is_phi_def(v0_id));
         assert!(!index.is_phi_def(v1_id));
-        assert!(index.phi_definitions().contains(&v0_id));
+        assert!(index.phi_definitions().contains(v0_id.index()));
     }
 
     #[test]

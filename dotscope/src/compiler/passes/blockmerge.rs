@@ -53,17 +53,15 @@
 //!     jump B7
 //! ```
 
-use std::collections::{HashMap, HashSet};
+use std::collections::BTreeMap;
 
 use crate::{
     analysis::{PhiOperand, SsaFunction, SsaInstruction, SsaOp},
     compiler::{pass::SsaPass, passes::utils::resolve_chain, CompilerContext, EventKind, EventLog},
     metadata::token::Token,
+    utils::BitSet,
     CilObject, Result,
 };
-
-/// Maximum iterations to prevent infinite loops.
-const MAX_ITERATIONS: usize = 50;
 
 /// Block merging pass for eliminating trampoline blocks.
 ///
@@ -73,19 +71,21 @@ const MAX_ITERATIONS: usize = 50;
 ///
 /// This pass redirects all edges that go through trampolines directly to their
 /// ultimate targets, simplifying the control flow graph.
-pub struct BlockMergingPass;
-
-impl Default for BlockMergingPass {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct BlockMergingPass {
+    /// Maximum fixpoint iterations before stopping.
+    max_iterations: usize,
 }
 
 impl BlockMergingPass {
     /// Creates a new block merging pass.
+    ///
+    /// # Arguments
+    ///
+    /// * `max_iterations` - Maximum fixpoint iterations for both trampoline
+    ///   elimination and block coalescing phases. The default config value is 50.
     #[must_use]
-    pub fn new() -> Self {
-        Self
+    pub fn new(max_iterations: usize) -> Self {
+        Self { max_iterations }
     }
 
     /// Redirects all jumps that go to trampolines to their ultimate targets.
@@ -102,7 +102,7 @@ impl BlockMergingPass {
     /// The number of redirections performed.
     fn redirect_to_ultimate_targets(
         ssa: &mut SsaFunction,
-        trampolines: &HashMap<usize, usize>,
+        trampolines: &BTreeMap<usize, usize>,
         method_token: Token,
         changes: &mut EventLog,
     ) -> usize {
@@ -111,10 +111,15 @@ impl BlockMergingPass {
         }
 
         // Precompute ultimate targets for all trampolines using shared utility
-        let ultimate_targets: HashMap<usize, usize> = trampolines
+        let ultimate_targets: BTreeMap<usize, usize> = trampolines
             .keys()
             .map(|&t| (t, resolve_chain(trampolines, t)))
             .collect();
+
+        // Collect which blocks redirect through which trampolines, so we can
+        // update phi operands at the ultimate target afterwards.
+        // Maps: (trampoline, ultimate_target) → [predecessor blocks that were redirected]
+        let mut redirected_preds: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
 
         let mut redirected = 0;
 
@@ -129,6 +134,10 @@ impl BlockMergingPass {
                     let mut changed = false;
                     for (&trampoline, &ultimate) in &ultimate_targets {
                         if op.redirect_target(trampoline, ultimate) {
+                            redirected_preds
+                                .entry((trampoline, ultimate))
+                                .or_default()
+                                .push(block_idx);
                             changed = true;
                         }
                     }
@@ -142,6 +151,42 @@ impl BlockMergingPass {
                                 "redirected through trampoline: {old_targets:?} -> {new_targets:?}"
                             ));
                         redirected += 1;
+                    }
+                }
+            }
+        }
+
+        // Update phi operands at ultimate target blocks. When B_src was redirected
+        // from B_trampoline → B_target, phi operands at B_target that referenced
+        // B_trampoline must be updated to reference B_src instead. If multiple
+        // blocks were redirected through the same trampoline, the single phi
+        // operand is duplicated for each new predecessor.
+        for (&(trampoline, ultimate), preds) in &redirected_preds {
+            if let Some(target_block) = ssa.block_mut(ultimate) {
+                for phi in target_block.phi_nodes_mut() {
+                    // Find the operand that came from the trampoline
+                    let trampoline_operand = phi
+                        .operands()
+                        .iter()
+                        .find(|op| op.predecessor() == trampoline)
+                        .map(|op| op.value());
+
+                    if let Some(value) = trampoline_operand {
+                        // Update the existing operand to point to the first new predecessor
+                        if let Some(&first_pred) = preds.first() {
+                            for operand in phi.operands_mut() {
+                                if operand.predecessor() == trampoline {
+                                    operand.set_predecessor(first_pred);
+                                    break;
+                                }
+                            }
+                        }
+
+                        // Add duplicate operands for any additional predecessors
+                        // (same value, different predecessor)
+                        for &pred in preds.iter().skip(1) {
+                            phi.add_operand(PhiOperand::new(value, pred));
+                        }
                     }
                 }
             }
@@ -167,7 +212,7 @@ impl BlockMergingPass {
     /// The number of blocks cleared.
     fn clear_trampolines(
         ssa: &mut SsaFunction,
-        trampolines: &HashMap<usize, usize>,
+        trampolines: &BTreeMap<usize, usize>,
         method_token: Token,
         changes: &mut EventLog,
     ) -> usize {
@@ -217,10 +262,18 @@ impl BlockMergingPass {
     ///
     /// Blocks involved in exception handler boundaries are excluded because
     /// merging them would break the handler region structure.
+    ///
+    /// # Arguments
+    ///
+    /// * `ssa` - The SSA function to modify.
+    /// * `method_token` - Token of the method being processed (for event logging).
+    /// * `changes` - Event log to record merge operations.
+    /// * `max_iterations` - Maximum fixpoint iterations for the merge loop.
     fn coalesce_blocks(
         ssa: &mut SsaFunction,
         method_token: Token,
         changes: &mut EventLog,
+        max_iterations: usize,
     ) -> usize {
         let mut merged = 0;
 
@@ -237,8 +290,8 @@ impl BlockMergingPass {
         // Merging within a region is safe: if A is a try_start and B is the next
         // block inside the same try body, merging B into A keeps the try region
         // starting at A.
-        let mut no_merge_into: HashSet<usize> = HashSet::new();
-        let mut no_merge_from: HashSet<usize> = HashSet::new();
+        let mut no_merge_into = BitSet::new(ssa.block_count());
+        let mut no_merge_from = BitSet::new(ssa.block_count());
         for handler in ssa.exception_handlers() {
             if let Some(b) = handler.try_start_block {
                 no_merge_into.insert(b);
@@ -258,7 +311,7 @@ impl BlockMergingPass {
         }
 
         // Iterate until fixed point.
-        for _ in 0..MAX_ITERATIONS {
+        for _ in 0..max_iterations {
             let mut iteration_merges = 0;
 
             // Build predecessor counts for all blocks.
@@ -284,9 +337,9 @@ impl BlockMergingPass {
             // Find mergeable pairs: A -> B where A's terminator is Jump(B),
             // B has exactly 1 predecessor, and neither is a handler boundary.
             let mut pairs: Vec<(usize, usize)> = Vec::new();
-            let mut consumed: HashSet<usize> = HashSet::new();
+            let mut consumed = BitSet::new(block_count);
             for a_idx in 0..block_count {
-                if consumed.contains(&a_idx) {
+                if consumed.contains(a_idx) {
                     continue;
                 }
                 let b_idx = match ssa.block(a_idx).and_then(|b| b.terminator_op()) {
@@ -299,7 +352,7 @@ impl BlockMergingPass {
                 if pred_counts[b_idx] != 1 {
                     continue;
                 }
-                if no_merge_from.contains(&a_idx) || no_merge_into.contains(&b_idx) {
+                if no_merge_from.contains(a_idx) || no_merge_into.contains(b_idx) {
                     continue;
                 }
                 // B must have instructions (not already cleared).
@@ -492,7 +545,9 @@ impl SsaPass for BlockMergingPass {
         let mut changes = EventLog::new();
 
         // Phase 1: Eliminate trampoline blocks (jump-only blocks).
-        for _ in 0..MAX_ITERATIONS {
+        // Trampoline elimination updates phi operands at target blocks to
+        // reference the new predecessors, maintaining SSA invariants.
+        for _ in 0..self.max_iterations {
             let iteration_changes = Self::run_iteration(ssa, method_token, &mut changes);
 
             if iteration_changes == 0 {
@@ -510,7 +565,7 @@ impl SsaPass for BlockMergingPass {
         // blocks with actual instructions connected by unconditional jumps
         // where the successor has a single predecessor. Merging these produces
         // larger blocks, reducing cross-block stores in the codegen.
-        Self::coalesce_blocks(ssa, method_token, &mut changes);
+        Self::coalesce_blocks(ssa, method_token, &mut changes, self.max_iterations);
 
         let changed = !changes.is_empty();
         if changed {
@@ -544,7 +599,7 @@ mod tests {
             })
             .unwrap();
 
-        let pass = BlockMergingPass::new();
+        let pass = BlockMergingPass::new(50);
         let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
         let assembly = test_assembly_arc();
 
@@ -584,7 +639,7 @@ mod tests {
             })
             .unwrap();
 
-        let pass = BlockMergingPass::new();
+        let pass = BlockMergingPass::new(50);
         let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
         let assembly = test_assembly_arc();
 
@@ -621,7 +676,7 @@ mod tests {
             })
             .unwrap();
 
-        let pass = BlockMergingPass::new();
+        let pass = BlockMergingPass::new(50);
         let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
         let assembly = test_assembly_arc();
 
@@ -665,7 +720,7 @@ mod tests {
             })
             .unwrap();
 
-        let pass = BlockMergingPass::new();
+        let pass = BlockMergingPass::new(50);
         let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
         let assembly = test_assembly_arc();
 
@@ -715,7 +770,7 @@ mod tests {
             })
             .unwrap();
 
-        let pass = BlockMergingPass::new();
+        let pass = BlockMergingPass::new(50);
         let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
         let assembly = test_assembly_arc();
 
@@ -745,7 +800,7 @@ mod tests {
             })
             .unwrap();
 
-        let pass = BlockMergingPass::new();
+        let pass = BlockMergingPass::new(50);
         let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
         let assembly = test_assembly_arc();
 
@@ -773,7 +828,7 @@ mod tests {
             })
             .unwrap();
 
-        let pass = BlockMergingPass::new();
+        let pass = BlockMergingPass::new(50);
         let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
         let assembly = test_assembly_arc();
 
@@ -830,7 +885,7 @@ mod tests {
             })
             .unwrap();
 
-        let pass = BlockMergingPass::new();
+        let pass = BlockMergingPass::new(50);
         let ctx = CompilerContext::new(Arc::new(CallGraph::new()));
         let assembly = test_assembly_arc();
 

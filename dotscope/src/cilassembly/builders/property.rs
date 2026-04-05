@@ -5,7 +5,7 @@
 //! the existing low-level builders to provide a fluent, high-level API for various property patterns.
 
 use crate::{
-    cilassembly::{ChangeRefRc, CilAssembly},
+    cilassembly::{builders::method::MethodBuilder, ChangeRefRc, CilAssembly},
     metadata::{
         signatures::{
             encode_field_signature, encode_property_signature, SignatureField, SignatureParameter,
@@ -18,8 +18,6 @@ use crate::{
     },
     Error, Result,
 };
-
-use super::method::MethodBuilder;
 
 /// Property accessor type for determining what accessors to generate.
 #[derive(Debug, Clone, PartialEq)]

@@ -18,10 +18,28 @@ use std::collections::HashSet;
 
 use crate::{
     cilassembly::CleanupRequest,
-    deobfuscation::techniques::{Detection, Evidence, PassPhase, Technique, TechniqueCategory},
+    compiler::PassPhase,
+    deobfuscation::{
+        techniques::{Detection, Evidence, Technique, TechniqueCategory},
+        utils::find_methods_calling_apis,
+    },
     metadata::token::Token,
     CilObject,
 };
+
+/// Pattern indices for [`find_methods_calling_apis`] results.
+const PAT_VIRTUAL_PROTECT: usize = 0;
+const PAT_GET_HINSTANCE: usize = 1;
+const PAT_GET_MODULE: usize = 2;
+const PAT_MARSHAL_COPY: usize = 3;
+
+/// API name patterns used for anti-dump detection.
+const API_PATTERNS: &[&str] = &[
+    "VirtualProtect",
+    "GetHINSTANCE",
+    "get_Module",
+    "Marshal.Copy",
+];
 
 /// Findings from generic anti-dump detection.
 #[derive(Debug)]
@@ -47,37 +65,22 @@ impl Technique for GenericAntiDump {
     }
 
     fn detect(&self, assembly: &CilObject) -> Detection {
-        let mut method_tokens = HashSet::new();
+        let api_hits = find_methods_calling_apis(assembly, API_PATTERNS);
 
-        for method_entry in assembly.methods() {
-            let method = method_entry.value();
-
-            let mut has_virtual_protect = false;
-            let mut has_get_hinstance = false;
-            let mut has_marshal_copy = false;
-
-            for instr in method.instructions() {
-                if let Some(token) = instr.get_token_operand() {
-                    if let Some(name) = assembly.resolve_method_name(token) {
-                        if name.contains("VirtualProtect") {
-                            has_virtual_protect = true;
-                        }
-                        if name.contains("GetHINSTANCE") || name.contains("get_Module") {
-                            has_get_hinstance = true;
-                        }
-                        if name.contains("Marshal") && name.contains("Copy") {
-                            has_marshal_copy = true;
-                        }
-                    }
-                }
-            }
-
-            // Anti-dump: VirtualProtect + GetHINSTANCE, but NOT Marshal.Copy
-            // (Marshal.Copy distinguishes anti-tamper from anti-dump)
-            if has_virtual_protect && has_get_hinstance && !has_marshal_copy {
-                method_tokens.insert(method.token);
-            }
-        }
+        // Anti-dump pattern: VirtualProtect + module handle access (GetHINSTANCE
+        // or get_Module), without Marshal.Copy (which indicates anti-tamper
+        // method body decryption). All APIs must co-occur in the same method.
+        let method_tokens: HashSet<Token> = api_hits
+            .into_iter()
+            .filter(|(_token, indices)| {
+                let has_virtual_protect = indices.contains(&PAT_VIRTUAL_PROTECT);
+                let has_module_handle =
+                    indices.contains(&PAT_GET_HINSTANCE) || indices.contains(&PAT_GET_MODULE);
+                let has_marshal_copy = indices.contains(&PAT_MARSHAL_COPY);
+                has_virtual_protect && has_module_handle && !has_marshal_copy
+            })
+            .map(|(token, _)| token)
+            .collect();
 
         if method_tokens.is_empty() {
             return Detection::new_empty();
@@ -92,10 +95,10 @@ impl Technique for GenericAntiDump {
         );
 
         for token in &method_tokens {
-            detection.cleanup.add_method(*token);
+            detection.cleanup_mut().add_method(*token);
         }
 
-        detection.findings = Some(Box::new(AntiDumpFindings { method_tokens }));
+        detection.set_findings(Box::new(AntiDumpFindings { method_tokens }));
 
         detection
     }
@@ -141,6 +144,6 @@ mod tests {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericAntiDump;
         let detection = technique.detect(&asm);
-        assert!(!detection.detected);
+        assert!(!detection.is_detected());
     }
 }

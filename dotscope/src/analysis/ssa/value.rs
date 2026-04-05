@@ -33,8 +33,8 @@ use crate::{
         SsaType, SsaVarId,
     },
     assembly::Immediate,
-    metadata::typesystem::PointerSize,
-    Error,
+    metadata::{token::Token, typesystem::PointerSize},
+    CilObject, Error,
 };
 
 /// Constant values that can appear in SSA form.
@@ -103,6 +103,18 @@ pub enum ConstValue {
 
     /// Runtime field handle.
     FieldHandle(FieldRef),
+
+    /// Decrypted array data (raw bytes and element type token).
+    /// Used by deobfuscation passes to store arrays that were decrypted at analysis time.
+    /// The codegen emits `newarr` + element stores to reconstruct the array.
+    DecryptedArray {
+        /// Raw bytes of the array data in little-endian layout.
+        data: Vec<u8>,
+        /// Metadata token of the element type (TypeRef/TypeDef from the assembly).
+        element_type_token: Token,
+        /// Size of each element in bytes (1 for byte, 4 for int, etc.).
+        element_size: usize,
+    },
 }
 
 impl ConstValue {
@@ -179,7 +191,10 @@ impl ConstValue {
             }
             Self::NativeUInt(_) => SsaType::NativeUInt,
             Self::True | Self::False => SsaType::Bool,
-            Self::Null | Self::String(_) | Self::DecryptedString(_) => SsaType::Object,
+            Self::Null
+            | Self::String(_)
+            | Self::DecryptedString(_)
+            | Self::DecryptedArray { .. } => SsaType::Object,
         }
     }
 
@@ -313,6 +328,34 @@ impl ConstValue {
             Self::True
         } else {
             Self::False
+        }
+    }
+
+    /// Returns the string content if this is a `DecryptedString`.
+    ///
+    /// For `String` variants (heap references), use [`as_string_content`](Self::as_string_content)
+    /// which resolves the heap index via the assembly.
+    #[must_use]
+    pub fn as_decrypted_string(&self) -> Option<&str> {
+        match self {
+            Self::DecryptedString(s) => Some(s.as_str()),
+            _ => None,
+        }
+    }
+
+    /// Returns string content, resolving `#US` heap indices via the assembly.
+    ///
+    /// Returns `Some` for `DecryptedString` (directly) and `String` (via heap lookup).
+    /// Returns `None` for all other variants.
+    #[must_use]
+    pub fn as_string_content(&self, assembly: &CilObject) -> Option<String> {
+        match self {
+            Self::DecryptedString(s) => Some(s.clone()),
+            Self::String(idx) => assembly
+                .userstrings()
+                .and_then(|us| us.get(*idx as usize).ok())
+                .map(|s| s.to_string_lossy()),
+            _ => None,
         }
     }
 
@@ -1183,6 +1226,19 @@ impl fmt::Display for ConstValue {
             Self::F64(v) => write!(f, "{v}"),
             Self::String(idx) => write!(f, "str@{idx}"),
             Self::DecryptedString(s) => write!(f, "\"{}\"", s.escape_default()),
+            Self::DecryptedArray {
+                data,
+                element_type_token,
+                element_size,
+            } => {
+                write!(
+                    f,
+                    "array[{}x{}]<0x{:08X}>",
+                    data.len() / element_size.max(&1),
+                    element_size,
+                    element_type_token.value()
+                )
+            }
             Self::Null => write!(f, "null"),
             Self::True => write!(f, "true"),
             Self::False => write!(f, "false"),
@@ -1262,6 +1318,7 @@ impl TryFrom<&ConstValue> for Immediate {
             // Non-numeric types cannot be converted to immediates
             ConstValue::String(_)
             | ConstValue::DecryptedString(_)
+            | ConstValue::DecryptedArray { .. }
             | ConstValue::Null
             | ConstValue::Type(_)
             | ConstValue::MethodHandle(_)

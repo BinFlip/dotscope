@@ -261,14 +261,15 @@ pub trait StateMachineProvider: Send + Sync + std::fmt::Debug {
     /// state value for decryption.
     ///
     /// The algorithm is obfuscator-specific. For example, ConfuserEx uses
-    /// dominator-based analysis to find updates that are guaranteed to execute
-    /// before the decryptor call, plus fallback logic for switch merge blocks.
+    /// BFS path-finding to collect updates along an entry-to-target path.
     ///
     /// # Arguments
     ///
     /// * `call_site` - The decryptor call site to analyze
     /// * `all_updates` - All state update calls in the method
     /// * `cfg_info` - CFG analysis data (dominators, predecessors)
+    /// * `seed_block` - Optional seed block index for filtering; only updates
+    ///   at or after the seed's position on the BFS path are included
     ///
     /// # Returns
     ///
@@ -283,6 +284,7 @@ pub trait StateMachineProvider: Send + Sync + std::fmt::Debug {
         _call_site: &StateMachineCallSite,
         _all_updates: &[StateUpdateCall],
         _cfg_info: &CfgInfo<'_>,
+        _seed_block: Option<usize>,
     ) -> Vec<usize> {
         Vec::new()
     }

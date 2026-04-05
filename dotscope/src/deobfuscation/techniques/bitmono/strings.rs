@@ -37,7 +37,7 @@
 //! - Tags infrastructure fields in the analysis context (encrypted data, salt, key fields)
 //! - Registers decryptor method tokens so cleanup knows what to remove
 //!
-//! **Phase B — `StringDecryptionPass`** (SSA pass, runs AFTER `CalltocalliReversalPass`):
+//! **Phase B — `StringDecryptionPass`** (SSA pass, runs AFTER `ReflectionDevirtualizationPass`):
 //! - Finds `Call` to decryptor methods in SSA blocks
 //! - Traces each site's `LoadStaticField` args to identify its specific encrypted
 //!   data, salt, and key fields
@@ -45,21 +45,27 @@
 //! - Decrypts only fields actually referenced as decryptor arguments
 //! - Replaces `Call` with `DecryptedString` constant, NOPs intermediate instructions
 
-use std::{any::Any, sync::Arc};
+use std::{
+    any::Any,
+    collections::{HashMap, HashSet},
+    sync::Arc,
+};
 
+#[cfg(feature = "legacy-crypto")]
+use crate::deobfuscation::passes::bitmono::StringDecryptionPass;
 use crate::{
+    analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
     cilassembly::CleanupRequest,
-    compiler::SsaPass,
+    compiler::{PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
-        techniques::{Detection, Evidence, PassPhase, Technique, TechniqueCategory},
+        techniques::{Detection, Evidence, Technique, TechniqueCategory},
     },
     metadata::{
-        signatures::TypeSignature,
         tables::{MemberRefRaw, TableId, TypeDefRaw, TypeRefRaw},
         token::Token,
-        typesystem::wellknown,
     },
+    utils::CryptoParameters,
     CilObject,
 };
 
@@ -80,6 +86,8 @@ pub struct StringFindings {
     pub constant_data_fields: Vec<Token>,
     /// Types owning the FieldRVA backing fields (ExplicitLayout value types).
     pub constant_data_types: Vec<Token>,
+    /// Crypto parameters extracted from the decryptor method's SSA.
+    pub crypto_params: CryptoParameters,
 }
 
 /// Detects BitMono's AES+PBKDF2 string encryption.
@@ -118,72 +126,31 @@ impl Technique for BitMonoStrings {
         false
     }
 
-    fn detect(&self, assembly: &CilObject) -> Detection {
-        let mut decryptor_type = None;
-        let mut decryptor_tokens = Vec::new();
+    fn detect(&self, _assembly: &CilObject) -> Detection {
+        // IL-level detection is not used — all detection happens in detect_ssa()
+        // where SSA def-use chains give us precise crypto parameter extraction
+        // and junk-immune decryptor identification.
+        Detection::new_empty()
+    }
 
-        // Phase 1: Scan all static methods for crypto type references.
-        for method_entry in assembly.methods() {
-            let method = method_entry.value();
+    fn detect_ssa(&self, ctx: &AnalysisContext, assembly: &CilObject) -> Detection {
+        // Phase 1: Find decryptor methods by scanning SSA for NewObj targeting
+        // crypto types (Rfc2898DeriveBytes, RijndaelManaged/Aes).
+        let mut decryptor_tokens: Vec<Token> = Vec::new();
+        let mut decryptor_type: Option<Token> = None;
 
-            if !method.is_static()
-                || method.name == wellknown::members::CCTOR
-                || method.name == wellknown::members::CTOR
-            {
-                continue;
-            }
+        for entry in ctx.ssa_functions.iter() {
+            let method_token = *entry.key();
+            let ssa = entry.value();
 
-            let instructions: Vec<_> = method.instructions().collect();
-            if instructions.is_empty() {
-                continue;
-            }
-
-            let mut has_aes = false;
-            let mut has_key_derivation = false;
-
-            for instr in &instructions {
-                if let Some(token) = instr.get_token_operand() {
-                    if let Some(name) = resolve_type_name(assembly, token) {
-                        if name.contains("RijndaelManaged") || name.contains("Aes") {
-                            has_aes = true;
-                        }
-                        if name.contains("Rfc2898DeriveBytes") {
-                            has_key_derivation = true;
-                        }
-                    }
-                }
-            }
-
-            if has_aes && has_key_derivation {
-                decryptor_tokens.push(method.token);
+            if has_crypto_ops(ssa, assembly) {
+                decryptor_tokens.push(method_token);
                 if decryptor_type.is_none() {
-                    if let Some(decl_type) = method.declaring_type_rc() {
-                        decryptor_type = Some(decl_type.token);
-                    }
-                }
-                break; // Only one decryptor expected
-            }
-        }
-
-        // Phase 2: Fallback — look for the characteristic decryptor signature:
-        // static, returns string, takes 3+ byte[] parameters.
-        if decryptor_tokens.is_empty() {
-            for method_entry in assembly.methods() {
-                let method = method_entry.value();
-                if !method.is_static()
-                    || method.name == wellknown::members::CCTOR
-                    || method.name == wellknown::members::CTOR
-                {
-                    continue;
-                }
-                if method_matches_decryptor_signature(method) {
-                    decryptor_tokens.push(method.token);
-                    if decryptor_type.is_none() {
+                    if let Some(method) = assembly.method(&method_token) {
                         if let Some(decl_type) = method.declaring_type_rc() {
                             decryptor_type = Some(decl_type.token);
                         }
                     }
-                    break;
                 }
             }
         }
@@ -192,30 +159,44 @@ impl Technique for BitMonoStrings {
             return Detection::new_empty();
         }
 
-        // Phase 3: Count call sites and collect infrastructure field tokens.
-        // Scan for ldsfld immediately before decryptor call to identify encrypted
-        // data, salt, and key fields.
-        let mut call_site_count = 0usize;
-        let mut infrastructure_fields = Vec::new();
+        // Phase 2: Extract crypto parameters from the first decryptor's SSA.
+        let crypto_params = decryptor_tokens
+            .first()
+            .and_then(|token| ctx.ssa_functions.get(token))
+            .map(|ssa| extract_crypto_parameters(&ssa, assembly))
+            .unwrap_or_default();
 
-        for method_entry in assembly.methods() {
-            let method = method_entry.value();
-            let instrs: Vec<_> = method.instructions().collect();
-            for (i, instr) in instrs.iter().enumerate() {
-                if instr.mnemonic == "call" || instr.mnemonic == "callvirt" {
-                    if let Some(token) = instr.get_token_operand() {
-                        if decryptor_tokens.contains(&token) {
-                            call_site_count += 1;
-                            // Walk backwards to find ldsfld args (up to 6 instructions)
-                            let start = i.saturating_sub(6);
-                            for prev in &instrs[start..i] {
-                                if prev.mnemonic == "ldsfld" {
-                                    if let Some(field_token) = prev.get_token_operand() {
-                                        if !infrastructure_fields.contains(&field_token) {
-                                            infrastructure_fields.push(field_token);
-                                        }
-                                    }
-                                }
+        log::info!(
+            "BitMono strings: extracted crypto params — {} iterations, {}/{} key/iv, {}",
+            crypto_params.iterations,
+            crypto_params.key_size,
+            crypto_params.iv_size,
+            crypto_params.hash_algorithm,
+        );
+
+        // Phase 3: Count call sites and collect infrastructure fields via SSA.
+        let decryptor_set: HashSet<Token> = decryptor_tokens.iter().copied().collect();
+        let mut call_site_count = 0usize;
+        let mut infrastructure_fields: Vec<Token> = Vec::new();
+
+        for entry in ctx.ssa_functions.iter() {
+            let ssa = entry.value();
+            for block in ssa.blocks() {
+                for instr in block.instructions() {
+                    let (call_token, args) = match instr.op() {
+                        SsaOp::Call { method, args, .. } => (method.token(), args),
+                        _ => continue,
+                    };
+                    if !decryptor_set.contains(&call_token) {
+                        continue;
+                    }
+                    call_site_count += 1;
+
+                    // Trace LoadStaticField args to collect infrastructure field tokens
+                    for arg in args {
+                        if let Some(field_token) = resolve_ldsfld_field(ssa, *arg) {
+                            if !infrastructure_fields.contains(&field_token) {
+                                infrastructure_fields.push(field_token);
                             }
                         }
                     }
@@ -224,8 +205,6 @@ impl Technique for BitMonoStrings {
         }
 
         // Phase 4: Collect FieldRVA backing fields and their owning types.
-        // Scan .cctor for RuntimeHelpers.InitializeArray patterns to find the
-        // ExplicitLayout value types that hold raw encrypted data.
         let (constant_data_fields, constant_data_types) =
             collect_constant_data_tokens(assembly, &infrastructure_fields);
 
@@ -246,6 +225,7 @@ impl Technique for BitMonoStrings {
             infrastructure_fields,
             constant_data_fields,
             constant_data_types,
+            crypto_params,
         };
 
         Detection::new_detected(
@@ -264,9 +244,14 @@ impl Technique for BitMonoStrings {
         _ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Option<Box<dyn SsaPass>> {
-        let findings = detection.findings::<StringFindings>()?;
-        Some(Box::new(StringDecryptionPass::from_findings(findings)))
+    ) -> Vec<Box<dyn SsaPass>> {
+        let Some(findings) = detection.findings::<StringFindings>() else {
+            return Vec::new();
+        };
+        vec![Box::new(StringDecryptionPass::from_findings(
+            findings,
+            findings.crypto_params.clone(),
+        ))]
     }
 
     #[cfg(not(feature = "legacy-crypto"))]
@@ -275,8 +260,8 @@ impl Technique for BitMonoStrings {
         _ctx: &AnalysisContext,
         _detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Option<Box<dyn SsaPass>> {
-        None
+    ) -> Vec<Box<dyn SsaPass>> {
+        Vec::new()
     }
 
     fn cleanup(&self, detection: &Detection) -> Option<CleanupRequest> {
@@ -347,31 +332,187 @@ fn collect_constant_data_tokens(
         }
     }
 
-    // Find types owning ANY backing field from the init_map.
-    // Intentionally broader than just infrastructure fields — catches container
-    // types (e.g. `<PrivateImplementationDetails>`) with extra FieldRVA fields
-    // that would otherwise keep System.ValueType alive.
-    let all_backing_tokens: Vec<Token> = init_map.values().copied().collect();
+    // Find types that ONLY contain infrastructure backing fields — safe to remove.
+    // A type like `<PrivateImplementationDetails>` may contain both string encryption
+    // backing fields (removable) AND RuntimeHelpers.InitializeArray backing fields
+    // (must survive). Only mark the type for deletion if ALL its FieldRVA fields
+    // are being removed — otherwise we'd break array initialization.
+    let removed_set: HashSet<Token> = constant_data_fields.iter().copied().collect();
 
     for type_entry in assembly.types().iter() {
         let cil_type = type_entry.value();
 
-        // Skip <Module> — it has a special role and must not be removed
         if cil_type.token.row() == 1 && cil_type.token.table() == 0x02 {
             continue;
         }
 
-        let type_owns_backing = cil_type
+        // Collect all FieldRVA-backed fields owned by this type
+        let rva_fields: Vec<Token> = cil_type
             .fields
             .iter()
-            .any(|(_, field)| all_backing_tokens.contains(&field.token));
+            .filter(|(_, field)| field.flags.has_field_rva())
+            .map(|(_, field)| field.token)
+            .collect();
 
-        if type_owns_backing {
+        if rva_fields.is_empty() {
+            continue;
+        }
+
+        // Only remove the type if ALL its FieldRVA fields are being removed.
+        // If some survive (e.g., InitializeArray backing data), the type must too.
+        if rva_fields.iter().all(|t| removed_set.contains(t)) {
             constant_data_types.push(cil_type.token);
         }
     }
 
     (constant_data_fields, constant_data_types)
+}
+
+/// Checks whether an SSA function contains NewObj/Call targeting crypto types.
+///
+/// Scans for `NewObj` or `Call` instructions whose resolved target name contains
+/// both an AES type (`RijndaelManaged` or `Aes`) and `Rfc2898DeriveBytes`.
+///
+/// # Arguments
+///
+/// * `ssa` - The SSA function to scan.
+/// * `assembly` - The assembly for resolving type names from metadata tokens.
+fn has_crypto_ops(ssa: &SsaFunction, assembly: &CilObject) -> bool {
+    let mut has_aes = false;
+    let mut has_pbkdf2 = false;
+
+    for block in ssa.blocks() {
+        for instr in block.instructions() {
+            let token = match instr.op() {
+                SsaOp::NewObj { ctor, .. } => ctor.token(),
+                SsaOp::Call { method, .. } | SsaOp::CallVirt { method, .. } => method.token(),
+                _ => continue,
+            };
+
+            if let Some(name) = resolve_type_name(assembly, token) {
+                if name.contains("RijndaelManaged") || name.contains("Aes") {
+                    has_aes = true;
+                }
+                if name.contains("Rfc2898DeriveBytes") {
+                    has_pbkdf2 = true;
+                }
+            }
+
+            if has_aes && has_pbkdf2 {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Extracts crypto parameters from a decryptor method's SSA.
+///
+/// Scans the SSA for:
+/// 1. `NewObj { ctor: Rfc2898DeriveBytes::.ctor, args: [..., iterations] }` to get
+///    the PBKDF2 iteration count
+/// 2. `CallVirt { method: GetBytes, args: [_, size] }` to get key and IV sizes
+///
+/// Falls back to [`CryptoParameters::default()`] for any parameter that cannot
+/// be resolved from the SSA.
+fn extract_crypto_parameters(ssa: &SsaFunction, assembly: &CilObject) -> CryptoParameters {
+    let mut params = CryptoParameters::default();
+
+    // Build a map from SsaVarId → ConstValue for resolving arguments
+    let const_map = build_const_map(ssa);
+
+    let mut get_bytes_sizes: Vec<u32> = Vec::new();
+
+    for block in ssa.blocks() {
+        for instr in block.instructions() {
+            match instr.op() {
+                // NewObj Rfc2898DeriveBytes(key, salt, iterations)
+                // or NewObj Rfc2898DeriveBytes(key, salt, iterations, hashAlgorithm)
+                SsaOp::NewObj { ctor, args, .. } => {
+                    if let Some(name) = resolve_type_name(assembly, ctor.token()) {
+                        if name.contains("Rfc2898DeriveBytes") && args.len() >= 3 {
+                            // 3rd arg (index 2) is the iteration count
+                            if let Some(ConstValue::I32(iters)) = const_map.get(&args[2]) {
+                                if *iters > 0 {
+                                    params.iterations = *iters as u32;
+                                }
+                            }
+                            // 4th arg (index 3), if present, is HashAlgorithmName
+                            // For now we keep SHA1 default — .NET's HashAlgorithmName
+                            // is a struct loaded via ldsfld, not a simple constant.
+                        }
+                    }
+                }
+                // CallVirt GetBytes(int32) — extract key and IV sizes
+                SsaOp::CallVirt { method, args, .. } => {
+                    if let Some(name) = assembly.resolve_method_name(method.token()) {
+                        if name == "GetBytes" && args.len() == 2 {
+                            // args[0] = this (Rfc2898DeriveBytes instance), args[1] = size
+                            if let Some(ConstValue::I32(size)) = const_map.get(&args[1]) {
+                                if *size > 0 {
+                                    get_bytes_sizes.push(*size as u32);
+                                }
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+    }
+
+    // First GetBytes call = key size, second = IV size
+    if let Some(&key_size) = get_bytes_sizes.first() {
+        params.key_size = key_size as usize;
+    }
+    if let Some(&iv_size) = get_bytes_sizes.get(1) {
+        params.iv_size = iv_size as usize;
+    }
+
+    params
+}
+
+/// Builds a map from SSA variable IDs to their constant values.
+///
+/// Only includes variables defined by `Const` instructions. Used for resolving
+/// arguments to crypto API calls during parameter extraction.
+///
+/// # Arguments
+///
+/// * `ssa` - The SSA function to scan for constant definitions.
+fn build_const_map(ssa: &SsaFunction) -> HashMap<SsaVarId, ConstValue> {
+    let mut map = HashMap::new();
+    for block in ssa.blocks() {
+        for instr in block.instructions() {
+            if let SsaOp::Const { dest, value } = instr.op() {
+                map.insert(*dest, value.clone());
+            }
+        }
+    }
+    map
+}
+
+/// Resolves a `LoadStaticField` definition for an SSA variable.
+///
+/// Scans the SSA for the instruction that defines `var_id` and returns the
+/// field token if it's a `LoadStaticField`.
+///
+/// # Arguments
+///
+/// * `ssa` - The SSA function containing the variable definition.
+/// * `var_id` - The SSA variable ID to resolve.
+fn resolve_ldsfld_field(ssa: &SsaFunction, var_id: SsaVarId) -> Option<Token> {
+    for block in ssa.blocks() {
+        for instr in block.instructions() {
+            if let SsaOp::LoadStaticField { dest, field } = instr.op() {
+                if *dest == var_id {
+                    return Some(field.token());
+                }
+            }
+        }
+    }
+    None
 }
 
 /// Resolves a metadata token to a type name string for crypto detection.
@@ -436,673 +577,35 @@ fn resolve_type_name(assembly: &CilObject, token: Token) -> Option<String> {
     }
 }
 
-/// Checks if a method has the characteristic BitMono decryptor signature:
-/// static, returns `string`, takes 3 or more `byte[]` parameters.
-fn method_matches_decryptor_signature(method: &crate::metadata::method::Method) -> bool {
-    // Must return string
-    if !matches!(method.signature.return_type.base, TypeSignature::String) {
-        return false;
-    }
-
-    // Must have 3+ parameters, all byte[]
-    if method.signature.params.len() < 3 {
-        return false;
-    }
-
-    let byte_array_count = method
-        .signature
-        .params
-        .iter()
-        .filter(|p| {
-            matches!(&p.base, TypeSignature::SzArray(arr) if matches!(*arr.base, TypeSignature::U1))
-        })
-        .count();
-
-    byte_array_count >= 3
-}
-
-// ============================================================================
-// Phase B: SSA pass (runs after CalltocalliReversalPass)
-// ============================================================================
-//
-// Everything below is gated on the `legacy-crypto` feature, which provides
-// the AES and PBKDF2 crates needed for actual string decryption.
-
-#[cfg(feature = "legacy-crypto")]
-mod pass {
-    use std::{
-        collections::{HashMap, HashSet},
-        sync::{Mutex, OnceLock},
-    };
-
-    use aes::Aes256;
-    use cbc::cipher::{block_padding::Pkcs7, BlockDecryptMut, KeyIvInit};
-    use cbc::Decryptor;
-
-    use crate::{
-        analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
-        compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
-        deobfuscation::utils,
-        metadata::{tables::FieldRvaRaw, token::Token, typesystem::wellknown},
-        CilObject, Error, Result,
-    };
-
-    use super::StringFindings;
-
-    /// Cached AES key material: `(derived_key, derived_iv)` per `(salt_token, key_token)` pair.
-    type KeyCache = HashMap<(Token, Token), (Vec<u8>, Vec<u8>)>;
-
-    /// A pending string replacement: `(call_idx, call_dest, ldsfld_locations, decrypted_string)`.
-    type StringReplacement = (usize, SsaVarId, [(usize, usize); 3], String);
-
-    /// FieldRVA entry data: (rva, data_size).
-    type FieldRvaEntry = (u32, usize);
-
-    /// SSA pass that decrypts BitMono-encrypted strings.
-    ///
-    /// Scans SSA blocks for `Call` to a known decryptor method, traces the three
-    /// `LoadStaticField` arguments to identify the per-site encrypted data, salt,
-    /// and key fields. Each site's salt/key pair is used individually to derive AES
-    /// key material via PBKDF2, then the specific encrypted field is decrypted.
-    ///
-    /// Caches are used for efficiency but are populated surgically -- only fields
-    /// that are actually referenced as decryptor arguments get decrypted. Key
-    /// derivation results are cached per `(salt_token, key_token)` pair so that
-    /// different salt/key combinations (if a variant uses them) are handled correctly.
-    pub struct StringDecryptionPass {
-        decryptor_tokens: HashSet<Token>,
-        /// Assembly FieldRVA mapping, built once on first use.
-        field_rva_map: OnceLock<HashMap<u32, FieldRvaEntry>>,
-        /// Derived AES key material per (salt_token, key_token) pair.
-        key_cache: Mutex<KeyCache>,
-        /// Decrypted strings per encrypted field token.
-        string_cache: Mutex<HashMap<Token, String>>,
-    }
-
-    impl StringDecryptionPass {
-        /// Creates a new pass from the detection findings' decryptor method tokens.
-        #[must_use]
-        pub fn from_findings(findings: &StringFindings) -> Self {
-            let decryptor_tokens = findings.decryptor_tokens.iter().copied().collect();
-            Self {
-                decryptor_tokens,
-                field_rva_map: OnceLock::new(),
-                key_cache: Mutex::new(HashMap::new()),
-                string_cache: Mutex::new(HashMap::new()),
-            }
-        }
-
-        /// Gets or derives AES key material for a specific (salt, key) field pair.
-        fn get_or_derive_key(
-            &self,
-            assembly: &CilObject,
-            salt_token: Token,
-            key_token: Token,
-            field_rva_map: &HashMap<u32, FieldRvaEntry>,
-        ) -> Result<(Vec<u8>, Vec<u8>)> {
-            let cache_key = (salt_token, key_token);
-
-            {
-                let cache = self.key_cache.lock().unwrap();
-                if let Some(cached) = cache.get(&cache_key) {
-                    return Ok(cached.clone());
-                }
-            }
-
-            let salt_bytes = get_field_rva_data(assembly, salt_token.row(), field_rva_map)?;
-            let key_bytes = get_field_rva_data(assembly, key_token.row(), field_rva_map)?;
-            let derived = derive_aes_key_iv(&key_bytes, &salt_bytes);
-
-            self.key_cache
-                .lock()
-                .unwrap()
-                .insert(cache_key, derived.clone());
-
-            Ok(derived)
-        }
-
-        /// Gets a cached decrypted string or decrypts it on demand.
-        fn decrypt_field(
-            &self,
-            assembly: &CilObject,
-            site: &DecryptionSite,
-            field_rva_map: &HashMap<u32, FieldRvaEntry>,
-        ) -> Result<String> {
-            // Check cache
-            {
-                let cache = self.string_cache.lock().unwrap();
-                if let Some(cached) = cache.get(&site.encrypted_field_token) {
-                    return Ok(cached.clone());
-                }
-            }
-
-            // Derive key from this site's specific salt/key pair
-            let (aes_key, aes_iv) = self.get_or_derive_key(
-                assembly,
-                site.salt_field_token,
-                site.key_field_token,
-                field_rva_map,
-            )?;
-
-            // Decrypt this specific encrypted field
-            let encrypted =
-                get_field_rva_data(assembly, site.encrypted_field_token.row(), field_rva_map)?;
-            let decrypted = decrypt_string(&encrypted, &aes_key, &aes_iv)?;
-
-            self.string_cache
-                .lock()
-                .unwrap()
-                .insert(site.encrypted_field_token, decrypted.clone());
-
-            Ok(decrypted)
-        }
-    }
-
-    impl SsaPass for StringDecryptionPass {
-        fn name(&self) -> &'static str {
-            "BitMonoStringDecryption"
-        }
-
-        fn description(&self) -> &'static str {
-            "Decrypts BitMono AES-encrypted strings via SSA pattern matching"
-        }
-
-        fn modification_scope(&self) -> ModificationScope {
-            ModificationScope::InstructionsOnly
-        }
-
-        fn run_on_method(
-            &self,
-            ssa: &mut SsaFunction,
-            method_token: Token,
-            ctx: &CompilerContext,
-            assembly: &CilObject,
-        ) -> Result<bool> {
-            let mut changed = false;
-
-            for block_idx in 0..ssa.blocks().len() {
-                let sites = find_decryption_sites(ssa, block_idx, &self.decryptor_tokens);
-                if sites.is_empty() {
-                    continue;
-                }
-
-                // Build FieldRVA map once (shared across all methods)
-                let field_rva_map = self
-                    .field_rva_map
-                    .get_or_init(|| build_field_rva_map(assembly));
-
-                // Decrypt each site surgically using its own traced salt/key
-                let mut replacements: Vec<StringReplacement> = Vec::new();
-
-                for site in &sites {
-                    match self.decrypt_field(assembly, site, field_rva_map) {
-                        Ok(decrypted) => {
-                            replacements.push((
-                                site.call_idx,
-                                site.call_dest,
-                                site.ldsfld_locations,
-                                decrypted,
-                            ));
-                        }
-                        Err(_) => continue,
-                    }
-                }
-
-                if replacements.is_empty() {
-                    continue;
-                }
-
-                // Apply replacements in reverse order to preserve indices
-                for (call_idx, call_dest, ldsfld_locations, decrypted) in replacements.iter().rev()
-                {
-                    // Replace the Call instruction in the current block
-                    if let Some(block) = ssa.block_mut(block_idx) {
-                        if let Some(instr) = block.instruction_mut(*call_idx) {
-                            instr.set_op(SsaOp::Const {
-                                dest: *call_dest,
-                                value: ConstValue::DecryptedString(decrypted.clone()),
-                            });
-                        }
-                    }
-
-                    // NOP the LoadStaticField instructions (may be in different blocks)
-                    for &(ldsfld_block, ldsfld_idx) in ldsfld_locations {
-                        if let Some(block) = ssa.block_mut(ldsfld_block) {
-                            if let Some(instr) = block.instruction_mut(ldsfld_idx) {
-                                instr.set_op(SsaOp::Nop);
-                            }
-                        }
-                    }
-                    changed = true;
-                }
-
-                ctx.events
-                    .record(EventKind::StringDecrypted)
-                    .method(method_token)
-                    .message(format!(
-                        "BitMonoStringDecryption: decrypted {} strings in block {}",
-                        replacements.len(),
-                        block_idx,
-                    ));
-            }
-
-            Ok(changed)
-        }
-    }
-
-    // ========================================================================
-    // SSA pattern matching
-    // ========================================================================
-
-    /// A decryption site found in SSA form.
-    struct DecryptionSite {
-        /// Index of the Call instruction within its block.
-        call_idx: usize,
-        /// Destination variable of the Call.
-        call_dest: SsaVarId,
-        /// Locations of the three LoadStaticField instructions feeding the call.
-        /// Each entry is `(block_idx, instr_idx)`. When the LoadStaticField is in the
-        /// same block as the Call, `block_idx` equals the call's block. When it is in a
-        /// predecessor block (e.g., due to exception handler splitting), `block_idx`
-        /// points to that predecessor.
-        ldsfld_locations: [(usize, usize); 3],
-        /// Token of the encrypted data field (1st arg).
-        encrypted_field_token: Token,
-        /// Token of the salt field (2nd arg).
-        salt_field_token: Token,
-        /// Token of the key field (3rd arg).
-        key_field_token: Token,
-    }
-
-    /// Finds string decryption call sites in a single SSA block.
-    ///
-    /// Searches for `Call` instructions targeting a known decryptor method, then
-    /// traces each argument back to a `LoadStaticField` instruction. The trace
-    /// first searches backward within the same block; if not found, it searches
-    /// all preceding blocks. This handles cases where exception handler splitting
-    /// or other control flow pushes the `LoadStaticField` into a predecessor block.
-    fn find_decryption_sites(
-        ssa: &SsaFunction,
-        block_idx: usize,
-        decryptor_tokens: &HashSet<Token>,
-    ) -> Vec<DecryptionSite> {
-        let mut sites = Vec::new();
-
-        let Some(block) = ssa.block(block_idx) else {
-            return sites;
-        };
-
-        let instructions = block.instructions();
-
-        for (i, instr) in instructions.iter().enumerate() {
-            // Look for Call to a decryptor method
-            let (call_dest, call_token, args) = match instr.op() {
-                SsaOp::Call { dest, method, args } => {
-                    let Some(d) = dest else { continue };
-                    (*d, method.token(), args.clone())
-                }
-                _ => continue,
-            };
-
-            if !decryptor_tokens.contains(&call_token) {
-                continue;
-            }
-
-            // Need exactly 3 arguments
-            if args.len() != 3 {
-                continue;
-            }
-
-            // Trace each arg back to a LoadStaticField
-            let mut ldsfld_locations = [(0usize, 0usize); 3];
-            let mut field_tokens = [Token::new(0); 3];
-            let mut all_found = true;
-
-            for (arg_idx, arg_var) in args.iter().enumerate() {
-                // First: search backward within the same block
-                let mut found = false;
-                for j in (0..i).rev() {
-                    let prev = &instructions[j];
-                    if let SsaOp::LoadStaticField { dest, field } = prev.op() {
-                        if *dest == *arg_var {
-                            ldsfld_locations[arg_idx] = (block_idx, j);
-                            field_tokens[arg_idx] = field.token();
-                            found = true;
-                            break;
-                        }
-                    }
-                }
-
-                // Second: search all preceding blocks (for cross-block definitions)
-                if !found {
-                    for prev_block_idx in (0..block_idx).rev() {
-                        let Some(prev_block) = ssa.block(prev_block_idx) else {
-                            continue;
-                        };
-                        for (j, prev_instr) in prev_block.instructions().iter().enumerate().rev() {
-                            if let SsaOp::LoadStaticField { dest, field } = prev_instr.op() {
-                                if *dest == *arg_var {
-                                    ldsfld_locations[arg_idx] = (prev_block_idx, j);
-                                    field_tokens[arg_idx] = field.token();
-                                    found = true;
-                                    break;
-                                }
-                            }
-                        }
-                        if found {
-                            break;
-                        }
-                    }
-                }
-
-                if !found {
-                    all_found = false;
-                    break;
-                }
-            }
-
-            if !all_found {
-                continue;
-            }
-
-            sites.push(DecryptionSite {
-                call_idx: i,
-                call_dest,
-                ldsfld_locations,
-                encrypted_field_token: field_tokens[0],
-                salt_field_token: field_tokens[1],
-                key_field_token: field_tokens[2],
-            });
-        }
-
-        sites
-    }
-
-    // ========================================================================
-    // FieldRVA data extraction
-    // ========================================================================
-
-    /// Builds a map from field RID to (RVA, data_size) for all FieldRVA entries,
-    /// including indirect entries resolved through `.cctor` `InitializeArray` patterns.
-    ///
-    /// .NET static byte[] fields are initialized in two steps:
-    /// 1. A backing field (e.g., `__StaticArrayInitTypeSize=N`) holds the raw data via FieldRVA
-    /// 2. The `.cctor` copies it to the byte[] field via `RuntimeHelpers.InitializeArray`
-    ///
-    /// Code references the byte[] field via `ldsfld`, but the actual data is in the
-    /// backing field's FieldRVA entry. This function maps both direct FieldRVA fields
-    /// and their corresponding byte[] fields (resolved via the `.cctor` pattern).
-    fn build_field_rva_map(assembly: &CilObject) -> HashMap<u32, FieldRvaEntry> {
-        let mut map = HashMap::new();
-
-        let Some(tables) = assembly.tables() else {
-            return map;
-        };
-        let Some(fieldrva_table) = tables.table::<FieldRvaRaw>() else {
-            return map;
-        };
-
-        // Build direct FieldRVA map (backing_field_rid -> (rva, size))
-        for row in fieldrva_table {
-            if row.rva == 0 {
-                continue;
-            }
-            let size = utils::get_field_data_size(assembly, row.field).unwrap_or(0);
-            if size > 0 {
-                map.insert(row.field, (row.rva, size));
-            }
-        }
-
-        // Build byte[] field -> backing field mapping from .cctor InitializeArray patterns.
-        // Pattern: newarr -> dup -> ldtoken <backing_field> -> call InitializeArray -> stsfld <byte_array_field>
-        let init_map = build_array_init_map(assembly);
-        for (byte_array_rid, backing_rid) in &init_map {
-            if let Some(&entry) = map.get(backing_rid) {
-                map.insert(*byte_array_rid, entry);
-            }
-        }
-
-        map
-    }
-
-    /// Scans the module `.cctor` for `InitializeArray` patterns and builds a mapping
-    /// from byte[] field RID to backing FieldRVA field RID.
-    ///
-    /// Looks for the pattern:
-    /// ```text
-    /// ldtoken    <backing_field>       // field with FieldRVA data
-    /// call       RuntimeHelpers.InitializeArray
-    /// stsfld     <byte_array_field>    // byte[] field referenced in code
-    /// ```
-    fn build_array_init_map(assembly: &CilObject) -> HashMap<u32, u32> {
-        let mut map = HashMap::new();
-
-        for method_entry in assembly.methods() {
-            let method = method_entry.value();
-
-            // Only scan static constructors (.cctor)
-            if method.name != wellknown::members::CCTOR {
-                continue;
-            }
-
-            let instructions: Vec<_> = method.instructions().collect();
-
-            for (i, instr) in instructions.iter().enumerate() {
-                // Look for: call to InitializeArray
-                if instr.mnemonic != "call" {
-                    continue;
-                }
-                let Some(call_token) = instr.get_token_operand() else {
-                    continue;
-                };
-
-                // Check if it's InitializeArray
-                let is_init_array = assembly
-                    .refs_members()
-                    .get(&call_token)
-                    .is_some_and(|r| r.value().name == "InitializeArray");
-
-                if !is_init_array {
-                    continue;
-                }
-
-                // Walk backward to find ldtoken <backing_field>
-                // Pattern: ... ldtoken <backing_field> -> call InitializeArray -> stsfld <byte_array_field>
-                if i < 1 || i + 1 >= instructions.len() {
-                    continue;
-                }
-
-                // Find ldtoken before the call (may be at i-1 or earlier)
-                let mut backing_field_token = None;
-                for j in (0..i).rev() {
-                    if instructions[j].mnemonic == "ldtoken" {
-                        backing_field_token = instructions[j].get_token_operand();
-                        break;
-                    }
-                    // Don't search too far back
-                    if i - j > 3 {
-                        break;
-                    }
-                }
-
-                // Find stsfld after the call
-                let stsfld_instr = &instructions[i + 1];
-                if stsfld_instr.mnemonic != "stsfld" {
-                    continue;
-                }
-
-                if let (Some(backing), Some(byte_array)) =
-                    (backing_field_token, stsfld_instr.get_token_operand())
-                {
-                    map.insert(byte_array.row(), backing.row());
-                }
-            }
-        }
-
-        map
-    }
-
-    /// Extracts raw bytes for a field's FieldRVA data.
-    fn get_field_rva_data(
-        assembly: &CilObject,
-        field_rid: u32,
-        field_rva_map: &HashMap<u32, FieldRvaEntry>,
-    ) -> Result<Vec<u8>> {
-        let (rva, size) = field_rva_map.get(&field_rid).ok_or_else(|| {
-            Error::Deobfuscation(format!("No FieldRVA entry for field RID 0x{:X}", field_rid))
-        })?;
-
-        let file = assembly.file();
-        let offset = file.rva_to_offset(*rva as usize)?;
-        let data = file.data_slice(offset, *size)?;
-        Ok(data.to_vec())
-    }
-
-    // ========================================================================
-    // AES decryption helpers
-    // ========================================================================
-
-    /// Derives AES-256 key and IV using PBKDF2-HMAC-SHA1.
-    ///
-    /// Matches .NET's `Rfc2898DeriveBytes(cryptKey, salt, 1000)` which defaults to
-    /// HMAC-SHA1 and produces 48 bytes (32-byte key + 16-byte IV).
-    fn derive_aes_key_iv(crypt_key: &[u8], salt: &[u8]) -> (Vec<u8>, Vec<u8>) {
-        let mut derived = [0u8; 48];
-        pbkdf2::pbkdf2::<hmac::Hmac<sha1::Sha1>>(crypt_key, salt, 1000, &mut derived)
-            .expect("PBKDF2 derivation should not fail with valid inputs");
-        (derived[..32].to_vec(), derived[32..48].to_vec())
-    }
-
-    /// Decrypts a single encrypted string using AES-256-CBC with PKCS7 padding.
-    fn decrypt_string(encrypted: &[u8], key: &[u8], iv: &[u8]) -> Result<String> {
-        if encrypted.is_empty() {
-            return Ok(String::new());
-        }
-
-        // AES-256-CBC requires data to be a multiple of 16 bytes
-        if !encrypted.len().is_multiple_of(16) {
-            return Err(Error::Deobfuscation(format!(
-                "Encrypted data length {} is not a multiple of AES block size",
-                encrypted.len()
-            )));
-        }
-
-        let mut buf = encrypted.to_vec();
-        let decryptor = Decryptor::<Aes256>::new_from_slices(key, iv)
-            .map_err(|e| Error::Deobfuscation(format!("AES key/IV init failed: {e}")))?;
-        let decrypted = decryptor
-            .decrypt_padded_mut::<Pkcs7>(&mut buf)
-            .map_err(|e| Error::Deobfuscation(format!("AES decryption failed: {e}")))?;
-
-        String::from_utf8(decrypted.to_vec())
-            .map_err(|e| Error::Deobfuscation(format!("UTF-8 decode failed: {e}")))
-    }
-
-    #[cfg(test)]
-    mod tests {
-        use aes::Aes256;
-        use cbc::cipher::{block_padding::Pkcs7, BlockEncryptMut, KeyIvInit};
-        use cbc::Encryptor;
-
-        use super::{decrypt_string, derive_aes_key_iv};
-
-        #[test]
-        fn test_derive_aes_key_iv_zeros() {
-            // BitMono always uses 8 zero bytes for salt and crypt key
-            let salt = [0u8; 8];
-            let key = [0u8; 8];
-
-            let (aes_key, aes_iv) = derive_aes_key_iv(&key, &salt);
-
-            assert_eq!(aes_key.len(), 32, "AES-256 key should be 32 bytes");
-            assert_eq!(aes_iv.len(), 16, "AES IV should be 16 bytes");
-
-            // Verify deterministic output with all-zero inputs
-            let (aes_key2, aes_iv2) = derive_aes_key_iv(&key, &salt);
-            assert_eq!(aes_key, aes_key2, "Key derivation should be deterministic");
-            assert_eq!(aes_iv, aes_iv2, "IV derivation should be deterministic");
-        }
-
-        #[test]
-        fn test_decrypt_string_roundtrip() {
-            let salt = [0u8; 8];
-            let key = [0u8; 8];
-            let (aes_key, aes_iv) = derive_aes_key_iv(&key, &salt);
-
-            // Encrypt a test string
-            let original = "Hello, BitMono!";
-            let plaintext = original.as_bytes();
-
-            // Allocate buffer with space for padding (max 1 extra block)
-            let mut buf = vec![0u8; plaintext.len() + 16];
-            buf[..plaintext.len()].copy_from_slice(plaintext);
-            let encryptor = Encryptor::<Aes256>::new_from_slices(&aes_key, &aes_iv).unwrap();
-            let encrypted = encryptor
-                .encrypt_padded_mut::<Pkcs7>(&mut buf, plaintext.len())
-                .unwrap();
-
-            // Decrypt and verify
-            let decrypted = decrypt_string(encrypted, &aes_key, &aes_iv).unwrap();
-            assert_eq!(decrypted, original);
-        }
-
-        #[test]
-        fn test_decrypt_empty_string() {
-            let salt = [0u8; 8];
-            let key = [0u8; 8];
-            let (aes_key, aes_iv) = derive_aes_key_iv(&key, &salt);
-
-            let result = decrypt_string(&[], &aes_key, &aes_iv).unwrap();
-            assert_eq!(result, "");
-        }
-
-        #[test]
-        fn test_decrypt_string_invalid_data() {
-            let salt = [0u8; 8];
-            let key = [0u8; 8];
-            let (aes_key, aes_iv) = derive_aes_key_iv(&key, &salt);
-
-            // Non-multiple-of-16 data should fail
-            let result = decrypt_string(&[1, 2, 3], &aes_key, &aes_iv);
-            assert!(result.is_err());
-        }
-    }
-}
-
-#[cfg(feature = "legacy-crypto")]
-pub use pass::StringDecryptionPass;
-
 #[cfg(test)]
 mod tests {
-    use crate::deobfuscation::techniques::{bitmono::BitMonoStrings, Technique};
-    use crate::test::helpers::load_sample;
+    use crate::{
+        deobfuscation::techniques::{bitmono::BitMonoStrings, Technique},
+        test::helpers::load_sample,
+    };
 
+    /// Verify that IL-level detect() is a no-op (detection is SSA-based).
+    ///
+    /// Positive detection is tested through the full pipeline in
+    /// `dotscope/tests/bitmono.rs::test_all_bitmono_samples`.
     #[test]
-    fn test_detect_positive() {
+    fn test_detect_is_noop() {
         let assembly = load_sample("tests/samples/packers/bitmono/0.39.0/bitmono_strings.exe");
-
         let technique = BitMonoStrings;
         let detection = technique.detect(&assembly);
-
         assert!(
-            detection.detected,
-            "BitMonoStrings should detect string encryption in bitmono_strings.exe"
-        );
-        assert!(
-            !detection.evidence.is_empty(),
-            "Detection should include evidence"
+            !detection.is_detected(),
+            "IL-level detect() should be a no-op — detection happens in detect_ssa()"
         );
     }
 
     #[test]
     fn test_detect_negative() {
         let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
-
         let technique = BitMonoStrings;
         let detection = technique.detect(&assembly);
-
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "BitMonoStrings should not detect string encryption in a non-BitMono assembly"
         );
     }

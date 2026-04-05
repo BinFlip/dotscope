@@ -355,7 +355,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "ConfuserExMetadata should not detect invalid metadata in original.exe"
         );
     }
@@ -372,7 +372,7 @@ mod tests {
         // in standard presets (Minimum, Normal, Maximum).
         // The 0x7fff marker pattern is specific to this protection.
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "ConfuserExMetadata should not detect in normal preset (no InvalidMetadata protection)"
         );
     }
@@ -400,8 +400,8 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         // If detected, verify findings structure
-        if detection.detected {
-            assert!(!detection.evidence.is_empty());
+        if detection.is_detected() {
+            assert!(!detection.evidence().is_empty());
             let findings = detection
                 .findings::<super::CxMetadataFindings>()
                 .expect("Should have CxMetadataFindings");

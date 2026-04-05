@@ -50,7 +50,7 @@
 //! - **`prune_phi_operands(reachable)`** — removes stale phi operands from
 //!   unreachable predecessors after CFG changes.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     analysis::ssa::{
@@ -58,6 +58,7 @@ use crate::{
         VariableOrigin,
     },
     metadata::signatures::{CustomModifiers, SignatureLocalVariable, SignatureLocalVariables},
+    utils::BitSet,
     Error,
 };
 
@@ -69,7 +70,7 @@ pub struct TrivialPhiOptions<'a> {
     ///
     /// If `None`, all blocks are considered. Chain resolution is applied, and only
     /// fully propagated phis (no skipped uses from the self-ref guard) are removed.
-    pub reachable: Option<&'a HashSet<usize>>,
+    pub reachable: Option<&'a BitSet>,
 }
 
 /// Result of batch copy propagation.
@@ -78,10 +79,12 @@ pub struct CopyPropagationResult {
     pub total_replaced: usize,
     /// Set of copy destinations that were fully propagated (all uses replaced).
     /// These copies can safely be Nop'd by the caller.
-    pub fully_propagated: HashSet<SsaVarId>,
+    /// Stored as a BitSet indexed by `SsaVarId::index()`.
+    pub fully_propagated: BitSet,
     /// Set of copy destinations that still have remaining instruction uses
     /// (due to self-referential guard). These copies must be kept alive.
-    pub partially_propagated: HashSet<SsaVarId>,
+    /// Stored as a BitSet indexed by `SsaVarId::index()`.
+    pub partially_propagated: BitSet,
 }
 
 impl SsaFunction {
@@ -167,11 +170,12 @@ impl SsaFunction {
     /// ```
     pub fn propagate_copies(
         &mut self,
-        copies: &HashMap<SsaVarId, SsaVarId>,
+        copies: &BTreeMap<SsaVarId, SsaVarId>,
     ) -> CopyPropagationResult {
+        let variable_count = self.var_id_capacity();
         let mut total_replaced = 0;
-        let mut fully_propagated: HashSet<SsaVarId> = HashSet::new();
-        let mut partially_propagated: HashSet<SsaVarId> = HashSet::new();
+        let mut fully_propagated = BitSet::new(variable_count);
+        let mut partially_propagated = BitSet::new(variable_count);
 
         for (dest, src) in copies {
             if dest == src {
@@ -182,9 +186,9 @@ impl SsaFunction {
 
             if result.replaced > 0 {
                 if result.is_complete() {
-                    fully_propagated.insert(*dest);
+                    fully_propagated.insert(dest.index());
                 } else {
-                    partially_propagated.insert(*dest);
+                    partially_propagated.insert(dest.index());
                 }
                 total_replaced += result.replaced;
             }
@@ -225,18 +229,26 @@ impl SsaFunction {
     /// defined values.
     ///
     /// Returns the number of operands pruned.
-    pub fn prune_phi_operands(&mut self, reachable: &HashSet<usize>) -> usize {
-        // Build a set of all defined variables in reachable blocks
-        let mut defined_vars: HashSet<SsaVarId> = HashSet::new();
+    pub fn prune_phi_operands(&mut self, reachable: &BitSet) -> usize {
+        let variable_count = self.var_id_capacity();
 
-        for &block_idx in reachable {
+        // Build a set of all defined variables in reachable blocks
+        let mut defined_vars = BitSet::new(variable_count);
+
+        for block_idx in reachable.iter() {
             if let Some(block) = self.block(block_idx) {
                 for phi in block.phi_nodes() {
-                    defined_vars.insert(phi.result());
+                    let idx = phi.result().index();
+                    if idx < variable_count {
+                        defined_vars.insert(idx);
+                    }
                 }
                 for instr in block.instructions() {
                     if let Some(def) = instr.def() {
-                        defined_vars.insert(def);
+                        let idx = def.index();
+                        if idx < variable_count {
+                            defined_vars.insert(idx);
+                        }
                     }
                 }
             }
@@ -245,18 +257,22 @@ impl SsaFunction {
         // Include argument variables (implicitly defined at function entry)
         for var in &self.variables {
             if var.origin().is_argument() {
-                defined_vars.insert(var.id());
+                let idx = var.id().index();
+                if idx < variable_count {
+                    defined_vars.insert(idx);
+                }
             }
         }
 
         // Compute actual predecessors from the CFG
-        let mut actual_predecessors: HashMap<usize, HashSet<usize>> = HashMap::new();
-        for &block_idx in reachable {
+        let block_count = self.blocks.len();
+        let mut actual_predecessors: BTreeMap<usize, BitSet> = BTreeMap::new();
+        for block_idx in reachable.iter() {
             if let Some(block) = self.block(block_idx) {
                 for successor in block.successors() {
                     actual_predecessors
                         .entry(successor)
-                        .or_default()
+                        .or_insert_with(|| BitSet::new(block_count))
                         .insert(block_idx);
                 }
             }
@@ -264,7 +280,7 @@ impl SsaFunction {
 
         let mut pruned = 0;
 
-        for block_idx in reachable.iter().copied() {
+        for block_idx in reachable.iter() {
             if let Some(block) = self.block_mut(block_idx) {
                 let preds = actual_predecessors.get(&block_idx);
 
@@ -281,8 +297,11 @@ impl SsaFunction {
                         .map(|op| {
                             let pred = op.predecessor();
                             let value = op.value();
-                            preds.is_some_and(|p| p.contains(&pred))
-                                && defined_vars.contains(&value)
+                            let pred_ok =
+                                pred < block_count && preds.is_some_and(|p| p.contains(pred));
+                            let val_ok = value.index() < variable_count
+                                && defined_vars.contains(value.index());
+                            pred_ok && val_ok
                         })
                         .collect();
 
@@ -423,29 +442,29 @@ impl SsaFunction {
     /// The number of phis eliminated.
     pub fn eliminate_trivial_phis(&mut self, options: &TrivialPhiOptions) -> usize {
         let mut total_eliminated = 0;
+        let block_count = self.blocks.len();
 
         // Precompute reachability data if in reachable mode
-        let reachable_preds: Option<HashMap<usize, HashSet<usize>>> =
-            options.reachable.map(|reachable| {
-                let mut map = HashMap::new();
-                for block in &self.blocks {
-                    let block_idx = block.id();
-                    if !reachable.contains(&block_idx) {
-                        continue;
-                    }
-                    let preds: HashSet<usize> = self
-                        .block_predecessors(block_idx)
-                        .iter()
-                        .copied()
-                        .filter(|p| reachable.contains(p))
-                        .collect();
-                    map.insert(block_idx, preds);
+        let reachable_preds: Option<BTreeMap<usize, BitSet>> = options.reachable.map(|reachable| {
+            let mut map = BTreeMap::new();
+            for block in &self.blocks {
+                let block_idx = block.id();
+                if !reachable.contains(block_idx) {
+                    continue;
                 }
-                map
-            });
+                let mut preds = BitSet::new(block_count);
+                for p in self.block_predecessors(block_idx) {
+                    if reachable.contains(p) {
+                        preds.insert(p);
+                    }
+                }
+                map.insert(block_idx, preds);
+            }
+            map
+        });
 
-        let var_def_block: Option<HashMap<SsaVarId, usize>> = options.reachable.map(|_| {
-            let mut map = HashMap::new();
+        let var_def_block: Option<BTreeMap<SsaVarId, usize>> = options.reachable.map(|_| {
+            let mut map = BTreeMap::new();
             for block in &self.blocks {
                 let block_idx = block.id();
                 for instr in block.instructions() {
@@ -469,7 +488,7 @@ impl SsaFunction {
                     let result = phi.result();
 
                     // Collect unique non-self operands
-                    let unique_sources: HashSet<SsaVarId> = phi
+                    let unique_sources: BTreeSet<SsaVarId> = phi
                         .operands()
                         .iter()
                         .map(|op| op.value())
@@ -501,10 +520,13 @@ impl SsaFunction {
                     // unreachable predecessors and check triviality again
                     if unique_sources.len() > 1 {
                         if let Some(rpreds) = block_reachable_preds {
-                            let unique_reachable: HashSet<SsaVarId> = phi
+                            let unique_reachable: BTreeSet<SsaVarId> = phi
                                 .operands()
                                 .iter()
-                                .filter(|op| rpreds.contains(&op.predecessor()))
+                                .filter(|op| {
+                                    let pred = op.predecessor();
+                                    pred < block_count && rpreds.contains(pred)
+                                })
                                 .map(|op| op.value())
                                 .filter(|&v| v != result)
                                 .collect();
@@ -522,10 +544,10 @@ impl SsaFunction {
                                     trivial_phis.push((result, source));
                                 }
                             } else if unique_reachable.is_empty()
-                                && phi
-                                    .operands()
-                                    .iter()
-                                    .any(|op| rpreds.contains(&op.predecessor()))
+                                && phi.operands().iter().any(|op| {
+                                    let pred = op.predecessor();
+                                    pred < block_count && rpreds.contains(pred)
+                                })
                             {
                                 trivial_phis.push((result, result));
                             }
@@ -538,16 +560,18 @@ impl SsaFunction {
                 break;
             }
 
+            let variable_count = self.var_id_capacity();
+
             if options.reachable.is_none() {
                 // Repair mode: resolve chains among trivial phis.
-                let trivial_map: HashMap<SsaVarId, SsaVarId> =
+                let trivial_map: BTreeMap<SsaVarId, SsaVarId> =
                     trivial_phis.iter().copied().collect();
                 for entry in &mut trivial_phis {
                     if entry.0 == entry.1 {
                         continue;
                     }
                     let mut current = entry.1;
-                    let mut visited = HashSet::new();
+                    let mut visited = BTreeSet::new();
                     while let Some(&next) = trivial_map.get(&current) {
                         if next == current || !visited.insert(current) {
                             break;
@@ -558,28 +582,32 @@ impl SsaFunction {
                 }
 
                 // Replace uses and track which phis were fully propagated.
-                let mut trivial_set: HashSet<SsaVarId> = HashSet::new();
+                let mut trivial_set = BitSet::new(variable_count);
                 for (phi_result, source) in &trivial_phis {
                     if *phi_result != *source {
                         let result = self.replace_uses_including_phis(*phi_result, *source);
                         if result.is_complete() {
-                            trivial_set.insert(*phi_result);
+                            trivial_set.insert(phi_result.index());
                         }
                     } else {
-                        trivial_set.insert(*phi_result);
+                        trivial_set.insert(phi_result.index());
                     }
                 }
                 if trivial_set.is_empty() {
                     break;
                 }
 
-                total_eliminated += trivial_set.len();
+                total_eliminated += trivial_set.count();
                 for block in &mut self.blocks {
-                    block
-                        .phi_nodes_mut()
-                        .retain(|phi| !trivial_set.contains(&phi.result()));
+                    block.phi_nodes_mut().retain(|phi| {
+                        let idx = phi.result().index();
+                        idx >= variable_count || !trivial_set.contains(idx)
+                    });
                 }
-                self.variables.retain(|v| !trivial_set.contains(&v.id()));
+                self.variables.retain(|v| {
+                    let idx = v.id().index();
+                    idx >= variable_count || !trivial_set.contains(idx)
+                });
             } else {
                 // Rebuild mode: replace uses and remove unconditionally.
                 for (phi_result, source) in &trivial_phis {
@@ -588,15 +616,21 @@ impl SsaFunction {
                     }
                 }
 
-                let trivial_set: HashSet<SsaVarId> =
-                    trivial_phis.iter().map(|(result, _)| *result).collect();
-                total_eliminated += trivial_set.len();
-                for block in &mut self.blocks {
-                    block
-                        .phi_nodes_mut()
-                        .retain(|phi| !trivial_set.contains(&phi.result()));
+                let mut trivial_set = BitSet::new(variable_count);
+                for (result, _) in &trivial_phis {
+                    trivial_set.insert(result.index());
                 }
-                self.variables.retain(|v| !trivial_set.contains(&v.id()));
+                total_eliminated += trivial_set.count();
+                for block in &mut self.blocks {
+                    block.phi_nodes_mut().retain(|phi| {
+                        let idx = phi.result().index();
+                        idx >= variable_count || !trivial_set.contains(idx)
+                    });
+                }
+                self.variables.retain(|v| {
+                    let idx = v.id().index();
+                    idx >= variable_count || !trivial_set.contains(idx)
+                });
             }
         }
 
@@ -626,8 +660,10 @@ impl SsaFunction {
     ///
     /// The number of variables that were removed.
     pub fn compact_variables(&mut self) -> usize {
+        let variable_count = self.var_id_capacity();
+
         // Phase 1: Collect all variables that still have active definitions
-        let mut defined_vars: HashSet<SsaVarId> = HashSet::new();
+        let mut defined_vars = BitSet::new(variable_count);
 
         for block in &self.blocks {
             // From instructions
@@ -638,13 +674,19 @@ impl SsaFunction {
                     continue;
                 }
                 if let Some(dest) = op.dest() {
-                    defined_vars.insert(dest);
+                    let idx = dest.index();
+                    if idx < variable_count {
+                        defined_vars.insert(idx);
+                    }
                 }
             }
 
             // From phi nodes
             for phi in block.phi_nodes() {
-                defined_vars.insert(phi.result());
+                let idx = phi.result().index();
+                if idx < variable_count {
+                    defined_vars.insert(idx);
+                }
             }
         }
 
@@ -655,7 +697,10 @@ impl SsaFunction {
         //   groups created during SSA rebuild
         for var in &self.variables {
             if var.version() == 0 && var.def_site().instruction.is_none() {
-                defined_vars.insert(var.id());
+                let idx = var.id().index();
+                if idx < variable_count {
+                    defined_vars.insert(idx);
+                }
             }
         }
 
@@ -669,14 +714,33 @@ impl SsaFunction {
                     continue;
                 }
                 for u in instr.uses() {
-                    defined_vars.insert(u);
+                    let idx = u.index();
+                    if idx < variable_count {
+                        defined_vars.insert(idx);
+                    }
+                }
+            }
+
+            // Also keep variables referenced by phi operands. A phi may
+            // reference a variable whose defining instruction was Nop'd by
+            // an optimization pass — without this, compact would remove the
+            // variable and the phi operand would become a dangling reference.
+            for phi in block.phi_nodes() {
+                for op in phi.operands() {
+                    let idx = op.value().index();
+                    if idx < variable_count {
+                        defined_vars.insert(idx);
+                    }
                 }
             }
         }
 
         // Phase 2: Remove orphaned variables
         let original_count = self.variables.len();
-        self.variables.retain(|v| defined_vars.contains(&v.id()));
+        self.variables.retain(|v| {
+            let idx = v.id().index();
+            idx < variable_count && defined_vars.contains(idx)
+        });
         // Reassign dense IDs and rebuild registries
         let remap = self.reassign_dense_ids();
         self.remap_var_ids_in_blocks(&remap);
@@ -705,8 +769,8 @@ impl SsaFunction {
     /// 2. Variables whose defining instruction was a Nop get reset to entry DefSite
     /// 3. Any remaining out-of-bounds DefSites are reset to entry DefSite
     pub fn strip_nops(&mut self) {
-        let mut remap: HashMap<(usize, usize), usize> = HashMap::new();
-        let mut nop_sites: HashSet<(usize, usize)> = HashSet::new();
+        let mut remap: BTreeMap<(usize, usize), usize> = BTreeMap::new();
+        let mut nop_sites: BTreeSet<(usize, usize)> = BTreeSet::new();
 
         for block_idx in 0..self.blocks.len() {
             let block = &mut self.blocks[block_idx];
@@ -774,18 +838,23 @@ impl SsaFunction {
     /// to the corresponding phi nodes for that local/arg origin, ensuring
     /// phis that are read by index-based loads are not incorrectly eliminated.
     pub fn eliminate_dead_phis(&mut self) {
-        let all_phi_results: HashSet<SsaVarId> = self
-            .blocks
-            .iter()
-            .flat_map(|b| b.phi_nodes().iter().map(|p| p.result()))
-            .collect();
+        let variable_count = self.var_id_capacity();
+        let mut all_phi_results = BitSet::new(variable_count);
+        for block in &self.blocks {
+            for phi in block.phi_nodes() {
+                let idx = phi.result().index();
+                if idx < variable_count {
+                    all_phi_results.insert(idx);
+                }
+            }
+        }
 
         if all_phi_results.is_empty() {
             return;
         }
 
         // Build map from phi origin to phi result IDs for LoadLocal/LoadArg bridging.
-        let mut origin_to_phi_results: HashMap<VariableOrigin, Vec<SsaVarId>> = HashMap::new();
+        let mut origin_to_phi_results: BTreeMap<VariableOrigin, Vec<SsaVarId>> = BTreeMap::new();
         for block in &self.blocks {
             for phi in block.phi_nodes() {
                 origin_to_phi_results
@@ -796,13 +865,14 @@ impl SsaFunction {
         }
 
         // Phase 1: Mark phis as live if used by any non-phi instruction
-        let mut live_phis: HashSet<SsaVarId> = HashSet::new();
+        let mut live_phis = BitSet::new(variable_count);
         for block in &self.blocks {
             for instr in block.instructions() {
                 // Direct SSA uses
                 for u in instr.uses() {
-                    if all_phi_results.contains(&u) {
-                        live_phis.insert(u);
+                    let idx = u.index();
+                    if idx < variable_count && all_phi_results.contains(idx) {
+                        live_phis.insert(idx);
                     }
                 }
 
@@ -814,7 +884,10 @@ impl SsaFunction {
                         let origin = VariableOrigin::Local(*local_index);
                         if let Some(phi_results) = origin_to_phi_results.get(&origin) {
                             for &phi_result in phi_results {
-                                live_phis.insert(phi_result);
+                                let idx = phi_result.index();
+                                if idx < variable_count {
+                                    live_phis.insert(idx);
+                                }
                             }
                         }
                     }
@@ -822,7 +895,10 @@ impl SsaFunction {
                         let origin = VariableOrigin::Argument(*arg_index);
                         if let Some(phi_results) = origin_to_phi_results.get(&origin) {
                             for &phi_result in phi_results {
-                                live_phis.insert(phi_result);
+                                let idx = phi_result.index();
+                                if idx < variable_count {
+                                    live_phis.insert(idx);
+                                }
                             }
                         }
                     }
@@ -837,10 +913,14 @@ impl SsaFunction {
             changed = false;
             for block in &self.blocks {
                 for phi in block.phi_nodes() {
-                    if live_phis.contains(&phi.result()) {
+                    let result_idx = phi.result().index();
+                    if result_idx < variable_count && live_phis.contains(result_idx) {
                         for op in phi.operands() {
-                            let val = op.value();
-                            if all_phi_results.contains(&val) && live_phis.insert(val) {
+                            let val_idx = op.value().index();
+                            if val_idx < variable_count
+                                && all_phi_results.contains(val_idx)
+                                && live_phis.insert(val_idx)
+                            {
                                 changed = true;
                             }
                         }
@@ -849,21 +929,25 @@ impl SsaFunction {
             }
         }
 
-        // Phase 3: Remove dead phis
-        let dead_phis: HashSet<SsaVarId> =
-            all_phi_results.difference(&live_phis).copied().collect();
+        // Phase 3: Remove dead phis (all_phi_results - live_phis)
+        let mut dead_phis = all_phi_results.clone();
+        dead_phis.difference_with(&live_phis);
 
         if dead_phis.is_empty() {
             return;
         }
 
         for block in &mut self.blocks {
-            block
-                .phi_nodes_mut()
-                .retain(|phi| !dead_phis.contains(&phi.result()));
+            block.phi_nodes_mut().retain(|phi| {
+                let idx = phi.result().index();
+                idx >= variable_count || !dead_phis.contains(idx)
+            });
         }
 
-        self.variables.retain(|v| !dead_phis.contains(&v.id()));
+        self.variables.retain(|v| {
+            let idx = v.id().index();
+            idx >= variable_count || !dead_phis.contains(idx)
+        });
     }
 
     /// Optimizes local variables by removing unused ones and compacting indices.
@@ -881,7 +965,7 @@ impl SsaFunction {
     /// or `None` for unused locals.
     pub fn optimize_locals(&mut self) -> Vec<Option<u16>> {
         // Phase 1: Collect all used local indices
-        let mut used_locals: HashSet<u16> = HashSet::new();
+        let mut used_locals: BTreeSet<u16> = BTreeSet::new();
 
         // From variables
         for var in &self.variables {
@@ -992,10 +1076,10 @@ impl SsaFunction {
     pub fn generate_local_signature(
         &self,
         override_count: Option<u16>,
-        temporary_types: Option<&HashMap<u16, SsaType>>,
+        temporary_types: Option<&BTreeMap<u16, SsaType>>,
     ) -> crate::Result<SignatureLocalVariables> {
         // Use empty map if none provided
-        let empty_temps = HashMap::new();
+        let empty_temps = BTreeMap::new();
         let temp_types = temporary_types.unwrap_or(&empty_temps);
 
         // Use override count if provided, otherwise use the SSA's num_locals

@@ -27,11 +27,21 @@ use crate::{
     CilObject, Result,
 };
 
-/// Marker value used by ConfuserEx for invalid metadata indices.
-const CONFUSEREX_MARKER: u32 = 0x7fff_7fff;
+/// Known sentinel values used by obfuscators for invalid metadata indices.
+/// These augment the generic `>= heap_size` bounds check to catch cases
+/// where the sentinel value happens to fall within the valid range but
+/// points to nonsensical heap content.
+const KNOWN_SENTINEL_VALUES: &[u32] = &[
+    0x7fff_7fff, // ConfuserEx
+    0xffff_ffff, // Generic overflow
+    0xdead_beef, // Common debug/obfuscator marker
+];
 
-/// Marker value for 16-bit invalid fields.
-const CONFUSEREX_MARKER_16: u16 = 0x7fff;
+/// Known sentinel values for 16-bit fields.
+const KNOWN_SENTINEL_VALUES_16: &[u16] = &[
+    0x7fff, // ConfuserEx DeclSecurity
+    0xffff, // Generic overflow
+];
 
 /// Findings from generic metadata scanning.
 #[derive(Debug)]
@@ -102,7 +112,8 @@ impl Technique for GenericMetadata {
 
             for row in module_table {
                 let name_index = row.name as usize;
-                if name_index >= strings_size || row.name == CONFUSEREX_MARKER {
+                let is_sentinel = KNOWN_SENTINEL_VALUES.contains(&row.name);
+                if name_index >= strings_size || is_sentinel {
                     findings.invalid_module_rows += 1;
                     findings.patches.push(MetadataPatch {
                         offset: row.offset + 2, // name field offset within Module row
@@ -119,16 +130,20 @@ impl Technique for GenericMetadata {
             let strings_size = strings.as_ref().map(|s| s.data().len()).unwrap_or(0);
 
             for row in assembly_table {
-                if row.name as usize >= strings_size || row.name == CONFUSEREX_MARKER {
+                let is_sentinel = KNOWN_SENTINEL_VALUES.contains(&row.name);
+                if row.name as usize >= strings_size || is_sentinel {
                     findings.invalid_assembly_rows += 1;
                 }
             }
         }
 
         // Check DeclSecurity for invalid action values
+        // ECMA-335 defines DeclSecurity actions 0-14 (0x000E). Any value
+        // outside this range is invalid and likely injected by an obfuscator.
         if let Some(declsec_table) = tables.table::<DeclSecurityRaw>() {
             for row in declsec_table {
-                if row.action == CONFUSEREX_MARKER_16 || row.action > 0x000E {
+                let is_sentinel = KNOWN_SENTINEL_VALUES_16.contains(&row.action);
+                if row.action > 0x000E || is_sentinel {
                     findings.invalid_declsecurity_rows += 1;
                 }
             }
@@ -235,6 +250,6 @@ mod tests {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericMetadata;
         let detection = technique.detect(&asm);
-        assert!(!detection.detected);
+        assert!(!detection.is_detected());
     }
 }

@@ -5,7 +5,7 @@
 //! the existing low-level builders to provide a fluent, high-level API.
 
 use crate::{
-    cilassembly::{ChangeRefRc, CilAssembly},
+    cilassembly::{builders::method::MethodBuilder, ChangeRefRc, CilAssembly},
     metadata::{
         signatures::{encode_field_signature, SignatureField, TypeSignature},
         tables::{
@@ -16,10 +16,6 @@ use crate::{
     },
     Error, Result,
 };
-
-// Use field attributes constants directly from the tables module
-
-use super::method::MethodBuilder;
 
 /// Field definition for the class builder.
 struct FieldDefinition {

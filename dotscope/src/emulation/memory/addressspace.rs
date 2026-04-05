@@ -1077,7 +1077,6 @@ impl AddressSpace {
     /// assert_eq!(template.read(0x1000, 1).unwrap(), vec![1]);
     /// ```
     pub fn fork(&self) -> Result<Self> {
-        use crate::emulation::engine::EmulationError;
         // Fork all regions (each region forks its pages)
         let regions = self
             .regions

@@ -95,33 +95,23 @@ mod value;
 mod variable;
 pub(crate) mod verifier;
 
-// Re-export primary types at module level
 pub use block::{ReplaceResult, SsaBlock};
-pub use builder::{SsaBlockBuilder, SsaFunctionBuilder, SsaFunctionContext};
+pub use builder::SsaFunctionBuilder;
 pub use cfg::SsaCfg;
-pub use constraints::{Constraint, PathConstraint};
-pub use consts::ConstEvaluator;
+pub use consts::{evaluate_const_op, ConstEvaluator};
 pub use converter::SsaConverter;
-pub use evaluator::{ControlFlow, EvaluatorConfig, ExecutionTrace, SsaEvaluator};
+pub use evaluator::SsaEvaluator;
 pub use exception::SsaExceptionHandler;
 pub use function::{MethodPurity, ReturnInfo, SsaFunction, TrivialPhiOptions};
 pub use instruction::SsaInstruction;
-pub use memory::{
-    analyze_alias, AliasResult, ArrayIndex, MemoryDefSite, MemoryLocation, MemoryOp, MemoryPhi,
-    MemoryPhiOperand, MemorySsa, MemorySsaStats, MemoryState, MemoryVersion,
-};
-pub use ops::{BinaryOpInfo, BinaryOpKind, CmpKind, SsaOp, UnaryOpInfo, UnaryOpKind};
-pub use patterns::{DispatcherPattern, PatternDetector, SourceBlock};
+pub use ops::{BinaryOpKind, CmpKind, SsaOp, UnaryOpKind};
 pub use phi::{PhiNode, PhiOperand};
 pub use phis::PhiAnalyzer;
 pub use resolver::ValueResolver;
 pub use stack::{SimulationResult, StackSimulator, StackSlot, StackSlotSource};
-pub use symbolic::{SymbolicEvaluator, SymbolicExpr, SymbolicOp};
-// Z3Solver requires the z3 dependency (independent of deobfuscation)
 #[cfg(feature = "z3")]
 pub use symbolic::Z3Solver;
-pub use types::{
-    FieldRef, FnPtrSig, MethodRef, SigRef, SsaType, TypeClass, TypeContext, TypeProvider, TypeRef,
-};
-pub use value::{AbstractValue, ComputedOp, ComputedValue, ConstValue};
+pub use symbolic::{SymbolicEvaluator, SymbolicExpr};
+pub use types::{FieldRef, MethodRef, SsaType, TypeClass, TypeContext, TypeProvider, TypeRef};
+pub use value::{AbstractValue, ConstValue};
 pub use variable::{DefSite, FunctionVarAllocator, SsaVarId, SsaVariable, UseSite, VariableOrigin};

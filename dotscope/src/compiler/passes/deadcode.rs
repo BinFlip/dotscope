@@ -24,7 +24,7 @@
 //! This pass works best after constant propagation and branch simplification,
 //! as those passes may expose more dead code.
 
-use std::collections::{HashMap, HashSet, VecDeque};
+use std::collections::{BTreeMap, BTreeSet, VecDeque};
 
 use crate::{
     analysis::{
@@ -35,12 +35,12 @@ use crate::{
         CompilerContext, EventKind, EventLog,
     },
     metadata::token::Token,
-    utils::graph::{algorithms, NodeId},
+    utils::{
+        graph::{algorithms, NodeId},
+        BitSet,
+    },
     CilObject, Result,
 };
-
-/// Maximum iterations for the fixed-point algorithm to prevent infinite loops.
-const MAX_ITERATIONS: usize = 100;
 
 /// Finds blocks that have dead code after terminator instructions.
 ///
@@ -75,23 +75,21 @@ pub fn find_dead_tails(ssa: &SsaFunction) -> Vec<(usize, usize)> {
 ///
 /// Removes unreachable blocks and unused definitions to simplify the SSA graph.
 /// Uses an iterative algorithm to handle cascading dead code.
-pub struct DeadCodeEliminationPass;
-
-impl Default for DeadCodeEliminationPass {
-    fn default() -> Self {
-        Self::new()
-    }
+pub struct DeadCodeEliminationPass {
+    /// Maximum fixpoint iterations before stopping.
+    max_iterations: usize,
 }
 
 impl DeadCodeEliminationPass {
     /// Creates a new dead code elimination pass.
     ///
-    /// # Returns
+    /// # Arguments
     ///
-    /// A new instance of `DeadCodeEliminationPass`.
+    /// * `max_iterations` - Maximum fixpoint iterations before stopping. Typical
+    ///   convergence is 2–3 iterations; the default config value is 20.
     #[must_use]
-    pub fn new() -> Self {
-        Self
+    pub fn new(max_iterations: usize) -> Self {
+        Self { max_iterations }
     }
 
     /// Finds all reachable blocks starting from entry and exception handlers.
@@ -112,31 +110,33 @@ impl DeadCodeEliminationPass {
     /// # Returns
     ///
     /// A set of block indices that are reachable from the entry point or exception handlers.
-    fn find_reachable_blocks(ssa: &SsaFunction) -> HashSet<usize> {
+    fn find_reachable_blocks(ssa: &SsaFunction) -> BitSet {
         if ssa.block_count() == 0 {
-            return HashSet::new();
+            return BitSet::new(0);
         }
 
         // Build CFG view for graph traversal
         let cfg = SsaCfg::from_ssa(ssa);
 
         // Use BFS from entry block (block 0) to find reachable nodes
-        let mut reachable: HashSet<usize> = algorithms::bfs(&cfg, NodeId::new(0))
-            .map(|n: NodeId| n.index())
-            .collect();
+        let mut reachable = BitSet::new(ssa.block_count());
+        for n in algorithms::bfs(&cfg, NodeId::new(0)) {
+            let n: NodeId = n;
+            reachable.insert(n.index());
+        }
 
         // Collect exception handler entry blocks from SSA exception handler info
-        let mut exception_roots: HashSet<usize> = HashSet::new();
+        let mut exception_roots = BitSet::new(ssa.block_count());
         for handler in ssa.exception_handlers() {
             // Add handler start block as a root
             if let Some(handler_block) = handler.handler_start_block {
-                if !reachable.contains(&handler_block) {
+                if !reachable.contains(handler_block) {
                     exception_roots.insert(handler_block);
                 }
             }
             // Add filter start block for FILTER handlers
             if let Some(filter_block) = handler.filter_start_block {
-                if !reachable.contains(&filter_block) {
+                if !reachable.contains(filter_block) {
                     exception_roots.insert(filter_block);
                 }
             }
@@ -145,7 +145,7 @@ impl DeadCodeEliminationPass {
         // Fallback: find exception handler blocks by instruction patterns
         // (for methods where exception handler info wasn't preserved)
         for (block_idx, block) in ssa.iter_blocks() {
-            if reachable.contains(&block_idx) || exception_roots.contains(&block_idx) {
+            if reachable.contains(block_idx) || exception_roots.contains(block_idx) {
                 continue;
             }
             // Check if this block starts with exception handling instructions
@@ -158,7 +158,7 @@ impl DeadCodeEliminationPass {
         }
 
         // Traverse from each exception handler root
-        for root in exception_roots {
+        for root in exception_roots.iter() {
             for node in algorithms::bfs(&cfg, NodeId::new(root)) {
                 let node: NodeId = node;
                 reachable.insert(node.index());
@@ -186,7 +186,7 @@ impl DeadCodeEliminationPass {
     ///
     /// A vector of block indices in reverse post-order. The entry block appears first,
     /// and exit blocks appear last.
-    fn compute_reverse_postorder(ssa: &SsaFunction, reachable: &HashSet<usize>) -> Vec<usize> {
+    fn compute_reverse_postorder(ssa: &SsaFunction, reachable: &BitSet) -> Vec<usize> {
         if ssa.block_count() == 0 || reachable.is_empty() {
             return Vec::new();
         }
@@ -198,16 +198,18 @@ impl DeadCodeEliminationPass {
         let mut rpo: Vec<usize> = algorithms::reverse_postorder(&cfg, NodeId::new(0))
             .into_iter()
             .map(|n: NodeId| n.index())
-            .filter(|idx| reachable.contains(idx))
+            .filter(|idx| reachable.contains(*idx))
             .collect();
 
         // Handle any remaining reachable blocks (exception handlers) not covered
         // by traversal from entry. Add them in sorted order for determinism.
-        let in_rpo: HashSet<usize> = rpo.iter().copied().collect();
+        let mut in_rpo = BitSet::new(ssa.block_count());
+        for &idx in &rpo {
+            in_rpo.insert(idx);
+        }
         let mut additional: Vec<usize> = reachable
             .iter()
-            .copied()
-            .filter(|idx| !in_rpo.contains(idx))
+            .filter(|idx| !in_rpo.contains(*idx))
             .collect();
         additional.sort_unstable();
 
@@ -216,7 +218,7 @@ impl DeadCodeEliminationPass {
             let handler_rpo: Vec<usize> = algorithms::reverse_postorder(&cfg, NodeId::new(root))
                 .into_iter()
                 .map(|n: NodeId| n.index())
-                .filter(|idx| reachable.contains(idx) && !rpo.contains(idx))
+                .filter(|idx| reachable.contains(*idx) && !rpo.contains(idx))
                 .collect();
             rpo.extend(handler_rpo);
         }
@@ -245,17 +247,13 @@ impl DeadCodeEliminationPass {
     /// # Returns
     ///
     /// A set of SSA variable IDs that are live (used by observable operations).
-    fn compute_live_variables(
-        ssa: &SsaFunction,
-        reachable: &HashSet<usize>,
-        rpo: &[usize],
-    ) -> HashSet<SsaVarId> {
-        let mut live = HashSet::new();
+    fn compute_live_variables(ssa: &SsaFunction, reachable: &BitSet, rpo: &[usize]) -> BitSet {
+        let mut live = BitSet::new(ssa.var_id_capacity());
         let mut worklist = VecDeque::new();
 
         // Phase 1: Mark variables used by side-effectful operations as live
         for &block_idx in rpo {
-            if !reachable.contains(&block_idx) {
+            if !reachable.contains(block_idx) {
                 continue;
             }
 
@@ -265,7 +263,7 @@ impl DeadCodeEliminationPass {
                     // Instructions with side effects make their operands live
                     if !op.is_pure() {
                         for var in op.uses() {
-                            if live.insert(var) {
+                            if live.insert(var.index()) {
                                 worklist.push_back(var);
                             }
                         }
@@ -273,14 +271,14 @@ impl DeadCodeEliminationPass {
 
                     // Return values are live
                     if let SsaOp::Return { value: Some(v) } = op {
-                        if live.insert(*v) {
+                        if live.insert(v.index()) {
                             worklist.push_back(*v);
                         }
                     }
 
                     // Thrown exceptions are live
                     if let SsaOp::Throw { exception } = op {
-                        if live.insert(*exception) {
+                        if live.insert(exception.index()) {
                             worklist.push_back(*exception);
                         }
                     }
@@ -290,16 +288,16 @@ impl DeadCodeEliminationPass {
 
         // Phase 2: Propagate liveness backwards through definitions
         // Build def-to-uses map for efficiency
-        let mut def_uses: HashMap<SsaVarId, Vec<SsaVarId>> = HashMap::new();
+        let mut def_uses: BTreeMap<SsaVarId, Vec<SsaVarId>> = BTreeMap::new();
 
         // Collect all definitions per Local/Arg origin, and all LoadLocal/LoadArg
         // instructions. LoadLocal/LoadArg reference locals/args by index (not SSA
         // variable), creating an implicit dependency that needs bridging.
-        let mut origin_defs: HashMap<VariableOrigin, Vec<SsaVarId>> = HashMap::new();
+        let mut origin_defs: BTreeMap<VariableOrigin, Vec<SsaVarId>> = BTreeMap::new();
         let mut load_local_info: Vec<(SsaVarId, VariableOrigin)> = Vec::new();
 
         for &block_idx in rpo {
-            if !reachable.contains(&block_idx) {
+            if !reachable.contains(block_idx) {
                 continue;
             }
 
@@ -343,6 +341,9 @@ impl DeadCodeEliminationPass {
                         SsaOp::LoadLocal { dest, local_index } => {
                             load_local_info.push((*dest, VariableOrigin::Local(*local_index)));
                         }
+                        SsaOp::LoadLocalAddr { dest, local_index } => {
+                            load_local_info.push((*dest, VariableOrigin::Local(*local_index)));
+                        }
                         SsaOp::LoadArg { dest, arg_index } => {
                             load_local_info.push((*dest, VariableOrigin::Argument(*arg_index)));
                         }
@@ -356,7 +357,7 @@ impl DeadCodeEliminationPass {
         while let Some(var) = worklist.pop_front() {
             if let Some(uses) = def_uses.get(&var) {
                 for &use_var in uses {
-                    if live.insert(use_var) {
+                    if live.insert(use_var.index()) {
                         worklist.push_back(use_var);
                     }
                 }
@@ -375,12 +376,12 @@ impl DeadCodeEliminationPass {
         loop {
             let mut newly_live = false;
             for (dest, origin) in &load_local_info {
-                if !live.contains(dest) {
+                if !live.contains(dest.index()) {
                     continue;
                 }
                 if let Some(defs) = origin_defs.get(origin) {
                     for &def_var in defs {
-                        if live.insert(def_var) {
+                        if live.insert(def_var.index()) {
                             worklist.push_back(def_var);
                             newly_live = true;
                         }
@@ -392,7 +393,7 @@ impl DeadCodeEliminationPass {
             while let Some(var) = worklist.pop_front() {
                 if let Some(uses) = def_uses.get(&var) {
                     for &use_var in uses {
-                        if live.insert(use_var) {
+                        if live.insert(use_var.index()) {
                             worklist.push_back(use_var);
                         }
                     }
@@ -428,15 +429,15 @@ impl DeadCodeEliminationPass {
     /// A vector of `(block_idx, instruction_idx)` tuples identifying dead instructions.
     fn find_dead_definitions(
         ssa: &SsaFunction,
-        reachable: &HashSet<usize>,
-        live: &HashSet<SsaVarId>,
-        dead_phi_results: &HashSet<SsaVarId>,
+        reachable: &BitSet,
+        live: &BitSet,
+        dead_phi_results: &BitSet,
     ) -> Vec<(usize, usize)> {
         // Track dead variables for Pop elimination
-        let mut dead_vars: HashSet<SsaVarId> = HashSet::new();
+        let mut dead_vars = BitSet::new(ssa.var_id_capacity());
         let mut dead = Vec::new();
 
-        for &block_idx in reachable {
+        for block_idx in reachable.iter() {
             if let Some(block) = ssa.block(block_idx) {
                 for (instr_idx, instr) in block.instructions().iter().enumerate() {
                     let op = instr.op();
@@ -456,9 +457,9 @@ impl DeadCodeEliminationPass {
                             dead.push((block_idx, instr_idx));
                         }
                         Some(def) => {
-                            if !live.contains(&def) {
+                            if !live.contains(def.index()) {
                                 dead.push((block_idx, instr_idx));
-                                dead_vars.insert(def);
+                                dead_vars.insert(def.index());
                             }
                         }
                     }
@@ -471,13 +472,13 @@ impl DeadCodeEliminationPass {
         // Note: We intentionally don't check for definers Nop'd in previous iterations
         // because that can cause stack depth mismatches with complex control flow.
         // The basic check (same-iteration removal) handles the common case correctly.
-        for &block_idx in reachable {
+        for block_idx in reachable.iter() {
             if let Some(block) = ssa.block(block_idx) {
                 for (instr_idx, instr) in block.instructions().iter().enumerate() {
                     if let SsaOp::Pop { value } = instr.op() {
                         // Check if operand's definer is being removed this iteration
-                        let instr_definer_being_removed = dead_vars.contains(value);
-                        let phi_definer_being_removed = dead_phi_results.contains(value);
+                        let instr_definer_being_removed = dead_vars.contains(value.index());
+                        let phi_definer_being_removed = dead_phi_results.contains(value.index());
 
                         if instr_definer_being_removed || phi_definer_being_removed {
                             dead.push((block_idx, instr_idx));
@@ -505,17 +506,13 @@ impl DeadCodeEliminationPass {
     /// # Returns
     ///
     /// A vector of `(block_idx, phi_idx)` tuples identifying dead phi nodes.
-    fn find_dead_phis(
-        ssa: &SsaFunction,
-        reachable: &HashSet<usize>,
-        live: &HashSet<SsaVarId>,
-    ) -> Vec<(usize, usize)> {
+    fn find_dead_phis(ssa: &SsaFunction, reachable: &BitSet, live: &BitSet) -> Vec<(usize, usize)> {
         let mut dead = Vec::new();
 
-        for &block_idx in reachable {
+        for block_idx in reachable.iter() {
             if let Some(block) = ssa.block(block_idx) {
                 for (phi_idx, phi) in block.phi_nodes().iter().enumerate() {
-                    if !live.contains(&phi.result()) {
+                    if !live.contains(phi.result().index()) {
                         dead.push((block_idx, phi_idx));
                     }
                 }
@@ -546,7 +543,7 @@ impl DeadCodeEliminationPass {
         changes: &mut EventLog,
     ) {
         // Group by block
-        let mut by_block: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut by_block: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for &(block_idx, instr_idx) in dead_defs {
             by_block.entry(block_idx).or_default().push(instr_idx);
         }
@@ -599,7 +596,7 @@ impl DeadCodeEliminationPass {
         changes: &mut EventLog,
     ) {
         // Group by block
-        let mut by_block: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut by_block: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for &(block_idx, phi_idx) in dead_phis {
             by_block.entry(block_idx).or_default().push(phi_idx);
         }
@@ -653,7 +650,7 @@ impl DeadCodeEliminationPass {
         let mut simplified = 0;
 
         // Process in reverse order by phi_idx within each block
-        let mut by_block: HashMap<usize, Vec<(usize, Option<SsaVarId>)>> = HashMap::new();
+        let mut by_block: BTreeMap<usize, Vec<(usize, Option<SsaVarId>)>> = BTreeMap::new();
         for &(block_idx, phi_idx, replacement) in trivial_phis {
             by_block
                 .entry(block_idx)
@@ -709,7 +706,7 @@ impl DeadCodeEliminationPass {
     /// The number of blocks that were cleared.
     fn clear_unreachable_blocks(
         ssa: &mut SsaFunction,
-        reachable: &HashSet<usize>,
+        reachable: &BitSet,
         method_token: Token,
         changes: &mut EventLog,
     ) -> usize {
@@ -717,7 +714,7 @@ impl DeadCodeEliminationPass {
         let total_blocks = ssa.block_count();
 
         for block_idx in 0..total_blocks {
-            if !reachable.contains(&block_idx) {
+            if !reachable.contains(block_idx) {
                 if let Some(block) = ssa.block_mut(block_idx) {
                     if !block.is_empty() {
                         block.clear();
@@ -751,13 +748,10 @@ impl DeadCodeEliminationPass {
     /// # Returns
     ///
     /// A vector of `(block_idx, instruction_idx)` tuples identifying op-less instructions.
-    fn find_opless_instructions(
-        ssa: &SsaFunction,
-        reachable: &HashSet<usize>,
-    ) -> Vec<(usize, usize)> {
+    fn find_opless_instructions(ssa: &SsaFunction, reachable: &BitSet) -> Vec<(usize, usize)> {
         let mut opless = Vec::new();
 
-        for &block_idx in reachable {
+        for block_idx in reachable.iter() {
             if let Some(block) = ssa.block(block_idx) {
                 let instr_count = block.instructions().len();
                 for (instr_idx, instr) in block.instructions().iter().enumerate() {
@@ -807,7 +801,7 @@ impl DeadCodeEliminationPass {
         }
 
         // Group by block
-        let mut by_block: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut by_block: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for &(block_idx, instr_idx) in opless {
             by_block.entry(block_idx).or_default().push(instr_idx);
         }
@@ -859,13 +853,13 @@ impl DeadCodeEliminationPass {
     /// The number of Nop instructions removed.
     fn remove_nop_instructions(
         ssa: &mut SsaFunction,
-        reachable: &HashSet<usize>,
+        reachable: &BitSet,
         method_token: Token,
         changes: &mut EventLog,
     ) -> usize {
         let mut removed = 0;
 
-        for &block_idx in reachable {
+        for block_idx in reachable.iter() {
             if let Some(block) = ssa.block_mut(block_idx) {
                 let original_len = block.instructions().len();
                 block
@@ -932,10 +926,11 @@ impl DeadCodeEliminationPass {
 
         // Step 5: Prune phi operands from unreachable predecessors
         total_changes += ssa.prune_phi_operands(&reachable);
+        let reachable_set: BTreeSet<usize> = reachable.iter().collect();
 
         // Step 6: Find and simplify trivial phis (doesn't need liveness)
         // Trivial phis are identified purely by structure (all operands same or self-referential)
-        let trivial_phis = PhiAnalyzer::new(ssa).find_all_trivial(&reachable);
+        let trivial_phis = PhiAnalyzer::new(ssa).find_all_trivial(&reachable_set);
         total_changes += Self::simplify_trivial_phis(ssa, &trivial_phis, method_token, changes);
 
         // Step 7: Recompute reachability after phi simplification
@@ -949,14 +944,16 @@ impl DeadCodeEliminationPass {
         let dead_phis = Self::find_dead_phis(ssa, &reachable, &live);
 
         // Collect dead phi results for Pop elimination
-        let dead_phi_results: HashSet<SsaVarId> = dead_phis
-            .iter()
-            .filter_map(|&(block_idx, phi_idx)| {
-                ssa.block(block_idx)
-                    .and_then(|b| b.phi_nodes().get(phi_idx))
-                    .map(PhiNode::result)
-            })
-            .collect();
+        let mut dead_phi_results = BitSet::new(ssa.var_id_capacity());
+        for &(block_idx, phi_idx) in &dead_phis {
+            if let Some(result) = ssa
+                .block(block_idx)
+                .and_then(|b| b.phi_nodes().get(phi_idx))
+                .map(PhiNode::result)
+            {
+                dead_phi_results.insert(result.index());
+            }
+        }
 
         Self::remove_phis(ssa, &dead_phis, method_token, changes);
         total_changes += dead_phis.len();
@@ -972,7 +969,7 @@ impl DeadCodeEliminationPass {
         // iteration would find these Nops as opless instructions, creating an
         // oscillation: dead_def → Nop → opless → dead_def → ...
         if c10 > 0 {
-            for &block_idx in &reachable {
+            for block_idx in reachable.iter() {
                 if let Some(block) = ssa.block_mut(block_idx) {
                     block
                         .instructions_mut()
@@ -1008,7 +1005,7 @@ impl SsaPass for DeadCodeEliminationPass {
         let mut changes = EventLog::new();
 
         // Iterate until fixed point
-        for _ in 0..MAX_ITERATIONS {
+        for _ in 0..self.max_iterations {
             if Self::run_iteration(ssa, method_token, &mut changes) == 0 {
                 break;
             }
@@ -1077,6 +1074,10 @@ impl SsaPass for DeadMethodEliminationPass {
         true
     }
 
+    fn requires_full_scan(&self) -> bool {
+        true
+    }
+
     fn description(&self) -> &'static str {
         "Identifies methods that are never called"
     }
@@ -1097,32 +1098,10 @@ impl SsaPass for DeadMethodEliminationPass {
 
         // Build a live call graph from actual SSA calls (not the static call graph).
         // This accounts for inlining and other transformations that may have removed calls.
-        let mut ssa_callees: HashMap<Token, HashSet<Token>> = HashMap::new();
-        for entry in &ctx.ssa_functions {
-            let caller_token = *entry.key();
-            let ssa = entry.value();
-            let mut callees = HashSet::new();
-            for block in ssa.blocks() {
-                for instr in block.instructions() {
-                    match instr.op() {
-                        SsaOp::Call { method, .. }
-                        | SsaOp::CallVirt { method, .. }
-                        | SsaOp::LoadFunctionPtr { method, .. }
-                        | SsaOp::LoadVirtFunctionPtr { method, .. } => {
-                            callees.insert(method.token());
-                        }
-                        SsaOp::NewObj { ctor, .. } => {
-                            callees.insert(ctor.token());
-                        }
-                        _ => {}
-                    }
-                }
-            }
-            ssa_callees.insert(caller_token, callees);
-        }
+        let ssa_callees = ctx.build_ssa_call_graph();
 
         // Methods that are definitely live (entry points and their transitive callees)
-        let mut live_methods: HashSet<Token> = ctx.entry_points.iter().map(|e| *e).collect();
+        let mut live_methods: BTreeSet<Token> = ctx.entry_points.iter().map(|e| *e).collect();
         let mut worklist: VecDeque<Token> = live_methods.iter().copied().collect();
 
         // Mark transitive callees as live using SSA-derived call information
@@ -1231,8 +1210,8 @@ mod tests {
             .unwrap();
 
         let reachable = DeadCodeEliminationPass::find_reachable_blocks(&ssa);
-        assert_eq!(reachable.len(), 1);
-        assert!(reachable.contains(&0));
+        assert_eq!(reachable.count(), 1);
+        assert!(reachable.contains(0));
     }
 
     #[test]
@@ -1249,10 +1228,10 @@ mod tests {
             .unwrap();
 
         let reachable = DeadCodeEliminationPass::find_reachable_blocks(&ssa);
-        assert_eq!(reachable.len(), 2);
-        assert!(reachable.contains(&0));
-        assert!(reachable.contains(&1));
-        assert!(!reachable.contains(&2));
+        assert_eq!(reachable.count(), 2);
+        assert!(reachable.contains(0));
+        assert!(reachable.contains(1));
+        assert!(!reachable.contains(2));
     }
 
     #[test]
@@ -1276,7 +1255,7 @@ mod tests {
             .unwrap();
 
         // Run DCE
-        let pass = DeadCodeEliminationPass::new();
+        let pass = DeadCodeEliminationPass::new(20);
         let ctx = test_context();
         let changed = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -1329,7 +1308,7 @@ mod tests {
         };
 
         // Run DCE
-        let pass = DeadCodeEliminationPass::new();
+        let pass = DeadCodeEliminationPass::new(20);
         let ctx = test_context();
         let _changes = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -1363,7 +1342,7 @@ mod tests {
         };
 
         // Run DCE
-        let pass = DeadCodeEliminationPass::new();
+        let pass = DeadCodeEliminationPass::new(20);
         let ctx = test_context();
         let _changes = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -1407,7 +1386,7 @@ mod tests {
         };
 
         // Run DCE
-        let pass = DeadCodeEliminationPass::new();
+        let pass = DeadCodeEliminationPass::new(20);
         let ctx = test_context();
         let _changes = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -1465,7 +1444,7 @@ mod tests {
         ssa.add_block(block1);
 
         // Run DCE
-        let pass = DeadCodeEliminationPass::new();
+        let pass = DeadCodeEliminationPass::new(20);
         let ctx = test_context();
         let _changes = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -1509,7 +1488,7 @@ mod tests {
         };
 
         // Run DCE
-        let pass = DeadCodeEliminationPass::new();
+        let pass = DeadCodeEliminationPass::new(20);
         let ctx = test_context();
         let _changes = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -1547,7 +1526,7 @@ mod tests {
         };
 
         // Run DCE
-        let pass = DeadCodeEliminationPass::new();
+        let pass = DeadCodeEliminationPass::new(20);
         let ctx = test_context();
         let _changes = pass
             .run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc())
@@ -1617,8 +1596,8 @@ mod tests {
         let rpo = DeadCodeEliminationPass::compute_reverse_postorder(&ssa, &reachable);
         let live = DeadCodeEliminationPass::compute_live_variables(&ssa, &reachable, &rpo);
 
-        assert!(live.contains(&v1)); // v1 is live (returned)
-        assert!(!live.contains(&v2)); // v2 is dead
+        assert!(live.contains(v1.index())); // v1 is live (returned)
+        assert!(!live.contains(v2.index())); // v2 is dead
     }
 
     #[test]
@@ -1656,11 +1635,11 @@ mod tests {
         let live = DeadCodeEliminationPass::compute_live_variables(&ssa, &reachable, &rpo);
 
         // All should be live transitively
-        assert!(live.contains(&v1));
-        assert!(live.contains(&v2));
-        assert!(live.contains(&v3));
-        assert!(live.contains(&c1));
-        assert!(live.contains(&c2));
+        assert!(live.contains(v1.index()));
+        assert!(live.contains(v2.index()));
+        assert!(live.contains(v3.index()));
+        assert!(live.contains(c1.index()));
+        assert!(live.contains(c2.index()));
     }
 
     #[test]
@@ -1692,7 +1671,7 @@ mod tests {
         };
 
         // Run DCE - should converge
-        let pass = DeadCodeEliminationPass::new();
+        let pass = DeadCodeEliminationPass::new(20);
         let ctx = test_context();
         let result =
             pass.run_on_method(&mut ssa, Token::new(0x06000001), &ctx, &test_assembly_arc());

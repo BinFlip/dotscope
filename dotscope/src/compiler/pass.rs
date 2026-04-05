@@ -1,8 +1,15 @@
 //! Pass traits and infrastructure for the SSA optimization pipeline.
 //!
-//! This module defines the `SsaPass` trait that all SSA transformation passes implement.
-//! Passes are organized into a fixed pipeline following a canonical multi-phase
-//! optimization sequence.
+//! This module defines the `SsaPass` trait that all SSA transformation passes implement,
+//! along with the [`PassCapability`] enum used for capability-based pass scheduling.
+//!
+//! # Capability-Based Scheduling
+//!
+//! Passes can declare what they [`provides`](SsaPass::provides) and
+//! [`requires`](SsaPass::requires) using [`PassCapability`] values. The scheduler
+//! uses these declarations to build a dependency graph and topologically sort
+//! passes into execution layers. Passes that don't declare capabilities fall back
+//! to their assigned phase ordering.
 //!
 //! # Modification Scope
 //!
@@ -17,6 +24,64 @@
 use crate::{
     analysis::SsaFunction, compiler::CompilerContext, metadata::token::Token, CilObject, Result,
 };
+
+/// Execution phase for an SSA pass.
+///
+/// Determines when in the pipeline a pass runs. The scheduler groups passes
+/// by phase and executes them in layer order: `Structure` → `Value` →
+/// `Simplify` → `Inline`. `Normalize` passes run between every layer's
+/// fixpoint iterations rather than as a layer themselves.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PassPhase {
+    /// Structural transformations (e.g., control flow unflattening).
+    Structure,
+    /// Value-level transformations (e.g., constant decryption, string decryption).
+    Value,
+    /// Simplification passes (e.g., proxy resolution, anti-debug neutralization).
+    Simplify,
+    /// Inlining passes (e.g., delegate inlining).
+    Inline,
+    /// Normalization passes (e.g., nop removal, dead code elimination).
+    Normalize,
+}
+
+impl PassPhase {
+    /// Returns the fallback scheduler layer for this phase.
+    ///
+    /// Convention: Structure=0, Value=1, Simplify=2, Inline=3.
+    /// Normalize passes don't participate in layered scheduling.
+    #[must_use]
+    pub fn as_layer(self) -> usize {
+        match self {
+            Self::Structure => 0,
+            Self::Value => 1,
+            Self::Simplify => 2,
+            Self::Inline => 3,
+            Self::Normalize => 0,
+        }
+    }
+}
+
+/// Capability that a pass can provide or require.
+///
+/// The scheduler uses these to build a dependency graph: if pass A provides
+/// `ResolvedStaticFields` and pass B requires it, A is scheduled before B.
+/// Passes that don't declare any capabilities fall back to phase-based ordering.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum PassCapability {
+    /// Static field values have been resolved to concrete constants.
+    ResolvedStaticFields,
+    /// Encrypted strings have been decrypted.
+    DecryptedStrings,
+    /// Control flow flattening has been reversed.
+    RestoredControlFlow,
+    /// Opaque predicates have been simplified/removed.
+    SimplifiedPredicates,
+    /// Proxy/delegate calls have been devirtualized.
+    DevirtualizedCalls,
+    /// Small methods have been inlined at call sites.
+    InlinedMethods,
+}
 
 /// Describes the extent of modifications a pass makes to the SSA function.
 ///
@@ -197,5 +262,37 @@ pub trait SsaPass: Send + Sync {
     /// Get a description of what this pass does.
     fn description(&self) -> &'static str {
         "No description available"
+    }
+
+    /// Capabilities this pass provides after successful execution.
+    ///
+    /// The scheduler uses this to determine which passes can run after this one.
+    /// Passes that don't override this return an empty slice and are scheduled
+    /// based on their fallback phase.
+    fn provides(&self) -> &[PassCapability] {
+        &[]
+    }
+
+    /// Capabilities this pass requires before it can run.
+    ///
+    /// The scheduler ensures all providers of required capabilities are
+    /// scheduled in earlier layers. If no provider is registered for a
+    /// required capability, the requirement is ignored (allows the pass
+    /// to run at its fallback layer).
+    fn requires(&self) -> &[PassCapability] {
+        &[]
+    }
+
+    /// Whether this pass requires a full scan of all methods every iteration.
+    ///
+    /// If `true`, the scheduler calls `run_on_method` for every method with SSA,
+    /// regardless of dirty tracking state. If `false` (default), the scheduler
+    /// only processes methods in the dirty set.
+    ///
+    /// Most passes operate on individual methods independently and should use
+    /// the default. Only passes that read other methods' SSA or need whole-program
+    /// visibility should return `true`.
+    fn requires_full_scan(&self) -> bool {
+        false
     }
 }

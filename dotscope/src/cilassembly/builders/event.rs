@@ -5,7 +5,7 @@
 //! the existing low-level builders to provide a fluent, high-level API for various event patterns.
 
 use crate::{
-    cilassembly::{ChangeRefRc, CilAssembly},
+    cilassembly::{builders::method::MethodBuilder, ChangeRefRc, CilAssembly},
     metadata::{
         signatures::{encode_field_signature, SignatureField, TypeSignature},
         tables::{
@@ -16,8 +16,6 @@ use crate::{
     },
     Error, Result,
 };
-
-use super::method::MethodBuilder;
 
 /// Event implementation strategy.
 pub enum EventImplementation {

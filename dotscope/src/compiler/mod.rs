@@ -18,12 +18,13 @@
 //! │    ├─ Method summaries         known values, dead methods)       │
 //! │    └─ EventLog                                                   │
 //! │                                                                  │
-//! │  PassScheduler               4-phase fixpoint execution          │
-//! │    ├─ Phase 1: Structure      (CFF unflattening)                 │
-//! │    ├─ Phase 2: Value          (decryption)                       │
-//! │    ├─ Phase 3: Simplify       (predicates, CFG, threading)       │
-//! │    └─ Phase 4: Inline         (small method inlining)            │
-//! │    Each phase: run → normalize → repeat until stable             │
+//! │  PassScheduler               Capability-based layered execution  │
+//! │    ├─ Structure layer         (CFF unflattening)                 │
+//! │    ├─ Value layer             (decryption)                       │
+//! │    ├─ Simplify layer          (predicates, CFG, threading)       │
+//! │    ├─ Inline layer            (small method inlining)            │
+//! │    └─ Normalize passes        (DCE, const prop, GVN, etc.)      │
+//! │    Each layer: run → normalize → repeat until stable             │
 //! │                                                                  │
 //! │  SsaPass trait               Interface for all passes            │
 //! │    ├─ run_on_method()         Per-method transformation          │
@@ -53,18 +54,20 @@ mod events;
 mod pass;
 mod passes;
 mod scheduler;
+mod state;
 mod summary;
 
 pub use codegen::{CompilationResult, SsaCodeGenerator};
 pub use context::CompilerContext;
 pub use events::{DerivedStats, Event, EventKind, EventLog};
-pub use pass::{ModificationScope, SsaPass};
+pub use pass::{ModificationScope, PassCapability, PassPhase, SsaPass};
 pub use passes::{
     AlgebraicSimplificationPass, BlockMergingPass, ConstantPropagationPass,
     ControlFlowSimplificationPass, CopyPropagationPass, DeadCodeEliminationPass,
     DeadMethodEliminationPass, GlobalValueNumberingPass, InliningPass, JumpThreadingPass, LicmPass,
-    LoopCanonicalizationPass, OpaquePredicatePass, PredicateResult, ReassociationPass,
-    StrengthReductionPass, ValueRangePropagationPass,
+    LoopCanonicalizationPass, OpaquePredicatePass, PredicateResult, ProxyDevirtualizationPass,
+    ReassociationPass, StrengthReductionPass, ValueRangePropagationPass,
 };
 pub use scheduler::PassScheduler;
+pub use state::ProcessingState;
 pub use summary::{CallSiteInfo, MethodSummary, ParameterSummary};

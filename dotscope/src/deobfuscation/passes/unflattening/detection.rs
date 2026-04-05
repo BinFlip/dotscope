@@ -17,18 +17,21 @@
 //! The confidence score combines these signals to distinguish CFF from normal
 //! loops or state machines.
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::VecDeque;
 
 use crate::{
-    analysis::{SsaFunction, SsaOp, SsaVarId},
+    analysis::{SsaFunction, SsaOp, SsaVarId, VariableOrigin},
     deobfuscation::passes::unflattening::{
         dispatcher::{analyze_switch_dispatcher, Dispatcher, DispatcherInfo},
         statevar::{identify_state_variable, StateVariable},
         UnflattenConfig,
     },
-    utils::graph::{
-        algorithms::{compute_dominators, DominatorTree},
-        GraphBase, NodeId, Successors,
+    utils::{
+        graph::{
+            algorithms::{compute_dominators, DominatorTree},
+            GraphBase, NodeId, Successors,
+        },
+        BitSet,
     },
 };
 
@@ -181,7 +184,7 @@ pub struct CffPattern {
     pub state_var: Option<StateVariable>,
 
     /// Blocks that are part of the CFF structure (case blocks).
-    pub case_blocks: HashSet<usize>,
+    pub case_blocks: BitSet,
 
     /// Entry block (before dispatcher, if separate).
     ///
@@ -196,7 +199,7 @@ pub struct CffPattern {
     pub entry_points: Vec<EntryPoint>,
 
     /// Exit blocks (leave the CFF structure).
-    pub exit_blocks: HashSet<usize>,
+    pub exit_blocks: BitSet,
 
     /// Confidence score (0.0 - 1.0).
     pub confidence: f64,
@@ -299,8 +302,53 @@ impl<'a> CffDetector<'a> {
     /// without the full CFF pattern metadata.
     pub fn detect_best(&mut self) -> Option<Dispatcher> {
         let pattern = self.detect()?;
+        Self::pattern_to_dispatcher(&pattern)
+    }
 
-        // Convert CffPattern to Dispatcher
+    /// Detects all CFF dispatchers in the function.
+    ///
+    /// Returns all `Dispatcher`s found, sorted by confidence (highest first).
+    /// Unlike [`detect_best`](Self::detect_best) which returns only the single
+    /// best dispatcher, this method returns all candidates that pass analysis.
+    /// The caller is responsible for filtering by confidence threshold.
+    pub fn detect_all_dispatchers(&mut self) -> Vec<Dispatcher> {
+        let patterns = self.detect_all();
+        patterns
+            .iter()
+            .filter_map(Self::pattern_to_dispatcher)
+            .collect()
+    }
+
+    /// Detects all CFF patterns in the function.
+    ///
+    /// Returns all `CffPattern`s found, sorted by confidence (highest first).
+    fn detect_all(&mut self) -> Vec<CffPattern> {
+        if self.ssa.block_count() < 4 {
+            return Vec::new();
+        }
+
+        let candidates = self.find_dispatcher_candidates();
+        if candidates.is_empty() {
+            return Vec::new();
+        }
+
+        let mut patterns: Vec<CffPattern> = candidates
+            .into_iter()
+            .filter_map(|block_idx| self.analyze_dispatcher_candidate(block_idx))
+            .collect();
+
+        // Sort by confidence (highest first)
+        patterns.sort_by(|a, b| {
+            b.confidence
+                .partial_cmp(&a.confidence)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
+        patterns
+    }
+
+    /// Converts a `CffPattern` to a `Dispatcher`.
+    fn pattern_to_dispatcher(pattern: &CffPattern) -> Option<Dispatcher> {
         match &pattern.dispatcher {
             DispatcherInfo::Switch {
                 block,
@@ -311,7 +359,6 @@ impl<'a> CffDetector<'a> {
             } => {
                 let mut dispatcher = Dispatcher::new(*block, *switch_var, cases.clone(), *default);
 
-                // Set state phi if identified
                 if let Some(ref state_var) = pattern.state_var {
                     if let Some(phi_var) = state_var.dispatcher_var {
                         dispatcher = dispatcher.with_state_phi(phi_var);
@@ -330,7 +377,6 @@ impl<'a> CffDetector<'a> {
                 comparisons,
                 default,
             } => {
-                // Convert if-else chain to dispatcher format
                 let cases: Vec<usize> = comparisons.iter().map(|(_, target)| *target).collect();
                 let default_block = default.unwrap_or(*head_block);
 
@@ -352,8 +398,6 @@ impl<'a> CffDetector<'a> {
                 jump_table,
                 ..
             } => {
-                // Convert computed jump to dispatcher format
-                // Use first target as default since computed jumps don't have a clear default
                 let default_block = jump_table.first().copied().unwrap_or(0);
 
                 let mut dispatcher =
@@ -439,6 +483,22 @@ impl<'a> CffDetector<'a> {
             .any(|instr| matches!(instr.op(), SsaOp::Switch { .. }));
 
         if has_switch {
+            // Reject switches on method arguments — they are user switches
+            // (e.g., switch on a parameter in DemoSwitch), not CFF dispatchers.
+            // Arguments are immutable and cannot be CFF state variables.
+            let switch_on_argument = block.instructions().iter().any(|instr| {
+                if let SsaOp::Switch { value, .. } = instr.op() {
+                    self.ssa
+                        .variable(*value)
+                        .is_some_and(|v| matches!(v.origin(), VariableOrigin::Argument(_)))
+                } else {
+                    false
+                }
+            });
+            if switch_on_argument {
+                return false;
+            }
+
             // Check predecessor count (should have many back edges).
             // block_predecessors excludes self-loops, but a switch targeting itself
             // is a valid CFF back-edge (e.g., x86-resolved CFF where case blocks
@@ -476,7 +536,10 @@ impl<'a> CffDetector<'a> {
         let state_var = identify_state_variable(self.ssa, block_idx, dispatcher.dispatch_var());
 
         // Find case blocks (targets of the dispatcher)
-        let case_blocks: HashSet<usize> = dispatcher.all_targets().into_iter().collect();
+        let mut case_blocks = BitSet::new(self.ssa.block_count());
+        for target in dispatcher.all_targets() {
+            case_blocks.insert(target);
+        }
 
         // Find exit blocks (blocks that leave the CFF structure)
         let exit_blocks = self.find_exit_blocks(block_idx, &case_blocks);
@@ -509,17 +572,13 @@ impl<'a> CffDetector<'a> {
     }
 
     /// Finds blocks that exit the CFF structure.
-    fn find_exit_blocks(
-        &self,
-        dispatcher_block: usize,
-        case_blocks: &HashSet<usize>,
-    ) -> HashSet<usize> {
-        let mut exits = HashSet::new();
+    fn find_exit_blocks(&self, dispatcher_block: usize, case_blocks: &BitSet) -> BitSet {
+        let mut exits = BitSet::new(self.ssa.block_count());
 
         // Check successors of case blocks that don't go back to dispatcher
-        for &case_block in case_blocks {
+        for case_block in case_blocks.iter() {
             for succ in self.ssa.block_successors(case_block) {
-                if succ != dispatcher_block && !case_blocks.contains(&succ) {
+                if succ != dispatcher_block && !case_blocks.contains(succ) {
                     exits.insert(succ);
                 }
             }
@@ -556,7 +615,7 @@ impl<'a> CffDetector<'a> {
     fn find_entry_points(
         &self,
         dispatcher_block: usize,
-        case_blocks: &HashSet<usize>,
+        case_blocks: &BitSet,
         state_var: Option<&StateVariable>,
     ) -> Vec<EntryPoint> {
         let mut entries = Vec::new();
@@ -565,7 +624,7 @@ impl<'a> CffDetector<'a> {
         // Collect non-case-block predecessors as potential entry points
         let entry_blocks: Vec<usize> = preds
             .iter()
-            .filter(|&&pred| !case_blocks.contains(&pred))
+            .filter(|&&pred| !case_blocks.contains(pred))
             .copied()
             .collect();
 
@@ -721,8 +780,8 @@ impl<'a> CffDetector<'a> {
         dispatcher_block: usize,
         dispatcher: &DispatcherInfo,
         state_var: Option<&StateVariable>,
-        case_blocks: &HashSet<usize>,
-        exit_blocks: &HashSet<usize>,
+        case_blocks: &BitSet,
+        exit_blocks: &BitSet,
     ) -> f64 {
         // Ensure dominator tree is computed before we start (avoids borrow issues).
         let _ = self.get_dom_tree();
@@ -730,34 +789,35 @@ impl<'a> CffDetector<'a> {
         let ssa = self.ssa;
 
         let mut score = 0.0;
-        let case_count = case_blocks.len();
+        let case_count = case_blocks.count();
+        let w = &self.config.confidence_weights;
 
         // Signal 1: Number of case blocks (more = more likely CFF)
         if case_count >= 3 {
-            score += 0.10;
+            score += w.case_count_base;
         }
         if case_count >= 5 {
-            score += 0.05;
+            score += w.case_count_bonus;
         }
         if case_count >= 10 {
-            score += 0.05;
+            score += w.case_count_bonus;
         }
 
         // Signal 2: Has state variable with phi node
         if let Some(sv) = state_var {
             if sv.dispatcher_var.is_some() {
-                score += 0.15;
+                score += w.state_variable;
             }
             if sv.def_count() >= case_count.saturating_sub(1) {
                 // State updated in most case blocks
-                score += 0.10;
+                score += w.state_update_coverage;
             }
         }
 
         // Signal 3: Dispatcher has many predecessors (back edges)
         let pred_count = ssa.block_predecessors(dispatcher_block).len();
         if pred_count >= case_count / 2 {
-            score += 0.10;
+            score += w.predecessor_ratio;
         }
 
         // Signal 4: Case blocks mostly reach back to dispatcher (transitively)
@@ -769,40 +829,49 @@ impl<'a> CffDetector<'a> {
         let dispatcher_node = NodeId::new(dispatcher_block);
         let back_edge_count = case_blocks
             .iter()
-            .filter(|&&b| can_reach_dispatcher(ssa, b, dispatcher_block, dispatcher_node, dom_tree))
+            .filter(|&b| {
+                can_reach_dispatcher(
+                    ssa,
+                    b,
+                    dispatcher_block,
+                    dispatcher_node,
+                    dom_tree,
+                    self.config.max_backedge_depth,
+                )
+            })
             .count();
         // Safe: counts are small integers, precision loss is negligible for scoring
         #[allow(clippy::cast_precision_loss)]
         let back_edge_ratio = back_edge_count as f64 / case_count.max(1) as f64;
-        score += back_edge_ratio * 0.10;
+        score += back_edge_ratio * w.back_edge_ratio;
 
         // Signal 5: Has exit blocks (function eventually returns)
         if !exit_blocks.is_empty() {
-            score += 0.05;
+            score += w.exit_blocks;
         }
 
         // Signal 6: Uses switch instruction (typical for CFF)
         if matches!(dispatcher, DispatcherInfo::Switch { .. }) {
-            score += 0.10;
+            score += w.switch_bonus;
         }
 
         // Signal 7: Has state transform (modulo is very strong indicator)
         let transform = dispatcher.transform();
         if transform.modulo_divisor().is_some() {
-            score += 0.10;
+            score += w.modulo_bonus;
         }
 
         // Signal 8: Dominance - dispatcher should dominate most case blocks
         let dominated_count = case_blocks
             .iter()
-            .filter(|&&case_block| {
+            .filter(|&case_block| {
                 case_block == dispatcher_block
                     || dom_tree.dominates(dispatcher_node, NodeId::new(case_block))
             })
             .count();
         #[allow(clippy::cast_precision_loss)]
-        let dominance_ratio = dominated_count as f64 / case_blocks.len().max(1) as f64;
-        score += dominance_ratio * 0.20;
+        let dominance_ratio = dominated_count as f64 / case_blocks.count().max(1) as f64;
+        score += dominance_ratio * w.dominance_ratio;
 
         // Signal 9: Method coverage — fraction of ALL blocks dominated by this candidate.
         // A real CFF dispatcher dominates most of the function (it controls nearly all
@@ -816,7 +885,7 @@ impl<'a> CffDetector<'a> {
                 .count();
             #[allow(clippy::cast_precision_loss)]
             let coverage = dominated_total as f64 / total_blocks as f64;
-            score += coverage * 0.10;
+            score += coverage * w.method_coverage;
         }
 
         score.min(1.0)
@@ -837,15 +906,15 @@ fn can_reach_dispatcher(
     dispatcher_block: usize,
     dispatcher_node: NodeId,
     dom_tree: &DominatorTree,
+    max_depth: usize,
 ) -> bool {
     // Direct check first (fast path)
     if ssa.block_successors(from).contains(&dispatcher_block) {
         return true;
     }
 
-    const MAX_DEPTH: usize = 10;
     let mut queue = VecDeque::new();
-    let mut visited = HashSet::new();
+    let mut visited = BitSet::new(ssa.block_count());
 
     for succ in ssa.block_successors(from) {
         if succ != from {
@@ -858,7 +927,7 @@ fn can_reach_dispatcher(
         if block == dispatcher_block {
             return true;
         }
-        if depth >= MAX_DEPTH || !visited.insert(block) {
+        if depth >= max_depth || !visited.insert(block) {
             continue;
         }
         // Only follow blocks dominated by the dispatcher (stay within the CFF region)
@@ -866,7 +935,7 @@ fn can_reach_dispatcher(
             continue;
         }
         for succ in ssa.block_successors(block) {
-            if !visited.contains(&succ) {
+            if !visited.contains(succ) {
                 queue.push_back((succ, depth + 1));
             }
         }
@@ -876,11 +945,10 @@ fn can_reach_dispatcher(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
-
     use crate::{
         analysis::SsaVarId,
         deobfuscation::passes::unflattening::dispatcher::{DispatcherInfo, StateTransform},
+        utils::BitSet,
     };
 
     use super::{CffPattern, EntryCondition, EntryPoint};
@@ -898,10 +966,16 @@ mod tests {
                 transform: StateTransform::Modulo(5),
             },
             state_var: None,
-            case_blocks: HashSet::from([1, 2, 3, 4, 5, 6]),
+            case_blocks: {
+                let mut cb = BitSet::new(7);
+                for i in [1, 2, 3, 4, 5, 6] {
+                    cb.insert(i);
+                }
+                cb
+            },
             entry_block: None,
             entry_points: vec![EntryPoint::with_state(0, 42)],
-            exit_blocks: HashSet::new(),
+            exit_blocks: BitSet::new(7),
             confidence: 0.8,
         };
 
@@ -941,10 +1015,20 @@ mod tests {
                 transform: StateTransform::Identity,
             },
             state_var: None,
-            case_blocks: HashSet::from([2, 3, 4]),
+            case_blocks: {
+                let mut cb = BitSet::new(7);
+                for i in [2, 3, 4] {
+                    cb.insert(i);
+                }
+                cb
+            },
             entry_block: None,
             entry_points: vec![EntryPoint::with_state(0, 10), EntryPoint::with_state(5, 20)],
-            exit_blocks: HashSet::from([6]),
+            exit_blocks: {
+                let mut eb = BitSet::new(7);
+                eb.insert(6);
+                eb
+            },
             confidence: 0.7,
         };
 

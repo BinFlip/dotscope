@@ -21,7 +21,8 @@ use std::any::Any;
 
 use crate::{
     cilassembly::CleanupRequest,
-    deobfuscation::techniques::{Detection, Evidence, PassPhase, Technique, TechniqueCategory},
+    compiler::PassPhase,
+    deobfuscation::techniques::{Detection, Evidence, Technique, TechniqueCategory},
     metadata::token::Token,
     CilObject,
 };
@@ -35,11 +36,26 @@ pub struct NopsFindings {
 
 /// Detects BitMono's BillionNops dead method inflation.
 ///
-/// Identifies methods in `<Module>` that contain over 50,000 `nop` instructions,
-/// which are injected by BitMono's BillionNops protection purely to inflate
-/// assembly size and degrade analysis performance. These methods are marked
-/// for removal during cleanup.
-pub struct BitMonoNops;
+/// Identifies methods in `<Module>` that contain over a configurable threshold
+/// of `nop` instructions (default: 50,000), which are injected by BitMono's
+/// BillionNops protection purely to inflate assembly size and degrade analysis
+/// performance. These methods are marked for removal during cleanup.
+pub struct BitMonoNops {
+    /// Minimum NOP instruction count to classify a `<Module>` method as dead.
+    nop_threshold: usize,
+}
+
+impl BitMonoNops {
+    /// Creates a new detector with the given NOP threshold.
+    ///
+    /// # Arguments
+    ///
+    /// * `nop_threshold` - Methods with more than this many `nop` instructions
+    ///   are flagged as BillionNops dead methods.
+    pub fn new(nop_threshold: usize) -> Self {
+        Self { nop_threshold }
+    }
+}
 
 impl Technique for BitMonoNops {
     fn id(&self) -> &'static str {
@@ -72,7 +88,7 @@ impl Technique for BitMonoNops {
                 .filter(|i| i.mnemonic == "nop")
                 .count();
 
-            if nop_count > 50_000 {
+            if nop_count > self.nop_threshold {
                 dead_methods.push(method.token);
             }
         }
@@ -117,15 +133,15 @@ mod tests {
     fn test_detect_positive() {
         let assembly = load_sample("tests/samples/packers/bitmono/0.39.0/bitmono_combined.exe");
 
-        let technique = BitMonoNops;
+        let technique = BitMonoNops::new(50_000);
         let detection = technique.detect(&assembly);
 
         // BitMonoNops is an SSA technique. The IL-level detect() looks for
         // <Module> methods with 50K+ nop instructions. The combined sample
         // may or may not contain BillionNops. Assert consistency.
-        if detection.detected {
+        if detection.is_detected() {
             assert!(
-                !detection.evidence.is_empty(),
+                !detection.evidence().is_empty(),
                 "Positive detection should include evidence"
             );
         }
@@ -135,11 +151,11 @@ mod tests {
     fn test_detect_negative() {
         let assembly = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
 
-        let technique = BitMonoNops;
+        let technique = BitMonoNops::new(50_000);
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "BitMonoNops should not detect nop methods in a non-BitMono assembly"
         );
     }

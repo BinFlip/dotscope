@@ -56,6 +56,9 @@ pub enum TraceEvent {
         operand: Option<String>,
         /// Evaluation stack depth before execution.
         stack_depth: usize,
+        /// Top stack values after execution (when `trace_stack_values` is enabled).
+        /// Contains up to 3 values from the top of the stack, formatted as strings.
+        stack_values: Option<Vec<String>>,
     },
 
     /// A method was called.
@@ -272,20 +275,32 @@ impl TraceEvent {
                 mnemonic,
                 operand,
                 stack_depth,
+                stack_values,
             } => {
                 let operand_str = operand
                     .as_ref()
                     .map(|o| format!(r#","operand":"{}""#, escape_json(o)))
                     .unwrap_or_default();
+                let stack_str = stack_values
+                    .as_ref()
+                    .map(|vals| {
+                        let items: Vec<String> = vals
+                            .iter()
+                            .map(|v| format!(r#""{}""#, escape_json(v)))
+                            .collect();
+                        format!(r#","stack":[{}]"#, items.join(","))
+                    })
+                    .unwrap_or_default();
                 format!(
-                    r#"{{{}"type":"instruction","method":"0x{:08X}","offset":"0x{:04X}","opcode":"0x{:04X}","mnemonic":"{}","stack_depth":{}{}}}"#,
+                    r#"{{{}"type":"instruction","method":"0x{:08X}","offset":"0x{:04X}","opcode":"0x{:04X}","mnemonic":"{}","stack_depth":{}{}{}}}"#,
                     context_prefix,
                     method.value(),
                     offset,
                     opcode,
                     escape_json(mnemonic),
                     stack_depth,
-                    operand_str
+                    operand_str,
+                    stack_str
                 )
             }
             TraceEvent::MethodCall {
@@ -555,6 +570,7 @@ mod tests {
             mnemonic: "call".to_string(),
             operand: Some("0x0A000001".to_string()),
             stack_depth: 2,
+            stack_values: None,
         };
 
         let json = event.to_json();

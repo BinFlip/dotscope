@@ -5,7 +5,7 @@
 //! the existing low-level builders to provide a fluent, high-level API.
 
 use crate::{
-    cilassembly::{ChangeRefRc, CilAssembly},
+    cilassembly::{builders::method_body::MethodBodyBuilder, ChangeRefRc, CilAssembly},
     metadata::{
         method::{MethodAccessFlags, MethodImplCodeType, MethodModifiers},
         signatures::{encode_method_signature, SignatureMethod, SignatureParameter, TypeSignature},
@@ -14,8 +14,6 @@ use crate::{
     },
     Result,
 };
-
-use super::method_body::MethodBodyBuilder;
 
 /// High-level builder for creating complete method definitions.
 ///

@@ -63,8 +63,10 @@
 
 #[cfg(feature = "legacy-crypto")]
 use crate::utils::{compute_md5, compute_sha1};
-use crate::utils::{compute_sha256, compute_sha384, compute_sha512};
-use crate::Result;
+use crate::{
+    utils::{compute_sha256, compute_sha384, compute_sha512},
+    Result,
+};
 use std::fmt::Write;
 
 /// Convert bytes to lowercase hexadecimal string representation

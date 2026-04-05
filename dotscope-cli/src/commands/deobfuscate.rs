@@ -84,7 +84,7 @@ pub fn run(path: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
 fn run_single(path: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
     let config = build_config(opts);
 
-    let mut engine = DeobfuscationEngine::new(config);
+    let engine = DeobfuscationEngine::new(config);
     let (deobfuscated, result) = engine
         .process_file(path)
         .with_context(|| format!("deobfuscation failed: {}", path.display()))?;
@@ -148,7 +148,7 @@ fn run_recursive(dir: &Path, opts: &DeobfuscateOptions) -> anyhow::Result<()> {
     let config = build_config(opts);
 
     let (reports, fail_count) = process_directory(dir, |file| {
-        let mut engine = DeobfuscationEngine::new(config.clone());
+        let engine = DeobfuscationEngine::new(config.clone());
         let (deobfuscated, result) = engine
             .process_file(file)
             .with_context(|| format!("deobfuscation failed: {}", file.display()))?;
@@ -231,10 +231,10 @@ fn build_config(opts: &DeobfuscateOptions) -> EngineConfig {
     };
 
     if let Some(iters) = opts.max_iterations {
-        config.max_iterations = iters;
+        config.iterations.max_ssa_iterations = iters;
     }
     if let Some(instrs) = opts.max_instructions {
-        config.emulation_max_instructions = instrs;
+        config.emulation.max_instructions = instrs;
     }
     if opts.no_cleanup {
         config.cleanup = CleanupConfig::disabled();

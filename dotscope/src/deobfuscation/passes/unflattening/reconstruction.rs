@@ -46,12 +46,16 @@
 //!
 //! We keep `merge_block` for path A and clone it as `merge_block'` for path B.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
     analysis::{SsaBlock, SsaFunction, SsaOp, SsaVarId},
     deobfuscation::passes::unflattening::tracer::{TraceNode, TraceTerminator, TraceTree},
+    utils::BitSet,
 };
+
+type PhiOperands = Vec<(usize, SsaVarId)>;
+type BlockPhiData = Vec<(usize, Vec<(SsaVarId, PhiOperands)>)>;
 
 /// Result of unflattening a CFG.
 #[derive(Debug)]
@@ -62,25 +66,39 @@ pub struct ReconstructionResult {
     pub user_branches_preserved: usize,
     /// Number of blocks in the function.
     pub block_count: usize,
+    /// Whether the dispatcher block is still needed by unresolved blocks.
+    ///
+    /// When `true`, the unflattening was only partial — some blocks still
+    /// route through the dispatcher because their dispatch values couldn't
+    /// be resolved. The caller should skip applying the partial result to
+    /// avoid corrupting SSA phi nodes at the dispatcher merge point.
+    pub dispatcher_still_needed: bool,
 }
 
 /// A plan for patching the SSA to remove CFF.
 #[derive(Debug)]
 pub struct PatchPlan {
-    /// Dispatcher block index.
-    pub dispatcher_block: usize,
+    /// Dispatcher block indices (one per CFF dispatcher in the method).
+    pub dispatcher_blocks: Vec<usize>,
 
     /// Variables that are state-related (CFF machinery).
-    pub state_tainted: HashSet<SsaVarId>,
+    pub state_tainted: BitSet,
 
     /// Block redirects: (source_block, new_target).
     /// These blocks currently jump to dispatcher but should jump to new_target.
     pub redirects: Vec<(usize, usize)>,
 
+    /// Source blocks whose redirects originated from StateTransition nodes.
+    /// Redirects from LoopBack nodes (which may be cross-contamination from
+    /// exploring other dispatchers' switches as user switches) are NOT in
+    /// this set. Used to filter out cross-contamination in multi-dispatcher
+    /// methods.
+    state_transition_sources: BTreeSet<usize>,
+
     /// Blocks that need cloning: merge_block -> [(predecessor, target), ...]
     /// These are blocks where multiple paths converge with different targets.
     /// We clone the merge block for each path.
-    pub clone_requests: HashMap<usize, Vec<(usize, usize)>>,
+    pub clone_requests: BTreeMap<usize, Vec<(usize, usize)>>,
 
     /// Blocks in execution order (for debugging/verification).
     pub execution_order: Vec<usize>,
@@ -93,30 +111,56 @@ pub struct PatchPlan {
 }
 
 impl PatchPlan {
-    fn new(dispatcher_block: usize, state_tainted: HashSet<SsaVarId>) -> Self {
+    fn new(dispatcher_block: usize, state_tainted: BitSet) -> Self {
         Self {
-            dispatcher_block,
+            dispatcher_blocks: vec![dispatcher_block],
             state_tainted,
             redirects: Vec::new(),
-            clone_requests: HashMap::new(),
+            state_transition_sources: BTreeSet::new(),
+            clone_requests: BTreeMap::new(),
             execution_order: Vec::new(),
             state_transitions_removed: 0,
             user_branches_preserved: 0,
         }
     }
 
+    /// Returns true if the given block is one of the dispatcher blocks.
+    pub fn is_dispatcher_block(&self, block: usize) -> bool {
+        self.dispatcher_blocks.contains(&block)
+    }
+
     fn add_redirect(&mut self, source: usize, target: usize, predecessor: Option<usize>) {
+        // Self-redirects are always wrong — they create infinite loops.
+        // They occur when the evaluator can't resolve the next CFF state
+        // (e.g., handler CFF where the second dispatch depends on values
+        // the evaluator lost track of). Skip them silently.
+        if source == target {
+            return;
+        }
         // Check for conflict: same source with different target
         if let Some(&(_, existing_target)) = self.redirects.iter().find(|&&(s, _)| s == source) {
             if existing_target != target {
                 // Conflict! This source is a merge point needing cloning.
-                // Add both the existing and new paths to clone requests
+                // Add both the existing and new paths to clone requests.
                 let entry = self.clone_requests.entry(source).or_default();
 
-                // Find the predecessor for the existing redirect (if we have it)
-                // For now, we'll add the new one; the existing one was added when first seen
+                // Ensure the original (first) redirect's path is present.
+                // The first redirect may have been added without a predecessor
+                // (e.g., from the root-level trace where external_predecessor
+                // is None), so its entry wasn't recorded in clone_requests.
+                // The first path keeps the original block during cloning (its
+                // predecessor isn't used for redirect, only its target matters).
+                if !entry.iter().any(|(_, t)| *t == existing_target) {
+                    entry.push((usize::MAX, existing_target));
+                }
+
                 if let Some(pred) = predecessor {
-                    if !entry.iter().any(|(p, _)| *p == pred) {
+                    // Deduplicate by (predecessor, target) pair — not just
+                    // predecessor. A user branch's TRUE and FALSE paths can
+                    // share the same predecessor (the branch block) but route
+                    // the merge block to different CFF targets. Both entries
+                    // are needed for correct cloning.
+                    if !entry.iter().any(|(p, t)| *p == pred && *t == target) {
                         entry.push((pred, target));
                     }
                 }
@@ -156,7 +200,7 @@ impl PatchPlan {
     }
 
     fn add_to_execution_order(&mut self, block: usize) {
-        if !self.execution_order.contains(&block) && block != self.dispatcher_block {
+        if !self.execution_order.contains(&block) && !self.is_dispatcher_block(block) {
             self.execution_order.push(block);
         }
     }
@@ -194,7 +238,119 @@ pub fn extract_patch_plan(tree: &TraceTree) -> Option<PatchPlan> {
         extract_redirects_from_node(&handler_trace.root, dispatcher.block, &mut plan, None);
     }
 
+    // Filter out cross-contamination redirects. When tracing for one dispatcher,
+    // the tracer explores OTHER dispatchers' switches as user switches. LoopBack
+    // terminators at those foreign switches generate spurious redirects for blocks
+    // that don't belong to this dispatcher's CFF region. Only keep redirects that
+    // originated from StateTransition nodes (the actual CFF state machine redirects).
+    plan.redirects
+        .retain(|&(source, _)| plan.state_transition_sources.contains(&source));
+    plan.clone_requests
+        .retain(|source, _| plan.state_transition_sources.contains(source));
+
     Some(plan)
+}
+
+/// Merges multiple patch plans into a single combined plan.
+///
+/// This is used when a method contains multiple independent CFF dispatchers
+/// (e.g., one per exception handler region in ConfuserEx). Each dispatcher
+/// is traced independently, producing its own patch plan. This function
+/// combines them so all patches are applied in a single pass before
+/// `rebuild_ssa()`, avoiding the block renumbering corruption that occurs
+/// when dispatchers are processed iteratively.
+///
+/// # Arguments
+///
+/// * `plans` - Individual patch plans, one per dispatcher.
+///
+/// # Returns
+///
+/// A single `PatchPlan` with all dispatcher blocks, redirects, taint sets,
+/// and clone requests merged.
+pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
+    if plans.is_empty() {
+        return PatchPlan {
+            dispatcher_blocks: Vec::new(),
+            state_tainted: BitSet::new(0),
+            redirects: Vec::new(),
+            state_transition_sources: BTreeSet::new(),
+            clone_requests: BTreeMap::new(),
+            execution_order: Vec::new(),
+            state_transitions_removed: 0,
+            user_branches_preserved: 0,
+        };
+    }
+
+    if plans.len() == 1 {
+        return plans.into_iter().next().unwrap();
+    }
+
+    // Determine the tainted BitSet size (all plans share the same SSA, so same size)
+    let taint_size = plans
+        .iter()
+        .map(|p| p.state_tainted.len())
+        .max()
+        .unwrap_or(0);
+    let mut merged = PatchPlan {
+        dispatcher_blocks: Vec::new(),
+        state_tainted: BitSet::new(taint_size),
+        redirects: Vec::new(),
+        state_transition_sources: BTreeSet::new(),
+        clone_requests: BTreeMap::new(),
+        execution_order: Vec::new(),
+        state_transitions_removed: 0,
+        user_branches_preserved: 0,
+    };
+
+    for plan in plans {
+        merged.dispatcher_blocks.extend(&plan.dispatcher_blocks);
+        merged.state_tainted.union_with(&plan.state_tainted);
+        merged
+            .state_transition_sources
+            .extend(&plan.state_transition_sources);
+
+        // Merge redirects, checking for conflicts
+        for (source, target) in plan.redirects {
+            if let Some(&(_, existing_target)) =
+                merged.redirects.iter().find(|&&(s, _)| s == source)
+            {
+                if existing_target != target {
+                    log::warn!(
+                        "CFF merge: redirect conflict for block {} (target {} vs {}), keeping first",
+                        source,
+                        existing_target,
+                        target
+                    );
+                    continue;
+                }
+                // Duplicate (same source, same target) — skip
+                continue;
+            }
+            merged.redirects.push((source, target));
+        }
+
+        // Merge clone requests
+        for (block, paths) in plan.clone_requests {
+            merged
+                .clone_requests
+                .entry(block)
+                .or_default()
+                .extend(paths);
+        }
+
+        // Merge execution order (deduplicated)
+        for block in plan.execution_order {
+            if !merged.execution_order.contains(&block) {
+                merged.execution_order.push(block);
+            }
+        }
+
+        merged.state_transitions_removed += plan.state_transitions_removed;
+        merged.user_branches_preserved += plan.user_branches_preserved;
+    }
+
+    merged
 }
 
 /// Recursively extracts redirect information from a trace node.
@@ -265,6 +421,7 @@ fn extract_redirects_from_node(
             if let Some(pred) = pred_block {
                 // This block should redirect to target_block instead of dispatcher
                 plan.add_redirect(pred, *target_block, predecessor_of_pred);
+                plan.state_transition_sources.insert(pred);
                 plan.state_transitions_removed += 1;
             } else if let Some(ext_pred) = external_predecessor {
                 // The sub-trace starts directly at the dispatcher (no preceding user blocks).
@@ -272,6 +429,7 @@ fn extract_redirects_from_node(
                 // to the dispatcher block. Redirect the external predecessor's
                 // dispatcher-targeting edge to the actual target.
                 plan.add_redirect(ext_pred, *target_block, None);
+                plan.state_transition_sources.insert(ext_pred);
                 plan.state_transitions_removed += 1;
             }
 
@@ -319,15 +477,30 @@ fn extract_redirects_from_node(
             plan.add_to_execution_order(*block);
         }
 
-        TraceTerminator::LoopBack { .. } | TraceTerminator::Stopped { .. } => {
-            // LoopBack means we tried to visit target_block again with the same state.
-            // The blocks_visited here is typically just [target_block] since we returned
-            // immediately upon detecting the loop.
+        TraceTerminator::LoopBack { target_block, .. } => {
+            // LoopBack means a loop back-edge through the CFF dispatcher: the
+            // path "source → dispatcher → target" should become a natural loop
+            // edge "source → target".
             //
-            // The actual back-edge redirect was already handled by the parent
-            // StateTransition node. We don't need to add another redirect here.
+            // Usually the parent StateTransition already added this redirect.
+            // However, in CFF patterns where multiple switch cases share the
+            // same target block (e.g., JIEJIE.NET), the parent's pred_block
+            // resolution can yield None, causing it to miss the redirect.
+            // Adding it here as a safety net is always correct — add_redirect
+            // deduplicates identical (source, target) pairs.
             //
-            // Stopped means the trace was halted. Nothing more to extract in either case.
+            // We use external_predecessor (set by the parent call site) as the
+            // redirect source, since this node's blocks_visited is typically
+            // just [target_block] (the loop header / destination, not the source).
+            if let Some(pred) = external_predecessor {
+                plan.add_redirect(pred, *target_block, external_predecessor);
+            }
+            plan.add_to_execution_order(*target_block);
+        }
+
+        TraceTerminator::Stopped { .. } | TraceTerminator::PendingStateTransition { .. } => {
+            // Trace halted due to a limit or unresolvable control flow.
+            // Nothing to extract.
         }
     }
 }
@@ -360,14 +533,17 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
     // Apply safe redirects (blocks that don't need cloning)
     for &(source_block, new_target) in &safe {
         if let Some(block) = ssa.block_mut(source_block) {
-            block.redirect_target(plan.dispatcher_block, new_target);
+            // Try redirecting from any dispatcher block to the new target
+            for &db in &plan.dispatcher_blocks {
+                block.redirect_target(db, new_target);
+            }
         }
     }
 
     // Handle merge points by cloning blocks
     // For each merge block, clone it for all predecessors except the first
     // Track clone mappings: clone_index -> original_index
-    let mut clone_map: HashMap<usize, usize> = HashMap::new();
+    let mut clone_map: BTreeMap<usize, usize> = BTreeMap::new();
     let mut cloned_blocks = Vec::new();
     for (merge_block, paths) in &to_clone {
         if paths.len() < 2 {
@@ -439,7 +615,7 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
         }
 
         // Filter state instructions from the clone
-        filter_state_instructions(&mut cloned, &plan.state_tainted, plan.dispatcher_block);
+        filter_state_instructions(&mut cloned, &plan.state_tainted, &plan.dispatcher_blocks);
 
         // Add the clone to SSA
         ssa.blocks_mut().push(cloned);
@@ -449,7 +625,7 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
     // Unresolved blocks (not redirected or cloned) must keep their CFF machinery
     // so they remain functional. Stripping state instructions from unresolved
     // blocks would remove their Jump-to-dispatcher terminators, orphaning them.
-    let mut patched_blocks: HashSet<usize> = HashSet::new();
+    let mut patched_blocks = BitSet::new(ssa.block_count());
     for &(source, _) in &safe {
         patched_blocks.insert(source);
     }
@@ -457,38 +633,65 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
         patched_blocks.insert(*merge_block);
     }
 
-    for &block_idx in &patched_blocks {
+    for block_idx in patched_blocks.iter() {
+        // Don't filter state instructions from blocks that still have a
+        // switch terminator (including handler CFF dispatchers). The switch
+        // needs its state computation (call + rem.un) to remain functional.
+        // These blocks will either be fully cleared later (when no longer
+        // needed) or their state will be folded by constant propagation.
+        let has_switch = ssa
+            .block(block_idx)
+            .and_then(|b| b.terminator_op())
+            .is_some_and(|op| matches!(op, SsaOp::Switch { .. }));
+        if plan.is_dispatcher_block(block_idx) || has_switch {
+            continue;
+        }
         if let Some(block) = ssa.block_mut(block_idx) {
-            filter_state_instructions(block, &plan.state_tainted, plan.dispatcher_block);
+            filter_state_instructions(block, &plan.state_tainted, &plan.dispatcher_blocks);
         }
     }
 
-    // Only clear the dispatcher if no unresolved blocks still jump to it.
+    // Materialize dispatcher phi resolutions as explicit copies.
+    //
+    // When a case block (e.g., B4) is redirected to bypass the dispatcher and
+    // jump directly to the next case block (e.g., B5), the phi nodes at the
+    // dispatcher carried user values between iterations. Without materializing
+    // these, rebuild_ssa() cannot recover the data flow because the phi
+    // definitions are destroyed when the dispatcher is cleared.
+    //
+    // For each redirected edge (source → new_target), we resolve the phi chain
+    // through dispatcher blocks and insert Copy instructions at the end of the
+    // source block.
+    materialize_dispatcher_phis(ssa, plan, &patched_blocks);
+
+    // Only clear dispatchers if no unresolved blocks still jump to them.
     // When partial unflattening occurs, unresolved blocks need the dispatcher
     // to route their execution through the CFF state machine.
     let dispatcher_still_needed = (0..ssa.block_count()).any(|bi| {
-        !patched_blocks.contains(&bi)
-            && bi != plan.dispatcher_block
+        !patched_blocks.contains(bi)
+            && !plan.is_dispatcher_block(bi)
             && ssa
                 .block(bi)
                 .and_then(|b| b.terminator_op())
                 .is_some_and(|op| match op {
-                    SsaOp::Jump { target } => *target == plan.dispatcher_block,
+                    SsaOp::Jump { target } => plan.is_dispatcher_block(*target),
                     SsaOp::BranchCmp {
                         true_target,
                         false_target,
                         ..
                     } => {
-                        *true_target == plan.dispatcher_block
-                            || *false_target == plan.dispatcher_block
+                        plan.is_dispatcher_block(*true_target)
+                            || plan.is_dispatcher_block(*false_target)
                     }
                     _ => false,
                 })
     });
 
     if !dispatcher_still_needed {
-        if let Some(dispatcher) = ssa.block_mut(plan.dispatcher_block) {
-            dispatcher.clear();
+        for &db in &plan.dispatcher_blocks {
+            if let Some(dispatcher) = ssa.block_mut(db) {
+                dispatcher.clear();
+            }
         }
     }
 
@@ -500,6 +703,7 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
         state_transitions_removed: plan.state_transitions_removed,
         user_branches_preserved: plan.user_branches_preserved,
         block_count: ssa.block_count(),
+        dispatcher_still_needed,
     }
 }
 
@@ -509,31 +713,248 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
 /// - Its output (def) is state-tainted, OR
 /// - Any of its inputs (uses) are state-tainted
 ///
+/// **Exception**: `Const` instructions are always preserved, even if their
+/// def variable is state-tainted. CFF state update constants (e.g.,
+/// `v_state = Const(42)`) become dead code after the dispatcher redirect
+/// and are cleaned up by subsequent dead code elimination passes. Filtering
+/// them here risks removing legitimate user constants (strings, integers)
+/// whose SSA variables were coincidentally tainted through PHI propagation
+/// in combined-protection scenarios (e.g., CFF + string encryption where
+/// resolved string constants share PHI merge points with state variables).
+///
 /// Terminator instructions are NOT filtered (they're handled by redirect).
 fn filter_state_instructions(
     block: &mut SsaBlock,
-    state_tainted: &HashSet<SsaVarId>,
-    dispatcher: usize,
+    state_tainted: &BitSet,
+    dispatcher_blocks: &[usize],
 ) {
     block.instructions_mut().retain(|instr| {
         // Always keep terminators - they're handled separately
         if instr.is_terminator() {
-            // But skip jumps to dispatcher (they've been redirected)
+            // But skip jumps to any dispatcher (they've been redirected)
             if let SsaOp::Jump { target } = instr.op() {
-                if *target == dispatcher {
+                if dispatcher_blocks.contains(target) {
                     return false; // Remove jump to dispatcher
                 }
             }
             return true;
         }
 
-        // Check if instruction is state-tainted
-        let def_tainted = instr.def().is_some_and(|d| state_tainted.contains(&d));
-        let uses_tainted = instr.uses().iter().any(|u| state_tainted.contains(u));
+        // Preserve Const instructions unconditionally. Dead state constants
+        // are removed by later DCE; user constants must survive.
+        if matches!(instr.op(), SsaOp::Const { .. }) {
+            return true;
+        }
 
-        // Keep if NOT tainted
-        !def_tainted && !uses_tainted
+        // Check if instruction is state-tainted
+        let def_tainted = instr
+            .def()
+            .is_some_and(|d| state_tainted.contains(d.index()));
+        let uses_tainted = instr
+            .uses()
+            .iter()
+            .any(|u| state_tainted.contains(u.index()));
+
+        // Remove instructions whose output is state infrastructure.
+        if def_tainted {
+            return false;
+        }
+
+        // For uses-only tainted instructions: preserve Call/CallVirt because
+        // they may compute user-visible values from state-derived constants.
+        // Example: JIEJIE.NET typeof container — `GetTypeInstance(state_index)`
+        // returns a System.Type needed by user code, even though the index
+        // argument is derived from the CFF state machine's Int32ValueContainer.
+        if uses_tainted {
+            return matches!(instr.op(), SsaOp::Call { .. } | SsaOp::CallVirt { .. });
+        }
+
+        true
     });
+}
+
+/// Materializes dispatcher phi resolutions as explicit Copy instructions.
+///
+/// When CFF unflattening redirects a case block to bypass the dispatcher, the
+/// dispatcher's phi nodes — which carried user values between loop iterations —
+/// are about to be destroyed. This function resolves those phis along each
+/// redirected edge and inserts Copy instructions so that `rebuild_ssa()` can
+/// see the data flow.
+///
+/// For a redirected edge `source → new_target` that originally went through
+/// dispatcher blocks `source → D1 → D2 → new_target`, this resolves the phi
+/// chain: for each phi at D2, trace back through D1's phis to find the
+/// concrete value coming from `source`, and insert `phi_result = value` as a
+/// Copy in `source`.
+fn materialize_dispatcher_phis(ssa: &mut SsaFunction, plan: &PatchPlan, patched_blocks: &BitSet) {
+    if plan.dispatcher_blocks.is_empty() {
+        return;
+    }
+
+    // Identify all blocks in the dispatcher loop: the dispatcher blocks themselves
+    // plus any "back-edge" blocks between case blocks and the dispatcher.
+    //
+    // The typical CFF pattern has: case_block → back_edge (B1) → dispatcher (B2).
+    // Both B1 and B2 have phis that carry user values between iterations.
+    //
+    // We detect back-edge blocks by two criteria:
+    // 1. They have phis with operands from patched (case) blocks
+    // 2. They are predecessors of the dispatcher (directly or transitively)
+    let dispatcher_set: BTreeSet<usize> = plan.dispatcher_blocks.iter().copied().collect();
+    let mut loop_blocks: Vec<usize> = plan.dispatcher_blocks.clone();
+    let mut loop_block_set: BTreeSet<usize> = dispatcher_set.clone();
+
+    // Find back-edge blocks: blocks with phis whose operands come from
+    // patched case blocks. These blocks sit between case blocks and the
+    // dispatcher, funneling values through phis.
+    for block_idx in 0..ssa.block_count() {
+        if loop_block_set.contains(&block_idx) {
+            continue;
+        }
+        if patched_blocks.contains(block_idx) {
+            continue;
+        }
+        let Some(block) = ssa.block(block_idx) else {
+            continue;
+        };
+        if block.phi_nodes().is_empty() {
+            continue;
+        }
+        // Check if any phi has an operand from a patched case block
+        let has_patched_predecessor = block.phi_nodes().iter().any(|phi| {
+            phi.operands()
+                .iter()
+                .any(|op| patched_blocks.contains(op.predecessor()))
+        });
+        if has_patched_predecessor {
+            loop_blocks.push(block_idx);
+            loop_block_set.insert(block_idx);
+        }
+    }
+
+    // Sort loop blocks: back-edge blocks first (not in dispatcher_set),
+    // then dispatcher blocks. This ensures we resolve back-edge phis
+    // before dispatcher phis that depend on them.
+    loop_blocks.sort_by_key(|&b| if dispatcher_set.contains(&b) { 1 } else { 0 });
+
+    // Collect the phi data from all loop blocks before mutating.
+    let dispatcher_phis: BlockPhiData = loop_blocks
+        .iter()
+        .filter_map(|&db| {
+            ssa.block(db).map(|block| {
+                let phis = block
+                    .phi_nodes()
+                    .iter()
+                    .filter(|phi| !plan.state_tainted.contains(phi.result().index()))
+                    .map(|phi| {
+                        let operands: Vec<(usize, SsaVarId)> = phi
+                            .operands()
+                            .iter()
+                            .map(|op| (op.predecessor(), op.value()))
+                            .collect();
+                        (phi.result(), operands)
+                    })
+                    .collect();
+                (db, phis)
+            })
+        })
+        .collect();
+
+    if dispatcher_phis.is_empty() {
+        return;
+    }
+
+    // Build a lookup: loop_block → (phi_result → operands)
+    let mut phi_lookup: BTreeMap<usize, BTreeMap<SsaVarId, Vec<(usize, SsaVarId)>>> =
+        BTreeMap::new();
+    for (db, phis) in &dispatcher_phis {
+        let map: BTreeMap<SsaVarId, Vec<(usize, SsaVarId)>> = phis
+            .iter()
+            .map(|(result, operands)| (*result, operands.clone()))
+            .collect();
+        phi_lookup.insert(*db, map);
+    }
+
+    let loop_block_set: BTreeSet<usize> = loop_blocks.iter().copied().collect();
+
+    // For each dispatcher phi, find the concrete value: the operand from a
+    // patched case block that provides a NON-pass-through value (i.e., a value
+    // that is NOT itself a dispatcher-phi result).
+    //
+    // Then substitute all uses of the phi-result variable in non-provider
+    // blocks with the concrete value. This eliminates stale references to
+    // variables defined only by the now-destroyed dispatcher phis.
+    let phi_result_set: BTreeSet<SsaVarId> = dispatcher_phis
+        .iter()
+        .flat_map(|(_, phis)| phis.iter().map(|(r, _)| *r))
+        .collect();
+
+    // For each phi, find which block(s) provide a concrete (non-phi-result) value
+    let mut concrete_for_phi: BTreeMap<SsaVarId, (usize, SsaVarId)> = BTreeMap::new();
+    for (_, phis) in &dispatcher_phis {
+        for (phi_result, operands) in phis {
+            for &(pred, val) in operands {
+                if !patched_blocks.contains(pred) || loop_block_set.contains(&pred) {
+                    continue;
+                }
+                // Pass-through: val is the phi result itself or another phi result
+                if val == *phi_result || phi_result_set.contains(&val) {
+                    continue;
+                }
+                concrete_for_phi.insert(*phi_result, (pred, val));
+            }
+        }
+    }
+
+    if concrete_for_phi.is_empty() {
+        return;
+    }
+
+    // Resolve phi values along the execution path and substitute uses.
+    //
+    // Process blocks in execution order (from the trace tree). For each block,
+    // resolve the dispatcher phis from the PREVIOUS block's perspective, then
+    // substitute all uses of phi-result variables in this block.
+    //
+    // The key: each block's phi resolution builds on the previous block's.
+    // When a phi operand from block B is itself a phi result (pass-through),
+    // we use the accumulated resolution to get the concrete value.
+    let mut accumulated: BTreeMap<SsaVarId, SsaVarId> = BTreeMap::new();
+
+    for &block_idx in &plan.execution_order {
+        if !patched_blocks.contains(block_idx) || loop_block_set.contains(&block_idx) {
+            continue;
+        }
+
+        // Apply accumulated resolution to THIS block's instructions
+        if !accumulated.is_empty() {
+            if let Some(block) = ssa.block_mut(block_idx) {
+                for instr in block.instructions_mut() {
+                    for (&phi_var, &concrete_val) in &accumulated {
+                        instr.op_mut().replace_uses(phi_var, concrete_val);
+                    }
+                }
+            }
+        }
+
+        // Compute this block's phi resolution for the NEXT block.
+        // For each dispatcher phi, find the operand from this block and
+        // resolve transitively using the accumulated map.
+        for &db in &loop_blocks {
+            let Some(phis) = phi_lookup.get(&db) else {
+                continue;
+            };
+            for (phi_result, operands) in phis {
+                if let Some(&(_, val)) = operands.iter().find(|&&(pred, _)| pred == block_idx) {
+                    // Resolve transitively
+                    let concrete = accumulated.get(&val).copied().unwrap_or(val);
+                    if *phi_result != concrete {
+                        accumulated.insert(*phi_result, concrete);
+                    }
+                }
+            }
+        }
+    }
 }
 
 /// Analyzes a trace tree and returns statistics without modifying anything.
@@ -561,6 +982,7 @@ pub fn reconstruct_from_tree(
         state_transitions_removed: plan.state_transitions_removed,
         user_branches_preserved: plan.user_branches_preserved,
         block_count: original.block_count(),
+        dispatcher_still_needed: false, // Preview only — actual value computed during apply
     })
 }
 

@@ -16,6 +16,7 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
+    analysis::{SsaFunction, SsaOp, SsaVarId},
     metadata::{
         signatures::{parse_field_signature, TypeSignature},
         streams::Strings,
@@ -24,16 +25,17 @@ use crate::{
             TypeDefRaw, TypeRefRaw,
         },
         token::Token,
-        typesystem::wellknown,
+        typesystem::{wellknown, PointerSize},
     },
     CilObject,
 };
 
-/// Determines a FieldRVA entry's data size from the ClassLayout table.
+/// Determines a FieldRVA entry's data size from its type signature.
 ///
-/// FieldRVA fields are backed by compiler-generated value types with explicit
-/// layout (e.g., `__StaticArrayInitTypeSize=16`). The actual size is in the
-/// ClassLayout table's `class_size` column.
+/// Handles two cases:
+/// - **Primitive types** (e.g., `int64` for 8-byte arrays): size from `byte_size()`
+/// - **Value types** with ClassLayout (e.g., `__StaticArrayInitTypeSize=40`):
+///   size from the ClassLayout table's `class_size` column
 pub(crate) fn get_field_data_size(assembly: &CilObject, field_rid: u32) -> Option<usize> {
     let tables = assembly.tables()?;
     let blobs = assembly.blob()?;
@@ -43,6 +45,12 @@ pub(crate) fn get_field_data_size(assembly: &CilObject, field_rid: u32) -> Optio
 
     let sig_data = blobs.get(field_row.signature as usize).ok()?;
     let field_sig = parse_field_signature(sig_data).ok()?;
+
+    // Check primitive types first (int64, int32, etc.)
+    // PointerSize only affects I/U (native int), which are not used in FieldRVA data.
+    if let Some(size) = field_sig.base.byte_size(PointerSize::Bit32) {
+        return Some(size);
+    }
 
     match &field_sig.base {
         TypeSignature::ValueType(token) => {
@@ -61,6 +69,32 @@ pub(crate) fn get_field_data_size(assembly: &CilObject, field_rid: u32) -> Optio
         }
         _ => None,
     }
+}
+
+/// Builds a mapping from SSA variable IDs to their defining operations.
+///
+/// Iterates over all blocks and instructions in the given SSA function,
+/// collecting each instruction's destination variable (if any) into a
+/// `HashMap`. This is a common first step in SSA-based analyses that need
+/// to trace definitions back from variable uses.
+///
+/// # Arguments
+///
+/// * `ssa` - The SSA function to scan.
+///
+/// # Returns
+///
+/// A [`HashMap`] mapping each defined [`SsaVarId`] to its defining [`SsaOp`].
+pub(crate) fn build_def_map(ssa: &SsaFunction) -> HashMap<SsaVarId, &SsaOp> {
+    let mut defs = HashMap::new();
+    for block in ssa.blocks() {
+        for instr in block.instructions() {
+            if let Some(dest) = instr.op().dest() {
+                defs.insert(dest, instr.op());
+            }
+        }
+    }
+    defs
 }
 
 /// Checks if a name contains obfuscation indicators (zero-width chars, PUA, spaces).
@@ -271,13 +305,10 @@ pub(crate) fn resolve_methoddef_declaring_type<'a>(
     let typedef_table = typedef_table?;
     let method = methoddef_table.get(method_row)?;
 
-    let typedef = typedef_table.iter().find(|t| {
-        t.method_list <= method.rid
-            && typedef_table
-                .iter()
-                .find(|next| next.rid > t.rid)
-                .is_none_or(|next| method.rid < next.method_list)
-    })?;
+    let typedef = typedef_table
+        .iter()
+        .filter(|t| t.method_list <= method.rid)
+        .last()?;
 
     let name = strings.get(typedef.type_name as usize).ok()?;
     let namespace = strings.get(typedef.type_namespace as usize).ok();
@@ -335,12 +366,42 @@ pub(crate) fn resolve_memberref_declaring_type<'a>(
     }
 }
 
+/// Resolves a qualified method name for a call target token.
+///
+/// For MemberRef tokens (cross-assembly calls), uses [`CilTypeReference::fullname()`]
+/// on the `declaredby` field to produce `"DeclaringType.MethodName"`
+/// (e.g., `"System.Environment.FailFast"`). For MethodDef and MethodSpec tokens,
+/// falls back to just the method name (the declaring type lookup for MethodDef
+/// requires an O(n) scan via [`TokenResolver::declaring_type()`] which is too
+/// expensive for batch scanning).
+///
+/// This enables patterns like `"Environment.FailFast"` to match only the BCL method,
+/// not a user-defined method also named `FailFast`.
+pub(crate) fn resolve_qualified_method_name(assembly: &CilObject, token: Token) -> Option<String> {
+    // MemberRef: cheaply get declaring type from the declaredby field
+    if token.table() == 0x0A {
+        if let Some(member) = assembly.member_ref(&token) {
+            if let Some(type_name) = member.declaredby.fullname() {
+                return Some(format!("{}.{}", type_name, member.name));
+            }
+            return Some(member.name.clone());
+        }
+    }
+    // MethodDef / MethodSpec: fall back to unqualified name
+    assembly.resolve_method_name(token)
+}
+
 /// Scans all methods for calls matching any of the given name patterns.
 ///
 /// For each method, checks every instruction with a token operand against the
 /// list of `patterns`. If the resolved method name contains pattern `i`, the
 /// method is recorded with that pattern index. Multiple patterns can match in
 /// a single method.
+///
+/// Patterns are matched against **qualified** method names when available
+/// (e.g., `"System.Environment.FailFast"` for MemberRef tokens). This allows
+/// patterns to include the declaring type for precision (e.g., `"Environment.FailFast"`)
+/// or remain method-name-only for backwards compatibility (e.g., `"get_UtcNow"`).
 ///
 /// # Arguments
 ///
@@ -363,7 +424,7 @@ pub(crate) fn find_methods_calling_apis(
 
         for instr in method.instructions() {
             if let Some(token) = instr.get_token_operand() {
-                if let Some(name) = assembly.resolve_method_name(token) {
+                if let Some(name) = resolve_qualified_method_name(assembly, token) {
                     for (i, pattern) in patterns.iter().enumerate() {
                         if name.contains(pattern) && !matched.contains(&i) {
                             matched.push(i);
@@ -384,25 +445,79 @@ pub(crate) fn find_methods_calling_apis(
 /// Filters candidate tokens by call-site count threshold.
 ///
 /// Retains only candidates that are called at least `min_calls` times
-/// according to the provided call-site counts.
+/// according to the provided call-site counts. Returns a [`HashSet`] for
+/// efficient membership testing in subsequent filtering stages.
 ///
 /// # Arguments
 ///
-/// * `candidates` - Tokens to filter.
+/// * `candidates` - Tokens to filter (consumed).
 /// * `counts` - Call-site counts (from [`build_call_site_counts`]).
 /// * `min_calls` - Minimum number of call sites required to keep a token.
 ///
 /// # Returns
 ///
-/// A [`Vec`] of tokens meeting the threshold.
+/// A [`HashSet`] of tokens meeting the threshold.
 pub(crate) fn filter_by_call_threshold(
     candidates: Vec<Token>,
     counts: &HashMap<Token, usize>,
     min_calls: usize,
-) -> Vec<Token> {
+) -> HashSet<Token> {
     candidates
         .into_iter()
         .filter(|t| *counts.get(t).unwrap_or(&0) >= min_calls)
+        .collect()
+}
+
+/// Removes candidates whose method bodies call other candidates.
+///
+/// A real decryptor implements its own decryption logic — it does not delegate
+/// to another decryptor. A method that calls another candidate is a **consumer**
+/// (e.g., a SQLite error-string lookup that calls the actual string decryptor
+/// for each entry), not a decryptor itself.
+///
+/// This filter eliminates a common class of false positives where legitimate
+/// helper methods (lookup tables, error formatters) match the decryptor
+/// signature and exceed the call-site threshold because they internally call
+/// the real decryptor many times.
+///
+/// # Arguments
+///
+/// * `candidates` - Tokens that passed signature and threshold checks (consumed).
+/// * `assembly` - The assembly for method body inspection.
+///
+/// # Returns
+///
+/// A [`HashSet`] containing only candidates whose bodies do not call any other
+/// candidate. Methods whose bodies cannot be inspected are kept.
+pub(crate) fn exclude_cross_calling_candidates(
+    candidates: HashSet<Token>,
+    assembly: &CilObject,
+) -> HashSet<Token> {
+    if candidates.len() <= 1 {
+        return candidates;
+    }
+
+    candidates
+        .iter()
+        .filter(|token| {
+            let Some(method) = assembly.method(token) else {
+                return true;
+            };
+            let calls_other = method.instructions().any(|instr| {
+                instr
+                    .get_token_operand()
+                    .is_some_and(|t| t != **token && candidates.contains(&t))
+            });
+            if calls_other {
+                log::trace!(
+                    "exclude_cross_calling: dropping {} ({}) — calls another candidate",
+                    token,
+                    method.name
+                );
+            }
+            !calls_other
+        })
+        .copied()
         .collect()
 }
 
@@ -555,6 +670,43 @@ pub(crate) fn is_method_named(assembly: &CilObject, token: Token, name: &str) ->
     assembly
         .resolve_method_name(token)
         .is_some_and(|n| n.contains(name))
+}
+
+/// Checks if a method token's declaring type name contains the given substring.
+///
+/// Works for both MethodDef (table 0x06) and MemberRef (table 0x0A) tokens.
+/// For MethodDef, resolves via the declaring type. For MemberRef, resolves
+/// via the `declaredby` parent reference.
+///
+/// # Returns
+///
+/// `true` if the declaring type name contains `type_name`,
+/// `false` if the token cannot be resolved or the name does not match.
+pub(crate) fn is_method_on_type(assembly: &CilObject, token: Token, type_name: &str) -> bool {
+    match token.table() {
+        0x06 => assembly
+            .method(&token)
+            .and_then(|m| m.declaring_type_rc())
+            .is_some_and(|ty| ty.name.contains(type_name)),
+        0x0A => assembly
+            .refs_members()
+            .get(&token)
+            .and_then(|entry| entry.value().declaredby.fullname())
+            .is_some_and(|name| name.contains(type_name)),
+        _ => false,
+    }
+}
+
+/// Checks if a token resolves to a method with the given name on the given declaring type.
+///
+/// Combines [`is_method_on_type`] and [`is_method_named`] in a single lookup.
+pub(crate) fn is_typed_method_named(
+    assembly: &CilObject,
+    token: Token,
+    type_name: &str,
+    method_name: &str,
+) -> bool {
+    is_method_on_type(assembly, token, type_name) && is_method_named(assembly, token, method_name)
 }
 
 #[cfg(test)]

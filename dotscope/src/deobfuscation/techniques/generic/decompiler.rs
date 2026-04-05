@@ -36,31 +36,37 @@ use crate::{
 };
 
 /// Known fake obfuscator type names used by anti-de4dot protections.
+///
+/// These are injected as module-level custom attributes to confuse de4dot and
+/// similar deobfuscation tools. The names reference real obfuscator products
+/// to trigger false-positive detection in automated tools.
+///
+/// Only names specific enough to be safe against false positives on legitimate
+/// code are included. Generic words like "Crypto" were removed — they are
+/// already caught by the `is_garbage` heuristic (module-scoped TypeRef or
+/// control characters in the name).
 const FAKE_OBFUSCATOR_TYPES: &[&str] = &[
     "SmartAssembly",
     "Xenocode",
     "Goliath",
     "Dotfuscator",
-    "Agile",
-    "Babel",
     "Spices",
     "Eziriz",
     "MaxtoCode",
     "Salamander",
-    "Reactor",
     "CodeWall",
     "DeepSea",
     "Skater",
-    "Crypto",
     "Demeanor",
     "PostBuild",
     "TrinityObfuscator",
     "CliSecure",
     "ZYXDNGuarder",
-    "Centos",
     "ConfusedBy",
     "NineRays",
     "EMyPID",
+    "ObfuscatedBy",
+    "PoweredBy",
 ];
 
 /// Findings from anti-decompiler detection.
@@ -114,8 +120,8 @@ impl Technique for GenericDecompiler {
             if let Some(f) = detection.findings::<DecompilerFindings>() {
                 let type_tokens: Vec<Token> = f.anti_decompiler_types.clone();
                 let attr_tokens: Vec<Token> = f.fake_attribute_tokens.clone();
-                detection.cleanup.add_types(type_tokens);
-                detection.cleanup.add_attributes(attr_tokens);
+                detection.cleanup_mut().add_types(type_tokens);
+                detection.cleanup_mut().add_attributes(attr_tokens);
             }
 
             detection
@@ -248,8 +254,16 @@ fn detect_fake_attributes(
             .iter()
             .any(|pattern| full_name.contains(pattern));
 
-        let is_garbage =
-            has_module_scope || type_name.chars().any(|c| c.is_ascii_control() || c == '\0');
+        // Garbage: self-referencing module-scoped TypeRef, control chars in name,
+        // or locally-defined attribute type with no real type body (injected stub)
+        let has_control_chars = type_name.chars().any(|c| c.is_ascii_control() || c == '\0');
+        let is_empty_local_type = resolved.typedef_token.is_some_and(|t| {
+            assembly
+                .types()
+                .get(&t)
+                .is_some_and(|ty| ty.methods.count() <= 1 && ty.fields.count() == 0)
+        });
+        let is_garbage = has_module_scope || has_control_chars || is_empty_local_type;
 
         if is_fake || is_garbage {
             findings.fake_attribute_tokens.push(attr.token);
@@ -273,8 +287,8 @@ mod tests {
         let asm = load_sample("tests/samples/packers/bitmono/0.39.0/bitmono_antide4dot.exe");
         let technique = super::GenericDecompiler;
         let detection = technique.detect(&asm);
-        assert!(detection.detected);
-        assert!(!detection.evidence.is_empty());
+        assert!(detection.is_detected());
+        assert!(!detection.evidence().is_empty());
     }
 
     #[test]
@@ -282,6 +296,6 @@ mod tests {
         let asm = load_sample("tests/samples/packers/confuserex/1.6.0/original.exe");
         let technique = super::GenericDecompiler;
         let detection = technique.detect(&asm);
-        assert!(!detection.detected);
+        assert!(!detection.is_detected());
     }
 }

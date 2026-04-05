@@ -50,11 +50,9 @@ mod reaching;
 mod sccp;
 mod solver;
 
-// Re-export primary types
-pub use framework::{AnalysisResults, DataFlowAnalysis, DataFlowCfg, Direction};
-pub use lattice::{JoinSemiLattice, Lattice, MeetSemiLattice};
+pub use framework::{AnalysisResults, DataFlowAnalysis, Direction};
 pub use liveness::{LiveVariables, LivenessResult};
-pub use reaching::{ReachingDefinitions, ReachingDefsResult};
+pub use reaching::ReachingDefinitions;
 pub use sccp::{ConstantPropagation, ScalarValue, SccpResult};
 pub use solver::DataFlowSolver;
 

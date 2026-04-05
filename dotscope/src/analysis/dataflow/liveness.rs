@@ -77,26 +77,15 @@ impl LiveVariables {
         let mut use_sets = Vec::with_capacity(num_blocks);
         let mut def_sets = Vec::with_capacity(num_blocks);
 
+        // Phase 1: Initialize use/def sets without PHI operands
         for block in ssa.blocks() {
             let mut uses = BitSet::new(num_vars);
             let mut defs = BitSet::new(num_vars);
 
-            // Process phi nodes: they define variables and use operands
+            // Process phi nodes: they define variables
             for phi in block.phi_nodes() {
-                // Phi defines its result
                 if let Some(def_idx) = ssa.var_index(phi.result()) {
                     defs.insert(def_idx);
-                }
-
-                // Phi uses its operands (these come from predecessors,
-                // but we track them as uses in this block for simplicity)
-                for op in phi.operands() {
-                    if let Some(var_idx) = ssa.var_index(op.value()) {
-                        // Only count as USE if not already defined in this block
-                        if !defs.contains(var_idx) {
-                            uses.insert(var_idx);
-                        }
-                    }
                 }
             }
 
@@ -121,6 +110,27 @@ impl LiveVariables {
 
             use_sets.push(uses);
             def_sets.push(defs);
+        }
+
+        // Phase 2: Add PHI operand uses to their PREDECESSOR blocks.
+        // A PHI operand `v<-B_pred` means variable v is used at the END
+        // of B_pred (ECMA-335 / SSA semantics: phi copies happen at the
+        // predecessor's outgoing edge). Placing the use in the predecessor
+        // ensures backward dataflow propagates liveness from the predecessor
+        // back through all intermediate blocks to the definition.
+        for block in ssa.blocks() {
+            for phi in block.phi_nodes() {
+                for op in phi.operands() {
+                    let pred = op.predecessor();
+                    if pred < use_sets.len() {
+                        if let Some(var_idx) = ssa.var_index(op.value()) {
+                            if !def_sets[pred].contains(var_idx) {
+                                use_sets[pred].insert(var_idx);
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         Self {

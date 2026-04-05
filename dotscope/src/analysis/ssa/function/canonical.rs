@@ -3,9 +3,12 @@
 //! Strips Nops, removes empty blocks, compacts block indices, and
 //! ensures valid terminators after deobfuscation passes.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet};
 
-use crate::analysis::ssa::{PhiOperand, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId};
+use crate::{
+    analysis::ssa::{PhiOperand, SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
+    utils::BitSet,
+};
 
 /// Finds kept predecessors of a removed block during canonicalization.
 ///
@@ -17,16 +20,17 @@ use crate::analysis::ssa::{PhiOperand, SsaBlock, SsaFunction, SsaInstruction, Ss
 /// finds blocks that are being kept (have entries in `block_remap`).
 pub(crate) fn find_kept_predecessors(
     removed_block: usize,
-    predecessors: &HashMap<usize, Vec<usize>>,
+    predecessors: &BTreeMap<usize, Vec<usize>>,
     block_remap: &[Option<usize>],
-    redirect_map: &HashMap<usize, usize>,
+    redirect_map: &BTreeMap<usize, usize>,
 ) -> Vec<usize> {
     let mut result = Vec::new();
-    let mut visited = HashSet::new();
+    let block_count = block_remap.len();
+    let mut visited = BitSet::new(block_count);
     let mut queue = vec![removed_block];
 
     while let Some(current) = queue.pop() {
-        if !visited.insert(current) {
+        if current >= block_count || !visited.insert(current) {
             continue;
         }
 
@@ -71,38 +75,47 @@ impl SsaFunction {
         // Collect blocks that must be preserved:
         // - Exception handler entry blocks
         // - Leave targets (exception handler exit blocks)
-        let mut protected_blocks: HashSet<usize> = HashSet::new();
+        let block_count = self.blocks.len();
+        let mut protected_blocks = BitSet::new(block_count);
 
         // Protect exception handler entry blocks
         for handler in &self.exception_handlers {
             if let Some(try_block) = handler.try_start_block {
-                protected_blocks.insert(try_block);
+                if try_block < block_count {
+                    protected_blocks.insert(try_block);
+                }
             }
             if let Some(handler_block) = handler.handler_start_block {
-                protected_blocks.insert(handler_block);
+                if handler_block < block_count {
+                    protected_blocks.insert(handler_block);
+                }
             }
             if let Some(filter_block) = handler.filter_start_block {
-                protected_blocks.insert(filter_block);
+                if filter_block < block_count {
+                    protected_blocks.insert(filter_block);
+                }
             }
         }
 
         // Protect Leave targets (exception handler exit blocks)
         for block in &self.blocks {
             if let Some(SsaOp::Leave { target }) = block.terminator_op() {
-                protected_blocks.insert(*target);
+                if *target < block_count {
+                    protected_blocks.insert(*target);
+                }
             }
         }
 
         // Phase 2: Identify empty blocks and build remapping.
         // An empty block has no instructions AND no phi nodes.
         // Exception: Keep block 0 (entry) and protected exception handler blocks even if empty.
-        let mut block_remap: Vec<Option<usize>> = Vec::with_capacity(self.blocks.len());
+        let mut block_remap: Vec<Option<usize>> = Vec::with_capacity(block_count);
         let mut new_index = 0usize;
 
         for (old_index, block) in self.blocks.iter().enumerate() {
             let is_empty = block.instructions().is_empty() && block.phi_nodes().is_empty();
             let is_entry = old_index == 0;
-            let is_protected = protected_blocks.contains(&old_index);
+            let is_protected = protected_blocks.contains(old_index);
 
             if is_empty && !is_entry && !is_protected {
                 block_remap.push(None); // This block will be removed
@@ -115,7 +128,7 @@ impl SsaFunction {
         // Phase 3: Build redirect map for removed blocks.
         // For each removed block, find its ultimate jump target (following jump chains).
         // If we can't find a redirect for a block, we must keep it instead of removing it.
-        let mut redirect_map: HashMap<usize, usize> = HashMap::new();
+        let mut redirect_map: BTreeMap<usize, usize> = BTreeMap::new();
 
         for old_index in 0..self.blocks.len() {
             if block_remap[old_index].is_none() {
@@ -133,7 +146,7 @@ impl SsaFunction {
 
         // Build predecessor map for PHI updates (needed for Phase 5).
         // For each block, collect all blocks that have edges TO it.
-        let mut predecessors: HashMap<usize, Vec<usize>> = HashMap::new();
+        let mut predecessors: BTreeMap<usize, Vec<usize>> = BTreeMap::new();
         for (block_idx, block) in self.blocks.iter().enumerate() {
             for target in block.successors() {
                 predecessors.entry(target).or_default().push(block_idx);
@@ -228,7 +241,7 @@ impl SsaFunction {
                 // to unaccounted-for predecessors.
                 if !orphaned_values.is_empty() {
                     // Get the predecessors that are currently accounted for in the PHI
-                    let accounted_preds: HashSet<usize> =
+                    let accounted_preds: BTreeSet<usize> =
                         phi.operands().iter().map(PhiOperand::predecessor).collect();
 
                     // Find predecessors that are NOT accounted for
@@ -313,7 +326,7 @@ impl SsaFunction {
         block_idx: usize,
         block_remap: &[Option<usize>],
     ) -> Option<usize> {
-        let mut visited = HashSet::new();
+        let mut visited = BitSet::new(self.blocks.len());
         let mut current = block_idx;
 
         while visited.insert(current) {
@@ -367,7 +380,7 @@ impl SsaFunction {
     fn remap_branch_targets(
         op: &mut SsaOp,
         block_remap: &[Option<usize>],
-        redirect_map: &HashMap<usize, usize>,
+        redirect_map: &BTreeMap<usize, usize>,
     ) {
         // Helper closure to remap a single target
         let remap_target = |target: &mut usize| {

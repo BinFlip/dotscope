@@ -702,8 +702,6 @@ mod tests {
         assert_eq!(manager.len(), 27);
     }
 
-    // ─── Core ops ──────────────────────────────────────────────────────
-
     #[test]
     fn test_list_ctor() {
         let mut thread = create_test_thread();
@@ -969,8 +967,6 @@ mod tests {
         ));
     }
 
-    // ─── Advanced ──────────────────────────────────────────────────────
-
     #[test]
     fn test_list_add_range_from_array() {
         let mut thread = create_test_thread();
@@ -1116,8 +1112,6 @@ mod tests {
             PreHookResult::Bypass(Some(EmValue::I32(0)))
         ));
     }
-
-    // ─── Enumerator ────────────────────────────────────────────────────
 
     #[test]
     fn test_list_enumerator_iterate() {

@@ -57,14 +57,13 @@ use std::sync::{Arc, OnceLock};
 
 use rustc_hash::FxHashMap;
 
-use crate::metadata::token::Token;
-
 use crate::{
     cilassembly::AssemblyChanges,
     metadata::{
         cilassemblyview::CilAssemblyView,
         cilobject::CilObject,
         method::Method,
+        token::Token,
         typesystem::{CilTypeRc, TypeSource},
         validation::{config::ValidationConfig, scanner::ReferenceScanner},
     },

@@ -285,7 +285,10 @@ fn gchandle_from_intptr_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::{emulation::runtime::hook::HookManager, metadata::typesystem::PointerSize};
+    use crate::{
+        emulation::runtime::hook::HookManager,
+        metadata::{token::Token, typesystem::PointerSize},
+    };
 
     #[test]
     fn test_register_hooks() {
@@ -296,8 +299,6 @@ mod tests {
 
     #[test]
     fn test_alloc_hook() {
-        use crate::metadata::token::Token;
-
         let obj_ref = HeapRef::new(42);
         let args = [EmValue::ObjectRef(obj_ref)];
         let ctx = HookContext::new(
@@ -320,8 +321,6 @@ mod tests {
 
     #[test]
     fn test_addr_of_pinned_object_hook() {
-        use crate::metadata::token::Token;
-
         let ctx = HookContext::new(
             Token::new(0x0A000001),
             "System.Runtime.InteropServices",
@@ -342,8 +341,6 @@ mod tests {
 
     #[test]
     fn test_get_target_hook() {
-        use crate::metadata::token::Token;
-
         let ctx = HookContext::new(
             Token::new(0x0A000001),
             "System.Runtime.InteropServices",
@@ -364,8 +361,6 @@ mod tests {
 
     #[test]
     fn test_get_target_null_hook() {
-        use crate::metadata::token::Token;
-
         let ctx = HookContext::new(
             Token::new(0x0A000001),
             "System.Runtime.InteropServices",
@@ -386,8 +381,6 @@ mod tests {
 
     #[test]
     fn test_free_returns_bypass_none() {
-        use crate::metadata::token::Token;
-
         let ctx = HookContext::new(
             Token::new(0x0A000001),
             "System.Runtime.InteropServices",
@@ -402,8 +395,6 @@ mod tests {
 
     #[test]
     fn test_is_allocated_returns_true() {
-        use crate::metadata::token::Token;
-
         let ctx = HookContext::new(
             Token::new(0x0A000001),
             "System.Runtime.InteropServices",
@@ -421,8 +412,6 @@ mod tests {
 
     #[test]
     fn test_roundtrip() {
-        use crate::metadata::token::Token;
-
         // Allocate a handle for an object
         let obj_ref = HeapRef::new(123);
         let args = [EmValue::ObjectRef(obj_ref)];

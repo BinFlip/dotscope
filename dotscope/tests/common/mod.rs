@@ -1,10 +1,13 @@
 pub mod compatibility;
+#[cfg(feature = "deobfuscation")]
+pub mod framework;
 pub mod verification;
 
 use dotscope::{
-    analysis::{SsaType, TypeProvider},
+    analysis::{ControlFlowGraph, SsaConverter, SsaFunction, SsaType, TypeProvider},
+    assembly::{decode_blocks, InstructionAssembler},
     metadata::{signatures::SignatureLocalVariable, token::Token},
-    CilObject,
+    CilObject, Result,
 };
 
 /// Test-only type provider that declares explicit types for synthetic CIL.
@@ -70,4 +73,31 @@ impl TypeProvider for TestTypeProvider {
     fn local_type_signatures(&self) -> Option<Vec<SignatureLocalVariable>> {
         None
     }
+}
+
+/// Build a control flow graph (and raw bytecode) from assembled CIL.
+///
+/// Returns both the bytecode vector and the CFG so callers that need
+/// the original bytes for round-trip verification can keep them.
+#[allow(dead_code)]
+pub fn build_cfg(assembler: InstructionAssembler) -> Result<(Vec<u8>, ControlFlowGraph<'static>)> {
+    let (bytecode, _max_stack, _) = assembler.finish()?;
+    let blocks = decode_blocks(&bytecode, 0, 0x1000, Some(bytecode.len()))?;
+    let cfg = ControlFlowGraph::from_basic_blocks(blocks)?;
+    Ok((bytecode, cfg))
+}
+
+/// Build SSA form from a control flow graph.
+#[allow(dead_code)]
+pub fn build_ssa(
+    cfg: &ControlFlowGraph<'_>,
+    num_args: usize,
+    num_locals: usize,
+) -> Result<SsaFunction> {
+    SsaConverter::build(
+        cfg,
+        num_args,
+        num_locals,
+        &TestTypeProvider::new(num_args, num_locals),
+    )
 }

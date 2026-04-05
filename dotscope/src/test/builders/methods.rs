@@ -5,17 +5,18 @@
 
 use std::sync::{atomic::AtomicU32, Arc, OnceLock};
 
-use crate::metadata::{
-    method::{
-        Method, MethodAccessFlags, MethodImplCodeType, MethodImplManagement, MethodImplOptions,
-        MethodModifiers, MethodRc, MethodVtableFlags,
+use crate::{
+    metadata::{
+        method::{
+            Method, MethodAccessFlags, MethodImplCodeType, MethodImplManagement, MethodImplOptions,
+            MethodModifiers, MethodRc, MethodVtableFlags,
+        },
+        signatures::{SignatureMethod, SignatureParameter, TypeSignature},
+        token::Token,
+        typesystem::{CilFlavor, TypeRegistry},
     },
-    signatures::{SignatureMethod, SignatureParameter, TypeSignature},
-    token::Token,
-    typesystem::{CilFlavor, TypeRegistry},
+    test::builders::params::ParamBuilder,
 };
-
-use super::params::ParamBuilder;
 
 /// Builder for creating mock Method instances with complex configurations
 pub struct MethodBuilder {

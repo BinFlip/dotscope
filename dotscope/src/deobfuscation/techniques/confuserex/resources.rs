@@ -156,7 +156,7 @@ impl Technique for ConfuserExResources {
 
         // Mark resource handler methods for cleanup.
         for token in &handler_tokens {
-            detection.cleanup.add_method(*token);
+            detection.cleanup_mut().add_method(*token);
         }
 
         detection
@@ -440,11 +440,11 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            detection.detected,
+            detection.is_detected(),
             "ConfuserExResources should detect resource protection in mkaring_resources.exe"
         );
         assert!(
-            !detection.evidence.is_empty(),
+            !detection.evidence().is_empty(),
             "Detection should have evidence"
         );
 
@@ -466,7 +466,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "ConfuserExResources should not detect resource protection in original.exe"
         );
     }

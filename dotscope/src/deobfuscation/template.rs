@@ -27,10 +27,7 @@
 
 use std::{
     collections::HashSet,
-    sync::{
-        atomic::{AtomicBool, Ordering},
-        Arc, RwLock,
-    },
+    sync::{Arc, RwLock},
 };
 
 use cowfile::CowFile;
@@ -78,9 +75,6 @@ pub struct EmulationTemplatePool {
 
     /// Engine config.
     config: EngineConfig,
-
-    /// Set to `true` if warmup fails — prevents further fork attempts.
-    warmup_failed: AtomicBool,
 }
 
 impl EmulationTemplatePool {
@@ -113,7 +107,6 @@ impl EmulationTemplatePool {
             warmup_methods,
             statemachine_providers,
             config,
-            warmup_failed: AtomicBool::new(false),
         }
     }
 
@@ -142,18 +135,18 @@ impl EmulationTemplatePool {
             .ok_or_else(|| Error::Deobfuscation("template pool assembly already released".into()))?
             .clone();
 
-        let warmup_instruction_limit = self.config.emulation_max_instructions.max(50_000_000);
+        let warmup_instruction_limit = self.config.emulation.max_instructions;
 
         let mut builder = ProcessBuilder::new()
             .assembly_arc(assembly.clone())
             .with_max_instructions(warmup_instruction_limit)
             .with_max_call_depth(100)
-            .with_timeout_ms(60_000)
+            .with_timeout_ms(self.config.emulation.warmup_timeout.as_millis() as u64)
             .with_max_heap_bytes(512 * 1024 * 1024)
             .name("template_pool");
 
         // Add tracing configuration if provided
-        if let Some(ref tracing) = self.config.tracing {
+        if let Some(ref tracing) = self.config.emulation.tracing {
             let pool_tracing = tracing.clone().with_context("template_warmup");
             builder = builder.with_tracing(pool_tracing);
         }
@@ -262,14 +255,8 @@ impl EmulationTemplatePool {
     ///
     /// # Errors
     ///
-    /// Returns an error if warmup previously failed.
+    /// Returns an error if the template is not available (not warmed up or released).
     pub fn fork(&self) -> Result<EmulationProcess> {
-        if self.warmup_failed.load(Ordering::Relaxed) {
-            return Err(Error::Emulation(Box::new(EmulationError::InternalError {
-                description: "template warmup failed — emulation disabled".to_string(),
-            })));
-        }
-
         let guard = self
             .template
             .read()
@@ -418,12 +405,6 @@ impl EmulationTemplatePool {
         &self.statemachine_providers
     }
 
-    /// Returns whether warmup has failed.
-    #[must_use]
-    pub fn warmup_failed(&self) -> bool {
-        self.warmup_failed.load(Ordering::Relaxed)
-    }
-
     /// Releases all references held by the pool.
     ///
     /// Clears both the template process and the `Arc<CilObject>` reference.
@@ -460,7 +441,7 @@ impl EmulationTemplatePool {
         let mut completed = HashSet::new();
         let mut permanently_failed = HashSet::new();
 
-        for pass in 1..=5 {
+        for pass in 1..=self.config.emulation.warmup_retry_passes {
             let mut new_completions = 0;
 
             for (warmup_token, warmup_args) in &warmup_methods {
@@ -472,11 +453,12 @@ impl EmulationTemplatePool {
                     continue;
                 };
                 match fork.execute_method(*warmup_token, warmup_args.clone()) {
-                    Ok(EmulationOutcome::Completed { .. }) => {
+                    Ok(EmulationOutcome::Completed { instructions, .. }) => {
                         debug!(
-                            "Template warmup: 0x{:08X} completed (pass {})",
+                            "Template warmup: 0x{:08X} completed (pass {}, {} instructions)",
                             warmup_token.value(),
-                            pass
+                            pass,
+                            instructions
                         );
                         *process = fork;
                         completed.insert(*warmup_token);

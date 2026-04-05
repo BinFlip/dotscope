@@ -145,6 +145,39 @@ pub(super) fn extract_decrypted_field_data(
     (fields, failed_count)
 }
 
+/// Finds methods that contain a call/callvirt to any token in `target_tokens`.
+///
+/// This supplements [`find_methods_calling_apis`](crate::deobfuscation::utils::find_methods_calling_apis)
+/// for cases where the target is identified by token rather than name — e.g.,
+/// P/Invoke MethodDef tokens resolved from the ImplMap table whose managed
+/// names have been obfuscated.
+///
+/// # Returns
+///
+/// A [`HashSet`] of method tokens that call at least one of the target tokens.
+pub(super) fn find_methods_calling_tokens(
+    assembly: &CilObject,
+    target_tokens: &HashSet<Token>,
+) -> HashSet<Token> {
+    if target_tokens.is_empty() {
+        return HashSet::new();
+    }
+
+    let mut callers = HashSet::new();
+    for method_entry in assembly.methods() {
+        let method = method_entry.value();
+        for instr in method.instructions() {
+            if let Some(token) = instr.get_token_operand() {
+                if target_tokens.contains(&token) {
+                    callers.insert(method.token);
+                    break;
+                }
+            }
+        }
+    }
+    callers
+}
+
 /// Resolves P/Invoke import names from the ImplMap table to find MethodDef
 /// tokens that map to a specific DLL export.
 ///

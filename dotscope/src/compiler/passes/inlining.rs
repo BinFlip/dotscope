@@ -1,10 +1,8 @@
-//! Small method inlining and proxy devirtualization pass.
+//! Small method inlining pass.
 //!
-//! This pass inlines small, pure methods at their call sites and devirtualizes
-//! proxy methods to expose further optimization opportunities. It's particularly
+//! This pass inlines small, pure methods at their call sites. It is particularly
 //! effective for:
 //!
-//! - Proxy methods that just forward to another method (even impure ones)
 //! - Simple getters/setters
 //! - Constant-returning methods
 //! - String decryptor helpers
@@ -18,26 +16,6 @@
 //! 4. The call is non-virtual (single target)
 //! 5. The callee SSA is available in the context
 //!
-//! # Proxy Devirtualization
-//!
-//! Additionally, proxy methods are detected and devirtualized regardless of purity.
-//! A proxy method is one that:
-//! 1. Contains a single call instruction (the forwarded call)
-//! 2. Forwards parameters directly as arguments (possibly reordered)
-//! 3. Returns the call result (if non-void)
-//! 4. Has no other side effects besides the forwarded call
-//!
-//! When a proxy is detected, the call is replaced with a direct call to the
-//! forwarding target, eliminating the proxy overhead.
-//!
-//! # Proxy-Only Mode
-//!
-//! When `proxy_only` is enabled, the pass only performs proxy devirtualization.
-//! Full method body inlining and no-op elimination are skipped. This mode is
-//! used when the pass is triggered by obfuscator proxy detection (e.g.,
-//! ConfuserEx ReferenceProxy) to remove obfuscation indirection without
-//! altering the original program structure.
-//!
 //! # Safety
 //!
 //! Inlining preserves semantics by:
@@ -46,49 +24,35 @@
 //! - Handling parameter binding correctly
 //! - Replacing return with assignment to destination
 //!
-//! Proxy devirtualization preserves semantics because the forwarded call
-//! happens exactly once in either case - we're just eliminating the wrapper.
+//! # Related Passes
+//!
+//! Proxy devirtualization and no-op elimination are handled by the standalone
+//! [`ProxyDevirtualizationPass`](super::ProxyDevirtualizationPass) which runs
+//! in the normalize phase unconditionally.
 
-use std::collections::HashMap;
+use std::collections::BTreeMap;
 
 use crate::{
     analysis::{
-        ConstValue, DefSite, MethodRef, ReturnInfo, SsaFunction, SsaInstruction, SsaOp, SsaType,
-        SsaVarId, VariableOrigin,
+        DefSite, ReturnInfo, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId, VariableOrigin,
     },
-    compiler::{pass::SsaPass, CompilerContext, EventKind, EventLog},
+    compiler::{
+        pass::{PassCapability, SsaPass},
+        CompilerContext, EventKind, EventLog,
+    },
     metadata::{tables::MemberRefSignature, token::Token, typesystem::CilTypeReference},
     CilObject, Result,
 };
 
-/// Type of inlining to perform at a call site.
-#[derive(Debug, Clone)]
-enum InlineAction {
-    /// Full inlining: copy callee's body into caller
-    FullInline,
-    /// Proxy devirtualization: replace call target with forwarding target
-    ProxyDevirtualize {
-        target_method: MethodRef,
-        arg_mapping: Vec<usize>,
-        is_virtual: bool,
-    },
-    /// No-op elimination: remove the call entirely (void method that just returns)
-    NoOpEliminate,
-    /// Constant fold: replace the call with a constant value
-    ConstantFold(ConstValue),
-}
-
-/// A candidate call site for inlining or devirtualization.
+/// A candidate call site for inlining.
 #[derive(Debug, Clone)]
 struct InlineCandidate {
     /// Block index containing the call
     block_idx: usize,
     /// Instruction index within the block
     instr_idx: usize,
-    /// Token of the method being called (the callee/proxy)
+    /// Token of the method being called
     callee_token: Token,
-    /// What action to take at this call site
-    action: InlineAction,
 }
 
 /// Method-specific context for inlining operations.
@@ -158,7 +122,7 @@ impl<'a> InliningContext<'a> {
         self.changes
     }
 
-    /// Checks if a callee is a valid target for inlining or devirtualization.
+    /// Checks if a callee is a valid target for inlining.
     ///
     /// A method is invalid for inlining if it:
     /// - Is the same as the caller (self-recursion)
@@ -261,81 +225,6 @@ impl<'a> InliningContext<'a> {
         false
     }
 
-    /// Checks if a method should be devirtualized as a proxy.
-    ///
-    /// Unlike full inlining, proxy devirtualization doesn't require purity
-    /// because we're just changing the call target, not duplicating code.
-    /// This is effective for wrapper methods that just forward calls.
-    ///
-    /// # Arguments
-    ///
-    /// * `callee_token` - Token of the method being considered for devirtualization.
-    ///
-    /// # Returns
-    ///
-    /// If the method is a proxy, returns `Some((target_method, arg_mapping, is_virtual))`:
-    /// - `target_method` - The forwarding target method.
-    /// - `arg_mapping` - Maps proxy parameter indices to target argument positions.
-    /// - `is_virtual` - Whether the forwarded call is virtual.
-    ///
-    /// Returns `None` if the method is not a proxy.
-    fn should_devirtualize_proxy(
-        &self,
-        callee_token: Token,
-    ) -> Option<(MethodRef, Vec<usize>, bool)> {
-        if !self.is_valid_target(callee_token) {
-            return None;
-        }
-
-        // Check for proxy pattern
-        self.analysis_ctx
-            .with_ssa(callee_token, |callee_ssa| {
-                InliningPass::detect_proxy_pattern(callee_ssa)
-            })
-            .flatten()
-    }
-
-    /// Checks if a method is a no-op that can be eliminated at call sites.
-    ///
-    /// A no-op method is one that:
-    /// - Just returns (void method with only `ret`)
-    /// - Always returns a constant value
-    /// - Has no side effects (is pure)
-    ///
-    /// # Arguments
-    ///
-    /// * `callee_token` - Token of the method being considered.
-    ///
-    /// # Returns
-    ///
-    /// - `Some(None)` - Void no-op: call can be replaced with Nop.
-    /// - `Some(Some(ConstValue))` - Constant return: call can be replaced with constant.
-    /// - `None` - Not a no-op method.
-    // Intentional: None=not noop, Some(None)=void noop, Some(Some(v))=constant noop
-    #[allow(clippy::option_option)]
-    fn detect_noop_method(&self, callee_token: Token) -> Option<Option<ConstValue>> {
-        if !self.is_valid_target(callee_token) {
-            return None;
-        }
-
-        // Check if callee is a no-op using SSA analysis
-        self.analysis_ctx
-            .with_ssa(callee_token, |callee_ssa| {
-                // Must have no side effects to safely eliminate
-                if !callee_ssa.purity().can_eliminate_if_unused() {
-                    return None;
-                }
-
-                // Check what the method returns
-                match callee_ssa.return_info() {
-                    ReturnInfo::Void => Some(None),
-                    ReturnInfo::Constant(val) => Some(Some(val.clone())),
-                    _ => None,
-                }
-            })
-            .flatten()
-    }
-
     /// Resolves a token to its MethodDef equivalent.
     ///
     /// This is necessary because:
@@ -387,17 +276,14 @@ impl<'a> InliningContext<'a> {
         token
     }
 
-    /// Finds all inlinable and devirtualizable call sites in the method.
+    /// Finds all inlinable call sites in the method.
     ///
     /// Scans the caller's SSA for call instructions and evaluates each one
-    /// against the inlining criteria. Candidates are prioritized as:
-    /// 1. Full inlining (for small, pure methods)
-    /// 2. No-op elimination (for void/constant-returning pure methods)
-    /// 3. Proxy devirtualization (for call forwarding wrappers)
+    /// against the inlining criteria.
     ///
     /// # Returns
     ///
-    /// A vector of candidates that can be inlined or devirtualized.
+    /// A vector of candidates that can be inlined.
     fn find_candidates(&self) -> Vec<InlineCandidate> {
         let mut candidates = Vec::new();
 
@@ -423,46 +309,12 @@ impl<'a> InliningContext<'a> {
             // Resolve MemberRef tokens to MethodDef tokens for SSA lookup
             let callee_token = self.resolve_to_method_def(raw_callee_token);
 
-            if !self.pass.proxy_only {
-                // Try full inlining first (for pure methods)
-                if self.should_inline(callee_token) {
-                    candidates.push(InlineCandidate {
-                        block_idx,
-                        instr_idx,
-                        callee_token,
-                        action: InlineAction::FullInline,
-                    });
-                    continue;
-                }
-                // Try no-op elimination
-                if let Some(noop_result) = self.detect_noop_method(callee_token) {
-                    let action = match noop_result {
-                        None => InlineAction::NoOpEliminate,
-                        Some(val) => InlineAction::ConstantFold(val),
-                    };
-                    candidates.push(InlineCandidate {
-                        block_idx,
-                        instr_idx,
-                        callee_token,
-                        action,
-                    });
-                    continue;
-                }
-            }
-
-            // Try proxy devirtualization (always enabled)
-            if let Some((target_method, arg_mapping, is_virtual)) =
-                self.should_devirtualize_proxy(callee_token)
-            {
+            // Try full inlining (for pure methods)
+            if self.should_inline(callee_token) {
                 candidates.push(InlineCandidate {
                     block_idx,
                     instr_idx,
                     callee_token,
-                    action: InlineAction::ProxyDevirtualize {
-                        target_method,
-                        arg_mapping,
-                        is_virtual,
-                    },
                 });
             }
         }
@@ -472,8 +324,8 @@ impl<'a> InliningContext<'a> {
 
     /// Processes a single inlining candidate.
     ///
-    /// Dispatches to the appropriate inlining strategy based on the candidate's
-    /// action type. Also marks successfully inlined methods in the analysis context.
+    /// Performs full body inlining and marks successfully inlined methods in
+    /// the analysis context.
     ///
     /// # Arguments
     ///
@@ -491,51 +343,21 @@ impl<'a> InliningContext<'a> {
             None => return false,
         };
 
-        let success = match &candidate.action {
-            InlineAction::FullInline => {
-                // Get the callee SSA
-                let Some(callee_ssa) = self
-                    .analysis_ctx
-                    .with_ssa(candidate.callee_token, Clone::clone)
-                else {
-                    return false;
-                };
-
-                self.inline_call(
-                    &callee_ssa,
-                    candidate.block_idx,
-                    candidate.instr_idx,
-                    &call_op,
-                    candidate.callee_token,
-                )
-            }
-            InlineAction::ProxyDevirtualize {
-                target_method,
-                arg_mapping,
-                is_virtual,
-            } => self.devirtualize_proxy(
-                candidate.block_idx,
-                candidate.instr_idx,
-                &call_op,
-                *target_method,
-                arg_mapping,
-                *is_virtual,
-                candidate.callee_token,
-            ),
-            InlineAction::NoOpEliminate => self.eliminate_noop_call(
-                candidate.block_idx,
-                candidate.instr_idx,
-                &call_op,
-                candidate.callee_token,
-            ),
-            InlineAction::ConstantFold(const_val) => self.fold_constant_call(
-                candidate.block_idx,
-                candidate.instr_idx,
-                &call_op,
-                const_val,
-                candidate.callee_token,
-            ),
+        // Get the callee SSA
+        let Some(callee_ssa) = self
+            .analysis_ctx
+            .with_ssa(candidate.callee_token, Clone::clone)
+        else {
+            return false;
         };
+
+        let success = self.inline_call(
+            &callee_ssa,
+            candidate.block_idx,
+            candidate.instr_idx,
+            &call_op,
+            candidate.callee_token,
+        );
 
         if success {
             self.analysis_ctx.mark_inlined(candidate.callee_token);
@@ -693,7 +515,7 @@ impl<'a> InliningContext<'a> {
         };
 
         // Build variable remapping
-        let mut var_remap: HashMap<SsaVarId, SsaVarId> = HashMap::new();
+        let mut var_remap: BTreeMap<SsaVarId, SsaVarId> = BTreeMap::new();
 
         // Map callee parameters to call arguments
         for (param_idx, &arg_var) in args.iter().enumerate() {
@@ -765,193 +587,6 @@ impl<'a> InliningContext<'a> {
         true
     }
 
-    /// Devirtualizes a proxy call by replacing it with a direct call to the target.
-    ///
-    /// This doesn't inline the proxy body - it just changes the call target and
-    /// remaps the arguments according to the proxy's parameter mapping.
-    ///
-    /// # Arguments
-    ///
-    /// * `call_block_idx` - Block index of the call instruction.
-    /// * `call_instr_idx` - Instruction index within the block.
-    /// * `call_op` - The call operation being devirtualized.
-    /// * `target_method` - The forwarding target method.
-    /// * `arg_mapping` - Maps proxy parameter indices to target argument positions.
-    /// * `is_virtual` - Whether the forwarded call should be virtual.
-    /// * `proxy_token` - Token of the proxy method (for logging).
-    ///
-    /// # Returns
-    ///
-    /// `true` if devirtualization was successful.
-    #[allow(clippy::too_many_arguments)]
-    fn devirtualize_proxy(
-        &mut self,
-        call_block_idx: usize,
-        call_instr_idx: usize,
-        call_op: &SsaOp,
-        target_method: MethodRef,
-        arg_mapping: &[usize],
-        is_virtual: bool,
-        proxy_token: Token,
-    ) -> bool {
-        let (dest, original_args) = match call_op {
-            SsaOp::Call { dest, args, .. } | SsaOp::CallVirt { dest, args, .. } => {
-                (*dest, args.clone())
-            }
-            _ => return false,
-        };
-
-        // Remap arguments
-        let mut remapped_args = Vec::with_capacity(arg_mapping.len());
-        for &param_idx in arg_mapping {
-            if let Some(&arg) = original_args.get(param_idx) {
-                remapped_args.push(arg);
-            } else {
-                return false;
-            }
-        }
-
-        // Create the new call operation
-        let new_op = if is_virtual {
-            SsaOp::CallVirt {
-                dest,
-                method: target_method,
-                args: remapped_args,
-            }
-        } else {
-            SsaOp::Call {
-                dest,
-                method: target_method,
-                args: remapped_args,
-            }
-        };
-
-        // Replace the instruction
-        if let Some(block) = self.caller_ssa.block_mut(call_block_idx) {
-            block.instructions_mut()[call_instr_idx].set_op(new_op);
-            self.changes
-                .record(EventKind::MethodInlined)
-                .at(self.caller_token, call_instr_idx)
-                .message(format!(
-                    "devirtualized proxy {:?} -> {:?}",
-                    proxy_token,
-                    target_method.token()
-                ));
-            return true;
-        }
-
-        false
-    }
-
-    /// Eliminates a call to a void no-op method.
-    ///
-    /// Replaces the call instruction with a Nop, which will be cleaned up by
-    /// the dead code elimination pass.
-    ///
-    /// # Arguments
-    ///
-    /// * `call_block_idx` - Block index of the call instruction.
-    /// * `call_instr_idx` - Instruction index within the block.
-    /// * `call_op` - The call operation being eliminated.
-    /// * `callee_token` - Token of the no-op method (for logging).
-    ///
-    /// # Returns
-    ///
-    /// `true` if elimination was successful.
-    fn eliminate_noop_call(
-        &mut self,
-        call_block_idx: usize,
-        call_instr_idx: usize,
-        call_op: &SsaOp,
-        callee_token: Token,
-    ) -> bool {
-        if !matches!(call_op, SsaOp::Call { .. } | SsaOp::CallVirt { .. }) {
-            return false;
-        }
-
-        if let Some(block) = self.caller_ssa.block_mut(call_block_idx) {
-            if let Some(instr) = block.instructions_mut().get_mut(call_instr_idx) {
-                instr.set_op(SsaOp::Nop);
-                self.changes
-                    .record(EventKind::MethodInlined)
-                    .at(self.caller_token, call_instr_idx)
-                    .message(format!(
-                        "eliminated no-op call to 0x{:08x}",
-                        callee_token.value()
-                    ));
-                return true;
-            }
-        }
-        false
-    }
-
-    /// Folds a call to a constant-returning method into the constant value.
-    ///
-    /// Replaces the call instruction with a Const instruction that produces
-    /// the same value the method would have returned. If the return value is
-    /// unused, replaces with Nop instead.
-    ///
-    /// # Arguments
-    ///
-    /// * `call_block_idx` - Block index of the call instruction.
-    /// * `call_instr_idx` - Instruction index within the block.
-    /// * `call_op` - The call operation being folded.
-    /// * `const_val` - The constant value to fold to.
-    /// * `callee_token` - Token of the constant-returning method (for logging).
-    ///
-    /// # Returns
-    ///
-    /// `true` if folding was successful.
-    fn fold_constant_call(
-        &mut self,
-        call_block_idx: usize,
-        call_instr_idx: usize,
-        call_op: &SsaOp,
-        const_val: &ConstValue,
-        callee_token: Token,
-    ) -> bool {
-        let dest = match call_op {
-            SsaOp::Call { dest, .. } | SsaOp::CallVirt { dest, .. } => *dest,
-            _ => return false,
-        };
-
-        if let Some(dest_var) = dest {
-            if let Some(block) = self.caller_ssa.block_mut(call_block_idx) {
-                if let Some(instr) = block.instructions_mut().get_mut(call_instr_idx) {
-                    instr.set_op(SsaOp::Const {
-                        dest: dest_var,
-                        value: const_val.clone(),
-                    });
-                    self.changes
-                        .record(EventKind::MethodInlined)
-                        .at(self.caller_token, call_instr_idx)
-                        .message(format!(
-                            "folded constant call to 0x{:08x} -> {:?}",
-                            callee_token.value(),
-                            const_val
-                        ));
-                    return true;
-                }
-            }
-        } else {
-            // No destination - just replace with Nop
-            if let Some(block) = self.caller_ssa.block_mut(call_block_idx) {
-                if let Some(instr) = block.instructions_mut().get_mut(call_instr_idx) {
-                    instr.set_op(SsaOp::Nop);
-                    self.changes
-                        .record(EventKind::MethodInlined)
-                        .at(self.caller_token, call_instr_idx)
-                        .message(format!(
-                            "eliminated unused constant call to 0x{:08x}",
-                            callee_token.value()
-                        ));
-                    return true;
-                }
-            }
-        }
-        false
-    }
-
     /// Remaps variables in an SSA operation using the given mapping.
     ///
     /// Creates fresh variables in the caller for any callee variables not
@@ -969,7 +604,7 @@ impl<'a> InliningContext<'a> {
     /// A cloned operation with all variables remapped to caller variables.
     fn remap_op(
         op: &SsaOp,
-        var_remap: &mut HashMap<SsaVarId, SsaVarId>,
+        var_remap: &mut BTreeMap<SsaVarId, SsaVarId>,
         callee_ssa: &SsaFunction,
         caller_ssa: &mut SsaFunction,
     ) -> SsaOp {
@@ -1008,7 +643,7 @@ impl<'a> InliningContext<'a> {
     /// The remapped variable ID in the caller's SSA.
     fn get_or_create_var(
         var: SsaVarId,
-        var_remap: &mut HashMap<SsaVarId, SsaVarId>,
+        var_remap: &mut BTreeMap<SsaVarId, SsaVarId>,
         callee_ssa: &SsaFunction,
         caller_ssa: &mut SsaFunction,
     ) -> SsaVarId {
@@ -1040,17 +675,10 @@ impl<'a> InliningContext<'a> {
 /// This pass operates on a per-method basis but consults the global context
 /// to access callee method SSA forms. It identifies call sites where the
 /// callee is small and pure, then replaces the call with the inlined body.
-///
-/// In proxy-only mode, the pass skips full inlining and no-op elimination,
-/// performing only proxy devirtualization. This preserves the original
-/// program structure while removing obfuscation indirection.
 #[derive(Debug)]
 pub struct InliningPass {
     /// Maximum instruction count for inlining candidates.
     inline_threshold: usize,
-    /// When true, only perform proxy devirtualization.
-    /// Full method inlining and no-op elimination are skipped.
-    proxy_only: bool,
 }
 
 impl InliningPass {
@@ -1059,138 +687,11 @@ impl InliningPass {
     /// # Arguments
     ///
     /// * `threshold` - Maximum instruction count for methods to be inlined.
-    /// * `proxy_only` - When true, only proxy devirtualization is performed.
-    ///   Full method body inlining is disabled, preserving the original
-    ///   program structure while removing obfuscation indirection.
     #[must_use]
-    pub fn new(threshold: usize, proxy_only: bool) -> Self {
+    pub fn new(threshold: usize) -> Self {
         Self {
             inline_threshold: threshold,
-            proxy_only,
         }
-    }
-
-    /// Finds the argument index that a variable ultimately comes from.
-    ///
-    /// This traces through:
-    /// 1. Direct argument variables (VariableOrigin::Argument)
-    /// 2. Variables defined by LoadArg instructions
-    /// 3. Variables defined by Copy from arguments
-    fn find_argument_origin(
-        ssa: &SsaFunction,
-        var: SsaVarId,
-        instructions: &[SsaInstruction],
-    ) -> Option<usize> {
-        // First, check if the variable directly represents an argument
-        if let Some(var_info) = ssa.variable(var) {
-            if let VariableOrigin::Argument(idx) = var_info.origin() {
-                return Some(idx as usize);
-            }
-        }
-
-        // Check if this variable was defined by a LoadArg or Copy instruction
-        for instr in instructions {
-            match instr.op() {
-                SsaOp::LoadArg { dest, arg_index } if *dest == var => {
-                    return Some(*arg_index as usize);
-                }
-                SsaOp::Copy { dest, src } if *dest == var => {
-                    return Self::find_argument_origin(ssa, *src, instructions);
-                }
-                _ => {}
-            }
-        }
-
-        None
-    }
-
-    /// Detects if a method is a simple proxy that just forwards to another method.
-    ///
-    /// A proxy method:
-    /// 1. Has a single basic block
-    /// 2. Contains exactly one Call/CallVirt instruction
-    /// 3. All call arguments come directly from method parameters
-    /// 4. If non-void, returns the call result directly
-    /// 5. Has no other instructions besides parameter loads, the call, and return
-    ///
-    /// # Returns
-    ///
-    /// If this is a proxy, returns `Some((target_method, arg_mapping, is_virtual))` where:
-    /// - `target_method` is the forwarding target
-    /// - `arg_mapping` maps caller argument index to callee parameter index
-    /// - `is_virtual` indicates if the forwarded call is virtual
-    fn detect_proxy_pattern(ssa: &SsaFunction) -> Option<(MethodRef, Vec<usize>, bool)> {
-        // Must be single-block method
-        if ssa.blocks().len() != 1 {
-            return None;
-        }
-
-        let block = ssa.blocks().first()?;
-        let instructions = block.instructions();
-
-        // Find the call instruction
-        let mut call_info: Option<(&MethodRef, &[SsaVarId], Option<SsaVarId>, bool)> = None;
-        let mut call_count = 0;
-
-        for instr in instructions {
-            match instr.op() {
-                SsaOp::Call { method, args, dest } => {
-                    call_count += 1;
-                    call_info = Some((method, args, *dest, false));
-                }
-                SsaOp::CallVirt { method, args, dest } => {
-                    call_count += 1;
-                    call_info = Some((method, args, *dest, true));
-                }
-                // These are allowed in proxy methods
-                SsaOp::Return { .. }
-                | SsaOp::Nop
-                | SsaOp::Phi { .. }
-                | SsaOp::LoadArg { .. }
-                | SsaOp::LoadLocal { .. }
-                | SsaOp::Copy { .. } => {}
-                // Any other instruction disqualifies as a proxy
-                _ => return None,
-            }
-        }
-
-        // Must have exactly one call
-        if call_count != 1 {
-            return None;
-        }
-
-        let (target_method, call_args, call_dest, is_virtual) = call_info?;
-
-        // Build parameter mapping
-        let mut arg_mapping = Vec::with_capacity(call_args.len());
-        let num_params = ssa.num_args();
-
-        for &arg_var in call_args {
-            let param_idx = Self::find_argument_origin(ssa, arg_var, instructions);
-
-            match param_idx {
-                Some(idx) if idx < num_params => {
-                    arg_mapping.push(idx);
-                }
-                _ => {
-                    return None;
-                }
-            }
-        }
-
-        // Check that if there's a return, it returns the call result
-        for instr in instructions {
-            if let SsaOp::Return {
-                value: Some(ret_var),
-            } = instr.op()
-            {
-                if Some(*ret_var) != call_dest {
-                    return None;
-                }
-            }
-        }
-
-        Some((*target_method, arg_mapping, is_virtual))
     }
 }
 
@@ -1200,7 +701,15 @@ impl SsaPass for InliningPass {
     }
 
     fn description(&self) -> &'static str {
-        "Inlines small, pure methods and devirtualizes proxy calls"
+        "Inlines small, pure methods at their call sites"
+    }
+
+    fn provides(&self) -> &[PassCapability] {
+        &[PassCapability::InlinedMethods]
+    }
+
+    fn requires(&self) -> &[PassCapability] {
+        &[PassCapability::DevirtualizedCalls]
     }
 
     fn run_on_method(
@@ -1241,10 +750,9 @@ mod tests {
         analysis::{
             CallGraph, ConstValue, MethodRef, SsaFunctionBuilder, SsaOp, SsaType, SsaVarId,
         },
-        compiler::CompilerContext,
         compiler::{
             passes::inlining::{InliningContext, InliningPass},
-            SsaPass,
+            CompilerContext, SsaPass,
         },
         metadata::token::Token,
         test::helpers::test_assembly_arc,
@@ -1262,18 +770,12 @@ mod tests {
 
     #[test]
     fn test_pass_creation() {
-        let pass = InliningPass::new(20, false);
+        let pass = InliningPass::new(20);
         assert_eq!(pass.name(), "InliningPass");
         assert_eq!(pass.inline_threshold, 20);
-        assert!(!pass.proxy_only);
 
-        let pass_custom = InliningPass::new(50, false);
+        let pass_custom = InliningPass::new(50);
         assert_eq!(pass_custom.inline_threshold, 50);
-        assert!(!pass_custom.proxy_only);
-
-        let pass_proxy = InliningPass::new(0, true);
-        assert_eq!(pass_proxy.inline_threshold, 0);
-        assert!(pass_proxy.proxy_only);
     }
 
     #[test]
@@ -1318,7 +820,7 @@ mod tests {
         let call_op = caller_ssa.block(0).unwrap().instructions()[0].op().clone();
 
         // Create inlining context and inline
-        let pass = InliningPass::new(20, false);
+        let pass = InliningPass::new(20);
         let assembly = test_assembly();
         let mut inline_ctx =
             InliningContext::new(&pass, &mut caller_ssa, caller_token, &ctx, &assembly);
@@ -1370,7 +872,7 @@ mod tests {
         let call_op = caller_ssa.block(0).unwrap().instructions()[0].op().clone();
 
         // Create inlining context and inline
-        let pass = InliningPass::new(20, false);
+        let pass = InliningPass::new(20);
         let assembly = test_assembly();
         let mut inline_ctx =
             InliningContext::new(&pass, &mut caller_ssa, caller_token, &ctx, &assembly);
@@ -1390,7 +892,7 @@ mod tests {
 
     #[test]
     fn test_no_inline_self_recursion() {
-        let pass = InliningPass::new(20, false);
+        let pass = InliningPass::new(20);
         let token = Token::new(0x06000001);
         let ctx = test_context();
         let assembly = test_assembly();
@@ -1428,7 +930,7 @@ mod tests {
         let ctx = test_context();
         ctx.set_ssa(callee_token, callee_ssa);
 
-        let pass = InliningPass::new(20, false);
+        let pass = InliningPass::new(20);
         let assembly = test_assembly();
 
         // Create a dummy caller SSA
@@ -1479,7 +981,7 @@ mod tests {
         let call_op = caller_ssa.block(0).unwrap().instructions()[1].op().clone();
 
         // Create inlining context and inline
-        let pass = InliningPass::new(20, false);
+        let pass = InliningPass::new(20);
         let assembly = test_assembly();
         let mut inline_ctx =
             InliningContext::new(&pass, &mut caller_ssa, caller_token, &ctx, &assembly);
@@ -1510,193 +1012,5 @@ mod tests {
             .iter()
             .any(|i| matches!(i.op(), SsaOp::Add { .. }));
         assert!(has_add, "Expected Add instruction after inlining");
-    }
-
-    #[test]
-    fn test_detect_proxy_void() {
-        // Proxy: void method that forwards to Console.WriteLine(string)
-        // void proxy(string s) { Console.WriteLine(s); }
-        let target_token = Token::new(0x0A000001); // External method
-
-        let proxy_ssa = SsaFunctionBuilder::new(1, 0)
-            .build_with(|f| {
-                let param0 = f.arg(0, SsaType::I32);
-                f.block(0, |b| {
-                    b.call_void(MethodRef::new(target_token), &[param0]);
-                    b.ret();
-                });
-            })
-            .unwrap();
-
-        // Should detect this as a proxy
-        let result = InliningPass::detect_proxy_pattern(&proxy_ssa);
-        assert!(result.is_some(), "Should detect void proxy");
-
-        let (target, arg_mapping, is_virtual) = result.unwrap();
-        assert_eq!(target.token(), target_token);
-        assert_eq!(arg_mapping, vec![0]); // First arg maps to param 0
-        assert!(!is_virtual);
-    }
-
-    #[test]
-    fn test_detect_proxy_with_return() {
-        // Proxy: string method that forwards to String.Format
-        // string proxy(string fmt, object arg) { return String.Format(fmt, arg); }
-        let target_token = Token::new(0x0A000002);
-
-        let proxy_ssa = SsaFunctionBuilder::new(2, 0)
-            .build_with(|f| {
-                let param0 = f.arg(0, SsaType::I32);
-                let param1 = f.arg(1, SsaType::I32);
-                f.block(0, |b| {
-                    let result = b.call(
-                        MethodRef::new(target_token),
-                        &[param0, param1],
-                        SsaType::I32,
-                    );
-                    b.ret_val(result);
-                });
-            })
-            .unwrap();
-
-        let result = InliningPass::detect_proxy_pattern(&proxy_ssa);
-        assert!(result.is_some(), "Should detect proxy with return");
-
-        let (target, arg_mapping, is_virtual) = result.unwrap();
-        assert_eq!(target.token(), target_token);
-        assert_eq!(arg_mapping, vec![0, 1]);
-        assert!(!is_virtual);
-    }
-
-    #[test]
-    fn test_detect_proxy_reordered_args() {
-        // Proxy: reorders arguments
-        // int proxy(int a, int b) { return target(b, a); }
-        let target_token = Token::new(0x0A000003);
-
-        let proxy_ssa = SsaFunctionBuilder::new(2, 0)
-            .build_with(|f| {
-                let param0 = f.arg(0, SsaType::I32);
-                let param1 = f.arg(1, SsaType::I32);
-                f.block(0, |b| {
-                    // Pass args in reverse order
-                    let result = b.call(
-                        MethodRef::new(target_token),
-                        &[param1, param0],
-                        SsaType::I32,
-                    );
-                    b.ret_val(result);
-                });
-            })
-            .unwrap();
-
-        let result = InliningPass::detect_proxy_pattern(&proxy_ssa);
-        assert!(result.is_some(), "Should detect proxy with reordered args");
-
-        let (target, arg_mapping, is_virtual) = result.unwrap();
-        assert_eq!(target.token(), target_token);
-        assert_eq!(arg_mapping, vec![1, 0]); // Reversed
-        assert!(!is_virtual);
-    }
-
-    #[test]
-    fn test_not_proxy_with_computation() {
-        // Not a proxy: adds a constant before calling
-        // int notProxy(int a) { return target(a + 1); }
-        let target_token = Token::new(0x0A000004);
-
-        let not_proxy_ssa = SsaFunctionBuilder::new(1, 0)
-            .build_with(|f| {
-                let param0 = f.arg(0, SsaType::I32);
-                f.block(0, |b| {
-                    let one = b.const_i32(1);
-                    let sum = b.add(param0, one);
-                    let result = b.call(MethodRef::new(target_token), &[sum], SsaType::I32);
-                    b.ret_val(result);
-                });
-            })
-            .unwrap();
-
-        let result = InliningPass::detect_proxy_pattern(&not_proxy_ssa);
-        assert!(
-            result.is_none(),
-            "Should NOT detect as proxy - has computation"
-        );
-    }
-
-    #[test]
-    fn test_devirtualize_proxy() {
-        // Setup: caller calls proxy, proxy forwards to target
-        let proxy_token = Token::new(0x06000002);
-        let target_token = Token::new(0x0A000001);
-
-        // Proxy: forwards arg0 to target
-        let proxy_ssa = SsaFunctionBuilder::new(1, 0)
-            .build_with(|f| {
-                let param0 = f.arg(0, SsaType::I32);
-                f.block(0, |b| {
-                    b.call_void(MethodRef::new(target_token), &[param0]);
-                    b.ret();
-                });
-            })
-            .unwrap();
-
-        // Caller: calls proxy
-        let caller_token = Token::new(0x06000001);
-        let mut caller_ssa = SsaFunctionBuilder::new(1, 0)
-            .build_with(|f| {
-                let arg0 = f.arg(0, SsaType::I32);
-                f.block(0, |b| {
-                    b.call_void(MethodRef::new(proxy_token), &[arg0]);
-                    b.ret();
-                });
-            })
-            .unwrap();
-
-        let ctx = test_context();
-        ctx.set_ssa(proxy_token, proxy_ssa);
-
-        // Get the proxy pattern
-        let proxy_pattern = ctx
-            .with_ssa(proxy_token, InliningPass::detect_proxy_pattern)
-            .flatten();
-        assert!(proxy_pattern.is_some(), "Proxy should be detected");
-
-        let (target_method, arg_mapping, is_virtual) = proxy_pattern.unwrap();
-
-        // Get call_op before creating context
-        let call_op = caller_ssa.block(0).unwrap().instructions()[0].op().clone();
-
-        // Devirtualize using InliningContext
-        let pass = InliningPass::new(20, false);
-        let assembly = test_assembly();
-        let mut inline_ctx =
-            InliningContext::new(&pass, &mut caller_ssa, caller_token, &ctx, &assembly);
-        let result = inline_ctx.devirtualize_proxy(
-            0,
-            0,
-            &call_op,
-            target_method,
-            &arg_mapping,
-            is_virtual,
-            proxy_token,
-        );
-
-        assert!(result, "Devirtualization should succeed");
-
-        // Check that the call target changed
-        let block = inline_ctx.caller_ssa.block(0).unwrap();
-        let first_instr = &block.instructions()[0];
-        match first_instr.op() {
-            SsaOp::Call { method, .. } => {
-                assert_eq!(
-                    method.token(),
-                    target_token,
-                    "Call should now target {:?}",
-                    target_token
-                );
-            }
-            other => panic!("Expected Call, got {:?}", other),
-        }
     }
 }

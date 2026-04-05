@@ -3,7 +3,7 @@
 //! This module provides the main [`ControlFlowGraph`] structure that wraps basic blocks
 //! with proper graph semantics and provides access to dominator trees, loops, and traversals.
 
-use std::{collections::HashSet, fmt::Write, sync::OnceLock};
+use std::{fmt::Write, sync::OnceLock};
 
 use crate::{
     analysis::cfg::{detect_loops, CfgEdge, CfgEdgeKind, LoopForest, LoopInfo},
@@ -14,6 +14,7 @@ use crate::{
             algorithms::{self, DominatorTree},
             DirectedGraph, EdgeId, GraphBase, NodeId, Predecessors, RootedGraph, Successors,
         },
+        BitSet,
     },
     Error::GraphError,
     Result,
@@ -66,7 +67,7 @@ pub struct ControlFlowGraph<'a> {
     /// Lazily computed dominator tree.
     dominators: OnceLock<DominatorTree>,
     /// Lazily computed dominance frontiers.
-    dominance_frontiers: OnceLock<Vec<HashSet<NodeId>>>,
+    dominance_frontiers: OnceLock<Vec<BitSet>>,
     /// Lazily computed loop forest with comprehensive loop information.
     loop_forest: OnceLock<LoopForest>,
 }
@@ -399,7 +400,7 @@ impl<'a> ControlFlowGraph<'a> {
     ///
     /// A reference to the dominance frontiers, indexed by node ID.
     #[must_use]
-    pub fn dominance_frontiers(&self) -> &Vec<HashSet<NodeId>> {
+    pub fn dominance_frontiers(&self) -> &Vec<BitSet> {
         self.dominance_frontiers
             .get_or_init(|| algorithms::compute_dominance_frontiers(&self.graph, self.dominators()))
     }
@@ -1033,10 +1034,10 @@ mod tests {
 
         let loop0 = &loops[0];
         assert_eq!(loop0.header, NodeId::new(1)); // Block 1 is the loop header
-        assert!(loop0.body.contains(&NodeId::new(1))); // Header is in body
-        assert!(loop0.body.contains(&NodeId::new(2))); // Block 2 is in body
-        assert!(!loop0.body.contains(&NodeId::new(0))); // Block 0 is not in loop
-        assert!(!loop0.body.contains(&NodeId::new(3))); // Block 3 is not in loop
+        assert!(loop0.body.contains(1)); // Header is in body
+        assert!(loop0.body.contains(2)); // Block 2 is in body
+        assert!(!loop0.body.contains(0)); // Block 0 is not in loop
+        assert!(!loop0.body.contains(3)); // Block 3 is not in loop
         assert_eq!(loop0.latches.len(), 1);
         assert_eq!(loop0.latches[0], NodeId::new(2)); // Back edge from block 2
         assert_eq!(loop0.depth, 0); // Outermost loop
@@ -1070,8 +1071,8 @@ mod tests {
         assert!(inner_loop.depth > outer_loop.depth);
 
         // Inner loop body should be subset of outer loop body
-        for node in &inner_loop.body {
-            assert!(outer_loop.body.contains(node));
+        for node_idx in inner_loop.body.iter() {
+            assert!(outer_loop.body.contains(node_idx));
         }
     }
 

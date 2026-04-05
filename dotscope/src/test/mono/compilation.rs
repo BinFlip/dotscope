@@ -3,8 +3,10 @@
 //! This module handles compilation of C# source code to .NET assemblies using
 //! the detected compiler from TestCapabilities.
 
-use crate::prelude::*;
-use crate::test::mono::capabilities::{Architecture, Compiler, TestCapabilities};
+use crate::{
+    prelude::*,
+    test::mono::capabilities::{Architecture, Compiler, TestCapabilities},
+};
 use std::path::{Path, PathBuf};
 use std::process::Command;
 

@@ -84,6 +84,7 @@ use crate::{
         tokens::io_fields,
         EmValue, HeapRef,
     },
+    utils::apply_crypto_transform,
     Result,
 };
 
@@ -880,8 +881,8 @@ fn streamreader_read_to_end_pre(
         None => return PreHookResult::Bypass(Some(EmValue::Null)),
     };
 
-    // Zero-copy: read remaining bytes and advance position to end in one operation
-    let text = match try_hook!(thread.heap().with_stream(stream_ref, |data, position| {
+    // Try plain Stream first (most common path)
+    if let Some(text) = try_hook!(thread.heap().with_stream(stream_ref, |data, position| {
         let remaining = if *position < data.len() {
             &data[*position..]
         } else {
@@ -891,11 +892,72 @@ fn streamreader_read_to_end_pre(
         *position = data.len(); // Advance to end
         text
     })) {
-        Some(t) => t,
-        None => return PreHookResult::Bypass(Some(EmValue::Null)),
-    };
+        return alloc_string_result(thread, &text);
+    }
 
-    alloc_string_result(thread, &text)
+    // Handle CryptoStream: the StreamReader wraps a CryptoStream which needs
+    // decryption/encryption before reading. Perform the full transform inline.
+    if let Some((underlying_stream, transform_ref, mode)) =
+        try_hook!(thread.heap().get_crypto_stream_info(stream_ref))
+    {
+        // Only handle Read mode (0)
+        if mode != 0 {
+            return PreHookResult::Bypass(Some(EmValue::Null));
+        }
+
+        // Check if we already have cached transformed data
+        let decrypted = if let Some((data, pos)) =
+            try_hook!(thread.heap().get_crypto_stream_transformed(stream_ref))
+        {
+            if pos < data.len() {
+                data[pos..].to_vec()
+            } else {
+                vec![]
+            }
+        } else {
+            // No cached data — perform the crypto transform now
+            let Some((stream_data, underlying_pos)) =
+                try_hook!(thread.heap().get_stream_data(underlying_stream))
+            else {
+                return PreHookResult::Bypass(Some(EmValue::Null));
+            };
+
+            let effective_data = if underlying_pos < stream_data.len() {
+                &stream_data[underlying_pos..]
+            } else {
+                &[]
+            };
+
+            let transformed = if let Some((algorithm, key, iv, is_encryptor, cmode, padding)) =
+                try_hook!(thread.heap().get_crypto_transform_info(transform_ref))
+            {
+                apply_crypto_transform(
+                    &algorithm,
+                    &key,
+                    &iv,
+                    is_encryptor,
+                    effective_data,
+                    cmode,
+                    padding,
+                )
+                .unwrap_or_else(|| effective_data.to_vec())
+            } else {
+                effective_data.to_vec()
+            };
+
+            // Cache the transformed data for potential future reads
+            let _ = thread
+                .heap()
+                .set_crypto_stream_transformed(stream_ref, transformed.clone());
+
+            transformed
+        };
+
+        let text = String::from_utf8_lossy(&decrypted).into_owned();
+        return alloc_string_result(thread, &text);
+    }
+
+    PreHookResult::Bypass(Some(EmValue::Null))
 }
 
 /// Hook for `System.IO.StreamReader.ReadLine() -> String`.

@@ -35,8 +35,6 @@
 //! v2 = shl v0, v1
 //! ```
 
-use std::collections::HashSet;
-
 use crate::{
     analysis::{ConstValue, DefUseIndex, SsaFunction, SsaOp, SsaVarId, ValueRange},
     compiler::{
@@ -44,7 +42,7 @@ use crate::{
         CompilerContext, EventKind, EventLog,
     },
     metadata::token::Token,
-    utils::is_power_of_two,
+    utils::{is_power_of_two, BitSet},
     CilObject, Result,
 };
 
@@ -77,12 +75,12 @@ struct ReductionChecker<'a> {
     /// Def-use index for the SSA function
     index: &'a DefUseIndex,
     /// Constants already used in other reductions (to avoid double-transform)
-    used_constants: &'a HashSet<SsaVarId>,
+    used_constants: &'a BitSet,
 }
 
 impl<'a> ReductionChecker<'a> {
     /// Creates a new reduction checker.
-    fn new(index: &'a DefUseIndex, used_constants: &'a HashSet<SsaVarId>) -> Self {
+    fn new(index: &'a DefUseIndex, used_constants: &'a BitSet) -> Self {
         Self {
             index,
             used_constants,
@@ -112,7 +110,7 @@ impl<'a> ReductionChecker<'a> {
 
         // Check if constant is single-use (or we skip this reduction)
         let uses = self.index.use_count(const_var);
-        if uses != 1 || self.used_constants.contains(&const_var) {
+        if uses != 1 || self.used_constants.contains(const_var.index()) {
             return None;
         }
 
@@ -151,7 +149,7 @@ impl<'a> ReductionChecker<'a> {
         let exponent = is_power_of_two(value)?;
 
         let uses = self.index.use_count(divisor_var);
-        if uses != 1 || self.used_constants.contains(&divisor_var) {
+        if uses != 1 || self.used_constants.contains(divisor_var.index()) {
             return None;
         }
 
@@ -199,7 +197,7 @@ impl<'a> ReductionChecker<'a> {
         let mask = value - 1; // 2^n - 1
 
         let uses = self.index.use_count(divisor_var);
-        if uses != 1 || self.used_constants.contains(&divisor_var) {
+        if uses != 1 || self.used_constants.contains(divisor_var.index()) {
             return None;
         }
 
@@ -262,7 +260,7 @@ impl StrengthReductionPass {
 
         // Set of constant variables that are already being transformed
         // (to avoid transforming the same constant twice if used in multiple reductions)
-        let mut used_constants: HashSet<SsaVarId> = HashSet::new();
+        let mut used_constants = BitSet::new(ssa.var_id_capacity());
 
         for (block_idx, instr_idx, instr) in ssa.iter_instructions() {
             let checker = ReductionChecker::new(index, &used_constants);
@@ -273,7 +271,7 @@ impl StrengthReductionPass {
             if let Some(candidate) =
                 Self::check_reduction(instr.op(), location, &checker, ctx, method_token)
             {
-                used_constants.insert(candidate.const_var);
+                used_constants.insert(candidate.const_var.index());
                 candidates.push(candidate);
             }
         }

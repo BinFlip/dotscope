@@ -64,7 +64,7 @@ mod tests {
     use super::*;
 
     use crate::{
-        analysis::{cfg::LoopType, SsaFunctionBuilder, SsaVarId},
+        analysis::{cfg::loops::LoopType, SsaFunctionBuilder, SsaVarId},
         utils::graph::NodeId,
     };
 

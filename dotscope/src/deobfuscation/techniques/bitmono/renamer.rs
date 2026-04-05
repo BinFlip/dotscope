@@ -15,7 +15,8 @@
 //! of BitMono FullRenamer.
 
 use crate::{
-    deobfuscation::techniques::{Detection, Evidence, PassPhase, Technique, TechniqueCategory},
+    compiler::PassPhase,
+    deobfuscation::techniques::{Detection, Evidence, Technique, TechniqueCategory},
     CilObject,
 };
 
@@ -95,9 +96,9 @@ mod tests {
         // BitMonoRenamer is an SSA technique. The IL-level detect() looks for
         // space-containing names which may or may not be present. We assert
         // consistency: if detected, evidence must be present.
-        if detection.detected {
+        if detection.is_detected() {
             assert!(
-                !detection.evidence.is_empty(),
+                !detection.evidence().is_empty(),
                 "Positive detection should include evidence"
             );
         }
@@ -111,7 +112,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "BitMonoRenamer should not detect space-containing names in a non-BitMono assembly"
         );
     }

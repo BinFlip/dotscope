@@ -619,8 +619,8 @@ pub use crate::metadata::{
         NativeExportRef, NativeExports, UnifiedExportContainer,
     },
     imports::{
-        DllDependency, DllSource, Import, ImportContainer, ImportEntry, ImportRc, Imports,
-        NativeImportRef, NativeImports, UnifiedImportContainer,
+        DllDependency, DllSource, Import, ImportContainer, ImportEntry, ImportRc, ImportSourceId,
+        Imports, NativeImportRef, NativeImports, UnifiedImportContainer,
     },
 };
 
@@ -837,6 +837,19 @@ pub use crate::file::pe::{
 /// Use `CilAssembly::to_file()` or `CilAssembly::to_memory()` to generate assemblies.
 /// Use `GeneratorConfig` for advanced configuration.
 pub use crate::cilassembly::GeneratorConfig;
+
+// ================================================================================================
+// Formatting and Disassembly Output
+// ================================================================================================
+//
+// This section provides ILDasm-compatible formatting for .NET assembly metadata.
+// Use IlFormatter to produce human-readable disassembly output from loaded assemblies.
+
+/// ILDasm-compatible disassembly output.
+///
+/// `IlFormatter` renders .NET assembly metadata as human-readable ILDasm-style text.
+/// `FormatterOptions` controls verbosity and detail level.
+pub use crate::formatting::{FormatterOptions, IlFormatter};
 
 // ================================================================================================
 // Analysis Infrastructure

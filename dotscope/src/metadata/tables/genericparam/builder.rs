@@ -8,13 +8,14 @@
 use crate::{
     cilassembly::{ChangeRefRc, CilAssembly},
     metadata::{
-        tables::{CodedIndex, CodedIndexType, GenericParamRaw, TableDataOwned, TableId},
+        tables::{
+            CodedIndex, CodedIndexType, GenericParamAttributes, GenericParamRaw, TableDataOwned,
+            TableId,
+        },
         token::Token,
     },
     Error, Result,
 };
-
-pub use super::GenericParamAttributes;
 
 /// Builder for creating GenericParam metadata entries.
 ///

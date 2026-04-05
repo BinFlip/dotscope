@@ -36,20 +36,17 @@
 //!
 //! # Passes
 //!
-//! Returns an [`InliningPass`] configured for proxy devirtualisation. The pass
-//! inlines the forwarding stubs, replacing indirect calls with direct calls
-//! to the real targets.
+//! No SSA pass is needed -- the always-on [`ProxyDevirtualizationPass`] in the
+//! normalize phase handles proxy devirtualization for all detected proxies.
+//! This technique only provides detection and cleanup (marking proxy methods
+//! for dead method elimination).
 
-use std::{any::Any, sync::Arc};
+use std::any::Any;
 
 use crate::{
     assembly::Instruction,
     cilassembly::CleanupRequest,
-    compiler::{InliningPass, SsaPass},
-    deobfuscation::{
-        context::AnalysisContext,
-        techniques::{Detection, Evidence, PassPhase, Technique, TechniqueCategory},
-    },
+    deobfuscation::techniques::{Detection, Evidence, Technique, TechniqueCategory},
     metadata::token::Token,
     prelude::FlowType,
     CilObject,
@@ -65,8 +62,11 @@ const MAX_PROXY_INSTRUCTIONS: usize = 10;
 /// Findings from reference proxy detection.
 #[derive(Debug)]
 pub struct ProxyFindings {
-    /// Tokens of detected proxy forwarding methods.
+    /// Tokens of all detected proxy forwarding methods (mild + strong).
     pub proxy_methods: Vec<Token>,
+    /// Tokens of strong (delegate-based) proxy methods only.
+    /// These are safe to delete directly — the pattern is specific to ConfuserEx.
+    pub strong_proxy_methods: Vec<Token>,
 }
 
 /// Detects ConfuserEx reference proxy forwarding stubs.
@@ -98,6 +98,7 @@ impl Technique for ConfuserExReferenceProxy {
         };
 
         let mut proxy_methods = Vec::new();
+        let mut strong_proxy_methods = Vec::new();
 
         for method_entry in assembly.methods() {
             let method = method_entry.value();
@@ -119,7 +120,10 @@ impl Technique for ConfuserExReferenceProxy {
                 continue;
             }
 
-            if is_mild_proxy(&instructions) || is_strong_proxy(&instructions) {
+            if is_strong_proxy(&instructions, assembly) {
+                proxy_methods.push(method.token);
+                strong_proxy_methods.push(method.token);
+            } else if is_mild_proxy(&instructions) {
                 proxy_methods.push(method.token);
             }
         }
@@ -129,7 +133,10 @@ impl Technique for ConfuserExReferenceProxy {
         }
 
         let count = proxy_methods.len();
-        let findings = ProxyFindings { proxy_methods };
+        let findings = ProxyFindings {
+            proxy_methods,
+            strong_proxy_methods,
+        };
 
         Detection::new_detected(
             vec![Evidence::BytecodePattern(format!(
@@ -139,30 +146,18 @@ impl Technique for ConfuserExReferenceProxy {
         )
     }
 
-    fn ssa_phase(&self) -> Option<PassPhase> {
-        Some(PassPhase::Inline)
-    }
-
-    fn create_pass(
-        &self,
-        _ctx: &AnalysisContext,
-        _detection: &Detection,
-        _assembly: &Arc<CilObject>,
-    ) -> Option<Box<dyn SsaPass>> {
-        // Create an inlining pass configured for proxy devirtualisation.
-        // threshold=0 means only inline trivially small methods (proxies).
-        // proxy_only=true restricts inlining to forwarding stubs.
-        Some(Box::new(InliningPass::new(0, true)))
-    }
-
     fn cleanup(&self, detection: &Detection) -> Option<CleanupRequest> {
         let findings = detection.findings::<ProxyFindings>()?;
-        if findings.proxy_methods.is_empty() {
+        if findings.strong_proxy_methods.is_empty() {
             return None;
         }
 
+        // Only add strong (delegate-based) proxy methods to the cleanup request.
+        // The strong pattern (ldsfld + callvirt Invoke) is specific to ConfuserEx
+        // and safe to mark for deletion. Mild proxies are handled by the
+        // devirtualization pass and dead method elimination.
         let mut request = CleanupRequest::new();
-        for token in &findings.proxy_methods {
+        for token in &findings.strong_proxy_methods {
             request.add_method(*token);
         }
         Some(request)
@@ -205,7 +200,7 @@ fn is_mild_proxy(instructions: &[&Instruction]) -> bool {
 /// Checks if a method matches the strong proxy pattern (delegate-based).
 ///
 /// Pattern: `ldsfld`, zero or more `ldarg`, `callvirt Invoke`, `ret`.
-fn is_strong_proxy(instructions: &[&Instruction]) -> bool {
+fn is_strong_proxy(instructions: &[&Instruction], _assembly: &CilObject) -> bool {
     if instructions.len() < 3 {
         return false;
     }
@@ -221,7 +216,7 @@ fn is_strong_proxy(instructions: &[&Instruction]) -> bool {
         return false;
     }
 
-    // Second-to-last must be callvirt with a token operand.
+    // Second-to-last must be callvirt (delegate dispatch).
     let call_instr = instructions[instructions.len() - 2];
     if call_instr.mnemonic != "callvirt" || call_instr.flow_type != FlowType::Call {
         return false;
@@ -229,6 +224,9 @@ fn is_strong_proxy(instructions: &[&Instruction]) -> bool {
     if call_instr.get_token_operand().is_none() {
         return false;
     }
+    // Note: we don't check that the callvirt target is named "Invoke" because
+    // ConfuserEx's renamer may rename the delegate's Invoke method. The pattern
+    // (ldsfld + ldarg* + callvirt + ret) is specific enough to identify proxy stubs.
 
     // All instructions between ldsfld and callvirt must be ldarg variants.
     for instr in &instructions[1..instructions.len() - 2] {
@@ -258,11 +256,11 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            detection.detected,
+            detection.is_detected(),
             "ConfuserExReferenceProxy should detect proxy stubs in mkaring_normal.exe"
         );
         assert!(
-            !detection.evidence.is_empty(),
+            !detection.evidence().is_empty(),
             "Detection should have evidence"
         );
 
@@ -284,7 +282,7 @@ mod tests {
         let detection = technique.detect(&assembly);
 
         assert!(
-            !detection.detected,
+            !detection.is_detected(),
             "ConfuserExReferenceProxy should not detect proxy stubs in original.exe"
         );
     }

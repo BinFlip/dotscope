@@ -21,7 +21,7 @@ A high-performance, cross-platform framework for analyzing, reverse engineering,
 - **Memory safe** - Built in Rust with comprehensive error handling and fuzzing
 - **Rich type system** - Full support for generics, signatures, and complex .NET types
 - **Static analysis** - SSA form, control flow graphs, data flow analysis, call graphs, and loop detection
-- **Deobfuscation** - 21 optimization passes, 30 techniques with ConfuserEx, BitMono, and Obfuscar support, string decryption, control flow recovery
+- **Deobfuscation** - 30 optimization passes, 35 techniques with ConfuserEx, BitMono, JIEJIE.NET, and Obfuscar support, string decryption, control flow recovery
 - **CIL emulation** - Full bytecode interpreter with 600+ BCL stubs for runtime value computation
 - **Extensible architecture** - Modular design for custom analysis and tooling
 
@@ -188,6 +188,7 @@ fn main() -> dotscope::Result<()> {
 
 - **[API Documentation](https://docs.rs/dotscope)** - Complete API reference
 - **[Examples](examples/)** - Working examples for common use cases
+- **[Obfuscator Research](docs/research/main.md)** - Detailed analysis of supported obfuscators and their protection techniques
 - **[Contributing Guide](CONTRIBUTING.md)** - How to contribute to the project
 - **[Security Policy](SECURITY.md)** - Security reporting and policy
 
@@ -269,10 +270,11 @@ Static program analysis infrastructure for .NET methods:
 SSA-based deobfuscation engine for protected .NET assemblies:
 
 - **Pass Pipeline**: 4-phase scheduler (normalize, optimize, deobfuscate, finalize) with fixpoint iteration
-- **21 Transformation Passes**: Constant propagation, copy propagation, GVN, dead code elimination, control flow unflattening, opaque predicate removal, strength reduction, algebraic simplification, block merging, loop canonicalization, LICM, jump threading, inlining, delegate proxy resolution, and more
-- **30 Detection Techniques**: Technique-based detection with extensible registry
+- **30 Transformation Passes**: Constant propagation, copy propagation, GVN, dead code elimination, control flow unflattening, opaque predicate removal, strength reduction, algebraic simplification, block merging, loop canonicalization, LICM, jump threading, inlining, delegate proxy resolution, typeof/array/resource restoration, and more
+- **35 Detection Techniques**: Technique-based detection with extensible registry
 - **ConfuserEx Support**: Anti-tamper, anti-debug, anti-dump, constants, control flow, resources, reference proxy, marker removal
 - **BitMono Support**: Anti-debug, hooks, junk code, call-to-calli, string encryption, unmanaged strings, PE repair, renaming
+- **JIEJIE.NET Support**: Control flow flattening, string encryption, constant encoding, resource encryption, typeof obfuscation, array initialization, symbol renaming
 - **Obfuscar Support**: String hiding (XOR decryption), symbol renaming, SuppressIldasm removal
 - **Code Generation**: SSA-to-CIL conversion with register coalescing and phi elimination
 - **Decryption**: Emulation-based string and constant decryption
@@ -307,7 +309,7 @@ Check out the [examples](examples/) directory for complete working examples with
 - **[Raw Assembly View](examples/raw_assembly_view.rs)** - Direct access to PE headers, metadata streams, and heaps
 - **[Project Loader](examples/project_loader.rs)** - Loading assemblies with automatic dependency resolution
 - **[Analysis](examples/analysis.rs)** - View SSA form, disassembly, control flow graphs, and call graphs
-- **[Deobfuscation](examples/deobfuscate.rs)** - CLI tool for deobfuscating .NET assemblies with ConfuserEx, BitMono, and Obfuscar support
+- **[Deobfuscation](examples/deobfuscate.rs)** - CLI tool for deobfuscating .NET assemblies with ConfuserEx, BitMono, JIEJIE.NET, and Obfuscar support
 
 Each example includes detailed documentation explaining:
 

@@ -1451,7 +1451,17 @@ impl Method {
 
         // Compute argument and local counts
         let num_args = self.signature.params.len() + usize::from(self.signature.has_this);
-        let num_locals = self.local_vars.count();
+        let declared_locals = self.local_vars.count();
+
+        // If no locals are declared (e.g., Tiny Format method body), infer from IL usage.
+        // Some obfuscators (JIEJIE.NET) emit Tiny Format methods that use stloc/ldloc
+        // without a LocalVarSig — technically invalid per ECMA-335 §II.25.4.1, but the
+        // CLR tolerates it by implicitly allocating locals.
+        let num_locals = if declared_locals == 0 {
+            Self::infer_local_count_from_blocks(blocks)
+        } else {
+            declared_locals
+        };
 
         // Create type context for type lookup during SSA construction
         let type_context = TypeContext::new(self, assembly);
@@ -1534,6 +1544,59 @@ impl Method {
         }
 
         Ok(ssa)
+    }
+
+    /// Infers the number of local variables from IL usage in the basic blocks.
+    ///
+    /// Scans all instructions for `stloc`/`ldloc`/`ldloca` opcodes and returns
+    /// `max_index + 1`. Returns 0 if no local variable instructions are found.
+    ///
+    /// This handles Tiny Format method bodies that use locals without declaring
+    /// a LocalVarSig token — technically invalid per ECMA-335 §II.25.4.1, but
+    /// tolerated by the CLR.
+    fn infer_local_count_from_blocks(blocks: &[BasicBlock]) -> usize {
+        let mut max_index: Option<usize> = None;
+
+        for block in blocks {
+            for instr in &block.instructions {
+                let idx = if instr.prefix == 0 {
+                    match instr.opcode {
+                        // Short forms: index encoded in the opcode
+                        assembly::opcodes::LDLOC_0 | assembly::opcodes::STLOC_0 => Some(0),
+                        assembly::opcodes::LDLOC_1 | assembly::opcodes::STLOC_1 => Some(1),
+                        assembly::opcodes::LDLOC_2 | assembly::opcodes::STLOC_2 => Some(2),
+                        assembly::opcodes::LDLOC_3 | assembly::opcodes::STLOC_3 => Some(3),
+                        // Byte-index forms: index in operand
+                        assembly::opcodes::LDLOC_S
+                        | assembly::opcodes::LDLOCA_S
+                        | assembly::opcodes::STLOC_S => match &instr.operand {
+                            assembly::Operand::Local(idx) => Some(*idx as usize),
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                } else if instr.prefix == 0xFE {
+                    match instr.opcode {
+                        // Two-byte forms (0xFE prefix): u16 index in operand
+                        assembly::opcodes::FE_LDLOC
+                        | assembly::opcodes::FE_LDLOCA
+                        | assembly::opcodes::FE_STLOC => match &instr.operand {
+                            assembly::Operand::Local(idx) => Some(*idx as usize),
+                            _ => None,
+                        },
+                        _ => None,
+                    }
+                } else {
+                    None
+                };
+
+                if let Some(i) = idx {
+                    max_index = Some(max_index.map_or(i, |prev| prev.max(i)));
+                }
+            }
+        }
+
+        max_index.map_or(0, |i| i + 1)
     }
 
     /// Finds the block index that starts at or contains the given offset.

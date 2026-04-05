@@ -25,12 +25,13 @@ use crate::{
         typesystem::{CilTypeRc, CilTypeReference},
         validation::ValidationConfig,
     },
+    test::{
+        builders::{
+            AssemblyRefBuilder, CilTypeBuilder, FileBuilder, MethodBuilder, ModuleRefBuilder,
+        },
+        validator::TestAssembly,
+    },
     CilObject, Error, Result,
-};
-
-use crate::test::{
-    builders::{AssemblyRefBuilder, CilTypeBuilder, FileBuilder, MethodBuilder, ModuleRefBuilder},
-    validator::TestAssembly,
 };
 
 pub mod dependencies;

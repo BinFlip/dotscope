@@ -17,7 +17,7 @@ use crate::{
 
 /// Placeholder RVA threshold — RVAs at or above this value are placeholder RVAs
 /// that point to regenerated method bodies stored in `AssemblyChanges`.
-pub(super) const PLACEHOLDER_RVA_THRESHOLD: u32 = 0xF000_0000;
+pub(crate) const PLACEHOLDER_RVA_THRESHOLD: u32 = 0xF000_0000;
 
 /// Computes the RID range `[start..end)` for a metadata list owned by a parent row.
 ///
@@ -74,7 +74,7 @@ pub(super) fn remove_candidates_not_alive(
 ///
 /// Handles both original (RVA-based) and regenerated (placeholder) methods.
 /// The callback receives `(body_bytes, base_rva)`.
-pub(super) fn with_method_body(
+pub(crate) fn with_method_body(
     assembly: &CilAssembly,
     effective_rva: u32,
     callback: &mut impl FnMut(&[u8], usize),
@@ -99,7 +99,7 @@ pub(super) fn with_method_body(
 ///
 /// Returns the `StandAloneSig` RID if the method body has a local variable
 /// signature token, or `None` otherwise.
-pub(super) fn extract_local_var_sig_rid(data: &[u8]) -> Option<u32> {
+pub(crate) fn extract_local_var_sig_rid(data: &[u8]) -> Option<u32> {
     let body = MethodBody::from(data).ok()?;
     if body.local_var_sig_token != 0 {
         let sig_token = Token::new(body.local_var_sig_token);

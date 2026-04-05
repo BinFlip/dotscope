@@ -28,14 +28,18 @@
 
 use std::{
     cmp::Reverse,
-    collections::{BinaryHeap, HashMap, HashSet},
+    collections::{BTreeMap, BinaryHeap},
 };
 
 use rayon::prelude::*;
 
-use crate::analysis::{
-    AnalysisResults, DataFlowSolver, LiveVariables, LivenessResult, SsaCfg, SsaFunction, SsaOp,
-    SsaType, SsaVarId, TypeClass, VariableOrigin,
+use crate::{
+    analysis::{
+        AnalysisResults, DataFlowSolver, LiveVariables, LivenessResult, SsaCfg, SsaFunction, SsaOp,
+        SsaType, SsaVarId, TypeClass, VariableOrigin,
+    },
+    utils::BitSet,
+    Error, Result,
 };
 
 /// Interference graph for register allocation.
@@ -43,26 +47,36 @@ use crate::analysis::{
 /// Tracks which variables interfere (are live simultaneously) and thus
 /// cannot share the same local slot.
 pub struct InterferenceGraph {
-    /// Adjacency list: var_id -> set of interfering var_ids
-    edges: HashMap<SsaVarId, HashSet<SsaVarId>>,
+    /// Adjacency list: var_id -> bitset of interfering var_ids (indexed by SsaVarId::index())
+    edges: BTreeMap<SsaVarId, BitSet>,
     /// Type of each variable (for compatibility checking)
-    var_types: HashMap<SsaVarId, SsaType>,
+    var_types: BTreeMap<SsaVarId, SsaType>,
+    /// Number of variables (capacity for BitSets)
+    var_count: usize,
 }
 
 impl InterferenceGraph {
-    /// Creates a new empty interference graph.
-    fn new() -> Self {
+    /// Creates a new empty interference graph with the given variable capacity.
+    fn new(var_count: usize) -> Self {
         Self {
-            edges: HashMap::new(),
-            var_types: HashMap::new(),
+            edges: BTreeMap::new(),
+            var_types: BTreeMap::new(),
+            var_count,
         }
     }
 
     /// Adds an interference edge between two variables.
     fn add_edge(&mut self, a: SsaVarId, b: SsaVarId) {
         if a != b {
-            self.edges.entry(a).or_default().insert(b);
-            self.edges.entry(b).or_default().insert(a);
+            let var_count = self.var_count;
+            self.edges
+                .entry(a)
+                .or_insert_with(|| BitSet::new(var_count))
+                .insert(b.index());
+            self.edges
+                .entry(b)
+                .or_insert_with(|| BitSet::new(var_count))
+                .insert(a.index());
         }
     }
 
@@ -76,23 +90,23 @@ impl InterferenceGraph {
         self.edges
             .get(&var)
             .into_iter()
-            .flat_map(|set| set.iter().copied())
+            .flat_map(|set| set.iter().map(SsaVarId::from_index))
     }
 
     /// Returns the degree (number of interferences) of a variable.
     fn degree(&self, var: SsaVarId) -> usize {
-        self.edges.get(&var).map_or(0, HashSet::len)
+        self.edges.get(&var).map_or(0, |s| s.count())
     }
 }
 
 /// Result of local allocation.
 pub struct LocalAllocation {
     /// Map SSA var -> allocated local slot
-    pub var_to_local: HashMap<SsaVarId, u16>,
+    pub var_to_local: BTreeMap<SsaVarId, u16>,
     /// Number of locals needed
     pub num_locals: u16,
     /// Map original local index -> compacted local index (for signature generation)
-    pub original_to_compacted: HashMap<u16, u16>,
+    pub original_to_compacted: BTreeMap<u16, u16>,
 }
 
 /// Live interval for a variable (used by linear scan).
@@ -162,7 +176,8 @@ impl LocalCoalescer {
     ///
     /// Complexity: O(n²) for n variables
     fn build_graph_coloring(ssa: &SsaFunction) -> Self {
-        let mut interference = InterferenceGraph::new();
+        let var_count = ssa.var_id_capacity();
+        let mut interference = InterferenceGraph::new(var_count);
 
         // Record types for all variables
         for var in ssa.variables() {
@@ -227,7 +242,7 @@ impl LocalCoalescer {
                 let mut edges = Vec::new();
 
                 // Group PHI operands by predecessor
-                let mut operands_by_pred: HashMap<usize, Vec<SsaVarId>> = HashMap::new();
+                let mut operands_by_pred: BTreeMap<usize, Vec<SsaVarId>> = BTreeMap::new();
                 for phi in block.phi_nodes() {
                     for operand in phi.operands() {
                         operands_by_pred
@@ -304,7 +319,7 @@ impl LocalCoalescer {
     /// Complexity: O(n log n) for n variables
     fn build_linear_scan(ssa: &SsaFunction) -> Self {
         // Collect variable types for compatibility checking
-        let mut var_types: HashMap<SsaVarId, SsaType> = HashMap::new();
+        let mut var_types: BTreeMap<SsaVarId, SsaType> = BTreeMap::new();
         for var in ssa.variables() {
             var_types.insert(var.id(), var.var_type().clone());
         }
@@ -312,14 +327,7 @@ impl LocalCoalescer {
         // Compute live intervals for each variable
         let intervals = Self::compute_live_intervals(ssa);
 
-        // Pre-assign fixed slots for arguments and used original locals
-        let mut var_to_local: HashMap<SsaVarId, u16> = HashMap::new();
-        let mut next_local: u16 = 0;
-        // Track which slots are reserved for Local-origin variables
-        let mut reserved_slots: HashSet<u16> = HashSet::new();
-        // Track mapping from original local index to compacted index
-        let mut original_to_new: HashMap<u16, u16> = HashMap::new();
-
+        // Pre-assign fixed slots for arguments and used original locals.
         // Collect Local-origin variables that have live intervals (are actually used).
         // Phi-origin variables go through linear scan allocation separately.
         let mut used_local_vars: Vec<(SsaVarId, u16)> = ssa
@@ -337,68 +345,22 @@ impl LocalCoalescer {
         // Sort by original index for deterministic ordering
         used_local_vars.sort_by_key(|(_, idx)| *idx);
 
-        // Also collect local indices referenced by LoadLocal/LoadLocalAddr instructions.
-        // These reference locals by index (not SSA variable), so the coalescer's
-        // liveness analysis doesn't see them. We need to ensure they have slots.
-        let mut load_referenced_locals: HashSet<u16> = HashSet::new();
-        for block in ssa.blocks() {
-            for instr in block.instructions() {
-                match instr.op() {
-                    SsaOp::LoadLocal { local_index, .. }
-                    | SsaOp::LoadLocalAddr { local_index, .. } => {
-                        load_referenced_locals.insert(*local_index);
-                    }
-                    _ => {}
-                }
-            }
-        }
-
-        // Assign consecutive slots to USED Local-origin variables
-        // IMPORTANT: All SSA versions of the same original local must share
-        // the same physical slot. This ensures original_to_new correctly maps
-        // each original index to exactly one compacted index.
-        for (var_id, original_idx) in used_local_vars {
-            // Reuse existing slot if this original local was already mapped
-            let new_slot = *original_to_new.entry(original_idx).or_insert_with(|| {
-                let slot = next_local;
-                next_local += 1;
-                slot
-            });
-            var_to_local.insert(var_id, new_slot);
-            reserved_slots.insert(new_slot);
-        }
-
-        // Ensure LoadLocal/LoadLocalAddr-referenced locals also get compacted entries
-        let mut sorted_load_refs: Vec<u16> = load_referenced_locals.into_iter().collect();
-        sorted_load_refs.sort_unstable();
-        for original_idx in sorted_load_refs {
-            original_to_new.entry(original_idx).or_insert_with(|| {
-                let slot = next_local;
-                next_local += 1;
-                reserved_slots.insert(slot);
-                slot
-            });
-        }
-
-        // Build a stable sort key for each variable: (origin, version).
-        // This is deterministic within a method, unlike SsaVarId which depends on
-        // global allocation order that varies with parallel processing.
-        let var_sort_key = |var_id: SsaVarId| -> (VariableOrigin, u32) {
-            ssa.variable(var_id)
-                .map_or((VariableOrigin::Phi, u32::MAX), |v| {
-                    (v.origin(), v.version())
-                })
-        };
+        let PreAssignment {
+            mut var_to_local,
+            reserved_slots,
+            original_to_new,
+            mut next_local,
+        } = pre_assign_locals(ssa, &used_local_vars);
 
         // Sort intervals by start position, with (origin, version) as tiebreaker for determinism.
-        // Without the secondary key, variables with the same start position would be ordered
-        // by HashMap iteration order, which is non-deterministic.
+        // The secondary key ensures stable ordering when multiple variables share the same
+        // start position.
         let mut sorted_intervals: Vec<_> = intervals.into_iter().collect();
         sorted_intervals.sort_by(|(var_id_a, interval_a), (var_id_b, interval_b)| {
             interval_a
                 .start
                 .cmp(&interval_b.start)
-                .then_with(|| var_sort_key(*var_id_a).cmp(&var_sort_key(*var_id_b)))
+                .then_with(|| var_sort_key(ssa, *var_id_a).cmp(&var_sort_key(ssa, *var_id_b)))
         });
 
         // Active list: heap sorted by end position (earliest end first)
@@ -406,7 +368,7 @@ impl LocalCoalescer {
         let mut active: BinaryHeap<Reverse<(usize, u16, TypeClass)>> = BinaryHeap::new();
 
         // Free slots available for reuse, grouped by type class
-        let mut free_slots: HashMap<TypeClass, Vec<u16>> = HashMap::new();
+        let mut free_slots: BTreeMap<TypeClass, Vec<u16>> = BTreeMap::new();
 
         // Linear scan allocation
         for (var_id, interval) in sorted_intervals {
@@ -432,7 +394,7 @@ impl LocalCoalescer {
                 }
                 active.pop();
                 // Only add to free pool if not a reserved slot
-                if !reserved_slots.contains(&slot) {
+                if !reserved_slots.contains(slot as usize) {
                     free_slots.entry(type_class).or_default().push(slot);
                 }
             }
@@ -464,7 +426,7 @@ impl LocalCoalescer {
         };
 
         Self {
-            interference: InterferenceGraph::new(),
+            interference: InterferenceGraph::new(0),
             coalescable_vars: Vec::new(),
             precomputed: Some(allocation),
         }
@@ -474,10 +436,25 @@ impl LocalCoalescer {
     ///
     /// A live interval is the range [start, end) where a variable is live.
     /// We use instruction indices within a linearized view of the CFG.
-    fn compute_live_intervals(ssa: &SsaFunction) -> HashMap<SsaVarId, LiveInterval> {
-        let mut intervals: HashMap<SsaVarId, LiveInterval> = HashMap::new();
+    fn compute_live_intervals(ssa: &SsaFunction) -> BTreeMap<SsaVarId, LiveInterval> {
+        let mut intervals: BTreeMap<SsaVarId, LiveInterval> = BTreeMap::new();
 
-        // Assign instruction indices by walking blocks in order
+        // Phase 1: Build a map of block → end instruction index.
+        // PHI operands are semantically used at the END of the predecessor
+        // block (not at the PHI's block), so we need to know each block's
+        // end position to correctly extend operand intervals.
+        let mut block_end_idx: Vec<usize> = Vec::with_capacity(ssa.block_count());
+        {
+            let mut idx = 0usize;
+            for block_id in 0..ssa.block_count() {
+                if let Some(block) = ssa.block(block_id) {
+                    idx += block.instructions().len();
+                }
+                block_end_idx.push(idx);
+            }
+        }
+
+        // Phase 2: Assign instruction indices by walking blocks in order
         let mut instr_idx = 0usize;
 
         for block_id in 0..ssa.block_count() {
@@ -493,12 +470,24 @@ impl LocalCoalescer {
                     .or_insert_with(|| LiveInterval::new(instr_idx))
                     .extend_start(instr_idx);
 
-                // Phi operands are used at this point
+                // PHI operands are used at the END of their predecessor block.
+                // A variable v in `v<-B_pred` must be live from its definition
+                // through the end of B_pred. If B_pred comes AFTER the PHI's
+                // block in the linearized layout, extending only to the PHI
+                // position would leave a gap where the local slot can be reused.
                 for operand in phi.operands() {
+                    let pred = operand.predecessor();
+                    let pred_end = if pred < block_end_idx.len() {
+                        block_end_idx[pred]
+                    } else {
+                        instr_idx + 1
+                    };
+                    // Use the later of: PHI position or predecessor end
+                    let use_point = pred_end.max(instr_idx + 1);
                     intervals
                         .entry(operand.value())
                         .or_insert_with(|| LiveInterval::new(instr_idx))
-                        .extend_end(instr_idx + 1);
+                        .extend_end(use_point);
                 }
             }
 
@@ -536,40 +525,45 @@ impl LocalCoalescer {
         block_id: usize,
     ) -> Vec<(SsaVarId, SsaVarId)> {
         let mut edges = Vec::new();
+        let var_count = ssa.var_id_capacity();
 
         let Some(block) = ssa.block(block_id) else {
             return edges;
         };
 
         // Start with live_out from this block
-        let mut live: HashSet<SsaVarId> = results
-            .out_state(block_id)
-            .map(|r| r.variables().collect())
-            .unwrap_or_default();
+        let mut live = BitSet::new(var_count);
+        if let Some(live_out) = results.out_state(block_id) {
+            for var in live_out.variables() {
+                live.insert(var.index());
+            }
+        }
 
         // Walk instructions backwards
         for instr in block.instructions().iter().rev() {
             // If this instruction defines a variable, it interferes with all live vars
             if let Some(def) = instr.def() {
-                for &live_var in &live {
+                for live_idx in live.iter() {
+                    let live_var = SsaVarId::from_index(live_idx);
                     if live_var != def {
                         edges.push((def, live_var));
                     }
                 }
                 // The defined variable is no longer live before this point
-                live.remove(&def);
+                live.remove(def.index());
             }
 
             // Uses make variables live
             for &use_var in &instr.uses() {
-                live.insert(use_var);
+                live.insert(use_var.index());
             }
         }
 
         // Handle phi nodes (they define at block entry)
         for phi in block.phi_nodes() {
             let def = phi.result();
-            for &live_var in &live {
+            for live_idx in live.iter() {
+                let live_var = SsaVarId::from_index(live_idx);
                 if live_var != def {
                     edges.push((def, live_var));
                 }
@@ -604,7 +598,7 @@ impl LocalCoalescer {
         }
 
         // Build def_map: variable -> instruction index within this block
-        let mut def_map: HashMap<SsaVarId, usize> = HashMap::with_capacity(instructions.len());
+        let mut def_map: BTreeMap<SsaVarId, usize> = BTreeMap::new();
         for (idx, instr) in instructions.iter().enumerate() {
             if let Some(dest) = instr.def() {
                 def_map.insert(dest, idx);
@@ -612,10 +606,11 @@ impl LocalCoalescer {
         }
 
         // Identify which variables are used as operands within this block
-        let mut used_in_block: HashSet<SsaVarId> = HashSet::with_capacity(instructions.len() * 2);
+        let var_count = ssa.var_id_capacity();
+        let mut used_in_block = BitSet::new(var_count);
         for instr in instructions {
             for use_var in instr.uses() {
-                used_in_block.insert(use_var);
+                used_in_block.insert(use_var.index());
             }
         }
 
@@ -627,7 +622,7 @@ impl LocalCoalescer {
             .filter_map(|(idx, instr)| {
                 let is_root = match instr.def() {
                     Some(dest) => {
-                        !used_in_block.contains(&dest)
+                        !used_in_block.contains(dest.index())
                             || matches!(
                                 instr.op(),
                                 SsaOp::Jump { .. }
@@ -708,14 +703,14 @@ impl LocalCoalescer {
     /// Returns a mapping from SSA variables to local slots, minimizing the
     /// total number of locals needed. Uses the result from whatever algorithm
     /// was selected during `build()`.
-    pub fn allocate(&self, ssa: &SsaFunction) -> LocalAllocation {
+    pub fn allocate(&self, ssa: &SsaFunction) -> Result<LocalAllocation> {
         // If we used linear scan, the allocation is already computed
         if let Some(precomputed) = &self.precomputed {
-            return LocalAllocation {
+            return Ok(LocalAllocation {
                 var_to_local: precomputed.var_to_local.clone(),
                 num_locals: precomputed.num_locals,
                 original_to_compacted: precomputed.original_to_compacted.clone(),
-            };
+            });
         }
 
         // Otherwise use graph coloring allocation
@@ -723,29 +718,26 @@ impl LocalCoalescer {
     }
 
     /// Allocates local slots using greedy graph coloring.
-    fn allocate_graph_coloring(&self, ssa: &SsaFunction) -> LocalAllocation {
-        let mut var_to_local: HashMap<SsaVarId, u16> = HashMap::new();
-        let mut next_local: u16 = 0;
-        // Track which slots are reserved for Local-origin variables
-        // These slots must not be reused by other variables
-        let mut reserved_slots: HashSet<u16> = HashSet::new();
+    fn allocate_graph_coloring(&self, ssa: &SsaFunction) -> Result<LocalAllocation> {
+        let var_count = ssa.variable_count();
 
         // First, collect which Local-origin variables are actually USED.
         // Phi-origin variables go through graph coloring allocation separately.
-        let mut used_local_vars: HashSet<SsaVarId> = HashSet::new();
+        let slot_capacity = var_count.max(self.coalescable_vars.len() + 1).max(64);
+        let mut used_local_var_ids = BitSet::new(slot_capacity);
         for block in ssa.blocks() {
             for phi in block.phi_nodes() {
                 // Check phi result
                 if let Some(var) = ssa.variable(phi.result()) {
                     if matches!(var.origin(), VariableOrigin::Local(_)) {
-                        used_local_vars.insert(phi.result());
+                        used_local_var_ids.insert(phi.result().index());
                     }
                 }
                 // Check phi operands
                 for operand in phi.operands() {
                     if let Some(var) = ssa.variable(operand.value()) {
                         if matches!(var.origin(), VariableOrigin::Local(_)) {
-                            used_local_vars.insert(operand.value());
+                            used_local_var_ids.insert(operand.value().index());
                         }
                     }
                 }
@@ -756,7 +748,7 @@ impl LocalCoalescer {
                 if let Some(dest) = op.dest() {
                     if let Some(var) = ssa.variable(dest) {
                         if matches!(var.origin(), VariableOrigin::Local(_)) {
-                            used_local_vars.insert(dest);
+                            used_local_var_ids.insert(dest.index());
                         }
                     }
                 }
@@ -764,7 +756,7 @@ impl LocalCoalescer {
                 for use_var in op.uses() {
                     if let Some(var) = ssa.variable(use_var) {
                         if matches!(var.origin(), VariableOrigin::Local(_)) {
-                            used_local_vars.insert(use_var);
+                            used_local_var_ids.insert(use_var.index());
                         }
                     }
                 }
@@ -777,7 +769,7 @@ impl LocalCoalescer {
             .iter()
             .filter_map(|v| {
                 if let VariableOrigin::Local(idx) = v.origin() {
-                    if used_local_vars.contains(&v.id()) {
+                    if used_local_var_ids.contains(v.id().index()) {
                         return Some((v.id(), idx));
                     }
                 }
@@ -786,58 +778,12 @@ impl LocalCoalescer {
             .collect();
         local_vars.sort_by_key(|(_, idx)| *idx);
 
-        // Assign consecutive slots to USED Local-origin variables only
-        // Track mapping from original index to new index
-        // IMPORTANT: All SSA versions of the same original local must share
-        // the same physical slot. This ensures original_to_new correctly maps
-        // each original index to exactly one compacted index.
-        let mut original_to_new: HashMap<u16, u16> = HashMap::new();
-        for (var_id, original_idx) in local_vars {
-            // Reuse existing slot if this original local was already mapped
-            let new_slot = *original_to_new.entry(original_idx).or_insert_with(|| {
-                let slot = next_local;
-                next_local += 1;
-                slot
-            });
-            var_to_local.insert(var_id, new_slot);
-            reserved_slots.insert(new_slot);
-        }
-
-        // Also ensure LoadLocal/LoadLocalAddr-referenced locals get compacted entries.
-        // These reference locals by index (not SSA variable), so the coalescer's
-        // liveness analysis doesn't see them.
-        let mut sorted_load_refs: Vec<u16> = Vec::new();
-        for block in ssa.blocks() {
-            for instr in block.instructions() {
-                match instr.op() {
-                    SsaOp::LoadLocal { local_index, .. }
-                    | SsaOp::LoadLocalAddr { local_index, .. } => {
-                        if !original_to_new.contains_key(local_index) {
-                            sorted_load_refs.push(*local_index);
-                        }
-                    }
-                    _ => {}
-                }
-            }
-        }
-        sorted_load_refs.sort_unstable();
-        sorted_load_refs.dedup();
-        for original_idx in sorted_load_refs {
-            let slot = next_local;
-            next_local += 1;
-            original_to_new.insert(original_idx, slot);
-            reserved_slots.insert(slot);
-        }
-
-        // Build a stable sort key for each variable: (origin, version).
-        // This is deterministic within a method, unlike SsaVarId which depends on
-        // global allocation order that varies with parallel processing.
-        let var_sort_key = |var_id: SsaVarId| -> (VariableOrigin, u32) {
-            ssa.variable(var_id)
-                .map_or((VariableOrigin::Phi, u32::MAX), |v| {
-                    (v.origin(), v.version())
-                })
-        };
+        let PreAssignment {
+            mut var_to_local,
+            reserved_slots,
+            original_to_new,
+            mut next_local,
+        } = pre_assign_locals(ssa, &local_vars);
 
         // Sort coalescable variables by degree (most constrained first)
         // This is a simple heuristic that often produces good colorings.
@@ -848,17 +794,18 @@ impl LocalCoalescer {
             let deg_b = self.interference.degree(*b);
             deg_b
                 .cmp(&deg_a)
-                .then_with(|| var_sort_key(*a).cmp(&var_sort_key(*b)))
+                .then_with(|| var_sort_key(ssa, *a).cmp(&var_sort_key(ssa, *b)))
         });
 
         // Greedy coloring with type compatibility
         for var in sorted_vars {
             // Find slots used by interfering neighbors
-            let used_slots: HashSet<u16> = self
-                .interference
-                .neighbors(var)
-                .filter_map(|neighbor| var_to_local.get(&neighbor).copied())
-                .collect();
+            let mut used_slots = BitSet::new(slot_capacity);
+            for neighbor in self.interference.neighbors(var) {
+                if let Some(&slot) = var_to_local.get(&neighbor) {
+                    used_slots.insert(slot as usize);
+                }
+            }
 
             // Get this variable's type for compatibility checking
             let var_type = self.interference.var_types.get(&var);
@@ -870,12 +817,12 @@ impl LocalCoalescer {
             let slot = (0u16..)
                 .find(|&s| {
                     // Skip reserved slots - they belong to Local-origin variables
-                    if reserved_slots.contains(&s) {
+                    if reserved_slots.contains(s as usize) {
                         return false;
                     }
 
                     // Slot must not be used by an interfering variable
-                    if used_slots.contains(&s) {
+                    if used_slots.contains(s as usize) {
                         return false;
                     }
 
@@ -891,18 +838,106 @@ impl LocalCoalescer {
 
                     true
                 })
-                .expect("Should always find a valid slot");
+                .ok_or_else(|| Error::CodegenFailed("Should always find a valid slot".into()))?;
 
             var_to_local.insert(var, slot);
             next_local = next_local.max(slot + 1);
         }
 
-        LocalAllocation {
+        Ok(LocalAllocation {
             var_to_local,
             num_locals: next_local,
             original_to_compacted: original_to_new,
+        })
+    }
+}
+
+/// Pre-assignment result for local variables.
+///
+/// Contains the initial slot assignments for Local-origin and LoadLocal-referenced
+/// variables, along with tracking state for the allocation phase.
+struct PreAssignment {
+    /// Map from SSA variable ID to assigned local slot.
+    var_to_local: BTreeMap<SsaVarId, u16>,
+    /// Slots reserved for Local-origin variables (must not be reused).
+    reserved_slots: BitSet,
+    /// Map from original local index to compacted index.
+    original_to_new: BTreeMap<u16, u16>,
+    /// Next available local slot index.
+    next_local: u16,
+}
+
+/// Pre-assigns local slots for Local-origin and LoadLocal-referenced variables.
+///
+/// This shared logic is used by both graph coloring and linear scan algorithms.
+/// It assigns consecutive slots to used Local-origin variables (deduplicating
+/// SSA versions of the same original local) and ensures LoadLocal/LoadLocalAddr-
+/// referenced locals also get compacted entries.
+///
+/// `used_local_vars` must be a pre-filtered, sorted list of `(var_id, original_local_index)`
+/// pairs representing Local-origin variables that are actually used.
+fn pre_assign_locals(ssa: &SsaFunction, used_local_vars: &[(SsaVarId, u16)]) -> PreAssignment {
+    let var_count = ssa.variable_count();
+    let slot_capacity = var_count.max(64);
+    let mut var_to_local: BTreeMap<SsaVarId, u16> = BTreeMap::new();
+    let mut reserved_slots = BitSet::new(slot_capacity);
+    let mut original_to_new: BTreeMap<u16, u16> = BTreeMap::new();
+    let mut next_local: u16 = 0;
+
+    // Assign consecutive slots to USED Local-origin variables.
+    // All SSA versions of the same original local share the same physical slot.
+    for &(var_id, original_idx) in used_local_vars {
+        let new_slot = *original_to_new.entry(original_idx).or_insert_with(|| {
+            let slot = next_local;
+            next_local += 1;
+            slot
+        });
+        var_to_local.insert(var_id, new_slot);
+        reserved_slots.insert(new_slot as usize);
+    }
+
+    // Ensure LoadLocal/LoadLocalAddr-referenced locals also get compacted entries.
+    // These reference locals by index (not SSA variable), so the coalescer's
+    // liveness analysis doesn't see them.
+    let mut load_referenced_locals = BitSet::new(slot_capacity);
+    for block in ssa.blocks() {
+        for instr in block.instructions() {
+            match instr.op() {
+                SsaOp::LoadLocal { local_index, .. } | SsaOp::LoadLocalAddr { local_index, .. } => {
+                    load_referenced_locals.insert(*local_index as usize);
+                }
+                _ => {}
+            }
         }
     }
+    let mut sorted_load_refs: Vec<u16> = load_referenced_locals.iter().map(|i| i as u16).collect();
+    sorted_load_refs.sort_unstable();
+    for original_idx in sorted_load_refs {
+        original_to_new.entry(original_idx).or_insert_with(|| {
+            let slot = next_local;
+            next_local += 1;
+            reserved_slots.insert(slot as usize);
+            slot
+        });
+    }
+
+    PreAssignment {
+        var_to_local,
+        reserved_slots,
+        original_to_new,
+        next_local,
+    }
+}
+
+/// Builds a stable sort key for an SSA variable.
+///
+/// Returns `(origin, version)` which is deterministic within a method,
+/// unlike `SsaVarId` which depends on global allocation order.
+fn var_sort_key(ssa: &SsaFunction, var_id: SsaVarId) -> (VariableOrigin, u32) {
+    ssa.variable(var_id)
+        .map_or((VariableOrigin::Phi, u32::MAX), |v| {
+            (v.origin(), v.version())
+        })
 }
 
 /// Checks if two types can share the same local slot.
@@ -919,7 +954,7 @@ fn types_compatible(t1: Option<&SsaType>, t2: Option<&SsaType>) -> bool {
 mod tests {
     use super::*;
 
-    use std::collections::HashSet;
+    use std::collections::BTreeSet;
 
     use crate::analysis::{SsaFunctionBuilder, SsaType, SsaVarId};
 
@@ -930,7 +965,7 @@ mod tests {
 
     #[test]
     fn test_interference_graph_add_edge() {
-        let mut graph = InterferenceGraph::new();
+        let mut graph = InterferenceGraph::new(10);
         let vars = make_vars(3);
         let (var_a, var_b, var_c) = (vars[0], vars[1], vars[2]);
 
@@ -958,7 +993,7 @@ mod tests {
 
     #[test]
     fn test_interference_graph_multiple_edges() {
-        let mut graph = InterferenceGraph::new();
+        let mut graph = InterferenceGraph::new(10);
         let vars = make_vars(5);
 
         // Create a clique of 3 variables (all interfere with each other)
@@ -989,9 +1024,16 @@ mod tests {
         // 64-bit integers are compatible
         assert!(types_compatible(Some(&SsaType::I64), Some(&SsaType::U64)));
 
-        // Reference types are compatible
-        assert!(types_compatible(
+        // Different reference types are NOT compatible (CIL verifier requires
+        // exact type match on stloc/ldloc for reference types)
+        assert!(!types_compatible(
             Some(&SsaType::Object),
+            Some(&SsaType::String)
+        ));
+
+        // Same reference types ARE compatible
+        assert!(types_compatible(
+            Some(&SsaType::String),
             Some(&SsaType::String)
         ));
     }
@@ -1025,7 +1067,7 @@ mod tests {
     #[test]
     fn test_greedy_coloring_non_interfering_same_slot() {
         // When variables don't interfere, they should share the same slot
-        let mut graph = InterferenceGraph::new();
+        let mut graph = InterferenceGraph::new(10);
         let vars = make_vars(2);
         let (var_a, var_b) = (vars[0], vars[1]);
 
@@ -1042,7 +1084,7 @@ mod tests {
 
         // Create a minimal SSA function for allocation
         let ssa = create_minimal_ssa_function();
-        let allocation = coalescer.allocate(&ssa);
+        let allocation = coalescer.allocate(&ssa).unwrap();
 
         // Non-interfering variables with compatible types should share slot 0
         assert_eq!(allocation.var_to_local.get(&var_a), Some(&0));
@@ -1053,7 +1095,7 @@ mod tests {
     #[test]
     fn test_greedy_coloring_interfering_different_slots() {
         // When variables interfere, they must get different slots
-        let mut graph = InterferenceGraph::new();
+        let mut graph = InterferenceGraph::new(10);
         let vars = make_vars(2);
         let (var_a, var_b) = (vars[0], vars[1]);
 
@@ -1068,7 +1110,7 @@ mod tests {
         };
 
         let ssa = create_minimal_ssa_function();
-        let allocation = coalescer.allocate(&ssa);
+        let allocation = coalescer.allocate(&ssa).unwrap();
 
         // Interfering variables must have different slots
         let slot_a = allocation.var_to_local.get(&var_a).unwrap();
@@ -1080,7 +1122,7 @@ mod tests {
     #[test]
     fn test_greedy_coloring_type_incompatible_different_slots() {
         // Even non-interfering variables need different slots if types are incompatible
-        let mut graph = InterferenceGraph::new();
+        let mut graph = InterferenceGraph::new(10);
         let vars = make_vars(2);
         let (var_a, var_b) = (vars[0], vars[1]);
 
@@ -1095,7 +1137,7 @@ mod tests {
         };
 
         let ssa = create_minimal_ssa_function();
-        let allocation = coalescer.allocate(&ssa);
+        let allocation = coalescer.allocate(&ssa).unwrap();
 
         // Type-incompatible variables must have different slots
         let slot_a = allocation.var_to_local.get(&var_a).unwrap();
@@ -1107,7 +1149,7 @@ mod tests {
     #[test]
     fn test_greedy_coloring_clique_needs_n_colors() {
         // A clique of n nodes needs n colors (slots)
-        let mut graph = InterferenceGraph::new();
+        let mut graph = InterferenceGraph::new(10);
         let vars = make_vars(4);
 
         // Create a clique - all 4 variables interfere with each other
@@ -1125,10 +1167,10 @@ mod tests {
         };
 
         let ssa = create_minimal_ssa_function();
-        let allocation = coalescer.allocate(&ssa);
+        let allocation = coalescer.allocate(&ssa).unwrap();
 
         // All 4 must have unique slots
-        let slots: HashSet<_> = vars
+        let slots: BTreeSet<_> = vars
             .iter()
             .filter_map(|v| allocation.var_to_local.get(v).copied())
             .collect();
@@ -1139,7 +1181,7 @@ mod tests {
     #[test]
     fn test_greedy_coloring_chain_needs_2_colors() {
         // A chain graph (v0-v1-v2-v3) is 2-colorable
-        let mut graph = InterferenceGraph::new();
+        let mut graph = InterferenceGraph::new(10);
         let vars = make_vars(4);
 
         // Chain: 0-1-2-3
@@ -1157,7 +1199,7 @@ mod tests {
         };
 
         let ssa = create_minimal_ssa_function();
-        let allocation = coalescer.allocate(&ssa);
+        let allocation = coalescer.allocate(&ssa).unwrap();
 
         // Adjacent variables must have different slots
         for i in 0..3 {
@@ -1179,7 +1221,7 @@ mod tests {
     #[test]
     fn test_mixed_types_coalesce_within_class() {
         // Variables of compatible types that don't interfere should share slots
-        let mut graph = InterferenceGraph::new();
+        let mut graph = InterferenceGraph::new(10);
         let vars = make_vars(5);
         let (var_i32, var_u32, var_bool, var_i64, var_u64) =
             (vars[0], vars[1], vars[2], vars[3], vars[4]);
@@ -1201,7 +1243,7 @@ mod tests {
         };
 
         let ssa = create_minimal_ssa_function();
-        let allocation = coalescer.allocate(&ssa);
+        let allocation = coalescer.allocate(&ssa).unwrap();
 
         // All Int32-class should share slot 0
         assert_eq!(allocation.var_to_local.get(&var_i32), Some(&0));

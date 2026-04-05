@@ -21,14 +21,15 @@ use std::sync::Arc;
 use crate::{
     metadata::{
         streams::Blob,
-        tables::{CodedIndex, CodedIndexType, ConstantRc, TableInfoRef, TableRow},
+        tables::{
+            constant::owned::Constant, CodedIndex, CodedIndexType, ConstantRc, TableInfoRef,
+            TableRow,
+        },
         token::Token,
         typesystem::{CilPrimitive, CilTypeReference},
     },
     Result,
 };
-
-use super::owned::Constant;
 
 /// Raw representation of a Constant metadata table entry
 ///

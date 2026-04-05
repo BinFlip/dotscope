@@ -881,8 +881,12 @@ impl CallGraph {
             .filter(|s| s.is_polymorphic())
             .count();
 
+        let internal_methods = self.nodes().filter(|n| !n.is_external_ref).count();
+        let external_refs = self.graph.node_count() - internal_methods;
+
         CallGraphStats {
-            method_count: self.graph.node_count(),
+            method_count: internal_methods,
+            external_refs,
             edge_count: self.graph.edge_count(),
             total_call_sites,
             virtual_calls,
@@ -994,8 +998,10 @@ impl Default for CallGraph {
 /// method counts, call site statistics, and recursion information.
 #[derive(Debug, Clone, Default)]
 pub struct CallGraphStats {
-    /// Number of methods (nodes) in the graph.
+    /// Number of internal methods (MethodDef) in the graph.
     pub method_count: usize,
+    /// Number of external references (MemberRef/MethodSpec) in the graph.
+    pub external_refs: usize,
     /// Number of call edges between methods.
     pub edge_count: usize,
     /// Total number of call sites across all method bodies.

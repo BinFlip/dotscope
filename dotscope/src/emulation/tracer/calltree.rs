@@ -54,9 +54,12 @@
 
 use std::{fmt, sync::Mutex};
 
+use log;
+
 use crate::{
     emulation::tracer::{event::TraceEvent, listener::TraceListener},
     metadata::token::Token,
+    Error, Result,
 };
 
 /// A node in the call tree representing a single method invocation.
@@ -122,8 +125,15 @@ impl CallTreeBuilder {
     }
 
     /// Processes a single trace event and updates the call tree.
-    pub fn process_event(&self, event: &TraceEvent) {
-        let mut state = self.state.lock().unwrap();
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the internal mutex is poisoned.
+    pub fn process_event(&self, event: &TraceEvent) -> Result<()> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|e| Error::LockError(format!("CallTreeBuilder lock failed: {e}")))?;
         match event {
             TraceEvent::MethodCall {
                 target,
@@ -181,6 +191,7 @@ impl CallTreeBuilder {
             }
             _ => {}
         }
+        Ok(())
     }
 
     /// Consumes the builder and returns the completed call tree roots.
@@ -188,9 +199,14 @@ impl CallTreeBuilder {
     /// Any in-progress calls (without matching returns) are finalized
     /// with `completed: false` and attached to their parent or returned
     /// as roots.
-    #[must_use]
-    pub fn finish(self) -> Vec<CallTreeNode> {
-        let mut state = self.state.into_inner().unwrap();
+    /// # Errors
+    ///
+    /// Returns an error if the internal mutex is poisoned.
+    pub fn finish(self) -> Result<Vec<CallTreeNode>> {
+        let mut state = self
+            .state
+            .into_inner()
+            .map_err(|e| Error::LockError(format!("CallTreeBuilder lock failed: {e}")))?;
         // Drain remaining stack items as incomplete nodes
         while let Some(node) = state.stack.pop() {
             if let Some(parent) = state.stack.last_mut() {
@@ -199,14 +215,20 @@ impl CallTreeBuilder {
                 state.roots.push(node);
             }
         }
-        state.roots
+        Ok(state.roots)
     }
 
     /// Returns a snapshot of the current roots without consuming the builder.
-    #[must_use]
-    pub fn roots_snapshot(&self) -> Vec<CallTreeNode> {
-        let state = self.state.lock().unwrap();
-        state.roots.clone()
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the internal mutex is poisoned.
+    pub fn roots_snapshot(&self) -> Result<Vec<CallTreeNode>> {
+        let state = self
+            .state
+            .lock()
+            .map_err(|e| Error::LockError(format!("CallTreeBuilder lock failed: {e}")))?;
+        Ok(state.roots.clone())
     }
 }
 
@@ -218,7 +240,9 @@ impl Default for CallTreeBuilder {
 
 impl TraceListener for CallTreeBuilder {
     fn on_event(&self, event: &TraceEvent) {
-        self.process_event(event);
+        if let Err(e) = self.process_event(event) {
+            log::warn!("CallTreeBuilder: failed to process event: {e}");
+        }
     }
 }
 
@@ -226,11 +250,14 @@ impl TraceListener for CallTreeBuilder {
 ///
 /// This is equivalent to creating a [`CallTreeBuilder`], feeding all events,
 /// and calling [`finish()`](CallTreeBuilder::finish).
-#[must_use]
-pub fn build_call_tree(events: &[TraceEvent]) -> Vec<CallTreeNode> {
+///
+/// # Errors
+///
+/// Returns an error if the internal mutex is poisoned.
+pub fn build_call_tree(events: &[TraceEvent]) -> Result<Vec<CallTreeNode>> {
     let builder = CallTreeBuilder::new();
     for event in events {
-        builder.process_event(event);
+        builder.process_event(event)?;
     }
     builder.finish()
 }
@@ -345,6 +372,7 @@ mod tests {
             mnemonic: "nop".to_string(),
             operand: None,
             stack_depth: 0,
+            stack_values: None,
         }
     }
 
@@ -374,7 +402,7 @@ mod tests {
             return_event(0x06000002, 2, 1),
             return_event(0x06000001, 1, 0),
         ];
-        let roots = build_call_tree(&events);
+        let roots = build_call_tree(&events).unwrap();
         assert_eq!(roots.len(), 1);
         assert_eq!(roots[0].method, Token::new(0x06000001));
         assert!(roots[0].completed);
@@ -394,7 +422,7 @@ mod tests {
             return_event(0x06000003, 3, 1),
             return_event(0x06000001, 1, 0),
         ];
-        let roots = build_call_tree(&events);
+        let roots = build_call_tree(&events).unwrap();
         assert_eq!(roots.len(), 1);
         assert_eq!(roots[0].children.len(), 2);
         assert_eq!(roots[0].children[0].method, Token::new(0x06000002));
@@ -410,7 +438,7 @@ mod tests {
         for i in (0..10).rev() {
             events.push(return_event(0x06000001 + i, (i + 1).into(), i as usize));
         }
-        let roots = build_call_tree(&events);
+        let roots = build_call_tree(&events).unwrap();
         assert_eq!(roots.len(), 1);
         let mut node = &roots[0];
         for _ in 0..9 {
@@ -426,7 +454,7 @@ mod tests {
     fn test_incomplete() {
         // Call without return
         let events = vec![call_event(0x06000001, 1, 1), call_event(0x06000002, 2, 2)];
-        let roots = build_call_tree(&events);
+        let roots = build_call_tree(&events).unwrap();
         assert_eq!(roots.len(), 1);
         assert!(!roots[0].completed);
         assert_eq!(roots[0].children.len(), 1);
@@ -441,7 +469,7 @@ mod tests {
             catch_event(0x06000001),
             return_event(0x06000001, 1, 0),
         ];
-        let roots = build_call_tree(&events);
+        let roots = build_call_tree(&events).unwrap();
         assert_eq!(roots.len(), 1);
         assert_eq!(roots[0].exceptions.len(), 1);
         assert!(roots[0].exceptions[0].caught);
@@ -461,7 +489,7 @@ mod tests {
             instruction_event(0x06000001),
             return_event(0x06000001, 1, 0),
         ];
-        let roots = build_call_tree(&events);
+        let roots = build_call_tree(&events).unwrap();
         assert_eq!(roots[0].instruction_count, 4); // 3 before child + 1 after
         assert_eq!(roots[0].children[0].instruction_count, 2);
         assert_eq!(roots[0].total_instructions(), 6);
@@ -478,14 +506,14 @@ mod tests {
         ];
 
         // Post-hoc
-        let post_hoc = build_call_tree(&events);
+        let post_hoc = build_call_tree(&events).unwrap();
 
         // Real-time via builder
         let builder = CallTreeBuilder::new();
         for event in &events {
-            builder.process_event(event);
+            builder.process_event(event).unwrap();
         }
-        let realtime = builder.finish();
+        let realtime = builder.finish().unwrap();
 
         // Compare structure
         assert_eq!(post_hoc.len(), realtime.len());

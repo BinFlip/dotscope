@@ -564,16 +564,25 @@ impl SsaType {
             return true;
         }
 
-        // Same storage class means compatible
-        matches!(
-            (self.storage_class(), other.storage_class()),
-            (TypeClass::Int32, TypeClass::Int32)
-                | (TypeClass::Int64, TypeClass::Int64)
-                | (TypeClass::Float32, TypeClass::Float32)
-                | (TypeClass::Float64, TypeClass::Float64)
-                | (TypeClass::Reference, TypeClass::Reference)
-                | (TypeClass::NativeInt, TypeClass::NativeInt)
-        )
+        if self.storage_class() != other.storage_class() {
+            return false;
+        }
+
+        // Reference types require exact type match for CIL local sharing.
+        // The CIL verifier checks assignment compatibility on stloc (the value
+        // must be assignable to the declared type) and the declared type is what
+        // ldloc pushes. Different reference types (e.g., string vs char[]) in
+        // the same local would require the LUB (object) as declared type, but
+        // then ldloc pushes object and downstream code expecting the specific
+        // type would fail verification. Requiring exact match avoids this.
+        if self.storage_class() == TypeClass::Reference {
+            return false; // self != other was already checked above
+        }
+
+        // For value-type classes (Int32, Int64, Float, NativeInt), same-class
+        // types can share slots. The CIL evaluation stack widens all sub-int32
+        // types to int32, so stloc/ldloc of any Int32-class type is compatible.
+        true
     }
 
     /// Merges two types at a control flow join point.
@@ -1595,8 +1604,9 @@ mod tests {
         // 64-bit integers are compatible
         assert!(SsaType::I64.is_compatible_for_storage(&SsaType::U64));
 
-        // Reference types are compatible
-        assert!(SsaType::Object.is_compatible_for_storage(&SsaType::String));
+        // Reference types require exact match (CIL verifier constraint)
+        assert!(!SsaType::Object.is_compatible_for_storage(&SsaType::String));
+        assert!(SsaType::String.is_compatible_for_storage(&SsaType::String));
 
         // Unknown is compatible with anything
         assert!(SsaType::Unknown.is_compatible_for_storage(&SsaType::I32));
@@ -1696,9 +1706,14 @@ mod tests {
     fn test_generic_inst_storage_compatibility() {
         let list_int = make_generic_inst_class(vec![SsaType::I32]);
 
-        // GenericInst(Class) is compatible with Object and String (all Reference)
-        assert!(list_int.is_compatible_for_storage(&SsaType::Object));
-        assert!(list_int.is_compatible_for_storage(&SsaType::String));
+        // GenericInst(Class) is NOT compatible with Object or String (different reference types
+        // require exact match for CIL local sharing)
+        assert!(!list_int.is_compatible_for_storage(&SsaType::Object));
+        assert!(!list_int.is_compatible_for_storage(&SsaType::String));
+
+        // Same GenericInst IS compatible with itself
+        let list_int2 = make_generic_inst_class(vec![SsaType::I32]);
+        assert!(list_int.is_compatible_for_storage(&list_int2));
 
         // Not compatible with Int32
         assert!(!list_int.is_compatible_for_storage(&SsaType::I32));

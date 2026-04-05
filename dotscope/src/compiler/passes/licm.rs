@@ -47,7 +47,7 @@
 //!     branch (i < 10), header, exit
 //! ```
 
-use std::collections::{HashSet, VecDeque};
+use std::collections::{HashMap, HashSet, VecDeque};
 
 use crate::{
     analysis::{LoopAnalyzer, LoopInfo, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
@@ -56,7 +56,7 @@ use crate::{
         CompilerContext, EventKind,
     },
     metadata::token::Token,
-    utils::graph::NodeId,
+    utils::BitSet,
     CilObject, Result,
 };
 
@@ -119,6 +119,42 @@ impl SsaPass for LicmPass {
                 continue;
             };
 
+            // Validate that the preheader is an actual immediate predecessor of
+            // the loop header. If it isn't (e.g., for loops inside CFF dispatchers
+            // where the loop analyzer may pick a distant dominator as preheader),
+            // hoisting would move definitions to a block that isn't a CFG
+            // predecessor of the header, making phi operand updates invalid.
+            let header_idx = loop_info.header.index();
+            let preheader_is_pred = ssa
+                .block(preheader.index())
+                .map(|b| {
+                    b.instructions()
+                        .last()
+                        .map(|i| i.op().successors().contains(&header_idx))
+                        .unwrap_or(false)
+                })
+                .unwrap_or(false);
+            if !preheader_is_pred {
+                continue;
+            }
+
+            // Skip loops whose header is a switch-based dispatcher (CFF pattern).
+            // Hoisting into the preheader of such loops adds variable definitions
+            // that change the stack layout at the preheader's exit. When a
+            // subsequent CfgModifying pass triggers rebuild_ssa(), the phi nodes
+            // at the switch header are reconstructed from scratch using stack-slot
+            // analysis. The extra definitions shift which variable occupies each
+            // stack slot, causing the switch to read the wrong phi — e.g., a
+            // hoisted constant instead of the CFF state variable. This misroutes
+            // the CFF tracer and drops entire code phases.
+            let header_has_switch = ssa
+                .block(header_idx)
+                .and_then(|b| b.terminator_op())
+                .is_some_and(|op| matches!(op, SsaOp::Switch { .. }));
+            if header_has_switch {
+                continue;
+            }
+
             // Find invariant instructions
             let invariants = find_loop_invariants(ssa, loop_info);
 
@@ -127,10 +163,95 @@ impl SsaPass for LicmPass {
             }
 
             // Filter to hoistable instructions
-            let hoistable: Vec<_> = invariants
+            let mut hoistable: Vec<_> = invariants
                 .into_iter()
                 .filter(|(block_idx, instr_idx)| can_hoist(ssa, loop_info, *block_idx, *instr_idx))
                 .collect();
+
+            // Second filter: ensure all operands of hoistable instructions are
+            // either defined outside the loop or by other hoistable instructions.
+            // Without this, an instruction like Conv(v10) would be hoisted but its
+            // operand v10 (from ArrayLength, which is invariant but not hoistable
+            // due to side effects) would remain in the loop body, producing a
+            // use-before-def.
+            let mut outside_defs = BitSet::new(ssa.var_id_capacity());
+            for v in ssa.variables() {
+                if !loop_info.body.contains(v.def_site().block) {
+                    outside_defs.insert(v.id().index());
+                }
+            }
+
+            loop {
+                let mut hoistable_defs = BitSet::new(ssa.var_id_capacity());
+                for (block_idx, instr_idx) in hoistable.iter() {
+                    if let Some(def) = ssa
+                        .block(*block_idx)
+                        .and_then(|b| b.instruction(*instr_idx))
+                        .and_then(|i| i.def())
+                    {
+                        hoistable_defs.insert(def.index());
+                    }
+                }
+
+                let before = hoistable.len();
+                hoistable.retain(|(block_idx, instr_idx)| {
+                    let Some(block) = ssa.block(*block_idx) else {
+                        return false;
+                    };
+                    let Some(instr) = block.instruction(*instr_idx) else {
+                        return false;
+                    };
+                    instr.op().uses().iter().all(|operand| {
+                        outside_defs.contains(operand.index())
+                            || hoistable_defs.contains(operand.index())
+                    })
+                });
+
+                if hoistable.len() == before {
+                    break;
+                }
+            }
+
+            // Guard: if hoisting ALL non-terminator instructions from a block
+            // would make it a trampoline AND that block feeds phis at a successor,
+            // skip hoisting from that block entirely. Making such blocks trampolines
+            // causes block-merging to clear them, and subsequent rebuild_ssa may
+            // not correctly reconnect the phi with the preheader's definitions.
+            {
+                // Count hoistable instructions per block
+                let mut hoist_count_per_block: HashMap<usize, usize> = HashMap::new();
+                for (block_idx, _) in &hoistable {
+                    *hoist_count_per_block.entry(*block_idx).or_insert(0) += 1;
+                }
+
+                // Find blocks that would become trampolines
+                let mut trampoline_blocks = BitSet::new(ssa.block_count());
+                for (&block_idx, &hoist_count) in &hoist_count_per_block {
+                    if let Some(block) = ssa.block(block_idx) {
+                        let non_term = block
+                            .instructions()
+                            .iter()
+                            .filter(|i| !i.is_terminator() && !matches!(i.op(), SsaOp::Nop))
+                            .count();
+                        if hoist_count >= non_term {
+                            // This block would become a trampoline — check if it feeds phis
+                            if let Some(term) = block.terminator_op() {
+                                for succ in term.successors() {
+                                    if let Some(succ_block) = ssa.block(succ) {
+                                        if !succ_block.phi_nodes().is_empty() {
+                                            trampoline_blocks.insert(block_idx);
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !trampoline_blocks.is_empty() {
+                    hoistable.retain(|(block_idx, _)| !trampoline_blocks.contains(*block_idx));
+                }
+            }
 
             if hoistable.is_empty() {
                 continue;
@@ -165,14 +286,18 @@ impl SsaPass for LicmPass {
                 0
             };
 
+            // Track which source blocks had ALL non-terminator instructions hoisted.
+            // These blocks become trampolines, and their successor phis need
+            // predecessor updates from the source block to the preheader.
+            let mut hoisted_from = BitSet::new(ssa.block_count());
+
             // Apply hoisting - insert all at once to maintain order
             for (i, (block_idx, instr_idx, op)) in to_hoist.iter().enumerate() {
+                hoisted_from.insert(*block_idx);
+
                 // Add to preheader
                 if let Some(preheader_block) = ssa.block_mut(preheader.index()) {
-                    // Create a new instruction with the same op
                     let new_instr = SsaInstruction::synthetic(op.clone());
-
-                    // Insert at position offset by the number of already-inserted instructions
                     let instrs = preheader_block.instructions_mut();
                     instrs.insert(insert_base + i, new_instr);
                 }
@@ -185,6 +310,48 @@ impl SsaPass for LicmPass {
                 }
 
                 total_hoisted += 1;
+            }
+
+            // Update phi operands at successor blocks. When all non-terminator
+            // instructions were hoisted from a block to the preheader, the block
+            // becomes a trampoline (just a Jump). Phi operands at successors that
+            // referenced the source block now need to reference the preheader
+            // (where the definitions live after hoisting).
+            let preheader_idx = preheader.index();
+            for source_block in hoisted_from.iter() {
+                // Check if all non-terminator instructions were hoisted (block is now a trampoline)
+                let is_trampoline = ssa.block(source_block).is_some_and(|b| {
+                    b.instructions()
+                        .iter()
+                        .all(|i| i.is_terminator() || matches!(i.op(), SsaOp::Nop))
+                });
+
+                if !is_trampoline {
+                    continue;
+                }
+
+                // Get successors of the source block
+                let successors: Vec<usize> = ssa
+                    .block(source_block)
+                    .map(|b| {
+                        b.instructions()
+                            .last()
+                            .map(|i| i.op().successors())
+                            .unwrap_or_default()
+                    })
+                    .unwrap_or_default();
+
+                for succ in successors {
+                    if let Some(succ_block) = ssa.block_mut(succ) {
+                        for phi in succ_block.phi_nodes_mut() {
+                            for operand in phi.operands_mut() {
+                                if operand.predecessor() == source_block {
+                                    operand.set_predecessor(preheader_idx);
+                                }
+                            }
+                        }
+                    }
+                }
             }
         }
 
@@ -211,24 +378,24 @@ impl SsaPass for LicmPass {
 /// each iteration. Instructions using these values are NOT loop-invariant.
 fn find_loop_invariants(ssa: &SsaFunction, loop_info: &LoopInfo) -> Vec<(usize, usize)> {
     let mut invariants: HashSet<(usize, usize)> = HashSet::new();
-    let mut invariant_defs: HashSet<SsaVarId> = HashSet::new();
+    let mut invariant_defs = BitSet::new(ssa.var_id_capacity());
 
     // Collect PHI-defined variables from the loop HEADER only.
     // These are loop induction variables that change each iteration.
     // PHIs at other loop body blocks are path merge points and don't affect invariance.
-    let mut header_phi_defs: HashSet<SsaVarId> = HashSet::new();
+    let mut header_phi_defs = BitSet::new(ssa.var_id_capacity());
     if let Some(header_block) = ssa.block(loop_info.header.index()) {
         for phi in header_block.phi_nodes() {
-            header_phi_defs.insert(phi.result());
+            header_phi_defs.insert(phi.result().index());
         }
     }
 
     // Build map of variables defined outside the loop
-    let mut outside_defs: HashSet<SsaVarId> = HashSet::new();
+    let mut outside_defs = BitSet::new(ssa.var_id_capacity());
     for var in ssa.variables() {
         let def_site = var.def_site();
-        if !loop_info.body.contains(&NodeId::new(def_site.block)) {
-            outside_defs.insert(var.id());
+        if !loop_info.body.contains(def_site.block) {
+            outside_defs.insert(var.id().index());
         }
     }
 
@@ -236,8 +403,7 @@ fn find_loop_invariants(ssa: &SsaFunction, loop_info: &LoopInfo) -> Vec<(usize, 
     while changed {
         changed = false;
 
-        for body_block in &loop_info.body {
-            let block_idx = body_block.index();
+        for block_idx in loop_info.body.iter() {
             if let Some(block) = ssa.block(block_idx) {
                 for (instr_idx, instr) in block.instructions().iter().enumerate() {
                     // Skip if already marked invariant
@@ -266,7 +432,7 @@ fn find_loop_invariants(ssa: &SsaFunction, loop_info: &LoopInfo) -> Vec<(usize, 
                     ) {
                         invariants.insert((block_idx, instr_idx));
                         if let Some(def) = instr.def() {
-                            invariant_defs.insert(def);
+                            invariant_defs.insert(def.index());
                         }
                         changed = true;
                     }
@@ -284,18 +450,18 @@ fn find_loop_invariants(ssa: &SsaFunction, loop_info: &LoopInfo) -> Vec<(usize, 
 /// since those represent induction variables that change each iteration.
 fn is_instruction_invariant(
     instr: &SsaInstruction,
-    outside_defs: &HashSet<SsaVarId>,
-    invariant_defs: &HashSet<SsaVarId>,
-    header_phi_defs: &HashSet<SsaVarId>,
+    outside_defs: &BitSet,
+    invariant_defs: &BitSet,
+    header_phi_defs: &BitSet,
 ) -> bool {
     // Use the built-in uses() method to get all operands
     for operand in instr.op().uses() {
         // If the operand is defined by a PHI at the loop header, it's loop-varying
-        if header_phi_defs.contains(&operand) {
+        if header_phi_defs.contains(operand.index()) {
             return false;
         }
         // Otherwise check if it's defined outside the loop or by an invariant instruction
-        if !outside_defs.contains(&operand) && !invariant_defs.contains(&operand) {
+        if !outside_defs.contains(operand.index()) && !invariant_defs.contains(operand.index()) {
             return false;
         }
     }
@@ -349,10 +515,10 @@ fn can_hoist(ssa: &SsaFunction, loop_info: &LoopInfo, block_idx: usize, instr_id
 fn feeds_phi_back_edge(ssa: &SsaFunction, loop_info: &LoopInfo, var: SsaVarId) -> bool {
     let header_idx = loop_info.header.index();
     let mut worklist: VecDeque<SsaVarId> = VecDeque::new();
-    let mut visited: HashSet<SsaVarId> = HashSet::new();
+    let mut visited = BitSet::new(ssa.var_id_capacity());
 
     worklist.push_back(var);
-    visited.insert(var);
+    visited.insert(var.index());
 
     while let Some(current) = worklist.pop_front() {
         // Check if this variable is a PHI operand from a back-edge (loop body block)
@@ -362,7 +528,7 @@ fn feeds_phi_back_edge(ssa: &SsaFunction, loop_info: &LoopInfo, var: SsaVarId) -
                     if operand.value() == current {
                         // Check if the predecessor is in the loop body (back-edge)
                         let pred = operand.predecessor();
-                        if loop_info.body.contains(&NodeId::new(pred)) && pred != header_idx {
+                        if loop_info.body.contains(pred) && pred != header_idx {
                             // This is a back-edge operand (from loop body, not the header itself)
                             return true;
                         }
@@ -372,12 +538,12 @@ fn feeds_phi_back_edge(ssa: &SsaFunction, loop_info: &LoopInfo, var: SsaVarId) -
         }
 
         // Find instructions that use this variable and add their dests to the worklist
-        for body_block_id in &loop_info.body {
-            if let Some(body_block) = ssa.block(body_block_id.index()) {
+        for body_block_idx in loop_info.body.iter() {
+            if let Some(body_block) = ssa.block(body_block_idx) {
                 for instr in body_block.instructions() {
                     if instr.op().uses().contains(&current) {
                         if let Some(dest) = instr.def() {
-                            if visited.insert(dest) {
+                            if visited.insert(dest.index()) {
                                 worklist.push_back(dest);
                             }
                         }

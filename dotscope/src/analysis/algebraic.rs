@@ -22,7 +22,7 @@
 //! }
 //! ```
 
-use std::{collections::HashMap, hash::BuildHasher};
+use std::collections::BTreeMap;
 
 use crate::analysis::{ConstValue, SsaOp, SsaVarId};
 
@@ -56,10 +56,7 @@ impl SimplifyResult {
 /// This function checks for common algebraic identities that allow
 /// an operation to be replaced with a simpler form (constant or copy).
 #[must_use]
-pub fn simplify_op<S: BuildHasher>(
-    op: &SsaOp,
-    constants: &HashMap<SsaVarId, ConstValue, S>,
-) -> SimplifyResult {
+pub fn simplify_op(op: &SsaOp, constants: &BTreeMap<SsaVarId, ConstValue>) -> SimplifyResult {
     match op {
         // XOR: x ^ x = 0, x ^ 0 = x
         SsaOp::Xor { left, right, .. } => {
@@ -223,11 +220,11 @@ pub fn simplify_op<S: BuildHasher>(
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashMap;
+    use std::collections::BTreeMap;
 
     use super::*;
 
-    fn make_constants(pairs: &[(SsaVarId, ConstValue)]) -> HashMap<SsaVarId, ConstValue> {
+    fn make_constants(pairs: &[(SsaVarId, ConstValue)]) -> BTreeMap<SsaVarId, ConstValue> {
         pairs.iter().cloned().collect()
     }
 
@@ -241,7 +238,7 @@ mod tests {
             right: v1,
         };
         assert_eq!(
-            simplify_op(&op, &HashMap::new()),
+            simplify_op(&op, &BTreeMap::new()),
             SimplifyResult::Constant(ConstValue::I32(0))
         );
     }
@@ -315,7 +312,7 @@ mod tests {
             right: v1,
         };
         assert_eq!(
-            simplify_op(&op, &HashMap::new()),
+            simplify_op(&op, &BTreeMap::new()),
             SimplifyResult::Constant(ConstValue::I32(0))
         );
     }
@@ -391,7 +388,7 @@ mod tests {
             right: v2,
         };
         // No constants - no simplification
-        assert_eq!(simplify_op(&op, &HashMap::new()), SimplifyResult::None);
+        assert_eq!(simplify_op(&op, &BTreeMap::new()), SimplifyResult::None);
     }
 
     #[test]
@@ -422,7 +419,7 @@ mod tests {
             right: v1,
         };
         assert_eq!(
-            simplify_op(&op, &HashMap::new()),
+            simplify_op(&op, &BTreeMap::new()),
             SimplifyResult::Constant(ConstValue::I32(1))
         );
     }
@@ -438,7 +435,7 @@ mod tests {
             unsigned: false,
         };
         assert_eq!(
-            simplify_op(&op, &HashMap::new()),
+            simplify_op(&op, &BTreeMap::new()),
             SimplifyResult::Constant(ConstValue::I32(0))
         );
     }
@@ -454,7 +451,7 @@ mod tests {
             unsigned: false,
         };
         assert_eq!(
-            simplify_op(&op, &HashMap::new()),
+            simplify_op(&op, &BTreeMap::new()),
             SimplifyResult::Constant(ConstValue::I32(0))
         );
     }
