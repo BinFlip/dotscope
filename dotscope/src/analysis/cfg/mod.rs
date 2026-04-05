@@ -88,8 +88,12 @@ mod graph;
 mod loops;
 mod semantics;
 
-pub use analyzer::{LoopAnalyzer, SsaLoopAnalysis};
+pub use analyzer::LoopAnalyzer;
+#[cfg(feature = "compiler")]
+pub use analyzer::SsaLoopAnalysis;
 pub use edge::{CfgEdge, CfgEdgeKind};
 pub use graph::ControlFlowGraph;
-pub use loops::{detect_loops, has_back_edges, InductionVar, LoopForest, LoopInfo};
+pub use loops::{detect_loops, InductionVar, LoopForest, LoopInfo};
+#[cfg(feature = "x86")]
+pub use loops::has_back_edges;
 pub use semantics::{BlockSemantics, LoopSemantics, SemanticAnalyzer};
