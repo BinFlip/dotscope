@@ -76,10 +76,13 @@ pub use io::{
     write_le_at_dyn, write_prefixed_string_utf16, write_prefixed_string_utf8, write_string_at,
     write_string_utf8, CilIO,
 };
+#[cfg(feature = "emulation")]
 pub use lebytes::LeBytes;
 #[cfg(feature = "compiler")]
 pub use math::is_power_of_two;
-pub use math::{to_i32_saturating, to_u32};
+#[cfg(feature = "emulation")]
+pub use math::to_i32_saturating;
+pub use math::to_u32;
 pub use synchronization::FailFastBarrier;
 pub use visitedmap::VisitedMap;
 
@@ -87,11 +90,12 @@ pub use visitedmap::VisitedMap;
 pub(crate) use crypto::derive_pbkdf1_key;
 #[cfg(feature = "emulation")]
 pub(crate) use crypto::{apply_crypto_transform, derive_pbkdf2_key, verify_rsa_pkcs1v15};
-pub(crate) use crypto::{
-    compute_hmac_sha256, compute_hmac_sha512, compute_sha256, compute_sha384, compute_sha512,
-};
+#[cfg(feature = "emulation")]
+pub(crate) use crypto::{compute_hmac_sha256, compute_hmac_sha512};
+pub(crate) use crypto::{compute_sha256, compute_sha384, compute_sha512};
 #[cfg(feature = "legacy-crypto")]
 pub(crate) use crypto::{compute_md5, compute_sha1};
+#[cfg(feature = "deobfuscation")]
 pub(crate) use crypto::{derive_key_iv, CryptoParameters};
 
 #[allow(unused_imports)]

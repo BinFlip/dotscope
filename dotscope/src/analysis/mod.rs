@@ -110,6 +110,7 @@ pub use taint::{
 };
 
 // Re-export crate-internal types (used by other crate modules via crate::analysis::X)
+#[cfg(feature = "compiler")]
 pub(crate) use cfg::SsaLoopAnalysis;
 
 #[cfg(feature = "x86")]

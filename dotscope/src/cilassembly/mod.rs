@@ -163,6 +163,7 @@ pub use builders::{
 };
 pub use changes::{AssemblyChanges, ChangeRef, ChangeRefKind, ChangeRefRc, HeapChanges};
 pub use cleanup::CleanupRequest;
+#[cfg(feature = "deobfuscation")]
 pub(crate) use cleanup::{
     compute_entry_points, expand_type_tokens, extract_local_var_sig_rid, find_unreferenced_types,
     with_method_body,
