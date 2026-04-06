@@ -704,6 +704,10 @@ impl SsaPass for InliningPass {
         "Inlines small, pure methods at their call sites"
     }
 
+    fn reads_peer_ssa(&self) -> bool {
+        true
+    }
+
     fn provides(&self) -> &[PassCapability] {
         &[PassCapability::InlinedMethods]
     }

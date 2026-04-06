@@ -765,6 +765,10 @@ impl SsaPass for ProxyDevirtualizationPass {
         "Devirtualizes proxy forwarding methods and eliminates no-op calls"
     }
 
+    fn reads_peer_ssa(&self) -> bool {
+        true
+    }
+
     fn modification_scope(&self) -> ModificationScope {
         ModificationScope::InstructionsOnly
     }

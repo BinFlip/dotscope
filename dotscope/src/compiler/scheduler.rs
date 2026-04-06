@@ -598,13 +598,28 @@ impl PassScheduler {
         let event_snapshot = ctx.events.len();
         let pass_change_count = AtomicUsize::new(0);
 
+        // Passes that read other methods' SSA (e.g., inlining, proxy devirt)
+        // need peer SSAs to remain visible in the DashMap during parallel
+        // execution. For these passes, we clone the SSA before processing so
+        // the original stays readable by other threads. Passes that only
+        // modify their own method use the faster remove/insert path.
+        let clone_for_visibility = pass.reads_peer_ssa();
+
         methods.par_iter().for_each(|&method_token| {
             if !pass.should_run(method_token, ctx) {
                 return;
             }
 
-            let Some((_, mut ssa)) = ctx.ssa_functions.remove(&method_token) else {
-                return;
+            let mut ssa = if clone_for_visibility {
+                let Some(ssa_ref) = ctx.ssa_functions.get(&method_token) else {
+                    return;
+                };
+                ssa_ref.clone()
+            } else {
+                let Some((_, ssa)) = ctx.ssa_functions.remove(&method_token) else {
+                    return;
+                };
+                ssa
             };
 
             let result = pass.run_on_method(&mut ssa, method_token, ctx, assembly);
