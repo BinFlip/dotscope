@@ -673,6 +673,22 @@ impl SsaCodeGenerator {
         // Phase 1: Allocate storage for all SSA variables based on their origins
         self.allocate_storage(ssa)?;
 
+        // Pre-compute the actual definition block for each variable by scanning
+        // instructions. This is more reliable than var.def_site() which can be
+        // stale after SSA passes that move/merge blocks without updating metadata.
+        let mut actual_def_block: BTreeMap<SsaVarId, usize> = BTreeMap::new();
+        for block in ssa.blocks() {
+            let block_id = block.id();
+            for phi in block.phi_nodes() {
+                actual_def_block.insert(phi.result(), block_id);
+            }
+            for instr in block.instructions() {
+                if let Some(dest) = instr.def() {
+                    actual_def_block.insert(dest, block_id);
+                }
+            }
+        }
+
         // Pre-compute cross-block use set: variables used in blocks other than
         // where they are defined. These must be stored to locals because the CIL
         // evaluation stack doesn't persist across block boundaries.
@@ -680,11 +696,17 @@ impl SsaCodeGenerator {
             let block_id = block.id();
             for instr in block.instructions() {
                 for &used_var in &instr.uses() {
-                    if let Some(var_info) = ssa.variable(used_var) {
-                        if var_info.def_site().block != block_id {
+                    if let Some(&def_block) = actual_def_block.get(&used_var) {
+                        if def_block != block_id {
                             self.cross_block_uses.insert(used_var);
                         }
                     }
+                }
+            }
+            // Phi operand uses always cross block boundaries
+            for phi in block.phi_nodes() {
+                for op in phi.operands() {
+                    self.cross_block_uses.insert(op.value());
                 }
             }
         }
@@ -2550,8 +2572,19 @@ impl SsaCodeGenerator {
                         src_storage != dest_storage || src_storage.is_none()
                     }
                     SsaOp::Const { dest, .. } => {
-                        // Skip deferred constants - generated inline at use site
-                        !self.deferred_constants.contains_key(dest)
+                        // Skip deferred constants - generated inline at use site.
+                        // Also skip dead constants (0 uses, not a phi operand) —
+                        // these are CFF state computation artifacts that DCE missed.
+                        // Emitting them would push values onto the CIL stack with
+                        // no consumer, causing stack depth mismatches at merge points.
+                        if self.deferred_constants.contains_key(dest) {
+                            return false;
+                        }
+                        let uses = self.global_use_counts.get(dest).copied().unwrap_or(0);
+                        if uses == 0 && !self.all_phi_operands.contains(dest) {
+                            return false;
+                        }
+                        true
                     }
                     SsaOp::Nop => false, // Skip Nop - produces unnecessary bytecode
                     _ => true,
@@ -3891,8 +3924,7 @@ impl SsaCodeGenerator {
             }
 
             SsaOp::Jump { target } => {
-                // Spill any remaining stack values before control flow transfer.
-                // This ensures all paths to the target have consistent stack depth.
+                // Spill remaining stack values before control flow transfer
                 self.spill_stack(encoder, ssa)?;
 
                 // Emit phi stores for the target block before jumping

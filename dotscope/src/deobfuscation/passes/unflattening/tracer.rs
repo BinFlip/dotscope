@@ -318,12 +318,10 @@ struct TreeTraceContext<'a> {
     state_tainted: BitSet,
     next_node_id: usize,
     total_visits: usize,
-    visited_states: BTreeSet<(usize, usize)>, // (block, last_case_index) pairs we've seen
+    visited_states: BTreeSet<(usize, i64)>, // (block, state_value) pairs we've seen
     /// The most recently dispatched case index. Updated each time the dispatcher
-    /// switch evaluates and routes to a case target. Used as part of the
-    /// visited_states key so that blocks reached via different CFF case paths
-    /// are correctly distinguished (critical for JIEJIE.NET CFF where multiple
-    /// switch cases share the same target block).
+    /// switch evaluates and routes to a case target. Used for loop threshold
+    /// tracking (visited_case_counts) to detect CFF loop back-edges.
     last_case_index: usize,
     /// Visit counts for each switch case index on the current execution path.
     /// Tracks how many times each case INDEX was taken (not which block was
@@ -393,8 +391,26 @@ impl<'a> TreeTraceContext<'a> {
             let mut taint = TaintAnalysis::new(taint_config);
             taint.add_tainted_var(state_var);
 
-            // Run propagation through PHI chains
-            // This catches constants/values computed specifically to set the next state
+            // Also seed the taint with the BACKWARD direction: variables that
+            // DEFINE the state variable through the dispatcher phi's operands.
+            // These are the state update values (constants, computed states) from
+            // each case block. Without tainting these and their definition chains,
+            // filter_state_instructions can't remove the state update instructions,
+            // causing CIL stack depth mismatches in codegen.
+            if let Some(disp_block) = ssa.block(dispatcher.block) {
+                for phi in disp_block.phi_nodes() {
+                    if phi.result() == state_var {
+                        for op in phi.operands() {
+                            taint.add_tainted_var(op.value());
+                        }
+                    }
+                }
+            }
+
+            // Run propagation through PHI chains and definition chains.
+            // This catches: (forward) values derived from the state variable,
+            // and (backward seeds) the full definition chains of state-setting
+            // values including intermediate Copies and Pops.
             taint.propagate(ssa);
 
             // Transfer tainted variables to context
@@ -440,30 +456,37 @@ impl<'a> TreeTraceContext<'a> {
             .and_then(ConstValue::as_i64)
     }
 
-    /// Computes the visited_states key for the current execution context.
+    /// Computes a visit key for loop detection.
     ///
-    /// Combines the last dispatched case index with its visit count so that
-    /// re-entering the same case (after a CFF loop exit) produces a different
-    /// key. Without the count, the merge blocks within a case chain would
-    /// collide between the first visit (pre-loop) and the second visit
-    /// (post-loop exit), causing a false LoopBack.
-    fn visit_key(&self) -> usize {
-        let count = if self.last_case_index < self.visited_case_counts.len() {
-            self.visited_case_counts[self.last_case_index] as usize
-        } else {
-            0
-        };
-        self.last_case_index.wrapping_mul(256).wrapping_add(count)
+    /// Uses the CFF state value when available (after dispatcher evaluation),
+    /// which allows revisiting blocks with different state machine values
+    /// (essential for CFF loop iterations). Falls back to a case-index-based
+    /// key at non-dispatcher blocks to prevent infinite recursion while still
+    /// allowing re-entry from different CFF case paths.
+    fn visit_state(&self) -> i64 {
+        self.current_state().unwrap_or_else(|| {
+            // Fallback: use case index + visit count as differentiator.
+            // This allows blocks to be revisited when entered from a
+            // different CFF case path (different last_case_index or count).
+            let count = if self.last_case_index < self.visited_case_counts.len() {
+                self.visited_case_counts[self.last_case_index] as i64
+            } else {
+                0
+            };
+            (self.last_case_index as i64)
+                .wrapping_mul(256)
+                .wrapping_add(count)
+        })
     }
 
     /// Checks if we've visited this block in the current execution context.
     fn is_visited(&self, block: usize) -> bool {
-        self.visited_states.contains(&(block, self.visit_key()))
+        self.visited_states.contains(&(block, self.visit_state()))
     }
 
     /// Marks a block as visited in the current execution context.
     fn mark_visited(&mut self, block: usize) {
-        self.visited_states.insert((block, self.visit_key()));
+        self.visited_states.insert((block, self.visit_state()));
     }
 
     /// Creates a snapshot of the evaluator for forking.

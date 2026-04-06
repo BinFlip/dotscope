@@ -445,8 +445,6 @@ impl SsaPass for CffReconstructionPass {
 
         match unflatten_with_dispatchers(ssa, &config, Some(assembly), dispatchers) {
             Some(mut patched) => {
-                // After CFF unflattening, the CFG structure has changed significantly.
-                // Rebuild SSA form to ensure PHI nodes are correct for the new CFG.
                 patched.rebuild_ssa()?;
 
                 *ssa = patched;

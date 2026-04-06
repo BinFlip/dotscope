@@ -199,8 +199,8 @@ fn test_all_obfuscar_samples() {
         let expected = &result.sample.expected_protections;
 
         // Common assertions: core validity, semantic preservation, structural match, diagnostics
-        let semantic_threshold = if expected.has_null_params { 0.50 } else { 0.80 };
-        assert_common_requirements(result, None, semantic_threshold, false);
+        let semantic_threshold = if expected.has_null_params { 0.85 } else { 0.90 };
+        assert_common_requirements(result, None, semantic_threshold, true);
 
         // Detection assertions
         if expected.has_string_hiding {

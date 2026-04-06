@@ -93,7 +93,7 @@ pub use analyzer::LoopAnalyzer;
 pub use analyzer::SsaLoopAnalysis;
 pub use edge::{CfgEdge, CfgEdgeKind};
 pub use graph::ControlFlowGraph;
-pub use loops::{detect_loops, InductionVar, LoopForest, LoopInfo};
 #[cfg(feature = "x86")]
 pub use loops::has_back_edges;
+pub use loops::{detect_loops, InductionVar, LoopForest, LoopInfo};
 pub use semantics::{BlockSemantics, LoopSemantics, SemanticAnalyzer};

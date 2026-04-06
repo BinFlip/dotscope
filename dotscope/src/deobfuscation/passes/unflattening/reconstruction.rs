@@ -494,6 +494,8 @@ fn extract_redirects_from_node(
             // just [target_block] (the loop header / destination, not the source).
             if let Some(pred) = external_predecessor {
                 plan.add_redirect(pred, *target_block, external_predecessor);
+                plan.state_transition_sources.insert(pred);
+                plan.state_transitions_removed += 1;
             }
             plan.add_to_execution_order(*target_block);
         }
@@ -556,8 +558,26 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
             continue;
         };
 
-        // First path keeps the original block - just update its terminator
+        // First path keeps the original block - update its terminator.
+        // Only redirect Jump terminators. Branch/BranchCmp blocks are user
+        // branches that must preserve both targets — cloning them with
+        // set_target would collapse both branch arms to the same target.
         let (_, first_target) = paths[0];
+        let is_user_branch = ssa
+            .block(*merge_block)
+            .and_then(|b| b.terminator_op())
+            .is_some_and(|op| {
+                matches!(
+                    op,
+                    SsaOp::Branch { .. } | SsaOp::BranchCmp { .. } | SsaOp::Switch { .. }
+                )
+            });
+        if is_user_branch {
+            // User branch block: don't clone, don't redirect.
+            // The redirect already points predecessors to this block;
+            // its branches are user code that should be preserved.
+            continue;
+        }
         if let Some(block) = ssa.block_mut(*merge_block) {
             block.set_target(first_target);
         }
@@ -664,33 +684,54 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
     // source block.
     materialize_dispatcher_phis(ssa, plan, &patched_blocks);
 
-    // Only clear dispatchers if no unresolved blocks still jump to them.
-    // When partial unflattening occurs, unresolved blocks need the dispatcher
-    // to route their execution through the CFF state machine.
-    let dispatcher_still_needed = (0..ssa.block_count()).any(|bi| {
-        !patched_blocks.contains(bi)
-            && !plan.is_dispatcher_block(bi)
-            && ssa
-                .block(bi)
-                .and_then(|b| b.terminator_op())
-                .is_some_and(|op| match op {
-                    SsaOp::Jump { target } => plan.is_dispatcher_block(*target),
-                    SsaOp::BranchCmp {
-                        true_target,
-                        false_target,
-                        ..
-                    } => {
-                        plan.is_dispatcher_block(*true_target)
-                            || plan.is_dispatcher_block(*false_target)
-                    }
-                    _ => false,
-                })
+    // Check if the dispatcher is still needed. A block that jumps to the
+    // dispatcher blocks unflattening only if it's reachable from OUTSIDE the
+    // dispatcher. Blocks whose only predecessors are dispatcher blocks (dead
+    // CFF case targets never dispatched during execution) are cleared along
+    // with the dispatcher.
+    let unresolved: Vec<usize> = (0..ssa.block_count())
+        .filter(|&bi| {
+            !patched_blocks.contains(bi)
+                && !plan.is_dispatcher_block(bi)
+                && ssa
+                    .block(bi)
+                    .and_then(|b| b.terminator_op())
+                    .is_some_and(|op| match op {
+                        SsaOp::Jump { target } => plan.is_dispatcher_block(*target),
+                        SsaOp::BranchCmp {
+                            true_target,
+                            false_target,
+                            ..
+                        } => {
+                            plan.is_dispatcher_block(*true_target)
+                                || plan.is_dispatcher_block(*false_target)
+                        }
+                        _ => false,
+                    })
+        })
+        .collect();
+
+    let dispatcher_still_needed = unresolved.iter().any(|&bi| {
+        ssa.block_predecessors(bi)
+            .iter()
+            .any(|&pred| !plan.is_dispatcher_block(pred))
     });
 
     if !dispatcher_still_needed {
         for &db in &plan.dispatcher_blocks {
             if let Some(dispatcher) = ssa.block_mut(db) {
                 dispatcher.clear();
+            }
+        }
+        for &bi in &unresolved {
+            if ssa
+                .block_predecessors(bi)
+                .iter()
+                .all(|&pred| plan.is_dispatcher_block(pred))
+            {
+                if let Some(block) = ssa.block_mut(bi) {
+                    block.clear();
+                }
             }
         }
     }
