@@ -373,10 +373,10 @@ fn test_all_bitmono_samples() {
 
         // Common assertions: core validity, semantic preservation, structural match, diagnostics
         let semantic_threshold = match result.sample.verification_level {
-            VerificationLevel::Normal => 0.70,
-            VerificationLevel::Relaxed => 0.50,
+            VerificationLevel::Normal => 0.90,
+            VerificationLevel::Relaxed => 0.85,
         };
-        assert_common_requirements(result, None, semantic_threshold, false);
+        assert_common_requirements(result, None, semantic_threshold, true);
 
         // === Detection assertions ===
         let has_attributed_protections = expected.has_pe_corruption

@@ -304,10 +304,10 @@ fn test_all_jiejie_samples() {
 
         // Common assertions: core validity, semantic preservation, structural match, diagnostics
         let semantic_threshold = match result.sample.verification_level {
-            VerificationLevel::Relaxed => 0.50,
-            VerificationLevel::Normal => 0.80,
+            VerificationLevel::Relaxed => 0.85,
+            VerificationLevel::Normal => 0.90,
         };
-        assert_common_requirements(result, original_stats.as_ref(), semantic_threshold, false);
+        assert_common_requirements(result, original_stats.as_ref(), semantic_threshold, true);
 
         // Detection: JIEJIE.NET should be identified when detectable protections
         // are present. Rename-only samples have no structural pattern to detect.

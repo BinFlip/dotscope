@@ -658,11 +658,27 @@ impl<'a> SsaRebuilder<'a> {
             .map(|v| (v.id(), v.origin()))
             .collect();
 
-        // Build group_origins from existing rename_groups
+        // Build group_origins from existing rename_groups.
+        // Prefer Local/Argument origins over Phi — after CFF reconstruction
+        // clears dispatcher phis, the union-find may group Local-origin and
+        // Phi-origin variables together. The group must retain the Local origin
+        // so the codegen allocates a CIL local slot instead of a stack temporary.
         for var in &self.ssa.variables {
             let group = self.ssa.rename_group(var.id());
             if group != u32::MAX {
-                self.group_origins.entry(group).or_insert(var.origin());
+                self.group_origins
+                    .entry(group)
+                    .and_modify(|existing| {
+                        if matches!(existing, VariableOrigin::Phi)
+                            && matches!(
+                                var.origin(),
+                                VariableOrigin::Local(_) | VariableOrigin::Argument(_)
+                            )
+                        {
+                            *existing = var.origin();
+                        }
+                    })
+                    .or_insert(var.origin());
             }
         }
 
