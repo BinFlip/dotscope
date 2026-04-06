@@ -283,6 +283,19 @@ pub trait SsaPass: Send + Sync {
         &[]
     }
 
+    /// Whether this pass reads other methods' SSA during `run_on_method`.
+    ///
+    /// Passes like inlining and proxy devirtualization look up callee SSA
+    /// via `ctx.with_ssa()`. During parallel execution, the scheduler must
+    /// keep each method's SSA visible in the DashMap so other threads can
+    /// read it. When this returns `true`, the scheduler clones the SSA
+    /// before processing instead of removing it, ensuring concurrent
+    /// visibility. Passes that only modify their own method should return
+    /// `false` (the default) to avoid the clone overhead.
+    fn reads_peer_ssa(&self) -> bool {
+        false
+    }
+
     /// Whether this pass requires a full scan of all methods every iteration.
     ///
     /// If `true`, the scheduler calls `run_on_method` for every method with SSA,
