@@ -62,7 +62,7 @@ tokio = { version = "1.50.0", optional = true, features = ["rt-multi-thread"] }
 
 # Metal GPU acceleration for LLM inference on macOS (Apple Silicon / AMD GPU).
 [target.'cfg(target_os = "macos")'.dependencies]
-mistralrs = { version = "0.7", optional = true, features = ["metal"] }
+mistralrs = { version = "0.8", optional = true, features = ["metal"] }
 
 # CUDA GPU acceleration for LLM inference on Linux/Windows with NVIDIA GPUs.
 [target.'cfg(not(target_os = "macos"))'.dependencies]
