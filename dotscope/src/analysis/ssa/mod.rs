@@ -111,7 +111,7 @@ pub use resolver::ValueResolver;
 pub use stack::{SimulationResult, StackSimulator, StackSlot, StackSlotSource};
 #[cfg(feature = "z3")]
 pub use symbolic::Z3Solver;
-pub use symbolic::{SymbolicEvaluator, SymbolicExpr};
+pub use symbolic::{SymbolicEvaluator, SymbolicExpr, SymbolicOp};
 pub use types::{FieldRef, MethodRef, SsaType, TypeClass, TypeContext, TypeProvider, TypeRef};
 pub use value::{AbstractValue, ConstValue};
 pub use variable::{DefSite, FunctionVarAllocator, SsaVarId, SsaVariable, UseSite, VariableOrigin};

@@ -171,7 +171,7 @@ impl ExactSizeIterator for LeBytesIter {}
 
 #[cfg(test)]
 mod tests {
-    use crate::utils::LeBytes;
+    use super::*;
 
     #[test]
     fn from_byte() {

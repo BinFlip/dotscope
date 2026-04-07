@@ -199,6 +199,11 @@ pub struct SsaCodeGenerator {
     /// definition block references it. Used to determine whether a value must
     /// be stored to a local (stack values don't persist across block boundaries).
     cross_block_uses: BTreeSet<SsaVarId>,
+    /// Local indices accessed via LoadLocalAddr (address-taken locals).
+    /// Const/Copy instructions that store to these locals must not be filtered
+    /// out as dead, even if the dest variable has zero SSA uses — the runtime
+    /// reads the actual memory location through the pointer.
+    address_taken_locals: BTreeSet<u16>,
 }
 
 /// Information needed to emit a `RuntimeHelpers.InitializeArray` call for a decrypted array.
@@ -275,6 +280,7 @@ impl SsaCodeGenerator {
             array_size_types: BTreeMap::new(),
             all_phi_operands: BTreeSet::new(),
             cross_block_uses: BTreeSet::new(),
+            address_taken_locals: BTreeSet::new(),
         }
     }
 
@@ -660,6 +666,7 @@ impl SsaCodeGenerator {
         self.interned_arrays.clear();
         self.all_phi_operands.clear();
         self.cross_block_uses.clear();
+        self.address_taken_locals.clear();
         // Note: protected_tokens and array_parent_type are NOT cleared here.
         // They accumulate across multiple compile() calls within the same
         // codegen session, since all methods share the same parent TypeDef
@@ -672,6 +679,20 @@ impl SsaCodeGenerator {
 
         // Phase 1: Allocate storage for all SSA variables based on their origins
         self.allocate_storage(ssa)?;
+
+        // Identify address-taken locals (accessed via LoadLocalAddr). Stores to
+        // these locals must not be filtered out as "dead" by the Const/Copy
+        // skip logic, because the runtime reads the actual memory location
+        // through the pointer even though no SSA variable directly uses the
+        // dest. Example: Monitor.Enter(obj, ref lockTaken) reads lockTaken
+        // through the pointer and throws if it wasn't initialized to false.
+        for block in ssa.blocks() {
+            for instr in block.instructions() {
+                if let SsaOp::LoadLocalAddr { local_index, .. } = instr.op() {
+                    self.address_taken_locals.insert(*local_index);
+                }
+            }
+        }
 
         // Pre-compute the actual definition block for each variable by scanning
         // instructions. This is more reliable than var.def_site() which can be
@@ -2582,6 +2603,16 @@ impl SsaCodeGenerator {
                         }
                         let uses = self.global_use_counts.get(dest).copied().unwrap_or(0);
                         if uses == 0 && !self.all_phi_operands.contains(dest) {
+                            // Keep stores to address-taken locals: the value is
+                            // read through a pointer (LoadLocalAddr), not via SSA
+                            // uses, so 0 SSA uses doesn't mean the store is dead.
+                            if let Some(var) = ssa.variable(*dest) {
+                                if let VariableOrigin::Local(idx) = var.origin() {
+                                    if self.address_taken_locals.contains(&idx) {
+                                        return true;
+                                    }
+                                }
+                            }
                             return false;
                         }
                         true

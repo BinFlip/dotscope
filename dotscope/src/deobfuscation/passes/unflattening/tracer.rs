@@ -340,9 +340,6 @@ struct TreeTraceContext<'a> {
     /// needs to reach the target dispatcher and get one dispatch — it doesn't
     /// need to explore all paths through foreign dispatchers.
     no_fork: bool,
-    /// When true, suppress the const-merge exception in no_fork mode. Set
-    /// after the first const-merge fork to prevent cascading forks.
-    no_const_merge_fork: bool,
 }
 
 impl<'a> TreeTraceContext<'a> {
@@ -366,7 +363,6 @@ impl<'a> TreeTraceContext<'a> {
             max_tree_depth: config.max_tree_depth,
             other_dispatcher_blocks: Vec::new(),
             no_fork: false,
-            no_const_merge_fork: false,
         }
     }
 
@@ -1370,14 +1366,6 @@ fn handle_terminator_tree(
                 // populate merge-point clone requests, otherwise both arms get
                 // the same redirect target and the comparison is destroyed.
                 if ctx.no_fork && !is_expr_switch {
-                    // Allow forking for conditional CFF state transitions:
-                    // both arms are const-producers merging at a block that
-                    // reaches the dispatcher. Suppress if already inside a
-                    // const-merge fork (no_const_merge_fork) to prevent
-                    // cascading that could cause exponential blowup.
-                    if ctx.no_const_merge_fork {
-                        return TerminatorResult::Continue(*true_target);
-                    }
                     let dispatcher_block = ctx.dispatcher.as_ref().map(|d| d.block);
                     let is_cff_state_transition = dispatcher_block.is_some_and(|db| {
                         let true_merge =
@@ -1406,8 +1394,6 @@ fn handle_terminator_tree(
                     if !is_cff_state_transition {
                         return TerminatorResult::Continue(*true_target);
                     }
-                    // Suppress further const-merge forks in sub-traces
-                    ctx.no_const_merge_fork = true;
                 }
 
                 let snapshot = ctx.snapshot_evaluator();

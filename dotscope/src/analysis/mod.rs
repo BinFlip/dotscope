@@ -101,8 +101,8 @@ pub use ssa::{
     AbstractValue, BinaryOpKind, CmpKind, ConstValue, DefSite, FieldRef, MethodPurity, MethodRef,
     PhiAnalyzer, PhiNode, PhiOperand, ReturnInfo, SsaBlock, SsaCfg, SsaConverter, SsaEvaluator,
     SsaExceptionHandler, SsaFunction, SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId,
-    SsaVariable, SymbolicEvaluator, SymbolicExpr, TypeClass, TypeContext, TypeProvider, TypeRef,
-    UnaryOpKind, UseSite, ValueResolver, VariableOrigin,
+    SsaVariable, SymbolicEvaluator, SymbolicExpr, SymbolicOp, TypeClass, TypeContext, TypeProvider,
+    TypeRef, UnaryOpKind, UseSite, ValueResolver, VariableOrigin,
 };
 pub use taint::{
     cff_taint_config, find_token_dependencies, PhiTaintMode, TaintAnalysis, TaintConfig,
