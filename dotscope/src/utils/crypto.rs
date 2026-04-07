@@ -32,7 +32,7 @@ use cbc::{Decryptor, Encryptor};
 #[cfg(feature = "legacy-crypto")]
 use des::{Des, TdesEde3};
 use ecb::{Decryptor as EcbDecryptor, Encryptor as EcbEncryptor};
-use hmac::{Hmac, Mac};
+use hmac::{Hmac, KeyInit as HmacKeyInit, Mac};
 #[cfg(feature = "legacy-crypto")]
 use md5::{Digest as Md5Digest, Md5};
 #[cfg(feature = "emulation")]
@@ -191,7 +191,7 @@ pub fn compute_hmac_sha256(key: &[u8], data: &[u8]) -> Vec<u8> {
     type HmacSha256 = Hmac<Sha256>;
 
     // HMAC accepts keys of any size (per RFC 2104), so this never fails.
-    let Ok(mut mac) = <HmacSha256 as Mac>::new_from_slice(key) else {
+    let Ok(mut mac) = <HmacSha256 as HmacKeyInit>::new_from_slice(key) else {
         return Vec::new();
     };
     mac.update(data);
@@ -213,7 +213,7 @@ pub fn compute_hmac_sha512(key: &[u8], data: &[u8]) -> Vec<u8> {
     type HmacSha512 = Hmac<Sha512>;
 
     // HMAC accepts keys of any size (per RFC 2104), so this never fails.
-    let Ok(mut mac) = <HmacSha512 as Mac>::new_from_slice(key) else {
+    let Ok(mut mac) = <HmacSha512 as HmacKeyInit>::new_from_slice(key) else {
         return Vec::new();
     };
     mac.update(data);
