@@ -147,24 +147,30 @@ impl CopyPropagationPass {
         }
 
         // Collect copy dests to protect: dest is in a local/arg group with
-        // exactly 1 instruction def, the source is in a different group,
-        // AND the group either participates in phi nodes (cross-block flow)
-        // or is address-taken (accessed via ldloca — the store is the only
-        // way to initialize the local's value).
+        // the source in a different group, AND either:
+        //   (a) the group has exactly 1 instruction def and participates in
+        //       phi nodes (cross-block flow — removing the sole def would
+        //       leave the group undefined), OR
+        //   (b) the group is address-taken (accessed via ldloca). ALL stores
+        //       to address-taken locals must be preserved regardless of def
+        //       count, because the runtime reads the actual memory location
+        //       through the pointer. Removing any store causes the pointer
+        //       read to see stale/default values (e.g., Monitor.Enter reads
+        //       lockTaken=true from a previous lock instead of the fresh
+        //       false initialization).
         let mut protected = BitSet::new(ssa.var_id_capacity());
         for (&dest, &src) in copies.iter() {
             let dest_group = ssa.rename_group(dest);
             if dest_group >= real_local_limit {
                 continue; // Not a local/arg group
             }
-            let src_group = ssa.rename_group(src);
-            if src_group == dest_group {
+
+            if ssa.rename_group(src) == dest_group {
                 continue; // Same group — safe to propagate
             }
             let def_count = group_def_count.get(&dest_group).copied().unwrap_or(0);
-            if def_count <= 1
-                && (groups_in_phis.contains(dest_group as usize)
-                    || address_taken_groups.contains(dest_group as usize))
+            if address_taken_groups.contains(dest_group as usize)
+                || (def_count <= 1 && groups_in_phis.contains(dest_group as usize))
             {
                 protected.insert(dest.index());
             }
