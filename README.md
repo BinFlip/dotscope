@@ -31,7 +31,7 @@ Add `dotscope` to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-dotscope = "0.6.0"
+dotscope = "0.7.0"
 ```
 
 ### Raw Access Example

@@ -5,6 +5,48 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] - 2026-05-03
+
+### Added
+
+- **JIEJIE.NET Support**: Full deobfuscation pipeline — control flow flattening, string encryption, constant encoding, resource encryption, typeof obfuscation, array initialization, and infrastructure cleanup. 10/10 test samples pass
+- **BitMono Support**: 16 protections covered with PE repair; 18/18 test samples pass. String decryption gated behind the `legacy-crypto` feature (PBKDF2-HMAC-SHA1)
+- **.NET Reactor 7.5.0 Support** (partial): basic protections supported; full feature set and virtualization remain in progress
+- **Deobfuscation Architecture Overhaul**: moved from obfuscator-focused to technique-based design; added `DelegateProxyResolutionPass`, `OpaqueFieldPredicatePass`, `StaticFieldResolutionPass`, and `SentinelTaintRemovalPass`
+- **Emulation Engine Decomposition**: split into `callresolver`, `exhandler`, `typeops`, `dispatch`, `generics`, and `tracefilter` modules; extended BCL runtime with 600+ stubs
+- **ILDasm Formatter Library**: full ILAsm-compatible text output in `dotscope::formatting` (~16 submodules) covering structural directives, type system, members, exception handlers, custom attributes, security, generics, resources, COM interop (`.vtfixup`/`.vtentry`/`.export`), and section-aware `.data` directives
+- **VtFixup Parsing**: support for mixed-mode assemblies via vtable fixup table parsing
+- **AssemblyRef and MemberRef Cleanup**: cleanup pipeline now removes unused `AssemblyRef` and `MemberRef` entries
+- **Cascading Output Cleanup**: improved cleanup system for better cascading removal of dead metadata in output binaries
+- **Metadata and Type System API Extensions**: `CilFlavor::byte_size`, `FieldQuery`, and the `wellknown` module
+
+### Changed
+
+- **File Backend Migration**: `File` now uses [`cowfile`](https://crates.io/crates/cowfile) (0.2.1) for OS-level copy-on-write memory maps (`MAP_PRIVATE` / `PAGE_WRITECOPY`); PE repairs are applied in place to the mmap with only touched pages copied by the OS
+- **Metadata Flags Refactor**: migrated metadata flag types to a type-safe `metadata_flags!` macro
+- **SSA Rebuild Refactor**: reworked `SsaRebuild`-related logic to improve SSA construction reliability and stability
+- **CI/CD**: removed macOS Intel from the CI/CD pipeline
+- **Dependencies**: replaced the `rsa` crate temporarily due to a published CVE; bumped other dependencies
+
+### Fixed
+
+- **Codegen — Address-Taken Locals**: codegen no longer erases required address-taken locals
+- **CFF Unflattening**: missing `BranchCmp` cases caused traces to abort early; now handled
+- **CFF Unflattening**: regressions from earlier refactoring resolved
+- **Inlining Race**: parallel pass execution could miss inlining candidates due to a race; fixed
+- **CALLI in SSA Construction**: now uses metadata for correct stack handling
+- **CALLI in `SsaConverter`**: previously missing handling added
+- **Exception Handler Hardening**: improved validation/handling of malformed handlers
+- **Exception Handler Encoding**: corrected size encoding for exception handlers
+- **Exception Handler Codegen**: fixed handler generation in codegen
+- **String Heap Compaction**: substrings within removed strings no longer cause incorrect compaction
+- **DeobfuscationConfig**: `detection_threshold` was not being applied properly
+- **Lenient Mode**: lenient flag is now properly propagated for force analysis
+- **x86 Decoder**: added support for `call $+5` trampolines
+- **PureLogs Reliability**: multiple analysis fixes
+- **.NET 10 Compatibility**: improvements for .NET 10 assemblies
+- **Feature Gating**: resolved unused warnings for feature-gated APIs
+
 ## [0.6.0] - 2026-02-12
 
 ### Added

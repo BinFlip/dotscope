@@ -1100,10 +1100,7 @@ fn is_assembly_load_reflection_shim(
 /// entry in the resources table. Returns the names of the encrypted
 /// resources for evidence/logging.
 #[allow(dead_code)]
-fn encrypted_resource_names(
-    assembly: &CilObject,
-    findings: &ResourceFindings,
-) -> Vec<String> {
+fn encrypted_resource_names(assembly: &CilObject, findings: &ResourceFindings) -> Vec<String> {
     let mut seen: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
     for &token in &findings.encrypted_resource_tokens {
