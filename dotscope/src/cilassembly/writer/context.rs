@@ -305,6 +305,15 @@ pub struct WriteContext<'a> {
     /// that must be updated with the new TypeRef RIDs.
     pub typeref_rid_remap: HashMap<u32, u32>,
 
+    /// TypeSpec RID remapping for signature blob processing. The
+    /// `TypeDefOrRefOrSpecEncoded` operand of `ELEMENT_TYPE_CLASS` /
+    /// `ELEMENT_TYPE_VALUETYPE` can reference TypeSpec rows in addition
+    /// to TypeDef / TypeRef. Without this remap, signatures (notably the
+    /// `LocalVarSig` blob in StandAloneSig) keep pointing at the old
+    /// TypeSpec RID after surrounding rows are deleted, breaking strict
+    /// reload of the regenerated assembly.
+    pub typespec_rid_remap: HashMap<u32, u32>,
+
     /// StandAloneSig RIDs to skip during table writing (duplicates).
     /// When multiple StandAloneSig entries have identical blob content,
     /// only one is kept and the rest are added here.
@@ -487,6 +496,7 @@ impl<'a> WriteContext<'a> {
             token_remapping: HashMap::new(),
             typedef_rid_remap: HashMap::new(),
             typeref_rid_remap: HashMap::new(),
+            typespec_rid_remap: HashMap::new(),
             standalonesig_skip: HashSet::new(),
 
             entry_point_token,

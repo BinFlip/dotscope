@@ -55,6 +55,7 @@ mod confuserex;
 mod detection;
 mod generic;
 mod jiejienet;
+mod netreactor;
 mod obfuscar;
 mod registry;
 mod result;
@@ -66,6 +67,7 @@ pub use result::TechniqueResult;
 pub(crate) use result::TechniqueResults;
 
 // Re-export findings types needed by infrastructure passes and the engine.
+#[cfg(feature = "legacy-crypto")]
 pub(crate) use bitmono::StringFindings as BitMonoStringFindings;
 
 use std::sync::Arc;

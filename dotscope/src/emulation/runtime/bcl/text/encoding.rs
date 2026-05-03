@@ -237,6 +237,10 @@ pub fn register(manager: &HookManager) -> Result<()> {
 
 /// Hook for `System.Text.Encoding.GetBytes` method.
 ///
+/// Inspects the `this` encoding instance to determine the actual encoding
+/// (UTF-8, ASCII, UTF-16LE, etc.) and produces the correct byte output.
+/// Falls back to UTF-8 when the encoding type cannot be determined.
+///
 /// # Handled Overloads
 ///
 /// - `Encoding.GetBytes(String) -> Byte[]`
@@ -258,10 +262,20 @@ fn encoding_get_bytes_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         return PreHookResult::Bypass(Some(EmValue::Null));
     }
 
-    // Default to UTF-8 encoding
+    let encoding_type = ctx
+        .this
+        .and_then(|this_val| {
+            if let EmValue::ObjectRef(href) = this_val {
+                thread.heap().get_encoding_type(*href).ok().flatten()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(EncodingType::Utf8);
+
     if let EmValue::ObjectRef(handle) = &ctx.args[0] {
         if let Ok(s) = thread.heap().get_string(*handle) {
-            let bytes: Vec<u8> = s.as_bytes().to_vec();
+            let bytes = encode_string(&s, encoding_type);
             match thread.heap_mut().alloc_byte_array(&bytes) {
                 Ok(arr_handle) => {
                     return PreHookResult::Bypass(Some(EmValue::ObjectRef(arr_handle)))
@@ -274,6 +288,15 @@ fn encoding_get_bytes_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
 }
 
 /// Hook for `System.Text.Encoding.GetString` method.
+///
+/// Inspects the `this` encoding instance to determine the actual encoding
+/// (UTF-8, ASCII, UTF-16LE, etc.) and decodes the bytes accordingly.
+/// Falls back to UTF-8 when the encoding type cannot be determined.
+///
+/// This is critical for obfuscators like .NET Reactor that call
+/// `Encoding.Unicode.GetString(bytes)` through the base class virtual
+/// dispatch — without encoding-aware handling, UTF-16LE bytes would be
+/// misinterpreted as UTF-8, producing strings with embedded null bytes.
 ///
 /// # Handled Overloads
 ///
@@ -298,11 +321,23 @@ fn encoding_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
         return PreHookResult::Bypass(Some(EmValue::Null));
     }
 
-    // Default to UTF-8 decoding
+    // Determine encoding type from the `this` instance. The base class
+    // Encoding.GetString dispatches virtually, so the actual encoding depends
+    // on which Encoding subclass is on the stack (UTF8, ASCII, Unicode, etc.).
+    let encoding_type = ctx
+        .this
+        .and_then(|this_val| {
+            if let EmValue::ObjectRef(href) = this_val {
+                thread.heap().get_encoding_type(*href).ok().flatten()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(EncodingType::Utf8);
+
     // Handle both GetString(byte[]) and GetString(byte[], int, int) overloads
     if let EmValue::ObjectRef(handle) = &ctx.args[0] {
         if let Some(all_bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
-            // Check for GetString(byte[], int offset, int count) overload
             let bytes = if ctx.args.len() >= 3 {
                 // Safe: value validated as non-negative
                 #[allow(clippy::cast_sign_loss)]
@@ -325,7 +360,7 @@ fn encoding_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
                 all_bytes
             };
 
-            let s = String::from_utf8_lossy(&bytes).into_owned();
+            let s = decode_bytes(&bytes, encoding_type);
 
             // Capture decoded string for analysis
             let source = CaptureSource::new(
@@ -348,6 +383,10 @@ fn encoding_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
 }
 
 /// Hook for `System.Text.Encoding.GetByteCount` method.
+///
+/// Inspects the `this` encoding instance to determine the actual encoding
+/// (UTF-8, ASCII, UTF-16LE, etc.) and computes the encoded byte length.
+/// Falls back to UTF-8 when the encoding type cannot be determined.
 ///
 /// # Handled Overloads
 ///
@@ -373,10 +412,21 @@ fn encoding_get_byte_count_pre(
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
     }
 
+    let encoding_type = ctx
+        .this
+        .and_then(|this_val| {
+            if let EmValue::ObjectRef(href) = this_val {
+                thread.heap().get_encoding_type(*href).ok().flatten()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(EncodingType::Utf8);
+
     if let EmValue::ObjectRef(handle) = &ctx.args[0] {
         if let Ok(s) = thread.heap().get_string(*handle) {
-            // Safe: string lengths don't exceed i32::MAX in practice
-            let len = i32::try_from(s.len()).unwrap_or(i32::MAX);
+            let byte_len = encode_string(&s, encoding_type).len();
+            let len = i32::try_from(byte_len).unwrap_or(i32::MAX);
             return PreHookResult::Bypass(Some(EmValue::I32(len)));
         }
     }
@@ -384,6 +434,10 @@ fn encoding_get_byte_count_pre(
 }
 
 /// Hook for `System.Text.Encoding.GetCharCount` method.
+///
+/// Inspects the `this` encoding instance to determine the actual encoding
+/// (UTF-8, ASCII, UTF-16LE, etc.) and computes the decoded character count.
+/// Falls back to UTF-8 when the encoding type cannot be determined.
 ///
 /// # Handled Overloads
 ///
@@ -407,11 +461,20 @@ fn encoding_get_char_count_pre(
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
     }
 
+    let encoding_type = ctx
+        .this
+        .and_then(|this_val| {
+            if let EmValue::ObjectRef(href) = this_val {
+                thread.heap().get_encoding_type(*href).ok().flatten()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(EncodingType::Utf8);
+
     if let EmValue::ObjectRef(handle) = &ctx.args[0] {
         if let Some(bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
-            // For UTF-8, count UTF-8 characters
-            let s = String::from_utf8_lossy(&bytes);
-            // Safe: character counts don't exceed i32::MAX in practice
+            let s = decode_bytes(&bytes, encoding_type);
             let count = i32::try_from(s.chars().count()).unwrap_or(i32::MAX);
             return PreHookResult::Bypass(Some(EmValue::I32(count)));
         }
@@ -897,6 +960,84 @@ fn unicode_get_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         }
     }
     PreHookResult::Bypass(Some(EmValue::Null))
+}
+
+/// Encodes a Rust string into a byte vector using the specified .NET encoding.
+///
+/// Mirrors the behavior of `System.Text.Encoding.GetBytes(String)` for each
+/// encoding subclass. Non-ASCII bytes in ASCII mode are replaced with `?`,
+/// matching the .NET `ASCIIEncoding` fallback behavior.
+///
+/// # Arguments
+///
+/// * `s` - The UTF-8 string to encode.
+/// * `encoding_type` - The .NET encoding to use (UTF-8, ASCII, UTF-16LE, UTF-16BE, UTF-32).
+///
+/// # Returns
+///
+/// The encoded byte representation of the string.
+fn encode_string(s: &str, encoding_type: EncodingType) -> Vec<u8> {
+    match encoding_type {
+        EncodingType::Utf8 => s.as_bytes().to_vec(),
+        EncodingType::Ascii => s.bytes().map(|b| if b > 127 { b'?' } else { b }).collect(),
+        EncodingType::Utf16Le => s.encode_utf16().flat_map(u16::to_le_bytes).collect(),
+        EncodingType::Utf16Be => s.encode_utf16().flat_map(u16::to_be_bytes).collect(),
+        EncodingType::Utf32 => s.chars().flat_map(|c| (c as u32).to_le_bytes()).collect(),
+    }
+}
+
+/// Decodes a byte slice into a Rust string using the specified .NET encoding.
+///
+/// Mirrors the behavior of `System.Text.Encoding.GetString(Byte[])` for each
+/// encoding subclass. Invalid sequences are handled lossily (replacement
+/// characters for UTF-8/UTF-16, truncation for odd-length UTF-16/UTF-32 input).
+///
+/// # Arguments
+///
+/// * `bytes` - The raw bytes to decode.
+/// * `encoding_type` - The .NET encoding to use (UTF-8, ASCII, UTF-16LE, UTF-16BE, UTF-32).
+///
+/// # Returns
+///
+/// The decoded string. Returns an empty string if the byte slice has an invalid
+/// length for the chosen multi-byte encoding (e.g. odd length for UTF-16).
+fn decode_bytes(bytes: &[u8], encoding_type: EncodingType) -> String {
+    match encoding_type {
+        EncodingType::Utf8 => String::from_utf8_lossy(bytes).into_owned(),
+        EncodingType::Ascii => bytes.iter().map(|&b| b as char).collect(),
+        EncodingType::Utf16Le => {
+            if !bytes.len().is_multiple_of(2) {
+                return String::new();
+            }
+            let u16s: Vec<u16> = bytes
+                .chunks_exact(2)
+                .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
+                .collect();
+            String::from_utf16_lossy(&u16s)
+        }
+        EncodingType::Utf16Be => {
+            if !bytes.len().is_multiple_of(2) {
+                return String::new();
+            }
+            let u16s: Vec<u16> = bytes
+                .chunks_exact(2)
+                .map(|chunk| u16::from_be_bytes([chunk[0], chunk[1]]))
+                .collect();
+            String::from_utf16_lossy(&u16s)
+        }
+        EncodingType::Utf32 => {
+            if !bytes.len().is_multiple_of(4) {
+                return String::new();
+            }
+            bytes
+                .chunks_exact(4)
+                .filter_map(|chunk| {
+                    let code = u32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                    char::from_u32(code)
+                })
+                .collect()
+        }
+    }
 }
 
 #[cfg(test)]

@@ -487,7 +487,7 @@ pub fn schedule_finally_blocks(
     }
 
     // Sort by try_offset descending (innermost first)
-    finally_blocks.sort_by(|a, b| b.1.cmp(&a.1));
+    finally_blocks.sort_by_key(|f| std::cmp::Reverse(f.1));
 
     // Schedule finally blocks in order (innermost first)
     // The last one scheduled will be popped first

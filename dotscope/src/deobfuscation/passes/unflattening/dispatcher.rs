@@ -36,6 +36,10 @@ pub struct Dispatcher {
     pub transform: StateTransform,
     /// Detection confidence score (0.0 - 1.0).
     pub confidence: f64,
+    /// Initial state value from the entry block, if detected.
+    /// Optimization passes may remove the `ldc.i4; stloc` that set this value,
+    /// so it's captured during detection when the SSA is still complete.
+    pub initial_state: Option<i64>,
 }
 
 impl Dispatcher {
@@ -50,6 +54,7 @@ impl Dispatcher {
             state_phi: None,
             transform: StateTransform::Identity,
             confidence: 0.0,
+            initial_state: None,
         }
     }
 
@@ -65,6 +70,13 @@ impl Dispatcher {
     #[must_use]
     pub fn with_state_phi(mut self, phi: SsaVarId) -> Self {
         self.state_phi = Some(phi);
+        self
+    }
+
+    /// Sets the initial state value.
+    #[must_use]
+    pub fn with_initial_state(mut self, state: i64) -> Self {
+        self.initial_state = Some(state);
         self
     }
 
@@ -195,6 +207,9 @@ impl Dispatcher {
         refreshed = refreshed
             .with_transform(self.transform.clone())
             .with_confidence(self.confidence);
+        if let Some(state) = self.initial_state {
+            refreshed = refreshed.with_initial_state(state);
+        }
 
         Some(refreshed)
     }

@@ -23,6 +23,7 @@
 //!
 //! - [`jiejienet`] — JIEJIE.NET value-level passes (constants, strings, typeof, arrays)
 //! - [`bitmono`] — BitMono passes (string decryption, unmanaged strings, anti-debug)
+//! - [`netreactor`] — .NET Reactor passes (anti-tamper token resolver)
 //!
 //! # Relationship to Compiler Passes
 //!
@@ -35,6 +36,7 @@
 
 pub mod bitmono;
 pub mod jiejienet;
+pub mod netreactor;
 
 mod antidebug;
 mod decryption;

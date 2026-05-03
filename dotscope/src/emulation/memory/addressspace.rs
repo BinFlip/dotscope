@@ -179,6 +179,21 @@ impl std::ops::Deref for SharedHeap {
     }
 }
 
+/// Metadata for a pinned managed array whose native address aliases
+/// the managed heap data. Reads and writes through the native address
+/// are transparently delegated to the managed heap's `Vec<EmValue>`.
+#[derive(Clone, Debug)]
+struct PinnedArrayEntry {
+    /// The managed array on the heap.
+    array_ref: HeapRef,
+    /// Base native address for the pinned region.
+    base_addr: u64,
+    /// Total byte length of the pinned region.
+    byte_length: usize,
+    /// Size of each element in bytes (1 for U1, 4 for I4, 8 for I8, etc.).
+    element_size: usize,
+}
+
 /// Unified address space for an emulated .NET process.
 ///
 /// `AddressSpace` provides a complete view of all memory accessible to an emulated
@@ -187,12 +202,21 @@ impl std::ops::Deref for SharedHeap {
 /// - **Managed heap** - Objects, arrays, and strings (via [`SharedHeap`])
 /// - **Memory regions** - PE images, mapped data, and unmanaged allocations
 /// - **Static fields** - Type-level static field storage
+/// - **Pinned arrays** - Native pointer aliases for managed arrays
 ///
 /// # Memory Layout
 ///
 /// The address space has a configurable size (default 4GB). Automatic allocations
 /// start at address `0x1000_0000` (256MB) and grow upward. PE images should be
 /// mapped at their preferred base addresses using [`map_pe_image`](Self::map_pe_image).
+///
+/// # Pinned Arrays
+///
+/// When CIL code pins a managed array (via `ldelema` + `conv.u`), the resulting
+/// native pointer is registered with the address space. Subsequent reads and writes
+/// through native pointers (`ldind.*`/`stind.*`) that target the pinned address
+/// range are transparently delegated to the managed heap, ensuring a single source
+/// of truth with no synchronization overhead.
 ///
 /// # Thread Safety
 ///
@@ -260,6 +284,16 @@ pub struct AddressSpace {
     ///
     /// Uses `imbl::HashMap` for O(1) fork via structural sharing.
     monitor_locks: RwLock<ImHashMap<u64, u32>>,
+
+    /// Pinned array mappings: native base address → pinned array metadata.
+    ///
+    /// When a managed array is pinned (via `ldelema` + `conv.u`), its native
+    /// address is registered here. Reads and writes through the native address
+    /// are transparently delegated to the managed heap's `Vec<EmValue>`,
+    /// ensuring a single source of truth with no data duplication.
+    ///
+    /// Uses `imbl::HashMap` for O(1) fork via structural sharing.
+    pinned_arrays: RwLock<ImHashMap<u64, PinnedArrayEntry>>,
 }
 
 impl AddressSpace {
@@ -293,6 +327,7 @@ impl AddressSpace {
             size: address_space_size,
             protection_overrides: RwLock::new(ImHashMap::new()),
             monitor_locks: RwLock::new(ImHashMap::new()),
+            pinned_arrays: RwLock::new(ImHashMap::new()),
         }
     }
 
@@ -315,6 +350,7 @@ impl AddressSpace {
             size: 0x1_0000_0000,
             protection_overrides: RwLock::new(ImHashMap::new()),
             monitor_locks: RwLock::new(ImHashMap::new()),
+            pinned_arrays: RwLock::new(ImHashMap::new()),
         }
     }
 
@@ -492,6 +528,11 @@ impl AddressSpace {
     ///
     /// Returns an error if the address is not mapped or the read fails.
     pub fn read(&self, address: u64, len: usize) -> Result<Vec<u8>> {
+        // Check pinned arrays first (transparent shared backing)
+        if let Some(result) = self.read_pinned(address, len) {
+            return result;
+        }
+
         let regions = self.regions.read().map_err(|_| {
             Error::from(EmulationError::InternalError {
                 description: "region lock poisoned".to_string(),
@@ -529,6 +570,11 @@ impl AddressSpace {
     /// Returns an error if the address is not mapped, the region is read-only,
     /// or the write otherwise fails.
     pub fn write(&self, address: u64, data: &[u8]) -> Result<()> {
+        // Check pinned arrays first (transparent shared backing)
+        if let Some(result) = self.write_pinned(address, data) {
+            return result;
+        }
+
         let regions = self.regions.read().map_err(|_| {
             Error::from(EmulationError::InternalError {
                 description: "region lock poisoned".to_string(),
@@ -562,6 +608,16 @@ impl AddressSpace {
     /// * `address` - The address to check
     #[must_use]
     pub fn is_valid(&self, address: u64) -> bool {
+        // Check pinned arrays first
+        if let Ok(pins) = self.pinned_arrays.read() {
+            for entry in pins.values() {
+                let end = entry.base_addr + entry.byte_length as u64;
+                if address >= entry.base_addr && address < end {
+                    return true;
+                }
+            }
+        }
+
         let Ok(regions) = self.regions.read() else {
             return false;
         };
@@ -763,6 +819,229 @@ impl AddressSpace {
                 reason: "not an unmanaged allocation".to_string(),
             }
             .into())
+        }
+    }
+
+    /// Reserves an address range without creating a backing memory region.
+    ///
+    /// Used for pinned arrays where the backing store is the managed heap.
+    /// The returned address is guaranteed not to conflict with other allocations.
+    pub fn reserve_address_range(&self, size: usize) -> u64 {
+        let aligned_size = (size + 0xFFF) & !0xFFF; // Align to 4KB
+        self.next_address
+            .fetch_add(aligned_size as u64, Ordering::SeqCst)
+    }
+
+    /// Registers a pinned managed array so that native pointer access
+    /// transparently delegates to the managed heap.
+    ///
+    /// After registration, `read()` and `write()` calls targeting the
+    /// pinned address range will be handled by reading from or writing
+    /// to the managed array's elements rather than a separate memory region.
+    ///
+    /// # Arguments
+    ///
+    /// * `base_addr` - Native base address of the pinned region
+    /// * `array_ref` - The managed array on the heap
+    /// * `element_size` - Size of each element in bytes
+    /// * `element_count` - Number of elements in the array
+    pub fn register_pinned_array(
+        &self,
+        base_addr: u64,
+        array_ref: HeapRef,
+        element_size: usize,
+        element_count: usize,
+    ) -> Result<()> {
+        let entry = PinnedArrayEntry {
+            array_ref,
+            base_addr,
+            byte_length: element_size * element_count,
+            element_size,
+        };
+        let mut pins = self.pinned_arrays.write().map_err(|_| {
+            Error::from(EmulationError::LockPoisoned {
+                description: "pinned arrays",
+            })
+        })?;
+        pins.insert(base_addr, entry);
+        Ok(())
+    }
+
+    /// Attempts to read from a pinned array region.
+    ///
+    /// Returns `None` if the address is not within a pinned array range.
+    /// Returns `Some(Ok(bytes))` if the read succeeded, `Some(Err(...))` on failure.
+    fn read_pinned(&self, addr: u64, len: usize) -> Option<Result<Vec<u8>>> {
+        if len == 0 {
+            return None;
+        }
+        let pins = self.pinned_arrays.read().ok()?;
+        if pins.is_empty() {
+            return None;
+        }
+
+        for entry in pins.values() {
+            let end = entry.base_addr + entry.byte_length as u64;
+            if addr >= entry.base_addr && addr + len as u64 <= end {
+                return Some(self.read_pinned_bytes(entry, addr, len));
+            }
+        }
+        None
+    }
+
+    /// Reads bytes from a pinned array by delegating to the managed heap.
+    fn read_pinned_bytes(
+        &self,
+        entry: &PinnedArrayEntry,
+        addr: u64,
+        len: usize,
+    ) -> Result<Vec<u8>> {
+        let byte_offset = (addr - entry.base_addr) as usize;
+        let heap = self.managed_heap();
+        let mut result = vec![0u8; len];
+
+        if entry.element_size == 1 {
+            // Byte array fast path: each element is one byte
+            for (i, slot) in result.iter_mut().enumerate().take(len) {
+                let elem_idx = byte_offset + i;
+                match heap.get_array_element(entry.array_ref, elem_idx) {
+                    Ok(EmValue::I32(v)) => {
+                        #[allow(clippy::cast_sign_loss)]
+                        {
+                            *slot = (v & 0xFF) as u8;
+                        }
+                    }
+                    Ok(_) | Err(_) => *slot = 0,
+                }
+            }
+        } else {
+            // Multi-byte element path: deserialize elements to bytes
+            let start_elem = byte_offset / entry.element_size;
+            let end_elem = (byte_offset + len).div_ceil(entry.element_size);
+            let mut elem_buf = vec![0u8; entry.element_size];
+
+            for elem_idx in start_elem..end_elem {
+                Self::emvalue_to_bytes(
+                    &heap
+                        .get_array_element(entry.array_ref, elem_idx)
+                        .unwrap_or(EmValue::I32(0)),
+                    &mut elem_buf,
+                );
+                let elem_byte_start = elem_idx * entry.element_size;
+                for (j, &b) in elem_buf.iter().enumerate() {
+                    let abs_byte = elem_byte_start + j;
+                    if abs_byte >= byte_offset && abs_byte < byte_offset + len {
+                        result[abs_byte - byte_offset] = b;
+                    }
+                }
+            }
+        }
+        Ok(result)
+    }
+
+    /// Attempts to write to a pinned array region.
+    ///
+    /// Returns `None` if the address is not within a pinned array range.
+    /// Returns `Some(Ok(()))` if the write succeeded, `Some(Err(...))` on failure.
+    fn write_pinned(&self, addr: u64, data: &[u8]) -> Option<Result<()>> {
+        if data.is_empty() {
+            return None;
+        }
+        let pins = self.pinned_arrays.read().ok()?;
+        if pins.is_empty() {
+            return None;
+        }
+
+        for entry in pins.values() {
+            let end = entry.base_addr + entry.byte_length as u64;
+            if addr >= entry.base_addr && addr + data.len() as u64 <= end {
+                return Some(self.write_pinned_bytes(entry, addr, data));
+            }
+        }
+        None
+    }
+
+    /// Writes bytes to a pinned array by delegating to the managed heap.
+    fn write_pinned_bytes(&self, entry: &PinnedArrayEntry, addr: u64, data: &[u8]) -> Result<()> {
+        let byte_offset = (addr - entry.base_addr) as usize;
+        let heap = self.managed_heap();
+
+        if entry.element_size == 1 {
+            // Byte array fast path: each byte is one element
+            for (i, &byte) in data.iter().enumerate() {
+                let elem_idx = byte_offset + i;
+                heap.set_array_element(entry.array_ref, elem_idx, EmValue::I32(i32::from(byte)))?;
+            }
+        } else {
+            // Multi-byte element path: read-modify-write for partial elements
+            let start_elem = byte_offset / entry.element_size;
+            let end_elem = (byte_offset + data.len()).div_ceil(entry.element_size);
+
+            for elem_idx in start_elem..end_elem {
+                let elem_byte_start = elem_idx * entry.element_size;
+                let mut elem_buf = vec![0u8; entry.element_size];
+
+                // Read existing element value
+                Self::emvalue_to_bytes(
+                    &heap
+                        .get_array_element(entry.array_ref, elem_idx)
+                        .unwrap_or(EmValue::I32(0)),
+                    &mut elem_buf,
+                );
+
+                // Overwrite the affected bytes
+                for (j, byte) in elem_buf.iter_mut().enumerate() {
+                    let abs_byte = elem_byte_start + j;
+                    if abs_byte >= byte_offset && abs_byte < byte_offset + data.len() {
+                        *byte = data[abs_byte - byte_offset];
+                    }
+                }
+
+                // Write back
+                let value = Self::bytes_to_emvalue(&elem_buf);
+                heap.set_array_element(entry.array_ref, elem_idx, value)?;
+            }
+        }
+        Ok(())
+    }
+
+    /// Serializes an `EmValue` to little-endian bytes.
+    fn emvalue_to_bytes(value: &EmValue, buf: &mut [u8]) {
+        match value {
+            EmValue::I32(v) => {
+                let bytes = v.to_le_bytes();
+                let copy_len = buf.len().min(4);
+                buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+            }
+            EmValue::I64(v) | EmValue::NativeInt(v) => {
+                let bytes = v.to_le_bytes();
+                let copy_len = buf.len().min(8);
+                buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+            }
+            EmValue::F32(v) => {
+                let bytes = v.to_le_bytes();
+                let copy_len = buf.len().min(4);
+                buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+            }
+            EmValue::F64(v) => {
+                let bytes = v.to_le_bytes();
+                let copy_len = buf.len().min(8);
+                buf[..copy_len].copy_from_slice(&bytes[..copy_len]);
+            }
+            _ => buf.fill(0),
+        }
+    }
+
+    /// Deserializes little-endian bytes to an `EmValue`.
+    fn bytes_to_emvalue(bytes: &[u8]) -> EmValue {
+        match bytes.len() {
+            1 => EmValue::I32(i32::from(bytes[0])),
+            2 => EmValue::I32(i32::from(i16::from_le_bytes([bytes[0], bytes[1]]))),
+            4 => EmValue::I32(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
+            8 => EmValue::I64(i64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])),
+            _ => EmValue::I32(0),
         }
     }
 
@@ -1025,6 +1304,8 @@ impl AddressSpace {
             protection_overrides: RwLock::new(ImHashMap::new()),
             // Fresh monitor locks
             monitor_locks: RwLock::new(ImHashMap::new()),
+            // Fresh pinned array mappings
+            pinned_arrays: RwLock::new(ImHashMap::new()),
         }
     }
 
@@ -1106,6 +1387,15 @@ impl AddressSpace {
             })?
             .clone();
 
+        // Fork pinned array mappings (O(1) due to imbl)
+        let pinned_arrays = self
+            .pinned_arrays
+            .read()
+            .map_err(|_| EmulationError::LockPoisoned {
+                description: "address space pinned arrays",
+            })?
+            .clone();
+
         Ok(Self {
             // Fork heap - O(1) due to imbl structural sharing
             heap: self.heap.fork()?,
@@ -1121,6 +1411,8 @@ impl AddressSpace {
             protection_overrides: RwLock::new(protection_overrides),
             // Fork monitor locks - O(1) due to imbl
             monitor_locks: RwLock::new(monitor_locks),
+            // Fork pinned array mappings - O(1) due to imbl
+            pinned_arrays: RwLock::new(pinned_arrays),
         })
     }
 }

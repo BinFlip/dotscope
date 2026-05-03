@@ -49,7 +49,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::{
-    analysis::{SsaBlock, SsaFunction, SsaOp, SsaVarId},
+    analysis::{SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
     deobfuscation::passes::unflattening::tracer::{TraceNode, TraceTerminator, TraceTree},
     utils::BitSet,
 };
@@ -103,6 +103,18 @@ pub struct PatchPlan {
     /// Blocks in execution order (for debugging/verification).
     pub execution_order: Vec<usize>,
 
+    /// Branch-collapse requests: `source_block -> new_target`.
+    ///
+    /// When a state transition's path enters the dispatcher through a
+    /// BranchCmp/Branch overflow check (e.g. NETReactor `bcmp state == Const`
+    /// on the dispatcher's default fall-through chain), the traced arm is the
+    /// only live path in the unflattened graph. Apply replaces the source's
+    /// BranchCmp/Branch terminator with a `Jump { target: new_target }` so the
+    /// dead arm is eliminated while the live arm's user-code blocks still
+    /// execute sequentially before the separate redirect rewires the final
+    /// jump-to-dispatcher block.
+    pub(crate) branch_collapses: BTreeMap<usize, usize>,
+
     /// Number of state transitions removed.
     pub state_transitions_removed: usize,
 
@@ -119,9 +131,20 @@ impl PatchPlan {
             state_transition_sources: BTreeSet::new(),
             clone_requests: BTreeMap::new(),
             execution_order: Vec::new(),
+            branch_collapses: BTreeMap::new(),
             state_transitions_removed: 0,
             user_branches_preserved: 0,
         }
+    }
+
+    fn add_branch_collapse(&mut self, source: usize, target: usize) {
+        if source == target {
+            return;
+        }
+        // First wins on conflict — multiple traces may visit the same overflow
+        // check through different state-match arms. Keeping the first avoids
+        // thrashing the terminator.
+        self.branch_collapses.entry(source).or_insert(target);
     }
 
     /// Returns true if the given block is one of the dispatcher blocks.
@@ -223,19 +246,19 @@ impl PatchPlan {
 /// `None` if no dispatcher was detected.
 ///
 /// [`trace_method_tree`]: super::tracer::trace_method_tree
-pub fn extract_patch_plan(tree: &TraceTree) -> Option<PatchPlan> {
+pub fn extract_patch_plan(tree: &TraceTree, ssa: &SsaFunction) -> Option<PatchPlan> {
     let dispatcher = tree.dispatcher.as_ref()?;
 
     let mut plan = PatchPlan::new(dispatcher.block, tree.state_tainted.clone());
 
     // Walk the main trace tree and extract redirects
     // Start with no external predecessor since we're at the root
-    extract_redirects_from_node(&tree.root, dispatcher.block, &mut plan, None);
+    extract_redirects_from_node(&tree.root, dispatcher.block, &mut plan, None, ssa);
 
     // Walk exception handler traces and merge their redirects into the same plan.
     // Handler blocks may contain their own CFF dispatchers that need unflattening.
     for handler_trace in &tree.handler_traces {
-        extract_redirects_from_node(&handler_trace.root, dispatcher.block, &mut plan, None);
+        extract_redirects_from_node(&handler_trace.root, dispatcher.block, &mut plan, None, ssa);
     }
 
     // Filter out cross-contamination redirects. When tracing for one dispatcher,
@@ -277,6 +300,7 @@ pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
             state_transition_sources: BTreeSet::new(),
             clone_requests: BTreeMap::new(),
             execution_order: Vec::new(),
+            branch_collapses: BTreeMap::new(),
             state_transitions_removed: 0,
             user_branches_preserved: 0,
         };
@@ -299,6 +323,7 @@ pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
         state_transition_sources: BTreeSet::new(),
         clone_requests: BTreeMap::new(),
         execution_order: Vec::new(),
+        branch_collapses: BTreeMap::new(),
         state_transitions_removed: 0,
         user_branches_preserved: 0,
     };
@@ -346,6 +371,11 @@ pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
             }
         }
 
+        // Merge branch collapses (first wins on conflict)
+        for (source, target) in plan.branch_collapses {
+            merged.branch_collapses.entry(source).or_insert(target);
+        }
+
         merged.state_transitions_removed += plan.state_transitions_removed;
         merged.user_branches_preserved += plan.user_branches_preserved;
     }
@@ -353,156 +383,310 @@ pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
     merged
 }
 
-/// Recursively extracts redirect information from a trace node.
+/// Returns true if an SSA op is safe to consider "pure CFG plumbing" — only
+/// data motion (Const/Copy/Phi) or a Jump terminator. Used to identify
+/// dispatcher prep-chain blocks that can be bypassed when redirecting case
+/// blocks.
+fn is_pure_prep_op(op: &SsaOp) -> bool {
+    matches!(
+        op,
+        SsaOp::Const { .. } | SsaOp::Copy { .. } | SsaOp::Jump { .. } | SsaOp::Nop
+    )
+}
+
+/// Returns true if `block_idx` is a state-overflow chain block — a block whose
+/// terminator is a `BranchCmp` comparing the state variable against a constant
+/// (NETReactor's `bcmp state == K, case_K, next_check` pattern on the
+/// dispatcher's default arm), and whose non-terminator body is only pure
+/// plumbing.
 ///
-/// `external_predecessor` is used when this node is a sub-trace spawned from a UserBranch/UserSwitch.
-/// It represents the block that branched to this sub-trace's first block, which is needed
-/// for proper merge point detection when the first block appears in multiple paths.
+/// Redirecting a case block directly to such a chain block lands the rewritten
+/// edge on machinery that will compare a now-undefined state operand and fall
+/// through into another case, creating self-loops after state-tainted
+/// filtering. The caller should advance the effective redirect target through
+/// consecutive chain blocks in the trace's `continues` visit list.
+fn is_state_chain_block(ssa: &SsaFunction, block_idx: usize, state_tainted: &BitSet) -> bool {
+    let Some(block) = ssa.block(block_idx) else {
+        return false;
+    };
+    let term_is_state_check = matches!(block.terminator_op(), Some(SsaOp::BranchCmp { left, right, .. })
+        if state_tainted.contains(left.index()) || state_tainted.contains(right.index()));
+    if !term_is_state_check {
+        return false;
+    }
+    let instrs = block.instructions();
+    let non_term_count = instrs.len().saturating_sub(1);
+    instrs
+        .iter()
+        .take(non_term_count)
+        .all(|instr| is_pure_prep_op(instr.op()))
+}
+
+/// Extracts redirect information from a trace tree.
+///
+/// Walks the tree iteratively via an explicit worklist to avoid blowing the
+/// thread stack on methods with hundreds of CFF state transitions (each is
+/// its own StateTransition node and the recursive version spent one frame per
+/// transition).
+///
+/// `external_predecessor` is used when a node is a sub-trace spawned from a
+/// UserBranch/UserSwitch. It represents the block that branched to this
+/// sub-trace's first block, needed for proper merge point detection when the
+/// first block appears in multiple paths.
 fn extract_redirects_from_node(
     node: &TraceNode,
     dispatcher_block: usize,
     plan: &mut PatchPlan,
     external_predecessor: Option<usize>,
+    ssa: &SsaFunction,
 ) {
-    // Add non-dispatcher blocks to execution order
-    for &block in &node.blocks_visited {
-        plan.add_to_execution_order(block);
-    }
+    let mut stack: Vec<(&TraceNode, Option<usize>)> = Vec::new();
+    stack.push((node, external_predecessor));
 
-    match &node.terminator {
-        TraceTerminator::StateTransition {
-            target_block,
-            continues,
-            ..
-        } => {
-            // Find the LAST non-dispatcher block - this is the one that jumps to dispatcher.
-            // We redirect it to bypass the dispatcher and go directly to target.
-            //
-            // For example, with blocks_visited=[9, 10, 2]:
-            // - Block 9 jumps to block 10 (keep this edge)
-            // - Block 10 jumps to dispatcher (redirect to target)
-            // - Block 2 is the dispatcher (being bypassed)
-            //
-            // This preserves block 10's code while bypassing the dispatcher.
-            // If multiple paths converge at block 10 with different targets,
-            // conflict detection will prevent the redirect.
-            // Find the LAST non-dispatcher block that jumps to the dispatcher
-            let pred_block = node
-                .blocks_visited
-                .iter()
-                .rev()
-                .find(|&&b| b != dispatcher_block)
-                .copied();
+    while let Some((node, external_predecessor)) = stack.pop() {
+        // Add non-dispatcher blocks to execution order
+        for &block in &node.blocks_visited {
+            plan.add_to_execution_order(block);
+        }
 
-            // Find what block leads INTO the pred block (for merge point tracking)
-            // In blocks_visited=[9, 10, 2], if pred=10, its predecessor is 9
-            //
-            // IMPORTANT: If pred is at position 0 (start of this trace), we use the
-            // external_predecessor which was passed from the parent UserBranch/UserSwitch.
-            // This ensures proper merge point detection when a block appears in multiple
-            // sub-traces (e.g., both as an entry path target and a CFF case target).
-            let predecessor_of_pred = if let Some(pred) = pred_block {
-                // Find position of pred in blocks_visited
-                node.blocks_visited
-                    .iter()
-                    .position(|&b| b == pred)
-                    .and_then(|pos| {
-                        if pos > 0 {
-                            Some(node.blocks_visited[pos - 1])
-                        } else {
-                            // Position 0 - use external predecessor if available
-                            external_predecessor
-                        }
-                    })
-            } else {
-                None
-            };
-
-            if let Some(pred) = pred_block {
-                // This block should redirect to target_block instead of dispatcher
-                plan.add_redirect(pred, *target_block, predecessor_of_pred);
-                plan.state_transition_sources.insert(pred);
-                plan.state_transitions_removed += 1;
-            } else if let Some(ext_pred) = external_predecessor {
-                // The sub-trace starts directly at the dispatcher (no preceding user blocks).
-                // This happens when a user branch at method entry sends one path directly
-                // to the dispatcher block. Redirect the external predecessor's
-                // dispatcher-targeting edge to the actual target.
-                plan.add_redirect(ext_pred, *target_block, None);
-                plan.state_transition_sources.insert(ext_pred);
-                plan.state_transitions_removed += 1;
-            }
-
-            // Continue processing the rest of the trace
-            // The continues trace starts at target_block, and its predecessor is pred_block
-            // (the block that was redirected to go to target_block).
-            // Fall back to external_predecessor when pred_block is None (direct-to-dispatcher path).
-            extract_redirects_from_node(
+        match &node.terminator {
+            TraceTerminator::StateTransition {
+                target_block,
                 continues,
-                dispatcher_block,
-                plan,
-                pred_block.or(external_predecessor),
-            );
-        }
+                ..
+            } => {
+                // When the dispatcher's switch falls through to its default and
+                // the default is an overflow chain (`bcmp state == K, case : next`
+                // repeated), `target_block` points at the chain's first block.
+                // Redirecting there lands on state-check machinery that — after
+                // state-tainted filtering — folds through an arbitrary chain
+                // arm and re-enters a case block, producing a self-loop. The
+                // traced `continues` node already walked the chain with concrete
+                // state, so the first non-chain block in its visit list is the
+                // real user-code target. Advance `target_block` to it.
+                let effective_target = {
+                    let mut t = *target_block;
+                    if is_state_chain_block(ssa, t, &plan.state_tainted) {
+                        for &b in &continues.blocks_visited {
+                            if !is_state_chain_block(ssa, b, &plan.state_tainted) {
+                                t = b;
+                                break;
+                            }
+                        }
+                    }
+                    t
+                };
+                let target_block = &effective_target;
+                // Find the LAST non-dispatcher block — the one that jumps to dispatcher.
+                // We redirect it to bypass the dispatcher and go directly to target.
+                //
+                // For example, with blocks_visited=[9, 10, 2]:
+                // - Block 9 jumps to block 10 (keep this edge)
+                // - Block 10 jumps to dispatcher (redirect to target)
+                // - Block 2 is the dispatcher (being bypassed)
+                //
+                // This preserves block 10's code while bypassing the dispatcher.
+                // If multiple paths converge at block 10 with different targets,
+                // conflict detection will prevent the redirect.
+                let last_pred = node
+                    .blocks_visited
+                    .iter()
+                    .rev()
+                    .find(|&&b| b != dispatcher_block)
+                    .copied();
+                let first_pred = node
+                    .blocks_visited
+                    .iter()
+                    .find(|&&b| b != dispatcher_block)
+                    .copied();
 
-        TraceTerminator::UserBranch {
-            block,
-            true_branch,
-            false_branch,
-            ..
-        } => {
-            plan.user_branches_preserved += 1;
-            // For user branches, the branch block is the predecessor of both sub-traces.
-            // This is crucial for proper merge point detection when a block is both
-            // an entry path target (from the branch) and a CFF case target.
-            extract_redirects_from_node(true_branch, dispatcher_block, plan, Some(*block));
-            extract_redirects_from_node(false_branch, dispatcher_block, plan, Some(*block));
-        }
+                // When the trace walks through intermediate blocks to reach the
+                // dispatcher (NETReactor inserts a `stloc state; ldloc state` prep
+                // chain between every case block and the switch), the "last block
+                // that jumps to the dispatcher" is a prep block shared across every
+                // path. Picking it as pred_block causes unresolvable redirect conflicts.
+                // If the intermediate blocks are pure CFG plumbing (no user-visible
+                // side effects — only Const/Copy/Phi), use the FIRST non-dispatcher
+                // block instead so each case block gets its own redirect.
+                //
+                // When `first` ends in a BranchCmp/Branch (e.g., NETReactor
+                // overflow-dispatch `bcmp state == Const ? case : next`), we
+                // can't simply use it as pred_block — `set_target` would collapse
+                // both branch arms to the same target, skipping over intervening
+                // user-code blocks like B103 → B11 (lock body) in the true arm.
+                // Instead, we keep `last` as pred_block (the block that actually
+                // jumps to the dispatcher) AND additionally collapse `first`'s
+                // BranchCmp to a Jump at the NEXT visited block — the arm the
+                // trace resolved. This preserves the sequential execution of the
+                // user-code intermediates while still bypassing the dispatcher.
+                let mut collapse_first_branch: Option<(usize, usize)> = None;
+                let pred_block = match (first_pred, last_pred) {
+                    (Some(first), Some(last)) if first != last => {
+                        let mut intermediates_are_pure = true;
+                        let start_idx = node
+                            .blocks_visited
+                            .iter()
+                            .position(|&b| b == first)
+                            .unwrap_or(0);
+                        let end_idx = node
+                            .blocks_visited
+                            .iter()
+                            .position(|&b| b == last)
+                            .unwrap_or(node.blocks_visited.len());
+                        if end_idx > start_idx + 1 {
+                            let intermediate_blocks: std::collections::BTreeSet<usize> = node
+                                .blocks_visited[start_idx + 1..end_idx]
+                                .iter()
+                                .copied()
+                                .collect();
+                            for iwv in &node.instructions {
+                                if !intermediate_blocks.contains(&iwv.block_idx) {
+                                    continue;
+                                }
+                                if !is_pure_prep_op(iwv.instruction.op()) {
+                                    intermediates_are_pure = false;
+                                    break;
+                                }
+                            }
+                        } else {
+                            intermediates_are_pure = false;
+                        }
+                        let first_is_jump_terminated = ssa
+                            .block(first)
+                            .and_then(|b| b.terminator_op())
+                            .is_some_and(|op| {
+                                matches!(op, SsaOp::Jump { .. } | SsaOp::Leave { .. })
+                            });
+                        if intermediates_are_pure && first_is_jump_terminated {
+                            Some(first)
+                        } else if intermediates_are_pure {
+                            // first has a Branch/BranchCmp overflow check: collapse
+                            // it to Jump at the next visited block, then use `last`
+                            // for the dispatcher bypass redirect.
+                            let next_in_path = node.blocks_visited.get(start_idx + 1).copied();
+                            if let Some(next) = next_in_path {
+                                collapse_first_branch = Some((first, next));
+                            }
+                            Some(last)
+                        } else {
+                            Some(last)
+                        }
+                    }
+                    _ => last_pred,
+                };
 
-        TraceTerminator::UserSwitch {
-            block,
-            cases,
-            default,
-            ..
-        } => {
-            plan.user_branches_preserved += 1;
-            // For user switches, the switch block is the predecessor of all case sub-traces.
-            for (_, case_node) in cases {
-                extract_redirects_from_node(case_node, dispatcher_block, plan, Some(*block));
+                // Find what block leads INTO the pred block (for merge point tracking)
+                let predecessor_of_pred = if let Some(pred) = pred_block {
+                    node.blocks_visited
+                        .iter()
+                        .position(|&b| b == pred)
+                        .and_then(|pos| {
+                            if pos > 0 {
+                                Some(node.blocks_visited[pos - 1])
+                            } else {
+                                external_predecessor
+                            }
+                        })
+                } else {
+                    None
+                };
+
+                if let Some(pred) = pred_block {
+                    // This block should redirect to target_block instead of dispatcher
+                    plan.add_redirect(pred, *target_block, predecessor_of_pred);
+                    plan.state_transition_sources.insert(pred);
+                    plan.state_transitions_removed += 1;
+                } else if let Some(ext_pred) = external_predecessor {
+                    // The sub-trace starts directly at the dispatcher (no preceding user blocks).
+                    // This happens when a user branch at method entry sends one path directly
+                    // to the dispatcher block. Redirect the external predecessor's
+                    // dispatcher-targeting edge to the actual target.
+                    plan.add_redirect(ext_pred, *target_block, None);
+                    plan.state_transition_sources.insert(ext_pred);
+                    plan.state_transitions_removed += 1;
+                }
+
+                // If the first visited block is a BranchCmp overflow check, add
+                // a supplementary redirect that collapses its branch to the next
+                // visited block (the arm the trace resolved). Flagged as a
+                // branch-collapse redirect so apply_patch_plan can replace the
+                // BranchCmp terminator with a Jump, preserving the traced arm's
+                // user-code execution while eliminating the dead state-check.
+                if let Some((src, next)) = collapse_first_branch {
+                    plan.add_branch_collapse(src, next);
+                }
+
+                // Continue processing the rest of the trace.
+                // The continues trace starts at target_block, and its predecessor is
+                // pred_block (the block that was redirected to go to target_block).
+                // Fall back to external_predecessor when pred_block is None
+                // (direct-to-dispatcher path).
+                stack.push((continues, pred_block.or(external_predecessor)));
             }
-            extract_redirects_from_node(default, dispatcher_block, plan, Some(*block));
-        }
 
-        TraceTerminator::Exit { block } => {
-            plan.add_to_execution_order(*block);
-        }
-
-        TraceTerminator::LoopBack { target_block, .. } => {
-            // LoopBack means a loop back-edge through the CFF dispatcher: the
-            // path "source → dispatcher → target" should become a natural loop
-            // edge "source → target".
-            //
-            // Usually the parent StateTransition already added this redirect.
-            // However, in CFF patterns where multiple switch cases share the
-            // same target block (e.g., JIEJIE.NET), the parent's pred_block
-            // resolution can yield None, causing it to miss the redirect.
-            // Adding it here as a safety net is always correct — add_redirect
-            // deduplicates identical (source, target) pairs.
-            //
-            // We use external_predecessor (set by the parent call site) as the
-            // redirect source, since this node's blocks_visited is typically
-            // just [target_block] (the loop header / destination, not the source).
-            if let Some(pred) = external_predecessor {
-                plan.add_redirect(pred, *target_block, external_predecessor);
-                plan.state_transition_sources.insert(pred);
-                plan.state_transitions_removed += 1;
+            TraceTerminator::UserBranch {
+                block,
+                true_branch,
+                false_branch,
+                ..
+            } => {
+                plan.user_branches_preserved += 1;
+                // For user branches, the branch block is the predecessor of both sub-traces.
+                // This is crucial for proper merge point detection when a block is both
+                // an entry path target (from the branch) and a CFF case target.
+                // Push in reverse so pops give true_branch first (preserving recursive order).
+                stack.push((false_branch, Some(*block)));
+                stack.push((true_branch, Some(*block)));
             }
-            plan.add_to_execution_order(*target_block);
-        }
 
-        TraceTerminator::Stopped { .. } | TraceTerminator::PendingStateTransition { .. } => {
-            // Trace halted due to a limit or unresolvable control flow.
-            // Nothing to extract.
+            TraceTerminator::UserSwitch {
+                block,
+                cases,
+                default,
+                ..
+            } => {
+                plan.user_branches_preserved += 1;
+                // For user switches, the switch block is the predecessor of all
+                // case sub-traces. The recursive version processed all cases in
+                // order, then the default — to reproduce that order with a LIFO
+                // stack, push the default first, then the cases in reverse.
+                stack.push((default, Some(*block)));
+                for (_, case_node) in cases.iter().rev() {
+                    stack.push((case_node, Some(*block)));
+                }
+            }
+
+            TraceTerminator::Exit { block } => {
+                plan.add_to_execution_order(*block);
+            }
+
+            TraceTerminator::LoopBack { target_block, .. } => {
+                // LoopBack means a loop back-edge through the CFF dispatcher: the
+                // path "source → dispatcher → target" should become a natural loop
+                // edge "source → target".
+                //
+                // Usually the parent StateTransition already added this redirect.
+                // However, in CFF patterns where multiple switch cases share the
+                // same target block (e.g., JIEJIE.NET), the parent's pred_block
+                // resolution can yield None, causing it to miss the redirect.
+                // Adding it here as a safety net is always correct — add_redirect
+                // deduplicates identical (source, target) pairs.
+                //
+                // We use external_predecessor (set by the parent call site) as the
+                // redirect source, since this node's blocks_visited is typically
+                // just [target_block] (the loop header / destination, not the source).
+                if let Some(pred) = external_predecessor {
+                    plan.add_redirect(pred, *target_block, external_predecessor);
+                    plan.state_transition_sources.insert(pred);
+                    plan.state_transitions_removed += 1;
+                }
+                plan.add_to_execution_order(*target_block);
+            }
+
+            TraceTerminator::Stopped { .. } | TraceTerminator::PendingStateTransition { .. } => {
+                // Trace halted due to a limit or unresolvable control flow.
+                // Nothing to extract.
+            }
         }
     }
 }
@@ -532,12 +716,46 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
     let safe = plan.safe_redirects();
     let to_clone = plan.blocks_to_clone();
 
-    // Apply safe redirects (blocks that don't need cloning)
+    // Apply safe redirects (blocks that don't need cloning).
+    //
+    // The source may be either the direct CASE→DISP edge block (ConfuserEx-style)
+    // or the start of a CASE→prep→...→DISP chain (NETReactor-style where the
+    // dispatcher has intermediate prep blocks for state setup). For Jump
+    // terminators we overwrite the target outright, which correctly bypasses
+    // multi-hop prep chains; for Branch/Switch terminators we fall back to
+    // edge-rewriting relative to any dispatcher block.
     for &(source_block, new_target) in &safe {
+        let is_jump = ssa
+            .block(source_block)
+            .and_then(|b| b.terminator_op())
+            .is_some_and(|op| matches!(op, SsaOp::Jump { .. } | SsaOp::Leave { .. }));
         if let Some(block) = ssa.block_mut(source_block) {
-            // Try redirecting from any dispatcher block to the new target
-            for &db in &plan.dispatcher_blocks {
-                block.redirect_target(db, new_target);
+            if is_jump {
+                block.set_target(new_target);
+            } else {
+                for &db in &plan.dispatcher_blocks {
+                    block.redirect_target(db, new_target);
+                }
+            }
+        }
+    }
+
+    // Apply branch collapses: at each source block with a recorded collapse,
+    // replace the BranchCmp/Branch terminator with a Jump to the traced arm's
+    // next block. This eliminates NETReactor overflow-dispatch machinery (e.g.
+    // `bcmp state == 13 ? B_match : B_next_check`) from the unflattened CFG
+    // while preserving the intervening user-code blocks that the separate
+    // redirect chain walks to reach the state transition's target.
+    for (&source_block, &new_target) in &plan.branch_collapses {
+        if let Some(block) = ssa.block_mut(source_block) {
+            let current = block
+                .terminator_op()
+                .map(|op| matches!(op, SsaOp::Branch { .. } | SsaOp::BranchCmp { .. }))
+                .unwrap_or(false);
+            if current {
+                if let Some(term) = block.instructions_mut().last_mut() {
+                    *term = SsaInstruction::synthetic(SsaOp::Jump { target: new_target });
+                }
             }
         }
     }
@@ -1017,7 +1235,7 @@ pub fn reconstruct_from_tree(
     tree: &TraceTree,
     original: &SsaFunction,
 ) -> Option<ReconstructionResult> {
-    let plan = extract_patch_plan(tree)?;
+    let plan = extract_patch_plan(tree, original)?;
 
     Some(ReconstructionResult {
         state_transitions_removed: plan.state_transitions_removed,

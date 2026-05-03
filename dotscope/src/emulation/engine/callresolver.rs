@@ -53,6 +53,7 @@ use crate::{
         process::{EmulationConfig, UnknownMethodBehavior},
         runtime::{HookContext, HookManager, HookOutcome, RuntimeState},
         thread::{EmulationThread, MulticastState, ThreadCallFrame},
+        tokens,
         tracer::{TraceEvent, TraceWriter},
         EmValue, SymbolicValue, TaintSource,
     },
@@ -827,6 +828,16 @@ impl CallResolver {
                         if let Some(entry) = invocation_list.first() {
                             let target_token = entry.method_token;
                             let delegate_target = entry.target;
+
+                            // Native function pointer delegates use synthetic
+                            // tokens allocated per-function by the registry.
+                            // Look up the function name and return an
+                            // appropriate value for each native API.
+                            if tokens::is_native_function_pointer(target_token) {
+                                let return_value =
+                                    resolve_native_delegate_return(target_token, thread, context);
+                                return Ok(CallResolution::HookedBypass { return_value });
+                            }
 
                             // Resolve MemberRef → MethodDef if the target is local
                             let mut dispatch_token = if target_token.is_table(TableId::MemberRef) {
@@ -1843,6 +1854,53 @@ fn zero_initialize_static_fields(
         address_space.statics().set(field.token, default_value)?;
     }
     Ok(())
+}
+
+/// Resolves the return value for a native function pointer delegate invocation.
+///
+/// Looks up the function name from the native function registry and returns a
+/// type-appropriate value. For known Win32 APIs, returns the correct type
+/// (e.g., BOOL for VirtualProtect, pointer for VirtualAlloc). For unknown
+/// functions, returns I32(0) as a safe default.
+fn resolve_native_delegate_return(
+    target_token: Token,
+    thread: &EmulationThread,
+    _context: &EmulationContext,
+) -> Option<EmValue> {
+    let func_name = thread
+        .runtime_state()
+        .read()
+        .ok()
+        .and_then(|rt| rt.native_functions().lookup_by_token(target_token));
+
+    let name = func_name.as_deref().unwrap_or("unknown");
+    log::debug!(
+        "Native delegate invoke: {name} (token 0x{:08X})",
+        target_token.value()
+    );
+
+    match name {
+        // BOOL-returning APIs — return TRUE (1)
+        "VirtualProtect" | "VirtualFree" | "CloseHandle" | "FreeLibrary" => Some(EmValue::I32(1)),
+        // Pointer-returning APIs — allocate real memory
+        "VirtualAlloc" => {
+            let size = 0x1_0000usize; // 64KB default
+            match thread.address_space().alloc_unmanaged(size) {
+                Ok(addr) => Some(EmValue::NativeInt(addr as i64)),
+                Err(_) => Some(EmValue::NativeInt(0)),
+            }
+        }
+        // Handle-returning APIs
+        "GetCurrentProcess" => Some(EmValue::NativeInt(-1)),
+        "GetCurrentThread" => Some(EmValue::NativeInt(-2)),
+        // Integer-returning APIs
+        "GetLastError" => Some(EmValue::I32(0)),
+        "GetTickCount" | "GetTickCount64" => Some(EmValue::I32(0)),
+        _ => {
+            log::debug!("Native delegate invoke: unknown function {name}, returning 0");
+            Some(EmValue::I32(0))
+        }
+    }
 }
 
 #[cfg(test)]

@@ -410,6 +410,7 @@ pub fn stream_blob_heap(
     changes: &HeapChanges<Vec<u8>>,
     typedef_remap: &HashMap<u32, u32>,
     typeref_remap: &HashMap<u32, u32>,
+    typespec_remap: &HashMap<u32, u32>,
 ) -> Result<StreamResult> {
     process_blob_heap(
         Some(output),
@@ -418,6 +419,7 @@ pub fn stream_blob_heap(
         changes,
         typedef_remap,
         typeref_remap,
+        typespec_remap,
     )
 }
 
@@ -443,7 +445,7 @@ pub fn compute_blob_heap_offsets(
     changes: &HeapChanges<Vec<u8>>,
 ) -> Result<StreamResult> {
     let empty = HashMap::new();
-    process_blob_heap(None, 0, source_data, changes, &empty, &empty)
+    process_blob_heap(None, 0, source_data, changes, &empty, &empty, &empty)
 }
 
 /// Unified blob heap processor.
@@ -457,6 +459,7 @@ fn process_blob_heap(
     changes: &HeapChanges<Vec<u8>>,
     typedef_remap: &HashMap<u32, u32>,
     typeref_remap: &HashMap<u32, u32>,
+    typespec_remap: &HashMap<u32, u32>,
 ) -> Result<StreamResult> {
     let mut result = StreamResult::new();
     let mut pos: u64 = 1; // Start after null byte
@@ -485,12 +488,13 @@ fn process_blob_heap(
                 .get_modification(old_offset_u32)
                 .map_or(original_blob, Vec::as_slice);
 
-            // Apply signature token remapping if TypeDef/TypeRef RIDs have shifted
+            // Apply signature token remapping if TypeDef/TypeRef/TypeSpec RIDs have shifted
             let remapped_blob: Option<Vec<u8>> = if (!typedef_remap.is_empty()
-                || !typeref_remap.is_empty())
+                || !typeref_remap.is_empty()
+                || !typespec_remap.is_empty())
                 && !base_blob.is_empty()
             {
-                remap_signature_tokens(base_blob, typedef_remap, typeref_remap)
+                remap_signature_tokens(base_blob, typedef_remap, typeref_remap, typespec_remap)
                     .ok()
                     .flatten()
             } else {
@@ -576,15 +580,18 @@ fn process_blob_heap(
 
         // Apply signature token remapping to new blobs as well
         // This is essential for regenerated methods whose local signatures contain
-        // TypeDef/TypeRef tokens that need remapping when types are deleted
-        let remapped_blob: Option<Vec<u8>> =
-            if (!typedef_remap.is_empty() || !typeref_remap.is_empty()) && !base_blob.is_empty() {
-                remap_signature_tokens(base_blob, typedef_remap, typeref_remap)
-                    .ok()
-                    .flatten()
-            } else {
-                None
-            };
+        // TypeDef/TypeRef/TypeSpec tokens that need remapping when types are deleted
+        let remapped_blob: Option<Vec<u8>> = if (!typedef_remap.is_empty()
+            || !typeref_remap.is_empty()
+            || !typespec_remap.is_empty())
+            && !base_blob.is_empty()
+        {
+            remap_signature_tokens(base_blob, typedef_remap, typeref_remap, typespec_remap)
+                .ok()
+                .flatten()
+        } else {
+            None
+        };
 
         let final_blob: &[u8] = remapped_blob.as_deref().unwrap_or(base_blob);
 

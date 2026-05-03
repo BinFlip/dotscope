@@ -36,7 +36,7 @@ use rayon::prelude::*;
 use crate::{
     analysis::{
         AnalysisResults, DataFlowSolver, LiveVariables, LivenessResult, SsaCfg, SsaFunction, SsaOp,
-        SsaType, SsaVarId, TypeClass, VariableOrigin,
+        SsaType, SsaVarId, VariableOrigin,
     },
     utils::BitSet,
     Error, Result,
@@ -363,12 +363,22 @@ impl LocalCoalescer {
                 .then_with(|| var_sort_key(ssa, *var_id_a).cmp(&var_sort_key(ssa, *var_id_b)))
         });
 
-        // Active list: heap sorted by end position (earliest end first)
-        // Each entry is (end_position, slot, type_class)
-        let mut active: BinaryHeap<Reverse<(usize, u16, TypeClass)>> = BinaryHeap::new();
+        // Active list: heap sorted by end position (earliest end first).
+        // Heap payload is just `(end, slot)` — we look up the slot's exact
+        // type in `slot_types` below when we need it (SsaType isn't `Ord`).
+        let mut active: BinaryHeap<Reverse<(usize, u16)>> = BinaryHeap::new();
+        // Per-slot exact type (indexed by slot id), used to tag free slots
+        // with the precise type they last held so reuse obeys the CIL
+        // exact-type-match rule for Reference-class locals.
+        let mut slot_type: BTreeMap<u16, SsaType> = BTreeMap::new();
 
-        // Free slots available for reuse, grouped by type class
-        let mut free_slots: BTreeMap<TypeClass, Vec<u16>> = BTreeMap::new();
+        // Free slots available for reuse, tagged with the exact type they last
+        // held. We key this pool by exact type (not just `TypeClass`) so we
+        // never recycle e.g. a `bool&` slot for a `string` or `object` value;
+        // `is_compatible_for_storage` then governs which types may share.
+        // A plain Vec is fine here — allocation count is bounded by live
+        // variables, so the linear search on pop stays small in practice.
+        let mut free_slots: Vec<(SsaType, u16)> = Vec::new();
 
         // Linear scan allocation
         for (var_id, interval) in sorted_intervals {
@@ -378,34 +388,39 @@ impl LocalCoalescer {
                 // If this is a Local-origin variable that was pre-assigned,
                 // add it to the active list so its slot isn't reused while live
                 if let Some(slot) = var_to_local.get(&var_id) {
-                    let type_class = var_types
-                        .get(&var_id)
-                        .map_or(TypeClass::Int32, SsaType::storage_class);
-                    active.push(Reverse((interval.end, *slot, type_class)));
+                    let ty = var_types.get(&var_id).cloned().unwrap_or(SsaType::Unknown);
+                    slot_type.insert(*slot, ty);
+                    active.push(Reverse((interval.end, *slot)));
                 }
                 continue;
             }
 
             // Expire old intervals - return their slots to free pool
             // BUT don't return reserved Local-origin slots to the pool
-            while let Some(&Reverse((end, slot, type_class))) = active.peek() {
-                if end > interval.start {
+            while let Some(Reverse((end, _slot))) = active.peek() {
+                if *end > interval.start {
                     break;
                 }
-                active.pop();
+                let Reverse((_, slot)) = active.pop().unwrap();
                 // Only add to free pool if not a reserved slot
                 if !reserved_slots.contains(slot as usize) {
-                    free_slots.entry(type_class).or_default().push(slot);
+                    let ty = slot_type.get(&slot).cloned().unwrap_or(SsaType::Unknown);
+                    free_slots.push((ty, slot));
                 }
             }
 
-            // Get this variable's type class
-            let type_class = var_types
-                .get(&var_id)
-                .map_or(TypeClass::Int32, SsaType::storage_class);
+            // Pick this variable's type
+            let var_type = var_types.get(&var_id).cloned().unwrap_or(SsaType::Unknown);
 
-            // Try to reuse a free slot with compatible type
-            let slot = free_slots.get_mut(&type_class).and_then(Vec::pop);
+            // Try to reuse a free slot whose stored type is compatible with
+            // the requesting variable's type. Linear scan is acceptable since
+            // the free pool is bounded by concurrently-live variables.
+            let slot = {
+                let pick = free_slots
+                    .iter()
+                    .position(|(ty, _)| ty.is_compatible_for_storage(&var_type));
+                pick.map(|i| free_slots.swap_remove(i).1)
+            };
 
             let slot = slot.unwrap_or_else(|| {
                 let s = next_local;
@@ -414,9 +429,10 @@ impl LocalCoalescer {
             });
 
             var_to_local.insert(var_id, slot);
+            slot_type.insert(slot, var_type.clone());
 
             // Add to active list
-            active.push(Reverse((interval.end, slot, type_class)));
+            active.push(Reverse((interval.end, slot)));
         }
 
         let allocation = LocalAllocation {

@@ -285,30 +285,23 @@ impl OwnedOwnershipValidator {
         method_flags: u32,
     ) -> Result<()> {
         match method_name {
-            ".ctor" => {
-                // Instance constructors should not be static
-                if method_flags & 0x0010 != 0 {
-                    // Static flag
-                    return Err(Error::ValidationOwnedFailed {
-                        validator: self.name().to_string(),
-                        message: format!(
-                            "Instance constructor '.ctor' in type '{type_name}' cannot be static"
-                        ),
-                    });
-                }
+            // Instance constructors should not have the static flag set
+            ".ctor" if method_flags & 0x0010 != 0 => {
+                return Err(Error::ValidationOwnedFailed {
+                    validator: self.name().to_string(),
+                    message: format!(
+                        "Instance constructor '.ctor' in type '{type_name}' cannot be static"
+                    ),
+                });
             }
-            ".cctor" => {
-                // Static constructors must be static
-                if method_flags & 0x0010 == 0 {
-                    // Static flag is NOT set - this is an error
-                    return Err(Error::ValidationOwnedFailed {
-                        validator: self.name().to_string(),
-                        message: format!(
-                            "Static constructor '.cctor' in type '{type_name}' must be static"
-                        ),
-                    });
-                }
-                // If static flag is set, this is correct - no error
+            // Static constructors must have the static flag set
+            ".cctor" if method_flags & 0x0010 == 0 => {
+                return Err(Error::ValidationOwnedFailed {
+                    validator: self.name().to_string(),
+                    message: format!(
+                        "Static constructor '.cctor' in type '{type_name}' must be static"
+                    ),
+                });
             }
             _ => {
                 // Other special methods (finalizers, etc.) follow normal rules

@@ -211,6 +211,12 @@ pub fn register(manager: &HookManager) -> Result<()> {
     )?;
 
     manager.register(
+        Hook::new("System.Reflection.MethodBase.get_MethodHandle")
+            .match_name("System.Reflection", "MethodBase", "get_MethodHandle")
+            .pre(method_get_method_handle_pre),
+    )?;
+
+    manager.register(
         Hook::new("System.Reflection.MethodBase.get_ContainsGenericParameters")
             .match_name(
                 "System.Reflection",
@@ -641,6 +647,33 @@ fn method_get_parameters_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread
         Ok(arr_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(arr_ref))),
         Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
     }
+}
+
+/// Hook for `MethodBase.get_MethodHandle`.
+///
+/// Returns a `RuntimeMethodHandle` value type. In the real CLR this wraps a
+/// pointer to the internal method descriptor. For emulation we return the
+/// method's metadata token as an `I64` — a unique, deterministic value that
+/// `PrepareMethod` can accept (which is a no-op in our emulator anyway).
+fn method_get_method_handle_pre(
+    ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
+) -> PreHookResult {
+    let method_token = ctx
+        .this
+        .and_then(|this| match this {
+            EmValue::ObjectRef(href) => thread
+                .heap()
+                .get_reflection_method_token(*href)
+                .ok()
+                .flatten(),
+            _ => None,
+        })
+        .unwrap_or(ctx.method_token);
+
+    // RuntimeMethodHandle is a value type with a single IntPtr field.
+    // Return the token value as a stable handle.
+    PreHookResult::Bypass(Some(EmValue::I64(i64::from(method_token.value()))))
 }
 
 /// Hook for `MethodBase.GetMethodBody()`.

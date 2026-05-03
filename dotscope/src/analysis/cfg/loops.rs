@@ -414,27 +414,21 @@ impl LoopInfo {
 
         // Check for Add/Sub patterns
         match instr.op() {
-            SsaOp::Add { left, right, .. } => {
-                // Check if one operand is the phi result
-                if *left == phi_result || *right == phi_result {
-                    let other = if *left == phi_result { *right } else { *left };
-                    let stride = ssa.try_constant_value(other).and_then(|v| v.as_i64());
-                    return (InductionUpdateKind::Add, stride);
-                }
+            // Check if one operand is the phi result
+            SsaOp::Add { left, right, .. } if *left == phi_result || *right == phi_result => {
+                let other = if *left == phi_result { *right } else { *left };
+                let stride = ssa.try_constant_value(other).and_then(|v| v.as_i64());
+                return (InductionUpdateKind::Add, stride);
             }
-            SsaOp::Sub { left, right, .. } => {
-                // For subtraction, left should be phi_result
-                if *left == phi_result {
-                    let stride = ssa.try_constant_value(*right).and_then(|v| v.as_i64());
-                    return (InductionUpdateKind::Sub, stride);
-                }
+            // For subtraction, left should be phi_result
+            SsaOp::Sub { left, right, .. } if *left == phi_result => {
+                let stride = ssa.try_constant_value(*right).and_then(|v| v.as_i64());
+                return (InductionUpdateKind::Sub, stride);
             }
-            SsaOp::Mul { left, right, .. } => {
-                if *left == phi_result || *right == phi_result {
-                    let other = if *left == phi_result { *right } else { *left };
-                    let stride = ssa.try_constant_value(other).and_then(|v| v.as_i64());
-                    return (InductionUpdateKind::Mul, stride);
-                }
+            SsaOp::Mul { left, right, .. } if *left == phi_result || *right == phi_result => {
+                let other = if *left == phi_result { *right } else { *left };
+                let stride = ssa.try_constant_value(other).and_then(|v| v.as_i64());
+                return (InductionUpdateKind::Mul, stride);
             }
             _ => {}
         }

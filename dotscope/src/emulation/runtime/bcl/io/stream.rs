@@ -70,6 +70,7 @@ use crate::{
         thread::EmulationThread,
         EmValue,
     },
+    utils::{apply_crypto_transform, decompress_deflate, decompress_gzip},
     Result,
 };
 
@@ -759,20 +760,105 @@ fn stream_copy_to_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pr
         _ => return PreHookResult::Bypass(None),
     };
 
-    // Read remaining data from source (from current position to end)
-    let Some((data, position)) = try_hook!(thread.heap().get_stream_data(src_ref)) else {
+    // Plain `MemoryStream` / `Stream` source. Fast path that mirrors the
+    // original CopyTo behavior — read remaining bytes, advance position.
+    if let Some((data, position)) = try_hook!(thread.heap().get_stream_data(src_ref)) {
+        if position < data.len() {
+            let remaining = &data[position..];
+            try_hook!(thread.heap_mut().write_to_stream(dst_ref, remaining));
+        }
+        let len = data.len();
+        try_hook!(thread.heap_mut().set_stream_position(src_ref, len));
         return PreHookResult::Bypass(None);
-    };
-
-    if position < data.len() {
-        let remaining = &data[position..];
-        try_hook!(thread.heap_mut().write_to_stream(dst_ref, remaining));
     }
 
-    // Update source position to end
-    let len = data.len();
-    try_hook!(thread.heap_mut().set_stream_position(src_ref, len));
+    // `DeflateStream` / `GZipStream` source. Decompress the underlying
+    // stream the same way `compressed_stream_read_pre` does, then drain
+    // the cached buffer into the destination. Without this branch a CFF
+    // dispatcher pattern like `MemoryStream(enc) -> DeflateStream ->
+    // CopyTo(MemoryStream)` ends up writing nothing because the original
+    // `get_stream_data` only matched `HeapObject::Stream`.
+    if let Some((underlying, compression_type, _mode)) =
+        try_hook!(thread.heap().get_compressed_stream_info(src_ref))
+    {
+        if !try_hook!(thread.heap().has_compressed_stream_data(src_ref)) {
+            let Some((compressed_data, underlying_pos)) =
+                try_hook!(thread.heap().get_stream_data(underlying))
+            else {
+                return PreHookResult::Bypass(None);
+            };
+            let effective = if underlying_pos < compressed_data.len() {
+                &compressed_data[underlying_pos..]
+            } else {
+                &[]
+            };
+            let decompressed = match compression_type {
+                0 => decompress_deflate(effective).ok(),
+                1 => decompress_gzip(effective).ok(),
+                _ => None,
+            };
+            try_hook!(thread
+                .heap()
+                .set_compressed_stream_data(src_ref, decompressed.unwrap_or_default()));
+        }
+        let Some(bytes) = try_hook!(thread.heap().read_compressed_stream(src_ref, usize::MAX))
+        else {
+            return PreHookResult::Bypass(None);
+        };
+        if !bytes.is_empty() {
+            try_hook!(thread.heap_mut().write_to_stream(dst_ref, &bytes));
+        }
+        return PreHookResult::Bypass(None);
+    }
 
+    // `CryptoStream` source. Lazily transform the underlying buffer once,
+    // then drain. Mirrors `crypto_stream_read_pre` so behaviour matches
+    // whether the caller does `CopyTo` or repeated `Read`s.
+    if let Some((underlying, transform, _mode)) =
+        try_hook!(thread.heap().get_crypto_stream_info(src_ref))
+    {
+        if try_hook!(thread.heap().get_crypto_stream_transformed(src_ref)).is_none() {
+            let Some((stream_data, underlying_pos)) =
+                try_hook!(thread.heap().get_stream_data(underlying))
+            else {
+                return PreHookResult::Bypass(None);
+            };
+            let effective = if underlying_pos < stream_data.len() {
+                &stream_data[underlying_pos..]
+            } else {
+                &[]
+            };
+            let transformed = if let Some((algorithm, key, iv, is_encryptor, cmode, padding)) =
+                try_hook!(thread.heap().get_crypto_transform_info(transform))
+            {
+                apply_crypto_transform(
+                    &algorithm,
+                    &key,
+                    &iv,
+                    is_encryptor,
+                    effective,
+                    cmode,
+                    padding,
+                )
+                .unwrap_or_else(|| effective.to_vec())
+            } else {
+                effective.to_vec()
+            };
+            try_hook!(thread
+                .heap()
+                .set_crypto_stream_transformed(src_ref, transformed));
+        }
+        let Some(bytes) = try_hook!(thread.heap().read_crypto_stream(src_ref, usize::MAX)) else {
+            return PreHookResult::Bypass(None);
+        };
+        if !bytes.is_empty() {
+            try_hook!(thread.heap_mut().write_to_stream(dst_ref, &bytes));
+        }
+        return PreHookResult::Bypass(None);
+    }
+
+    // Unknown stream subclass — leave the destination untouched rather
+    // than guess at a backing store.
     PreHookResult::Bypass(None)
 }
 

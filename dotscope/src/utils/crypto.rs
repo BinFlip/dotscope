@@ -27,7 +27,7 @@ use std::iter::repeat_n;
 
 use aes::Aes128;
 use cbc::cipher::block_padding::{NoPadding, Pkcs7};
-use cbc::cipher::{BlockDecryptMut, BlockEncryptMut, KeyInit, KeyIvInit};
+use cbc::cipher::{BlockModeDecrypt, BlockModeEncrypt, KeyInit, KeyIvInit};
 use cbc::{Decryptor, Encryptor};
 #[cfg(feature = "legacy-crypto")]
 use des::{Des, TdesEde3};
@@ -488,8 +488,8 @@ fn cbc_transform<E, D>(
     padding: u8,
 ) -> Option<Vec<u8>>
 where
-    E: BlockEncryptMut + KeyIvInit,
-    D: BlockDecryptMut + KeyIvInit,
+    E: BlockModeEncrypt + KeyIvInit,
+    D: BlockModeDecrypt + KeyIvInit,
 {
     if iv.len() < block_size {
         return None;
@@ -501,18 +501,16 @@ where
         buf[..data.len()].copy_from_slice(data);
         let result = match padding {
             1 => cipher
-                .encrypt_padded_mut::<NoPadding>(&mut buf, data.len())
+                .encrypt_padded::<NoPadding>(&mut buf, data.len())
                 .ok()?,
             3 => {
                 // Zeros padding: pad with zeros to block boundary
                 let result = cipher
-                    .encrypt_padded_mut::<NoPadding>(&mut buf, padded_len)
+                    .encrypt_padded::<NoPadding>(&mut buf, padded_len)
                     .ok()?;
                 return Some(result.to_vec());
             }
-            _ => cipher
-                .encrypt_padded_mut::<Pkcs7>(&mut buf, data.len())
-                .ok()?,
+            _ => cipher.encrypt_padded::<Pkcs7>(&mut buf, data.len()).ok()?,
         };
         Some(result.to_vec())
     } else {
@@ -522,8 +520,8 @@ where
         let cipher = D::new_from_slices(key, &iv[..block_size]).ok()?;
         let mut buf = data.to_vec();
         let result = match padding {
-            1 | 3 => cipher.decrypt_padded_mut::<NoPadding>(&mut buf).ok()?,
-            _ => cipher.decrypt_padded_mut::<Pkcs7>(&mut buf).ok()?,
+            1 | 3 => cipher.decrypt_padded::<NoPadding>(&mut buf).ok()?,
+            _ => cipher.decrypt_padded::<Pkcs7>(&mut buf).ok()?,
         };
         Some(result.to_vec())
     }
@@ -538,8 +536,8 @@ fn ecb_transform<E, D>(
     padding: u8,
 ) -> Option<Vec<u8>>
 where
-    E: BlockEncryptMut + KeyInit,
-    D: BlockDecryptMut + KeyInit,
+    E: BlockModeEncrypt + KeyInit,
+    D: BlockModeDecrypt + KeyInit,
 {
     if is_encryptor {
         let cipher = E::new_from_slice(key).ok()?;
@@ -548,17 +546,15 @@ where
         buf[..data.len()].copy_from_slice(data);
         let result = match padding {
             1 => cipher
-                .encrypt_padded_mut::<NoPadding>(&mut buf, data.len())
+                .encrypt_padded::<NoPadding>(&mut buf, data.len())
                 .ok()?,
             3 => {
                 let result = cipher
-                    .encrypt_padded_mut::<NoPadding>(&mut buf, padded_len)
+                    .encrypt_padded::<NoPadding>(&mut buf, padded_len)
                     .ok()?;
                 return Some(result.to_vec());
             }
-            _ => cipher
-                .encrypt_padded_mut::<Pkcs7>(&mut buf, data.len())
-                .ok()?,
+            _ => cipher.encrypt_padded::<Pkcs7>(&mut buf, data.len()).ok()?,
         };
         Some(result.to_vec())
     } else {
@@ -568,8 +564,8 @@ where
         let cipher = D::new_from_slice(key).ok()?;
         let mut buf = data.to_vec();
         let result = match padding {
-            1 | 3 => cipher.decrypt_padded_mut::<NoPadding>(&mut buf).ok()?,
-            _ => cipher.decrypt_padded_mut::<Pkcs7>(&mut buf).ok()?,
+            1 | 3 => cipher.decrypt_padded::<NoPadding>(&mut buf).ok()?,
+            _ => cipher.decrypt_padded::<Pkcs7>(&mut buf).ok()?,
         };
         Some(result.to_vec())
     }

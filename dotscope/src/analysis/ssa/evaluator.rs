@@ -775,23 +775,23 @@ impl<'a> SsaEvaluator<'a> {
                             // v == right_val means ceq is true
                             return Some(v.ceq(right_val).is_some_and(|r| !r.is_zero()));
                         }
-                        Constraint::NotEqual(v) => {
+                        Constraint::NotEqual(v)
                             // If v == right_val, then left != right_val, so ceq is false
-                            if v.ceq(right_val).is_some_and(|r| !r.is_zero()) {
-                                return Some(false);
-                            }
+                            if v.ceq(right_val).is_some_and(|r| !r.is_zero()) =>
+                        {
+                            return Some(false);
                         }
-                        Constraint::GreaterThan(v) => {
+                        Constraint::GreaterThan(v)
                             // left > v, so if right_val <= v, then left != right_val
-                            if right_val.cgt(v).is_none_or(|r| r.is_zero()) {
-                                return Some(false);
-                            }
+                            if right_val.cgt(v).is_none_or(|r| r.is_zero()) =>
+                        {
+                            return Some(false);
                         }
-                        Constraint::LessThan(v) => {
+                        Constraint::LessThan(v)
                             // left < v, so if right_val >= v, then left != right_val
-                            if right_val.clt(v).is_none_or(|r| r.is_zero()) {
-                                return Some(false);
-                            }
+                            if right_val.clt(v).is_none_or(|r| r.is_zero()) =>
+                        {
+                            return Some(false);
                         }
                         _ => {}
                     }
@@ -805,23 +805,23 @@ impl<'a> SsaEvaluator<'a> {
 
                 for constraint in left_constraints {
                     match constraint {
-                        Constraint::GreaterThan(v) => {
+                        Constraint::GreaterThan(v)
                             // left > v, so if v >= right_val, then left > right_val
-                            if v.clt(right_val).is_none_or(|r| r.is_zero()) {
-                                return Some(true);
-                            }
+                            if v.clt(right_val).is_none_or(|r| r.is_zero()) =>
+                        {
+                            return Some(true);
                         }
-                        Constraint::LessOrEqual(v) => {
+                        Constraint::LessOrEqual(v)
                             // left <= v, so if v <= right_val, then left <= right_val
-                            if v.cgt(right_val).is_none_or(|r| r.is_zero()) {
-                                return Some(false);
-                            }
+                            if v.cgt(right_val).is_none_or(|r| r.is_zero()) =>
+                        {
+                            return Some(false);
                         }
-                        Constraint::LessThan(v) => {
+                        Constraint::LessThan(v)
                             // left < v, so if v <= right_val, then left < right_val <= right_val
-                            if v.cgt(right_val).is_none_or(|r| r.is_zero()) {
-                                return Some(false);
-                            }
+                            if v.cgt(right_val).is_none_or(|r| r.is_zero()) =>
+                        {
+                            return Some(false);
                         }
                         Constraint::Equal(v) => {
                             // left == v, so return v > right_val
@@ -839,23 +839,23 @@ impl<'a> SsaEvaluator<'a> {
 
                 for constraint in left_constraints {
                     match constraint {
-                        Constraint::LessThan(v) => {
+                        Constraint::LessThan(v)
                             // left < v, so if v <= right_val, then left < right_val
-                            if v.cgt(right_val).is_none_or(|r| r.is_zero()) {
-                                return Some(true);
-                            }
+                            if v.cgt(right_val).is_none_or(|r| r.is_zero()) =>
+                        {
+                            return Some(true);
                         }
-                        Constraint::GreaterOrEqual(v) => {
+                        Constraint::GreaterOrEqual(v)
                             // left >= v, so if v >= right_val, then left >= right_val
-                            if v.clt(right_val).is_none_or(|r| r.is_zero()) {
-                                return Some(false);
-                            }
+                            if v.clt(right_val).is_none_or(|r| r.is_zero()) =>
+                        {
+                            return Some(false);
                         }
-                        Constraint::GreaterThan(v) => {
+                        Constraint::GreaterThan(v)
                             // left > v, so if v >= right_val, then left > right_val >= right_val
-                            if v.clt(right_val).is_none_or(|r| r.is_zero()) {
-                                return Some(false);
-                            }
+                            if v.clt(right_val).is_none_or(|r| r.is_zero()) =>
+                        {
+                            return Some(false);
                         }
                         Constraint::Equal(v) => {
                             // left == v, so return v < right_val
@@ -1740,7 +1740,7 @@ impl<'a> SsaEvaluator<'a> {
     ///
     /// Uses the typed comparison methods on `ConstValue` which properly
     /// handle signedness based on the operand types.
-    fn evaluate_comparison(
+    pub fn evaluate_comparison(
         left: &ConstValue,
         right: &ConstValue,
         cmp: CmpKind,

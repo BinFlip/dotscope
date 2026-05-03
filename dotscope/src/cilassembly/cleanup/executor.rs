@@ -265,6 +265,23 @@ pub fn execute_cleanup(
         }
     }
 
+    // 2h: Remove explicit ManifestResource rows (in descending RID order).
+    //
+    // This handles embedded resources whose payload lives in the PE's CLR
+    // resource section. For rows with a non-zero `implementation` target,
+    // this is still safe — the row is marked deleted and the generic
+    // orphan sweep (`remove_orphan_manifestresources`) is a no-op for an
+    // already-deleted row. Embedded payload bytes are dropped
+    // automatically during PE regeneration: the writer's resource-section
+    // compaction loop consults `is_row_deleted(TableId::ManifestResource, rid)`
+    // and skips the entry, then rewrites `offset_field` on surviving rows
+    // via `resource_offset_remap`.
+    for res_token in request.manifest_resources() {
+        if try_remove(assembly, TableId::ManifestResource, res_token.row()) {
+            stats.add(TableId::ManifestResource, 1);
+        }
+    }
+
     // Phase 2.5: Dead definition elimination (unified fixpoint).
     //
     // After explicit deletions, methods and fields that were ONLY referenced

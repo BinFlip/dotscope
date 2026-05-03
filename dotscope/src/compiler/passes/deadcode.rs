@@ -660,7 +660,7 @@ impl DeadCodeEliminationPass {
 
         for (block_idx, mut phis) in by_block {
             // Sort by phi_idx in reverse order
-            phis.sort_by(|a, b| b.0.cmp(&a.0));
+            phis.sort_by_key(|p| std::cmp::Reverse(p.0));
 
             for (phi_idx, replacement) in phis {
                 if let Some(replacement_var) = replacement {

@@ -98,11 +98,12 @@ pub use range::ValueRange;
 #[cfg(feature = "z3")]
 pub use ssa::Z3Solver;
 pub use ssa::{
-    AbstractValue, BinaryOpKind, CmpKind, ConstValue, DefSite, FieldRef, MethodPurity, MethodRef,
-    PhiAnalyzer, PhiNode, PhiOperand, ReturnInfo, SsaBlock, SsaCfg, SsaConverter, SsaEvaluator,
-    SsaExceptionHandler, SsaFunction, SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId,
-    SsaVariable, SymbolicEvaluator, SymbolicExpr, SymbolicOp, TypeClass, TypeContext, TypeProvider,
-    TypeRef, UnaryOpKind, UseSite, ValueResolver, VariableOrigin,
+    resolve_corelib_valuetype, AbstractValue, BinaryOpKind, CmpKind, ConstValue, ControlFlow,
+    DefSite, FieldRef, MethodPurity, MethodRef, PhiAnalyzer, PhiNode, PhiOperand, ReturnInfo,
+    SsaBlock, SsaCfg, SsaConverter, SsaEvaluator, SsaExceptionHandler, SsaFunction,
+    SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable, SymbolicEvaluator,
+    SymbolicExpr, SymbolicOp, TypeClass, TypeContext, TypeProvider, TypeRef, UnaryOpKind, UseSite,
+    ValueResolver, VariableOrigin,
 };
 pub use taint::{
     cff_taint_config, find_token_dependencies, PhiTaintMode, TaintAnalysis, TaintConfig,

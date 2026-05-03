@@ -1571,13 +1571,9 @@ impl SsaOp {
         }
 
         match self {
-            Self::Jump { target } | Self::Leave { target } => {
-                if *target == old_target {
-                    *target = new_target;
-                    true
-                } else {
-                    false
-                }
+            Self::Jump { target } | Self::Leave { target } if *target == old_target => {
+                *target = new_target;
+                true
             }
             Self::Branch {
                 true_target,
@@ -2677,12 +2673,13 @@ impl SsaOp {
             Self::LoadElement { elem_type, .. } => Some(elem_type.clone()),
             // Load indirect — type embedded in the op
             Self::LoadIndirect { value_type, .. } => Some(value_type.clone()),
-            // Load token — determine handle type from token table
-            Self::LoadToken { token, .. } => Some(match token.token().table() {
-                0x06 | 0x0A | 0x2B => SsaType::RuntimeMethodHandle,
-                0x04 => SsaType::RuntimeFieldHandle,
-                _ => SsaType::RuntimeTypeHandle,
-            }),
+            // Load token — resolving to the correct corelib
+            // `valuetype [mscorlib]System.Runtime*Handle` requires metadata
+            // access (see `TypeProvider::runtime_handle_type`). This op
+            // inference is assembly-free, so return `None` and let the
+            // caller fall back to the variable's declared type set during
+            // SSA construction.
+            Self::LoadToken { .. } => None,
             // Unbox produces ByRef to the embedded value type
             Self::Unbox { value_type, .. } => {
                 Some(SsaType::ByRef(Box::new(SsaType::ValueType(*value_type))))

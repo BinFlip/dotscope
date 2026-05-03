@@ -422,6 +422,18 @@ pub fn register(manager: &HookManager) -> Result<()> {
             .pre(type_get_type_code_pre),
     )?;
 
+    manager.register(
+        Hook::new("System.Type.GetType")
+            .match_name("System", "Type", "GetType")
+            .pre(type_get_type_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Reflection.AssemblyName.GetPublicKeyToken")
+            .match_name("System.Reflection", "AssemblyName", "GetPublicKeyToken")
+            .pre(assembly_name_get_public_key_token_pre),
+    )?;
+
     Ok(())
 }
 
@@ -2585,6 +2597,66 @@ fn find_interface_impl_for_map(
     }
 
     None
+}
+
+/// Hook for `System.Type.GetType(string)` static method.
+///
+/// Returns a `Type` object for the given type name. For emulation, we try
+/// to resolve the name against the assembly's type definitions. If no match
+/// is found, returns null (the type is not available in the emulated context).
+///
+/// # Handled Overloads
+///
+/// - `Type.GetType(String) -> Type`
+/// - `Type.GetType(String, Boolean) -> Type`
+/// - `Type.GetType(String, Boolean, Boolean) -> Type`
+fn type_get_type_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    let type_name = ctx
+        .args
+        .first()
+        .and_then(|v| v.as_object_ref())
+        .and_then(|r| thread.heap().get_string(r).ok());
+
+    if let Some(name) = type_name {
+        // Try to find the type in the assembly's type registry
+        if let Some(assembly) = thread.assembly() {
+            let types = assembly.types();
+            for type_entry in types.iter() {
+                let ty = type_entry.value();
+                let full_name = if ty.namespace.is_empty() {
+                    ty.name.clone()
+                } else {
+                    format!("{}.{}", ty.namespace, ty.name)
+                };
+                if full_name == *name || *ty.name == *name {
+                    match thread.heap_mut().alloc_reflection_type(ty.token, None) {
+                        Ok(type_ref) => {
+                            return PreHookResult::Bypass(Some(EmValue::ObjectRef(type_ref)))
+                        }
+                        Err(_) => break,
+                    }
+                }
+            }
+        }
+    }
+
+    // Type not found — return null (matches .NET behavior when throwOnError=false)
+    PreHookResult::Bypass(Some(EmValue::Null))
+}
+
+/// Hook for `AssemblyName.GetPublicKeyToken()`.
+///
+/// Returns the public key token as a byte array. For emulation, we return
+/// an empty byte array since the assembly's strong name is not relevant
+/// to deobfuscation.
+fn assembly_name_get_public_key_token_pre(
+    _ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
+) -> PreHookResult {
+    match thread.heap_mut().alloc_array(CilFlavor::U1, 0) {
+        Ok(array_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(array_ref))),
+        Err(_) => PreHookResult::Bypass(Some(EmValue::Null)),
+    }
 }
 
 #[cfg(test)]

@@ -148,6 +148,12 @@ pub fn register(manager: &HookManager) -> Result<()> {
             .pre(assembly_get_modules_pre),
     )?;
 
+    manager.register(
+        Hook::new("System.Reflection.Assembly.get_ManifestModule")
+            .match_name("System.Reflection", "Assembly", "get_ManifestModule")
+            .pre(assembly_get_manifest_module_pre),
+    )?;
+
     // ModuleHandle — converts metadata tokens to runtime handles
     manager.register(
         Hook::new("System.ModuleHandle.GetRuntimeTypeHandleFromMetadataToken")
@@ -287,13 +293,20 @@ fn module_get_assembly_pre(_ctx: &HookContext<'_>, thread: &mut EmulationThread)
 /// Hook for `System.Reflection.Module.get_ModuleHandle` property.
 ///
 /// Returns a `ModuleHandle` struct for this module. In real .NET, `ModuleHandle`
-/// wraps an `IntPtr` to internal runtime data. For emulation, we return a zero
-/// `NativeInt` -- downstream consumers are already hooked and don't use the handle value.
+/// wraps an `IntPtr` to internal runtime data. We return the PE image base
+/// address, which is what obfuscated code typically extracts from the handle
+/// for pointer arithmetic on the in-memory PE image.
 fn module_get_module_handle_pre(
     _ctx: &HookContext<'_>,
-    _thread: &mut EmulationThread,
+    thread: &mut EmulationThread,
 ) -> PreHookResult {
-    PreHookResult::Bypass(Some(EmValue::NativeInt(0)))
+    let image_base = thread
+        .assembly()
+        .map_or(tokens::native_addresses::CURRENT_MODULE as u64, |asm| {
+            asm.file().imagebase()
+        });
+    #[allow(clippy::cast_possible_wrap)]
+    PreHookResult::Bypass(Some(EmValue::NativeInt(image_base as i64)))
 }
 
 /// Hook for `System.Reflection.Module.ResolveMethod` method.
@@ -517,6 +530,21 @@ fn assembly_get_manifest_resource_names_pre(
 ) -> PreHookResult {
     match thread.heap_mut().alloc_array(CilFlavor::Object, 0) {
         Ok(arr_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(arr_ref))),
+        Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
+    }
+}
+
+/// Hook for `Assembly.get_ManifestModule`.
+///
+/// Returns a fake Module reflection object representing the primary module of
+/// the loaded assembly. This is used by obfuscators to obtain a module handle
+/// for native interop (`Marshal.GetHINSTANCE(module)`).
+fn assembly_get_manifest_module_pre(
+    _ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
+) -> PreHookResult {
+    match thread.heap_mut().alloc_object(tokens::reflection::MODULE) {
+        Ok(m_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(m_ref))),
         Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
     }
 }

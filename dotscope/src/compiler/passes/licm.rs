@@ -507,13 +507,23 @@ fn can_hoist(ssa: &SsaFunction, loop_info: &LoopInfo, block_idx: usize, instr_id
     true
 }
 
-/// Checks if a variable (directly or indirectly) feeds a PHI's back-edge operand.
+/// Checks if a variable (directly or indirectly) feeds a PHI operand on an
+/// intra-loop edge — i.e. a phi at any block in the loop body whose operand
+/// comes from another loop body block.
 ///
-/// A variable feeds a PHI's back-edge if:
-/// 1. The variable is directly used as a PHI operand from a loop body block, OR
-/// 2. The variable is used by another instruction whose result feeds a PHI back-edge
+/// Hoisting a def in this category is unsafe because the def's value is
+/// attributed to a specific CFG edge (pred → phi-block). Moving it to the
+/// shared preheader makes it dominate every intra-loop edge; when
+/// `rebuild_ssa` recomputes phi operands by reaching definitions, every
+/// such edge sees the hoisted value, collapsing per-edge attribution.
+///
+/// Typical break case: CFF state-machine dispatcher. Case blocks push
+/// different `Const` values (state 5, 4, 0, 2, ...) into a phi at the
+/// dispatcher. Without this guard LICM hoists all of them into the
+/// single preheader, and SSA rebuild rewrites every phi operand to point
+/// at whichever hoisted const happens to be on top of the version stack,
+/// destroying the state machine.
 fn feeds_phi_back_edge(ssa: &SsaFunction, loop_info: &LoopInfo, var: SsaVarId) -> bool {
-    let header_idx = loop_info.header.index();
     let mut worklist: VecDeque<SsaVarId> = VecDeque::new();
     let mut visited = BitSet::new(ssa.var_id_capacity());
 
@@ -521,17 +531,18 @@ fn feeds_phi_back_edge(ssa: &SsaFunction, loop_info: &LoopInfo, var: SsaVarId) -
     visited.insert(var.index());
 
     while let Some(current) = worklist.pop_front() {
-        // Check if this variable is a PHI operand from a back-edge (loop body block)
-        if let Some(header_block) = ssa.block(header_idx) {
-            for phi in header_block.phi_nodes() {
+        // Check phis at any block in the loop body (including the header).
+        // An intra-loop edge is one where both the phi's block and the
+        // operand's predecessor are in the loop body.
+        for phi_block_idx in loop_info.body.iter() {
+            let Some(phi_block) = ssa.block(phi_block_idx) else {
+                continue;
+            };
+            for phi in phi_block.phi_nodes() {
                 for operand in phi.operands() {
-                    if operand.value() == current {
-                        // Check if the predecessor is in the loop body (back-edge)
-                        let pred = operand.predecessor();
-                        if loop_info.body.contains(pred) && pred != header_idx {
-                            // This is a back-edge operand (from loop body, not the header itself)
-                            return true;
-                        }
+                    if operand.value() == current && loop_info.body.contains(operand.predecessor())
+                    {
+                        return true;
                     }
                 }
             }

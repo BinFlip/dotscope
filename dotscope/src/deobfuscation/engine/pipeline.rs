@@ -593,11 +593,12 @@ impl<'a> PipelineRun<'a> {
         }
 
         info!(
-            "Cleanup request: {} types, {} methods, {} fields, {} attributes",
+            "Cleanup request: {} types, {} methods, {} fields, {} attributes, {} manifest resources",
             merged_cleanup.types_len(),
             merged_cleanup.methods_len(),
             merged_cleanup.fields_len(),
             merged_cleanup.attributes_len(),
+            merged_cleanup.manifest_resources_len(),
         );
         let cleanup_request =
             if merged_cleanup.has_deletions() || !merged_cleanup.excluded_sections().is_empty() {

@@ -115,11 +115,7 @@ pub(crate) fn is_obfuscated_name(name: &str) -> bool {
             | '\u{2060}'..='\u{206F}'
             | '\u{FEFF}'
             | '\u{E000}'..='\u{F8FF}' => return true,
-            c if !c.is_ascii() => {
-                if !c.is_alphabetic() {
-                    return true;
-                }
-            }
+            c if !c.is_ascii() && !c.is_alphabetic() => return true,
             _ => {}
         }
     }

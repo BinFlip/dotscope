@@ -77,10 +77,8 @@ pub fn collect_string_literals(ssa: &SsaFunction, assembly: &CilObject) -> Vec<S
     for (_block_idx, _instr_idx, instr) in ssa.iter_instructions() {
         if let SsaOp::Const { value, .. } = instr.op() {
             match value {
-                ConstValue::DecryptedString(s) => {
-                    if !s.is_empty() {
-                        strings.push(s.clone());
-                    }
+                ConstValue::DecryptedString(s) if !s.is_empty() => {
+                    strings.push(s.clone());
                 }
                 ConstValue::String(idx) => {
                     // Resolve from UserStrings heap
@@ -318,10 +316,10 @@ pub fn collect_call_site_context(
         for (_, _, nearby_instr) in &all_instrs[window_start..window_end] {
             if let SsaOp::Const { value, .. } = nearby_instr.op() {
                 match value {
-                    ConstValue::DecryptedString(s) if !s.is_empty() => {
-                        if !nearby_strings.contains(s) {
-                            nearby_strings.push(s.clone());
-                        }
+                    ConstValue::DecryptedString(s)
+                        if !s.is_empty() && !nearby_strings.contains(s) =>
+                    {
+                        nearby_strings.push(s.clone());
                     }
                     ConstValue::String(us_idx) => {
                         if let Some(us) = assembly.userstrings() {

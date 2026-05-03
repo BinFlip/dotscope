@@ -45,7 +45,9 @@ use crate::{
         context::AnalysisContext, engine::DeobfuscationEngine, renamer, techniques::Detections,
     },
     metadata::{
-        tables::{FieldRaw, NestedClassRaw, TableDataOwned, TableId, TypeDefRaw},
+        tables::{
+            AssemblyRaw, FieldRaw, ModuleRaw, NestedClassRaw, TableDataOwned, TableId, TypeDefRaw,
+        },
         token::Token,
         typesystem::wellknown,
         validation::ValidationConfig,
@@ -196,8 +198,18 @@ pub fn execute_cleanup(
     // Determine if we should rename obfuscated names
     let rename_obfuscated = ctx.config.cleanup.rename_obfuscated_names;
 
-    // Nothing to do
-    if !request.has_deletions() && request.excluded_sections().is_empty() && !rename_obfuscated {
+    // Nothing to do.
+    //
+    // Metadata repairs (`repair_*` below) must run even when the request is
+    // empty — some samples (notably .NET Reactor's SuppressIldasm) have no
+    // technique-driven deletions but still carry ECMA-335 violations that
+    // break strict-mode reload. `needs_metadata_repair` short-circuits the
+    // exit when any of those violations are present.
+    if !request.has_deletions()
+        && request.excluded_sections().is_empty()
+        && !rename_obfuscated
+        && !needs_metadata_repair(&assembly)
+    {
         return Ok(assembly);
     }
 
@@ -238,6 +250,17 @@ pub fn execute_cleanup(
     // ECMA-335 §22.2: Assembly table shall contain zero or one row.
     // Some obfuscators inject duplicate rows to confuse tooling.
     repair_duplicate_assembly_rows(&mut cil_assembly, ctx);
+
+    // ECMA-335 §22.30: Module table shall contain exactly one row.
+    // .NET Reactor's SuppressIldasm injects a duplicate Module row to
+    // break parsers and the schema validator.
+    repair_duplicate_module_rows(&mut cil_assembly, ctx);
+
+    // ECMA-335 §22.30: Module row 1's `EncId` and `EncBaseId` are GUID
+    // heap indices that must be 0 (no value) or point inside the heap.
+    // .NET Reactor's SuppressIldasm sets them to 0xFFFF to break loaders
+    // that don't bounds-check the lookup.
+    repair_invalid_module_guids(&mut cil_assembly, ctx);
 
     // ECMA-335 §22.37: TypeDef names must be unique within (name, namespace, enclosingClass).
     // Some obfuscators inject duplicate nested types (e.g., multiple <>c closures).
@@ -355,6 +378,146 @@ fn repair_duplicate_assembly_rows(cil_assembly: &mut CilAssembly, ctx: &Analysis
         .message(format!(
             "Repaired Assembly table: removed {duplicates} duplicate row(s)"
         ));
+}
+
+/// Repairs duplicate Module table rows injected by obfuscators.
+///
+/// ECMA-335 §22.30 requires the Module table to contain exactly one row.
+/// .NET Reactor's SuppressIldasm protection injects a second row to break
+/// parsers and our `SchemaValidator` (`shared/schema.rs:135`). Removes any
+/// rows beyond the first, keeping the original module identity.
+fn repair_duplicate_module_rows(cil_assembly: &mut CilAssembly, ctx: &AnalysisContext) {
+    let row_count = cil_assembly.original_table_row_count(TableId::Module);
+    if row_count <= 1 {
+        return;
+    }
+
+    let duplicates = row_count - 1;
+    for rid in (2..=row_count).rev() {
+        if let Err(e) = cil_assembly.table_row_remove(TableId::Module, rid) {
+            log::warn!("Failed to remove duplicate Module row {rid}: {e}");
+        }
+    }
+
+    log::info!(
+        "Repaired Module table: removed {duplicates} duplicate row(s) (ECMA-335 §22.30 violation)"
+    );
+    ctx.events
+        .record(EventKind::ArtifactRemoved)
+        .message(format!(
+            "Repaired Module table: removed {duplicates} duplicate row(s)"
+        ));
+}
+
+/// Repairs out-of-bounds GUID indices on Module row 1.
+///
+/// ECMA-335 §22.30: `EncId` / `EncBaseId` are `#GUID` heap indices that must
+/// be 0 (no value) or point inside the heap. .NET Reactor's SuppressIldasm
+/// injects `0xFFFF` to crash strict loaders that look the indices up
+/// without bounds checking — dotscope's loader fails at
+/// `streams/guid.rs:505` with `Out of Bounds`, which then blocks the
+/// roundtrip reload.
+///
+/// Clamps any out-of-bounds value back to 0 (the standard "no value"
+/// sentinel). The user-visible Mvid is left untouched.
+fn repair_invalid_module_guids(cil_assembly: &mut CilAssembly, ctx: &AnalysisContext) {
+    let guid_count: u32 = cil_assembly
+        .view()
+        .guids()
+        .map_or(0, |g| (g.data().len() / 16) as u32);
+
+    let Some(tables) = cil_assembly.view().tables() else {
+        return;
+    };
+    let Some(module_table) = tables.table::<ModuleRaw>() else {
+        return;
+    };
+    let Some(row) = module_table.get(1) else {
+        return;
+    };
+
+    let bad_encid = row.encid != 0 && row.encid > guid_count;
+    let bad_encbaseid = row.encbaseid != 0 && row.encbaseid > guid_count;
+
+    if !bad_encid && !bad_encbaseid {
+        return;
+    }
+
+    let original_encid = row.encid;
+    let original_encbaseid = row.encbaseid;
+    let fixed = ModuleRaw {
+        rid: row.rid,
+        token: row.token,
+        offset: row.offset,
+        generation: row.generation,
+        name: row.name,
+        mvid: row.mvid,
+        encid: if bad_encid { 0 } else { row.encid },
+        encbaseid: if bad_encbaseid { 0 } else { row.encbaseid },
+    };
+
+    if let Err(e) = cil_assembly.table_row_update(TableId::Module, 1, TableDataOwned::Module(fixed))
+    {
+        log::warn!("Failed to repair Module row 1 GUID indices: {e}");
+        return;
+    }
+
+    log::info!(
+        "Repaired Module row 1 GUIDs: encid {original_encid} → 0 ({}), encbaseid {original_encbaseid} → 0 ({}); heap has {guid_count} GUID(s)",
+        if bad_encid { "fixed" } else { "kept" },
+        if bad_encbaseid { "fixed" } else { "kept" },
+    );
+    ctx.events
+        .record(EventKind::ArtifactRemoved)
+        .message(format!(
+            "Repaired Module row 1: cleared out-of-bounds ENC GUID indices \
+             (encid={original_encid}, encbaseid={original_encbaseid})"
+        ));
+}
+
+/// Returns `true` if the assembly carries any ECMA-335 metadata-table
+/// violation that the `repair_*` functions know how to fix.
+///
+/// Used by [`execute_cleanup`] to bypass its early-exit when a cleanup
+/// request is otherwise empty: a sample with only metadata corruption
+/// (e.g. .NET Reactor's SuppressIldasm) needs cleanup to actually run.
+///
+/// Currently checks:
+/// - Duplicate `Module` rows (`row_count > 1`).
+/// - Duplicate `Assembly` rows (`row_count > 1`).
+/// - Module row 1's `EncId` / `EncBaseId` pointing outside the `#GUID`
+///   heap.
+///
+/// All other repairs in this module either run only when there is a
+/// pre-existing reason for cleanup (e.g. duplicate TypeDefs piggyback on
+/// the technique-driven deletions that already trigger cleanup) or are
+/// triggered explicitly by techniques.
+fn needs_metadata_repair(assembly: &CilObject) -> bool {
+    let Some(tables) = assembly.tables() else {
+        return false;
+    };
+
+    if let Some(t) = tables.table::<ModuleRaw>() {
+        if t.row_count > 1 {
+            return true;
+        }
+        if let Some(row) = t.get(1) {
+            let guid_count: u32 = assembly.guids().map_or(0, |g| (g.data().len() / 16) as u32);
+            if (row.encid != 0 && row.encid > guid_count)
+                || (row.encbaseid != 0 && row.encbaseid > guid_count)
+            {
+                return true;
+            }
+        }
+    }
+
+    if let Some(t) = tables.table::<AssemblyRaw>() {
+        if t.row_count > 1 {
+            return true;
+        }
+    }
+
+    false
 }
 
 /// Detects duplicate TypeDef rows with the same (name, namespace, enclosingClass) tuple.

@@ -35,5 +35,7 @@ pub use junk::BitMonoJunk;
 pub use nops::BitMonoNops;
 pub use pe::BitMonoPeRepair;
 pub use renamer::BitMonoRenamer;
-pub use strings::{BitMonoStrings, StringFindings};
+pub use strings::BitMonoStrings;
+#[cfg(feature = "legacy-crypto")]
+pub use strings::StringFindings;
 pub use unmanaged::BitMonoUnmanaged;

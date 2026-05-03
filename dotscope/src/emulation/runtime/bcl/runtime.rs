@@ -154,6 +154,26 @@ pub fn register(manager: &HookManager) -> Result<()> {
             .pre(runtime_helpers_run_module_constructor_pre),
     )?;
 
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.RuntimeHelpers.PrepareDelegate")
+            .match_name(
+                "System.Runtime.CompilerServices",
+                "RuntimeHelpers",
+                "PrepareDelegate",
+            )
+            .pre(runtime_helpers_prepare_noop_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.CompilerServices.RuntimeHelpers.PrepareMethod")
+            .match_name(
+                "System.Runtime.CompilerServices",
+                "RuntimeHelpers",
+                "PrepareMethod",
+            )
+            .pre(runtime_helpers_prepare_noop_pre),
+    )?;
+
     // System.Object.Equals - handles both instance and static overloads.
     // Critical for ConfuserEx anti-tamper: Assembly.GetExecutingAssembly().Equals(...)
     manager.register(
@@ -585,7 +605,18 @@ fn runtime_helpers_run_module_constructor_pre(
     _ctx: &HookContext<'_>,
     _thread: &mut EmulationThread,
 ) -> PreHookResult {
-    // We don't actually run the module constructor
+    PreHookResult::Bypass(None)
+}
+
+/// Hook for `RuntimeHelpers.PrepareDelegate` and `RuntimeHelpers.PrepareMethod`.
+///
+/// These are JIT compilation hints that request early compilation of delegates
+/// and methods. In emulation we interpret IL directly, so pre-compilation is
+/// unnecessary. Implemented as a void no-op.
+fn runtime_helpers_prepare_noop_pre(
+    _ctx: &HookContext<'_>,
+    _thread: &mut EmulationThread,
+) -> PreHookResult {
     PreHookResult::Bypass(None)
 }
 
@@ -962,7 +993,7 @@ mod tests {
     fn test_register_hooks() {
         let manager = HookManager::new();
         register(&manager).unwrap();
-        assert_eq!(manager.len(), 28);
+        assert_eq!(manager.len(), 30);
     }
 
     #[test]

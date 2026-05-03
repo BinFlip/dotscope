@@ -60,6 +60,8 @@ OBFUSCAR_SCRIPT="$SCRIPT_DIR/obfuscar/generate.ps1"
 OBFUSCAR_SAMPLES="$SCRIPT_DIR/obfuscar/2.2.50"
 JIEJIE_SCRIPT="$SCRIPT_DIR/jiejie/source/generate.ps1"
 JIEJIE_SAMPLES="$SCRIPT_DIR/jiejie/source"
+NETREACTOR_SCRIPT="$SCRIPT_DIR/netreactor/generate.ps1"
+NETREACTOR_SAMPLES="$SCRIPT_DIR/netreactor/7.5.0"
 
 # Build SSH command array — handles port and user@host
 build_ssh_args() {
@@ -120,7 +122,7 @@ download_exes() {
 # Determine which obfuscators to regenerate
 TARGETS=("$@")
 if [ ${#TARGETS[@]} -eq 0 ]; then
-    TARGETS=(confuserex bitmono obfuscar jiejie)
+    TARGETS=(confuserex bitmono obfuscar jiejie netreactor)
 fi
 
 build_ssh_args
@@ -249,14 +251,37 @@ regenerate_jiejie() {
     ok "JIEJIE.NET: $count samples in place."
 }
 
+regenerate_netreactor() {
+    log "=== .NET Reactor ==="
+
+    # Upload generation script (no config files, flags are inline in the script)
+    run_ssh "New-Item -ItemType Directory -Path '${REMOTE_DIR}/netreactor' -Force | Out-Null"
+    run_scp_to "$NETREACTOR_SCRIPT" "$REMOTE_DIR/netreactor/"
+
+    # Run generation
+    log "Running .NET Reactor generate.ps1..."
+    run_ssh "& '${REMOTE_DIR}/netreactor/generate.ps1' \
+        -TestAppPath '${REMOTE_DIR}/TestApp/TestApp.csproj' \
+        -OutputDir '${REMOTE_DIR}/output/netreactor'"
+
+    # Download results
+    log "Downloading .NET Reactor samples..."
+    download_exes "$REMOTE_DIR/output/netreactor" "$NETREACTOR_SAMPLES"
+
+    local count
+    count=$(ls "$NETREACTOR_SAMPLES"/*.exe 2>/dev/null | wc -l | tr -d ' ')
+    ok ".NET Reactor: $count samples in place."
+}
+
 for target in "${TARGETS[@]}"; do
     case "$target" in
-        confuserex) regenerate_confuserex ;;
-        bitmono)    regenerate_bitmono ;;
-        obfuscar)   regenerate_obfuscar ;;
-        jiejie)     regenerate_jiejie ;;
+        confuserex)  regenerate_confuserex ;;
+        bitmono)     regenerate_bitmono ;;
+        obfuscar)    regenerate_obfuscar ;;
+        jiejie)      regenerate_jiejie ;;
+        netreactor)  regenerate_netreactor ;;
         *)
-            err "Unknown target: $target (valid: confuserex, bitmono, obfuscar, jiejie)"
+            err "Unknown target: $target (valid: confuserex, bitmono, obfuscar, jiejie, netreactor)"
             exit 1
             ;;
     esac
@@ -273,5 +298,5 @@ for target in "${TARGETS[@]}"; do
 done
 log ""
 log "Or all at once:"
-log "  cargo test --release --test confuserex --test bitmono --test obfuscar --test jiejie"
+log "  cargo test --release --test confuserex --test bitmono --test obfuscar --test jiejie --test netreactor"
 log "════════════════════════════════════════════════════════════════"

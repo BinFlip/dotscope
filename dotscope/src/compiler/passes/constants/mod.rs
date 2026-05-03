@@ -44,11 +44,30 @@ use crate::{
         pass::{ModificationScope, SsaPass},
         CompilerContext, EventKind, EventLog,
     },
-    deobfuscation::utils::is_method_on_type,
     metadata::{token::Token, typesystem::PointerSize},
     utils::BitSet,
     CilObject, Result,
 };
+
+/// Checks whether `token` resolves to a method whose declaring type name contains `type_name`.
+///
+/// Handles both `MethodDef` (table 0x06) and `MemberRef` (table 0x0A) tokens. A duplicate of
+/// `deobfuscation::utils::is_method_on_type` exists here so that the `compiler` feature does
+/// not depend on the `deobfuscation` feature being enabled.
+fn is_method_on_type(assembly: &CilObject, token: Token, type_name: &str) -> bool {
+    match token.table() {
+        0x06 => assembly
+            .method(&token)
+            .and_then(|m| m.declaring_type_rc())
+            .is_some_and(|ty| ty.name.contains(type_name)),
+        0x0A => assembly
+            .refs_members()
+            .get(&token)
+            .and_then(|entry| entry.value().declaredby.fullname())
+            .is_some_and(|name| name.contains(type_name)),
+        _ => false,
+    }
+}
 
 /// Result of checking an algebraic identity.
 ///

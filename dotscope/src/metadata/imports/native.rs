@@ -887,8 +887,7 @@ impl NativeImports {
 
         // Sort descriptors for deterministic ordering (mscoree.dll should be first when building import list)
         let mut descriptors_sorted: Vec<_> = self.descriptors.values().collect();
-        descriptors_sorted
-            .sort_by(|a, b| a.dll_name.to_lowercase().cmp(&b.dll_name.to_lowercase()));
+        descriptors_sorted.sort_by_key(|d| d.dll_name.to_lowercase());
 
         // Calculate where strings will be in the import table
         // Layout: descriptors + null descriptor + ILT entries + strings
@@ -999,8 +998,7 @@ impl NativeImports {
 
         // Sort descriptors for deterministic ordering
         let mut descriptors_sorted: Vec<_> = self.descriptors.values().collect();
-        descriptors_sorted
-            .sort_by(|a, b| a.dll_name.to_lowercase().cmp(&b.dll_name.to_lowercase()));
+        descriptors_sorted.sort_by_key(|d| d.dll_name.to_lowercase());
 
         // Calculate layout sizes
         let descriptor_table_size = (descriptors_sorted.len() + 1) * 20; // +1 for null terminator

@@ -36,8 +36,8 @@ use log::debug;
 
 use crate::{
     analysis::{
-        ConstValue, DefSite, MethodRef, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId,
-        TypeRef, VariableOrigin,
+        resolve_corelib_valuetype, ConstValue, DefSite, MethodRef, SsaFunction, SsaInstruction,
+        SsaOp, SsaVarId, TypeRef, VariableOrigin,
     },
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     metadata::token::Token,
@@ -99,7 +99,7 @@ impl SsaPass for TypeOfRestorationPass {
         ssa: &mut SsaFunction,
         _method_token: Token,
         ctx: &CompilerContext,
-        _assembly: &CilObject,
+        assembly: &CilObject,
     ) -> Result<bool> {
         if self.type_tokens.is_empty() {
             return Ok(false);
@@ -155,12 +155,17 @@ impl SsaPass for TypeOfRestorationPass {
         replacements.sort_by(|a, b| b.0.cmp(&a.0).then(b.1.cmp(&a.1)));
 
         for (block_idx, instr_idx, type_token, orig_dest) in &replacements {
-            // Create a temporary variable for the RuntimeTypeHandle (LoadToken result)
+            // Create a temporary variable for the RuntimeTypeHandle (LoadToken result).
+            // Resolve the corelib TypeRef now so the SSA variable carries a
+            // proper `valuetype [mscorlib]System.RuntimeTypeHandle` token —
+            // a tokenless placeholder would produce invalid CIL if this
+            // variable ever spilled to a local slot downstream.
+            let handle_type = resolve_corelib_valuetype(assembly, "System.RuntimeTypeHandle");
             let handle_var = ssa.create_variable(
                 VariableOrigin::Phi, // synthetic origin
                 0,
                 DefSite::instruction(*block_idx, *instr_idx),
-                SsaType::RuntimeTypeHandle,
+                handle_type,
             );
 
             // Replace the original Call with LoadToken into the temp variable
