@@ -1499,7 +1499,7 @@ dependencies = [
 
 [[package]]
 name = "dotscope"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "aes",
  "boxcar",
@@ -1543,7 +1543,7 @@ dependencies = [
 
 [[package]]
 name = "dotscope-cli"
-version = "0.6.0"
+version = "0.7.0"
 dependencies = [
  "anyhow",
  "clap",
