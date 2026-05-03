@@ -35,7 +35,7 @@
 //!
 //! The SCCP pass will then fold the combined constants in the next iteration.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 
 use crate::{
     analysis::{ConstValue, DefUseIndex, SsaFunction, SsaOp, SsaVarId},
@@ -330,6 +330,15 @@ impl ReassociationPass {
     }
 
     /// Applies the reassociation transformations.
+    ///
+    /// Candidates from a single pass can overlap: in a chain `(A op B) op C) op K`,
+    /// the pass emits a candidate for `(Op(A,B), Op(t1,C))` *and* one for
+    /// `(Op(t1,C), Op(t2,K))`. Applying both blindly is unsafe because the second
+    /// candidate's captured `inner_instr` was rewritten by the first (into a
+    /// `Copy`), and unconditionally overwriting that `Copy` with a new binary op
+    /// re-introduces a stale operand — causing the middle constant to be applied
+    /// twice and cancelling itself under XOR. Skip any candidate whose inner or
+    /// outer instruction position has already been mutated in this pass.
     fn apply_reassociations(
         ssa: &mut SsaFunction,
         candidates: Vec<ReassociationCandidate>,
@@ -337,7 +346,17 @@ impl ReassociationPass {
         changes: &mut EventLog,
         ptr_size: PointerSize,
     ) {
+        let mut modified: HashSet<(usize, usize)> = HashSet::new();
+
         for candidate in candidates {
+            // Skip if either position has already been rewritten by a prior
+            // overlapping candidate (see doc comment above).
+            if modified.contains(&(candidate.inner_block, candidate.inner_instr))
+                || modified.contains(&(candidate.block_idx, candidate.instr_idx))
+            {
+                continue;
+            }
+
             // Combine the constants
             let Some(combined) = candidate.op_kind.combine(
                 &candidate.const1_value,
@@ -380,6 +399,9 @@ impl ReassociationPass {
                     src: candidate.inner_dest,
                 });
             }
+
+            modified.insert((candidate.inner_block, candidate.inner_instr));
+            modified.insert((candidate.block_idx, candidate.instr_idx));
 
             changes
                 .record(EventKind::ConstantFolded)

@@ -69,7 +69,10 @@ use crate::{
         ArgumentStorage, EmValue, EvaluationStack, HeapRef, LocalVariables, ManagedPointer,
         ThreadId,
     },
-    metadata::{token::Token, typesystem::CilFlavor},
+    metadata::{
+        token::Token,
+        typesystem::{CilFlavor, PointerSize},
+    },
     CilObject, Error, Result,
 };
 
@@ -1067,6 +1070,62 @@ impl EmulationThread {
     #[must_use]
     pub fn address_space(&self) -> &AddressSpace {
         &self.context.address_space
+    }
+
+    /// Pins a managed array element to a native memory address.
+    ///
+    /// This implements the `fixed` / pinned array pattern: when CIL code takes
+    /// the address of an array element via `ldelema` and converts it to a native
+    /// pointer via `conv.i`/`conv.u`, the array must be accessible through
+    /// the native address for subsequent `ldind.*`/`stind.*` and
+    /// `Marshal.Read*`/`Write*` operations.
+    ///
+    /// The pinned array uses transparent shared backing: no data is copied.
+    /// Instead, a native address range is reserved and registered with the
+    /// address space. Reads and writes through the native address are
+    /// transparently delegated to the managed heap's `Vec<EmValue>`,
+    /// ensuring a single source of truth.
+    pub fn pin_array_element(
+        &self,
+        array: HeapRef,
+        index: usize,
+        offset: u32,
+        ptr_size: PointerSize,
+    ) -> Result<u64> {
+        let heap = self.context.address_space.managed_heap();
+
+        let length = heap.get_array_length(array).unwrap_or(0);
+        if length == 0 {
+            return Ok(self.context.address_space.reserve_address_range(1));
+        }
+
+        // Determine element size from the element type or first element
+        let elem_size = if let Ok(elem_type) = heap.get_array_element_type(array) {
+            elem_type.byte_size(ptr_size).unwrap_or(ptr_size.bytes())
+        } else {
+            match heap.get_array_element(array, 0) {
+                Ok(EmValue::I32(_)) => 4usize,
+                Ok(EmValue::I64(_) | EmValue::NativeInt(_)) => 8,
+                Ok(EmValue::NativeUInt(_)) => ptr_size.bytes(),
+                Ok(EmValue::F32(_)) => 4,
+                Ok(EmValue::F64(_)) => 8,
+                _ => ptr_size.bytes(),
+            }
+        };
+
+        let total_size = length * elem_size;
+        let base_addr = self
+            .context
+            .address_space
+            .reserve_address_range(total_size.max(1));
+
+        // Register the pinned mapping for transparent read/write delegation
+        self.context
+            .address_space
+            .register_pinned_array(base_addr, array, elem_size, length)?;
+
+        let element_addr = base_addr + (index * elem_size) as u64 + u64::from(offset);
+        Ok(element_addr)
     }
 
     /// Gets a thread-local storage value by its field token.

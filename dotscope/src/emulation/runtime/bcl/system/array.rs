@@ -371,19 +371,9 @@ fn array_get_dimension_length_pre(
     };
 
     let length = match obj {
-        HeapObject::Array { elements, .. } => {
-            if dimension == 0 {
-                elements.len()
-            } else {
-                return PreHookResult::Bypass(Some(EmValue::I32(0)));
-            }
-        }
-        HeapObject::MultiArray { dimensions, .. } => {
-            if dimension < dimensions.len() {
-                dimensions[dimension]
-            } else {
-                return PreHookResult::Bypass(Some(EmValue::I32(0)));
-            }
+        HeapObject::Array { elements, .. } if dimension == 0 => elements.len(),
+        HeapObject::MultiArray { dimensions, .. } if dimension < dimensions.len() => {
+            dimensions[dimension]
         }
         _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
     };

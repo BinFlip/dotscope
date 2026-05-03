@@ -146,6 +146,6 @@ mod tests {
     fn test_register_hooks() {
         let manager = HookManager::new();
         register(&manager).unwrap();
-        assert_eq!(manager.len(), 139);
+        assert_eq!(manager.len(), 143);
     }
 }

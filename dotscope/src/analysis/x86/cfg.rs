@@ -129,17 +129,13 @@ impl X86Function {
                         leaders.insert(instructions[i + 1].offset);
                     }
                 }
-                X86Instruction::Call { .. } => {
-                    // Instruction after call is a leader (call returns)
-                    if i + 1 < instructions.len() {
-                        leaders.insert(instructions[i + 1].offset);
-                    }
+                // Instruction after call is a leader (call returns)
+                X86Instruction::Call { .. } if i + 1 < instructions.len() => {
+                    leaders.insert(instructions[i + 1].offset);
                 }
-                X86Instruction::Ret => {
-                    // Instruction after ret is a leader (if any)
-                    if i + 1 < instructions.len() {
-                        leaders.insert(instructions[i + 1].offset);
-                    }
+                // Instruction after ret is a leader (if any)
+                X86Instruction::Ret if i + 1 < instructions.len() => {
+                    leaders.insert(instructions[i + 1].offset);
                 }
                 _ => {}
             }

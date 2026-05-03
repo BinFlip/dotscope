@@ -417,6 +417,14 @@ impl<'a> PeGenerator<'a> {
                 if let Some(typeref_remap) = remapper.typeref_remap() {
                     ctx.typeref_rid_remap = typeref_remap;
                 }
+                // Store TypeSpec RID remapping for signature blob processing.
+                // `ELEMENT_TYPE_CLASS` / `ELEMENT_TYPE_VALUETYPE` operands are
+                // `TypeDefOrRefOrSpecEncoded`, so a `LocalVarSig` (or any other
+                // signature) can carry a TypeSpec token that needs to follow
+                // the row shift when neighbouring TypeSpecs are deleted.
+                if let Some(typespec_remap) = remapper.typespec_remap() {
+                    ctx.typespec_rid_remap = typespec_remap;
+                }
             }
 
             // Build StandAloneSig deduplication mapping
@@ -1724,6 +1732,7 @@ impl<'a> PeGenerator<'a> {
             &changes.blob_heap_changes,
             &ctx.typedef_rid_remap,
             &ctx.typeref_rid_remap,
+            &ctx.typespec_rid_remap,
         )?;
         ctx.blob_heap_size = blob_result.bytes_written;
         ctx.heap_remapping.blobs = blob_result.remapping;

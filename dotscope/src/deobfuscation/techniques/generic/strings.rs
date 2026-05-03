@@ -29,7 +29,10 @@ use crate::{
     compiler::PassPhase,
     deobfuscation::{
         context::AnalysisContext,
-        techniques::{Detection, Detections, Evidence, Technique, TechniqueCategory},
+        techniques::{
+            netreactor::find_resources_referenced_by_methods, Detection, Detections, Evidence,
+            Technique, TechniqueCategory,
+        },
         utils::{
             build_call_site_counts, exclude_cross_calling_candidates, filter_by_call_threshold,
         },
@@ -49,6 +52,10 @@ use crate::{
 pub struct StringFindings {
     /// Tokens of detected string decryptor methods.
     pub decryptor_methods: HashSet<Token>,
+    /// Manifest resource tokens referenced only from decryptor-owned methods.
+    /// Populated during detection so cleanup can remove them when the decryptor
+    /// type is fully resolved and marked for removal.
+    pub encrypted_resource_tokens: Vec<Token>,
 }
 
 /// Detects generic string decryptor methods.
@@ -175,8 +182,10 @@ impl Technique for GenericStrings {
         }
 
         let count = decryptors.len();
+        let encrypted_resource_tokens = collect_decryptor_resources(assembly, &decryptors);
         let findings = StringFindings {
             decryptor_methods: decryptors,
+            encrypted_resource_tokens,
         };
 
         Detection::new_detected(
@@ -250,8 +259,10 @@ impl Technique for GenericStrings {
                 .sum::<usize>()
         );
 
+        let encrypted_resource_tokens = collect_decryptor_resources(assembly, &decryptors);
         let findings = StringFindings {
             decryptor_methods: decryptors,
+            encrypted_resource_tokens,
         };
 
         Detection::new_detected(
@@ -337,8 +348,61 @@ impl Technique for GenericStrings {
         for &token in &findings.decryptor_methods {
             req.add_method(token);
         }
+        for &token in &findings.encrypted_resource_tokens {
+            req.add_manifest_resource(token);
+        }
         Some(req)
     }
+}
+
+/// Collects manifest-resource tokens referenced by name from the decryptors'
+/// declaring types (and their nested types).
+///
+/// The NR strings protection stores the encrypted string table in a managed
+/// resource whose name is loaded via `ldstr` by the decryptor (or methods in
+/// the same injected type / its nested types). Once every call site is
+/// resolved and the decryptor type is cleaned up, those resources become dead
+/// payload. Scanning by `ldstr` name is the structural signal used here —
+/// matching the pattern already used for NR anti-tamper resource cleanup.
+///
+/// This returns resources reachable from ANY decryptor-owned method. The
+/// cleanup request marks them unconditionally; the executor's existing
+/// protection for non-removable decryptors keeps the resource alive whenever
+/// the decryptor itself is kept, so a partial decryption result doesn't leave
+/// runtime calls referencing a removed resource.
+fn collect_decryptor_resources(assembly: &CilObject, decryptors: &HashSet<Token>) -> Vec<Token> {
+    let mut declaring_types: HashSet<Token> = HashSet::new();
+    for &decryptor in decryptors {
+        if let Some(method) = assembly.method(&decryptor) {
+            if let Some(parent) = method.declaring_type_rc() {
+                declaring_types.insert(parent.token);
+            }
+        }
+    }
+
+    let mut method_tokens: Vec<Token> = Vec::new();
+    let mut stack: Vec<Token> = declaring_types.into_iter().collect();
+    let mut visited: HashSet<Token> = stack.iter().copied().collect();
+    while let Some(type_token) = stack.pop() {
+        let Some(cil_type) = assembly.types().get(&type_token) else {
+            continue;
+        };
+        for method in cil_type.methods() {
+            method_tokens.push(method.token);
+        }
+        for (_, nested_ref) in cil_type.nested_types.iter() {
+            if let Some(nested) = nested_ref.upgrade() {
+                if visited.insert(nested.token) {
+                    stack.push(nested.token);
+                }
+            }
+        }
+    }
+
+    if method_tokens.is_empty() {
+        return Vec::new();
+    }
+    find_resources_referenced_by_methods(assembly, &method_tokens)
 }
 
 #[cfg(test)]

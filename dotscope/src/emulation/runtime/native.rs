@@ -25,7 +25,7 @@
 //! - `VirtualFree` - Frees virtual memory (validates but doesn't actually free)
 //!
 //! ## Module Loading (kernel32.dll)
-//! - `GetModuleHandleA/W` - Returns fake module handle (0x0040_0000 for current module)
+//! - `GetModuleHandleA/W` - Returns fake module handle (see [`tokens::native_addresses`])
 //! - `GetProcAddress` - Returns fake function pointer
 //! - `LoadLibraryA/W` - Returns fake module handle
 //!
@@ -87,14 +87,104 @@
 //! if the old protection was 0x40 (PAGE_EXECUTE_READWRITE) and skips decryption
 //! if so. By returning 0x20, the decryption path is taken.
 
+use std::sync::{
+    atomic::{AtomicU64, Ordering},
+    Arc,
+};
+
+use dashmap::DashMap;
+
 use crate::{
     emulation::{
         memory::MemoryProtection,
-        runtime::{Hook, HookManager, HookPriority, PreHookResult},
+        runtime::{
+            hook::{HookContext, PreHookResult},
+            Hook, HookManager, HookPriority,
+        },
+        thread::EmulationThread,
+        tokens::{self, native_addresses},
         EmValue,
     },
+    metadata::token::Token,
     Result,
 };
+
+/// Shared registry that maps fake function pointer addresses to their names
+/// and native function tokens to their names. This allows the full chain
+/// (GetProcAddress → GetDelegateForFunctionPointer → delegate dispatch) to
+/// preserve function identity.
+#[derive(Clone, Debug)]
+pub struct NativeFunctionRegistry {
+    address_to_name: Arc<DashMap<u64, Arc<str>>>,
+    token_to_name: Arc<DashMap<u32, Arc<str>>>,
+    next_address: Arc<AtomicU64>,
+    next_token_id: Arc<AtomicU64>,
+}
+
+impl NativeFunctionRegistry {
+    pub fn new() -> Self {
+        Self {
+            address_to_name: Arc::new(DashMap::new()),
+            token_to_name: Arc::new(DashMap::new()),
+            next_address: Arc::new(AtomicU64::new(native_addresses::PROC_ADDRESS_BASE)),
+            next_token_id: Arc::new(AtomicU64::new(1)),
+        }
+    }
+
+    /// Registers a native function name and returns a unique fake address for it.
+    pub fn register_proc(&self, name: &str) -> u64 {
+        let name: Arc<str> = Arc::from(name);
+        // Check if already registered
+        for entry in self.address_to_name.iter() {
+            if *entry.value() == name {
+                return *entry.key();
+            }
+        }
+        let addr = self
+            .next_address
+            .fetch_add(native_addresses::PROC_ADDRESS_PAGE, Ordering::Relaxed);
+        self.address_to_name.insert(addr, name);
+        addr
+    }
+
+    /// Looks up the function name for a given fake address.
+    pub fn lookup_by_address(&self, addr: u64) -> Option<Arc<str>> {
+        self.address_to_name
+            .get(&addr)
+            .map(|v| Arc::clone(v.value()))
+    }
+
+    /// Allocates a unique native function pointer token for a function name and
+    /// returns the token. If a token was already allocated for this name, returns
+    /// the existing one.
+    pub fn allocate_token(&self, name: &str) -> Token {
+        let name: Arc<str> = Arc::from(name);
+        for entry in self.token_to_name.iter() {
+            if *entry.value() == name {
+                return tokens::native::token_for_id(*entry.key());
+            }
+        }
+        let id = self.next_token_id.fetch_add(1, Ordering::Relaxed);
+        self.token_to_name.insert(id as u32, name);
+        tokens::native::token_for_id(id as u32)
+    }
+
+    /// Finds the fake address registered for the given function name.
+    pub fn lookup_address_by_name(&self, name: &str) -> Option<u64> {
+        for entry in self.address_to_name.iter() {
+            if entry.value().as_ref() == name {
+                return Some(*entry.key());
+            }
+        }
+        None
+    }
+
+    /// Looks up the function name for a native function pointer token.
+    pub fn lookup_by_token(&self, token: Token) -> Option<Arc<str>> {
+        let id = token.value() & 0x0000_FFFF;
+        self.token_to_name.get(&id).map(|v| Arc::clone(v.value()))
+    }
+}
 
 /// Registers all default native P/Invoke hooks with the hook manager.
 ///
@@ -126,7 +216,7 @@ use crate::{
 /// **Process/Thread Handles:**
 /// - `kernel32!GetCurrentProcess`
 /// - `kernel32!GetCurrentThread`
-pub fn register(manager: &HookManager) -> Result<()> {
+pub fn register(manager: &HookManager, registry: &NativeFunctionRegistry) -> Result<()> {
     // Memory management hooks
     register_virtual_protect(manager)?;
     register_virtual_alloc(manager)?;
@@ -134,7 +224,7 @@ pub fn register(manager: &HookManager) -> Result<()> {
 
     // Module loading hooks
     register_get_module_handle(manager)?;
-    register_get_proc_address(manager)?;
+    register_get_proc_address(manager, registry)?;
     register_load_library(manager)?;
 
     // Anti-debug bypass hooks
@@ -208,13 +298,12 @@ fn register_virtual_protect(manager: &HookManager) -> Result<()> {
                 // Write old protection value to the out parameter
                 let old_protect_value = EmValue::I32(old_protect_windows.cast_signed());
                 match &args[3] {
-                    EmValue::ManagedPtr(ptr) => {
+                    EmValue::ManagedPtr(ptr)
                         if thread
                             .store_through_pointer(ptr, old_protect_value)
-                            .is_err()
-                        {
-                            return PreHookResult::Bypass(Some(EmValue::I32(0)));
-                        }
+                            .is_err() =>
+                    {
+                        return PreHookResult::Bypass(Some(EmValue::I32(0)));
                     }
                     EmValue::UnmanagedPtr(addr) if *addr != 0 => {
                         let old_protect_bytes = old_protect_windows.to_le_bytes();
@@ -388,10 +477,12 @@ fn register_get_module_handle(manager: &HookManager) -> Result<()> {
 
                 if is_null {
                     // Return a fake module base for the current module
-                    PreHookResult::Bypass(Some(EmValue::NativeInt(0x0040_0000)))
+                    PreHookResult::Bypass(Some(EmValue::NativeInt(
+                        native_addresses::CURRENT_MODULE,
+                    )))
                 } else {
                     // Return a fake handle for other modules
-                    PreHookResult::Bypass(Some(EmValue::NativeInt(0x7FFE_0000)))
+                    PreHookResult::Bypass(Some(EmValue::NativeInt(native_addresses::OTHER_MODULE)))
                 }
             }),
     )?;
@@ -410,9 +501,11 @@ fn register_get_module_handle(manager: &HookManager) -> Result<()> {
                 });
 
                 if is_null {
-                    PreHookResult::Bypass(Some(EmValue::NativeInt(0x0040_0000)))
+                    PreHookResult::Bypass(Some(EmValue::NativeInt(
+                        native_addresses::CURRENT_MODULE,
+                    )))
                 } else {
-                    PreHookResult::Bypass(Some(EmValue::NativeInt(0x7FFE_0000)))
+                    PreHookResult::Bypass(Some(EmValue::NativeInt(native_addresses::OTHER_MODULE)))
                 }
             }),
     )?;
@@ -421,41 +514,72 @@ fn register_get_module_handle(manager: &HookManager) -> Result<()> {
 }
 
 /// Registers the GetProcAddress hook.
-fn register_get_proc_address(manager: &HookManager) -> Result<()> {
+///
+/// Extracts the function name from the second argument (lpProcName) and
+/// registers it in the native function registry with a unique fake address.
+/// This preserves function identity through the GetDelegateForFunctionPointer
+/// and delegate dispatch chain.
+fn register_get_proc_address(
+    manager: &HookManager,
+    registry: &NativeFunctionRegistry,
+) -> Result<()> {
+    let registry = registry.clone();
     manager.register(
         Hook::new("native-get-proc-address")
             .with_priority(HookPriority::HIGH)
             .match_native("kernel32", "GetProcAddress")
-            .pre(|_ctx, _thread| {
+            .pre(move |ctx, thread| {
                 // GetProcAddress(hModule, lpProcName)
-                // Return a fake function pointer
-                PreHookResult::Bypass(Some(EmValue::NativeInt(0x7FFE_1000)))
+                let func_name = ctx
+                    .args
+                    .get(1)
+                    .and_then(|arg| match arg {
+                        EmValue::ObjectRef(href) => {
+                            thread.heap().get_string(*href).ok().map(|s| s.to_string())
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| "unknown".to_string());
+
+                let addr = registry.register_proc(&func_name);
+                log::debug!("GetProcAddress({func_name}) → 0x{addr:X}");
+                PreHookResult::Bypass(Some(EmValue::NativeInt(addr as i64)))
             }),
     )?;
 
     Ok(())
 }
 
-/// Registers LoadLibrary hooks (both A and W variants).
+/// Registers LoadLibrary hooks (A, W, and unsuffixed variants).
+///
+/// Some obfuscators (e.g., .NET Reactor) use the unsuffixed `LoadLibrary`
+/// import name in their P/Invoke declarations, which doesn't match the
+/// standard `LoadLibraryA`/`LoadLibraryW` exports.
 fn register_load_library(manager: &HookManager) -> Result<()> {
-    // LoadLibraryA
+    let load_library_handler =
+        |_ctx: &HookContext<'_>, _thread: &mut EmulationThread| -> PreHookResult {
+            PreHookResult::Bypass(Some(EmValue::NativeInt(native_addresses::LOADED_LIBRARY)))
+        };
+
     manager.register(
         Hook::new("native-load-library-a")
             .with_priority(HookPriority::HIGH)
             .match_native("kernel32", "LoadLibraryA")
-            .pre(|_ctx, _thread| {
-                // LoadLibrary(lpLibFileName)
-                // Return a fake module handle
-                PreHookResult::Bypass(Some(EmValue::NativeInt(0x7FFE_2000)))
-            }),
+            .pre(load_library_handler),
     )?;
 
-    // LoadLibraryW
     manager.register(
         Hook::new("native-load-library-w")
             .with_priority(HookPriority::HIGH)
             .match_native("kernel32", "LoadLibraryW")
-            .pre(|_ctx, _thread| PreHookResult::Bypass(Some(EmValue::NativeInt(0x7FFE_2000)))),
+            .pre(load_library_handler),
+    )?;
+
+    manager.register(
+        Hook::new("native-load-library")
+            .with_priority(HookPriority::HIGH)
+            .match_native("kernel32", "LoadLibrary")
+            .pre(load_library_handler),
     )?;
 
     Ok(())
@@ -567,13 +691,14 @@ mod tests {
     use crate::{
         emulation::{
             runtime::{HookContext, HookManager, HookOutcome},
+            tokens::native_addresses,
             EmValue,
         },
         metadata::{token::Token, typesystem::PointerSize},
         test::emulation::create_test_thread,
     };
 
-    use super::register;
+    use super::{register, NativeFunctionRegistry};
 
     fn create_native_context<'a>(dll: &'a str, function: &'a str) -> HookContext<'a> {
         HookContext::native(Token::new(0x06000001), dll, function, PointerSize::Bit64)
@@ -582,7 +707,7 @@ mod tests {
     #[test]
     fn test_native_hooks_registered() {
         let manager = HookManager::new();
-        register(&manager).unwrap();
+        register(&manager, &NativeFunctionRegistry::new()).unwrap();
 
         // Should have at least 12 hooks (one for each function, with A/W variants)
         assert!(manager.len() >= 12);
@@ -591,7 +716,7 @@ mod tests {
     #[test]
     fn test_is_debugger_present_hook() {
         let manager = HookManager::new();
-        register(&manager).unwrap();
+        register(&manager, &NativeFunctionRegistry::new()).unwrap();
 
         let mut thread = create_test_thread();
         let context = create_native_context("kernel32", "IsDebuggerPresent").with_args(&[]);
@@ -606,7 +731,7 @@ mod tests {
     #[test]
     fn test_get_current_process_hook() {
         let manager = HookManager::new();
-        register(&manager).unwrap();
+        register(&manager, &NativeFunctionRegistry::new()).unwrap();
 
         let mut thread = create_test_thread();
         let context = create_native_context("kernel32", "GetCurrentProcess").with_args(&[]);
@@ -621,7 +746,7 @@ mod tests {
     #[test]
     fn test_get_module_handle_null() {
         let manager = HookManager::new();
-        register(&manager).unwrap();
+        register(&manager, &NativeFunctionRegistry::new()).unwrap();
 
         let mut thread = create_test_thread();
         let args = [EmValue::NativeInt(0)];
@@ -631,7 +756,7 @@ mod tests {
         assert!(
             matches!(
                 outcome,
-                HookOutcome::Handled(Some(EmValue::NativeInt(0x0040_0000)))
+                HookOutcome::Handled(Some(EmValue::NativeInt(native_addresses::CURRENT_MODULE)))
             ),
             "GetModuleHandleA(null) should return base address"
         );

@@ -17,10 +17,12 @@
 //! The confidence score combines these signals to distinguish CFF from normal
 //! loops or state machines.
 
-use std::collections::VecDeque;
+use std::collections::{HashSet, VecDeque};
+
+use rayon::prelude::*;
 
 use crate::{
-    analysis::{SsaFunction, SsaOp, SsaVarId, VariableOrigin},
+    analysis::{ControlFlow, SsaEvaluator, SsaFunction, SsaOp, SsaVarId, VariableOrigin},
     deobfuscation::passes::unflattening::{
         dispatcher::{analyze_switch_dispatcher, Dispatcher, DispatcherInfo},
         statevar::{identify_state_variable, StateVariable},
@@ -322,6 +324,8 @@ impl<'a> CffDetector<'a> {
     /// Detects all CFF patterns in the function.
     ///
     /// Returns all `CffPattern`s found, sorted by confidence (highest first).
+    /// Candidate analysis is parallelized — each candidate is scored
+    /// independently against a shared (pre-computed) dominator tree.
     fn detect_all(&mut self) -> Vec<CffPattern> {
         if self.ssa.block_count() < 4 {
             return Vec::new();
@@ -332,9 +336,13 @@ impl<'a> CffDetector<'a> {
             return Vec::new();
         }
 
+        // Pre-compute the dominator tree so candidate analysis can be parallel
+        let _ = self.get_dom_tree();
+        let dom_tree = self.dom_tree.as_ref().unwrap();
+
         let mut patterns: Vec<CffPattern> = candidates
-            .into_iter()
-            .filter_map(|block_idx| self.analyze_dispatcher_candidate(block_idx))
+            .into_par_iter()
+            .filter_map(|block_idx| self.analyze_candidate_with_dom(block_idx, dom_tree))
             .collect();
 
         // Sort by confidence (highest first)
@@ -368,6 +376,14 @@ impl<'a> CffDetector<'a> {
                 dispatcher = dispatcher
                     .with_transform(transform.clone())
                     .with_confidence(pattern.confidence);
+
+                // Carry the initial state from the primary entry point.
+                // This is critical for NETReactor CFF: optimization passes may
+                // remove the `ldc.i4; stloc` that sets the initial state, so
+                // we capture it during detection when the SSA is still complete.
+                if let Some(state) = pattern.primary_entry().and_then(|e| e.initial_state) {
+                    dispatcher = dispatcher.with_initial_state(state);
+                }
 
                 Some(dispatcher)
             }
@@ -432,12 +448,16 @@ impl<'a> CffDetector<'a> {
             return None;
         }
 
+        // Pre-compute dominator tree once
+        let _ = self.get_dom_tree();
+        let dom_tree = self.dom_tree.as_ref().unwrap();
+
         // Score each candidate and pick the best
         let mut best_pattern: Option<CffPattern> = None;
         let mut best_score = 0.0;
 
         for block_idx in candidates {
-            if let Some(pattern) = self.analyze_dispatcher_candidate(block_idx) {
+            if let Some(pattern) = self.analyze_candidate_with_dom(block_idx, dom_tree) {
                 if pattern.confidence > best_score {
                     best_score = pattern.confidence;
                     best_pattern = Some(pattern);
@@ -453,16 +473,43 @@ impl<'a> CffDetector<'a> {
     /// Dispatchers typically have:
     /// - Multiple predecessors (back edges from case blocks)
     /// - A switch instruction or branching pattern
+    ///
+    /// Each block is tested independently (read-only), so candidates are
+    /// found in parallel.
     fn find_dispatcher_candidates(&self) -> Vec<usize> {
-        let mut candidates = Vec::new();
+        (0..self.ssa.block_count())
+            .into_par_iter()
+            .filter(|&block_idx| self.is_dispatcher_candidate(block_idx))
+            .collect()
+    }
 
-        for block_idx in 0..self.ssa.block_count() {
-            if self.is_dispatcher_candidate(block_idx) {
-                candidates.push(block_idx);
+    /// Returns whether `var` ultimately originates from a method argument,
+    /// tracing through any chain of `Copy` instructions.
+    ///
+    /// CIL frequently lowers `ldarg ; switch` to a `Copy` of the argument
+    /// into a fresh temporary before the `switch`. The temporary's
+    /// [`VariableOrigin`] is `Local` (or `Synthetic`), which would otherwise
+    /// hide the underlying argument from a single-step origin check. This
+    /// helper walks the `Copy` chain iteratively (with a visited set to
+    /// avoid pathological cycles in malformed SSA) and reports whether any
+    /// link in the chain is an `Argument`.
+    fn is_argument_derived(&self, mut var: SsaVarId) -> bool {
+        let mut visited: HashSet<SsaVarId> = HashSet::new();
+        loop {
+            if !visited.insert(var) {
+                return false;
+            }
+            let Some(variable) = self.ssa.variable(var) else {
+                return false;
+            };
+            if matches!(variable.origin(), VariableOrigin::Argument(_)) {
+                return true;
+            }
+            match self.ssa.get_definition(var) {
+                Some(SsaOp::Copy { src, .. }) => var = *src,
+                _ => return false,
             }
         }
-
-        candidates
     }
 
     /// Checks if a block could be a dispatcher.
@@ -486,14 +533,17 @@ impl<'a> CffDetector<'a> {
             // Reject switches on method arguments — they are user switches
             // (e.g., switch on a parameter in DemoSwitch), not CFF dispatchers.
             // Arguments are immutable and cannot be CFF state variables.
+            //
+            // Trace through `Copy` chains so a switch on `v_n = v_arg`
+            // (typical CIL `ldarg ; switch` lowering) is also rejected.
+            // Without this, NETReactor's CFF + opaque-predicate dead arms
+            // can give a user switch enough predecessors to pass the
+            // candidate filter and be misclassified as a dispatcher.
             let switch_on_argument = block.instructions().iter().any(|instr| {
-                if let SsaOp::Switch { value, .. } = instr.op() {
-                    self.ssa
-                        .variable(*value)
-                        .is_some_and(|v| matches!(v.origin(), VariableOrigin::Argument(_)))
-                } else {
-                    false
-                }
+                let SsaOp::Switch { value, .. } = instr.op() else {
+                    return false;
+                };
+                self.is_argument_derived(*value)
             });
             if switch_on_argument {
                 return false;
@@ -527,8 +577,16 @@ impl<'a> CffDetector<'a> {
         false
     }
 
-    /// Analyzes a dispatcher candidate and builds a CFF pattern.
-    fn analyze_dispatcher_candidate(&mut self, block_idx: usize) -> Option<CffPattern> {
+    /// Analyzes a dispatcher candidate with a pre-computed dominator tree.
+    ///
+    /// Takes `&self` (not `&mut self`) so it can be called from parallel
+    /// iterators. The dominator tree is passed explicitly instead of being
+    /// lazily computed.
+    fn analyze_candidate_with_dom(
+        &self,
+        block_idx: usize,
+        dom_tree: &DominatorTree,
+    ) -> Option<CffPattern> {
         // Try to identify dispatcher type
         let dispatcher = analyze_switch_dispatcher(self.ssa, block_idx)?;
 
@@ -557,6 +615,7 @@ impl<'a> CffDetector<'a> {
             state_var.as_ref(),
             &case_blocks,
             &exit_blocks,
+            dom_tree,
         );
 
         Some(CffPattern {
@@ -640,7 +699,9 @@ impl<'a> CffDetector<'a> {
             let mut entry = EntryPoint::new(entry_block);
 
             // Try to extract initial state from the entry block
-            if let Some(initial) = self.extract_initial_state(entry_block, state_var) {
+            if let Some(initial) =
+                self.extract_initial_state(entry_block, dispatcher_block, state_var)
+            {
                 entry.initial_state = Some(initial);
             }
 
@@ -665,37 +726,182 @@ impl<'a> CffDetector<'a> {
     }
 
     /// Extracts the initial state value from an entry block.
+    ///
+    /// Uses three strategies:
+    /// 1. Direct: looks for Const/Copy to the state variable in the entry block
+    /// 2. PHI operand trace: `block_idx` is a direct predecessor of the dispatcher,
+    ///    so we find the dispatcher PHI operand from that predecessor and trace its
+    ///    SSA definition chain back to a constant
+    /// 3. Evaluator path: walks from block 0 to the dispatcher evaluating each block,
+    ///    then reads the PHI result from the evaluator
     fn extract_initial_state(
         &self,
         block_idx: usize,
+        dispatcher_block: usize,
         state_var: Option<&StateVariable>,
     ) -> Option<i64> {
         let block = self.ssa.block(block_idx)?;
 
-        // Look for a constant assignment to the state variable
-        for instr in block.instructions() {
-            if let SsaOp::Const { dest, value } = instr.op() {
-                // Check if this constant is assigned to the state variable
-                if let Some(sv) = state_var {
-                    if let Some(ssa_var) = sv.var.as_ssa_var() {
-                        if *dest == ssa_var {
+        // Strategy 1: Look for a constant assignment to the state variable
+        if let Some(sv) = state_var {
+            if let Some(ssa_var) = sv.var.as_ssa_var() {
+                for instr in block.instructions() {
+                    match instr.op() {
+                        SsaOp::Const { dest, value } if *dest == ssa_var => {
                             return value.as_i64();
                         }
-                    }
-                }
-            }
-
-            // Also check for copy of a constant
-            if let SsaOp::Copy { dest, src } = instr.op() {
-                if let Some(sv) = state_var {
-                    if let Some(ssa_var) = sv.var.as_ssa_var() {
-                        if *dest == ssa_var {
-                            // Try to get the constant value of src
+                        SsaOp::Copy { dest, src } if *dest == ssa_var => {
                             if let Some(SsaOp::Const { value, .. }) = self.ssa.get_definition(*src)
                             {
                                 return value.as_i64();
                             }
                         }
+                        _ => {}
+                    }
+                }
+            }
+
+            if let Some(dispatcher_var) = sv.dispatcher_var {
+                // Strategy 2: Direct PHI operand trace.
+                // block_idx is a non-case predecessor of the dispatcher, so the
+                // dispatcher PHI has an operand with predecessor == block_idx.
+                // Trace that operand's SSA variable backward to a constant.
+                if let Some(disp_block) = self.ssa.block(dispatcher_block) {
+                    for phi in disp_block.phi_nodes() {
+                        if phi.result() == dispatcher_var {
+                            if let Some(op) = phi
+                                .operands()
+                                .iter()
+                                .find(|op| op.predecessor() == block_idx)
+                            {
+                                if let Some(val) = self.trace_to_constant(op.value(), 20) {
+                                    return Some(val);
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // Strategy 3: Evaluate the entry-to-dispatcher path.
+                if let Some(val) =
+                    self.evaluate_entry_to_dispatcher(dispatcher_block, dispatcher_var)
+                {
+                    return Some(val);
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Traces a variable backward through SSA definitions to find a constant value.
+    ///
+    /// Handles Const, Copy, and PHI definitions. For PHI nodes, tries each
+    /// operand and returns the first constant found (handles the case where
+    /// opaque predicate branches merge at the entry block, creating PHIs with
+    /// one real operand and one dead/undefined operand).
+    fn trace_to_constant(&self, var: SsaVarId, max_depth: usize) -> Option<i64> {
+        // Iterative DFS with explicit worklist — a recursive version with no
+        // visited set made NR's 667-case dispatcher hang by exploring O(N^depth)
+        // paths. Here every SSA var is visited at most once, and the stack depth
+        // is bounded by the worklist size, not by program call depth.
+        let mut stack: Vec<(SsaVarId, usize)> = Vec::new();
+        let mut visited: HashSet<SsaVarId> = HashSet::new();
+        stack.push((var, max_depth));
+
+        while let Some((v, depth)) = stack.pop() {
+            if depth == 0 || !visited.insert(v) {
+                continue;
+            }
+
+            // Instruction definition (Const / Copy)
+            if let Some(def) = self.ssa.get_definition(v) {
+                match def {
+                    SsaOp::Const { value, .. } => {
+                        if let Some(i) = value.as_i64() {
+                            return Some(i);
+                        }
+                    }
+                    SsaOp::Copy { src, .. } => {
+                        stack.push((*src, depth - 1));
+                    }
+                    _ => {}
+                }
+                continue;
+            }
+
+            // PHI definition: scan the block's phi nodes for one producing `v`
+            let Some(variable) = self.ssa.variable(v) else {
+                continue;
+            };
+            let def_site = variable.def_site();
+            if def_site.instruction.is_some() {
+                continue; // instruction-defined but not found — stale
+            }
+            let Some(block) = self.ssa.block(def_site.block) else {
+                continue;
+            };
+            for phi in block.phi_nodes() {
+                if phi.result() == v {
+                    // Push operands in reverse so pops happen in original order
+                    // — matches the recursive "return first constant" semantics.
+                    for op in phi.operands().iter().rev() {
+                        stack.push((op.value(), depth - 1));
+                    }
+                    break;
+                }
+            }
+        }
+
+        None
+    }
+
+    /// Evaluates the path from block 0 to the dispatcher using `SsaEvaluator`.
+    ///
+    /// When the evaluator can't resolve a branch (opaque predicates with unknown
+    /// field values), tries each successor block. This handles the NETReactor
+    /// pattern where `ldsfld; ldfld; brfalse` creates an unresolvable branch
+    /// between the initial state assignment and the dispatcher.
+    fn evaluate_entry_to_dispatcher(
+        &self,
+        dispatcher_block: usize,
+        dispatcher_var: SsaVarId,
+    ) -> Option<i64> {
+        let mut evaluator = SsaEvaluator::new(self.ssa, self.config.pointer_size);
+        let mut current = 0usize;
+        let mut visited = BitSet::new(self.ssa.block_count());
+
+        for _ in 0..30 {
+            if visited.contains(current) {
+                break;
+            }
+            visited.insert(current);
+
+            evaluator.evaluate_block(current);
+
+            if current == dispatcher_block {
+                return evaluator
+                    .get_concrete(dispatcher_var)
+                    .and_then(|v| v.as_i64());
+            }
+
+            match evaluator.next_block(current) {
+                ControlFlow::Continue(next) if !visited.contains(next) => {
+                    evaluator.set_predecessor(Some(current));
+                    current = next;
+                }
+                _ => {
+                    // Can't resolve terminator or target already visited.
+                    // Try each successor to find one leading to the dispatcher.
+                    let Some(block) = self.ssa.block(current) else {
+                        break;
+                    };
+                    let succs = block.successors();
+                    if let Some(&next) = succs.iter().find(|&&s| !visited.contains(s)) {
+                        evaluator.set_predecessor(Some(current));
+                        current = next;
+                    } else {
+                        break;
                     }
                 }
             }
@@ -776,16 +982,14 @@ impl<'a> CffDetector<'a> {
     /// - State transform (modulo operation is a strong indicator)
     /// - Method coverage (fraction of all blocks dominated by dispatcher)
     fn compute_confidence(
-        &mut self,
+        &self,
         dispatcher_block: usize,
         dispatcher: &DispatcherInfo,
         state_var: Option<&StateVariable>,
         case_blocks: &BitSet,
         exit_blocks: &BitSet,
+        dom_tree: &DominatorTree,
     ) -> f64 {
-        // Ensure dominator tree is computed before we start (avoids borrow issues).
-        let _ = self.get_dom_tree();
-        let dom_tree = self.dom_tree.as_ref().unwrap();
         let ssa = self.ssa;
 
         let mut score = 0.0;

@@ -403,7 +403,11 @@ impl SsaCodeGenerator {
     ) -> Result<CompilationResult> {
         let (bytecode, max_stack, num_locals) = self.generate_with_assembly(ssa, assembly)?;
 
-        // Build local variable signatures from codegen's compacted types
+        // Build local variable signatures from codegen's compacted types.
+        // Runtime-handle TypeRefs should have been pre-resolved via
+        // [`set_handle_typerefs`] before this call; without it, locals
+        // whose SSA type is a runtime handle fall back to `object` (the
+        // analysis-crate default) and produce invalid CIL on `stloc`.
         let locals = self.build_local_signatures(ssa, num_locals)?;
 
         // Remap exception handlers using block offset mapping
@@ -835,12 +839,10 @@ impl SsaCodeGenerator {
                     SsaOp::Const {
                         value: ConstValue::DecryptedString(s),
                         ..
-                    } => {
-                        if !self.interned_strings.contains_key(s) {
-                            let change_ref = assembly.userstring_add(s)?;
-                            self.interned_strings
-                                .insert(s.clone(), change_ref.placeholder());
-                        }
+                    } if !self.interned_strings.contains_key(s) => {
+                        let change_ref = assembly.userstring_add(s)?;
+                        self.interned_strings
+                            .insert(s.clone(), change_ref.placeholder());
                     }
                     SsaOp::Const {
                         value:
@@ -850,16 +852,14 @@ impl SsaCodeGenerator {
                                 element_size,
                             },
                         ..
-                    } => {
-                        if !self.interned_arrays.contains_key(data) {
-                            if let Some(info) = self.intern_array_data(
-                                data,
-                                *element_type_token,
-                                *element_size,
-                                assembly,
-                            )? {
-                                self.interned_arrays.insert(data.clone(), info);
-                            }
+                    } if !self.interned_arrays.contains_key(data) => {
+                        if let Some(info) = self.intern_array_data(
+                            data,
+                            *element_type_token,
+                            *element_size,
+                            assembly,
+                        )? {
+                            self.interned_arrays.insert(data.clone(), info);
                         }
                     }
                     _ => {}
@@ -3083,8 +3083,16 @@ impl SsaCodeGenerator {
 
         // Phase 1: Generate all dependencies of all Copy roots.
         // This ensures operations like Add are completed before any Copy stores.
+        let mut visiting = BTreeSet::new();
         for &copy_idx in copy_roots {
-            self.generate_copy_deps_recursive(encoder, ctx, copy_idx, generated, use_counts)?;
+            self.generate_copy_deps_recursive(
+                encoder,
+                ctx,
+                copy_idx,
+                generated,
+                &mut visiting,
+                use_counts,
+            )?;
         }
 
         // Phase 2: Collect all copy operations and their storage info.
@@ -3201,23 +3209,31 @@ impl SsaCodeGenerator {
     }
 
     /// Recursively generates dependencies of a Copy root.
+    ///
+    /// Uses a `visiting` set for cycle detection: if a dependency is already
+    /// being visited (but not yet fully generated), we have a circular
+    /// dependency chain and break it by skipping the recursion. The variable
+    /// will be loaded from its existing storage location instead.
     fn generate_copy_deps_recursive(
         &mut self,
         encoder: &mut InstructionEncoder,
         ctx: &BlockCodegenContext<'_>,
         idx: usize,
         generated: &mut BTreeSet<usize>,
+        visiting: &mut BTreeSet<usize>,
         use_counts: &BTreeMap<SsaVarId, usize>,
     ) -> Result<()> {
-        // Get the operands of this op
+        if !visiting.insert(idx) {
+            return Ok(());
+        }
+
         let operands = &ctx.operands_cache[idx];
 
         for &operand in operands {
             if let Some(&dep_idx) = ctx.def_map.get(&operand) {
                 if !generated.contains(&dep_idx) {
-                    // Recursively generate dependencies first
                     self.generate_copy_deps_recursive(
-                        encoder, ctx, dep_idx, generated, use_counts,
+                        encoder, ctx, dep_idx, generated, visiting, use_counts,
                     )?;
 
                     // Skip Copy ops - they'll be handled in the parallel copy phase

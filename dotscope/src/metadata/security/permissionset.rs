@@ -691,29 +691,25 @@ impl PermissionSet {
                     b"PermissionSet" => {
                         in_permission_set = true;
                     }
-                    b"IPermission" => {
-                        if in_permission_set {
-                            match Self::parse_permission_from_xml_attributes(e.attributes()) {
-                                Ok(permission) => permissions.push(permission),
-                                Err(e) => return Err(e),
-                            }
-                        }
-                    }
-                    _ => {}
-                },
-                Ok(Event::Empty(ref e)) => {
-                    // Handle self-closing tags like <IPermission ... />
-                    if e.name().as_ref() == b"IPermission" && in_permission_set {
+                    b"IPermission" if in_permission_set => {
                         match Self::parse_permission_from_xml_attributes(e.attributes()) {
                             Ok(permission) => permissions.push(permission),
                             Err(e) => return Err(e),
                         }
                     }
-                }
-                Ok(Event::End(ref e)) => {
-                    if e.name().as_ref() == b"PermissionSet" {
-                        in_permission_set = false;
+                    _ => {}
+                },
+                // Handle self-closing tags like <IPermission ... />
+                Ok(Event::Empty(ref e))
+                    if e.name().as_ref() == b"IPermission" && in_permission_set =>
+                {
+                    match Self::parse_permission_from_xml_attributes(e.attributes()) {
+                        Ok(permission) => permissions.push(permission),
+                        Err(e) => return Err(e),
                     }
+                }
+                Ok(Event::End(ref e)) if e.name().as_ref() == b"PermissionSet" => {
+                    in_permission_set = false;
                 }
                 Ok(Event::Eof) => break,
                 Err(e) => return Err(malformed_error!("XML parsing error: {}", e)),

@@ -74,6 +74,9 @@ pub enum EventKind {
     VariablesCompacted,
     /// An encrypted method body was decrypted (anti-tamper).
     MethodBodyDecrypted,
+    /// An encrypted manifest resource was decrypted and re-injected as a real
+    /// `ManifestResource` row (e.g. .NET Reactor Stage 7 resource encryption).
+    ResourceDecrypted,
     /// Anti-tamper protection was removed.
     AntiTamperRemoved,
     /// An obfuscation artifact was removed (method, type, metadata).
@@ -106,6 +109,7 @@ impl EventKind {
             Self::StrengthReduced => "strength reduced",
             Self::VariablesCompacted => "variables compacted",
             Self::MethodBodyDecrypted => "method body decrypted",
+            Self::ResourceDecrypted => "resource decrypted",
             Self::AntiTamperRemoved => "anti-tamper removed",
             Self::ArtifactRemoved => "artifact removed",
             Self::CodeRegenerated => "code regenerated",

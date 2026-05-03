@@ -181,4 +181,22 @@ When `typeErasure=true`, all parameter and return types in proxy signatures are 
 
 ## dotscope Handling
 
-Handled by `ConfuserExProxy` technique which identifies delegate fields, emulates token resolution, and restores direct calls. Mild mode proxies are also resolved via the generic `DelegateProxyResolutionPass`.
+### Detection
+
+`ConfuserExReferenceProxy` technique performs IL-level detection:
+- **Mild proxies**: Matches `[ldarg*] call <target> ret` pattern (max 10 instructions)
+- **Strong proxies**: Matches `ldsfld <delegate> [ldarg*] callvirt <Invoke> ret` pattern
+
+### Resolution
+
+Three passes handle proxy elimination:
+
+1. **`ProxyDevirtualizationPass`** (SSA normalize phase, always active): Detects single-block forwarding stubs (Call/CallVirt/NewObj) in SSA. Replaces call sites with direct calls to the forwarding target. Handles mild proxies and bridge methods from strong mode.
+
+2. **`DelegateProxyResolutionPass`** (SSA inline phase): Detects delegate types inheriting from `MulticastDelegate` with static singleton fields and wrapper methods. Emulates delegate type `.cctor` to resolve the delegate target via the emulation engine. Replaces `Call(wrapper)` with direct call to resolved target.
+
+3. **Technique cleanup**: Strong proxy method tokens are directly deleted via the cleanup request. Mild proxies are left to the SSA pipeline for natural elimination via inlining + dead code analysis.
+
+### Known Limitation
+
+ConfuserEx "normal" preset uses **mild mode** reference proxy. The proxy stubs are static methods in `<Module>` with pattern `[ldarg*] call <BCL> ret`. The SSA `ProxyDevirtualizationPass` detects and devirtualizes most call sites. However, some call sites survive when the caller method's SSA uses MemberRef tokens that `resolve_to_method_def` cannot resolve to the proxy stub's MethodDef token (e.g., calls through ConfuserEx's renamed nested type infrastructure).

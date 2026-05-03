@@ -244,22 +244,6 @@ pub enum SsaType {
     /// Function pointer type.
     FnPtr(Box<FnPtrSig>),
 
-    // ========== Runtime Handle Types ==========
-    /// Runtime type handle (System.RuntimeTypeHandle).
-    ///
-    /// Result of `ldtoken` on a type. Used with `Type.GetTypeFromHandle()`.
-    RuntimeTypeHandle,
-
-    /// Runtime method handle (System.RuntimeMethodHandle).
-    ///
-    /// Result of `ldtoken` on a method. Used with `MethodBase.GetMethodFromHandle()`.
-    RuntimeMethodHandle,
-
-    /// Runtime field handle (System.RuntimeFieldHandle).
-    ///
-    /// Result of `ldtoken` on a field. Used with `FieldInfo.GetFieldFromHandle()`.
-    RuntimeFieldHandle,
-
     // ========== Analysis Types ==========
     /// Known null constant (more precise than Object).
     Null,
@@ -502,7 +486,12 @@ impl SsaType {
             // Native integers
             Self::NativeInt | Self::NativeUInt => TypeClass::NativeInt,
 
-            // Reference types and value types (all pointer-sized on stack)
+            // Reference types and value types (all pointer-sized on stack).
+            // Note that value-types share this class with reference-types
+            // only for the purposes of local-slot coalescing — CIL still
+            // forbids `stloc` of a value-type into a slot declared as a
+            // reference-type. `is_compatible_for_storage` enforces the
+            // exact-match rule within this class to keep the two apart.
             Self::Object
             | Self::String
             | Self::Class(_)
@@ -510,10 +499,7 @@ impl SsaType {
             | Self::Array(_, _)
             | Self::ByRef(_)
             | Self::Pointer(_)
-            | Self::TypedReference
-            | Self::RuntimeTypeHandle
-            | Self::RuntimeMethodHandle
-            | Self::RuntimeFieldHandle => TypeClass::Reference,
+            | Self::TypedReference => TypeClass::Reference,
 
             // Generic instantiation delegates to its base type
             Self::GenericInst(base, _) => base.storage_class(),
@@ -699,14 +685,11 @@ impl SsaType {
                     .collect(),
                 varargs: Vec::new(),
             })),
-            // Object and analysis-only types (runtime handles would need BCL resolution)
-            Self::Object
-            | Self::Null
-            | Self::Unknown
-            | Self::Varying
-            | Self::RuntimeTypeHandle
-            | Self::RuntimeMethodHandle
-            | Self::RuntimeFieldHandle => TypeSignature::Object,
+            // Object and analysis-only types. Runtime-handle variants have
+            // been removed from `SsaType` — construction sites now always
+            // produce `ValueType(token)` for them via
+            // [`resolve_runtime_handle_type`], so they never land here.
+            Self::Object | Self::Null | Self::Unknown | Self::Varying => TypeSignature::Object,
         }
     }
 
@@ -958,14 +941,49 @@ impl fmt::Display for SsaType {
             Self::GenericParam(idx) => write!(f, "!{idx}"),
             Self::MethodGenericParam(idx) => write!(f, "!!{idx}"),
             Self::FnPtr(_) => write!(f, "fnptr"),
-            Self::RuntimeTypeHandle => write!(f, "RuntimeTypeHandle"),
-            Self::RuntimeMethodHandle => write!(f, "RuntimeMethodHandle"),
-            Self::RuntimeFieldHandle => write!(f, "RuntimeFieldHandle"),
             Self::Null => write!(f, "null"),
             Self::Unknown => write!(f, "?"),
             Self::Varying => write!(f, "varying"),
         }
     }
+}
+
+/// Resolves a corelib fully-qualified type name (e.g.
+/// `"System.RuntimeFieldHandle"`) to [`SsaType::ValueType`] with a real
+/// TypeRef / TypeDef token.
+///
+/// Prefers a TypeRef row (table `0x01`) whose fullname matches — that's
+/// the import the rest of the assembly already references, and it keeps
+/// the signatures we emit pointing at the row that survives cleanup.
+/// Falls back to `TypeRegistry::get_by_fullname` (which filters TypeRefs
+/// out but returns any TypeDef / external match of the same fullname).
+/// Returns [`SsaType::Unknown`] only when no row matches; callers log a
+/// warning in that case since it indicates missing corelib references.
+///
+/// Used at SSA construction time so every `ldtoken` / handle-producing
+/// op gets a `valuetype [mscorlib]System.Runtime*Handle` token baked
+/// into the variable's type — replacing the old tokenless
+/// `RuntimeFieldHandle` / `RuntimeMethodHandle` / `RuntimeTypeHandle`
+/// variants that could not round-trip through
+/// [`SsaType::to_type_signature`].
+#[must_use]
+pub fn resolve_corelib_valuetype(assembly: &CilObject, fullname: &str) -> SsaType {
+    let registry = assembly.types();
+    for entry in registry.iter() {
+        let ty = entry.value();
+        if ty.token.table() == 0x01 && ty.fullname() == fullname {
+            return SsaType::ValueType(TypeRef::new(ty.token));
+        }
+    }
+    if let Some(ty) = registry.get_by_fullname(fullname, true) {
+        return SsaType::ValueType(TypeRef::new(ty.token));
+    }
+    log::warn!(
+        "resolve_corelib_valuetype: no TypeRef or TypeDef for {fullname:?}; \
+         SSA type falls back to Unknown — the assembly appears to be missing \
+         corelib imports for this type"
+    );
+    SsaType::Unknown
 }
 
 /// Trait for providing type information during SSA construction.

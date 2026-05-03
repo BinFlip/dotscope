@@ -149,27 +149,27 @@ impl StateMachineProvider for ConfuserExStateMachine {
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
                 match instr.op() {
                     // Value type initialization uses Call to .ctor
-                    SsaOp::Call { method, args, .. } if method.token() == init_method_token => {
-                        // .ctor for value type: args are (&this, seed)
-                        if args.len() >= 2 {
-                            let seed_var = args[1];
-                            if let Some(ConstValue::I32(seed)) =
-                                self.trace_to_constant(seed_var, ssa, ctx, method_token)
-                            {
-                                #[allow(clippy::cast_sign_loss)]
-                                seeds.push((block_idx, instr_idx, seed as u32));
-                            }
+                    // .ctor for value type: args are (&this, seed)
+                    SsaOp::Call { method, args, .. }
+                        if method.token() == init_method_token && args.len() >= 2 =>
+                    {
+                        let seed_var = args[1];
+                        if let Some(ConstValue::I32(seed)) =
+                            self.trace_to_constant(seed_var, ssa, ctx, method_token)
+                        {
+                            #[allow(clippy::cast_sign_loss)]
+                            seeds.push((block_idx, instr_idx, seed as u32));
                         }
                     }
                     // NewObj for reference types (less common for CFGCtx)
-                    SsaOp::NewObj { ctor, args, .. } if ctor.token() == init_method_token => {
-                        if args.len() == 1 {
-                            if let Some(ConstValue::I32(seed)) =
-                                self.trace_to_constant(args[0], ssa, ctx, method_token)
-                            {
-                                #[allow(clippy::cast_sign_loss)]
-                                seeds.push((block_idx, instr_idx, seed as u32));
-                            }
+                    SsaOp::NewObj { ctor, args, .. }
+                        if ctor.token() == init_method_token && args.len() == 1 =>
+                    {
+                        if let Some(ConstValue::I32(seed)) =
+                            self.trace_to_constant(args[0], ssa, ctx, method_token)
+                        {
+                            #[allow(clippy::cast_sign_loss)]
+                            seeds.push((block_idx, instr_idx, seed as u32));
                         }
                     }
                     _ => {}

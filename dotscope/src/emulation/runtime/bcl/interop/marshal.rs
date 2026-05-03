@@ -66,10 +66,77 @@ use crate::{
     emulation::{
         runtime::hook::{Hook, HookContext, HookManager, PreHookResult},
         thread::EmulationThread,
-        EmValue,
+        tokens, EmValue, HeapObject,
     },
+    metadata::token::Token,
     Result,
 };
+
+/// Extracts a memory address from a hook argument.
+///
+/// Handles both direct pointer values (`NativeInt`, `UnmanagedPtr`) and boxed
+/// IntPtr values (`ObjectRef` wrapping a `BoxedValue` containing a `NativeInt`).
+/// .NET Reactor's body patcher passes IntPtr through generic wrappers that box
+/// the value — this helper ensures the address is recovered regardless.
+fn resolve_address(arg: &EmValue, thread: &EmulationThread) -> Option<u64> {
+    match arg {
+        EmValue::UnmanagedPtr(a) => Some(*a),
+        EmValue::NativeInt(a) => Some(a.cast_unsigned()),
+        EmValue::NativeUInt(a) => Some(*a),
+        EmValue::I32(a) => Some(a.cast_unsigned() as u64),
+        EmValue::ObjectRef(href) => {
+            // Unbox: ObjectRef → BoxedValue or Object with IntPtr field
+            match thread.heap().get(*href) {
+                Ok(HeapObject::BoxedValue { value, .. }) => match value.as_ref() {
+                    EmValue::NativeInt(a) => Some(a.cast_unsigned()),
+                    EmValue::NativeUInt(a) => Some(*a),
+                    EmValue::I32(a) => Some(a.cast_unsigned() as u64),
+                    EmValue::I64(a) => Some(a.cast_unsigned()),
+                    _ => None,
+                },
+                Ok(HeapObject::Object { fields, .. }) => {
+                    // IntPtr stored via intptr_ctor_pre with synthetic field
+                    let intptr_field = Token::new(0x04FF_FF01);
+                    fields.get(&intptr_field).and_then(|v| match v {
+                        EmValue::NativeInt(a) => Some(a.cast_unsigned()),
+                        EmValue::NativeUInt(a) => Some(*a),
+                        EmValue::I32(a) => Some(a.cast_unsigned() as u64),
+                        EmValue::I64(a) => Some(a.cast_unsigned()),
+                        _ => None,
+                    })
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Resolves a `ManagedPointer` to an i64 value.
+///
+/// Reads the value that the pointer points to (local variable, argument, or field)
+/// and converts it to i64. Used by IntPtr hooks when the `this` argument is a
+/// `ldloca`-produced managed pointer instead of a direct value.
+fn resolve_managed_ptr_as_i64(
+    ptr: &crate::emulation::value::ManagedPointer,
+    thread: &EmulationThread,
+) -> Option<i64> {
+    use crate::emulation::value::PointerTarget;
+    let value = match &ptr.target {
+        PointerTarget::Local(idx) => thread.get_local(*idx as usize).ok().cloned(),
+        PointerTarget::StaticField(token) => {
+            thread.address_space().statics().get(*token).ok().flatten()
+        }
+        _ => None,
+    }?;
+    match value {
+        EmValue::NativeInt(n) => Some(n),
+        EmValue::NativeUInt(n) => Some(n.cast_signed()),
+        EmValue::I32(n) => Some(i64::from(n)),
+        EmValue::I64(n) => Some(n),
+        _ => None,
+    }
+}
 
 /// Registers all interop method hooks with the given hook manager.
 ///
@@ -120,7 +187,109 @@ pub fn register(manager: &HookManager) -> Result<()> {
             .pre(marshal_write_int32_pre),
     )?;
 
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.ReadInt64")
+            .match_name("System.Runtime.InteropServices", "Marshal", "ReadInt64")
+            .pre(marshal_read_int64_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.ReadInt16")
+            .match_name("System.Runtime.InteropServices", "Marshal", "ReadInt16")
+            .pre(marshal_read_int16_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.ReadIntPtr")
+            .match_name("System.Runtime.InteropServices", "Marshal", "ReadIntPtr")
+            .pre(marshal_read_intptr_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.WriteInt64")
+            .match_name("System.Runtime.InteropServices", "Marshal", "WriteInt64")
+            .pre(marshal_write_int64_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.WriteInt16")
+            .match_name("System.Runtime.InteropServices", "Marshal", "WriteInt16")
+            .pre(marshal_write_int16_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.WriteIntPtr")
+            .match_name("System.Runtime.InteropServices", "Marshal", "WriteIntPtr")
+            .pre(marshal_write_intptr_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.AllocCoTaskMem")
+            .match_name(
+                "System.Runtime.InteropServices",
+                "Marshal",
+                "AllocCoTaskMem",
+            )
+            .pre(marshal_alloc_cotaskmem_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.FreeCoTaskMem")
+            .match_name("System.Runtime.InteropServices", "Marshal", "FreeCoTaskMem")
+            .pre(marshal_free_cotaskmem_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.AllocHGlobal")
+            .match_name("System.Runtime.InteropServices", "Marshal", "AllocHGlobal")
+            .pre(marshal_alloc_hglobal_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.FreeHGlobal")
+            .match_name("System.Runtime.InteropServices", "Marshal", "FreeHGlobal")
+            .pre(marshal_free_hglobal_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.SizeOf")
+            .match_name("System.Runtime.InteropServices", "Marshal", "SizeOf")
+            .pre(marshal_sizeof_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.GetDelegateForFunctionPointer")
+            .match_name(
+                "System.Runtime.InteropServices",
+                "Marshal",
+                "GetDelegateForFunctionPointer",
+            )
+            .pre(marshal_get_delegate_for_function_pointer_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.Runtime.InteropServices.Marshal.GetFunctionPointerForDelegate")
+            .match_name(
+                "System.Runtime.InteropServices",
+                "Marshal",
+                "GetFunctionPointerForDelegate",
+            )
+            .pre(marshal_get_function_pointer_for_delegate_pre),
+    )?;
+
     // IntPtr methods
+    manager.register(
+        Hook::new("System.IntPtr..ctor")
+            .match_name("System", "IntPtr", ".ctor")
+            .pre(intptr_ctor_pre),
+    )?;
+
+    manager.register(
+        Hook::new("System.IntPtr.get_Size")
+            .match_name("System", "IntPtr", "get_Size")
+            .pre(intptr_get_size_pre),
+    )?;
+
     manager.register(
         Hook::new("System.IntPtr.op_Explicit")
             .match_name("System", "IntPtr", "op_Explicit")
@@ -173,6 +342,28 @@ pub fn register(manager: &HookManager) -> Result<()> {
     Ok(())
 }
 
+/// Writes bytes to a possibly-unmapped address, auto-allocating if needed.
+///
+/// Some obfuscated code writes to addresses that don't exist in emulation
+/// (e.g., CLR method table addresses). Rather than aborting emulation, we
+/// silently allocate a page at the target address and proceed.
+fn write_with_auto_alloc(thread: &EmulationThread, addr: u64, data: &[u8]) {
+    if thread.address_space().write(addr, data).is_err() {
+        let page_base = addr & !0xFFFF;
+        let page_size = 0x1_0000usize; // 64KB
+        log::debug!(
+            "Auto-allocating 0x{page_size:X} bytes at 0x{page_base:X} for write to 0x{addr:X}"
+        );
+        if thread
+            .address_space()
+            .map_data(page_base, &vec![0u8; page_size], "auto-alloc")
+            .is_ok()
+        {
+            let _ = thread.address_space().write(addr, data);
+        }
+    }
+}
+
 /// Hook for `System.Runtime.InteropServices.Marshal.GetHINSTANCE` method.
 ///
 /// Returns the PE base address for the module's assembly image.
@@ -191,7 +382,9 @@ fn marshal_get_hinstance_pre(
     // Try to get actual image base from the assembly
     let image_base = thread
         .assembly()
-        .map_or(0x0040_0000, |asm| asm.file().imagebase()); // Default Windows image base
+        .map_or(tokens::native_addresses::CURRENT_MODULE as u64, |asm| {
+            asm.file().imagebase()
+        });
 
     #[allow(clippy::cast_possible_wrap)]
     PreHookResult::Bypass(Some(EmValue::NativeInt(image_base as i64)))
@@ -290,7 +483,7 @@ fn marshal_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreH
         bytes.push(byte_val);
     }
 
-    try_hook!(thread.address_space().write(dest_addr, &bytes));
+    write_with_auto_alloc(thread, dest_addr, &bytes);
     PreHookResult::Bypass(None)
 }
 
@@ -310,10 +503,8 @@ fn marshal_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreH
 /// - `ofs`: Byte offset to add to ptr (optional)
 /// - `o`: Object in unmanaged memory to read from (overload 3)
 fn marshal_read_byte_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    let addr = match ctx.args.first() {
-        Some(EmValue::UnmanagedPtr(a)) => *a,
-        Some(EmValue::NativeInt(a)) => (*a).cast_unsigned(),
-        _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    let Some(addr) = ctx.args.first().and_then(|a| resolve_address(a, thread)) else {
+        return PreHookResult::Bypass(Some(EmValue::I32(0)));
     };
 
     if let Ok(bytes) = thread.address_space().read(addr, 1) {
@@ -386,7 +577,7 @@ fn marshal_write_byte_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         _ => return PreHookResult::Bypass(None),
     };
 
-    try_hook!(thread.address_space().write(addr, &[value]));
+    write_with_auto_alloc(thread, addr, &[value]);
     PreHookResult::Bypass(None)
 }
 
@@ -411,10 +602,8 @@ fn marshal_write_int32_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
         return PreHookResult::Bypass(None);
     }
 
-    let addr = match &ctx.args[0] {
-        EmValue::UnmanagedPtr(a) => *a,
-        EmValue::NativeInt(a) => (*a).cast_unsigned(),
-        _ => return PreHookResult::Bypass(None),
+    let Some(addr) = resolve_address(&ctx.args[0], thread) else {
+        return PreHookResult::Bypass(None);
     };
 
     let value = match &ctx.args[1] {
@@ -422,8 +611,524 @@ fn marshal_write_int32_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
         _ => return PreHookResult::Bypass(None),
     };
 
-    try_hook!(thread.address_space().write(addr, &value.to_le_bytes()));
+    write_with_auto_alloc(thread, addr, &value.to_le_bytes());
     PreHookResult::Bypass(None)
+}
+
+/// Hook for `System.Runtime.InteropServices.Marshal.ReadInt64` method.
+///
+/// Reads a 64-bit signed integer from unmanaged memory.
+///
+/// # Handled Overloads
+///
+/// - `Marshal.ReadInt64(IntPtr) -> Int64`
+/// - `Marshal.ReadInt64(IntPtr, Int32) -> Int64`
+fn marshal_read_int64_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    let Some(base_addr) = ctx.args.first().and_then(|a| resolve_address(a, thread)) else {
+        return PreHookResult::Bypass(Some(EmValue::I64(0)));
+    };
+
+    let offset = ctx
+        .args
+        .get(1)
+        .and_then(EmValue::as_i32)
+        .map(i64::from)
+        .unwrap_or(0);
+    let addr = (base_addr as i64).wrapping_add(offset).cast_unsigned();
+
+    if let Ok(bytes) = thread.address_space().read(addr, 8) {
+        let value = i64::from_le_bytes([
+            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+        ]);
+        PreHookResult::Bypass(Some(EmValue::I64(value)))
+    } else {
+        PreHookResult::Bypass(Some(EmValue::I64(0)))
+    }
+}
+
+/// Hook for `System.Runtime.InteropServices.Marshal.ReadInt16` method.
+///
+/// Reads a 16-bit signed integer from unmanaged memory.
+///
+/// # Handled Overloads
+///
+/// - `Marshal.ReadInt16(IntPtr) -> Int16`
+/// - `Marshal.ReadInt16(IntPtr, Int32) -> Int16`
+fn marshal_read_int16_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    let base_addr = match ctx.args.first() {
+        Some(EmValue::UnmanagedPtr(a)) => *a,
+        Some(EmValue::NativeInt(a)) => (*a).cast_unsigned(),
+        _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+    };
+
+    let offset = ctx
+        .args
+        .get(1)
+        .and_then(EmValue::as_i32)
+        .map(i64::from)
+        .unwrap_or(0);
+    let addr = (base_addr as i64).wrapping_add(offset).cast_unsigned();
+
+    if let Ok(bytes) = thread.address_space().read(addr, 2) {
+        let value = i16::from_le_bytes([bytes[0], bytes[1]]);
+        PreHookResult::Bypass(Some(EmValue::I32(i32::from(value))))
+    } else {
+        PreHookResult::Bypass(Some(EmValue::I32(0)))
+    }
+}
+
+/// Hook for `System.Runtime.InteropServices.Marshal.ReadIntPtr` method.
+///
+/// Reads a pointer-sized value from unmanaged memory.
+///
+/// # Handled Overloads
+///
+/// - `Marshal.ReadIntPtr(IntPtr) -> IntPtr`
+/// - `Marshal.ReadIntPtr(IntPtr, Int32) -> IntPtr`
+fn marshal_read_intptr_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    let base_addr = match ctx.args.first() {
+        Some(EmValue::UnmanagedPtr(a)) => *a,
+        Some(EmValue::NativeInt(a)) => (*a).cast_unsigned(),
+        _ => return PreHookResult::Bypass(Some(EmValue::NativeInt(0))),
+    };
+
+    let offset = ctx
+        .args
+        .get(1)
+        .and_then(EmValue::as_i32)
+        .map(i64::from)
+        .unwrap_or(0);
+    let addr = (base_addr as i64).wrapping_add(offset).cast_unsigned();
+
+    let ptr_size = ctx.pointer_size.bytes();
+    if let Ok(bytes) = thread.address_space().read(addr, ptr_size) {
+        let value = if ptr_size == 8 {
+            i64::from_le_bytes([
+                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
+            ])
+        } else {
+            i64::from(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+        };
+        PreHookResult::Bypass(Some(EmValue::NativeInt(value)))
+    } else {
+        PreHookResult::Bypass(Some(EmValue::NativeInt(0)))
+    }
+}
+
+/// Hook for `System.Runtime.InteropServices.Marshal.WriteInt64` method.
+///
+/// Writes a 64-bit signed integer to unmanaged memory.
+///
+/// # Handled Overloads
+///
+/// - `Marshal.WriteInt64(IntPtr, Int64) -> void`
+/// - `Marshal.WriteInt64(IntPtr, Int32, Int64) -> void`
+fn marshal_write_int64_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    if ctx.args.len() < 2 {
+        return PreHookResult::Bypass(None);
+    }
+
+    let Some(addr) = resolve_address(&ctx.args[0], thread) else {
+        return PreHookResult::Bypass(None);
+    };
+
+    // Two-arg form: WriteInt64(IntPtr, Int64)
+    // Three-arg form: WriteInt64(IntPtr, Int32 offset, Int64)
+    let (offset, value) = if ctx.args.len() >= 3 {
+        let ofs = ctx.args[1].as_i32().map(i64::from).unwrap_or(0);
+        let val = match &ctx.args[2] {
+            EmValue::I64(v) | EmValue::NativeInt(v) => *v,
+            _ => return PreHookResult::Bypass(None),
+        };
+        (ofs, val)
+    } else {
+        let val = match &ctx.args[1] {
+            EmValue::I64(v) | EmValue::NativeInt(v) => *v,
+            _ => return PreHookResult::Bypass(None),
+        };
+        (0, val)
+    };
+
+    let final_addr = (addr as i64).wrapping_add(offset).cast_unsigned();
+    write_with_auto_alloc(thread, final_addr, &value.to_le_bytes());
+    PreHookResult::Bypass(None)
+}
+
+/// Hook for `System.Runtime.InteropServices.Marshal.WriteInt16` method.
+///
+/// Writes a 16-bit signed integer to unmanaged memory.
+///
+/// # Handled Overloads
+///
+/// - `Marshal.WriteInt16(IntPtr, Int16) -> void`
+/// - `Marshal.WriteInt16(IntPtr, Int32, Int16) -> void`
+fn marshal_write_int16_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    if ctx.args.len() < 2 {
+        return PreHookResult::Bypass(None);
+    }
+
+    let Some(addr) = resolve_address(&ctx.args[0], thread) else {
+        return PreHookResult::Bypass(None);
+    };
+
+    // 3-arg overload: WriteInt16(IntPtr ptr, Int32 offset, Int16 value)
+    // 2-arg overload: WriteInt16(IntPtr ptr, Int16 value)
+    let (offset, value_arg) = if ctx.args.len() >= 3 {
+        let off = match &ctx.args[1] {
+            EmValue::I32(v) => i64::from(*v),
+            _ => 0,
+        };
+        (off, &ctx.args[2])
+    } else {
+        (0i64, &ctx.args[1])
+    };
+
+    #[allow(clippy::cast_possible_truncation)]
+    let value = match value_arg {
+        EmValue::I32(v) => *v as i16,
+        _ => return PreHookResult::Bypass(None),
+    };
+
+    let final_addr = (addr as i64).wrapping_add(offset).cast_unsigned();
+    write_with_auto_alloc(thread, final_addr, &value.to_le_bytes());
+    PreHookResult::Bypass(None)
+}
+
+/// Hook for `System.Runtime.InteropServices.Marshal.WriteIntPtr` method.
+///
+/// Writes a pointer-sized value to unmanaged memory.
+///
+/// # Handled Overloads
+///
+/// - `Marshal.WriteIntPtr(IntPtr, IntPtr) -> void`
+/// - `Marshal.WriteIntPtr(IntPtr, Int32, IntPtr) -> void`
+fn marshal_write_intptr_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    if ctx.args.len() < 2 {
+        return PreHookResult::Bypass(None);
+    }
+
+    let Some(addr) = resolve_address(&ctx.args[0], thread) else {
+        return PreHookResult::Bypass(None);
+    };
+
+    // Two-arg form: WriteIntPtr(IntPtr, IntPtr)
+    // Three-arg form: WriteIntPtr(IntPtr, Int32 offset, IntPtr)
+    let (offset, value) = if ctx.args.len() >= 3 {
+        let ofs = ctx.args[1].as_i32().map(i64::from).unwrap_or(0);
+        let val = match &ctx.args[2] {
+            EmValue::NativeInt(v) | EmValue::I64(v) => *v,
+            EmValue::NativeUInt(v) | EmValue::UnmanagedPtr(v) => (*v).cast_signed(),
+            EmValue::I32(v) => i64::from(*v),
+            _ => return PreHookResult::Bypass(None),
+        };
+        (ofs, val)
+    } else {
+        let val = match &ctx.args[1] {
+            EmValue::NativeInt(v) | EmValue::I64(v) => *v,
+            EmValue::NativeUInt(v) | EmValue::UnmanagedPtr(v) => (*v).cast_signed(),
+            EmValue::I32(v) => i64::from(*v),
+            _ => return PreHookResult::Bypass(None),
+        };
+        (0, val)
+    };
+
+    let final_addr = (addr as i64).wrapping_add(offset).cast_unsigned();
+    let ptr_size = ctx.pointer_size.bytes();
+    if ptr_size == 8 {
+        write_with_auto_alloc(thread, final_addr, &value.to_le_bytes());
+    } else {
+        #[allow(clippy::cast_possible_truncation)]
+        let val32 = value as i32;
+        write_with_auto_alloc(thread, final_addr, &val32.to_le_bytes());
+    }
+    PreHookResult::Bypass(None)
+}
+
+/// Hook for `System.Runtime.InteropServices.Marshal.AllocCoTaskMem` method.
+///
+/// Allocates unmanaged memory from the emulator's address space.
+///
+/// # Handled Overloads
+///
+/// - `Marshal.AllocCoTaskMem(Int32) -> IntPtr`
+fn marshal_alloc_cotaskmem_pre(
+    ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
+) -> PreHookResult {
+    let size = ctx
+        .args
+        .first()
+        .and_then(EmValue::as_i32)
+        .unwrap_or(0)
+        .max(0) as usize;
+
+    let size = size.max(1); // Minimum 1 byte allocation
+    match thread.address_space().alloc_unmanaged(size) {
+        Ok(addr) => PreHookResult::Bypass(Some(EmValue::NativeInt(addr as i64))),
+        Err(_) => PreHookResult::Bypass(Some(EmValue::NativeInt(0))),
+    }
+}
+
+/// Hook for `System.Runtime.InteropServices.Marshal.FreeCoTaskMem` method.
+///
+/// No-op in emulation — memory is not individually freed.
+///
+/// # Handled Overloads
+///
+/// - `Marshal.FreeCoTaskMem(IntPtr) -> void`
+fn marshal_free_cotaskmem_pre(
+    _ctx: &HookContext<'_>,
+    _thread: &mut EmulationThread,
+) -> PreHookResult {
+    PreHookResult::Bypass(None)
+}
+
+/// Hook for `System.Runtime.InteropServices.Marshal.AllocHGlobal` method.
+///
+/// Allocates unmanaged memory (same as `AllocCoTaskMem` for emulation purposes).
+///
+/// # Handled Overloads
+///
+/// - `Marshal.AllocHGlobal(Int32) -> IntPtr`
+/// - `Marshal.AllocHGlobal(IntPtr) -> IntPtr`
+fn marshal_alloc_hglobal_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    let size = match ctx.args.first() {
+        Some(EmValue::I32(v)) => (*v).max(0) as usize,
+        Some(EmValue::NativeInt(v)) => (*v).max(0) as usize,
+        _ => 0,
+    };
+
+    let size = size.max(1);
+    match thread.address_space().alloc_unmanaged(size) {
+        Ok(addr) => PreHookResult::Bypass(Some(EmValue::NativeInt(addr as i64))),
+        Err(_) => PreHookResult::Bypass(Some(EmValue::NativeInt(0))),
+    }
+}
+
+/// Hook for `System.Runtime.InteropServices.Marshal.FreeHGlobal` method.
+///
+/// No-op in emulation — memory is not individually freed.
+///
+/// # Handled Overloads
+///
+/// - `Marshal.FreeHGlobal(IntPtr) -> void`
+fn marshal_free_hglobal_pre(
+    _ctx: &HookContext<'_>,
+    _thread: &mut EmulationThread,
+) -> PreHookResult {
+    PreHookResult::Bypass(None)
+}
+
+/// Hook for `System.Runtime.InteropServices.Marshal.SizeOf` method.
+///
+/// Returns the unmanaged size of a type. For primitive types, returns the
+/// exact size. For unknown types, falls back to pointer size.
+///
+/// # Handled Overloads
+///
+/// - `Marshal.SizeOf(Object) -> Int32`
+/// - `Marshal.SizeOf(Type) -> Int32`
+/// - `Marshal.SizeOf<T>() -> Int32`
+fn marshal_sizeof_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    let ptr_size = ctx.pointer_size;
+
+    // Try to resolve the type from the first argument (a Type reflection object)
+    let type_token = ctx.args.first().and_then(|arg| {
+        if let EmValue::ObjectRef(href) = arg {
+            thread
+                .heap()
+                .get_reflection_type_token(*href)
+                .ok()
+                .flatten()
+        } else {
+            None
+        }
+    });
+
+    let size = if let Some(token) = type_token {
+        // Look up the type and compute its marshal size
+        thread
+            .assembly()
+            .and_then(|asm| asm.types().get(&token))
+            .and_then(|ty| ty.flavor().byte_size(ptr_size))
+            .unwrap_or(ptr_size.bytes())
+    } else {
+        ptr_size.bytes()
+    };
+
+    PreHookResult::Bypass(Some(EmValue::I32(size as i32)))
+}
+
+/// Hook for `Marshal.GetDelegateForFunctionPointer` method.
+///
+/// Creates a delegate from a native function pointer. The delegate is
+/// allocated as a `HeapObject::Delegate` so that `Invoke` dispatches
+/// correctly through the emulator's delegate resolution system.
+///
+/// The delegate's target method token is set to
+/// [`tokens::native::NATIVE_FUNCTION_POINTER`] — a synthetic marker that
+/// the delegate dispatcher recognizes as a native function pointer delegate.
+/// When invoked, the dispatcher returns a default success value appropriate
+/// for the return type.
+///
+/// # Handled Overloads
+///
+/// - `Marshal.GetDelegateForFunctionPointer(IntPtr, Type) -> Delegate`
+/// - `Marshal.GetDelegateForFunctionPointer<TDelegate>(IntPtr) -> TDelegate`
+fn marshal_get_delegate_for_function_pointer_pre(
+    ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
+) -> PreHookResult {
+    let type_token = if let Some(EmValue::ObjectRef(type_ref)) = ctx.args.get(1) {
+        thread
+            .heap()
+            .get_reflection_type_token(*type_ref)
+            .unwrap_or(None)
+    } else {
+        None
+    };
+
+    let delegate_type = type_token.unwrap_or(Token::new(0x0200_0001));
+
+    // Extract the function pointer address and look up its name in the
+    // native function registry to allocate a per-function token.
+    let func_addr = ctx.args.first().and_then(|v| match v {
+        EmValue::NativeInt(a) => Some(*a as u64),
+        EmValue::NativeUInt(a) => Some(*a),
+        EmValue::I32(a) => Some(*a as u64),
+        EmValue::I64(a) => Some(*a as u64),
+        _ => None,
+    });
+
+    let native_target = if let Some(addr) = func_addr {
+        let runtime = thread.runtime_state().read().ok();
+        runtime
+            .as_ref()
+            .and_then(|rt| {
+                let name = rt.native_functions().lookup_by_address(addr)?;
+                let token = rt.native_functions().allocate_token(&name);
+                log::debug!(
+                    "GetDelegateForFunctionPointer(0x{addr:X}) → {name} → token 0x{:08X}",
+                    token.value()
+                );
+                Some(token)
+            })
+            .unwrap_or(tokens::native::NATIVE_FUNCTION_POINTER)
+    } else {
+        tokens::native::NATIVE_FUNCTION_POINTER
+    };
+
+    match thread
+        .heap_mut()
+        .alloc_delegate(delegate_type, None, native_target)
+    {
+        Ok(obj_ref) => PreHookResult::Bypass(Some(EmValue::ObjectRef(obj_ref))),
+        Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
+    }
+}
+
+/// Hook for `Marshal.GetFunctionPointerForDelegate` method.
+///
+/// Converts a managed delegate back to a native function pointer. If the
+/// delegate wraps a native function (created via `GetDelegateForFunctionPointer`),
+/// looks up the original address from the native function registry. For managed
+/// delegates, allocates a synthetic native address so the caller has a valid
+/// pointer value.
+///
+/// # Handled Overloads
+///
+/// - `Marshal.GetFunctionPointerForDelegate(Delegate) -> IntPtr`
+/// - `Marshal.GetFunctionPointerForDelegate<TDelegate>(TDelegate) -> IntPtr`
+fn marshal_get_function_pointer_for_delegate_pre(
+    ctx: &HookContext<'_>,
+    thread: &mut EmulationThread,
+) -> PreHookResult {
+    let delegate_ref = ctx.args.first().and_then(|v| match v {
+        EmValue::ObjectRef(href) => Some(*href),
+        _ => None,
+    });
+
+    if let Some(href) = delegate_ref {
+        if let Ok(crate::emulation::HeapObject::Delegate {
+            invocation_list, ..
+        }) = thread.heap().get(href)
+        {
+            if let Some(entry) = invocation_list.first() {
+                let method_token = entry.method_token;
+                if tokens::is_native_function_pointer(method_token) {
+                    if let Ok(rt) = thread.runtime_state().read() {
+                        if let Some(name) = rt.native_functions().lookup_by_token(method_token) {
+                            if let Some(addr) = rt.native_functions().lookup_address_by_name(&name)
+                            {
+                                log::debug!("GetFunctionPointerForDelegate → {name} at 0x{addr:X}");
+                                return PreHookResult::Bypass(Some(EmValue::NativeInt(
+                                    addr as i64,
+                                )));
+                            }
+                        }
+                    }
+                }
+                // For managed delegates, return the method token value as a fake address
+                return PreHookResult::Bypass(Some(EmValue::NativeInt(i64::from(
+                    method_token.value(),
+                ))));
+            }
+        }
+    }
+
+    // Fallback: return a non-null pointer so callers don't crash
+    PreHookResult::Bypass(Some(EmValue::NativeInt(
+        tokens::native_addresses::DELEGATE_FUNCTION_POINTER_FALLBACK,
+    )))
+}
+
+/// Hook for `System.IntPtr..ctor` constructor.
+///
+/// Initializes an IntPtr from an integer value. Since IntPtr is a value type
+/// on the CIL stack, the constructor replaces the `this` pointer's target
+/// with the integer value.
+///
+/// # Handled Overloads
+///
+/// - `IntPtr..ctor(Int32) -> void`
+/// - `IntPtr..ctor(Int64) -> void`
+/// - `IntPtr..ctor(void*) -> void`
+fn intptr_ctor_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
+    let value = match ctx.args.first() {
+        Some(EmValue::I32(v)) => EmValue::NativeInt(i64::from(*v)),
+        Some(EmValue::I64(v)) | Some(EmValue::NativeInt(v)) => EmValue::NativeInt(*v),
+        Some(EmValue::NativeUInt(v)) | Some(EmValue::UnmanagedPtr(v)) => {
+            EmValue::NativeInt((*v).cast_signed())
+        }
+        _ => EmValue::NativeInt(0),
+    };
+
+    // Store the value through the `this` pointer.
+    // For value type locals (ldloca path): this is a ManagedPtr.
+    // For heap-allocated objects (newobj path): this is an ObjectRef — store as a
+    // synthetic field so resolve_address can recover it later.
+    match ctx.this {
+        Some(EmValue::ManagedPtr(ptr)) => {
+            let _ = thread.store_through_pointer(ptr, value);
+        }
+        Some(EmValue::ObjectRef(href)) => {
+            // Store the IntPtr value as a field on the heap object.
+            // Use the well-known IntPtr.m_value field token (0x04_FFFF_01).
+            let field_token = Token::new(0x04FF_FF01);
+            let _ = thread.heap_mut().set_field(*href, field_token, value);
+        }
+        _ => {}
+    }
+
+    PreHookResult::Bypass(None)
+}
+
+/// Hook for `System.IntPtr.get_Size` property.
+///
+/// Returns the size of a pointer in bytes (4 for 32-bit, 8 for 64-bit).
+fn intptr_get_size_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+    let size = ctx.pointer_size.bytes() as i32;
+    PreHookResult::Bypass(Some(EmValue::I32(size)))
 }
 
 /// Hook for `System.IntPtr.op_Explicit` operator method.
@@ -497,11 +1202,14 @@ fn intptr_add_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHo
 /// # Handled Overloads
 ///
 /// - `IntPtr.ToInt32() -> Int32`
-fn intptr_to_int32_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+fn intptr_to_int32_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
     #[allow(clippy::cast_possible_truncation)]
     let value = match ctx.this {
         Some(EmValue::NativeInt(v)) => *v as i32,
         Some(EmValue::UnmanagedPtr(v)) => *v as i32,
+        Some(EmValue::ManagedPtr(ptr)) => {
+            resolve_managed_ptr_as_i64(ptr, thread).unwrap_or(0) as i32
+        }
         _ => 0,
     };
     PreHookResult::Bypass(Some(EmValue::I32(value)))
@@ -510,14 +1218,20 @@ fn intptr_to_int32_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> 
 /// Hook for `System.IntPtr.ToInt64` method.
 ///
 /// Converts the pointer value to a 64-bit signed integer.
+/// Handles direct values, unmanaged pointers, and ManagedPointer references
+/// (from `ldloca + call` on value type locals).
 ///
 /// # Handled Overloads
 ///
 /// - `IntPtr.ToInt64() -> Int64`
-fn intptr_to_int64_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
+fn intptr_to_int64_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
     let value = match ctx.this {
         Some(EmValue::NativeInt(v)) => *v,
         Some(EmValue::UnmanagedPtr(v)) => (*v).cast_signed(),
+        Some(EmValue::ManagedPtr(ptr)) => {
+            // Dereference: read the IntPtr value from the pointed-to local/field
+            resolve_managed_ptr_as_i64(ptr, thread).unwrap_or(0)
+        }
         _ => 0,
     };
     PreHookResult::Bypass(Some(EmValue::I64(value)))
@@ -602,7 +1316,7 @@ mod tests {
     fn test_register_hooks() {
         let manager = HookManager::new();
         register(&manager).unwrap();
-        assert_eq!(manager.len(), 14);
+        assert_eq!(manager.len(), 29);
     }
 
     #[test]
@@ -621,7 +1335,7 @@ mod tests {
         let result = marshal_get_hinstance_pre(&ctx, &mut thread);
         match result {
             PreHookResult::Bypass(Some(EmValue::NativeInt(v))) => {
-                assert_eq!(v, 0x0040_0000);
+                assert_eq!(v, tokens::native_addresses::CURRENT_MODULE);
             }
             _ => panic!("Expected Bypass with NativeInt"),
         }

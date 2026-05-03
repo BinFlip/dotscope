@@ -1750,6 +1750,46 @@ impl ManagedPointer {
         self.offset = self.offset.saturating_add(additional_offset);
         self
     }
+
+    /// Synthesizes a deterministic address for this managed pointer.
+    ///
+    /// ECMA-335 §III.3.19 permits converting managed pointers to native int
+    /// via `conv.i` / `conv.u`. The resulting value is implementation-defined
+    /// but must be consistent: the same pointer must always produce the same
+    /// address.
+    ///
+    /// Since managed pointers in the emulator do not have real memory
+    /// addresses, we synthesize a unique value from the pointer's components.
+    /// The address space is partitioned by target kind to avoid collisions:
+    ///
+    /// | Target | Base address |
+    /// |--------|-------------|
+    /// | Local | `0x7FFE_0000_0000` + frame * 0x1_0000 + index * 8 |
+    /// | Argument | `0x7FFD_0000_0000` + frame * 0x1_0000 + index * 8 |
+    /// | ArrayElement | `0x7FFC_0000_0000` + array_id * 0x1_0000 + index * 8 |
+    /// | ObjectField | `0x7FFB_0000_0000` + object_id * 0x1_0000 + field |
+    /// | StaticField | `0x7FFA_0000_0000` + field_token |
+    #[must_use]
+    pub fn synthesize_address(&self) -> u64 {
+        let base = match &self.target {
+            PointerTarget::Local(index) => 0x7FFE_0000_0000_u64
+                .wrapping_add((self.frame_depth as u64).wrapping_mul(0x1_0000))
+                .wrapping_add(u64::from(*index).wrapping_mul(8)),
+            PointerTarget::Argument(index) => 0x7FFD_0000_0000_u64
+                .wrapping_add((self.frame_depth as u64).wrapping_mul(0x1_0000))
+                .wrapping_add(u64::from(*index).wrapping_mul(8)),
+            PointerTarget::ArrayElement { array, index } => 0x7FFC_0000_0000_u64
+                .wrapping_add(array.id().wrapping_mul(0x1_0000))
+                .wrapping_add((*index as u64).wrapping_mul(8)),
+            PointerTarget::ObjectField { object, field } => 0x7FFB_0000_0000_u64
+                .wrapping_add(object.id().wrapping_mul(0x1_0000))
+                .wrapping_add(u64::from(field.value())),
+            PointerTarget::StaticField(token) => {
+                0x7FFA_0000_0000_u64.wrapping_add(u64::from(token.value()))
+            }
+        };
+        base.wrapping_add(u64::from(self.offset))
+    }
 }
 
 /// Target of a managed pointer.

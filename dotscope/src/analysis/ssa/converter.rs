@@ -40,10 +40,10 @@ use crate::{
     analysis::{
         cfg::ControlFlowGraph,
         ssa::{
-            decompose::decompose_instruction, liveness, phis::place_pruned_phis, ConstValue,
-            DefSite, PhiNode, SimulationResult, SsaBlock, SsaFunction, SsaInstruction, SsaOp,
-            SsaType, SsaVarId, StackSimulator, StackSlot, StackSlotSource, TypeProvider, UseSite,
-            VariableOrigin,
+            decompose::decompose_instruction, liveness, phis::place_pruned_phis,
+            resolve_corelib_valuetype, ConstValue, DefSite, PhiNode, SimulationResult, SsaBlock,
+            SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId, StackSimulator, StackSlot,
+            StackSlotSource, TypeProvider, UseSite, VariableOrigin,
         },
     },
     assembly::{opcodes, Immediate, Instruction, Operand},
@@ -293,10 +293,31 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
                 ConstValue::DecryptedArray { .. } => SsaType::Object,
                 ConstValue::Null => SsaType::Null,
                 ConstValue::True | ConstValue::False => SsaType::Bool,
-                // Runtime handle types (ldtoken results)
-                ConstValue::Type(_) => SsaType::RuntimeTypeHandle,
-                ConstValue::MethodHandle(_) => SsaType::RuntimeMethodHandle,
-                ConstValue::FieldHandle(_) => SsaType::RuntimeFieldHandle,
+                // Runtime handle types (`ldtoken` results). Each handle
+                // variant is a distinct corelib `valuetype`; resolve its
+                // TypeRef so the SSA variable carries a real
+                // `valuetype [mscorlib]System.Runtime*Handle` token from
+                // construction — never a tokenless placeholder. The
+                // operand's own token is the *subject* of the handle,
+                // not its type, and is already preserved on the op.
+                ConstValue::Type(_) => self
+                    .type_provider
+                    .assembly()
+                    .map_or(SsaType::Unknown, |a| {
+                        resolve_corelib_valuetype(a, "System.RuntimeTypeHandle")
+                    }),
+                ConstValue::MethodHandle(_) => self
+                    .type_provider
+                    .assembly()
+                    .map_or(SsaType::Unknown, |a| {
+                        resolve_corelib_valuetype(a, "System.RuntimeMethodHandle")
+                    }),
+                ConstValue::FieldHandle(_) => self
+                    .type_provider
+                    .assembly()
+                    .map_or(SsaType::Unknown, |a| {
+                        resolve_corelib_valuetype(a, "System.RuntimeFieldHandle")
+                    }),
             },
 
             // Comparison results are always bool (represented as I32 on stack)
@@ -398,15 +419,19 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             | SsaOp::ArrayLength { .. }
             | SsaOp::LocalAlloc { .. } => SsaType::NativeInt,
 
-            // Load token produces the appropriate RuntimeHandle type
+            // `ldtoken` yields one of three corelib `System.Runtime*Handle`
+            // value-types, depending on which metadata table the operand
+            // points into. Resolve the matching TypeRef so the SSA
+            // variable carries a real `valuetype` token from construction.
             SsaOp::LoadToken { token, .. } => {
-                // Determine handle type based on token table
-                match token.token().table() {
-                    // TypeRef, TypeDef, TypeSpec
-                    0x06 | 0x0A | 0x2B => SsaType::RuntimeMethodHandle, // MethodDef, MemberRef, MethodSpec
-                    0x04 => SsaType::RuntimeFieldHandle,                // Field
-                    _ => SsaType::RuntimeTypeHandle,                    // Default to type handle
-                }
+                let fullname = match token.token().table() {
+                    0x06 | 0x0A | 0x2B => "System.RuntimeMethodHandle", // MethodDef, MemberRef, MethodSpec
+                    0x04 => "System.RuntimeFieldHandle",                // Field
+                    _ => "System.RuntimeTypeHandle", // TypeDef, TypeRef, TypeSpec, …
+                };
+                self.type_provider
+                    .assembly()
+                    .map_or(SsaType::Unknown, |a| resolve_corelib_valuetype(a, fullname))
             }
 
             // Load argument/local — type from type provider

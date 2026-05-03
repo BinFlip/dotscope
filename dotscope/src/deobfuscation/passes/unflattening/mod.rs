@@ -14,17 +14,24 @@
 //!
 //! # Algorithm Overview
 //!
-//! 1. **Detection**: Identify CFF patterns via structural analysis (dominance, SCCs, back-edges)
-//! 2. **State Variable Identification**: Find the variable controlling dispatch via dataflow
-//! 3. **Dispatcher Classification**: Determine dispatcher type (switch, if-else chain, etc.)
-//! 4. **State Resolution**: Resolve state values using constant propagation, symbolic execution, or Z3
-//! 5. **Graph Construction**: Build state transition graph from resolved values
-//! 6. **CFG Reconstruction**: Convert state graph back to clean control flow
+//! 1. **Detection** ([`detection`]): Identify CFF dispatchers via structural graph
+//!    analysis — dominance, predecessor counts, back-edge ratios, method coverage
+//! 2. **State Variable Identification** ([`statevar`]): Trace from the switch
+//!    instruction backwards through the SSA to find the PHI node carrying state
+//! 3. **Dispatcher Classification** ([`dispatcher`]): Determine type (switch with
+//!    optional XOR/modulo transform, if-else chain, computed jump)
+//! 4. **Tracing** ([`tracer`]): Evaluate the method from entry, following state
+//!    transitions through the dispatcher while forking at user branches to build
+//!    a tree of all execution paths
+//! 5. **Reconstruction** ([`reconstruction`]): Extract a patch plan from the trace
+//!    tree (redirects, block clones, state instruction removal) and apply it to
+//!    the SSA, eliminating the dispatcher
 //!
 //! # Design Principles
 //!
 //! - **Structure-based detection**: Uses graph properties, not opcode patterns
-//! - **Tiered state resolution**: Fast path (const prop) with fallback to symbolic/Z3
+//! - **Concrete evaluation**: SSA evaluator resolves state transitions at trace
+//!   time — no solver needed for standard arithmetic encodings
 //! - **Graceful degradation**: Works partially even when full recovery isn't possible
 //! - **Clean separation**: Each phase is isolated for testability
 
@@ -136,6 +143,7 @@ pub fn unflatten_with_dispatchers(
                 targets: d.cases.clone(),
                 default: d.default,
                 state_var: d.state_phi,
+                initial_state: d.initial_state,
             };
 
             let others: Vec<usize> = all_dispatcher_blocks
@@ -147,7 +155,7 @@ pub fn unflatten_with_dispatchers(
 
             tree.dispatcher.as_ref()?;
 
-            extract_patch_plan(&tree).filter(|plan| plan.state_transitions_removed > 0)
+            extract_patch_plan(&tree, ssa).filter(|plan| plan.state_transitions_removed > 0)
         })
         .collect();
 
@@ -186,15 +194,15 @@ pub struct UnflattenConfig {
     /// limit, the method likely has unusual structure or isn't CFF.
     pub max_states: usize,
 
-    /// Enable Z3 solver for complex state encodings.
+    /// Reserved: enable solver for complex state encodings.
     ///
-    /// When constant propagation can't resolve states, the solver can
-    /// enumerate possible values. Disable for faster (but less complete) analysis.
+    /// Placeholder for future solver integration. Currently unused — state
+    /// resolution relies entirely on concrete evaluation via the SSA evaluator.
     pub enable_solver: bool,
 
-    /// Maximum solver time per query in milliseconds.
+    /// Reserved: maximum solver time per query in milliseconds.
     ///
-    /// Limits time spent on individual Z3 queries to prevent stalls.
+    /// Placeholder for future solver integration. Currently unused.
     pub solver_timeout_ms: u64,
 
     /// Minimum confidence score to attempt unflattening (0.0 - 1.0).
@@ -225,10 +233,11 @@ pub struct UnflattenConfig {
     /// tracing stops with a `StopReason::MaxVisitsExceeded`.
     pub max_block_visits: usize,
 
-    /// Maximum recursion depth for tree tracing.
+    /// Maximum nesting depth for the trace tree.
     ///
-    /// Prevents stack overflow when building the trace tree. Limits how
-    /// deeply nested the tree can become from forking at user branches.
+    /// Limits how deeply nested the tree can become from forking at user
+    /// branches. Prevents exponential tree growth in methods with many
+    /// independent conditionals.
     pub max_tree_depth: usize,
 
     /// Target pointer size for SSA evaluation.
@@ -269,15 +278,13 @@ impl UnflattenConfig {
     pub fn confuserex() -> Self {
         Self {
             max_states: 500,
-            enable_solver: false, // Not needed for ConfuserEx
+            enable_solver: false,
             solver_timeout_ms: 50,
             min_confidence: 0.5,
             max_eval_depth: 25,
             max_block_visits: 5000,
             max_tree_depth: 75,
-            pointer_size: PointerSize::Bit32,
-            max_backedge_depth: 10,
-            confidence_weights: DetectionWeights::default(),
+            ..Self::default()
         }
     }
 
@@ -295,15 +302,13 @@ impl UnflattenConfig {
     pub fn aggressive() -> Self {
         Self {
             max_states: 2000,
-            enable_solver: true,
             solver_timeout_ms: 200,
             min_confidence: 0.4,
             max_eval_depth: 50,
             max_block_visits: 20000,
             max_tree_depth: 150,
-            pointer_size: PointerSize::Bit32,
             max_backedge_depth: 15,
-            confidence_weights: DetectionWeights::default(),
+            ..Self::default()
         }
     }
 }
@@ -1263,6 +1268,135 @@ mod tests {
         assert!(
             final_switch_count < initial_switch_count,
             "At least the CFF switch should be eliminated (was {initial_switch_count}, now {final_switch_count})"
+        );
+
+        Ok(())
+    }
+
+    /// Test: NETReactor-style CFF where the state variable is one of many locals.
+    ///
+    /// Reproduces a bug where the optimizer corrupts the initial state value.
+    /// The entry block sets local4 = 10 (state var) along with several other
+    /// locals (local0..3 = various values). After optimization, local4 must
+    /// still evaluate to 10 at the dispatcher, not be confused with another
+    /// local's value.
+    ///
+    /// Pattern:
+    ///   B0: ldc.i4 1; stloc.0     (local0 = 1)
+    ///       ldc.i4 0; stloc.1     (local1 = 0)
+    ///       ldc.i4 4; stloc.2     (local2 = 4)
+    ///       ldc.i4 1; stloc.3     (local3 = 1)
+    ///       ldc.i4 10; stloc.s 4  (local4 = 10, the STATE variable)
+    ///       br dispatcher
+    ///   dispatcher:
+    ///       ldloc.s 4
+    ///       switch (case0..case13)  ; 14 cases, state 10 -> case10
+    ///       br exit                ; default -> exit
+    ///   case10:
+    ///       ldloc.0               ; use local0 (value 1) as a counter
+    ///       ldc.i4 3; stloc.s 4   ; next state = 3
+    ///       br dispatcher
+    ///   case3:
+    ///       ldloc.0
+    ///       ldc.i4 4; stloc.s 4   ; next state = 4
+    ///       br dispatcher
+    ///   case4:
+    ///       br exit
+    ///   (other cases: nop + br dispatcher for padding)
+    ///   exit: ret
+    #[test]
+    fn test_initial_state_preserved_with_multiple_locals() -> crate::Result<()> {
+        let mut asm = InstructionAssembler::new();
+
+        asm
+            // Entry: initialize multiple locals then state var
+            .ldc_i4(1)?
+            .stloc(0)? // local0 = 1
+            .ldc_i4(0)?
+            .stloc(1)? // local1 = 0
+            .ldc_i4(4)?
+            .stloc(2)? // local2 = 4
+            .ldc_i4(1)?
+            .stloc(3)? // local3 = 1
+            .ldc_i4(10)?
+            .stloc_s(4)? // local4 = 10 (STATE VAR)
+            .br("dispatcher")?
+            // Dispatcher: switch on state var (local4)
+            .label("dispatcher")?
+            .ldloc_s(4)?
+            .switch(&[
+                "case0", "case1", "case2", "case3", "case4", "case5", "case6", "case7", "case8",
+                "case9", "case10", "case11", "case12", "case13",
+            ])?
+            .br("exit")? // default -> exit
+            // Case 10: the FIRST executed case (initial state = 10)
+            // Uses local0, then transitions to state 3
+            .label("case10")?
+            .ldloc(0)?
+            .pop()?
+            .ldc_i4(3)?
+            .stloc_s(4)? // next state = 3
+            .br("dispatcher")?
+            // Case 3: second step, transitions to state 4
+            .label("case3")?
+            .ldloc(0)?
+            .pop()?
+            .ldc_i4(4)?
+            .stloc_s(4)? // next state = 4
+            .br("dispatcher")?
+            // Case 4: exits
+            .label("case4")?
+            .br("exit")?;
+
+        // Padding cases: just jump back to dispatcher (dead in correct trace)
+        for i in [0, 1, 2, 5, 6, 7, 8, 9, 11, 12, 13] {
+            asm.label(&format!("case{i}"))?
+                .nop()?
+                .ldc_i4(0)?
+                .stloc_s(4)? // state = 0 (doesn't matter)
+                .br("dispatcher")?;
+        }
+
+        // Exit
+        asm.label("exit")?.ret()?;
+
+        let cfg = build_cfg(asm)?;
+        // 0 args, 5 locals (local0..local4, local4 is state)
+        let ssa = build_ssa(&cfg, 0, 5)?;
+
+        // Verify detection finds the dispatcher with initial_state = 10
+        let mut detector = CffDetector::new(&ssa);
+        let detected = detector.detect_best();
+
+        assert!(detected.is_some(), "CFF dispatcher should be detected");
+        let dispatcher = detected.unwrap();
+
+        assert_eq!(
+            dispatcher.initial_state,
+            Some(10),
+            "Initial state must be 10 (from ldc.i4 10; stloc.s 4 in entry block). \
+             If this fails, the detection or optimizer is corrupting the state variable \
+             value by confusing it with another local's value (e.g., local3=1)."
+        );
+
+        // Now simulate what happens in the full pipeline:
+        // 1. The opaque pred pass may modify branches in case blocks
+        // 2. Optimizer runs (copy prop + DCE)
+        // 3. rebuild_ssa() creates fresh SSA
+        // The state variable must still be detectable with value 10.
+        let mut ssa_mut = ssa;
+        run_full_deobfuscation(&mut ssa_mut)?;
+
+        // After the full pipeline, check if the CFF was properly unflattened.
+        // If the initial state was corrupted (e.g., 10 → 1), the trace would
+        // follow the wrong path (case 1 instead of case 10) and the switch
+        // would remain.
+        let remaining_switches = count_switches(&ssa_mut);
+        assert_eq!(
+            remaining_switches, 0,
+            "CFF switch should be completely removed after unflattening. \
+             If it remains, the trace likely followed the wrong initial state path. \
+             The initial state should be 10 (case10 -> case3 -> case4 -> exit)."
         );
 
         Ok(())

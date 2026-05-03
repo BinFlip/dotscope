@@ -246,6 +246,35 @@ impl Interpreter {
         ptr_size: PointerSize,
     ) -> Result<StepResult> {
         let value = thread.pop()?;
+
+        // When converting a ManagedPtr to native int/uint (conv.i / conv.u),
+        // and the pointer targets an array element, map the array's backing
+        // bytes into the unmanaged address space. This implements the pinned
+        // array pattern used by obfuscators and native interop:
+        //   fixed (byte* ptr = &array[0]) { Marshal.ReadInt64((IntPtr)ptr); }
+        if matches!(
+            conv_type,
+            ConversionType::I | ConversionType::U | ConversionType::I8 | ConversionType::U8
+        ) {
+            if let EmValue::ManagedPtr(ref ptr) = value {
+                if let PointerTarget::ArrayElement { array, index } = &ptr.target {
+                    if let Ok(addr) = thread.pin_array_element(*array, *index, ptr.offset, ptr_size)
+                    {
+                        let result = match conv_type {
+                            ConversionType::U | ConversionType::U8 => EmValue::NativeUInt(addr),
+                            _ =>
+                            {
+                                #[allow(clippy::cast_possible_wrap)]
+                                EmValue::NativeInt(addr as i64)
+                            }
+                        };
+                        thread.push(result)?;
+                        return Ok(StepResult::Continue);
+                    }
+                }
+            }
+        }
+
         let result = value.convert(conv_type, ptr_size)?;
         thread.push(result)?;
         Ok(StepResult::Continue)
@@ -643,20 +672,16 @@ impl Interpreter {
                         }
                     }
                 }
-                HeapObject::Array { elements, .. } => {
+                HeapObject::Array { elements, .. } if elements.len() == 1 => {
                     // Check if it's a single-element array containing an integer
-                    if elements.len() == 1 {
-                        if let Some(int_val) = elements[0].try_to_i64() {
-                            return Some(int_val);
-                        }
+                    if let Some(int_val) = elements[0].try_to_i64() {
+                        return Some(int_val);
                     }
                 }
-                HeapObject::MultiArray { elements, .. } => {
+                HeapObject::MultiArray { elements, .. } if elements.len() == 1 => {
                     // Check if it's a single-element multi-array
-                    if elements.len() == 1 {
-                        if let Some(int_val) = elements[0].try_to_i64() {
-                            return Some(int_val);
-                        }
+                    if let Some(int_val) = elements[0].try_to_i64() {
+                        return Some(int_val);
                     }
                 }
                 HeapObject::String(s) => {

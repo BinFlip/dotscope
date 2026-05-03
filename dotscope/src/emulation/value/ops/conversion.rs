@@ -361,6 +361,12 @@ impl EmValue {
     /// This is an internal helper that converts any numeric value type to `i64`.
     /// For floating point values, truncates toward zero.
     ///
+    /// Pointer types are also supported per ECMA-335 §III.3.19 (`conv.i`):
+    /// - `UnmanagedPtr`: raw address reinterpreted as signed
+    /// - `ManagedPtr`: synthesized deterministic address (the actual address
+    ///   is not available during static emulation, but the value must be
+    ///   consistent for repeated conversions of the same pointer)
+    ///
     /// # Errors
     ///
     /// Returns an error if the value type cannot be converted to a numeric value.
@@ -373,6 +379,8 @@ impl EmValue {
             EmValue::Char(v) => Ok(*v as i64),
             EmValue::F32(v) => Ok(*v as i64),
             EmValue::F64(v) => Ok(*v as i64),
+            EmValue::UnmanagedPtr(addr) => Ok(*addr as i64),
+            EmValue::ManagedPtr(ptr) => Ok(ptr.synthesize_address() as i64),
             _ => Err(EmulationError::InvalidOperationTypes {
                 operation: "conversion".to_string(),
                 operand_types: self.cil_flavor().to_string(),
@@ -387,6 +395,8 @@ impl EmValue {
     /// For signed types, interprets the bit pattern as unsigned.
     /// For floating point values, truncates toward zero (negative values become 0).
     ///
+    /// Pointer types are also supported (see [`to_i64`] for details).
+    ///
     /// # Errors
     ///
     /// Returns an error if the value type cannot be converted to a numeric value.
@@ -400,6 +410,8 @@ impl EmValue {
             EmValue::Char(v) => Ok(*v as u64),
             EmValue::F32(v) => Ok(*v as u64),
             EmValue::F64(v) => Ok(*v as u64),
+            EmValue::UnmanagedPtr(addr) => Ok(*addr),
+            EmValue::ManagedPtr(ptr) => Ok(ptr.synthesize_address()),
             _ => Err(EmulationError::InvalidOperationTypes {
                 operation: "conversion".to_string(),
                 operand_types: self.cil_flavor().to_string(),

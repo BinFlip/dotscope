@@ -7,7 +7,7 @@
 
 use std::collections::{BTreeSet, HashSet};
 
-use crate::metadata::token::Token;
+use crate::metadata::{tables::TableId, token::Token};
 
 /// Request for cleanup operations on a [`CilAssembly`](crate::CilAssembly).
 ///
@@ -86,6 +86,19 @@ pub struct CleanupRequest {
     /// used by anti-tamper, `libc.so.6` used by DotNetHook).
     modulerefs: BTreeSet<Token>,
 
+    /// ManifestResource tokens to remove.
+    ///
+    /// Used for NR-injected encrypted resources (anti-tamper, string tables,
+    /// etc.) whose backing data is embedded in the PE's CLR resource
+    /// section. The generic orphan sweep only removes rows whose
+    /// implementation target (File / AssemblyRef) has been deleted — it
+    /// can't reach embedded rows (`implementation.row == 0`). The writer
+    /// honours deleted-row marks by compacting the resource section and
+    /// remapping `offset_field` values on surviving rows, so once a row is
+    /// marked deleted here the executor's `try_remove` wiring is all that's
+    /// needed; the embedded bytes vanish automatically during regeneration.
+    manifest_resources: BTreeSet<Token>,
+
     /// Metadata tokens orphaned by SSA body rewriting (not entity deletion).
     /// These become additional cascade candidates for MemberRef/TypeRef/AssemblyRef removal.
     rewrite_orphaned_tokens: HashSet<Token>,
@@ -130,6 +143,7 @@ impl Default for CleanupRequest {
             attributes: BTreeSet::new(),
             assemblyrefs: BTreeSet::new(),
             modulerefs: BTreeSet::new(),
+            manifest_resources: BTreeSet::new(),
             rewrite_orphaned_tokens: HashSet::new(),
             excluded_sections: HashSet::new(),
             remove_orphans: true,
@@ -239,14 +253,33 @@ impl CleanupRequest {
     }
 
     /// Adds a field to be removed.
+    ///
+    /// Non-Field tokens (e.g. MemberRef referencing an external field) are
+    /// dropped with a warning. The cleanup pipeline can only remove rows from
+    /// the local Field table; foreign references should reach cleanup via the
+    /// orphan cascade, not via direct deletion. Smuggling a MemberRef in here
+    /// would be misinterpreted as `Field RID == memberref.row`, which has
+    /// historically corrupted the Field table row count.
     pub fn add_field(&mut self, token: Token) -> &mut Self {
+        if !token.is_table(TableId::Field) {
+            log::warn!(
+                "CleanupRequest::add_field rejected non-Field token {token:?} \
+                 (only FieldDef rows are deletable here)"
+            );
+            return self;
+        }
         self.fields.insert(token);
         self
     }
 
     /// Adds multiple fields to be removed.
+    ///
+    /// See [`Self::add_field`] for the table-id constraint; non-Field tokens
+    /// are dropped with a warning instead of being inserted.
     pub fn add_fields(&mut self, tokens: impl IntoIterator<Item = Token>) -> &mut Self {
-        self.fields.extend(tokens);
+        for tok in tokens {
+            self.add_field(tok);
+        }
         self
     }
 
@@ -332,6 +365,36 @@ impl CleanupRequest {
     #[must_use]
     pub fn modulerefs_len(&self) -> usize {
         self.modulerefs.len()
+    }
+
+    /// Adds a `ManifestResource` row to be removed.
+    ///
+    /// Accepts both `Token(TableId::ManifestResource, rid)` and plain RID
+    /// tokens — the executor normalises on RID. The corresponding embedded
+    /// bytes (for rows whose `implementation.row == 0`) are dropped during
+    /// PE regeneration because the writer's existing compaction loop
+    /// already respects `is_row_deleted(TableId::ManifestResource, rid)`.
+    pub fn add_manifest_resource(&mut self, token: Token) -> &mut Self {
+        self.manifest_resources.insert(token);
+        self
+    }
+
+    /// Adds multiple `ManifestResource` rows to be removed.
+    pub fn add_manifest_resources(&mut self, tokens: impl IntoIterator<Item = Token>) -> &mut Self {
+        self.manifest_resources.extend(tokens);
+        self
+    }
+
+    /// Returns an iterator over `ManifestResource` rows to remove in
+    /// descending RID order (required for safe row removal).
+    pub fn manifest_resources(&self) -> impl Iterator<Item = &Token> + '_ {
+        self.manifest_resources.iter().rev()
+    }
+
+    /// Returns the number of `ManifestResource` rows to remove.
+    #[must_use]
+    pub fn manifest_resources_len(&self) -> usize {
+        self.manifest_resources.len()
     }
 
     /// Adds metadata tokens orphaned by SSA body rewriting as cascade candidates.
@@ -425,6 +488,7 @@ impl CleanupRequest {
             && self.attributes.is_empty()
             && self.assemblyrefs.is_empty()
             && self.modulerefs.is_empty()
+            && self.manifest_resources.is_empty()
             && self.excluded_sections.is_empty()
             && self.rewrite_orphaned_tokens.is_empty()
     }
@@ -445,6 +509,7 @@ impl CleanupRequest {
             + self.attributes.len()
             + self.assemblyrefs.len()
             + self.modulerefs.len()
+            + self.manifest_resources.len()
     }
 
     /// Checks if a specific token is marked for deletion.
@@ -463,6 +528,7 @@ impl CleanupRequest {
             || self.attributes.contains(&token)
             || self.assemblyrefs.contains(&token)
             || self.modulerefs.contains(&token)
+            || self.manifest_resources.contains(&token)
     }
 
     /// Adds methods from a `boxcar::Vec<Token>`.
@@ -485,9 +551,11 @@ impl CleanupRequest {
     }
 
     /// Adds fields from a `boxcar::Vec<Token>`.
+    ///
+    /// Honours the same FieldDef-only constraint as [`Self::add_field`].
     pub fn add_fields_from(&mut self, tokens: &boxcar::Vec<Token>) -> &mut Self {
         for (_, token) in tokens {
-            self.fields.insert(*token);
+            self.add_field(*token);
         }
         self
     }
@@ -512,6 +580,8 @@ impl CleanupRequest {
         self.attributes.extend(other.attributes.iter().copied());
         self.assemblyrefs.extend(other.assemblyrefs.iter().copied());
         self.modulerefs.extend(other.modulerefs.iter().copied());
+        self.manifest_resources
+            .extend(other.manifest_resources.iter().copied());
         self.rewrite_orphaned_tokens
             .extend(other.rewrite_orphaned_tokens.iter().copied());
         self.excluded_sections
@@ -534,6 +604,7 @@ impl CleanupRequest {
         all.extend(&self.attributes);
         all.extend(&self.assemblyrefs);
         all.extend(&self.modulerefs);
+        all.extend(&self.manifest_resources);
         all
     }
 }

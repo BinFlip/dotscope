@@ -28,6 +28,7 @@
 mod array;
 mod bitconverter;
 mod convert;
+mod datetime;
 mod diagnostics;
 mod enums;
 mod environment;
@@ -52,6 +53,7 @@ pub fn register(manager: &HookManager) -> Result<()> {
     array::register(manager)?;
     bitconverter::register(manager)?;
     convert::register(manager)?;
+    datetime::register(manager)?;
     diagnostics::register(manager)?;
     enums::register(manager)?;
     environment::register(manager)?;

@@ -237,6 +237,41 @@ impl TableModifications {
     /// Returns `Ok(())` if the operation was applied successfully, or an error
     /// describing why the operation could not be applied.
     pub fn apply_operation(&mut self, op: TableOperation) -> Result<()> {
+        // Reject Delete/Update on RIDs that have never existed in the
+        // table (rid > original_count and not inserted). Stale RIDs from
+        // upstream techniques marking tokens that have already been
+        // shifted out of the table by intermediate regenerations would
+        // otherwise inflate `calculate_table_row_count`'s delete count
+        // without removing any actual row, shifting the header's row
+        // counts out of sync with the bytes the writer emits — corrupting
+        // every table that follows in the layout.
+        //
+        // Note: Update on a row that's been Deleted is intentionally
+        // allowed (it implements the "un-delete via update" pattern);
+        // duplicate Delete is handled below.
+        if let Operation::Delete(rid) | Operation::Update(rid, _) = &op.operation {
+            let rid = *rid;
+            let in_table = rid != 0
+                && match self {
+                    Self::Sparse {
+                        next_rid,
+                        inserted_rows,
+                        ..
+                    } => rid < *next_rid || inserted_rows.contains(&rid),
+                    Self::Replaced(rows) => (rid as usize) <= rows.len(),
+                };
+            if !in_table {
+                let kind = match &op.operation {
+                    Operation::Delete(_) => "delete",
+                    Operation::Update(_, _) => "update",
+                    _ => unreachable!(),
+                };
+                return Err(Error::ModificationInvalid(format!(
+                    "RID {rid} not in table — cannot {kind} a row that never existed"
+                )));
+            }
+        }
+
         match self {
             Self::Sparse {
                 operations,

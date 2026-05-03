@@ -96,7 +96,9 @@ pub(crate) use crypto::{compute_hmac_sha256, compute_hmac_sha512};
 pub(crate) use crypto::{compute_md5, compute_sha1};
 pub(crate) use crypto::{compute_sha256, compute_sha384, compute_sha512};
 #[cfg(feature = "deobfuscation")]
-pub(crate) use crypto::{derive_key_iv, CryptoParameters};
+pub(crate) use crypto::CryptoParameters;
+#[cfg(all(feature = "deobfuscation", feature = "legacy-crypto"))]
+pub(crate) use crypto::derive_key_iv;
 
 #[allow(unused_imports)]
 pub(crate) use decompress::{

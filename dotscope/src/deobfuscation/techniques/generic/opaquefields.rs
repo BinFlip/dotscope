@@ -172,7 +172,12 @@ fn identify_sentinel_method(ssa: &SsaFunction) -> Option<Token> {
         _ => return None,
     };
 
-    // One operand must be LoadStaticField, the other must be Const(Null)
+    // One operand must be LoadStaticField, the other must be Const(Null).
+    // The token in `LoadStaticField` may be a FieldDef (0x04) or a MemberRef
+    // (0x0A) per ECMA-335 — only the former is deletable from this assembly,
+    // so reject MemberRefs here. A sentinel field is, by construction, a
+    // private static FieldDef of the protector; a MemberRef-resolved sentinel
+    // would imply the field lives in another assembly, which we cannot delete.
     let field_token = match (defs.get(&left), defs.get(&right)) {
         (Some(SsaOp::LoadStaticField { field, .. }), Some(SsaOp::Const { value, .. }))
             if value.is_null() =>
@@ -186,6 +191,9 @@ fn identify_sentinel_method(ssa: &SsaFunction) -> Option<Token> {
         }
         _ => return None,
     };
+    if !field_token.is_table(TableId::Field) {
+        return None;
+    }
 
     // Verify the method is small (no more than ~8 real instructions, excluding phis/nops)
     let real_instructions = block

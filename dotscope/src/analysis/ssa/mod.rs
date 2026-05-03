@@ -100,7 +100,7 @@ pub use builder::SsaFunctionBuilder;
 pub use cfg::SsaCfg;
 pub use consts::{evaluate_const_op, ConstEvaluator};
 pub use converter::SsaConverter;
-pub use evaluator::SsaEvaluator;
+pub use evaluator::{ControlFlow, SsaEvaluator};
 pub use exception::SsaExceptionHandler;
 pub use function::{MethodPurity, ReturnInfo, SsaFunction, TrivialPhiOptions};
 pub use instruction::SsaInstruction;
@@ -112,6 +112,9 @@ pub use stack::{SimulationResult, StackSimulator, StackSlot, StackSlotSource};
 #[cfg(feature = "z3")]
 pub use symbolic::Z3Solver;
 pub use symbolic::{SymbolicEvaluator, SymbolicExpr, SymbolicOp};
-pub use types::{FieldRef, MethodRef, SsaType, TypeClass, TypeContext, TypeProvider, TypeRef};
+pub use types::{
+    resolve_corelib_valuetype, FieldRef, MethodRef, SsaType, TypeClass, TypeContext, TypeProvider,
+    TypeRef,
+};
 pub use value::{AbstractValue, ConstValue};
 pub use variable::{DefSite, FunctionVarAllocator, SsaVarId, SsaVariable, UseSite, VariableOrigin};

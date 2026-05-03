@@ -953,41 +953,41 @@ impl PeLoader {
                 let target_offset = page_rva + reloc_offset;
 
                 match reloc_type {
-                    reloc_type::IMAGE_REL_BASED_HIGHLOW => {
-                        // 32-bit fixup
-                        if target_offset + 4 <= image_data.len() {
-                            let value = u32::from_le_bytes([
-                                image_data[target_offset],
-                                image_data[target_offset + 1],
-                                image_data[target_offset + 2],
-                                image_data[target_offset + 3],
-                            ]);
-                            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                            let new_value = (i64::from(value) + delta) as u32;
-                            image_data[target_offset..target_offset + 4]
-                                .copy_from_slice(&new_value.to_le_bytes());
-                        }
+                    // 32-bit fixup
+                    reloc_type::IMAGE_REL_BASED_HIGHLOW
+                        if target_offset + 4 <= image_data.len() =>
+                    {
+                        let value = u32::from_le_bytes([
+                            image_data[target_offset],
+                            image_data[target_offset + 1],
+                            image_data[target_offset + 2],
+                            image_data[target_offset + 3],
+                        ]);
+                        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
+                        let new_value = (i64::from(value) + delta) as u32;
+                        image_data[target_offset..target_offset + 4]
+                            .copy_from_slice(&new_value.to_le_bytes());
                     }
-                    reloc_type::IMAGE_REL_BASED_DIR64 if is_64_bit => {
-                        // 64-bit fixup
-                        if target_offset + 8 <= image_data.len() {
-                            let value = u64::from_le_bytes([
-                                image_data[target_offset],
-                                image_data[target_offset + 1],
-                                image_data[target_offset + 2],
-                                image_data[target_offset + 3],
-                                image_data[target_offset + 4],
-                                image_data[target_offset + 5],
-                                image_data[target_offset + 6],
-                                image_data[target_offset + 7],
-                            ]);
-                            let new_value = (value.cast_signed() + delta).cast_unsigned();
-                            image_data[target_offset..target_offset + 8]
-                                .copy_from_slice(&new_value.to_le_bytes());
-                        }
+                    // 64-bit fixup
+                    reloc_type::IMAGE_REL_BASED_DIR64
+                        if is_64_bit && target_offset + 8 <= image_data.len() =>
+                    {
+                        let value = u64::from_le_bytes([
+                            image_data[target_offset],
+                            image_data[target_offset + 1],
+                            image_data[target_offset + 2],
+                            image_data[target_offset + 3],
+                            image_data[target_offset + 4],
+                            image_data[target_offset + 5],
+                            image_data[target_offset + 6],
+                            image_data[target_offset + 7],
+                        ]);
+                        let new_value = (value.cast_signed() + delta).cast_unsigned();
+                        image_data[target_offset..target_offset + 8]
+                            .copy_from_slice(&new_value.to_le_bytes());
                     }
                     _ => {
-                        // ABSOLUTE (padding) or unknown/unsupported relocation type - skip
+                        // ABSOLUTE (padding), out-of-bounds, or unsupported relocation type - skip
                     }
                 }
             }

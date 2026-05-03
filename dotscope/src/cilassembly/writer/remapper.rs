@@ -351,6 +351,41 @@ impl RidRemapper {
         }
     }
 
+    /// Returns the TypeSpec RID remapping for signature blob processing.
+    ///
+    /// `TypeDefOrRefOrSpecEncoded` tokens (the operand of
+    /// `ELEMENT_TYPE_CLASS` / `ELEMENT_TYPE_VALUETYPE` in a signature) can
+    /// reference TypeSpec rows in addition to TypeDef and TypeRef. Without
+    /// this remapping, signature blobs that reference a surviving TypeSpec
+    /// continue to point at its **old** RID, breaking strict-mode reload
+    /// (the typesystem lookup fails because the post-deletion table only
+    /// contains the row at its **new** RID).
+    ///
+    /// **Important**: Like `typedef_remap()` / `typeref_remap()`, this
+    /// method filters out deleted TypeSpec RIDs.
+    ///
+    /// # Returns
+    ///
+    /// A HashMap mapping old TypeSpec RIDs to new RIDs for surviving rows
+    /// only, or `None` if there are no TypeSpec deletions.
+    #[must_use]
+    pub fn typespec_remap(&self) -> Option<HashMap<u32, u32>> {
+        let full_remap = self.remaps.get(&TableId::TypeSpec)?;
+        let deleted = self.deleted_rids.get(&TableId::TypeSpec);
+
+        let filtered: HashMap<u32, u32> = full_remap
+            .iter()
+            .filter(|(old_rid, _)| deleted.is_none_or(|d| !d.contains(old_rid)))
+            .map(|(&k, &v)| (k, v))
+            .collect();
+
+        if filtered.is_empty() {
+            None
+        } else {
+            Some(filtered)
+        }
+    }
+
     /// Remaps a coded index reference.
     ///
     /// Coded indices encode both the target table (in the tag) and the RID.

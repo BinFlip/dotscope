@@ -316,12 +316,20 @@ fn collect_type_tokens_from_local_sig(blob_data: &[u8], referenced: &mut HashSet
     }
 }
 
-/// Recursively collects TypeDef and TypeRef tokens from a type signature.
+/// Recursively collects TypeDef, TypeRef, and TypeSpec tokens from a type
+/// signature.
+///
+/// `ELEMENT_TYPE_CLASS` and `ELEMENT_TYPE_VALUETYPE` are followed by a
+/// `TypeDefOrRefOrSpecEncoded` token (ECMA-335 §II.23.2.8), so the token's
+/// table can be `TypeDef` (0x02), `TypeRef` (0x01), **or** `TypeSpec`
+/// (0x1B). All three must flow into the live-set so that the cascade
+/// cleanup doesn't drop a TypeSpec that's referenced only via a local
+/// variable signature (no IL operand picks it up).
 fn collect_all_type_tokens(sig: &TypeSignature, out: &mut HashSet<Token>) {
     match sig {
         TypeSignature::Class(token) | TypeSignature::ValueType(token) => {
             let table = token.table();
-            if table == 0x01 || table == 0x02 {
+            if table == 0x01 || table == 0x02 || table == 0x1B {
                 out.insert(*token);
             }
         }

@@ -203,13 +203,7 @@ fn binary_writer_write_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
                 // Write(Boolean) — 1 byte: 0 or 1
                 CilFlavor::Boolean => {
                     let v = match ctx.args.first() {
-                        Some(EmValue::I32(v)) => {
-                            if *v != 0 {
-                                1u8
-                            } else {
-                                0u8
-                            }
-                        }
+                        Some(EmValue::I32(v)) if *v != 0 => 1u8,
                         _ => 0u8,
                     };
                     try_hook!(thread.heap_mut().write_to_stream(stream_ref, &[v]));

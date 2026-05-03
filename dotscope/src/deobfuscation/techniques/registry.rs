@@ -23,6 +23,10 @@ use crate::deobfuscation::techniques::{
     jiejienet::{
         JiejieNetArrays, JiejieNetConstants, JiejieNetResources, JiejieNetStrings, JiejieNetTypeOf,
     },
+    netreactor::{
+        NetReactorAntiTamp, NetReactorAntiTrial, NetReactorLicenseCheck, NetReactorNecroBit,
+        NetReactorPrivateImpl, NetReactorResources,
+    },
     obfuscar::ObfuscarStrings,
     AttributionResult, Detections, Technique,
 };
@@ -138,6 +142,14 @@ impl TechniqueRegistry {
 
         // === Obfuscar techniques ===
         registry.register(Box::new(ObfuscarStrings));
+
+        // === .NET Reactor techniques ===
+        registry.register(Box::new(NetReactorNecroBit));
+        registry.register(Box::new(NetReactorAntiTrial));
+        registry.register(Box::new(NetReactorAntiTamp));
+        registry.register(Box::new(NetReactorLicenseCheck));
+        registry.register(Box::new(NetReactorPrivateImpl));
+        registry.register(Box::new(NetReactorResources));
 
         registry
     }
@@ -393,6 +405,30 @@ impl ObfuscatorMatcher {
             supporting: vec![],
         });
 
+        // .NET Reactor: any single NR-specific technique is sufficient for
+        // attribution. NecroBit is the most distinctive (only NR encrypts
+        // every method body via a `<Module>::.cctor` chain), but the other
+        // NR techniques each match structural patterns that no other
+        // obfuscator in the registry produces — `<PrivateImplementationDetails>{GUID}`
+        // containers, the GUID-marker anti-tamper init runtime, the
+        // `<Module>` trial-guard triplet, etc. Without this, samples
+        // protected by NR but without NecroBit (e.g. `reactor_strings`,
+        // `reactor_resources`, `reactor_antitamp`, `reactor_obfuscation`)
+        // either get no attribution at all or get mis-attributed as
+        // BitMono via single-technique BitMono signatures (`bitmono.junk`
+        // false-positives on NR `br.s +5` anti-disassembly stubs).
+        let netreactor_ids: &[&str] = &[
+            "netreactor.necrobit",
+            "netreactor.antitrial",
+            "netreactor.antitamp",
+            "netreactor.licensecheck",
+            "netreactor.privateimpl",
+            "netreactor.resources",
+        ];
+        for sig in single_technique_signatures(".NET Reactor", netreactor_ids, &[]) {
+            matcher.add_signature(sig);
+        }
+
         matcher
     }
 
@@ -439,7 +475,7 @@ impl ObfuscatorMatcher {
             .collect();
 
         // Sort: most supporting matches first; break ties by required count (more = stronger).
-        candidates.sort_by(|a, b| b.supporting_matched.cmp(&a.supporting_matched));
+        candidates.sort_by_key(|c| std::cmp::Reverse(c.supporting_matched));
         candidates.into_iter().next()
     }
 
@@ -488,7 +524,7 @@ impl ObfuscatorMatcher {
         }
 
         let mut result: Vec<AttributionResult> = best_by_name.into_values().collect();
-        result.sort_by(|a, b| b.supporting_matched.cmp(&a.supporting_matched));
+        result.sort_by_key(|r| std::cmp::Reverse(r.supporting_matched));
         result
     }
 }
@@ -834,5 +870,27 @@ mod tests {
         ds.insert("jiejienet.constants", Detection::new_detected(vec![], None));
         let attr = m.compute_attribution(&ds).unwrap();
         assert_eq!(attr.obfuscator_name, "JIEJIE.NET");
+
+        // Verify .NET Reactor attribution works from ANY single NR technique,
+        // not only NecroBit. NR samples without NecroBit (e.g. strings-only,
+        // resources-only) must still attribute as ".NET Reactor".
+        for nr_id in &[
+            "netreactor.necrobit",
+            "netreactor.antitrial",
+            "netreactor.antitamp",
+            "netreactor.licensecheck",
+            "netreactor.privateimpl",
+            "netreactor.resources",
+        ] {
+            let mut ds = Detections::new();
+            ds.insert(*nr_id, Detection::new_detected(vec![], None));
+            let attr = m.compute_attribution(&ds).unwrap_or_else(|| {
+                panic!("Single NR technique {nr_id} should attribute to .NET Reactor")
+            });
+            assert_eq!(
+                attr.obfuscator_name, ".NET Reactor",
+                "{nr_id} should attribute to .NET Reactor"
+            );
+        }
     }
 }

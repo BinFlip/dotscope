@@ -16,6 +16,7 @@
 //! | `0x7F00_xxxx`      | 0x7F  | Synthetic heap-object type tokens    |
 //! | `0x7F01_xxxx`      | 0x7F  | Synthetic exception type tokens      |
 //! | `0x7F02_xxxx`      | 0x7F  | Dynamic synthetic method tokens      |
+//! | `0x7F03_xxxx`      | 0x7F  | Native function pointer method tokens|
 //! | `0x7F04_xxxx`      | 0x7F  | Synthetic field tokens on syn. types |
 //! | `0x7FFF_xxxx`      | 0x7F  | BCL helper object type tokens        |
 //! | `0xEF00_xxxx`      | 0xEF  | Sentinel field tokens                |
@@ -31,6 +32,7 @@
 //! - `0x7F00_10xx`: Placeholder type tokens (heap streaming)
 //! - `0x7F01_00xx`: Synthetic exception hierarchy tokens
 //! - `0x7F02_xxxx`: Synthetic method tokens (DynamicMethod)
+//! - `0x7F03_xxxx`: Native function pointer method tokens
 //! - `0xF100_xxxx`: Generic instantiation tokens
 
 use crate::metadata::token::Token;
@@ -99,6 +101,8 @@ pub mod collections {
     pub const QUEUE: Token = Token::new(0x7F00_0011);
     /// `HashSet<T>` object.
     pub const HASH_SET: Token = Token::new(0x7F00_0012);
+    /// `IEnumerator` empty enumerator stub object.
+    pub const ENUMERATOR: Token = Token::new(0x7F00_0030);
 }
 
 /// Dynamic code generation types.
@@ -149,6 +153,74 @@ pub mod singletons {
     pub const ASSEMBLY: Token = Token::new(0x7F00_00F0);
     /// Fake `System.AppDomain` singleton.
     pub const APP_DOMAIN: Token = Token::new(0x7F00_00F1);
+}
+
+/// Native function pointer method tokens (`0x7F03_xxxx` range).
+///
+/// These tokens represent native methods resolved through `GetProcAddress` and
+/// wrapped in delegates via `Marshal.GetDelegateForFunctionPointer`. When the
+/// delegate's `Invoke` is called, the dispatcher recognizes these tokens and
+/// returns a default success value (e.g. `I32(1)` for `BOOL`-returning APIs
+/// like `VirtualProtect`).
+pub mod native {
+    use crate::metadata::token::Token;
+
+    /// Base value for the native function pointer token range.
+    /// Individual function tokens are `RANGE_BASE | function_id`.
+    pub const RANGE_BASE: u32 = 0x7F03_0000;
+
+    /// Default marker method token for delegates wrapping native function pointers
+    /// when the specific function cannot be identified.
+    pub const NATIVE_FUNCTION_POINTER: Token = Token::new(RANGE_BASE | 0x0001);
+
+    /// Creates a native function pointer token from a function ID.
+    #[must_use]
+    pub const fn token_for_id(id: u32) -> Token {
+        Token::new(RANGE_BASE | id)
+    }
+}
+
+/// Fake virtual addresses used by P/Invoke and native interop hooks.
+///
+/// These addresses are returned by emulated Win32 API hooks (`GetModuleHandle`,
+/// `LoadLibrary`, `GetProcAddress`) and must not overlap with each other or with
+/// PE image addresses (typically `0x0040_0000`..`0x0042_0000`).
+///
+/// # Address Map
+///
+/// | Range | Purpose |
+/// |-------|---------|
+/// | `0x0040_0000` | Current process image base (`GetModuleHandle(NULL)`) |
+/// | `0x7FFD_0000`..`0x7FFD_FFFF` | Per-function fake addresses (`GetProcAddress`) |
+/// | `0x7FFC_0000` | Fallback for `GetFunctionPointerForDelegate` |
+/// | `0x7FFE_0000` | Non-null module handle (`GetModuleHandle(other)`) |
+/// | `0x7FFE_2000` | Loaded DLL handle (`LoadLibrary`) |
+pub mod native_addresses {
+    /// Image base address for the current process module.
+    ///
+    /// Returned by `GetModuleHandle(NULL)`. Matches the default Win32 PE image
+    /// base so that pointer arithmetic against the PE header produces correct
+    /// offsets.
+    pub const CURRENT_MODULE: i64 = 0x0040_0000;
+
+    /// Handle returned for non-null `GetModuleHandle` calls (requesting a
+    /// specific DLL by name). Must differ from [`CURRENT_MODULE`] so callers
+    /// can distinguish the main module from loaded DLLs.
+    pub const OTHER_MODULE: i64 = 0x7FFE_0000;
+
+    /// Handle returned by all `LoadLibrary` variants.
+    pub const LOADED_LIBRARY: i64 = 0x7FFE_2000;
+
+    /// Base address for per-function fake pointers allocated by `GetProcAddress`.
+    /// Each distinct function name gets `PROC_ADDRESS_BASE + N * PROC_ADDRESS_PAGE`.
+    pub const PROC_ADDRESS_BASE: u64 = 0x7FFD_0000;
+
+    /// Page-size increment between consecutive `GetProcAddress` allocations.
+    pub const PROC_ADDRESS_PAGE: u64 = 0x1000;
+
+    /// Fallback address returned by `GetFunctionPointerForDelegate` when the
+    /// delegate doesn't wrap a known native function.
+    pub const DELEGATE_FUNCTION_POINTER_FALLBACK: i64 = 0x7FFC_0000;
 }
 
 /// BCL helper type tokens for internal hook objects.
@@ -259,6 +331,12 @@ pub mod process_fields {
     pub const MAIN_MODULE: Token = Token::new(0xEF00_0020);
     /// `ProcessModule.FileName` — stores filename string on a `ProcessModule` object.
     pub const FILE_NAME: Token = Token::new(0xEF00_0021);
+    /// `ProcessModule.BaseAddress` — stores native int PE base address.
+    pub const BASE_ADDRESS: Token = Token::new(0xEF00_0022);
+    /// `ProcessModule.ModuleMemorySize` — stores int32 size of image in memory.
+    pub const MODULE_MEMORY_SIZE: Token = Token::new(0xEF00_0023);
+    /// `ProcessModule.ModuleName` — stores module name string.
+    pub const MODULE_NAME: Token = Token::new(0xEF00_0024);
 }
 
 /// Constants for dynamic token range detection.
@@ -317,6 +395,12 @@ pub fn is_synthetic_method(token: Token) -> bool {
     token.value() & ranges::SYNTHETIC_METHOD_MASK == ranges::SYNTHETIC_METHOD_BASE
 }
 
+/// Returns `true` if the token is a native function pointer method (`0x7F03_xxxx`).
+#[must_use]
+pub fn is_native_function_pointer(token: Token) -> bool {
+    token.value() & 0xFFFF_0000 == native::RANGE_BASE
+}
+
 /// Returns `true` if the token is a generic instantiation (`0xF1xx_xxxx`).
 #[must_use]
 pub fn is_generic_instantiation(token: Token) -> bool {
@@ -360,8 +444,8 @@ mod tests {
         emulation::{
             synthetic_exception,
             tokens::{
-                self, codegen, collections, crypto, helpers, io, io_fields, ranges, reflection,
-                singletons, system,
+                self, codegen, collections, crypto, helpers, io, io_fields, native, ranges,
+                reflection, singletons, system,
             },
         },
         metadata::token::Token,
@@ -410,6 +494,18 @@ mod tests {
     }
 
     #[test]
+    fn native_function_pointer_detection() {
+        assert!(tokens::is_native_function_pointer(
+            native::NATIVE_FUNCTION_POINTER
+        ));
+        assert!(tokens::is_native_function_pointer(Token::new(0x7F03_0002)));
+        assert!(!tokens::is_native_function_pointer(reflection::TYPE));
+        assert!(!tokens::is_native_function_pointer(Token::new(
+            ranges::SYNTHETIC_METHOD_BASE | 1
+        )));
+    }
+
+    #[test]
     fn generic_instantiation_detection() {
         assert!(tokens::is_generic_instantiation(Token::new(
             ranges::GENERIC_INSTANTIATION_BASE | 42
@@ -426,6 +522,7 @@ mod tests {
             ranges::SYNTHETIC_METHOD_BASE | 1
         )));
         assert!(tokens::is_synthetic(Token::new(0x7F04_0001)));
+        assert!(tokens::is_synthetic(native::NATIVE_FUNCTION_POINTER));
 
         // Table 0xEF
         assert!(tokens::is_synthetic(Token::new(0xEF00_0010)));

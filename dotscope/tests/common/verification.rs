@@ -204,28 +204,22 @@ impl MethodSemantics {
                     SsaOp::Switch { .. } => {
                         semantics.has_switches = true;
                     }
-                    SsaOp::Jump { target } => {
-                        if *target <= block_idx {
-                            has_back_edge = true;
-                        }
+                    SsaOp::Jump { target } if *target <= block_idx => {
+                        has_back_edge = true;
                     }
                     SsaOp::Branch {
                         true_target,
                         false_target,
                         ..
-                    } => {
-                        if *true_target <= block_idx || *false_target <= block_idx {
-                            has_back_edge = true;
-                        }
+                    } if *true_target <= block_idx || *false_target <= block_idx => {
+                        has_back_edge = true;
                     }
                     SsaOp::BranchCmp {
                         true_target,
                         false_target,
                         ..
-                    } => {
-                        if *true_target <= block_idx || *false_target <= block_idx {
-                            has_back_edge = true;
-                        }
+                    } if *true_target <= block_idx || *false_target <= block_idx => {
+                        has_back_edge = true;
                     }
 
                     // Exceptions
@@ -315,18 +309,14 @@ impl MethodSemantics {
             ConstValue::U32(v) => {
                 semantics.integer_constants.insert(i64::from(*v));
             }
-            ConstValue::U64(v) => {
-                if *v <= i64::MAX as u64 {
-                    semantics.integer_constants.insert(*v as i64);
-                }
+            ConstValue::U64(v) if *v <= i64::MAX as u64 => {
+                semantics.integer_constants.insert(*v as i64);
             }
             ConstValue::NativeInt(v) => {
                 semantics.integer_constants.insert(*v);
             }
-            ConstValue::NativeUInt(v) => {
-                if *v <= i64::MAX as u64 {
-                    semantics.integer_constants.insert(*v as i64);
-                }
+            ConstValue::NativeUInt(v) if *v <= i64::MAX as u64 => {
+                semantics.integer_constants.insert(*v as i64);
             }
             ConstValue::F32(v) => {
                 semantics

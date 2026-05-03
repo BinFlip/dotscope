@@ -85,6 +85,8 @@ use crate::{
     Result,
 };
 
+pub use native::NativeFunctionRegistry;
+
 /// Central runtime state for .NET emulation.
 ///
 /// `RuntimeState` is the main entry point for runtime services during emulation.
@@ -153,6 +155,10 @@ pub struct RuntimeState {
 
     /// Reference to the emulation configuration.
     config: Arc<EmulationConfig>,
+
+    /// Registry mapping native function pointers to their names, shared across
+    /// GetProcAddress, GetDelegateForFunctionPointer, and delegate dispatch.
+    native_functions: NativeFunctionRegistry,
 }
 
 impl RuntimeState {
@@ -203,6 +209,7 @@ impl RuntimeState {
     #[must_use]
     pub fn with_config(config: Arc<EmulationConfig>) -> Self {
         let hooks = HookManager::new();
+        let native_functions = NativeFunctionRegistry::new();
 
         // Register default BCL hooks based on configuration
         if config.stubs.bcl_stubs {
@@ -211,7 +218,8 @@ impl RuntimeState {
 
         // Register default native P/Invoke hooks based on configuration
         if config.stubs.pinvoke_stubs {
-            native::register(&hooks).expect("Native hook registration should not fail at startup");
+            native::register(&hooks, &native_functions)
+                .expect("Native hook registration should not fail at startup");
         }
 
         Self {
@@ -219,6 +227,7 @@ impl RuntimeState {
             app_domain: AppDomainState::new(),
             unknown_method_behavior: UnknownMethodBehavior::default(),
             config,
+            native_functions,
         }
     }
 
@@ -241,6 +250,12 @@ impl RuntimeState {
     #[must_use]
     pub fn hooks(&self) -> Arc<HookManager> {
         Arc::clone(&self.hooks)
+    }
+
+    /// Returns the native function pointer registry.
+    #[must_use]
+    pub fn native_functions(&self) -> &NativeFunctionRegistry {
+        &self.native_functions
     }
 
     /// Returns the behavior for unknown method calls.
@@ -484,6 +499,7 @@ impl RuntimeStateBuilder {
     /// Returns an error if hook registration fails due to a poisoned lock.
     pub fn build(self) -> Result<RuntimeState> {
         let hooks = HookManager::new();
+        let native_functions = NativeFunctionRegistry::new();
 
         // Register defaults if enabled
         if self.register_defaults && self.config.stubs.bcl_stubs {
@@ -492,7 +508,7 @@ impl RuntimeStateBuilder {
 
         // Register native P/Invoke hooks if enabled
         if self.register_defaults && self.config.stubs.pinvoke_stubs {
-            native::register(&hooks)?;
+            native::register(&hooks, &native_functions)?;
         }
 
         // Add custom hooks
@@ -505,6 +521,7 @@ impl RuntimeStateBuilder {
             app_domain: AppDomainState::new(),
             unknown_method_behavior: self.unknown_method_behavior,
             config: Arc::new(self.config),
+            native_functions,
         })
     }
 }

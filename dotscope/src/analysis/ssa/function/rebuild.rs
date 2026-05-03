@@ -16,8 +16,8 @@ use crate::{
         liveness,
         phis::place_pruned_phis,
         verifier::{SsaVerifier, VerifierError, VerifyLevel},
-        DefSite, PhiOperand, SsaBlock, SsaCfg, SsaFunction, SsaOp, SsaType, SsaVarId,
-        TrivialPhiOptions, VariableOrigin,
+        DefSite, PhiOperand, SsaBlock, SsaCfg, SsaFunction, SsaInstruction, SsaOp, SsaType,
+        SsaVarId, TrivialPhiOptions, VariableOrigin,
     },
     utils::{
         graph::{
@@ -240,6 +240,84 @@ impl<'a> SsaRebuilder<'a> {
         Ok(())
     }
 
+    /// Clones side-effect-free defs from unreachable blocks into the entry
+    /// block so their downstream uses survive block clearing.
+    ///
+    /// Called from `pre_clean_unreachable` before the clear step. Only
+    /// `Const`, `LoadToken`, and `LoadStaticField` are eligible — these
+    /// have no operands (or only compile-time-constant operands) and no
+    /// side effects, so relocating them to the entry is always safe.
+    fn rescue_orphaned_pure_defs(ssa: &mut SsaFunction, reachable: &BitSet) {
+        if ssa.blocks.is_empty() {
+            return;
+        }
+
+        // Collect every var used from reachable code — instruction operands
+        // and phi operand values.
+        let mut reachable_uses: BTreeSet<SsaVarId> = BTreeSet::new();
+        for bi in reachable.iter() {
+            let Some(block) = ssa.block(bi) else {
+                continue;
+            };
+            for phi in block.phi_nodes() {
+                for op in phi.operands() {
+                    reachable_uses.insert(op.value());
+                }
+            }
+            for instr in block.instructions() {
+                for u in instr.op().uses() {
+                    reachable_uses.insert(u);
+                }
+            }
+        }
+
+        if reachable_uses.is_empty() {
+            return;
+        }
+
+        // Collect rescuable instructions from unreachable blocks.
+        let mut to_rescue: Vec<SsaInstruction> = Vec::new();
+        for bi in 0..ssa.block_count() {
+            if reachable.contains(bi) {
+                continue;
+            }
+            let Some(block) = ssa.block(bi) else {
+                continue;
+            };
+            for instr in block.instructions() {
+                let Some(dest) = instr.def() else {
+                    continue;
+                };
+                if !reachable_uses.contains(&dest) {
+                    continue;
+                }
+                if !matches!(
+                    instr.op(),
+                    SsaOp::Const { .. } | SsaOp::LoadToken { .. } | SsaOp::LoadStaticField { .. }
+                ) {
+                    continue;
+                }
+                to_rescue.push(instr.clone());
+            }
+        }
+
+        if to_rescue.is_empty() {
+            return;
+        }
+
+        let Some(entry) = ssa.block_mut(0) else {
+            return;
+        };
+        let term_idx = entry
+            .instructions()
+            .iter()
+            .position(|i| i.is_terminator())
+            .unwrap_or(entry.instructions().len());
+        for (i, instr) in to_rescue.into_iter().enumerate() {
+            entry.instructions_mut().insert(term_idx + i, instr);
+        }
+    }
+
     /// Removes unreachable blocks and simplifies stale phi operands.
     ///
     /// Must run BEFORE `recompute_groups_from_connectivity` so that stale phi
@@ -248,9 +326,21 @@ impl<'a> SsaRebuilder<'a> {
     /// removal that make blocks unreachable (but don't clean up phis in
     /// successor blocks) cause phi results to be split from their operands,
     /// leading to orphan groups with no definitions after phi clearing.
+    ///
+    /// Before clearing, this rescues side-effect-free defs from unreachable
+    /// blocks whose result variable is still referenced from reachable code.
+    /// CFG-modifying passes (CFF unflattening, jump threading, dead branch
+    /// removal, block merging) can redirect control flow past a block that
+    /// held a loop-invariant `Const` / `LoadToken` / `LoadStaticField`
+    /// hoisted there by an earlier LICM pass. Wiping the block would orphan
+    /// the use site and leave codegen reading an uninitialized local slot.
+    /// Cloning the def into the entry block keeps it dominating every
+    /// reachable use.
     fn pre_clean_unreachable(&mut self) {
         let cfg = SsaCfg::from_ssa(self.ssa);
         let reachable = Self::compute_reachable_blocks(self.ssa, &cfg);
+
+        Self::rescue_orphaned_pure_defs(self.ssa, &reachable);
 
         // Clear unreachable blocks
         for block_idx in 0..self.ssa.blocks.len() {
@@ -645,6 +735,63 @@ impl<'a> SsaRebuilder<'a> {
         }
 
         for (var_id, new_group) in updates {
+            self.ssa.set_rename_group(var_id, new_group);
+        }
+
+        // Split groups that have multiple instruction-level definitions in the
+        // same block. After block merging or constant hoisting, a single block
+        // can end up with several Const/Copy definitions in the same rename
+        // group. The rename phase processes them sequentially and only the LAST
+        // definition is visible to successors (last-writer-wins). If the first
+        // definition is the semantically correct one (e.g., the CFF initial
+        // state), it gets shadowed by a later hoisted constant.
+        //
+        // Fix: for each block, keep the FIRST definition of each group and
+        // assign new groups to subsequent definitions. This makes each hoisted
+        // constant independent, preventing it from shadowing the original.
+        let max_group_so_far = self
+            .ssa
+            .rename_groups
+            .iter()
+            .copied()
+            .filter(|&g| g != u32::MAX)
+            .max()
+            .unwrap_or(next_new_group);
+        let mut next_split_group = max_group_so_far + 1;
+        let mut split_updates: Vec<(SsaVarId, u32)> = Vec::new();
+
+        for block in &self.ssa.blocks {
+            // Track which groups already have a definition in this block.
+            // Key: group ID, Value: true if first def already seen.
+            let mut seen_groups: BTreeMap<u32, bool> = BTreeMap::new();
+
+            for instr in block.instructions() {
+                let Some(dest) = instr.op().dest() else {
+                    continue;
+                };
+                let group = self.ssa.rename_group(dest);
+                if group == u32::MAX {
+                    continue;
+                }
+                if let Some(already_seen) = seen_groups.get_mut(&group) {
+                    if *already_seen {
+                        // Third+ definition — also split
+                        split_updates.push((dest, next_split_group));
+                        next_split_group += 1;
+                    } else {
+                        // Second definition — split this one
+                        split_updates.push((dest, next_split_group));
+                        next_split_group += 1;
+                        *already_seen = true;
+                    }
+                } else {
+                    // First definition — keep in original group
+                    seen_groups.insert(group, false);
+                }
+            }
+        }
+
+        for (var_id, new_group) in split_updates {
             self.ssa.set_rename_group(var_id, new_group);
         }
     }
@@ -1068,23 +1215,21 @@ impl<'a> SsaRebuilder<'a> {
                 }
                 // Track implicit uses from LoadLocal/LoadArg
                 match instr.op() {
-                    SsaOp::LoadLocal { dest, local_index } => {
-                        if consumed_vars.contains(dest.index()) {
-                            let group = self.ssa.num_args as u32 + *local_index as u32;
-                            use_sites
-                                .entry(group)
-                                .or_insert_with(|| BitSet::new(block_count))
-                                .insert(block_idx);
-                        }
+                    SsaOp::LoadLocal { dest, local_index }
+                        if consumed_vars.contains(dest.index()) =>
+                    {
+                        let group = self.ssa.num_args as u32 + *local_index as u32;
+                        use_sites
+                            .entry(group)
+                            .or_insert_with(|| BitSet::new(block_count))
+                            .insert(block_idx);
                     }
-                    SsaOp::LoadArg { dest, arg_index } => {
-                        if consumed_vars.contains(dest.index()) {
-                            let group = *arg_index as u32;
-                            use_sites
-                                .entry(group)
-                                .or_insert_with(|| BitSet::new(block_count))
-                                .insert(block_idx);
-                        }
+                    SsaOp::LoadArg { dest, arg_index } if consumed_vars.contains(dest.index()) => {
+                        let group = *arg_index as u32;
+                        use_sites
+                            .entry(group)
+                            .or_insert_with(|| BitSet::new(block_count))
+                            .insert(block_idx);
                     }
                     _ => {}
                 }
@@ -1798,10 +1943,41 @@ impl<'a> SsaRebuilder<'a> {
                 if group == u32::MAX {
                     continue;
                 }
-                if let Some(reaching_def) = version_stacks
-                    .get(&group)
-                    .and_then(|stack| stack.last().copied())
-                {
+                // Determine the reaching definition. Using stack.last() is almost
+                // always correct — it's the most recent definition of the group
+                // that dominates this edge. But for a back-edge where the loop
+                // body doesn't redefine the group, stack.last() is the successor
+                // block's OWN PHI result (pushed when rename entered the
+                // successor), which would produce a self-referential PHI operand.
+                //
+                // Self-referential operands are technically valid SSA (meaning
+                // "no change on this edge") but they destroy per-edge attribution:
+                // an earlier LICM pass may have legitimately hoisted a case-block
+                // state-update Const to a preheader and left the PHI operand
+                // pointing at the hoisted variable. That hoisted variable still
+                // dominates this edge, so the existing operand value is the
+                // correct reaching def — but rename's dominator-tree walk only
+                // sees the header PHI on top of the stack because case blocks
+                // don't redefine the group locally. Overwriting with the header
+                // PHI result loses the hoisted value.
+                //
+                // When the most-recent reaching def would be the successor's own
+                // PHI result, walk down the version stack to find the next
+                // reaching def that ISN'T a self-reference. If none exists, skip
+                // the fill — preserving whatever operand is already there (e.g.,
+                // a LICM-maintained reference to the hoisted variable).
+                let succ_phi_result = ssa
+                    .block(succ_idx)
+                    .and_then(|b| b.phi_nodes().get(phi_idx))
+                    .map(|phi| phi.result());
+                let reaching_def = version_stacks.get(&group).and_then(|stack| {
+                    stack
+                        .iter()
+                        .rev()
+                        .find(|&&v| Some(v) != succ_phi_result)
+                        .copied()
+                });
+                if let Some(reaching_def) = reaching_def {
                     if let Some(succ_block) = ssa.block_mut(succ_idx) {
                         if let Some(phi) = succ_block.phi_nodes_mut().get_mut(phi_idx) {
                             phi.set_operand(block_idx, reaching_def);

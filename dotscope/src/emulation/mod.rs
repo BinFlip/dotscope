@@ -143,9 +143,10 @@ pub use value::{
 
 // Re-export primary types from memory module
 pub use memory::{
-    AddressSpace, ArgumentStorage, EncodingType, EvaluationStack, HeapObject, LocalVariables,
-    ManagedHeap, MemoryProtection, MemoryRegion, Page, SectionInfo, SharedHeap, StaticFieldStorage,
-    ThreadId, TypeInitState, TypeWrapper, UnmanagedMemory, UnmanagedRef, PAGE_SIZE,
+    AddressSpace, ArgumentStorage, DictionaryKey, EncodingType, EvaluationStack, HeapObject,
+    LocalVariables, ManagedHeap, MemoryProtection, MemoryRegion, Page, SectionInfo, SharedHeap,
+    StaticFieldStorage, ThreadId, TypeInitState, TypeWrapper, UnmanagedMemory, UnmanagedRef,
+    PAGE_SIZE,
 };
 
 // Re-export primary types from engine module
@@ -191,9 +192,9 @@ pub use runtime::{
 
 // Re-export primary types from capture module
 pub use capture::{
-    BufferSource, CaptureContext, CaptureSource, CapturedAssembly, CapturedBuffer,
-    CapturedMethodReturn, CapturedString, FileOpKind, FileOperation, MemorySnapshot, NetworkOpKind,
-    NetworkOperation,
+    AssemblyLoadMethod, BufferSource, CaptureContext, CaptureSource, CapturedAssembly,
+    CapturedBuffer, CapturedMethodReturn, CapturedString, FileOpKind, FileOperation,
+    MemorySnapshot, NetworkOpKind, NetworkOperation,
 };
 
 // Re-export primary types from loader module
