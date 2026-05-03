@@ -36,7 +36,7 @@ jobs:
         components: rustfmt, clippy
         
     - name: Setup .NET SDK
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v5
       with:
         dotnet-version: '8.0.x'
 
@@ -204,7 +204,7 @@ jobs:
         components: llvm-tools-preview
         
     - name: Setup .NET SDK
-      uses: actions/setup-dotnet@v4
+      uses: actions/setup-dotnet@v5
       with:
         dotnet-version: '8.0.x'
 
@@ -231,7 +231,7 @@ jobs:
       run: cargo llvm-cov --workspace --features z3,skip-expensive-tests --lcov --output-path lcov.info --exclude dotscope-cli
       
     - name: Upload to codecov.io
-      uses: codecov/codecov-action@v5
+      uses: codecov/codecov-action@v6
       with:
         files: lcov.info
         fail_ci_if_error: true
