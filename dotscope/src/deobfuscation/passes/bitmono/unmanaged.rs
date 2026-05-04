@@ -184,15 +184,14 @@ fn find_unmanaged_string_sites(
         // traces) should not prevent finding the actual string constructor.
         // Limit search distance to avoid O(n²) behaviour across many call sites.
         const MAX_SEARCH_DISTANCE: usize = 20;
-        let search_end = (i + 1 + MAX_SEARCH_DISTANCE).min(instructions.len());
-        for (j, next) in instructions
-            .iter()
-            .enumerate()
-            .skip(i + 1)
-            .take(search_end - (i + 1))
-        {
+        let start = i.saturating_add(1);
+        let search_end = start
+            .saturating_add(MAX_SEARCH_DISTANCE)
+            .min(instructions.len());
+        let take = search_end.saturating_sub(start);
+        for (j, next) in instructions.iter().enumerate().skip(start).take(take) {
             if let SsaOp::NewObj { dest, args, .. } = next.op() {
-                if args.len() == 1 && args[0] == call_dest {
+                if args.len() == 1 && args.first() == Some(&call_dest) {
                     sites.push(UnmanagedStringSite {
                         call_idx: i,
                         newobj_idx: j,

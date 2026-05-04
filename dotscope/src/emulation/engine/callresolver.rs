@@ -484,7 +484,7 @@ impl CallResolver {
             let total_args = if is_static {
                 param_types.len()
             } else {
-                param_types.len() + 1
+                param_types.len().saturating_add(1)
             };
             let arg_values = thread.pop_args(total_args)?;
             let expects_return = context.method_returns_value(method_token)?;
@@ -581,7 +581,7 @@ impl CallResolver {
             if let Some(member_ref) = context.get_member_ref(method_token) {
                 if let MemberRefSignature::Method(method_sig) = &member_ref.signature {
                     let total_args = if method_sig.has_this {
-                        method_sig.param_count as usize + 1
+                        (method_sig.param_count as usize).saturating_add(1)
                     } else {
                         method_sig.param_count as usize
                     };
@@ -593,7 +593,9 @@ impl CallResolver {
                     // hook lookup using the runtime type of `this`.
                     if is_virtual && method_sig.has_this && total_args > 0 {
                         let args = thread.peek_args(total_args)?;
-                        let this_arg = &args[0];
+                        let Some((this_arg, rest_args)) = args.split_first() else {
+                            return Err(out_of_bounds_error!());
+                        };
 
                         if let EmValue::ObjectRef(heap_ref) = this_arg {
                             if let Ok(runtime_type_token) = thread.heap().get_type_token(*heap_ref)
@@ -629,7 +631,7 @@ impl CallResolver {
                                         let (this_ref, method_args): (
                                             Option<&EmValue>,
                                             &[EmValue],
-                                        ) = (Some(&args[0]), &args[1..]);
+                                        ) = (Some(this_arg), rest_args);
 
                                         let hook_context = HookContext::new(
                                             method_token,
@@ -756,7 +758,7 @@ impl CallResolver {
         let param_count = method.signature.params.len();
         let is_instance = !context.is_static_method(method_token)?;
         let total_args = if is_instance {
-            param_count + 1
+            param_count.saturating_add(1)
         } else {
             param_count
         };
@@ -776,16 +778,25 @@ impl CallResolver {
                 // ECMA-335 III.2.1: If the constraint type is a value type and it does NOT
                 // override the method, box the value type and use the boxed ref as 'this'.
                 if resolved == method_token && context.is_value_type(constraint_token) {
-                    if let EmValue::ManagedPtr(ptr) = &arg_values[0] {
-                        if let Ok(value) = typeops::deref_managed_ptr(address_space, thread, ptr) {
+                    let ptr_opt = match arg_values.first() {
+                        Some(EmValue::ManagedPtr(ptr)) => Some(ptr.clone()),
+                        _ => None,
+                    };
+                    if let Some(ptr) = ptr_opt {
+                        if let Ok(value) = typeops::deref_managed_ptr(address_space, thread, &ptr) {
                             let boxed = thread.heap_mut().alloc_boxed(constraint_token, value)?;
-                            arg_values[0] = EmValue::ObjectRef(boxed);
+                            if let Some(slot) = arg_values.first_mut() {
+                                *slot = EmValue::ObjectRef(boxed);
+                            }
                         }
                     }
                 }
                 resolved
             } else {
-                self.resolve_virtual_dispatch(context, thread, method_token, &arg_values[0])
+                let Some(this_arg) = arg_values.first() else {
+                    return Err(out_of_bounds_error!());
+                };
+                self.resolve_virtual_dispatch(context, thread, method_token, this_arg)
             }
         } else {
             method_token
@@ -818,7 +829,7 @@ impl CallResolver {
             && is_instance
             && !arg_values.is_empty()
         {
-            if let EmValue::ObjectRef(href) = &arg_values[0] {
+            if let Some(EmValue::ObjectRef(href)) = arg_values.first() {
                 match thread.heap().get(*href) {
                     Ok(HeapObject::Delegate {
                         invocation_list, ..
@@ -912,12 +923,16 @@ impl CallResolver {
                             };
 
                             if should_dispatch {
-                                let delegate_args: Vec<EmValue> = arg_values[1..].to_vec();
+                                let delegate_args: Vec<EmValue> =
+                                    arg_values.get(1..).unwrap_or(&[]).to_vec();
 
                                 // Set up multicast state if there are more entries
                                 if invocation_list.len() > 1 {
                                     thread.set_multicast_state(MulticastState {
-                                        remaining_entries: invocation_list[1..].to_vec(),
+                                        remaining_entries: invocation_list
+                                            .get(1..)
+                                            .unwrap_or(&[])
+                                            .to_vec(),
                                         delegate_args: delegate_args.clone(),
                                         dispatch_depth: thread.call_depth(),
                                     });
@@ -935,12 +950,16 @@ impl CallResolver {
                             }
 
                             if target_token.is_table(TableId::MemberRef) {
-                                let delegate_args: Vec<EmValue> = arg_values[1..].to_vec();
+                                let delegate_args: Vec<EmValue> =
+                                    arg_values.get(1..).unwrap_or(&[]).to_vec();
 
                                 // Set up multicast state if there are more entries
                                 if invocation_list.len() > 1 {
                                     thread.set_multicast_state(MulticastState {
-                                        remaining_entries: invocation_list[1..].to_vec(),
+                                        remaining_entries: invocation_list
+                                            .get(1..)
+                                            .unwrap_or(&[])
+                                            .to_vec(),
                                         delegate_args: delegate_args.clone(),
                                         dispatch_depth: thread.call_depth(),
                                     });
@@ -987,7 +1006,8 @@ impl CallResolver {
             } else {
                 debug!(
                     "Delegate Invoke on {:?}: this is {:?}, not an ObjectRef",
-                    resolved_method_token, arg_values[0],
+                    resolved_method_token,
+                    arg_values.first(),
                 );
             }
         }
@@ -1401,7 +1421,7 @@ impl CallResolver {
         info: &ResolvedMethodInfo,
     ) -> Result<HookOutcome> {
         let total_args = if info.has_this {
-            info.param_count + 1
+            info.param_count.saturating_add(1)
         } else {
             info.param_count
         };
@@ -1417,12 +1437,14 @@ impl CallResolver {
         let return_type = context.get_return_type(method_token).ok().flatten();
 
         // Split into this and method args
-        let (this_ref, method_args): (Option<&EmValue>, &[EmValue]) =
-            if info.has_this && !args.is_empty() {
-                (Some(&args[0]), &args[1..])
-            } else {
-                (None, &args[..])
-            };
+        let (this_ref, method_args): (Option<&EmValue>, &[EmValue]) = if info.has_this {
+            match args.split_first() {
+                Some((first, rest)) => (Some(first), rest),
+                None => (None, args.as_slice()),
+            }
+        } else {
+            (None, args.as_slice())
+        };
 
         let hook_context = HookContext::new(
             method_token,

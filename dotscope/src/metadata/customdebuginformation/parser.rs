@@ -378,7 +378,11 @@ impl<'a> CustomDebugParser<'a> {
             return Vec::new();
         }
 
-        self.parser.data()[pos..len].to_vec()
+        self.parser
+            .data()
+            .get(pos..len)
+            .map(<[u8]>::to_vec)
+            .unwrap_or_default()
     }
 }
 

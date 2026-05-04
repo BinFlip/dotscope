@@ -1084,7 +1084,7 @@ impl<'a> TypeContext<'a> {
                     .map_or(SsaType::Object, |dt| SsaType::Class(TypeRef::new(dt.token)));
             }
             // Adjust for 'this' offset
-            if let Some(param) = self.method.signature.params.get(idx - 1) {
+            if let Some(param) = self.method.signature.params.get(idx.saturating_sub(1)) {
                 let ty = SsaType::from_type_signature(&param.base, self.assembly);
                 return self.validate_generic_params(ty);
             }

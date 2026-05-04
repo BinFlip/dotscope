@@ -501,7 +501,7 @@ impl MemorySsa {
     fn allocate_version(&mut self, location: &MemoryLocation) -> u32 {
         let version = self.next_version.entry(location.clone()).or_insert(0);
         let result = *version;
-        *version += 1;
+        *version = version.saturating_add(1);
         result
     }
 
@@ -666,7 +666,10 @@ impl MemorySsa {
                     continue;
                 }
 
-                for frontier_block in frontiers[node_id.index()].iter() {
+                let Some(frontier_set) = frontiers.get(node_id.index()) else {
+                    continue;
+                };
+                for frontier_block in frontier_set.iter() {
                     if phi_blocks.insert(frontier_block) {
                         // Add phi at frontier
                         let version = self.allocate_version(&location);
@@ -720,16 +723,20 @@ impl MemorySsa {
         let mut worklist = vec![cfg.entry().index()];
 
         while let Some(block_idx) = worklist.pop() {
-            if visited[block_idx] {
-                continue;
+            match visited.get(block_idx) {
+                Some(true) => continue,
+                None => continue,
+                Some(false) => {}
             }
-            visited[block_idx] = true;
+            if let Some(slot) = visited.get_mut(block_idx) {
+                *slot = true;
+            }
 
             self.rename_block(block_idx, ssa, cfg, &mut version_stacks);
 
             // Add dominated blocks to worklist
             for child in dom_tree.children(NodeId::new(block_idx)) {
-                if !visited[child.index()] {
+                if visited.get(child.index()).copied() == Some(false) {
                     worklist.push(child.index());
                 }
             }
@@ -969,12 +976,15 @@ pub fn analyze_alias(loc1: &MemoryLocation, loc2: &MemoryLocation) -> AliasResul
 mod tests {
     use super::*;
 
-    use crate::analysis::ssa::{FieldRef, SsaVarId};
+    use crate::{
+        analysis::ssa::{FieldRef, SsaVarId},
+        metadata::token::Token,
+    };
 
     #[test]
     fn test_memory_location_static_field_alias() {
-        let field1 = FieldRef::new(crate::metadata::token::Token::new(0x04000001));
-        let field2 = FieldRef::new(crate::metadata::token::Token::new(0x04000002));
+        let field1 = FieldRef::new(Token::new(0x04000001));
+        let field2 = FieldRef::new(Token::new(0x04000002));
 
         let loc1 = MemoryLocation::StaticField(field1);
         let loc2 = MemoryLocation::StaticField(field1);
@@ -987,7 +997,7 @@ mod tests {
 
     #[test]
     fn test_memory_location_instance_field_alias() {
-        let field = FieldRef::new(crate::metadata::token::Token::new(0x04000001));
+        let field = FieldRef::new(Token::new(0x04000001));
         let obj1 = SsaVarId::from_index(0);
         let obj2 = SsaVarId::from_index(1);
 
@@ -1030,7 +1040,7 @@ mod tests {
 
     #[test]
     fn test_memory_location_unknown_alias() {
-        let field = FieldRef::new(crate::metadata::token::Token::new(0x04000001));
+        let field = FieldRef::new(Token::new(0x04000001));
         let loc1 = MemoryLocation::Unknown;
         let loc2 = MemoryLocation::StaticField(field);
 
@@ -1040,7 +1050,7 @@ mod tests {
 
     #[test]
     fn test_alias_result() {
-        let field = FieldRef::new(crate::metadata::token::Token::new(0x04000001));
+        let field = FieldRef::new(Token::new(0x04000001));
         let loc1 = MemoryLocation::StaticField(field);
         let loc2 = MemoryLocation::StaticField(field);
 
@@ -1057,7 +1067,7 @@ mod tests {
     #[test]
     fn test_memory_state() {
         let mut state = MemoryState::new();
-        let field = FieldRef::new(crate::metadata::token::Token::new(0x04000001));
+        let field = FieldRef::new(Token::new(0x04000001));
         let loc = MemoryLocation::StaticField(field);
         let value = SsaVarId::from_index(0);
 
@@ -1072,7 +1082,7 @@ mod tests {
 
     #[test]
     fn test_memory_phi() {
-        let field = FieldRef::new(crate::metadata::token::Token::new(0x04000001));
+        let field = FieldRef::new(Token::new(0x04000001));
         let loc = MemoryLocation::StaticField(field);
 
         let mut phi = MemoryPhi::new(loc.clone(), 2);
@@ -1088,7 +1098,7 @@ mod tests {
 
     #[test]
     fn test_memory_op() {
-        let field = FieldRef::new(crate::metadata::token::Token::new(0x04000001));
+        let field = FieldRef::new(Token::new(0x04000001));
         let loc = MemoryLocation::StaticField(field);
         let dest = SsaVarId::from_index(0);
         let value = SsaVarId::from_index(1);

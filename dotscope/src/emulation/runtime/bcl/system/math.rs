@@ -384,11 +384,11 @@ pub fn register(manager: &HookManager) -> Result<()> {
 ///
 /// - `value`: The number whose absolute value is to be found
 fn system_math_abs_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(0_i32.into()));
-    }
+    };
 
-    let result = match &ctx.args[0] {
+    let result = match arg0 {
         EmValue::I32(n) => n.abs().into(),
         EmValue::I64(n) => n.abs().into(),
         EmValue::F32(f) => f.abs().into(),
@@ -422,16 +422,16 @@ fn system_math_abs_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> 
 /// - `val1`: The first of two values to compare
 /// - `val2`: The second of two values to compare
 fn system_math_min_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(ctx.args.first().cloned());
-    }
+    };
 
-    let result = match (&ctx.args[0], &ctx.args[1]) {
+    let result = match (arg0, arg1) {
         (EmValue::I32(a), EmValue::I32(b)) => (*a.min(b)).into(),
         (EmValue::I64(a), EmValue::I64(b)) => (*a.min(b)).into(),
         (EmValue::F32(a), EmValue::F32(b)) => a.min(*b).into(),
         (EmValue::F64(a), EmValue::F64(b)) => a.min(*b).into(),
-        _ => ctx.args[0].clone(),
+        _ => arg0.clone(),
     };
 
     PreHookResult::Bypass(Some(result))
@@ -460,16 +460,16 @@ fn system_math_min_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> 
 /// - `val1`: The first of two values to compare
 /// - `val2`: The second of two values to compare
 fn system_math_max_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(ctx.args.first().cloned());
-    }
+    };
 
-    let result = match (&ctx.args[0], &ctx.args[1]) {
+    let result = match (arg0, arg1) {
         (EmValue::I32(a), EmValue::I32(b)) => EmValue::I32(*a.max(b)),
         (EmValue::I64(a), EmValue::I64(b)) => EmValue::I64(*a.max(b)),
         (EmValue::F32(a), EmValue::F32(b)) => EmValue::F32(a.max(*b)),
         (EmValue::F64(a), EmValue::F64(b)) => EmValue::F64(a.max(*b)),
-        _ => ctx.args[0].clone(),
+        _ => arg0.clone(),
     };
 
     PreHookResult::Bypass(Some(result))
@@ -493,11 +493,11 @@ fn system_math_max_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> 
 ///
 /// - `value`: A signed number
 fn system_math_sign_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
-    }
+    };
 
-    let result = match &ctx.args[0] {
+    let result = match arg0 {
         EmValue::I32(n) => n.signum(),
         EmValue::I64(n) => n.signum() as i32,
         EmValue::F32(f) => {
@@ -552,11 +552,12 @@ fn system_math_sign_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) ->
 /// - `min`: The lower bound of the result
 /// - `max`: The upper bound of the result
 fn system_math_clamp_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 3 {
+    let (Some(arg0), Some(arg1), Some(arg2)) = (ctx.args.first(), ctx.args.get(1), ctx.args.get(2))
+    else {
         return PreHookResult::Bypass(ctx.args.first().cloned());
-    }
+    };
 
-    let result = match (&ctx.args[0], &ctx.args[1], &ctx.args[2]) {
+    let result = match (arg0, arg1, arg2) {
         (EmValue::I32(val), EmValue::I32(min), EmValue::I32(max)) => {
             EmValue::I32(*val.max(min).min(max))
         }
@@ -569,7 +570,7 @@ fn system_math_clamp_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -
         (EmValue::F64(val), EmValue::F64(min), EmValue::F64(max)) => {
             EmValue::F64(val.max(*min).min(*max))
         }
-        _ => ctx.args[0].clone(),
+        _ => arg0.clone(),
     };
 
     PreHookResult::Bypass(Some(result))
@@ -592,31 +593,29 @@ fn system_math_clamp_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -
 /// - `b`: The divisor
 /// - `result` (out): The remainder (for legacy overloads)
 fn system_math_divrem_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
-    }
+    };
 
-    let (quotient, remainder) = match (&ctx.args[0], &ctx.args[1]) {
-        (EmValue::I32(a), EmValue::I32(b)) => {
-            if *b == 0 {
-                (EmValue::I32(0), EmValue::I32(0))
-            } else {
-                (EmValue::I32(a / b), EmValue::I32(a % b))
-            }
-        }
-        (EmValue::I64(a), EmValue::I64(b)) => {
-            if *b == 0 {
-                (EmValue::I64(0), EmValue::I64(0))
-            } else {
-                (EmValue::I64(a / b), EmValue::I64(a % b))
-            }
-        }
+    // Use checked arithmetic: division by zero or i32::MIN/-1 overflow falls
+    // back to (0, 0). The hook intentionally degrades gracefully rather than
+    // raising DivideByZeroException/OverflowException, matching the existing
+    // lenient style used by other Math hooks here.
+    let (quotient, remainder) = match (arg0, arg1) {
+        (EmValue::I32(a), EmValue::I32(b)) => match (a.checked_div(*b), a.checked_rem(*b)) {
+            (Some(q), Some(r)) => (EmValue::I32(q), EmValue::I32(r)),
+            _ => (EmValue::I32(0), EmValue::I32(0)),
+        },
+        (EmValue::I64(a), EmValue::I64(b)) => match (a.checked_div(*b), a.checked_rem(*b)) {
+            (Some(q), Some(r)) => (EmValue::I64(q), EmValue::I64(r)),
+            _ => (EmValue::I64(0), EmValue::I64(0)),
+        },
         _ => (EmValue::I32(0), EmValue::I32(0)),
     };
 
     // Store remainder through the out parameter if provided
-    if ctx.args.len() >= 3 {
-        if let Some(ptr) = ctx.args[2].as_managed_ptr() {
+    if let Some(arg2) = ctx.args.get(2) {
+        if let Some(ptr) = arg2.as_managed_ptr() {
             try_hook!(thread.store_through_pointer(ptr, remainder));
         }
     }
@@ -637,11 +636,11 @@ fn system_math_divrem_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
 ///
 /// - `d`: A double-precision floating-point number
 fn system_math_floor_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(0.0)));
-    }
+    };
 
-    let result = match &ctx.args[0] {
+    let result = match arg0 {
         EmValue::F32(f) => EmValue::F64(f64::from(f.floor())),
         EmValue::F64(f) => EmValue::F64(f.floor()),
         _ => EmValue::F64(0.0),
@@ -663,11 +662,11 @@ fn system_math_floor_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -
 ///
 /// - `d`: A double-precision floating-point number
 fn system_math_ceiling_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(0.0)));
-    }
+    };
 
-    let result = match &ctx.args[0] {
+    let result = match arg0 {
         EmValue::F32(f) => EmValue::F64(f64::from(f.ceil())),
         EmValue::F64(f) => EmValue::F64(f.ceil()),
         _ => EmValue::F64(0.0),
@@ -697,23 +696,19 @@ fn system_math_ceiling_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread)
 /// - `digits`: The number of fractional digits in the return value (optional)
 /// - `mode`: Specification for how to round value if it is midway (optional)
 fn system_math_round_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(0.0)));
-    }
+    };
 
-    let value = match &ctx.args[0] {
+    let value = match arg0 {
         EmValue::F32(f) => f64::from(*f),
         EmValue::F64(f) => *f,
         _ => return PreHookResult::Bypass(Some(EmValue::F64(0.0))),
     };
 
-    let decimals = if ctx.args.len() > 1 {
-        match &ctx.args[1] {
-            EmValue::I32(n) => (*n).clamp(0, 15),
-            _ => 0,
-        }
-    } else {
-        0
+    let decimals = match ctx.args.get(1) {
+        Some(EmValue::I32(n)) => (*n).clamp(0, 15),
+        _ => 0,
     };
 
     let multiplier = 10_f64.powi(decimals);
@@ -735,11 +730,11 @@ fn system_math_round_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -
 ///
 /// - `d`: A number to truncate
 fn system_math_truncate_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(0.0)));
-    }
+    };
 
-    let result = match &ctx.args[0] {
+    let result = match arg0 {
         EmValue::F32(f) => EmValue::F64(f64::from(f.trunc())),
         EmValue::F64(f) => EmValue::F64(f.trunc()),
         _ => EmValue::F64(0.0),
@@ -761,12 +756,12 @@ fn system_math_truncate_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread
 /// - `x`: A double-precision floating-point number to be raised to a power
 /// - `y`: A double-precision floating-point number that specifies a power
 fn system_math_pow_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::F64(0.0)));
-    }
+    };
 
-    let base = ctx.args[0].to_f64_cil();
-    let exp = ctx.args[1].to_f64_cil();
+    let base = arg0.to_f64_cil();
+    let exp = arg1.to_f64_cil();
 
     PreHookResult::Bypass(Some(EmValue::F64(base.powf(exp))))
 }
@@ -783,11 +778,11 @@ fn system_math_pow_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> 
 ///
 /// - `d`: The number whose square root is to be found
 fn system_math_sqrt_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(0.0)));
-    }
+    };
 
-    let value = ctx.args[0].to_f64_cil();
+    let value = arg0.to_f64_cil();
     PreHookResult::Bypass(Some(EmValue::F64(value.sqrt())))
 }
 
@@ -805,14 +800,14 @@ fn system_math_sqrt_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) ->
 /// - `d`: The number whose logarithm is to be found
 /// - `newBase`: The base of the logarithm (optional, defaults to e)
 fn system_math_log_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(f64::NEG_INFINITY)));
-    }
+    };
 
-    let value = ctx.args[0].to_f64_cil();
+    let value = arg0.to_f64_cil();
 
-    let result = if ctx.args.len() > 1 {
-        let base = ctx.args[1].to_f64_cil();
+    let result = if let Some(arg1) = ctx.args.get(1) {
+        let base = arg1.to_f64_cil();
         value.log(base)
     } else {
         value.ln()
@@ -833,11 +828,11 @@ fn system_math_log_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> 
 ///
 /// - `d`: A number whose logarithm is to be found
 fn system_math_log10_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(f64::NEG_INFINITY)));
-    }
+    };
 
-    let value = ctx.args[0].to_f64_cil();
+    let value = arg0.to_f64_cil();
     PreHookResult::Bypass(Some(EmValue::F64(value.log10())))
 }
 
@@ -853,11 +848,11 @@ fn system_math_log10_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -
 ///
 /// - `d`: A number specifying a power
 fn system_math_exp_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(1.0)));
-    }
+    };
 
-    let value = ctx.args[0].to_f64_cil();
+    let value = arg0.to_f64_cil();
     PreHookResult::Bypass(Some(EmValue::F64(value.exp())))
 }
 
@@ -873,11 +868,11 @@ fn system_math_exp_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> 
 ///
 /// - `a`: An angle, measured in radians
 fn system_math_sin_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(0.0)));
-    }
+    };
 
-    let value = ctx.args[0].to_f64_cil();
+    let value = arg0.to_f64_cil();
     PreHookResult::Bypass(Some(EmValue::F64(value.sin())))
 }
 
@@ -893,11 +888,11 @@ fn system_math_sin_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> 
 ///
 /// - `d`: An angle, measured in radians
 fn system_math_cos_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(1.0)));
-    }
+    };
 
-    let value = ctx.args[0].to_f64_cil();
+    let value = arg0.to_f64_cil();
     PreHookResult::Bypass(Some(EmValue::F64(value.cos())))
 }
 
@@ -913,11 +908,11 @@ fn system_math_cos_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> 
 ///
 /// - `a`: An angle, measured in radians
 fn system_math_tan_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(0.0)));
-    }
+    };
 
-    let value = ctx.args[0].to_f64_cil();
+    let value = arg0.to_f64_cil();
     PreHookResult::Bypass(Some(EmValue::F64(value.tan())))
 }
 
@@ -933,11 +928,11 @@ fn system_math_tan_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> 
 ///
 /// - `d`: A number representing a sine, where d must be >= -1 and <= 1
 fn system_math_asin_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(0.0)));
-    }
+    };
 
-    let value = ctx.args[0].to_f64_cil();
+    let value = arg0.to_f64_cil();
     PreHookResult::Bypass(Some(EmValue::F64(value.asin())))
 }
 
@@ -953,11 +948,11 @@ fn system_math_asin_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) ->
 ///
 /// - `d`: A number representing a cosine, where d must be >= -1 and <= 1
 fn system_math_acos_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(std::f64::consts::FRAC_PI_2)));
-    }
+    };
 
-    let value = ctx.args[0].to_f64_cil();
+    let value = arg0.to_f64_cil();
     PreHookResult::Bypass(Some(EmValue::F64(value.acos())))
 }
 
@@ -973,11 +968,11 @@ fn system_math_acos_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) ->
 ///
 /// - `d`: A number representing a tangent
 fn system_math_atan_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(0.0)));
-    }
+    };
 
-    let value = ctx.args[0].to_f64_cil();
+    let value = arg0.to_f64_cil();
     PreHookResult::Bypass(Some(EmValue::F64(value.atan())))
 }
 
@@ -994,12 +989,12 @@ fn system_math_atan_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) ->
 /// - `y`: The y coordinate of a point
 /// - `x`: The x coordinate of a point
 fn system_math_atan2_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::F64(0.0)));
-    }
+    };
 
-    let y = ctx.args[0].to_f64_cil();
-    let x = ctx.args[1].to_f64_cil();
+    let y = arg0.to_f64_cil();
+    let x = arg1.to_f64_cil();
 
     PreHookResult::Bypass(Some(EmValue::F64(y.atan2(x))))
 }
@@ -1026,11 +1021,11 @@ fn system_numerics_bitoperations_popcount_pre(
     ctx: &HookContext<'_>,
     _thread: &mut EmulationThread,
 ) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
-    }
+    };
 
-    let count = match &ctx.args[0] {
+    let count = match arg0 {
         EmValue::I32(n) => (*n as u32).count_ones() as i32,
         EmValue::I64(n) => (*n as u64).count_ones() as i32,
         _ => 0,
@@ -1061,11 +1056,11 @@ fn system_numerics_bitoperations_leadingzerocount_pre(
     ctx: &HookContext<'_>,
     _thread: &mut EmulationThread,
 ) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::I32(32)));
-    }
+    };
 
-    let count = match &ctx.args[0] {
+    let count = match arg0 {
         EmValue::I32(n) => (*n as u32).leading_zeros() as i32,
         EmValue::I64(n) => (*n as u64).leading_zeros() as i32,
         _ => 32,
@@ -1099,11 +1094,11 @@ fn system_numerics_bitoperations_trailingzerocount_pre(
     ctx: &HookContext<'_>,
     _thread: &mut EmulationThread,
 ) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::I32(32)));
-    }
+    };
 
-    let count = match &ctx.args[0] {
+    let count = match arg0 {
         EmValue::I32(n) => (*n as u32).trailing_zeros() as i32,
         EmValue::I64(n) => (*n as u64).trailing_zeros() as i32,
         _ => 32,
@@ -1131,19 +1126,19 @@ fn system_numerics_bitoperations_rotateleft_pre(
     ctx: &HookContext<'_>,
     _thread: &mut EmulationThread,
 ) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(ctx.args.first().cloned());
-    }
-
-    let shift = match &ctx.args[1] {
-        EmValue::I32(n) => *n as u32,
-        _ => return PreHookResult::Bypass(Some(ctx.args[0].clone())),
     };
 
-    let result = match &ctx.args[0] {
+    let shift = match arg1 {
+        EmValue::I32(n) => *n as u32,
+        _ => return PreHookResult::Bypass(Some(arg0.clone())),
+    };
+
+    let result = match arg0 {
         EmValue::I32(n) => EmValue::I32((*n as u32).rotate_left(shift) as i32),
         EmValue::I64(n) => EmValue::I64((*n as u64).rotate_left(shift) as i64),
-        _ => ctx.args[0].clone(),
+        _ => arg0.clone(),
     };
 
     PreHookResult::Bypass(Some(result))
@@ -1168,19 +1163,19 @@ fn system_numerics_bitoperations_rotateright_pre(
     ctx: &HookContext<'_>,
     _thread: &mut EmulationThread,
 ) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(ctx.args.first().cloned());
-    }
-
-    let shift = match &ctx.args[1] {
-        EmValue::I32(n) => *n as u32,
-        _ => return PreHookResult::Bypass(Some(ctx.args[0].clone())),
     };
 
-    let result = match &ctx.args[0] {
+    let shift = match arg1 {
+        EmValue::I32(n) => *n as u32,
+        _ => return PreHookResult::Bypass(Some(arg0.clone())),
+    };
+
+    let result = match arg0 {
         EmValue::I32(n) => EmValue::I32((*n as u32).rotate_right(shift) as i32),
         EmValue::I64(n) => EmValue::I64((*n as u64).rotate_right(shift) as i64),
-        _ => ctx.args[0].clone(),
+        _ => arg0.clone(),
     };
 
     PreHookResult::Bypass(Some(result))
@@ -1198,108 +1193,108 @@ fn system_numerics_bitoperations_rotateright_pre(
 ///
 /// - `x`: The number whose base-2 logarithm is to be found
 fn system_math_log2_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F64(f64::NEG_INFINITY)));
-    }
+    };
 
-    let value = ctx.args[0].to_f64_cil();
+    let value = arg0.to_f64_cil();
     PreHookResult::Bypass(Some(EmValue::F64(value.log2())))
 }
 
 /// Hook for `System.MathF.Abs` — absolute value (single-precision).
 fn system_mathf_abs_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(0.0)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().abs())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().abs())))
 }
 
 /// Hook for `System.MathF.Sin` — sine (single-precision).
 fn system_mathf_sin_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(0.0)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().sin())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().sin())))
 }
 
 /// Hook for `System.MathF.Cos` — cosine (single-precision).
 fn system_mathf_cos_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(1.0)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().cos())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().cos())))
 }
 
 /// Hook for `System.MathF.Sqrt` — square root (single-precision).
 fn system_mathf_sqrt_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(0.0)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().sqrt())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().sqrt())))
 }
 
 /// Hook for `System.MathF.Floor` — round down (single-precision).
 fn system_mathf_floor_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(0.0)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().floor())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().floor())))
 }
 
 /// Hook for `System.MathF.Ceiling` — round up (single-precision).
 fn system_mathf_ceiling_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(0.0)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().ceil())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().ceil())))
 }
 
 /// Hook for `System.MathF.Round` — round to nearest (single-precision).
 fn system_mathf_round_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(0.0)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().round())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().round())))
 }
 
 /// Hook for `System.MathF.Min` — minimum of two values (single-precision).
 fn system_mathf_min_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(ctx.args.first().cloned());
-    }
-    let a = ctx.args[0].to_f32_cil();
-    let b = ctx.args[1].to_f32_cil();
+    };
+    let a = arg0.to_f32_cil();
+    let b = arg1.to_f32_cil();
     PreHookResult::Bypass(Some(EmValue::F32(a.min(b))))
 }
 
 /// Hook for `System.MathF.Max` — maximum of two values (single-precision).
 fn system_mathf_max_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(ctx.args.first().cloned());
-    }
-    let a = ctx.args[0].to_f32_cil();
-    let b = ctx.args[1].to_f32_cil();
+    };
+    let a = arg0.to_f32_cil();
+    let b = arg1.to_f32_cil();
     PreHookResult::Bypass(Some(EmValue::F32(a.max(b))))
 }
 
 /// Hook for `System.MathF.Pow` — power (single-precision).
 fn system_mathf_pow_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::F32(0.0)));
-    }
-    let base = ctx.args[0].to_f32_cil();
-    let exp = ctx.args[1].to_f32_cil();
+    };
+    let base = arg0.to_f32_cil();
+    let exp = arg1.to_f32_cil();
     PreHookResult::Bypass(Some(EmValue::F32(base.powf(exp))))
 }
 
 /// Hook for `System.MathF.Log` — natural or custom base logarithm (single-precision).
 fn system_mathf_log_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(f32::NEG_INFINITY)));
-    }
-    let value = ctx.args[0].to_f32_cil();
-    let result = if ctx.args.len() > 1 {
-        let base = ctx.args[1].to_f32_cil();
+    };
+    let value = arg0.to_f32_cil();
+    let result = if let Some(arg1) = ctx.args.get(1) {
+        let base = arg1.to_f32_cil();
         value.log(base)
     } else {
         value.ln()
@@ -1309,68 +1304,68 @@ fn system_mathf_log_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) ->
 
 /// Hook for `System.MathF.Log2` — base-2 logarithm (single-precision).
 fn system_mathf_log2_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(f32::NEG_INFINITY)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().log2())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().log2())))
 }
 
 /// Hook for `System.MathF.Log10` — base-10 logarithm (single-precision).
 fn system_mathf_log10_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(f32::NEG_INFINITY)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().log10())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().log10())))
 }
 
 /// Hook for `System.MathF.Tan` — tangent (single-precision).
 fn system_mathf_tan_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(0.0)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().tan())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().tan())))
 }
 
 /// Hook for `System.MathF.Asin` — inverse sine (single-precision).
 fn system_mathf_asin_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(0.0)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().asin())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().asin())))
 }
 
 /// Hook for `System.MathF.Acos` — inverse cosine (single-precision).
 fn system_mathf_acos_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(std::f32::consts::FRAC_PI_2)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().acos())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().acos())))
 }
 
 /// Hook for `System.MathF.Atan` — inverse tangent (single-precision).
 fn system_mathf_atan_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(0.0)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().atan())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().atan())))
 }
 
 /// Hook for `System.MathF.Atan2` — two-argument arctangent (single-precision).
 fn system_mathf_atan2_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::F32(0.0)));
-    }
-    let y = ctx.args[0].to_f32_cil();
-    let x = ctx.args[1].to_f32_cil();
+    };
+    let y = arg0.to_f32_cil();
+    let x = arg1.to_f32_cil();
     PreHookResult::Bypass(Some(EmValue::F32(y.atan2(x))))
 }
 
 /// Hook for `System.MathF.Exp` — e raised to a power (single-precision).
 fn system_mathf_exp_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(1.0)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().exp())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().exp())))
 }
 
 /// Hook for `System.MathF.Truncate` — remove fractional part (single-precision).
@@ -1378,19 +1373,19 @@ fn system_mathf_truncate_pre(
     ctx: &HookContext<'_>,
     _thread: &mut EmulationThread,
 ) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::F32(0.0)));
-    }
-    PreHookResult::Bypass(Some(EmValue::F32(ctx.args[0].to_f32_cil().trunc())))
+    };
+    PreHookResult::Bypass(Some(EmValue::F32(arg0.to_f32_cil().trunc())))
 }
 
 /// Hook for `System.MathF.Sign` — returns -1, 0, or 1 (single-precision input).
 #[allow(clippy::cast_possible_truncation)]
 fn system_mathf_sign_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
-    }
-    let f = ctx.args[0].to_f32_cil();
+    };
+    let f = arg0.to_f32_cil();
     let result = if f.is_nan() {
         0
     } else if f > 0.0 {

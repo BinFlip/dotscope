@@ -279,12 +279,12 @@ impl<'a> Iterator for InstructionIterator<'a> {
             let block = self.blocks.get(self.current_block)?;
 
             if self.current_instruction < block.instructions.len() {
-                let instruction = &block.instructions[self.current_instruction];
-                self.current_instruction += 1;
+                let instruction = block.instructions.get(self.current_instruction)?;
+                self.current_instruction = self.current_instruction.saturating_add(1);
                 return Some(instruction);
             }
 
-            self.current_block += 1;
+            self.current_block = self.current_block.saturating_add(1);
             self.current_instruction = 0;
         }
     }
@@ -324,16 +324,18 @@ impl<'a> Iterator for InstructionIterator<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let mut remaining = 0;
+        let mut remaining: usize = 0;
         for i in self.current_block..self.blocks.len() {
             if let Some(block) = self.blocks.get(i) {
                 if i == self.current_block {
-                    remaining += block
-                        .instructions
-                        .len()
-                        .saturating_sub(self.current_instruction);
+                    remaining = remaining.saturating_add(
+                        block
+                            .instructions
+                            .len()
+                            .saturating_sub(self.current_instruction),
+                    );
                 } else {
-                    remaining += block.instructions.len();
+                    remaining = remaining.saturating_add(block.instructions.len());
                 }
             }
         }

@@ -457,7 +457,7 @@ impl ResourceType {
                 let utf8_byte_count = s.len();
                 let utf8_size = u32::try_from(utf8_byte_count).ok()?;
                 let prefix_size = u32::try_from(compressed_uint_size(utf8_size as usize)).ok()?;
-                Some(prefix_size + utf8_size)
+                prefix_size.checked_add(utf8_size)
             }
             ResourceType::Boolean(_) | ResourceType::Byte(_) | ResourceType::SByte(_) => Some(1), // Single byte
             ResourceType::Char(_) | ResourceType::Int16(_) | ResourceType::UInt16(_) => Some(2), // 2 bytes
@@ -474,7 +474,7 @@ impl ResourceType {
                 // Per .NET specification: ByteArray and Stream use fixed 4-byte LE length
                 // Note: Type code is NOT included here - encoder adds type_code_size separately
                 let data_size = u32::try_from(data.len()).ok()?;
-                Some(4 + data_size)
+                4_u32.checked_add(data_size)
             }
             // Types without .NET equivalents
             ResourceType::Null | ResourceType::StartOfUserTypes => None,
@@ -596,13 +596,19 @@ impl ResourceType {
             0x20 => {
                 let length = parser.read_le::<u32>()?;
                 let start_pos = parser.pos();
-                let end_pos = start_pos + length as usize;
+                let end_pos = start_pos.checked_add(length as usize).ok_or_else(|| {
+                    malformed_error!(
+                        "ByteArray resource end offset overflow: start={} length={}",
+                        start_pos,
+                        length
+                    )
+                })?;
 
-                if end_pos > parser.data().len() {
-                    return Err(out_of_bounds_error!());
-                }
-
-                let data = parser.data()[start_pos..end_pos].to_vec();
+                let data = parser
+                    .data()
+                    .get(start_pos..end_pos)
+                    .ok_or(out_of_bounds_error!())?
+                    .to_vec();
                 if end_pos < parser.data().len() {
                     parser.seek(end_pos)?;
                 }
@@ -611,13 +617,19 @@ impl ResourceType {
             0x21 => {
                 let length = parser.read_le::<u32>()?;
                 let start_pos = parser.pos();
-                let end_pos = start_pos + length as usize;
+                let end_pos = start_pos.checked_add(length as usize).ok_or_else(|| {
+                    malformed_error!(
+                        "Stream resource end offset overflow: start={} length={}",
+                        start_pos,
+                        length
+                    )
+                })?;
 
-                if end_pos > parser.data().len() {
-                    return Err(out_of_bounds_error!());
-                }
-
-                let data = parser.data()[start_pos..end_pos].to_vec();
+                let data = parser
+                    .data()
+                    .get(start_pos..end_pos)
+                    .ok_or(out_of_bounds_error!())?
+                    .to_vec();
                 if end_pos < parser.data().len() {
                     parser.seek(end_pos)?;
                 }
@@ -1032,33 +1044,41 @@ impl<'a> ResourceTypeRef<'a> {
             0x20 => {
                 let length = parser.read_le::<u32>()?;
                 let start_pos = parser.pos();
-                let end_pos = start_pos + length as usize;
+                let end_pos = start_pos.checked_add(length as usize).ok_or_else(|| {
+                    malformed_error!(
+                        "ByteArray resource end offset overflow: start={} length={}",
+                        start_pos,
+                        length
+                    )
+                })?;
 
-                if end_pos > data.len() {
-                    return Err(out_of_bounds_error!());
-                }
+                let slice = data.get(start_pos..end_pos).ok_or(out_of_bounds_error!())?;
 
                 if end_pos < data.len() {
                     parser.seek(end_pos)?;
                 }
 
-                Ok(ResourceTypeRef::ByteArray(&data[start_pos..end_pos]))
+                Ok(ResourceTypeRef::ByteArray(slice))
             }
             0x21 => {
                 let length = parser.read_le::<u32>()?;
                 let start_pos = parser.pos();
-                let end_pos = start_pos + length as usize;
+                let end_pos = start_pos.checked_add(length as usize).ok_or_else(|| {
+                    malformed_error!(
+                        "Stream resource end offset overflow: start={} length={}",
+                        start_pos,
+                        length
+                    )
+                })?;
 
-                if end_pos > data.len() {
-                    return Err(out_of_bounds_error!());
-                }
+                let slice = data.get(start_pos..end_pos).ok_or(out_of_bounds_error!())?;
 
                 if end_pos < data.len() {
                     parser.seek(end_pos)?;
                 }
 
                 // Stream uses same format as ByteArray, just different type code
-                Ok(ResourceTypeRef::Stream(&data[start_pos..end_pos]))
+                Ok(ResourceTypeRef::Stream(slice))
             }
             0x40..=0xFF => {
                 // User types - these require a type table for resolution

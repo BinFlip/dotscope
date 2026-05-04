@@ -77,7 +77,7 @@ impl ExceptionBlockLayout {
         // Group handlers by try region (try_offset, try_end)
         let mut try_groups: BTreeMap<(u32, u32), Vec<&ExceptionHandler>> = BTreeMap::new();
         for handler in handlers {
-            let try_end = handler.try_offset + handler.try_length;
+            let try_end = handler.try_offset.saturating_add(handler.try_length);
             try_groups
                 .entry((handler.try_offset, try_end))
                 .or_default()
@@ -103,7 +103,9 @@ impl ExceptionBlockLayout {
 
             // For each handler in this try group
             for handler in group {
-                let handler_end = handler.handler_offset + handler.handler_length;
+                let handler_end = handler
+                    .handler_offset
+                    .saturating_add(handler.handler_length);
                 let kind = handler_kind(handler, asm);
 
                 // Filter block opens at filter_offset (before handler)

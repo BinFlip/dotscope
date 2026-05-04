@@ -259,7 +259,7 @@ impl<'a> NeutralizationPass<'a> {
         // Find blocks that can reach exit (for fallback target selection)
         let can_reach_exit = Self::find_blocks_reaching_exit(ssa);
 
-        let mut count = 0;
+        let mut count: usize = 0;
 
         // 1. Remove tainted PHI nodes
         // Collect PHIs to remove (block_idx, phi_idx) sorted in reverse order
@@ -271,7 +271,7 @@ impl<'a> NeutralizationPass<'a> {
             if let Some(block) = ssa.block_mut(block_idx) {
                 if phi_idx < block.phi_nodes().len() {
                     block.phi_nodes_mut().remove(phi_idx);
-                    count += 1;
+                    count = count.saturating_add(1);
                 }
             }
         }
@@ -350,7 +350,7 @@ impl<'a> NeutralizationPass<'a> {
                         InstrAction::Nop => instr.set_op(SsaOp::Nop),
                         InstrAction::Jump(target) => instr.set_op(SsaOp::Jump { target }),
                     }
-                    count += 1;
+                    count = count.saturating_add(1);
                 }
             }
         }

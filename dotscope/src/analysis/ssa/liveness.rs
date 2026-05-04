@@ -40,8 +40,8 @@ pub fn compute_live_in_blocks(
     let mut predecessors: Vec<Vec<usize>> = vec![Vec::new(); block_count];
     for (block_idx, succs) in successors.iter().enumerate() {
         for &succ in succs {
-            if succ < block_count {
-                predecessors[succ].push(block_idx);
+            if let Some(preds) = predecessors.get_mut(succ) {
+                preds.push(block_idx);
             }
         }
     }
@@ -78,7 +78,10 @@ pub fn compute_live_in_blocks(
         // a successor and the predecessor doesn't define it (or it's live-in to the
         // predecessor due to a direct use).
         while let Some(block_idx) = worklist.pop() {
-            for &pred in &predecessors[block_idx] {
+            let Some(preds) = predecessors.get(block_idx) else {
+                continue;
+            };
+            for &pred in preds {
                 // If predecessor defines the variable, liveness doesn't propagate further
                 // (the definition satisfies the use). But the predecessor itself is NOT
                 // live-in for this variable (the def originates here).

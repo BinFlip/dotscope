@@ -157,6 +157,7 @@ impl TableRow for EventPtrRaw {
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
             /* event */ sizes.table_index_bytes(TableId::Event)
+
         )
     }
 }

@@ -302,7 +302,7 @@ impl<'a> PhiAnalyzer<'a> {
         }
 
         // Get the first operand's constant value
-        let first_value = evaluator.evaluate_var(operands[0].value())?;
+        let first_value = evaluator.evaluate_var(operands.first()?.value())?;
 
         // Check that all other operands have the same value
         for operand in operands.iter().skip(1) {
@@ -387,8 +387,8 @@ pub(crate) fn place_pruned_phis(
 
         while let Some(block_idx) = worklist.pop() {
             let node_id = NodeId::new(block_idx);
-            if node_id.index() < dominance_frontiers.len() {
-                for frontier_idx in dominance_frontiers[node_id.index()].iter() {
+            if let Some(frontier) = dominance_frontiers.get(node_id.index()) {
+                for frontier_idx in frontier.iter() {
                     let is_reachable = reachable.is_none_or(|r| r.contains(frontier_idx));
                     if frontier_idx < block_count && is_reachable && phi_blocks.insert(frontier_idx)
                     {

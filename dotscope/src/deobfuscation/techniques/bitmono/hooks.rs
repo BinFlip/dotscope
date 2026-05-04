@@ -47,7 +47,7 @@ use crate::{
         token::Token,
         typesystem::wellknown,
     },
-    CilObject, Result,
+    CilObject, Error, Result,
 };
 
 /// Findings from BitMono DotNetHook detection.
@@ -129,7 +129,7 @@ impl Technique for BitMonoHooks {
             }
 
             if has_jit_hook_setup && has_marshal_write {
-                hook_count += 1;
+                hook_count = hook_count.saturating_add(1);
                 infrastructure_type = Some(cil_type.token);
 
                 // Identify the RedirectStub method by signature: static void(int32, int32).
@@ -332,7 +332,20 @@ impl Technique for BitMonoHooks {
                         let raw_token = call_target.value();
                         if let Some(&real_target) = redirect_map.get(&raw_token) {
                             // Token operand is the last 4 bytes of the instruction
-                            patches.push((instr.offset + instr.size - 4, real_target));
+                            let operand_offset = instr
+                                .offset
+                                .checked_add(instr.size)
+                                .and_then(|v| v.checked_sub(4))
+                                .ok_or_else(|| {
+                                    Error::Deobfuscation(
+                                        "DotNetHook: instruction offset overflow computing operand position".into(),
+                                    )
+                                });
+                            let operand_offset = match operand_offset {
+                                Ok(v) => v,
+                                Err(e) => return Some(Err(e)),
+                            };
+                            patches.push((operand_offset, real_target));
                         }
                     }
                     continue;
@@ -354,7 +367,15 @@ impl Technique for BitMonoHooks {
                             if let Some(&corrected) = stale_correction_map.get(&u) {
                                 if corrected != u {
                                     // ldc.i4 is 5 bytes: 0x20 + i32 operand
-                                    patches.push((instr.offset + 1, corrected));
+                                    let operand_offset = match instr.offset.checked_add(1) {
+                                        Some(v) => v,
+                                        None => {
+                                            return Some(Err(Error::Deobfuscation(
+                                                "DotNetHook: ldc.i4 offset overflow computing operand position".into(),
+                                            )));
+                                        }
+                                    };
+                                    patches.push((operand_offset, corrected));
                                 }
                             }
                         }
@@ -537,15 +558,22 @@ fn extract_hook_mappings(
                 continue;
             }
 
-            let arg1 = instructions[i - 2]
+            let Some(prev2) = instructions.get(i.saturating_sub(2)) else {
+                continue;
+            };
+            let Some(prev1) = instructions.get(i.saturating_sub(1)) else {
+                continue;
+            };
+
+            let arg1 = prev2
                 .mnemonic
                 .starts_with("ldc.i4")
-                .then(|| instructions[i - 2].get_i32_operand())
+                .then(|| prev2.get_i32_operand())
                 .flatten();
-            let arg2 = instructions[i - 1]
+            let arg2 = prev1
                 .mnemonic
                 .starts_with("ldc.i4")
-                .then(|| instructions[i - 1].get_i32_operand())
+                .then(|| prev1.get_i32_operand())
                 .flatten();
 
             if let (Some(a1), Some(a2)) = (arg1, arg2) {
@@ -621,7 +649,7 @@ fn extract_hook_mappings(
     let offset = target_offset.unwrap_or(0);
     let total_methods = assembly.methods().iter().count() as u32;
     let original_count = if offset > 0 {
-        (total_methods as i64 - offset) as u32
+        (total_methods as i64).saturating_sub(offset).max(0) as u32
     } else {
         total_methods
     };
@@ -629,7 +657,11 @@ fn extract_hook_mappings(
     let mut stale_correction_map: HashMap<u32, u32> = (1..=original_count)
         .filter_map(|r| {
             let stale = 0x0600_0000 | r;
-            let final_row = (r as i64 + offset) as u32;
+            let final_row_i64 = (r as i64).saturating_add(offset);
+            if final_row_i64 < 1 {
+                return None;
+            }
+            let final_row = final_row_i64 as u32;
             if final_row != r && final_row >= 1 && final_row <= total_methods {
                 Some((stale, 0x0600_0000 | final_row))
             } else {
@@ -691,22 +723,30 @@ fn extract_hook_mappings(
 /// - 2 instructions: `ldc.*` or `ldnull`, then `ret`
 /// - 3 instructions: `ldc.*` + `conv.*` + `ret`, or `ldloca` + `initobj` + `ret`
 fn is_dummy_body(instructions: &[&crate::assembly::Instruction]) -> bool {
-    if instructions.is_empty() {
+    let Some(last) = instructions.last() else {
         return false;
-    }
-    let last = instructions.last().unwrap();
+    };
     if last.mnemonic != "ret" {
         return false;
     }
     match instructions.len() {
         1 => true, // just ret (void or stack-underflow dummy)
         2 => {
-            let m = instructions[0].mnemonic;
+            let Some(first) = instructions.first() else {
+                return false;
+            };
+            let m = first.mnemonic;
             m.starts_with("ldc.") || m == "ldnull"
         }
         3 => {
-            let m0 = instructions[0].mnemonic;
-            let m1 = instructions[1].mnemonic;
+            let Some(i0) = instructions.first() else {
+                return false;
+            };
+            let Some(i1) = instructions.get(1) else {
+                return false;
+            };
+            let m0 = i0.mnemonic;
+            let m1 = i1.mnemonic;
             // ldc.i4.0 + conv.i8 + ret (int64 return)
             // ldloca.s + initobj + ret (value type return — rare)
             (m0.starts_with("ldc.") && m1.starts_with("conv."))
@@ -779,10 +819,11 @@ fn compute_target_offset(
         };
         let stale_row = (stale_target & 0x00FF_FFFF) as i64;
 
-        if candidates.len() == 1 {
-            let final_row = candidates[0].row() as i64;
-            let offset = final_row - stale_row;
-            *offset_votes.entry(offset).or_insert(0) += 1;
+        if let [single] = candidates.as_slice() {
+            let final_row = single.row() as i64;
+            let offset = final_row.saturating_sub(stale_row);
+            let entry = offset_votes.entry(offset).or_insert(0_usize);
+            *entry = entry.saturating_add(1);
         }
     }
 

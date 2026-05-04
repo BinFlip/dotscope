@@ -243,7 +243,7 @@ impl OwnedTypeCircularityValidator {
                 visited,
                 visiting,
                 context,
-                depth + 1,
+                depth.saturating_add(1),
             )?;
         }
 

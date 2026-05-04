@@ -87,8 +87,8 @@ impl GenericStrings {
             let matches_signature = match param_count {
                 // string(int32), string(uint32), string(string)
                 1 => matches!(
-                    method.signature.params[0].base,
-                    TypeSignature::I4 | TypeSignature::U4 | TypeSignature::String
+                    method.signature.params.first().map(|p| &p.base),
+                    Some(TypeSignature::I4 | TypeSignature::U4 | TypeSignature::String)
                 ),
                 // string(int32, int32) — offset+length based
                 2 => method
@@ -113,9 +113,9 @@ impl GenericStrings {
     /// unsupported signatures.
     fn default_warmup_args(params: &[SignatureParameter]) -> Option<Vec<EmValue>> {
         match params.len() {
-            1 => match params[0].base {
-                TypeSignature::I4 | TypeSignature::U4 => Some(vec![EmValue::I32(0)]),
-                TypeSignature::String => Some(vec![EmValue::Null]),
+            1 => match params.first().map(|p| &p.base) {
+                Some(TypeSignature::I4 | TypeSignature::U4) => Some(vec![EmValue::I32(0)]),
+                Some(TypeSignature::String) => Some(vec![EmValue::Null]),
                 _ => None,
             },
             2 => {
@@ -221,7 +221,7 @@ impl Technique for GenericStrings {
 
                     // Direct match
                     if let Some(c) = counts.get_mut(&token) {
-                        *c += 1;
+                        *c = c.saturating_add(1);
                         continue;
                     }
 
@@ -232,7 +232,7 @@ impl Technique for GenericStrings {
                             .or_insert_with(|| assembly.resolver().resolve_memberref_method(token));
                         if let Some(resolved_token) = resolved {
                             if let Some(c) = counts.get_mut(resolved_token) {
-                                *c += 1;
+                                *c = c.saturating_add(1);
                             }
                         }
                     }

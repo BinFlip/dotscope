@@ -249,7 +249,7 @@ impl SsaPass for ReflectionDevirtualizationPass {
                 ReflectionSite::FieldAccess { .. } => rewrite_field_access(ssa, site, ctx),
             };
             if success {
-                count += 1;
+                count = count.saturating_add(1);
             }
         }
 
@@ -281,7 +281,7 @@ impl SsaPass for ReflectionDevirtualizationPass {
 /// The number of confirmed P1 (ResolveMethod + GetFunctionPointer + calli) sites.
 pub fn count_resolve_method_calli_sites(ssa: &SsaFunction, assembly: &CilObject) -> usize {
     let tracer = ChainTracer { ssa, assembly };
-    let mut count = 0;
+    let mut count: usize = 0;
     for (block_idx, block) in ssa.blocks().iter().enumerate() {
         for (i, instr) in block.instructions().iter().enumerate() {
             let SsaOp::CallIndirect {
@@ -294,7 +294,7 @@ pub fn count_resolve_method_calli_sites(ssa: &SsaFunction, assembly: &CilObject)
                 .trace_resolve_method_calli(block_idx, i, *dest, *fptr, args)
                 .is_some()
             {
-                count += 1;
+                count = count.saturating_add(1);
             }
         }
     }
@@ -421,7 +421,7 @@ impl<'a> ChainTracer<'a> {
         if args.is_empty() {
             return None;
         }
-        match self.ssa.get_definition(args[0])? {
+        match self.ssa.get_definition(*args.first()?)? {
             SsaOp::LoadToken { token, .. } => Some(token.0),
             _ => None,
         }
@@ -441,7 +441,7 @@ impl<'a> ChainTracer<'a> {
             return None;
         };
         if rm_args.len() >= 2 && is_method_named(self.assembly, method.token(), "ResolveMethod") {
-            Some((rm_args[0], rm_args[1]))
+            Some((*rm_args.first()?, *rm_args.get(1)?))
         } else {
             None
         }
@@ -472,8 +472,9 @@ impl<'a> ChainTracer<'a> {
             return None;
         }
         intermediates.extend(self.def_site(field_info_var));
-        let field_token = self.extract_field_token(rf_args[1])?;
-        intermediates.extend(self.def_site(rf_args[1]));
+        let token_var = *rf_args.get(1)?;
+        let field_token = self.extract_field_token(token_var)?;
+        intermediates.extend(self.def_site(token_var));
         Some((field_token, intermediates))
     }
 
@@ -486,20 +487,18 @@ impl<'a> ChainTracer<'a> {
         let Some(SsaOp::CallVirt { args, .. }) = self.ssa.get_definition(module_var) else {
             return;
         };
-        if args.is_empty() {
+        let Some(&type_handle_var) = args.first() else {
             return;
-        }
+        };
         intermediates.extend(self.def_site(module_var));
-        let type_handle_var = args[0];
 
         let Some(SsaOp::Call { args, .. }) = self.ssa.get_definition(type_handle_var) else {
             return;
         };
-        if args.is_empty() {
+        let Some(&loadtoken_arg) = args.first() else {
             return;
-        }
+        };
         intermediates.extend(self.def_site(type_handle_var));
-        let loadtoken_arg = args[0];
 
         if matches!(
             self.ssa.get_definition(loadtoken_arg),
@@ -525,10 +524,10 @@ impl<'a> ChainTracer<'a> {
         // Fast path: fptr directly defined by Call GetFunctionPointer.
         if let Some(def) = self.ssa.get_definition(fptr) {
             if let SsaOp::Call { method, args, .. } = def {
-                if !args.is_empty()
-                    && is_method_named(self.assembly, method.token(), "GetFunctionPointer")
-                {
-                    return Some((fptr, method.token(), args[0]));
+                if let Some(&first) = args.first() {
+                    if is_method_named(self.assembly, method.token(), "GetFunctionPointer") {
+                        return Some((fptr, method.token(), first));
+                    }
                 }
             }
             return None;
@@ -539,10 +538,10 @@ impl<'a> ChainTracer<'a> {
         for operand in phi.operands() {
             let op_var = operand.value();
             if let Some(SsaOp::Call { method, args, .. }) = self.ssa.get_definition(op_var) {
-                if !args.is_empty()
-                    && is_method_named(self.assembly, method.token(), "GetFunctionPointer")
-                {
-                    return Some((op_var, method.token(), args[0]));
+                if let Some(&first) = args.first() {
+                    if is_method_named(self.assembly, method.token(), "GetFunctionPointer") {
+                        return Some((op_var, method.token(), first));
+                    }
                 }
             }
         }
@@ -582,12 +581,12 @@ impl<'a> ChainTracer<'a> {
                     continue;
                 }
                 if let Some(SsaOp::CallVirt { method, args, .. }) = self.ssa.get_definition(*src) {
-                    if !args.is_empty()
-                        && is_method_named(self.assembly, method.token(), "get_MethodHandle")
-                    {
-                        intermediates.extend(self.def_site(*src));
-                        intermediates.push((block_idx, instr_idx));
-                        return Some(args[0]);
+                    if let Some(&first) = args.first() {
+                        if is_method_named(self.assembly, method.token(), "get_MethodHandle") {
+                            intermediates.extend(self.def_site(*src));
+                            intermediates.push((block_idx, instr_idx));
+                            return Some(first);
+                        }
                     }
                 }
             }
@@ -643,7 +642,7 @@ impl<'a> ChainTracer<'a> {
                     && is_method_named(self.assembly, method.token(), "get_MethodHandle") =>
             {
                 intermediates.extend(self.def_site(getfp_arg));
-                args[0]
+                *args.first()?
             }
             SsaOp::LoadLocalAddr { local_index, .. } => {
                 let local_idx = *local_index;
@@ -697,7 +696,7 @@ impl<'a> ChainTracer<'a> {
         args: &[SsaVarId],
         dest: Option<SsaVarId>,
     ) -> Option<ReflectionSite> {
-        let (method_info_var, obj_var, array_var) = (args[0], args[1], args[2]);
+        let (method_info_var, obj_var, array_var) = (*args.first()?, *args.get(1)?, *args.get(2)?);
         let mut intermediates: Vec<(usize, usize)> = Vec::new();
 
         let (module_var, token_const_var) = self.trace_resolve_method_call(method_info_var)?;
@@ -743,7 +742,7 @@ impl<'a> ChainTracer<'a> {
         args: &[SsaVarId],
         dest: Option<SsaVarId>,
     ) -> Option<ReflectionSite> {
-        let (method_info_var, obj_var, array_var) = (args[0], args[1], args[2]);
+        let (method_info_var, obj_var, array_var) = (*args.first()?, *args.get(1)?, *args.get(2)?);
         let mut intermediates: Vec<(usize, usize)> = Vec::new();
 
         // method_info_var ← Call/CallVirt GetMethod(type, Const("name"))
@@ -756,7 +755,7 @@ impl<'a> ChainTracer<'a> {
                 method, args: a, ..
             } if a.len() >= 2 && is_method_named(self.assembly, method.token(), "GetMethod") => {
                 intermediates.extend(self.def_site(method_info_var));
-                (a[0], a[1])
+                (*a.first()?, *a.get(1)?)
             }
             _ => return None,
         };
@@ -825,7 +824,7 @@ impl<'a> ChainTracer<'a> {
         args: &[SsaVarId],
         dest: Option<SsaVarId>,
     ) -> Option<ReflectionSite> {
-        let type_var = args[0];
+        let type_var = *args.first()?;
         let mut intermediates = Vec::new();
 
         let type_token = self.trace_type_from_handle(type_var)?;
@@ -860,7 +859,7 @@ impl<'a> ChainTracer<'a> {
         args: &[SsaVarId],
         dest: Option<SsaVarId>,
     ) -> Option<ReflectionSite> {
-        let (field_info_var, obj_var) = (args[0], args[1]);
+        let (field_info_var, obj_var) = (*args.first()?, *args.get(1)?);
         let (field_token, intermediates) = self.trace_resolve_field(field_info_var)?;
 
         Some(ReflectionSite::FieldAccess {
@@ -896,7 +895,7 @@ impl<'a> ChainTracer<'a> {
         idx: usize,
         args: &[SsaVarId],
     ) -> Option<ReflectionSite> {
-        let (field_info_var, obj_var, value_var) = (args[0], args[1], args[2]);
+        let (field_info_var, obj_var, value_var) = (*args.first()?, *args.get(1)?, *args.get(2)?);
         let (field_token, intermediates) = self.trace_resolve_field(field_info_var)?;
 
         // Unwrap Box on the value if present
@@ -1088,9 +1087,9 @@ fn unpack_object_array(ssa: &SsaFunction, array_var: SsaVarId) -> Option<Vec<Ssa
                 if let Some(SsaOp::Const { value: idx_val, .. }) = ssa.get_definition(*index) {
                     if let Some(i) = idx_val.as_i32() {
                         let i = i as usize;
-                        if i < arr_len {
+                        if let Some(slot) = elements.get_mut(i) {
                             let actual_val = unwrap_box(ssa, *value).unwrap_or(*value);
-                            elements[i] = Some(actual_val);
+                            *slot = Some(actual_val);
                         }
                     }
                 }

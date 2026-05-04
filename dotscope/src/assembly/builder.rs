@@ -339,9 +339,13 @@ impl InstructionAssembler {
                 handlers.push(ExceptionHandler {
                     flags,
                     try_offset: *try_start,
-                    try_length: try_end - try_start,
+                    try_length: try_end
+                        .checked_sub(*try_start)
+                        .ok_or_else(|| malformed_error!("try region length underflow"))?,
                     handler_offset: *handler_start,
-                    handler_length: handler_end - handler_start,
+                    handler_length: handler_end
+                        .checked_sub(*handler_start)
+                        .ok_or_else(|| malformed_error!("handler region length underflow"))?,
                     handler: class_token,
                     filter_offset,
                 });
@@ -493,20 +497,19 @@ impl InstructionAssembler {
     /// by indexing into the static `INSTRUCTIONS` / `INSTRUCTIONS_FE` tables.
     fn lookup_mnemonic(opcode: u16) -> Result<&'static str> {
         if opcode < u16::from(INSTRUCTIONS_MAX) {
-            let entry = &INSTRUCTIONS[opcode as usize];
+            let entry = INSTRUCTIONS
+                .get(opcode as usize)
+                .ok_or_else(|| malformed_error!("opcode 0x{:04X} out of range", opcode))?;
             if entry.instr.is_empty() {
                 return Err(malformed_error!("unused opcode slot 0x{:02X}", opcode));
             }
             Ok(entry.instr)
         } else if opcode >= 0xFE00 {
             let sub = (opcode & 0xFF) as usize;
-            if sub >= usize::from(INSTRUCTIONS_FE_MAX) {
-                return Err(malformed_error!(
-                    "extended opcode 0xFE{:02X} out of range",
-                    sub
-                ));
-            }
-            let entry = &INSTRUCTIONS_FE[sub];
+            let entry = INSTRUCTIONS_FE
+                .get(sub)
+                .filter(|_| sub < usize::from(INSTRUCTIONS_FE_MAX))
+                .ok_or_else(|| malformed_error!("extended opcode 0xFE{:02X} out of range", sub))?;
             if entry.instr.is_empty() {
                 return Err(malformed_error!("unused extended opcode 0xFE{:02X}", sub));
             }
@@ -522,13 +525,19 @@ impl InstructionAssembler {
     #[must_use]
     pub fn is_branch_opcode(opcode: u16) -> bool {
         let flow = if opcode < u16::from(INSTRUCTIONS_MAX) {
-            INSTRUCTIONS[opcode as usize].flow
+            let Some(entry) = INSTRUCTIONS.get(opcode as usize) else {
+                return false;
+            };
+            entry.flow
         } else if opcode >= 0xFE00 {
             let sub = (opcode & 0xFF) as usize;
             if sub >= usize::from(INSTRUCTIONS_FE_MAX) {
                 return false;
             }
-            INSTRUCTIONS_FE[sub].flow
+            let Some(entry) = INSTRUCTIONS_FE.get(sub) else {
+                return false;
+            };
+            entry.flow
         } else {
             return false;
         };
@@ -544,13 +553,19 @@ impl InstructionAssembler {
     #[must_use]
     pub fn is_token_opcode(opcode: u16) -> bool {
         let op_type = if opcode < u16::from(INSTRUCTIONS_MAX) {
-            INSTRUCTIONS[opcode as usize].op_type
+            let Some(entry) = INSTRUCTIONS.get(opcode as usize) else {
+                return false;
+            };
+            entry.op_type
         } else if opcode >= 0xFE00 {
             let sub = (opcode & 0xFF) as usize;
             if sub >= usize::from(INSTRUCTIONS_FE_MAX) {
                 return false;
             }
-            INSTRUCTIONS_FE[sub].op_type
+            let Some(entry) = INSTRUCTIONS_FE.get(sub) else {
+                return false;
+            };
+            entry.op_type
         } else {
             return false;
         };
@@ -589,7 +604,7 @@ impl InstructionAssembler {
 
     /// Generate a unique internal label name.
     fn generate_label(&mut self, prefix: &str) -> String {
-        self.label_counter += 1;
+        self.label_counter = self.label_counter.saturating_add(1);
         format!("__{}_{}", prefix, self.label_counter)
     }
 
@@ -798,7 +813,9 @@ impl InstructionAssembler {
 
         // Update handler (mutable borrow)
         if let Some(try_block) = self.try_blocks.get_mut(try_name) {
-            try_block.handlers[handler_idx].end_label = Some(end_label);
+            if let Some(h) = try_block.handlers.get_mut(handler_idx) {
+                h.end_label = Some(end_label);
+            }
         }
 
         Ok(self)
@@ -909,7 +926,9 @@ impl InstructionAssembler {
 
         // Update handler (mutable borrow)
         if let Some(try_block) = self.try_blocks.get_mut(try_name) {
-            try_block.handlers[handler_idx].end_label = Some(end_label);
+            if let Some(h) = try_block.handlers.get_mut(handler_idx) {
+                h.end_label = Some(end_label);
+            }
         }
 
         Ok(self)
@@ -1019,7 +1038,9 @@ impl InstructionAssembler {
 
         // Update handler (mutable borrow)
         if let Some(try_block) = self.try_blocks.get_mut(try_name) {
-            try_block.handlers[handler_idx].end_label = Some(end_label);
+            if let Some(h) = try_block.handlers.get_mut(handler_idx) {
+                h.end_label = Some(end_label);
+            }
         }
 
         Ok(self)
@@ -1149,7 +1170,9 @@ impl InstructionAssembler {
 
         // Update handler (mutable borrow)
         if let Some(try_block) = self.try_blocks.get_mut(try_name) {
-            try_block.handlers[handler_idx].start_label = start_label;
+            if let Some(h) = try_block.handlers.get_mut(handler_idx) {
+                h.start_label = start_label;
+            }
         }
 
         Ok(self)
@@ -1194,7 +1217,9 @@ impl InstructionAssembler {
 
         // Update handler (mutable borrow)
         if let Some(try_block) = self.try_blocks.get_mut(try_name) {
-            try_block.handlers[handler_idx].end_label = Some(end_label);
+            if let Some(h) = try_block.handlers.get_mut(handler_idx) {
+                h.end_label = Some(end_label);
+            }
         }
 
         Ok(self)

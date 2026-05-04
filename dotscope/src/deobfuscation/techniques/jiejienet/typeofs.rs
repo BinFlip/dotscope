@@ -110,7 +110,10 @@ impl Technique for JiejieNetTypeOf {
                 // Accessor: static, single int32 param, returns a class (Type)
                 if method.is_static()
                     && sig.params.len() == 1
-                    && matches!(sig.params[0].base, TypeSignature::I4)
+                    && sig
+                        .params
+                        .first()
+                        .is_some_and(|p| matches!(p.base, TypeSignature::I4))
                     && matches!(sig.return_type.base, TypeSignature::Class(_))
                 {
                     accessor_token = Some(method.token);

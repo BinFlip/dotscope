@@ -515,7 +515,8 @@ impl OpaquePredicatePass {
 
         // Nested analysis
         if let Some(left_op) = left_def {
-            let left_result = Self::analyze_predicate_with_cache(left_op, cache, depth + 1);
+            let left_result =
+                Self::analyze_predicate_with_cache(left_op, cache, depth.saturating_add(1));
             if left_result != PredicateResult::Unknown {
                 if let Some(r) = right_def {
                     if Self::is_one_constant(r) {
@@ -1591,12 +1592,12 @@ impl OpaquePredicatePass {
         for block in ssa.blocks() {
             for phi in block.phi_nodes() {
                 let operands: Vec<_> = phi.operands().iter().collect();
-                if operands.is_empty() {
+                let Some(first_operand) = operands.first() else {
                     continue;
-                }
+                };
 
                 // Check if all operands come from the same constant
-                let first_val = operands[0].value();
+                let first_val = first_operand.value();
                 let mut all_same_const = true;
                 let mut const_value = None;
 
@@ -1813,14 +1814,16 @@ impl SsaPass for OpaquePredicatePass {
                 } else {
                     ConstValue::False
                 };
-                block.instructions_mut()[instr_idx].set_op(SsaOp::Const {
-                    dest,
-                    value: const_value,
-                });
-                changes
-                    .record(EventKind::ConstantFolded)
-                    .at(method_token, instr_idx)
-                    .message(format!("opaque predicate → {value}"));
+                if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                    instr.set_op(SsaOp::Const {
+                        dest,
+                        value: const_value,
+                    });
+                    changes
+                        .record(EventKind::ConstantFolded)
+                        .at(method_token, instr_idx)
+                        .message(format!("opaque predicate → {value}"));
+                }
             }
         }
 
@@ -1829,18 +1832,22 @@ impl SsaPass for OpaquePredicatePass {
             if let Some(block) = ssa.block_mut(block_idx) {
                 match simplification {
                     ComparisonSimplification::SimplerOp { new_op, reason } => {
-                        block.instructions_mut()[instr_idx].set_op(new_op);
-                        changes
-                            .record(EventKind::ConstantFolded)
-                            .at(method_token, instr_idx)
-                            .message(reason);
+                        if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                            instr.set_op(new_op);
+                            changes
+                                .record(EventKind::ConstantFolded)
+                                .at(method_token, instr_idx)
+                                .message(reason);
+                        }
                     }
                     ComparisonSimplification::Copy { dest, src, reason } => {
-                        block.instructions_mut()[instr_idx].set_op(SsaOp::Copy { dest, src });
-                        changes
-                            .record(EventKind::ConstantFolded)
-                            .at(method_token, instr_idx)
-                            .message(reason);
+                        if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                            instr.set_op(SsaOp::Copy { dest, src });
+                            changes
+                                .record(EventKind::ConstantFolded)
+                                .at(method_token, instr_idx)
+                                .message(reason);
+                        }
                     }
                 }
             }

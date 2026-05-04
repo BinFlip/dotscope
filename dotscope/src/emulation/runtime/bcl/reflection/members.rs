@@ -842,7 +842,7 @@ mod tests {
             runtime::hook::{HookContext, PreHookResult},
             EmValue,
         },
-        metadata::typesystem::PointerSize,
+        metadata::{token::Token, typesystem::PointerSize},
         test::emulation::create_test_thread,
     };
 
@@ -851,7 +851,7 @@ mod tests {
     #[test]
     fn test_field_get_value_hook() {
         let ctx = HookContext::new(
-            crate::metadata::token::Token::new(0x0A000001),
+            Token::new(0x0A000001),
             "System.Reflection",
             "FieldInfo",
             "GetValue",

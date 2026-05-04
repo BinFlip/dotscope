@@ -107,7 +107,7 @@ impl LoopCanonicalizationPass {
         method_token: Token,
         changes: &mut EventLog,
     ) -> usize {
-        let mut total_modified = 0;
+        let mut total_modified: usize = 0;
 
         // We need to iterate until no more changes because inserting blocks
         // can affect loop structure
@@ -118,7 +118,7 @@ impl LoopCanonicalizationPass {
                 break;
             }
 
-            let mut modified_this_iteration = 0;
+            let mut modified_this_iteration: usize = 0;
 
             // Process loops from innermost to outermost to avoid invalidating
             // parent loop analysis when modifying inner loops
@@ -134,7 +134,7 @@ impl LoopCanonicalizationPass {
                             method_token,
                             changes,
                         );
-                        modified_this_iteration += 1;
+                        modified_this_iteration = modified_this_iteration.saturating_add(1);
                         // After inserting a preheader, we need to re-analyze loops
                         break;
                     }
@@ -143,13 +143,13 @@ impl LoopCanonicalizationPass {
                 // Check if this loop needs latch unification
                 if !loop_info.has_single_latch() && loop_info.latches.len() > 1 {
                     Self::unify_latches(ssa, loop_info, method_token, changes);
-                    modified_this_iteration += 1;
+                    modified_this_iteration = modified_this_iteration.saturating_add(1);
                     // After unifying latches, we need to re-analyze loops
                     break;
                 }
             }
 
-            total_modified += modified_this_iteration;
+            total_modified = total_modified.saturating_add(modified_this_iteration);
 
             if modified_this_iteration == 0 {
                 break;
@@ -296,9 +296,9 @@ impl LoopCanonicalizationPass {
                 // For non-loop values: if there was a phi created in preheader,
                 // reference that phi's result; otherwise reference the single value
                 if !non_loop_values.is_empty() {
-                    if non_loop_values.len() == 1 {
+                    if let [single] = non_loop_values.as_slice() {
                         // Single non-loop predecessor: just update the predecessor
-                        operands.push(PhiOperand::new(non_loop_values[0].value(), preheader_idx));
+                        operands.push(PhiOperand::new(single.value(), preheader_idx));
                     } else if let Some(&preheader_var) = preheader_phi_map.get(&origin) {
                         // Multiple non-loop predecessors: use the phi we created in preheader
                         operands.push(PhiOperand::new(preheader_var, preheader_idx));
@@ -369,9 +369,9 @@ impl LoopCanonicalizationPass {
                 }
                 latch_phi_vars.insert(*origin, new_var);
                 unified_latch.phi_nodes_mut().push(latch_phi);
-            } else if latch_operands.len() == 1 {
+            } else if let [single] = latch_operands.as_slice() {
                 // Single latch operand - just remember its value
-                latch_phi_vars.insert(*origin, latch_operands[0].value());
+                latch_phi_vars.insert(*origin, single.value());
             }
         }
 

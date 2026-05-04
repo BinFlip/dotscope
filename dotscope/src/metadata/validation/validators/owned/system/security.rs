@@ -275,12 +275,24 @@ impl OwnedSecurityValidator {
 
         // Simplified extraction - real implementation would parse XML properly
         if let Some(start) = permission_set.find(&format!("<{action}")) {
-            if let Some(end) = permission_set[start..].find('>') {
-                let section = &permission_set[start..start + end];
-                if let Some(class_start) = section.find("class=\"") {
-                    if let Some(class_end) = section[class_start + 7..].find('"') {
-                        let class_name = &section[class_start + 7..class_start + 7 + class_end];
-                        permissions.push(class_name.to_string());
+            if let Some(rest) = permission_set.get(start..) {
+                if let Some(end) = rest.find('>') {
+                    let section_end = start.saturating_add(end);
+                    if let Some(section) = permission_set.get(start..section_end) {
+                        if let Some(class_start) = section.find("class=\"") {
+                            let class_value_start = class_start.saturating_add(7);
+                            if let Some(after_class) = section.get(class_value_start..) {
+                                if let Some(class_end) = after_class.find('"') {
+                                    let class_value_end =
+                                        class_value_start.saturating_add(class_end);
+                                    if let Some(class_name) =
+                                        section.get(class_value_start..class_value_end)
+                                    {
+                                        permissions.push(class_name.to_string());
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

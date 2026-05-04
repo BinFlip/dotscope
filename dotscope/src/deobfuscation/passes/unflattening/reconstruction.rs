@@ -307,7 +307,21 @@ pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
     }
 
     if plans.len() == 1 {
-        return plans.into_iter().next().unwrap();
+        if let Some(only) = plans.into_iter().next() {
+            return only;
+        }
+        // Unreachable: we just checked len() == 1, but handle defensively.
+        return PatchPlan {
+            dispatcher_blocks: Vec::new(),
+            state_tainted: BitSet::new(0),
+            redirects: Vec::new(),
+            state_transition_sources: BTreeSet::new(),
+            clone_requests: BTreeMap::new(),
+            execution_order: Vec::new(),
+            branch_collapses: BTreeMap::new(),
+            state_transitions_removed: 0,
+            user_branches_preserved: 0,
+        };
     }
 
     // Determine the tainted BitSet size (all plans share the same SSA, so same size)
@@ -376,8 +390,12 @@ pub fn merge_patch_plans(plans: Vec<PatchPlan>) -> PatchPlan {
             merged.branch_collapses.entry(source).or_insert(target);
         }
 
-        merged.state_transitions_removed += plan.state_transitions_removed;
-        merged.user_branches_preserved += plan.user_branches_preserved;
+        merged.state_transitions_removed = merged
+            .state_transitions_removed
+            .saturating_add(plan.state_transitions_removed);
+        merged.user_branches_preserved = merged
+            .user_branches_preserved
+            .saturating_add(plan.user_branches_preserved);
     }
 
     merged
@@ -533,12 +551,13 @@ fn extract_redirects_from_node(
                             .iter()
                             .position(|&b| b == last)
                             .unwrap_or(node.blocks_visited.len());
-                        if end_idx > start_idx + 1 {
+                        let interior_start = start_idx.saturating_add(1);
+                        if end_idx > interior_start {
                             let intermediate_blocks: std::collections::BTreeSet<usize> = node
-                                .blocks_visited[start_idx + 1..end_idx]
-                                .iter()
-                                .copied()
-                                .collect();
+                                .blocks_visited
+                                .get(interior_start..end_idx)
+                                .map(|s| s.iter().copied().collect())
+                                .unwrap_or_default();
                             for iwv in &node.instructions {
                                 if !intermediate_blocks.contains(&iwv.block_idx) {
                                     continue;
@@ -563,7 +582,10 @@ fn extract_redirects_from_node(
                             // first has a Branch/BranchCmp overflow check: collapse
                             // it to Jump at the next visited block, then use `last`
                             // for the dispatcher bypass redirect.
-                            let next_in_path = node.blocks_visited.get(start_idx + 1).copied();
+                            let next_in_path = node
+                                .blocks_visited
+                                .get(start_idx.saturating_add(1))
+                                .copied();
                             if let Some(next) = next_in_path {
                                 collapse_first_branch = Some((first, next));
                             }
@@ -582,7 +604,7 @@ fn extract_redirects_from_node(
                         .position(|&b| b == pred)
                         .and_then(|pos| {
                             if pos > 0 {
-                                Some(node.blocks_visited[pos - 1])
+                                node.blocks_visited.get(pos.saturating_sub(1)).copied()
                             } else {
                                 external_predecessor
                             }
@@ -595,7 +617,8 @@ fn extract_redirects_from_node(
                     // This block should redirect to target_block instead of dispatcher
                     plan.add_redirect(pred, *target_block, predecessor_of_pred);
                     plan.state_transition_sources.insert(pred);
-                    plan.state_transitions_removed += 1;
+                    plan.state_transitions_removed =
+                        plan.state_transitions_removed.saturating_add(1);
                 } else if let Some(ext_pred) = external_predecessor {
                     // The sub-trace starts directly at the dispatcher (no preceding user blocks).
                     // This happens when a user branch at method entry sends one path directly
@@ -603,7 +626,8 @@ fn extract_redirects_from_node(
                     // dispatcher-targeting edge to the actual target.
                     plan.add_redirect(ext_pred, *target_block, None);
                     plan.state_transition_sources.insert(ext_pred);
-                    plan.state_transitions_removed += 1;
+                    plan.state_transitions_removed =
+                        plan.state_transitions_removed.saturating_add(1);
                 }
 
                 // If the first visited block is a BranchCmp overflow check, add
@@ -630,7 +654,7 @@ fn extract_redirects_from_node(
                 false_branch,
                 ..
             } => {
-                plan.user_branches_preserved += 1;
+                plan.user_branches_preserved = plan.user_branches_preserved.saturating_add(1);
                 // For user branches, the branch block is the predecessor of both sub-traces.
                 // This is crucial for proper merge point detection when a block is both
                 // an entry path target (from the branch) and a CFF case target.
@@ -645,7 +669,7 @@ fn extract_redirects_from_node(
                 default,
                 ..
             } => {
-                plan.user_branches_preserved += 1;
+                plan.user_branches_preserved = plan.user_branches_preserved.saturating_add(1);
                 // For user switches, the switch block is the predecessor of all
                 // case sub-traces. The recursive version processed all cases in
                 // order, then the default — to reproduce that order with a LIFO
@@ -678,7 +702,8 @@ fn extract_redirects_from_node(
                 if let Some(pred) = external_predecessor {
                     plan.add_redirect(pred, *target_block, external_predecessor);
                     plan.state_transition_sources.insert(pred);
-                    plan.state_transitions_removed += 1;
+                    plan.state_transitions_removed =
+                        plan.state_transitions_removed.saturating_add(1);
                 }
                 plan.add_to_execution_order(*target_block);
             }
@@ -780,7 +805,9 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
         // Only redirect Jump terminators. Branch/BranchCmp blocks are user
         // branches that must preserve both targets — cloning them with
         // set_target would collapse both branch arms to the same target.
-        let (_, first_target) = paths[0];
+        let Some(&(_, first_target)) = paths.first() else {
+            continue;
+        };
         let is_user_branch = ssa
             .block(*merge_block)
             .and_then(|b| b.terminator_op())
@@ -802,7 +829,7 @@ pub fn apply_patch_plan(ssa: &mut SsaFunction, plan: &PatchPlan) -> Reconstructi
 
         // For remaining paths, create clones
         for &(pred, target) in paths.iter().skip(1) {
-            let new_block_idx = ssa.block_count() + cloned_blocks.len();
+            let new_block_idx = ssa.block_count().saturating_add(cloned_blocks.len());
 
             // Track the clone mapping
             clone_map.insert(new_block_idx, *merge_block);

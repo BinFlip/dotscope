@@ -536,15 +536,13 @@ pub fn read_le<T: CilIO>(data: &[u8]) -> Result<T> {
 /// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn read_le_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
     let type_len = std::mem::size_of::<T>();
-    if (type_len + *offset) > data.len() {
-        return Err(out_of_bounds_error!());
-    }
-
-    let Ok(read) = data[*offset..*offset + type_len].try_into() else {
+    let end = offset.checked_add(type_len).ok_or(out_of_bounds_error!())?;
+    let slice = data.get(*offset..end).ok_or(out_of_bounds_error!())?;
+    let Ok(read) = slice.try_into() else {
         return Err(out_of_bounds_error!());
     };
 
-    *offset += type_len;
+    *offset = end;
 
     Ok(T::from_le_bytes(read))
 }
@@ -671,15 +669,13 @@ pub fn read_be<T: CilIO>(data: &[u8]) -> Result<T> {
 /// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn read_be_at<T: CilIO>(data: &[u8], offset: &mut usize) -> Result<T> {
     let type_len = std::mem::size_of::<T>();
-    if (type_len + *offset) > data.len() {
-        return Err(out_of_bounds_error!());
-    }
-
-    let Ok(read) = data[*offset..*offset + type_len].try_into() else {
+    let end = offset.checked_add(type_len).ok_or(out_of_bounds_error!())?;
+    let slice = data.get(*offset..end).ok_or(out_of_bounds_error!())?;
+    let Ok(read) = slice.try_into() else {
         return Err(out_of_bounds_error!());
     };
 
-    *offset += type_len;
+    *offset = end;
 
     Ok(T::from_be_bytes(read))
 }
@@ -809,13 +805,11 @@ pub fn write_le<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 /// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn write_le_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> Result<()> {
     let type_len = std::mem::size_of::<T>();
-    if (type_len + *offset) > data.len() {
-        return Err(out_of_bounds_error!());
-    }
-
+    let end = offset.checked_add(type_len).ok_or(out_of_bounds_error!())?;
     let bytes = value.to_le_bytes();
-    data[*offset..*offset + type_len].copy_from_slice(bytes.as_ref());
-    *offset += type_len;
+    let dst = data.get_mut(*offset..end).ok_or(out_of_bounds_error!())?;
+    dst.copy_from_slice(bytes.as_ref());
+    *offset = end;
 
     Ok(())
 }
@@ -952,13 +946,11 @@ pub fn write_be<T: CilIO>(data: &mut [u8], value: T) -> Result<()> {
 /// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn write_be_at<T: CilIO>(data: &mut [u8], offset: &mut usize, value: T) -> Result<()> {
     let type_len = std::mem::size_of::<T>();
-    if (type_len + *offset) > data.len() {
-        return Err(out_of_bounds_error!());
-    }
-
+    let end = offset.checked_add(type_len).ok_or(out_of_bounds_error!())?;
     let bytes = value.to_be_bytes();
-    data[*offset..*offset + type_len].copy_from_slice(bytes.as_ref());
-    *offset += type_len;
+    let dst = data.get_mut(*offset..end).ok_or(out_of_bounds_error!())?;
+    dst.copy_from_slice(bytes.as_ref());
+    *offset = end;
 
     Ok(())
 }
@@ -1094,9 +1086,12 @@ pub fn write_compressed_uint(value: u32, buffer: &mut Vec<u8>) {
 #[allow(clippy::cast_sign_loss)]
 pub fn write_compressed_int(value: i32, buffer: &mut Vec<u8>) {
     let unsigned_value = if value >= 0 {
-        (value as u32) << 1
+        (value as u32).wrapping_shl(1)
     } else {
-        (((-value - 1) as u32) << 1) | 1
+        // value is negative, so -value-1 fits in u32 without overflow
+        // (covers i32::MIN: -i32::MIN - 1 == i32::MAX, fits in u32)
+        let magnitude = value.wrapping_neg().wrapping_sub(1) as u32;
+        magnitude.wrapping_shl(1) | 1
     };
     write_compressed_uint(unsigned_value, buffer);
 }
@@ -1201,7 +1196,9 @@ pub fn write_prefixed_string_utf8(value: &str, buffer: &mut Vec<u8>) {
 #[allow(clippy::cast_possible_truncation)]
 pub fn write_prefixed_string_utf16(value: &str, buffer: &mut Vec<u8>) {
     let utf16_chars: Vec<u16> = value.encode_utf16().collect();
-    let byte_length = utf16_chars.len() * 2;
+    // saturating_mul: the byte length is then bounded; the 7-bit prefix is u32
+    // and overflow only matters for >2GiB strings, which we cannot encode anyway.
+    let byte_length = utf16_chars.len().saturating_mul(2);
 
     write_7bit_encoded_int(byte_length as u32, buffer);
 
@@ -1223,18 +1220,14 @@ pub fn write_prefixed_string_utf16(value: &str, buffer: &mut Vec<u8>) {
 /// only a null terminator.
 #[must_use]
 pub fn decode_utf16le(bytes: &[u8]) -> Option<String> {
-    if bytes.len() < 2 {
-        return None;
-    }
     let mut utf16_chars = Vec::new();
-    let mut i = 0;
-    while i + 1 < bytes.len() {
-        let ch = u16::from_le_bytes([bytes[i], bytes[i + 1]]);
+    for pair in bytes.chunks_exact(2) {
+        let arr: [u8; 2] = pair.try_into().ok()?;
+        let ch = u16::from_le_bytes(arr);
         if ch == 0 {
             break;
         }
         utf16_chars.push(ch);
-        i += 2;
     }
     if utf16_chars.is_empty() {
         return None;
@@ -1278,20 +1271,19 @@ pub fn decode_utf16le(bytes: &[u8]) -> Option<String> {
 /// Note that the offset parameter is modified, so each thread should use its own offset variable.
 pub fn write_string_at(data: &mut [u8], offset: &mut usize, value: &str) -> Result<()> {
     let string_bytes = value.as_bytes();
-    let total_length = string_bytes.len() + 1; // +1 for null terminator
+    let after_str = offset
+        .checked_add(string_bytes.len())
+        .ok_or(out_of_bounds_error!())?;
+    let after_null = after_str.checked_add(1).ok_or(out_of_bounds_error!())?;
 
-    // Check bounds
-    if *offset + total_length > data.len() {
-        return Err(out_of_bounds_error!());
-    }
+    let dst = data
+        .get_mut(*offset..after_str)
+        .ok_or(out_of_bounds_error!())?;
+    dst.copy_from_slice(string_bytes);
 
-    // Write string bytes
-    data[*offset..*offset + string_bytes.len()].copy_from_slice(string_bytes);
-    *offset += string_bytes.len();
+    *data.get_mut(after_str).ok_or(out_of_bounds_error!())? = 0;
 
-    // Write null terminator
-    data[*offset] = 0;
-    *offset += 1;
+    *offset = after_null;
 
     Ok(())
 }
@@ -1336,35 +1328,32 @@ pub fn write_string_at(data: &mut [u8], offset: &mut usize, value: &str) -> Resu
 /// # Ok::<(), dotscope::Error>(())
 /// ```
 pub fn read_compressed_int(data: &[u8], offset: &mut usize) -> Result<(usize, usize)> {
-    if *offset >= data.len() {
-        return Err(out_of_bounds_error!());
-    }
-
-    let first_byte = data[*offset];
+    let first_byte = *data.get(*offset).ok_or(out_of_bounds_error!())?;
 
     if first_byte & 0x80 == 0 {
         // Single byte: 0xxxxxxx
-        *offset += 1;
+        *offset = offset.checked_add(1).ok_or(out_of_bounds_error!())?;
         Ok((first_byte as usize, 1))
     } else if first_byte & 0xC0 == 0x80 {
         // Two bytes: 10xxxxxx xxxxxxxx
-        if *offset + 1 >= data.len() {
-            return Err(out_of_bounds_error!());
-        }
-        let second_byte = data[*offset + 1];
+        let next = offset.checked_add(1).ok_or(out_of_bounds_error!())?;
+        let second_byte = *data.get(next).ok_or(out_of_bounds_error!())?;
         let value = (((first_byte & 0x3F) as usize) << 8) | (second_byte as usize);
-        *offset += 2;
+        *offset = offset.checked_add(2).ok_or(out_of_bounds_error!())?;
         Ok((value, 2))
     } else {
         // Four bytes: 110xxxxx xxxxxxxx xxxxxxxx xxxxxxxx
-        if *offset + 3 >= data.len() {
-            return Err(out_of_bounds_error!());
-        }
+        let o1 = offset.checked_add(1).ok_or(out_of_bounds_error!())?;
+        let o2 = offset.checked_add(2).ok_or(out_of_bounds_error!())?;
+        let o3 = offset.checked_add(3).ok_or(out_of_bounds_error!())?;
+        let b1 = *data.get(o1).ok_or(out_of_bounds_error!())?;
+        let b2 = *data.get(o2).ok_or(out_of_bounds_error!())?;
+        let b3 = *data.get(o3).ok_or(out_of_bounds_error!())?;
         let mut value = ((first_byte & 0x1F) as usize) << 24;
-        value |= (data[*offset + 1] as usize) << 16;
-        value |= (data[*offset + 2] as usize) << 8;
-        value |= data[*offset + 3] as usize;
-        *offset += 4;
+        value |= (b1 as usize) << 16;
+        value |= (b2 as usize) << 8;
+        value |= b3 as usize;
+        *offset = offset.checked_add(4).ok_or(out_of_bounds_error!())?;
         Ok((value, 4))
     }
 }
@@ -1416,7 +1405,7 @@ pub fn read_compressed_int_at(data: &[u8], offset: usize) -> Result<(usize, usiz
 /// (`0xFF`), empty input, or truncated data.
 #[must_use]
 pub fn read_packed_len(data: &[u8]) -> Option<(usize, usize)> {
-    if data.is_empty() || data[0] == 0xFF {
+    if *data.first()? == 0xFF {
         return None;
     }
     read_compressed_int_at(data, 0).ok()

@@ -159,8 +159,8 @@ impl<'a> PatternDetector<'a> {
         let block_count = self.ssa.block_count().max(1);
         let mut visited = BitSet::new(block_count);
         let mut queue = vec![from_block];
-        let max_depth = 50; // Prevent infinite loops
-        let mut depth = 0;
+        let max_depth: u32 = 50; // Prevent infinite loops
+        let mut depth: u32 = 0;
 
         while !queue.is_empty() && depth < max_depth {
             let mut next_queue = Vec::new();
@@ -181,7 +181,7 @@ impl<'a> PatternDetector<'a> {
             }
 
             queue = next_queue;
-            depth += 1;
+            depth = depth.saturating_add(1);
         }
 
         false
@@ -506,11 +506,7 @@ impl DispatcherPattern {
     /// Gets the target block for a specific case index.
     #[must_use]
     pub fn target_for_case(&self, case_idx: usize) -> usize {
-        if case_idx < self.targets.len() {
-            self.targets[case_idx]
-        } else {
-            self.default
-        }
+        self.targets.get(case_idx).copied().unwrap_or(self.default)
     }
 }
 

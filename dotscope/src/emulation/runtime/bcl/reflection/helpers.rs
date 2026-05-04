@@ -94,7 +94,7 @@ pub(crate) fn find_method_by_name(asm: &CilObject, type_token: Token, name: &str
             if let Some(method) = method_weak.upgrade() {
                 if method.name == name {
                     let param_count = method.signature.params.len();
-                    if best.is_none() || param_count < best.unwrap().1 {
+                    if best.is_none_or(|(_, n)| param_count < n) {
                         best = Some((method.token, param_count));
                     }
                 }

@@ -33,7 +33,7 @@ impl RowReadable for FieldLayoutRaw {
 
         Ok(FieldLayoutRaw {
             rid,
-            token: Token::new(0x1000_0000 + rid),
+            token: Token::new(0x1000_0000u32.saturating_add(rid)),
             offset: offset_org,
             field_offset,
             field,

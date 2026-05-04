@@ -49,7 +49,10 @@ use std::sync::{
     Arc,
 };
 
-use crate::metadata::{tables::TableId, token::Token};
+use crate::{
+    metadata::{tables::TableId, token::Token},
+    Error, Result,
+};
 
 // Re-export hash functions from utils for backwards compatibility
 pub use crate::utils::{hash_blob, hash_guid, hash_string};
@@ -222,21 +225,24 @@ impl ChangeRef {
     ///
     /// * `token` - The existing metadata token
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the token's table type is not recognized.
-    #[must_use]
-    pub fn from_token(token: Token) -> Self {
-        let table_id =
-            TableId::from_token_type(token.table()).expect("Token has unrecognized table type");
-        Self {
+    /// Returns an error if the token's table type is not recognized.
+    pub fn from_token(token: Token) -> Result<Self> {
+        let table_id = TableId::from_token_type(token.table()).ok_or_else(|| {
+            Error::Other(format!(
+                "Token has unrecognized table type: 0x{:02X}",
+                token.table()
+            ))
+        })?;
+        Ok(Self {
             id: NEXT_CHANGE_ID.fetch_add(1, Ordering::Relaxed),
             kind: ChangeRefKind::TableRow(table_id),
             content_hash: 0,
             resolved: AtomicBool::new(true),
             resolved_offset: AtomicU32::new(UNRESOLVED),
             resolved_token: AtomicU32::new(token.value()),
-        }
+        })
     }
 
     /// Returns the unique ID of this change reference.
@@ -522,9 +528,12 @@ impl ChangeRef {
     }
 
     /// Creates a reference from an existing token, wrapped in Arc.
-    #[must_use]
-    pub fn existing_token(token: Token) -> ChangeRefRc {
-        Arc::new(Self::from_token(token))
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the token's table type is not recognized.
+    pub fn existing_token(token: Token) -> Result<ChangeRefRc> {
+        Ok(Arc::new(Self::from_token(token)?))
     }
 }
 
@@ -561,7 +570,7 @@ mod tests {
     #[test]
     fn test_changeref_from_existing_token() {
         let token = Token::new(0x0200_0001); // TypeDef row 1
-        let ref1 = ChangeRef::existing_token(token);
+        let ref1 = ChangeRef::existing_token(token).unwrap();
         assert!(ref1.is_resolved());
         assert_eq!(ref1.token(), Some(token));
     }

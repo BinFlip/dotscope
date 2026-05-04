@@ -133,7 +133,7 @@ impl SsaPass for ResourceShimRewritePass {
                             method: bcl_target,
                             args: args.clone(),
                         };
-                        shim_rewrites += 1;
+                        shim_rewrites = shim_rewrites.saturating_add(1);
                         Some(new)
                     }
                     SsaOp::Call { dest, method, args }
@@ -141,7 +141,7 @@ impl SsaPass for ResourceShimRewritePass {
                             && dest.is_none()
                             && args.is_empty() =>
                     {
-                        init_nops += 1;
+                        init_nops = init_nops.saturating_add(1);
                         Some(SsaOp::Nop)
                     }
                     _ => None,

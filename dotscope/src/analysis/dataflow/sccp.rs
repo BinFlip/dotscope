@@ -362,8 +362,8 @@ impl ConstantPropagation {
                     ScalarValue::Constant(c) => {
                         // Known switch value - use checked conversion to handle negative values
                         if let Some(idx) = c.as_i32().and_then(|i| usize::try_from(i).ok()) {
-                            if idx < targets.len() {
-                                self.add_cfg_edge(block_id, targets[idx]);
+                            if let Some(target) = targets.get(idx) {
+                                self.add_cfg_edge(block_id, *target);
                             } else {
                                 self.add_cfg_edge(block_id, *default);
                             }

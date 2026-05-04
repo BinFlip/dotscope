@@ -135,24 +135,63 @@ impl ManifestResourceRaw {
             // The resource format is: [4-byte length prefix][data bytes]
             // offset_field points to the length prefix
             let section_start = file.rva_to_offset(cor20.resource_rva as usize)?;
-            let length_prefix_offset = section_start + self.offset_field as usize;
+            let length_prefix_offset = section_start
+                .checked_add(self.offset_field as usize)
+                .ok_or_else(|| {
+                    malformed_error!(
+                        "ManifestResource length-prefix offset overflow: {} + {}",
+                        section_start,
+                        self.offset_field
+                    )
+                })?;
 
             // Read the 4-byte length prefix to get actual data size
             if let Ok(len_bytes) = file.data_slice(length_prefix_offset, 4) {
-                data_size =
-                    u32::from_le_bytes([len_bytes[0], len_bytes[1], len_bytes[2], len_bytes[3]])
-                        as usize;
+                let b0 = *len_bytes.first().ok_or(out_of_bounds_error!())?;
+                let b1 = *len_bytes.get(1).ok_or(out_of_bounds_error!())?;
+                let b2 = *len_bytes.get(2).ok_or(out_of_bounds_error!())?;
+                let b3 = *len_bytes.get(3).ok_or(out_of_bounds_error!())?;
+                data_size = u32::from_le_bytes([b0, b1, b2, b3]) as usize;
             } else {
                 // Fallback: calculate from offset differences (includes length prefix)
-                data_size = if let Some(next_res) = table.get(self.rid + 1) {
-                    (next_res.offset_field as usize - self.offset_field as usize).saturating_sub(4)
+                let next_rid = self.rid.checked_add(1).ok_or_else(|| {
+                    malformed_error!(
+                        "ManifestResource rid overflow when computing next rid: {}",
+                        self.rid
+                    )
+                })?;
+                data_size = if let Some(next_res) = table.get(next_rid) {
+                    (next_res.offset_field as usize)
+                        .checked_sub(self.offset_field as usize)
+                        .ok_or_else(|| {
+                            malformed_error!(
+                                "ManifestResource offsets out of order: next={} current={}",
+                                next_res.offset_field,
+                                self.offset_field
+                            )
+                        })?
+                        .saturating_sub(4)
                 } else {
-                    (cor20.resource_size as usize - self.offset_field as usize).saturating_sub(4)
+                    (cor20.resource_size as usize)
+                        .checked_sub(self.offset_field as usize)
+                        .ok_or_else(|| {
+                            malformed_error!(
+                                "ManifestResource offset {} exceeds resource section size {}",
+                                self.offset_field,
+                                cor20.resource_size
+                            )
+                        })?
+                        .saturating_sub(4)
                 };
             }
 
             // data_offset points to actual data (after the 4-byte length prefix)
-            data_offset = length_prefix_offset + 4;
+            data_offset = length_prefix_offset.checked_add(4).ok_or_else(|| {
+                malformed_error!(
+                    "ManifestResource data offset overflow: {} + 4",
+                    length_prefix_offset
+                )
+            })?;
             None
         } else {
             let implementation = get_ref(&self.implementation);
@@ -208,10 +247,11 @@ impl TableRow for ManifestResourceRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* offset_field */   4 +
-            /* flags */          4 +
-            /* name */           sizes.str_bytes() +
-            /* implementation */ sizes.coded_index_bytes(CodedIndexType::Implementation)
+            /* offset */         4u8
+            /* flags */          .saturating_add(4)
+            /* name */           .saturating_add(sizes.str_bytes())
+            /* implementation */ .saturating_add(sizes.coded_index_bytes(CodedIndexType::Implementation))
+
         )
     }
 }

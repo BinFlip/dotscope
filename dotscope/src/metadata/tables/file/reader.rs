@@ -13,7 +13,7 @@ impl RowReadable for FileRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(FileRaw {
             rid,
-            token: Token::new(0x2600_0000 + rid),
+            token: Token::new(0x2600_0000u32.saturating_add(rid)),
             offset: *offset,
             flags: read_le_at::<u32>(data, offset)?,
             name: read_le_at_dyn(data, offset, sizes.is_large_str())?,

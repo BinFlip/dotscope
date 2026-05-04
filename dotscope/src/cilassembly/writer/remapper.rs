@@ -49,18 +49,22 @@ use std::collections::{HashMap, HashSet};
 
 use crate::{
     cilassembly::{AssemblyChanges, TableModifications},
-    metadata::tables::{
-        AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
-        AssemblyRefProcessorRaw, AssemblyRefRaw, ClassLayoutRaw, CodedIndex, ConstantRaw,
-        CustomAttributeRaw, CustomDebugInformationRaw, DeclSecurityRaw, DocumentRaw, EncLogRaw,
-        EncMapRaw, EventMapRaw, EventPtrRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw,
-        FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw, GenericParamConstraintRaw,
-        GenericParamRaw, ImplMapRaw, ImportScopeRaw, InterfaceImplRaw, LocalConstantRaw,
-        LocalScopeRaw, LocalVariableRaw, ManifestResourceRaw, MemberRefRaw,
-        MethodDebugInformationRaw, MethodDefRaw, MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw,
-        MethodSpecRaw, ModuleRaw, ModuleRefRaw, NestedClassRaw, ParamPtrRaw, ParamRaw,
-        PropertyMapRaw, PropertyPtrRaw, PropertyRaw, StandAloneSigRaw, StateMachineMethodRaw,
-        TableDataOwned, TableId, TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+    metadata::{
+        tables::{
+            AssemblyOsRaw, AssemblyProcessorRaw, AssemblyRaw, AssemblyRefOsRaw,
+            AssemblyRefProcessorRaw, AssemblyRefRaw, ClassLayoutRaw, CodedIndex, ConstantRaw,
+            CustomAttributeRaw, CustomDebugInformationRaw, DeclSecurityRaw, DocumentRaw, EncLogRaw,
+            EncMapRaw, EventMapRaw, EventPtrRaw, EventRaw, ExportedTypeRaw, FieldLayoutRaw,
+            FieldMarshalRaw, FieldPtrRaw, FieldRaw, FieldRvaRaw, FileRaw,
+            GenericParamConstraintRaw, GenericParamRaw, ImplMapRaw, ImportScopeRaw,
+            InterfaceImplRaw, LocalConstantRaw, LocalScopeRaw, LocalVariableRaw,
+            ManifestResourceRaw, MemberRefRaw, MethodDebugInformationRaw, MethodDefRaw,
+            MethodImplRaw, MethodPtrRaw, MethodSemanticsRaw, MethodSpecRaw, ModuleRaw,
+            ModuleRefRaw, NestedClassRaw, ParamPtrRaw, ParamRaw, PropertyMapRaw, PropertyPtrRaw,
+            PropertyRaw, StandAloneSigRaw, StateMachineMethodRaw, TableDataOwned, TableId,
+            TypeDefRaw, TypeRefRaw, TypeSpecRaw,
+        },
+        token::Token,
     },
 };
 
@@ -211,7 +215,7 @@ impl RidRemapper {
             if old_rid != new_rid {
                 remap.insert(old_rid, new_rid);
             }
-            new_rid += 1;
+            new_rid = new_rid.saturating_add(1);
         }
 
         // Second pass: for deleted rows, find the "continuation" RID
@@ -235,7 +239,7 @@ impl RidRemapper {
         // In .NET, tables like MethodDef use param_list/field_list/method_list values
         // that can point one past the end of the table to indicate "no items".
         // When rows are deleted, this continuation value must also be remapped.
-        let old_continuation = original_count + 1;
+        let old_continuation = original_count.saturating_add(1);
         if old_continuation != final_new_rid {
             remap.insert(old_continuation, final_new_rid);
         }
@@ -415,7 +419,7 @@ impl RidRemapper {
             if let Some(&new_rid) = table_remap.get(&coded_index.row) {
                 coded_index.row = new_rid;
                 // Update the token to reflect the new row
-                coded_index.token = crate::metadata::token::Token::from_parts(table_id, new_rid);
+                coded_index.token = Token::from_parts(table_id, new_rid);
             }
         }
     }
@@ -1087,7 +1091,7 @@ mod tests {
 
         let mut typedef = TypeDefRaw {
             rid: 1,
-            token: crate::metadata::token::Token::new(0x02000001),
+            token: Token::new(0x02000001),
             offset: 0,
             flags: 0,
             type_name: 0,

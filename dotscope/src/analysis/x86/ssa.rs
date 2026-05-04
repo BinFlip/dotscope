@@ -86,18 +86,14 @@ impl RegisterState {
     /// Gets the current SSA variable for a register.
     fn get(&self, reg: X86Register) -> Option<SsaVarId> {
         let idx = reg.base_index() as usize;
-        if idx < MAX_REGISTERS {
-            self.registers[idx]
-        } else {
-            None
-        }
+        self.registers.get(idx).copied().flatten()
     }
 
     /// Sets the SSA variable for a register.
     fn set(&mut self, reg: X86Register, var: SsaVarId) {
         let idx = reg.base_index() as usize;
-        if idx < MAX_REGISTERS {
-            self.registers[idx] = Some(var);
+        if let Some(slot) = self.registers.get_mut(idx) {
+            *slot = Some(var);
         }
     }
 
@@ -203,7 +199,7 @@ impl<'a> X86ToSsaTranslator<'a> {
         self.analyze_definitions();
 
         // Step 2: Place phi nodes using dominance frontiers
-        self.place_phi_nodes();
+        self.place_phi_nodes()?;
 
         // Step 3: Translate blocks in dominator tree order
         let ssa_blocks = self.translate_blocks()?;
@@ -237,7 +233,9 @@ impl<'a> X86ToSsaTranslator<'a> {
             if let Some(block) = self.func.block(block_idx) {
                 for instr in &block.instructions {
                     if let Some(reg_idx) = get_defined_register(&instr.instruction) {
-                        self.reg_def_blocks[reg_idx].insert(block_idx);
+                        if let Some(set) = self.reg_def_blocks.get_mut(reg_idx) {
+                            set.insert(block_idx);
+                        }
                     }
                 }
             }
@@ -245,16 +243,26 @@ impl<'a> X86ToSsaTranslator<'a> {
     }
 
     /// Places phi nodes at dominance frontiers.
-    fn place_phi_nodes(&mut self) {
+    fn place_phi_nodes(&mut self) -> Result<()> {
         let doms = self.func.dominators();
         let block_count = self.func.block_count();
         let bitness = self.func.bitness;
-        let register_count = self.block_exit_states[0].register_count();
+        let register_count = self
+            .block_exit_states
+            .first()
+            .ok_or_else(|| Error::SsaError("place_phi_nodes: block_exit_states is empty".into()))?
+            .register_count();
 
         // For each register that is defined somewhere
         for reg_idx in 0..register_count {
             // Clone the def_blocks to avoid borrow issues
-            let def_blocks: FxHashSet<usize> = self.reg_def_blocks[reg_idx].clone();
+            let def_blocks: FxHashSet<usize> = self
+                .reg_def_blocks
+                .get(reg_idx)
+                .ok_or_else(|| {
+                    Error::SsaError("place_phi_nodes: reg_def_blocks index out of bounds".into())
+                })?
+                .clone();
             if def_blocks.is_empty() {
                 continue;
             }
@@ -295,6 +303,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 }
             }
         }
+        Ok(())
     }
 
     /// Translates all blocks to SSA form.
@@ -393,7 +402,12 @@ impl<'a> X86ToSsaTranslator<'a> {
         }
 
         // Save exit state for phi operand computation
-        self.block_exit_states[block_idx] = reg_state;
+        let slot = self.block_exit_states.get_mut(block_idx).ok_or_else(|| {
+            Error::SsaError(format!(
+                "translate_block: block_exit_states out of bounds at {block_idx}"
+            ))
+        })?;
+        *slot = reg_state;
 
         Ok(ssa_block)
     }
@@ -421,12 +435,18 @@ impl<'a> X86ToSsaTranslator<'a> {
         let preds: Vec<_> = self.func.predecessors(node).collect();
 
         if preds.len() == 1 {
-            let pred_idx = preds[0].index();
-            // Copy predecessor's exit state for registers without phi nodes
-            for reg_idx in 0..state.register_count() {
-                if !self.phi_placement.has(block_idx, reg_idx) {
-                    if let Some(var) = self.block_exit_states[pred_idx].registers[reg_idx] {
-                        state.registers[reg_idx] = Some(var);
+            if let Some(pred) = preds.first() {
+                let pred_idx = pred.index();
+                // Copy predecessor's exit state for registers without phi nodes
+                if let Some(pred_state) = self.block_exit_states.get(pred_idx) {
+                    for reg_idx in 0..state.register_count() {
+                        if !self.phi_placement.has(block_idx, reg_idx) {
+                            if let Some(Some(var)) = pred_state.registers.get(reg_idx) {
+                                if let Some(slot) = state.registers.get_mut(reg_idx) {
+                                    *slot = Some(*var);
+                                }
+                            }
+                        }
                     }
                 }
             }
@@ -449,8 +469,10 @@ impl<'a> X86ToSsaTranslator<'a> {
                     // Add operand from each predecessor
                     for pred in self.func.predecessors(node) {
                         let pred_idx = pred.index();
-                        if let Some(var) = self.block_exit_states[pred_idx].registers[reg_idx] {
-                            phi.add_operand(PhiOperand::new(var, pred_idx));
+                        if let Some(pred_state) = self.block_exit_states.get(pred_idx) {
+                            if let Some(Some(var)) = pred_state.registers.get(reg_idx) {
+                                phi.add_operand(PhiOperand::new(*var, pred_idx));
+                            }
                         }
                     }
                 }
@@ -1355,7 +1377,7 @@ impl<'a> X86ToSsaTranslator<'a> {
 
             X86Instruction::Jcc { condition, target } => {
                 let target_block = self.find_block_for_address(*target)?;
-                let fallthrough_block = block_idx + 1; // Assumes sequential layout
+                let fallthrough_block = block_idx.saturating_add(1); // Assumes sequential layout
 
                 // Get comparison operands from flags
                 if let Some((cmp, left, right, unsigned)) = flags.get_branch_operands(*condition) {
@@ -2311,7 +2333,12 @@ impl<'a> X86ToSsaTranslator<'a> {
 
     /// Finds the block index for a given address.
     fn find_block_for_address(&self, addr: u64) -> Result<usize> {
-        let offset = addr - self.func.base_address;
+        let offset = addr.checked_sub(self.func.base_address).ok_or_else(|| {
+            Error::X86Error(format!(
+                "Address 0x{addr:x} is below base 0x{:x}",
+                self.func.base_address
+            ))
+        })?;
 
         for node_id in self.func.node_ids() {
             let idx = node_id.index();

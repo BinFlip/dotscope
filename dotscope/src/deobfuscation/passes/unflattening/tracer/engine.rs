@@ -121,7 +121,13 @@ pub fn trace_from_block(
 
     loop {
         let Some(item) = work_stack.pop() else {
-            return current_result.expect("trace work stack empty but no result");
+            return current_result.unwrap_or_else(|| {
+                let mut node = TraceNode::new(0, block_idx);
+                node.set_terminator(TraceTerminator::Stopped {
+                    reason: StopReason::UnknownControlFlow { block: block_idx },
+                });
+                node
+            });
         };
 
         match item {
@@ -136,9 +142,15 @@ pub fn trace_from_block(
                 to_state,
                 target_block,
             } => {
-                let child = current_result
-                    .take()
-                    .expect("StateTransitionLink: missing child");
+                let Some(child) = current_result.take() else {
+                    parent_node.set_terminator(TraceTerminator::Stopped {
+                        reason: StopReason::UnknownControlFlow {
+                            block: target_block,
+                        },
+                    });
+                    current_result = Some(parent_node);
+                    continue;
+                };
                 parent_node.set_terminator(TraceTerminator::StateTransition {
                     from_state,
                     to_state,
@@ -158,9 +170,14 @@ pub fn trace_from_block(
                 case_counts_snapshot,
                 is_expr_switch,
             } => {
-                let true_node = current_result
-                    .take()
-                    .expect("BranchFalseArm: missing true_node");
+                let Some(true_node) = current_result.take() else {
+                    let mut node = parent_node;
+                    node.set_terminator(TraceTerminator::Stopped {
+                        reason: StopReason::UnknownControlFlow { block: block_idx },
+                    });
+                    current_result = Some(node);
+                    continue;
+                };
 
                 // Restore context to the state before the true arm.
                 // For expression switches, preserve the visited_case_counts
@@ -197,7 +214,7 @@ pub fn trace_from_block(
                 });
                 work_stack.push(WorkItem::TraceBlock {
                     block: false_target,
-                    depth: depth + 1,
+                    depth: depth.saturating_add(1),
                 });
             }
 
@@ -208,9 +225,16 @@ pub fn trace_from_block(
                 true_node,
                 expr_switch_restore,
             } => {
-                let false_node = current_result
-                    .take()
-                    .expect("BranchCombine: missing false_node");
+                let Some(false_node) = current_result.take() else {
+                    if let Some(saved) = expr_switch_restore {
+                        ctx.exit_expr_switch_false_arm(saved);
+                    }
+                    parent_node.set_terminator(TraceTerminator::Stopped {
+                        reason: StopReason::UnknownControlFlow { block: block_idx },
+                    });
+                    current_result = Some(parent_node);
+                    continue;
+                };
 
                 if let Some(saved) = expr_switch_restore {
                     ctx.exit_expr_switch_false_arm(saved);
@@ -240,17 +264,15 @@ pub fn trace_from_block(
                 if let Some(prev_result) = current_result.take() {
                     if next_case_index > 0 {
                         #[allow(clippy::cast_possible_wrap)]
-                        let case_value = (next_case_index - 1) as i64;
+                        let case_value = next_case_index.saturating_sub(1) as i64;
                         completed_cases.push((case_value, Box::new(prev_result)));
                     }
                 }
 
-                if next_case_index < targets.len() {
+                if let Some(&target) = targets.get(next_case_index) {
                     // More cases to trace — restore and trace the next one
                     ctx.restore(snapshot.clone_snapshot());
                     ctx.evaluator_mut().set_predecessor(Some(block_idx));
-
-                    let target = targets[next_case_index];
 
                     work_stack.push(WorkItem::SwitchNextCase {
                         parent_node,
@@ -261,7 +283,7 @@ pub fn trace_from_block(
                         depth,
                         snapshot,
                         completed_cases,
-                        next_case_index: next_case_index + 1,
+                        next_case_index: next_case_index.saturating_add(1),
                     });
                     work_stack.push(WorkItem::TraceBlock {
                         block: target,
@@ -291,9 +313,13 @@ pub fn trace_from_block(
                 value,
                 cases,
             } => {
-                let default_node = current_result
-                    .take()
-                    .expect("SwitchCombine: missing default_node");
+                let Some(default_node) = current_result.take() else {
+                    parent_node.set_terminator(TraceTerminator::Stopped {
+                        reason: StopReason::UnknownControlFlow { block: block_idx },
+                    });
+                    current_result = Some(parent_node);
+                    continue;
+                };
                 parent_node.set_terminator(TraceTerminator::UserSwitch {
                     block: block_idx,
                     value,
@@ -369,7 +395,7 @@ fn trace_from_block_linear<'a>(
                     });
                     work_stack.push(WorkItem::TraceBlock {
                         block: true_target,
-                        depth: depth + 1,
+                        depth: depth.saturating_add(1),
                     });
                 }
                 ForkRequest::Switch {
@@ -380,13 +406,16 @@ fn trace_from_block_linear<'a>(
                     snapshot,
                     is_foreign,
                 } => {
-                    let fork_depth = if is_foreign { depth } else { depth + 1 };
-                    if targets.is_empty() {
+                    let fork_depth = if is_foreign {
+                        depth
+                    } else {
+                        depth.saturating_add(1)
+                    };
+                    let Some(&first_target) = targets.first() else {
                         ctx.evaluator_mut().set_predecessor(Some(block_idx));
                         return leaf;
-                    }
+                    };
                     ctx.evaluator_mut().set_predecessor(Some(block_idx));
-                    let first_target = targets[0];
                     work_stack.push(WorkItem::SwitchNextCase {
                         parent_node: leaf,
                         block_idx,
@@ -525,10 +554,15 @@ fn trace_from_block_inner<'a>(
         // Exempt the dispatcher block — it's intentionally revisited as it dispatches
         // to different case blocks based on the state variable.
         let is_dispatcher = ctx.is_dispatcher_block(current_block);
+        let visited_without_last = node
+            .blocks_visited
+            .split_last()
+            .map(|(_, rest)| rest)
+            .unwrap_or(&[]);
         if !is_dispatcher
             && current_block != block_idx
             && node.blocks_visited.len() > 1
-            && node.blocks_visited[..node.blocks_visited.len() - 1].contains(&current_block)
+            && visited_without_last.contains(&current_block)
         {
             let state = ctx.current_state().unwrap_or(0);
             node.set_terminator(TraceTerminator::LoopBack {
@@ -539,9 +573,14 @@ fn trace_from_block_inner<'a>(
         }
 
         // Handle dispatcher re-entry: clear stale values and fix predecessor
+        let visited_without_last_for_reentry = node
+            .blocks_visited
+            .split_last()
+            .map(|(_, rest)| rest)
+            .unwrap_or(&[]);
         let is_dispatcher_reentry = is_dispatcher
             && node.blocks_visited.len() > 1
-            && node.blocks_visited[..node.blocks_visited.len() - 1].contains(&current_block);
+            && visited_without_last_for_reentry.contains(&current_block);
         if is_dispatcher_reentry {
             if let Some(block) = ssa.block(current_block) {
                 for instr in block.instructions() {
@@ -579,8 +618,12 @@ fn trace_from_block_inner<'a>(
 
         // Set predecessor for phi evaluation
         if node.blocks_visited.len() > 1 {
-            let prev = node.blocks_visited[node.blocks_visited.len() - 2];
-            ctx.evaluator_mut().set_predecessor(Some(prev));
+            if let Some(&prev) = node
+                .blocks_visited
+                .get(node.blocks_visited.len().saturating_sub(2))
+            {
+                ctx.evaluator_mut().set_predecessor(Some(prev));
+            }
         }
 
         // Bridge loop-carried phi operand values for dispatcher blocks
@@ -1211,11 +1254,7 @@ fn handle_switch<'a>(
 
             #[allow(clippy::cast_possible_truncation)]
             let idx_usize = idx as usize;
-            let target = if idx_usize < targets.len() {
-                targets[idx_usize]
-            } else {
-                *default
-            };
+            let target = targets.get(idx_usize).copied().unwrap_or(*default);
 
             let from_state = ctx.current_state().unwrap_or(0);
 

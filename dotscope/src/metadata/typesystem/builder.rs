@@ -754,7 +754,7 @@ impl TypeBuilder {
             let dimension_part = if rank <= 1 {
                 "[]".to_string()
             } else {
-                format!("[{}]", ",".repeat(rank as usize - 1))
+                format!("[{}]", ",".repeat((rank as usize).saturating_sub(1)))
             };
 
             let name = format!("{}{}", base_type.name, dimension_part);
@@ -901,7 +901,8 @@ impl TypeBuilder {
                     // Create a dummy method specification for the type argument
                     let rid = u32::try_from(index)
                         .map_err(|_| malformed_error!("Generic argument index too large"))?
-                        + 1;
+                        .checked_add(1)
+                        .ok_or_else(|| malformed_error!("Generic argument rid overflow"))?;
                     let token_value =
                         0x2B00_0000_u32
                             .checked_add(u32::try_from(index).map_err(|_| {

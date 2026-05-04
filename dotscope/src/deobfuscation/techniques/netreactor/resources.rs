@@ -475,7 +475,7 @@ impl Technique for NetReactorResources {
                 .build(&mut cil_assembly)
             {
                 Ok(_) => {
-                    injected += 1;
+                    injected = injected.saturating_add(1);
                     events.record(EventKind::ResourceDecrypted).message(format!(
                         "Injected NR-decrypted resource {:?} ({} bytes)",
                         name,
@@ -718,35 +718,43 @@ fn is_lazy_init_body(
         .filter(|i| !matches!(i.mnemonic, "nop" | "br" | "br.s"))
         .collect();
 
-    if instrs.len() < 7 {
-        return false;
-    }
-
-    let Operand::Token(flag_load) = &instrs[0].operand else {
+    let (Some(i0), Some(i1), Some(i2), Some(i3), Some(i4), Some(i5), Some(i6)) = (
+        instrs.first(),
+        instrs.get(1),
+        instrs.get(2),
+        instrs.get(3),
+        instrs.get(4),
+        instrs.get(5),
+        instrs.get(6),
+    ) else {
         return false;
     };
-    if instrs[0].mnemonic != "ldsfld" {
+
+    let Operand::Token(flag_load) = &i0.operand else {
+        return false;
+    };
+    if i0.mnemonic != "ldsfld" {
         return false;
     }
-    if !matches!(instrs[1].mnemonic, "brtrue" | "brtrue.s") {
+    if !matches!(i1.mnemonic, "brtrue" | "brtrue.s") {
         return false;
     }
-    if !matches!(instrs[2].mnemonic, "ldc.i4.1") {
+    if !matches!(i2.mnemonic, "ldc.i4.1") {
         return false;
     }
-    if instrs[3].mnemonic != "stsfld" {
+    if i3.mnemonic != "stsfld" {
         return false;
     }
-    let Operand::Token(flag_store) = &instrs[3].operand else {
+    let Operand::Token(flag_store) = &i3.operand else {
         return false;
     };
     if flag_load != flag_store {
         return false;
     }
-    if instrs[4].mnemonic != "newobj" {
+    if i4.mnemonic != "newobj" {
         return false;
     }
-    let Operand::Token(ctor_token) = &instrs[4].operand else {
+    let Operand::Token(ctor_token) = &i4.operand else {
         return false;
     };
     // The newobj must target a .ctor on the resolver type.
@@ -759,10 +767,10 @@ fn is_lazy_init_body(
     if declaring.token != cil_type.token {
         return false;
     }
-    if instrs[5].mnemonic != "pop" {
+    if i5.mnemonic != "pop" {
         return false;
     }
-    if instrs[6].mnemonic != "ret" {
+    if i6.mnemonic != "ret" {
         return false;
     }
     true
@@ -850,19 +858,22 @@ fn classify_purely_injected_cctors(assembly: &CilObject, lazy_init_token: Token)
             .instructions()
             .filter(|i| !matches!(i.mnemonic, "nop" | "br" | "br.s"))
             .collect();
+        let (Some(i0), Some(i1)) = (instrs.first(), instrs.get(1)) else {
+            continue;
+        };
         if instrs.len() != 2 {
             continue;
         }
-        if instrs[0].mnemonic != "call" {
+        if i0.mnemonic != "call" {
             continue;
         }
-        let Operand::Token(t) = &instrs[0].operand else {
+        let Operand::Token(t) = &i0.operand else {
             continue;
         };
         if *t != lazy_init_token {
             continue;
         }
-        if instrs[1].mnemonic != "ret" {
+        if i1.mnemonic != "ret" {
             continue;
         }
         out.push(method.token);
@@ -900,7 +911,10 @@ fn find_get_manifest_resource_names_shims(
             if method.signature.params.len() != 1 {
                 continue;
             }
-            if !matches!(method.signature.params[0].base, TypeSignature::Class(_)) {
+            let Some(first_param) = method.signature.params.first() else {
+                continue;
+            };
+            if !matches!(first_param.base, TypeSignature::Class(_)) {
                 continue;
             }
             if !method.has_body() {
@@ -1029,7 +1043,9 @@ fn find_assembly_load_shim_methods(assembly: &CilObject, cil_type: &CilTypeRc) -
             if method.signature.params.len() != 1 {
                 continue;
             }
-            let param = &method.signature.params[0];
+            let Some(param) = method.signature.params.first() else {
+                continue;
+            };
             let is_byte_array = match &param.base {
                 TypeSignature::SzArray(inner) => matches!(*inner.base, TypeSignature::U1),
                 _ => false,

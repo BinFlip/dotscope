@@ -78,9 +78,8 @@ impl ManagedHeap {
                 description: "managed heap",
             })?;
         if let Some(HeapObject::Stream { data, position }) = state.objects.get_mut(&heap_ref.id()) {
-            if *position < data.len() {
-                let byte = data[*position];
-                *position += 1;
+            if let Some(&byte) = data.get(*position) {
+                *position = position.saturating_add(1);
                 return Ok(Some(byte));
             }
         }
@@ -102,11 +101,13 @@ impl ManagedHeap {
                 description: "managed heap",
             })?;
         if let Some(HeapObject::Stream { data, position }) = state.objects.get_mut(&heap_ref.id()) {
-            if *position + N <= data.len() {
-                let mut buf = [0u8; N];
-                buf.copy_from_slice(&data[*position..*position + N]);
-                *position += N;
-                return Ok(Some(buf));
+            if let Some(end) = position.checked_add(N) {
+                if let Some(slice) = data.get(*position..end) {
+                    let mut buf = [0u8; N];
+                    buf.copy_from_slice(slice);
+                    *position = end;
+                    return Ok(Some(buf));
+                }
             }
         }
         Ok(None)
@@ -130,8 +131,12 @@ impl ManagedHeap {
         if let Some(HeapObject::Stream { data, position }) = state.objects.get_mut(&heap_ref.id()) {
             let available = data.len().saturating_sub(*position);
             let to_read = count.min(available);
-            let bytes = data[*position..*position + to_read].to_vec();
-            *position += to_read;
+            let end = position.saturating_add(to_read);
+            let bytes = data
+                .get(*position..end)
+                .map(<[u8]>::to_vec)
+                .unwrap_or_default();
+            *position = end;
             return Ok(Some(bytes));
         }
         Ok(None)
@@ -263,19 +268,26 @@ impl ManagedHeap {
             let write_len = bytes.len();
 
             // Ensure capacity
-            let required_len = *position + write_len;
+            let required_len =
+                position
+                    .checked_add(write_len)
+                    .ok_or(EmulationError::InternalError {
+                        description: "stream write length overflow".into(),
+                    })?;
             if data.len() < required_len {
                 data.resize(required_len, 0);
             }
 
             // Copy bytes to the stream
-            data[*position..*position + write_len].copy_from_slice(bytes);
+            let dst =
+                data.get_mut(*position..required_len)
+                    .ok_or(EmulationError::InternalError {
+                        description: "stream write slice OOB".into(),
+                    })?;
+            dst.copy_from_slice(bytes);
 
             // Advance position
-            *position += write_len;
-
-            // Update size estimate
-            // (We don't track size changes precisely here, but that's acceptable)
+            *position = required_len;
 
             Ok(write_len)
         } else {
@@ -349,10 +361,10 @@ impl ManagedHeap {
             // Update size tracking atomically
             if new_size >= old_size {
                 self.current_size
-                    .fetch_add(new_size - old_size, Ordering::Relaxed);
+                    .fetch_add(new_size.saturating_sub(old_size), Ordering::Relaxed);
             } else {
                 self.current_size
-                    .fetch_sub(old_size - new_size, Ordering::Relaxed);
+                    .fetch_sub(old_size.saturating_sub(new_size), Ordering::Relaxed);
             }
             Ok(true)
         } else {
@@ -476,10 +488,10 @@ impl ManagedHeap {
             // Update size tracking atomically
             if new_size >= old_size {
                 self.current_size
-                    .fetch_add(new_size - old_size, Ordering::Relaxed);
+                    .fetch_add(new_size.saturating_sub(old_size), Ordering::Relaxed);
             } else {
                 self.current_size
-                    .fetch_sub(old_size - new_size, Ordering::Relaxed);
+                    .fetch_sub(old_size.saturating_sub(new_size), Ordering::Relaxed);
             }
             Ok(true)
         } else {
@@ -560,10 +572,10 @@ impl ManagedHeap {
         // Update size tracking atomically
         if new_size >= old_size {
             self.current_size
-                .fetch_add(new_size - old_size, Ordering::Relaxed);
+                .fetch_add(new_size.saturating_sub(old_size), Ordering::Relaxed);
         } else {
             self.current_size
-                .fetch_sub(old_size - new_size, Ordering::Relaxed);
+                .fetch_sub(old_size.saturating_sub(new_size), Ordering::Relaxed);
         }
         Ok(true)
     }
@@ -598,8 +610,12 @@ impl ManagedHeap {
         {
             let available = data.len().saturating_sub(*transformed_pos);
             let to_read = count.min(available);
-            let result = data[*transformed_pos..*transformed_pos + to_read].to_vec();
-            *transformed_pos += to_read;
+            let end = transformed_pos.saturating_add(to_read);
+            let result = data
+                .get(*transformed_pos..end)
+                .map(<[u8]>::to_vec)
+                .unwrap_or_default();
+            *transformed_pos = end;
             Ok(Some(result))
         } else {
             Ok(None)
@@ -743,10 +759,10 @@ impl ManagedHeap {
             // Update size tracking atomically
             if new_size >= old_size {
                 self.current_size
-                    .fetch_add(new_size - old_size, Ordering::Relaxed);
+                    .fetch_add(new_size.saturating_sub(old_size), Ordering::Relaxed);
             } else {
                 self.current_size
-                    .fetch_sub(old_size - new_size, Ordering::Relaxed);
+                    .fetch_sub(old_size.saturating_sub(new_size), Ordering::Relaxed);
             }
             Ok(true)
         } else {
@@ -826,10 +842,10 @@ impl ManagedHeap {
         // Update size tracking atomically
         if data_len >= old_cached_size {
             self.current_size
-                .fetch_add(data_len - old_cached_size, Ordering::Relaxed);
+                .fetch_add(data_len.saturating_sub(old_cached_size), Ordering::Relaxed);
         } else {
             self.current_size
-                .fetch_sub(old_cached_size - data_len, Ordering::Relaxed);
+                .fetch_sub(old_cached_size.saturating_sub(data_len), Ordering::Relaxed);
         }
         Ok(())
     }
@@ -870,8 +886,12 @@ impl ManagedHeap {
             }) => {
                 let available = data.len().saturating_sub(*read_position);
                 let to_read = count.min(available);
-                let bytes = data[*read_position..*read_position + to_read].to_vec();
-                *read_position += to_read;
+                let end = read_position.saturating_add(to_read);
+                let bytes = data
+                    .get(*read_position..end)
+                    .map(<[u8]>::to_vec)
+                    .unwrap_or_default();
+                *read_position = end;
                 Some(bytes)
             }
             _ => None,

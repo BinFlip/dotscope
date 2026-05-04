@@ -246,7 +246,8 @@ impl RawTableValidator {
             (tables.table::<TypeDefRaw>(), tables.table::<FieldRaw>())
         {
             for typedef_row in typedef_table {
-                if typedef_row.field_list != 0 && typedef_row.field_list > field_table.row_count + 1
+                if typedef_row.field_list != 0
+                    && typedef_row.field_list > field_table.row_count.saturating_add(1)
                 {
                     return Err(malformed_error!(
                         "TypeDef RID {} references field list starting at RID {} but Field table only has {} rows",
@@ -263,7 +264,7 @@ impl RawTableValidator {
         {
             for typedef_row in typedef_table {
                 if typedef_row.method_list != 0
-                    && typedef_row.method_list > method_table.row_count + 1
+                    && typedef_row.method_list > method_table.row_count.saturating_add(1)
                 {
                     return Err(malformed_error!(
                         "TypeDef RID {} references method list starting at RID {} but MethodDef table only has {} rows",

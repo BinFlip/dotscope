@@ -33,7 +33,7 @@ impl RowReadable for MethodSpecRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(MethodSpecRaw {
             rid,
-            token: Token::new(0x2B00_0000 + rid),
+            token: Token::new(0x2B00_0000u32.saturating_add(rid)),
             offset: *offset,
             method: CodedIndex::read(data, offset, sizes, CodedIndexType::MethodDefOrRef)?,
             instantiation: read_le_at_dyn(data, offset, sizes.is_large_blob())?,

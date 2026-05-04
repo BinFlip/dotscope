@@ -216,7 +216,7 @@ impl LoopInfo {
     #[must_use]
     pub fn single_latch(&self) -> Option<NodeId> {
         if self.latches.len() == 1 {
-            Some(self.latches[0])
+            self.latches.first().copied()
         } else {
             None
         }
@@ -360,8 +360,10 @@ impl LoopInfo {
 
             // Classic induction variable: 1 init from outside, 1+ updates from inside
             if outside_ops.len() == 1 && !inside_ops.is_empty() {
-                let init_op = outside_ops[0];
-                let update_op = inside_ops[0]; // Take first inside operand
+                let (Some(init_op), Some(update_op)) = (outside_ops.first(), inside_ops.first())
+                else {
+                    continue;
+                };
 
                 // Try to determine update kind by analyzing the defining instruction
                 let (update_kind, stride) =
@@ -464,15 +466,21 @@ impl LoopForest {
 
         // Update block-to-loop mapping for all blocks in this loop
         for block_idx in loop_info.body.iter() {
-            if block_idx < self.block_to_loop.len() {
-                // Only update if this is a more deeply nested loop
-                if let Some(existing_idx) = self.block_to_loop[block_idx] {
-                    if self.loops[existing_idx].depth < loop_info.depth {
-                        self.block_to_loop[block_idx] = Some(loop_idx);
+            let Some(slot) = self.block_to_loop.get_mut(block_idx) else {
+                continue;
+            };
+            // Only update if this is a more deeply nested loop
+            match *slot {
+                Some(existing_idx) => {
+                    if self
+                        .loops
+                        .get(existing_idx)
+                        .is_some_and(|l| l.depth < loop_info.depth)
+                    {
+                        *slot = Some(loop_idx);
                     }
-                } else {
-                    self.block_to_loop[block_idx] = Some(loop_idx);
                 }
+                None => *slot = Some(loop_idx),
             }
         }
 
@@ -501,11 +509,8 @@ impl LoopForest {
     #[must_use]
     pub fn innermost_loop(&self, block: NodeId) -> Option<&LoopInfo> {
         let block_idx = block.index();
-        if block_idx < self.block_to_loop.len() {
-            self.block_to_loop[block_idx].map(|idx| &self.loops[idx])
-        } else {
-            None
-        }
+        let loop_idx = (*self.block_to_loop.get(block_idx)?)?;
+        self.loops.get(loop_idx)
     }
 
     /// Returns the loop with the given header.
@@ -517,7 +522,8 @@ impl LoopForest {
     /// Returns the loop depth for a block (0 if not in any loop).
     #[must_use]
     pub fn loop_depth(&self, block: NodeId) -> usize {
-        self.innermost_loop(block).map_or(0, |l| l.depth + 1)
+        self.innermost_loop(block)
+            .map_or(0, |l| l.depth.saturating_add(1))
     }
 
     /// Returns true if a block is in any loop.
@@ -720,7 +726,7 @@ where
 
     // Preheader exists only if there's exactly one non-loop predecessor
     loop_info.preheader = if non_loop_preds.len() == 1 {
-        Some(non_loop_preds[0])
+        non_loop_preds.first().copied()
     } else {
         None
     };
@@ -804,43 +810,69 @@ fn compute_nesting(loops: &mut [LoopInfo]) {
 
     // For each loop, find its parent (smallest enclosing loop)
     for i in 0..n {
-        let header = loops[i].header;
+        let Some(header) = loops.get(i).map(|l| l.header) else {
+            continue;
+        };
 
         // Find all loops that contain this loop's header (except itself)
         let mut candidates: Vec<usize> = (0..n)
-            .filter(|&j| j != i && loops[j].body.contains(header.index()))
+            .filter(|&j| {
+                j != i
+                    && loops
+                        .get(j)
+                        .is_some_and(|l| l.body.contains(header.index()))
+            })
             .collect();
 
         // Parent is the smallest containing loop
         if !candidates.is_empty() {
-            candidates.sort_by_key(|&j| loops[j].size());
-            let parent_idx = candidates[0];
-            loops[i].parent = Some(loops[parent_idx].header);
+            candidates.sort_by_key(|&j| loops.get(j).map_or(usize::MAX, LoopInfo::size));
+            let parent_idx = match candidates.first().copied() {
+                Some(p) => p,
+                None => continue,
+            };
+            let parent_header = match loops.get(parent_idx).map(|l| l.header) {
+                Some(h) => h,
+                None => continue,
+            };
+            if let Some(loop_i) = loops.get_mut(i) {
+                loop_i.parent = Some(parent_header);
+            }
         }
     }
 
     // Compute children from parent relationships
     for i in 0..n {
-        if let Some(parent_header) = loops[i].parent {
-            if let Some(&parent_idx) = header_to_idx.get(&parent_header) {
-                loops[parent_idx].children.push(loops[i].header);
+        let parent_opt = loops.get(i).and_then(|l| l.parent);
+        let Some(parent_header) = parent_opt else {
+            continue;
+        };
+        let header_i = match loops.get(i).map(|l| l.header) {
+            Some(h) => h,
+            None => continue,
+        };
+        if let Some(&parent_idx) = header_to_idx.get(&parent_header) {
+            if let Some(parent) = loops.get_mut(parent_idx) {
+                parent.children.push(header_i);
             }
         }
     }
 
     // Compute depths from parent chain
     for i in 0..n {
-        let mut depth = 0;
-        let mut current = loops[i].parent;
+        let mut depth: usize = 0;
+        let mut current = loops.get(i).and_then(|l| l.parent);
         while let Some(parent_header) = current {
-            depth += 1;
+            depth = depth.saturating_add(1);
             if let Some(&parent_idx) = header_to_idx.get(&parent_header) {
-                current = loops[parent_idx].parent;
+                current = loops.get(parent_idx).and_then(|l| l.parent);
             } else {
                 break;
             }
         }
-        loops[i].depth = depth;
+        if let Some(l) = loops.get_mut(i) {
+            l.depth = depth;
+        }
     }
 }
 

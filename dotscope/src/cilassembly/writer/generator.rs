@@ -435,7 +435,10 @@ impl<'a> PeGenerator<'a> {
         ctx.align_to_4();
         ctx.method_bodies_offset = ctx.pos();
         self.write_method_bodies(&mut ctx, changes)?;
-        ctx.method_bodies_size = ctx.pos() - ctx.method_bodies_offset;
+        ctx.method_bodies_size = ctx
+            .pos()
+            .checked_sub(ctx.method_bodies_offset)
+            .ok_or_else(|| Error::LayoutFailed("Method bodies size underflow".to_string()))?;
 
         // Write field initialization data (FieldRVA entries)
         write_field_data(&mut ctx)?;
@@ -448,7 +451,10 @@ impl<'a> PeGenerator<'a> {
         ctx.align_to_4();
         ctx.metadata_offset = ctx.pos();
         self.write_metadata(&mut ctx, changes)?;
-        ctx.metadata_size = ctx.pos() - ctx.metadata_offset;
+        ctx.metadata_size = ctx
+            .pos()
+            .checked_sub(ctx.metadata_offset)
+            .ok_or_else(|| Error::LayoutFailed("Metadata size underflow".to_string()))?;
 
         // Write import/export data (if present)
         if self.needs_native_imports() {
@@ -461,7 +467,10 @@ impl<'a> PeGenerator<'a> {
         self.write_embedded_pe_resources(&mut ctx)?;
 
         // Calculate .text section size and update sections vector
-        ctx.text_section_size = ctx.pos() - ctx.text_section_offset;
+        ctx.text_section_size = ctx
+            .pos()
+            .checked_sub(ctx.text_section_offset)
+            .ok_or_else(|| Error::LayoutFailed(".text section size underflow".to_string()))?;
         let text_size_u32 = u32::try_from(ctx.text_section_size).unwrap_or(u32::MAX);
         if let Some(idx) = ctx.find_section_index(".text") {
             ctx.update_section(
@@ -523,11 +532,15 @@ impl<'a> PeGenerator<'a> {
 
         // Add 20% buffer for safety
         let estimated = original_size
-            + method_bodies_expansion
-            + field_data_expansion
-            + heap_expansion
-            + fieldrva_expansion;
-        let with_buffer = (estimated * 120) / 100;
+            .checked_add(method_bodies_expansion)
+            .and_then(|v| v.checked_add(field_data_expansion))
+            .and_then(|v| v.checked_add(heap_expansion))
+            .and_then(|v| v.checked_add(fieldrva_expansion))
+            .ok_or_else(|| Error::LayoutFailed("File size estimate overflow".to_string()))?;
+        let with_buffer = estimated
+            .checked_mul(120)
+            .map(|v| v / 100)
+            .ok_or_else(|| Error::LayoutFailed("File size estimate overflow".to_string()))?;
 
         // Align to file alignment
         Ok(align_to(with_buffer, u64::from(FILE_ALIGNMENT_DEFAULT)))
@@ -565,20 +578,24 @@ impl<'a> PeGenerator<'a> {
 
         // Add space for appended strings
         for (data, _) in changes.string_heap_changes.appended_iter() {
-            expansion += data.len() as u64 + 1; // +1 for null terminator
+            // +1 for null terminator. Saturate on absurd estimate; final emission validates.
+            expansion = expansion.saturating_add((data.len() as u64).saturating_add(1));
         }
 
         // Add space for appended blobs
         for (data, _) in changes.blob_heap_changes.appended_iter() {
-            expansion += data.len() as u64 + 5; // +5 for max compressed length prefix
+            // +5 for max compressed length prefix
+            expansion = expansion.saturating_add((data.len() as u64).saturating_add(5));
         }
 
         // Add space for appended GUIDs
-        expansion += (changes.guid_heap_changes.appended_iter().count() * 16) as u64;
+        let guid_count = changes.guid_heap_changes.appended_iter().count() as u64;
+        expansion = expansion.saturating_add(guid_count.saturating_mul(16));
 
         // Add space for appended user strings
         for (data, _) in changes.userstring_heap_changes.appended_iter() {
-            expansion += data.len() as u64 + 5; // +5 for max compressed length prefix
+            // +5 for max compressed length prefix
+            expansion = expansion.saturating_add((data.len() as u64).saturating_add(5));
         }
 
         expansion
@@ -806,7 +823,7 @@ impl<'a> PeGenerator<'a> {
         let imports = self.build_import_list(ctx)?;
 
         // Calculate IAT size
-        let iat_size = imports.iat_byte_size(ctx.is_pe32_plus);
+        let iat_size = imports.iat_byte_size(ctx.is_pe32_plus)?;
 
         if iat_size == 0 {
             // No imports - write minimal placeholder (shouldn't happen for .NET)
@@ -1104,8 +1121,13 @@ impl<'a> PeGenerator<'a> {
                         } else {
                             // CIL method - parse, remap tokens, and rebuild
                             let offset = file.rva_to_offset(original_rva as usize)?;
-                            let available_data =
-                                file.data_slice(offset, file.data().len() - offset)?;
+                            let remaining =
+                                file.data().len().checked_sub(offset).ok_or_else(|| {
+                                    Error::LayoutFailed(
+                                        "Method offset exceeds file size".to_string(),
+                                    )
+                                })?;
+                            let available_data = file.data_slice(offset, remaining)?;
 
                             let rebuilt = rebuild_method_body(
                                 available_data,
@@ -1115,7 +1137,7 @@ impl<'a> PeGenerator<'a> {
                             )?;
 
                             // Fat method headers require 4-byte alignment (ECMA-335 §II.25.4.2)
-                            let rebuilt_is_fat = !rebuilt.is_empty() && (rebuilt[0] & 0x3) == 0x3;
+                            let rebuilt_is_fat = rebuilt.first().is_some_and(|&b| (b & 0x3) == 0x3);
                             if rebuilt_is_fat {
                                 ctx.align_to_4_with_padding()?;
                             }
@@ -1142,7 +1164,7 @@ impl<'a> PeGenerator<'a> {
             )?;
 
             // Fat method headers require 4-byte alignment (ECMA-335 §II.25.4.2)
-            let rebuilt_is_fat = !rebuilt.is_empty() && (rebuilt[0] & 0x3) == 0x3;
+            let rebuilt_is_fat = rebuilt.first().is_some_and(|&b| (b & 0x3) == 0x3);
             if rebuilt_is_fat {
                 ctx.align_to_4_with_padding()?;
             }
@@ -1224,18 +1246,32 @@ impl<'a> PeGenerator<'a> {
                         let entry_start = old_offset as usize;
 
                         // Read the 4-byte length prefix
-                        if entry_start + 4 > original_data.len() {
+                        let len_end = match entry_start.checked_add(4) {
+                            Some(v) => v,
+                            None => continue,
+                        };
+                        if len_end > original_data.len() {
                             continue;
                         }
-                        let data_len = u32::from_le_bytes([
-                            original_data[entry_start],
-                            original_data[entry_start + 1],
-                            original_data[entry_start + 2],
-                            original_data[entry_start + 3],
-                        ]) as usize;
-                        let entry_total = 4 + data_len;
+                        let len_slice = match original_data.get(entry_start..len_end) {
+                            Some(s) => s,
+                            None => continue,
+                        };
+                        let len_arr: [u8; 4] = match len_slice.try_into() {
+                            Ok(a) => a,
+                            Err(_) => continue,
+                        };
+                        let data_len = u32::from_le_bytes(len_arr) as usize;
+                        let entry_total = match data_len.checked_add(4) {
+                            Some(v) => v,
+                            None => continue,
+                        };
 
-                        if entry_start + entry_total > original_data.len() {
+                        let entry_end = match entry_start.checked_add(entry_total) {
+                            Some(v) => v,
+                            None => continue,
+                        };
+                        if entry_end > original_data.len() {
                             continue;
                         }
 
@@ -1245,9 +1281,16 @@ impl<'a> PeGenerator<'a> {
                         }
 
                         // Write surviving resource and track offset remapping
-                        ctx.write(&original_data[entry_start..entry_start + entry_total])?;
+                        let entry_data = match original_data.get(entry_start..entry_end) {
+                            Some(s) => s,
+                            None => continue,
+                        };
+                        ctx.write(entry_data)?;
                         ctx.resource_offset_remap.insert(old_offset, new_offset);
-                        new_offset += entry_total as u32;
+                        new_offset =
+                            new_offset.checked_add(entry_total as u32).ok_or_else(|| {
+                                Error::LayoutFailed("Resource offset overflow".to_string())
+                            })?;
                     }
                 }
             } else {
@@ -1270,7 +1313,10 @@ impl<'a> PeGenerator<'a> {
         }
 
         // Calculate total size
-        ctx.resource_data_size = ctx.pos() - ctx.resource_data_offset;
+        ctx.resource_data_size = ctx
+            .pos()
+            .checked_sub(ctx.resource_data_offset)
+            .ok_or_else(|| Error::LayoutFailed("Resource data size underflow".to_string()))?;
 
         Ok(())
     }
@@ -1339,7 +1385,10 @@ impl<'a> PeGenerator<'a> {
         fixup_metadata_stream_headers(ctx, metadata_root_offset, stream_headers_offset)?;
 
         // Update metadata size
-        ctx.metadata_size = ctx.pos() - metadata_root_offset;
+        ctx.metadata_size = ctx
+            .pos()
+            .checked_sub(metadata_root_offset)
+            .ok_or_else(|| Error::LayoutFailed("Metadata size underflow".to_string()))?;
 
         // Note: Table ChangeRefs are resolved earlier (before method bodies)
         // to support methods with local variable signatures
@@ -1377,7 +1426,12 @@ impl<'a> PeGenerator<'a> {
             })
             .collect();
 
-        let version_padded_len = (root.version.len() + 3) & !3;
+        let version_padded_len = root
+            .version
+            .len()
+            .checked_add(3)
+            .ok_or_else(|| Error::LayoutFailed("Version length overflow".to_string()))?
+            & !3;
         let version_len_u32 = u32::try_from(version_padded_len).map_err(|_| {
             Error::LayoutFailed(format!(
                 "Version length {version_padded_len} exceeds u32 range"
@@ -1397,8 +1451,13 @@ impl<'a> PeGenerator<'a> {
 
         // Calculate where stream headers will start (after fixed root header)
         // sig(4) + major(2) + minor(2) + reserved(4) + length(4) + version(padded) + flags(2) + count(2)
-        let fixed_header_size = 4 + 2 + 2 + 4 + 4 + version_padded_len + 2 + 2;
-        let stream_headers_offset = ctx.pos() + fixed_header_size as u64;
+        let fixed_header_size = 20usize
+            .checked_add(version_padded_len)
+            .ok_or_else(|| Error::LayoutFailed("Header size overflow".to_string()))?;
+        let stream_headers_offset = ctx
+            .pos()
+            .checked_add(fixed_header_size as u64)
+            .ok_or_else(|| Error::LayoutFailed("Stream headers offset overflow".to_string()))?;
 
         // Write the full root header using its write_to method
         modified_root.write_to(ctx)?;
@@ -1475,8 +1534,14 @@ impl<'a> PeGenerator<'a> {
         );
 
         // Calculate where table data starts (after tables stream header)
-        let header_size = 24 + (valid.count_ones() as usize * 4);
-        let mut table_data_offset = ctx.tables_stream_offset + header_size as u64;
+        let header_size = (valid.count_ones() as usize)
+            .checked_mul(4)
+            .and_then(|v| v.checked_add(24))
+            .ok_or_else(|| Error::LayoutFailed("Tables header size overflow".to_string()))?;
+        let mut table_data_offset = ctx
+            .tables_stream_offset
+            .checked_add(header_size as u64)
+            .ok_or_else(|| Error::LayoutFailed("Tables data offset overflow".to_string()))?;
 
         // Clone remapping to avoid borrow issues
         let strings_remap = ctx.heap_remapping.strings.clone();
@@ -1496,7 +1561,12 @@ impl<'a> PeGenerator<'a> {
 
             // Patch each row in the output table
             for output_idx in 0..output_row_count as usize {
-                let row_offset = table_data_offset + (output_idx as u64 * row_size as u64);
+                let row_off_within = (output_idx as u64)
+                    .checked_mul(row_size as u64)
+                    .ok_or_else(|| Error::LayoutFailed("Row offset overflow".to_string()))?;
+                let row_offset = table_data_offset
+                    .checked_add(row_off_within)
+                    .ok_or_else(|| Error::LayoutFailed("Row offset overflow".to_string()))?;
                 let mut row_buffer = vec![0u8; row_size];
                 ctx.output.read_at(row_offset, &mut row_buffer)?;
 
@@ -1529,7 +1599,12 @@ impl<'a> PeGenerator<'a> {
                 ctx.write_at(row_offset, &row_buffer)?;
             }
 
-            table_data_offset += u64::from(output_row_count) * (row_size as u64);
+            let table_bytes = u64::from(output_row_count)
+                .checked_mul(row_size as u64)
+                .ok_or_else(|| Error::LayoutFailed("Table size overflow".to_string()))?;
+            table_data_offset = table_data_offset
+                .checked_add(table_bytes)
+                .ok_or_else(|| Error::LayoutFailed("Table data offset overflow".to_string()))?;
         }
 
         Ok(())
@@ -1557,23 +1632,28 @@ impl<'a> PeGenerator<'a> {
         let heap_fields = get_heap_fields(table_id, table_info);
 
         for field in heap_fields {
-            if field.offset + field.size > row_buffer.len() {
+            let Some(field_end) = field.offset.checked_add(field.size) else {
+                continue;
+            };
+            if field_end > row_buffer.len() {
                 continue;
             }
 
+            let Some(field_slice) = row_buffer.get(field.offset..field_end) else {
+                continue;
+            };
+
             // Read the field value
             let value = if field.size == 4 {
-                u32::from_le_bytes([
-                    row_buffer[field.offset],
-                    row_buffer[field.offset + 1],
-                    row_buffer[field.offset + 2],
-                    row_buffer[field.offset + 3],
-                ])
+                let Ok(arr) = <[u8; 4]>::try_from(field_slice) else {
+                    continue;
+                };
+                u32::from_le_bytes(arr)
             } else {
-                u32::from(u16::from_le_bytes([
-                    row_buffer[field.offset],
-                    row_buffer[field.offset + 1],
-                ]))
+                let Ok(arr) = <[u8; 2]>::try_from(field_slice) else {
+                    continue;
+                };
+                u32::from(u16::from_le_bytes(arr))
             };
 
             // Check if it's a placeholder
@@ -1581,17 +1661,19 @@ impl<'a> PeGenerator<'a> {
                 if let Some(change_ref) = changes.lookup_by_placeholder(value) {
                     if let Some(resolved) = change_ref.offset() {
                         // Write the resolved value back
+                        let Some(field_slice_mut) = row_buffer.get_mut(field.offset..field_end)
+                        else {
+                            continue;
+                        };
                         if field.size == 4 {
-                            row_buffer[field.offset..field.offset + 4]
-                                .copy_from_slice(&resolved.to_le_bytes());
+                            field_slice_mut.copy_from_slice(&resolved.to_le_bytes());
                         } else {
                             // Truncate to u16 - this is safe because heap offsets in small
                             // metadata files fit in u16. Overflow would indicate a corrupted state.
                             #[allow(clippy::cast_possible_truncation)]
                             let small_value =
                                 u16::try_from(resolved).unwrap_or((resolved & 0xFFFF) as u16);
-                            row_buffer[field.offset..field.offset + 2]
-                                .copy_from_slice(&small_value.to_le_bytes());
+                            field_slice_mut.copy_from_slice(&small_value.to_le_bytes());
                         }
                     }
                 }
@@ -1612,19 +1694,22 @@ impl<'a> PeGenerator<'a> {
         let root = view.metadata_root();
 
         // Base header: signature (4) + major (2) + minor (2) + reserved (4) + version_length (4)
-        let base_size = 16;
+        let base_size: usize = 16;
         // Version string aligned to 4 bytes
         let version_len = root.version.len();
         // Safe cast: version_len is a string length which is always small
-        let aligned_version =
-            usize::try_from(align_to(version_len as u64, 4)).unwrap_or(version_len + 4);
+        let aligned_version = usize::try_from(align_to(version_len as u64, 4))
+            .unwrap_or_else(|_| version_len.saturating_add(4));
         // Flags (2) + stream count (2)
-        let flags_and_count = 4;
+        let flags_and_count: usize = 4;
         // Stream headers: each is offset (4) + size (4) + name (variable, 4-byte aligned)
         // Estimate 5 streams max with ~12 bytes each for names
-        let stream_headers = 5 * (8 + 12);
+        let stream_headers: usize = 5 * (8 + 12);
 
-        base_size + aligned_version + flags_and_count + stream_headers
+        base_size
+            .saturating_add(aligned_version)
+            .saturating_add(flags_and_count)
+            .saturating_add(stream_headers)
     }
 
     /// Writes all heaps using streaming writers.
@@ -1876,7 +1961,10 @@ impl<'a> PeGenerator<'a> {
             self.write_table_data(ctx, table_id, &output_table_info, changes, &remapper)?;
         }
 
-        ctx.tables_stream_size = ctx.pos() - ctx.tables_stream_offset;
+        ctx.tables_stream_size = ctx
+            .pos()
+            .checked_sub(ctx.tables_stream_offset)
+            .ok_or_else(|| Error::LayoutFailed("Tables stream size underflow".to_string()))?;
 
         Ok(())
     }
@@ -1936,7 +2024,12 @@ impl<'a> PeGenerator<'a> {
                         "Table {table_id:?} deleted count {deleted_count} exceeds u32::MAX"
                     ))
                 })?;
-                Ok(original_count + added - deleted)
+                let total = original_count
+                    .checked_add(added)
+                    .ok_or_else(|| Error::LayoutFailed("Row count overflow".to_string()))?;
+                total
+                    .checked_sub(deleted)
+                    .ok_or_else(|| Error::LayoutFailed("Row count underflow".to_string()))
             }
         }
     }
@@ -1991,8 +2084,11 @@ impl<'a> PeGenerator<'a> {
         if let Some(TableModifications::Replaced(rows)) = table_mod {
             let mut buffer = vec![0u8; output_row_size];
             for (idx, row) in rows.iter().enumerate() {
-                let rid = u32::try_from(idx + 1).map_err(|_| {
-                    Error::LayoutFailed(format!("Row index {} exceeds u32 range", idx + 1))
+                let rid_idx = idx
+                    .checked_add(1)
+                    .ok_or_else(|| Error::LayoutFailed("Row index overflow".to_string()))?;
+                let rid = u32::try_from(rid_idx).map_err(|_| {
+                    Error::LayoutFailed(format!("Row index {rid_idx} exceeds u32 range"))
                 })?;
 
                 let mut resolved_row = row.clone();
@@ -2162,10 +2258,14 @@ impl<'a> PeGenerator<'a> {
         } else if table_id == TableId::ManifestResource && !resource_offset_remap.is_empty() {
             // ManifestResource row layout: offset_field (4 bytes) is first.
             // Remap the offset to account for resource data compaction.
-            if buffer.len() >= 4 {
-                let old_offset = u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
-                if let Some(&new_offset) = resource_offset_remap.get(&old_offset) {
-                    buffer[..4].copy_from_slice(&new_offset.to_le_bytes());
+            if let Some(rva_slice) = buffer.get(..4) {
+                if let Ok(arr) = <[u8; 4]>::try_from(rva_slice) {
+                    let old_offset = u32::from_le_bytes(arr);
+                    if let Some(&new_offset) = resource_offset_remap.get(&old_offset) {
+                        if let Some(out) = buffer.get_mut(..4) {
+                            out.copy_from_slice(&new_offset.to_le_bytes());
+                        }
+                    }
                 }
             }
         }
@@ -2189,11 +2289,13 @@ impl<'a> PeGenerator<'a> {
         method_body_rva_map: &HashMap<u32, u32>,
         original_rva_delta: i32,
     ) {
-        if buffer.len() < 4 {
+        let Some(rva_slice) = buffer.get(..4) else {
             return;
-        }
-
-        let rva = u32::from_le_bytes([buffer[0], buffer[1], buffer[2], buffer[3]]);
+        };
+        let Ok(rva_arr) = <[u8; 4]>::try_from(rva_slice) else {
+            return;
+        };
+        let rva = u32::from_le_bytes(rva_arr);
 
         // RVA 0 means abstract/extern method with no body
         if rva == 0 {
@@ -2206,18 +2308,21 @@ impl<'a> PeGenerator<'a> {
             mapped_rva
         } else if rva < 0xF000_0000 {
             // Original RVA not in map - apply delta as fallback
-            // (used when method bodies region was copied as a whole)
-            (rva.cast_signed() + original_rva_delta).cast_unsigned()
+            // (used when method bodies region was copied as a whole).
+            // If the delta overflows i32, leave the row unchanged rather than
+            // writing a corrupt RVA.
+            match rva.cast_signed().checked_add(original_rva_delta) {
+                Some(v) => v.cast_unsigned(),
+                None => return,
+            }
         } else {
             // Unmapped placeholder - keep as is (shouldn't happen in valid code)
             rva
         };
 
-        let new_bytes = new_rva.to_le_bytes();
-        buffer[0] = new_bytes[0];
-        buffer[1] = new_bytes[1];
-        buffer[2] = new_bytes[2];
-        buffer[3] = new_bytes[3];
+        if let Some(out) = buffer.get_mut(..4) {
+            out.copy_from_slice(&new_rva.to_le_bytes());
+        }
     }
 
     /// Builds StandAloneSig deduplication mapping.
@@ -2278,7 +2383,7 @@ impl<'a> PeGenerator<'a> {
             if deleted_rids.contains(&sig.rid) || ctx.standalonesig_skip.contains(&sig.rid) {
                 continue;
             }
-            output_rid += 1;
+            output_rid = output_rid.saturating_add(1);
             rid_to_output.insert(sig.rid, output_rid);
         }
 
@@ -2302,7 +2407,7 @@ impl<'a> PeGenerator<'a> {
             inserts.sort();
 
             for rid in inserts {
-                output_rid += 1;
+                output_rid = output_rid.saturating_add(1);
                 rid_to_output.insert(rid, output_rid);
             }
         }
@@ -2459,7 +2564,9 @@ impl<'a> PeGenerator<'a> {
             // followed by 8-byte absolute address
             // But for .NET, the stub is simpler: jmp qword ptr [IAT]
             // The offset from RIP (after instruction) to IAT
-            let stub_end_rva = entry_rva + 6; // instruction is 6 bytes
+            let stub_end_rva = entry_rva
+                .checked_add(6)
+                .ok_or_else(|| Error::LayoutFailed("Entry stub RVA overflow".to_string()))?; // instruction is 6 bytes
             let rel_offset = iat_rva.wrapping_sub(stub_end_rva);
             let stub: [u8; 6] = [
                 0xff,
@@ -2473,7 +2580,9 @@ impl<'a> PeGenerator<'a> {
         } else {
             // PE32 (x86): Use absolute addressing
             // ff 25 xx xx xx xx = jmp dword ptr [VA]
-            let iat_va = image_base + u64::from(iat_rva);
+            let iat_va = image_base
+                .checked_add(u64::from(iat_rva))
+                .ok_or_else(|| Error::LayoutFailed("IAT VA overflow".to_string()))?;
             let stub: [u8; 6] = [
                 0xff,
                 0x25, // jmp dword ptr [abs]
@@ -2621,7 +2730,10 @@ impl<'a> PeGenerator<'a> {
             return Ok(()); // Can't resolve, skip
         };
 
-        let Some(data) = file.data().get(offset..offset + res_size as usize) else {
+        let Some(end) = offset.checked_add(res_size as usize) else {
+            return Ok(()); // Overflow, skip
+        };
+        let Some(data) = file.data().get(offset..end) else {
             return Ok(()); // Out of bounds, skip
         };
 
@@ -2659,7 +2771,9 @@ impl<'a> PeGenerator<'a> {
         let file = view.file();
 
         // Track current end RVA for calculating next section's RVA
-        let mut current_end_rva = u64::from(ctx.text_section_rva) + ctx.text_section_size;
+        let mut current_end_rva = u64::from(ctx.text_section_rva)
+            .checked_add(ctx.text_section_size)
+            .ok_or_else(|| Error::LayoutFailed(".text end RVA overflow".to_string()))?;
 
         // Get original section info for reloc processing
         let original_text_rva = file
@@ -2676,7 +2790,12 @@ impl<'a> PeGenerator<'a> {
 
         // Iterate through sections in order
         for section_idx in 0..ctx.sections.len() {
-            let section_name = ctx.sections[section_idx].name.clone();
+            let section_name = ctx
+                .sections
+                .get(section_idx)
+                .ok_or(out_of_bounds_error!())?
+                .name
+                .clone();
 
             // Skip .text - already handled
             if section_name.starts_with(".text") {
@@ -2711,7 +2830,11 @@ impl<'a> PeGenerator<'a> {
 
                 if data_size > 0 {
                     ctx.update_section(section_idx, data_offset, section_rva, data_size);
-                    current_end_rva = u64::from(section_rva) + u64::from(data_size);
+                    current_end_rva = u64::from(section_rva)
+                        .checked_add(u64::from(data_size))
+                        .ok_or_else(|| {
+                            Error::LayoutFailed("Section end RVA overflow".to_string())
+                        })?;
                 }
             } else if section_name.starts_with(".reloc") {
                 // Write reloc section with filtering
@@ -2725,7 +2848,11 @@ impl<'a> PeGenerator<'a> {
 
                 if let Some(data_size) = result {
                     ctx.update_section(section_idx, data_offset, section_rva, data_size);
-                    current_end_rva = u64::from(section_rva) + u64::from(data_size);
+                    current_end_rva = u64::from(section_rva)
+                        .checked_add(u64::from(data_size))
+                        .ok_or_else(|| {
+                            Error::LayoutFailed("Section end RVA overflow".to_string())
+                        })?;
                 } else {
                     // Reloc section was filtered out entirely
                     ctx.mark_section_removed(section_idx);
@@ -2737,7 +2864,11 @@ impl<'a> PeGenerator<'a> {
 
                 if data_size > 0 {
                     ctx.update_section(section_idx, data_offset, section_rva, data_size);
-                    current_end_rva = u64::from(section_rva) + u64::from(data_size);
+                    current_end_rva = u64::from(section_rva)
+                        .checked_add(u64::from(data_size))
+                        .ok_or_else(|| {
+                            Error::LayoutFailed("Section end RVA overflow".to_string())
+                        })?;
                 }
             }
 
@@ -2762,10 +2893,16 @@ impl<'a> PeGenerator<'a> {
         let view = self.assembly.view();
         let file = view.file();
 
-        let Some(data) = file.data().get(
-            section.pointer_to_raw_data as usize
-                ..(section.pointer_to_raw_data + section.size_of_raw_data) as usize,
-        ) else {
+        let Some(end) = section
+            .pointer_to_raw_data
+            .checked_add(section.size_of_raw_data)
+        else {
+            return Ok(0);
+        };
+        let Some(data) = file
+            .data()
+            .get(section.pointer_to_raw_data as usize..end as usize)
+        else {
             return Ok(0);
         };
 
@@ -2801,10 +2938,13 @@ impl<'a> PeGenerator<'a> {
         let file = view.file();
 
         // Get original reloc data if present
-        let existing_data = file.data().get(
-            section.pointer_to_raw_data as usize
-                ..(section.pointer_to_raw_data + section.size_of_raw_data) as usize,
-        );
+        let existing_data = section
+            .pointer_to_raw_data
+            .checked_add(section.size_of_raw_data)
+            .and_then(|end| {
+                file.data()
+                    .get(section.pointer_to_raw_data as usize..end as usize)
+            });
 
         // Build relocation configuration
         let config = RelocationConfig {
@@ -2846,10 +2986,16 @@ impl<'a> PeGenerator<'a> {
             return Ok(0);
         }
 
-        let Some(data) = file.data().get(
-            section.pointer_to_raw_data as usize
-                ..(section.pointer_to_raw_data + section.size_of_raw_data) as usize,
-        ) else {
+        let Some(end) = section
+            .pointer_to_raw_data
+            .checked_add(section.size_of_raw_data)
+        else {
+            return Ok(0);
+        };
+        let Some(data) = file
+            .data()
+            .get(section.pointer_to_raw_data as usize..end as usize)
+        else {
             return Ok(0);
         };
 

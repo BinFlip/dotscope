@@ -59,7 +59,7 @@ use crate::{
     cilassembly::writer::{context::WriteContext, output::Output},
     file::pe::{constants::COR20_HEADER_SIZE, SectionTable},
     utils::align_to,
-    Result,
+    Error, Result,
 };
 
 /// Standard metadata stream names in the order they are written.
@@ -89,10 +89,13 @@ const METADATA_STREAM_NAMES: [&str; 5] = ["#~", "#Strings", "#US", "#GUID", "#Bl
 /// 7. PE checksum calculation (must be last)
 pub fn apply_all_fixups(ctx: &mut WriteContext) -> Result<()> {
     // Fix e_lfanew in DOS header (offset 0x3C points to PE signature)
-    let pe_sig_offset = u32::try_from(ctx.pe_signature_offset).map_err(|_| {
-        crate::Error::LayoutFailed("PE signature offset exceeds u32 range".to_string())
-    })?;
-    ctx.write_u32_at(ctx.dos_header_offset + 0x3C, pe_sig_offset)?;
+    let pe_sig_offset = u32::try_from(ctx.pe_signature_offset)
+        .map_err(|_| Error::LayoutFailed("PE signature offset exceeds u32 range".to_string()))?;
+    let lfanew_pos = ctx
+        .dos_header_offset
+        .checked_add(0x3C)
+        .ok_or_else(|| Error::LayoutFailed("DOS header offset overflow".to_string()))?;
+    ctx.write_u32_at(lfanew_pos, pe_sig_offset)?;
 
     // Fix header fields
     fixup_optional_header(ctx)?;
@@ -133,7 +136,7 @@ pub fn fixup_optional_header(ctx: &mut WriteContext) -> Result<()> {
         ctx.text_section_size,
         u64::from(ctx.file_alignment),
     ))
-    .map_err(|_| crate::Error::LayoutFailed("Text file size exceeds u32 range".to_string()))?;
+    .map_err(|_| Error::LayoutFailed("Text file size exceeds u32 range".to_string()))?;
 
     // Calculate total image size from all active sections
     let mut end_rva: u32 = 0;
@@ -153,24 +156,30 @@ pub fn fixup_optional_header(ctx: &mut WriteContext) -> Result<()> {
         u64::from(end_rva),
         u64::from(ctx.section_alignment),
     ))
-    .map_err(|_| crate::Error::LayoutFailed("Image size exceeds u32 range".to_string()))?;
+    .map_err(|_| Error::LayoutFailed("Image size exceeds u32 range".to_string()))?;
+
+    let oh = ctx.optional_header_offset;
+    let oh_field = |off: u64| -> Result<u64> {
+        oh.checked_add(off)
+            .ok_or_else(|| Error::LayoutFailed("Optional header offset overflow".to_string()))
+    };
 
     // SizeOfCode at offset 4 (after magic field)
-    ctx.write_u32_at(ctx.optional_header_offset + 4, text_file_size)?;
+    ctx.write_u32_at(oh_field(4)?, text_file_size)?;
 
     // AddressOfEntryPoint at offset 16
     // This is the RVA of the native entry point stub that jumps to _CorExeMain/_CorDllMain
     if let Some(entry_rva) = ctx.native_entry_rva {
-        ctx.write_u32_at(ctx.optional_header_offset + 16, entry_rva)?;
+        ctx.write_u32_at(oh_field(16)?, entry_rva)?;
     }
 
     // SizeOfImage at offset 56
-    ctx.write_u32_at(ctx.optional_header_offset + 56, image_size)?;
+    ctx.write_u32_at(oh_field(56)?, image_size)?;
 
     // SizeOfHeaders at offset 60
     let headers_size = u32::try_from(ctx.text_section_offset)
-        .map_err(|_| crate::Error::LayoutFailed("Headers size exceeds u32 range".to_string()))?;
-    ctx.write_u32_at(ctx.optional_header_offset + 60, headers_size)?;
+        .map_err(|_| Error::LayoutFailed("Headers size exceeds u32 range".to_string()))?;
+    ctx.write_u32_at(oh_field(60)?, headers_size)?;
 
     Ok(())
 }
@@ -209,14 +218,14 @@ pub fn fixup_section_table(ctx: &mut WriteContext) -> Result<()> {
             u64::from(ctx.file_alignment),
         ))
         .map_err(|_| {
-            crate::Error::LayoutFailed(format!(
+            Error::LayoutFailed(format!(
                 "Section {} file size exceeds u32 range",
                 section.name
             ))
         })?;
 
         let offset_u32 = u32::try_from(data_offset).map_err(|_| {
-            crate::Error::LayoutFailed(format!("Section {} offset exceeds u32 range", section.name))
+            Error::LayoutFailed(format!("Section {} offset exceeds u32 range", section.name))
         })?;
 
         // Build section header
@@ -225,28 +234,59 @@ pub fn fixup_section_table(ctx: &mut WriteContext) -> Result<()> {
         // Name (8 bytes, null-padded)
         let name_bytes = section.name.as_bytes();
         let copy_len = std::cmp::min(name_bytes.len(), 8);
-        header[..copy_len].copy_from_slice(&name_bytes[..copy_len]);
+        let name_src = name_bytes.get(..copy_len).ok_or(out_of_bounds_error!())?;
+        header
+            .get_mut(..copy_len)
+            .ok_or(out_of_bounds_error!())?
+            .copy_from_slice(name_src);
 
         // VirtualSize
-        header[8..12].copy_from_slice(&data_size.to_le_bytes());
+        header
+            .get_mut(8..12)
+            .ok_or(out_of_bounds_error!())?
+            .copy_from_slice(&data_size.to_le_bytes());
         // VirtualAddress
-        header[12..16].copy_from_slice(&rva.to_le_bytes());
+        header
+            .get_mut(12..16)
+            .ok_or(out_of_bounds_error!())?
+            .copy_from_slice(&rva.to_le_bytes());
         // SizeOfRawData
-        header[16..20].copy_from_slice(&file_size.to_le_bytes());
+        header
+            .get_mut(16..20)
+            .ok_or(out_of_bounds_error!())?
+            .copy_from_slice(&file_size.to_le_bytes());
         // PointerToRawData
-        header[20..24].copy_from_slice(&offset_u32.to_le_bytes());
+        header
+            .get_mut(20..24)
+            .ok_or(out_of_bounds_error!())?
+            .copy_from_slice(&offset_u32.to_le_bytes());
         // COFF relocation and line number fields are always 0 for PE executables.
         // These are legacy fields from COFF object files used during linking.
         // PointerToRelocations
-        header[24..28].copy_from_slice(&0u32.to_le_bytes());
+        header
+            .get_mut(24..28)
+            .ok_or(out_of_bounds_error!())?
+            .copy_from_slice(&0u32.to_le_bytes());
         // PointerToLinenumbers (deprecated)
-        header[28..32].copy_from_slice(&0u32.to_le_bytes());
+        header
+            .get_mut(28..32)
+            .ok_or(out_of_bounds_error!())?
+            .copy_from_slice(&0u32.to_le_bytes());
         // NumberOfRelocations
-        header[32..34].copy_from_slice(&0u16.to_le_bytes());
+        header
+            .get_mut(32..34)
+            .ok_or(out_of_bounds_error!())?
+            .copy_from_slice(&0u16.to_le_bytes());
         // NumberOfLinenumbers (deprecated)
-        header[34..36].copy_from_slice(&0u16.to_le_bytes());
+        header
+            .get_mut(34..36)
+            .ok_or(out_of_bounds_error!())?
+            .copy_from_slice(&0u16.to_le_bytes());
         // Characteristics
-        header[36..40].copy_from_slice(&section.characteristics.to_le_bytes());
+        header
+            .get_mut(36..40)
+            .ok_or(out_of_bounds_error!())?
+            .copy_from_slice(&section.characteristics.to_le_bytes());
 
         section_headers.push(header);
     }
@@ -255,20 +295,36 @@ pub fn fixup_section_table(ctx: &mut WriteContext) -> Result<()> {
     let mut offset = ctx.section_table_offset;
     for header in &section_headers {
         ctx.write_at(offset, header)?;
-        offset += SectionTable::SIZE as u64;
+        offset = offset
+            .checked_add(SectionTable::SIZE as u64)
+            .ok_or_else(|| Error::LayoutFailed("Section table offset overflow".to_string()))?;
     }
 
     // Zero any remaining space (from removed sections)
-    let original_table_size = ctx.sections.len() * SectionTable::SIZE;
-    let new_table_size = section_headers.len() * SectionTable::SIZE;
+    let original_table_size = ctx
+        .sections
+        .len()
+        .checked_mul(SectionTable::SIZE)
+        .ok_or_else(|| Error::LayoutFailed("Section table size overflow".to_string()))?;
+    let new_table_size = section_headers
+        .len()
+        .checked_mul(SectionTable::SIZE)
+        .ok_or_else(|| Error::LayoutFailed("Section table size overflow".to_string()))?;
     if new_table_size < original_table_size {
-        let zeros = vec![0u8; original_table_size - new_table_size];
+        let zero_len = original_table_size
+            .checked_sub(new_table_size)
+            .ok_or_else(|| Error::LayoutFailed("Section table size underflow".to_string()))?;
+        let zeros = vec![0u8; zero_len];
         ctx.write_at(offset, &zeros)?;
     }
 
     // Update section count in COFF header
     let new_count = u16::try_from(section_headers.len()).unwrap_or(0);
-    ctx.write_u16_at(ctx.coff_header_offset + 2, new_count)?;
+    let coff_count_pos = ctx
+        .coff_header_offset
+        .checked_add(2)
+        .ok_or_else(|| Error::LayoutFailed("COFF header offset overflow".to_string()))?;
+    ctx.write_u16_at(coff_count_pos, new_count)?;
 
     Ok(())
 }
@@ -291,10 +347,17 @@ pub fn fixup_cor20_header(ctx: &mut WriteContext) -> Result<()> {
     // MetaData directory (offset 8-15)
     let metadata_rva = ctx.offset_to_rva(ctx.metadata_offset);
     let metadata_size = u32::try_from(ctx.metadata_size)
-        .map_err(|_| crate::Error::LayoutFailed("Metadata size exceeds u32 range".to_string()))?;
+        .map_err(|_| Error::LayoutFailed("Metadata size exceeds u32 range".to_string()))?;
 
-    ctx.write_u32_at(ctx.cor20_header_offset + 8, metadata_rva)?; // MetaData RVA
-    ctx.write_u32_at(ctx.cor20_header_offset + 12, metadata_size)?; // MetaData Size
+    let cor20 = ctx.cor20_header_offset;
+    let cor20_field = |off: u64| -> Result<u64> {
+        cor20
+            .checked_add(off)
+            .ok_or_else(|| Error::LayoutFailed("COR20 header offset overflow".to_string()))
+    };
+
+    ctx.write_u32_at(cor20_field(8)?, metadata_rva)?; // MetaData RVA
+    ctx.write_u32_at(cor20_field(12)?, metadata_size)?; // MetaData Size
 
     // Resources directory (offset 24-31)
     // COR20 header layout:
@@ -311,18 +374,17 @@ pub fn fixup_cor20_header(ctx: &mut WriteContext) -> Result<()> {
     // Entry point token (offset 20-23) - may need remapping if methods were deleted
     if ctx.entry_point_token != 0 && !ctx.token_remapping.is_empty() {
         if let Some(&new_token) = ctx.token_remapping.get(&ctx.entry_point_token) {
-            ctx.write_u32_at(ctx.cor20_header_offset + 20, new_token)?;
+            ctx.write_u32_at(cor20_field(20)?, new_token)?;
         }
     }
 
     if ctx.resource_data_size > 0 {
         let resource_rva = ctx.offset_to_rva(ctx.resource_data_offset);
-        let resource_size = u32::try_from(ctx.resource_data_size).map_err(|_| {
-            crate::Error::LayoutFailed("Resource size exceeds u32 range".to_string())
-        })?;
+        let resource_size = u32::try_from(ctx.resource_data_size)
+            .map_err(|_| Error::LayoutFailed("Resource size exceeds u32 range".to_string()))?;
 
-        ctx.write_u32_at(ctx.cor20_header_offset + 24, resource_rva)?; // Resources RVA
-        ctx.write_u32_at(ctx.cor20_header_offset + 28, resource_size)?; // Resources Size
+        ctx.write_u32_at(cor20_field(24)?, resource_rva)?; // Resources RVA
+        ctx.write_u32_at(cor20_field(28)?, resource_size)?; // Resources Size
     }
 
     Ok(())
@@ -357,8 +419,25 @@ pub fn fixup_cor20_header(ctx: &mut WriteContext) -> Result<()> {
 /// Debug (index 6) and Certificate (index 4) directories are zeroed during the
 /// write phase because they become invalid after assembly modification.
 pub fn fixup_data_directories(ctx: &mut WriteContext) -> Result<()> {
-    let dd_offset = if ctx.is_pe32_plus { 112 } else { 96 };
-    let dd_base = ctx.optional_header_offset + dd_offset;
+    let dd_offset: u64 = if ctx.is_pe32_plus { 112 } else { 96 };
+    let dd_base = ctx
+        .optional_header_offset
+        .checked_add(dd_offset)
+        .ok_or_else(|| Error::LayoutFailed("Data directory offset overflow".to_string()))?;
+
+    // Each directory entry is 8 bytes: index N → offset N*8 (RVA), N*8+4 (Size)
+    let dd_entry = |index: u64| -> Result<(u64, u64)> {
+        let rva_off = index
+            .checked_mul(8)
+            .and_then(|v| dd_base.checked_add(v))
+            .ok_or_else(|| {
+                Error::LayoutFailed("Data directory entry offset overflow".to_string())
+            })?;
+        let size_off = rva_off.checked_add(4).ok_or_else(|| {
+            Error::LayoutFailed("Data directory entry offset overflow".to_string())
+        })?;
+        Ok((rva_off, size_off))
+    };
 
     // IAT (index 12) and CLR Runtime Header (index 14)
     // When the assembly has native imports (IAT was written), the layout is:
@@ -366,82 +445,91 @@ pub fn fixup_data_directories(ctx: &mut WriteContext) -> Result<()> {
     // When no native imports exist (.NET Core PE32+ without mscoree.dll):
     //   .text start → COR20 header → ...
     let has_iat = ctx.iat_size > 0;
+    let (iat_rva_off, iat_size_off) = dd_entry(12)?;
+    let (clr_rva_off, clr_size_off) = dd_entry(14)?;
     if has_iat {
         let iat_rva = ctx.text_section_rva;
         let iat_size = u32::try_from(ctx.iat_size).unwrap_or(8);
-        ctx.write_u32_at(dd_base + 12 * 8, iat_rva)?;
-        ctx.write_u32_at(dd_base + 12 * 8 + 4, iat_size)?;
+        ctx.write_u32_at(iat_rva_off, iat_rva)?;
+        ctx.write_u32_at(iat_size_off, iat_size)?;
 
         // CLR header sits immediately after IAT
-        let clr_rva = ctx.text_section_rva + iat_size;
-        ctx.write_u32_at(dd_base + 14 * 8, clr_rva)?;
-        ctx.write_u32_at(dd_base + 14 * 8 + 4, COR20_HEADER_SIZE)?;
+        let clr_rva = ctx
+            .text_section_rva
+            .checked_add(iat_size)
+            .ok_or_else(|| Error::LayoutFailed("CLR header RVA overflow".to_string()))?;
+        ctx.write_u32_at(clr_rva_off, clr_rva)?;
+        ctx.write_u32_at(clr_size_off, COR20_HEADER_SIZE)?;
     } else {
         // No IAT - zero the IAT data directory
-        ctx.write_u32_at(dd_base + 12 * 8, 0)?;
-        ctx.write_u32_at(dd_base + 12 * 8 + 4, 0)?;
+        ctx.write_u32_at(iat_rva_off, 0)?;
+        ctx.write_u32_at(iat_size_off, 0)?;
 
         // CLR header sits at the very start of .text section
         let clr_rva = ctx.text_section_rva;
-        ctx.write_u32_at(dd_base + 14 * 8, clr_rva)?;
-        ctx.write_u32_at(dd_base + 14 * 8 + 4, COR20_HEADER_SIZE)?;
+        ctx.write_u32_at(clr_rva_off, clr_rva)?;
+        ctx.write_u32_at(clr_size_off, COR20_HEADER_SIZE)?;
     }
 
     // Import Table (index 1)
+    let (imp_rva_off, imp_size_off) = dd_entry(1)?;
     if let (Some(rva), Some(size)) = (ctx.import_data_rva, ctx.import_data_size) {
-        ctx.write_u32_at(dd_base + 8, rva)?;
-        ctx.write_u32_at(dd_base + 8 + 4, size)?;
+        ctx.write_u32_at(imp_rva_off, rva)?;
+        ctx.write_u32_at(imp_size_off, size)?;
     } else {
         // No import table - zero the directory entry
-        ctx.write_u32_at(dd_base + 8, 0)?;
-        ctx.write_u32_at(dd_base + 8 + 4, 0)?;
+        ctx.write_u32_at(imp_rva_off, 0)?;
+        ctx.write_u32_at(imp_size_off, 0)?;
     }
 
     // Export Table (index 0)
+    let (exp_rva_off, exp_size_off) = dd_entry(0)?;
     if let (Some(rva), Some(size)) = (ctx.export_data_rva, ctx.export_data_size) {
-        ctx.write_u32_at(dd_base, rva)?;
-        ctx.write_u32_at(dd_base + 4, size)?;
+        ctx.write_u32_at(exp_rva_off, rva)?;
+        ctx.write_u32_at(exp_size_off, size)?;
     }
 
     // Resource Table (index 2) - find .rsrc section or embedded PE resources
+    let (rsrc_rva_off, rsrc_size_off) = dd_entry(2)?;
     let rsrc_section = ctx
         .sections
         .iter()
         .find(|s| s.name.starts_with(".rsrc") && !s.removed);
     if let Some(section) = rsrc_section {
         if let (Some(rva), Some(size)) = (section.rva, section.data_size) {
-            ctx.write_u32_at(dd_base + 2 * 8, rva)?;
-            ctx.write_u32_at(dd_base + 2 * 8 + 4, size)?;
+            ctx.write_u32_at(rsrc_rva_off, rva)?;
+            ctx.write_u32_at(rsrc_size_off, size)?;
         }
     } else if ctx.pe_resource_size > 0 {
         // Resources were embedded in .text and carried over
         let rva = ctx.offset_to_rva(ctx.pe_resource_offset);
-        ctx.write_u32_at(dd_base + 2 * 8, rva)?;
-        ctx.write_u32_at(dd_base + 2 * 8 + 4, ctx.pe_resource_size)?;
+        ctx.write_u32_at(rsrc_rva_off, rva)?;
+        ctx.write_u32_at(rsrc_size_off, ctx.pe_resource_size)?;
     } else {
         // No resources at all - zero the directory entry
-        ctx.write_u32_at(dd_base + 2 * 8, 0)?;
-        ctx.write_u32_at(dd_base + 2 * 8 + 4, 0)?;
+        ctx.write_u32_at(rsrc_rva_off, 0)?;
+        ctx.write_u32_at(rsrc_size_off, 0)?;
     }
 
     // Base Relocation Table (index 5) - find .reloc section in sections vector
+    let (reloc_rva_off, reloc_size_off) = dd_entry(5)?;
     let reloc_section = ctx
         .sections
         .iter()
         .find(|s| s.name.starts_with(".reloc") && !s.removed);
     if let Some(section) = reloc_section {
         if let (Some(rva), Some(size)) = (section.rva, section.data_size) {
-            ctx.write_u32_at(dd_base + 5 * 8, rva)?;
-            ctx.write_u32_at(dd_base + 5 * 8 + 4, size)?;
+            ctx.write_u32_at(reloc_rva_off, rva)?;
+            ctx.write_u32_at(reloc_size_off, size)?;
         } else {
             // Section exists but no data written - zero the directory
-            ctx.write_u32_at(dd_base + 5 * 8, 0)?;
-            ctx.write_u32_at(dd_base + 5 * 8 + 4, 0)?;
+            ctx.write_u32_at(reloc_rva_off, 0)?;
+            ctx.write_u32_at(reloc_size_off, 0)?;
         }
     } else {
         // No reloc section or it was removed - zero out the data directory entry
-        ctx.write_u32_at(dd_base + 5 * 8, 0)?;
-        ctx.write_u32_at(dd_base + 5 * 8 + 4, 0)?;
+        ctx.write_u32_at(reloc_rva_off, 0)?;
+        ctx.write_u32_at(reloc_size_off, 0)?;
     }
 
     Ok(())
@@ -517,23 +605,34 @@ pub fn fixup_metadata_stream_headers(
 
     for (stream_offset, stream_size, name) in &streams {
         // Calculate offset relative to metadata root
-        let relative_offset =
-            u32::try_from(*stream_offset - metadata_root_offset).map_err(|_| {
-                crate::Error::LayoutFailed("Stream relative offset exceeds u32 range".to_string())
-            })?;
+        let rel = stream_offset
+            .checked_sub(metadata_root_offset)
+            .ok_or_else(|| Error::LayoutFailed("Stream offset before metadata root".to_string()))?;
+        let relative_offset = u32::try_from(rel).map_err(|_| {
+            Error::LayoutFailed("Stream relative offset exceeds u32 range".to_string())
+        })?;
         let aligned_size = u32::try_from(align_to(*stream_size, 4)).map_err(|_| {
-            crate::Error::LayoutFailed("Stream aligned size exceeds u32 range".to_string())
+            Error::LayoutFailed("Stream aligned size exceeds u32 range".to_string())
         })?;
 
         // Write offset
         ctx.write_u32_at(offset, relative_offset)?;
         // Write size
-        ctx.write_u32_at(offset + 4, aligned_size)?;
+        let size_off = offset
+            .checked_add(4)
+            .ok_or_else(|| Error::LayoutFailed("Stream header offset overflow".to_string()))?;
+        ctx.write_u32_at(size_off, aligned_size)?;
 
         // Advance past this stream header (offset + size + name with alignment)
-        let name_with_null = name.len() + 1;
+        let name_with_null = name
+            .len()
+            .checked_add(1)
+            .ok_or_else(|| Error::LayoutFailed("Stream name length overflow".to_string()))?;
         let aligned_name = align_to(name_with_null as u64, 4);
-        offset += 8 + aligned_name;
+        offset = aligned_name
+            .checked_add(8)
+            .and_then(|v| offset.checked_add(v))
+            .ok_or_else(|| Error::LayoutFailed("Stream header offset overflow".to_string()))?;
     }
 
     Ok(())
@@ -593,7 +692,10 @@ pub fn zero_stripped_data_regions(ctx: &mut WriteContext) -> Result<()> {
     // any modification.
     if let Some((cert_offset, cert_size)) = ctx.original_certificate_dir {
         let cert_offset_u64 = u64::from(cert_offset);
-        if cert_offset_u64 + u64::from(cert_size) <= ctx.bytes_written {
+        let cert_end = cert_offset_u64
+            .checked_add(u64::from(cert_size))
+            .ok_or_else(|| Error::LayoutFailed("Certificate region offset overflow".to_string()))?;
+        if cert_end <= ctx.bytes_written {
             let zeros = vec![0u8; cert_size as usize];
             ctx.write_at(cert_offset_u64, &zeros)?;
         }
@@ -627,16 +729,25 @@ pub fn fixup_coff_characteristics(ctx: &mut WriteContext) -> Result<()> {
         const IMAGE_FILE_RELOCS_STRIPPED: u16 = 0x0001;
 
         // Read current characteristics (offset +18 from COFF header)
-        let chars_offset = ctx.coff_header_offset + 18;
+        let chars_offset = ctx
+            .coff_header_offset
+            .checked_add(18)
+            .ok_or_else(|| Error::LayoutFailed("COFF header offset overflow".to_string()))?;
 
         // Read the current value from the output
         let current_bytes = ctx.output.as_slice();
         #[allow(clippy::cast_possible_truncation)]
         let chars_offset_usize = chars_offset as usize;
-        if chars_offset_usize + 2 <= current_bytes.len() {
+        let chars_end = chars_offset_usize.checked_add(2).ok_or_else(|| {
+            Error::LayoutFailed("COFF characteristics offset overflow".to_string())
+        })?;
+        if chars_end <= current_bytes.len() {
+            let chars_slice = current_bytes
+                .get(chars_offset_usize..chars_end)
+                .ok_or(out_of_bounds_error!())?;
             let current = u16::from_le_bytes([
-                current_bytes[chars_offset_usize],
-                current_bytes[chars_offset_usize + 1],
+                *chars_slice.first().ok_or(out_of_bounds_error!())?,
+                *chars_slice.get(1).ok_or(out_of_bounds_error!())?,
             ]);
 
             // Set the RELOCS_STRIPPED flag
@@ -674,9 +785,12 @@ pub fn fixup_coff_characteristics(ctx: &mut WriteContext) -> Result<()> {
 /// mmap size. This ensures the checksum matches what the final truncated
 /// file will contain.
 pub fn fixup_checksum(ctx: &mut WriteContext) -> Result<()> {
-    let checksum_offset = ctx.optional_header_offset + 64;
+    let checksum_offset = ctx
+        .optional_header_offset
+        .checked_add(64)
+        .ok_or_else(|| Error::LayoutFailed("Checksum offset overflow".to_string()))?;
     let actual_size = usize::try_from(ctx.bytes_written)
-        .map_err(|_| crate::Error::LayoutFailed("File size exceeds usize range".to_string()))?;
+        .map_err(|_| Error::LayoutFailed("File size exceeds usize range".to_string()))?;
     let checksum = calculate_pe_checksum(&ctx.output, checksum_offset, actual_size);
     ctx.write_u32_at(checksum_offset, checksum)?;
 
@@ -715,39 +829,48 @@ fn calculate_pe_checksum(output: &Output, checksum_offset: u64, actual_size: usi
     let file_size = actual_size.min(data.len()); // Don't exceed mmap bounds
                                                  // Safe: checksum_offset is a small PE header offset that always fits in usize
     let checksum_offset_usize = usize::try_from(checksum_offset).unwrap_or(usize::MAX);
+    let checksum_end_usize = checksum_offset_usize.saturating_add(4);
 
     let mut sum: u64 = 0;
 
-    // Process 16-bit words directly from the memory-mapped file
-    let mut i = 0;
-    while i + 1 < file_size {
+    // Process 16-bit words directly from the memory-mapped file.
+    // The bounds (file_size) are clamped to the slice length above, so all
+    // index/saturating arithmetic stays within `data`.
+    let mut i: usize = 0;
+    while i.saturating_add(1) < file_size {
         // Skip the checksum field (4 bytes = 2 words)
-        if i >= checksum_offset_usize && i < checksum_offset_usize + 4 {
-            i += 2;
+        if i >= checksum_offset_usize && i < checksum_end_usize {
+            i = i.saturating_add(2);
             continue;
         }
 
-        let word = u16::from_le_bytes([data[i], data[i + 1]]);
-        sum += u64::from(word);
-        i += 2;
+        let word = match data
+            .get(i..i.saturating_add(2))
+            .and_then(|s| s.try_into().ok())
+        {
+            Some(arr) => u16::from_le_bytes(arr),
+            None => break,
+        };
+        sum = sum.saturating_add(u64::from(word));
+        i = i.saturating_add(2);
     }
 
     // Handle odd byte at the end of file (if any) - pad with zero
-    if i < file_size {
-        // Only include if not in checksum field
-        if i < checksum_offset_usize || i >= checksum_offset_usize + 4 {
-            sum += u64::from(data[i]);
+    if i < file_size && (i < checksum_offset_usize || i >= checksum_end_usize) {
+        if let Some(&byte) = data.get(i) {
+            sum = sum.saturating_add(u64::from(byte));
         }
     }
 
     // Fold the sum to 16 bits (add carry to low 16 bits)
     while sum > 0xFFFF {
-        sum = (sum & 0xFFFF) + (sum >> 16);
+        sum = (sum & 0xFFFF).saturating_add(sum >> 16);
     }
 
-    // Add file size - safe: sum is folded to fit in u16, and file_size fits in u32 on all platforms
+    // Add file size - the PE checksum spec defines `(sum & 0xFFFF) + file_size`;
+    // wrap is part of the algorithm for files near 4 GiB.
     #[allow(clippy::cast_possible_truncation)]
-    let checksum = (sum as u32) + (file_size as u32);
+    let checksum = (sum as u32).wrapping_add(file_size as u32);
 
     checksum
 }

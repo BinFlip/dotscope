@@ -97,7 +97,7 @@ pub(crate) struct SsaRebuilder<'a> {
 
 impl<'a> SsaRebuilder<'a> {
     pub fn new(ssa: &'a mut SsaFunction) -> Self {
-        let next_group = ssa.num_args as u32 + ssa.num_locals as u32;
+        let next_group = (ssa.num_args as u32).saturating_add(ssa.num_locals as u32);
         let block_count = ssa.blocks.len();
         Self {
             ssa,
@@ -314,7 +314,8 @@ impl<'a> SsaRebuilder<'a> {
             .position(|i| i.is_terminator())
             .unwrap_or(entry.instructions().len());
         for (i, instr) in to_rescue.into_iter().enumerate() {
-            entry.instructions_mut().insert(term_idx + i, instr);
+            let pos = term_idx.saturating_add(i);
+            entry.instructions_mut().insert(pos, instr);
         }
     }
 
@@ -345,8 +346,10 @@ impl<'a> SsaRebuilder<'a> {
         // Clear unreachable blocks
         for block_idx in 0..self.ssa.blocks.len() {
             if !reachable.contains(block_idx) {
-                self.ssa.blocks[block_idx].instructions_mut().clear();
-                self.ssa.blocks[block_idx].phi_nodes_mut().clear();
+                if let Some(b) = self.ssa.blocks.get_mut(block_idx) {
+                    b.instructions_mut().clear();
+                    b.phi_nodes_mut().clear();
+                }
             }
         }
 
@@ -357,7 +360,9 @@ impl<'a> SsaRebuilder<'a> {
             if !reachable.contains(block_idx) {
                 continue;
             }
-            let block = &mut self.ssa.blocks[block_idx];
+            let Some(block) = self.ssa.blocks.get_mut(block_idx) else {
+                continue;
+            };
 
             // Remove operands from unreachable predecessors
             for phi in block.phi_nodes_mut().iter_mut() {
@@ -367,11 +372,11 @@ impl<'a> SsaRebuilder<'a> {
             // Inline trivial phis (0 or 1 unique operand value)
             block.phi_nodes_mut().retain(|phi| {
                 let operands = phi.operands();
-                if operands.is_empty() {
+                let Some(first_op) = operands.first() else {
                     return false; // Remove empty phi
-                }
+                };
+                let first = first_op.value();
                 // Check if all operands resolve to the same value
-                let first = operands[0].value();
                 if operands
                     .iter()
                     .all(|op| op.value() == first || op.value() == phi.result())
@@ -430,9 +435,21 @@ impl<'a> SsaRebuilder<'a> {
         let mut rank: Vec<u8> = vec![0; num_vars];
 
         let find = |parent: &mut Vec<usize>, mut x: usize| -> usize {
-            while parent[x] != x {
-                parent[x] = parent[parent[x]]; // path halving
-                x = parent[x];
+            // Bound the iterations to the union-find size to avoid infinite
+            // loops if the parent array is corrupted.
+            for _ in 0..parent.len() {
+                let Some(&p) = parent.get(x) else {
+                    return x;
+                };
+                if p == x {
+                    return x;
+                }
+                // Path halving: parent[x] = parent[parent[x]].
+                let pp = parent.get(p).copied().unwrap_or(p);
+                if let Some(slot) = parent.get_mut(x) {
+                    *slot = pp;
+                }
+                x = pp;
             }
             x
         };
@@ -443,13 +460,23 @@ impl<'a> SsaRebuilder<'a> {
             if ra == rb {
                 return;
             }
-            if rank[ra] < rank[rb] {
-                parent[ra] = rb;
-            } else if rank[ra] > rank[rb] {
-                parent[rb] = ra;
+            let rank_ra = rank.get(ra).copied().unwrap_or(0);
+            let rank_rb = rank.get(rb).copied().unwrap_or(0);
+            if rank_ra < rank_rb {
+                if let Some(slot) = parent.get_mut(ra) {
+                    *slot = rb;
+                }
+            } else if rank_ra > rank_rb {
+                if let Some(slot) = parent.get_mut(rb) {
+                    *slot = ra;
+                }
             } else {
-                parent[rb] = ra;
-                rank[ra] += 1;
+                if let Some(slot) = parent.get_mut(rb) {
+                    *slot = ra;
+                }
+                if let Some(slot) = rank.get_mut(ra) {
+                    *slot = slot.saturating_add(1);
+                }
             }
         };
 
@@ -520,7 +547,7 @@ impl<'a> SsaRebuilder<'a> {
                     arg_local_reps.entry(group).or_insert(idx);
                 }
                 VariableOrigin::Local(li) => {
-                    let group = num_args as u32 + li as u32;
+                    let group = (num_args as u32).saturating_add(li as u32);
                     arg_local_reps.entry(group).or_insert(idx);
                 }
                 _ => {}
@@ -530,7 +557,7 @@ impl<'a> SsaRebuilder<'a> {
             for instr in block.instructions() {
                 match instr.op() {
                     SsaOp::LoadLocal { dest, local_index } => {
-                        let group = num_args as u32 + *local_index as u32;
+                        let group = (num_args as u32).saturating_add(*local_index as u32);
                         if let (Some(&dest_idx), Some(&rep_idx)) =
                             (var_to_idx.get(dest), arg_local_reps.get(&group))
                         {
@@ -563,14 +590,14 @@ impl<'a> SsaRebuilder<'a> {
         // Only split groups that actually have disconnected components.
         let max_existing = self.ssa.rename_groups.iter().copied().max().unwrap_or(0);
         let mut next_new_group = if max_existing == u32::MAX {
-            num_args as u32 + self.ssa.num_locals as u32
+            (num_args as u32).saturating_add(self.ssa.num_locals as u32)
         } else {
-            max_existing + 1
+            max_existing.saturating_add(1)
         };
 
         let mut updates: Vec<(SsaVarId, u32)> = Vec::new();
 
-        let real_local_limit = num_args as u32 + self.ssa.num_locals as u32;
+        let real_local_limit = (num_args as u32).saturating_add(self.ssa.num_locals as u32);
 
         for (&original_group, members) in &group_members {
             if members.len() <= 1 {
@@ -595,7 +622,9 @@ impl<'a> SsaRebuilder<'a> {
             let mut canonical_root: Option<usize> = None;
             for (&root, component_members) in &component_roots {
                 for &idx in component_members {
-                    let var = &self.ssa.variables[idx];
+                    let Some(var) = self.ssa.variables.get(idx) else {
+                        continue;
+                    };
                     match var.origin() {
                         VariableOrigin::Argument(_) | VariableOrigin::Local(_) => {
                             canonical_root = Some(root);
@@ -612,8 +641,9 @@ impl<'a> SsaRebuilder<'a> {
             // If no canonical root found, pick the largest component.
             // Break ties deterministically by the smallest variable index
             // within each component to avoid nondeterministic grouping.
-            let canonical_root = canonical_root.unwrap_or_else(|| {
-                *component_roots
+            let canonical_root = match canonical_root {
+                Some(r) => r,
+                None => match component_roots
                     .iter()
                     .max_by(|(_, members_a), (_, members_b)| {
                         members_a.len().cmp(&members_b.len()).then_with(|| {
@@ -622,9 +652,13 @@ impl<'a> SsaRebuilder<'a> {
                             min_b.cmp(&min_a)
                         })
                     })
-                    .map(|(root, _)| root)
-                    .unwrap()
-            });
+                    .map(|(root, _)| *root)
+                {
+                    Some(r) => r,
+                    // No components — group is empty, nothing to split.
+                    None => continue,
+                },
+            };
 
             // Decide which components to keep vs. split.
             //
@@ -648,7 +682,7 @@ impl<'a> SsaRebuilder<'a> {
                 .into_iter()
                 .flat_map(|members| members.iter())
                 .filter_map(|&idx| {
-                    let var = &self.ssa.variables[idx];
+                    let var = self.ssa.variables.get(idx)?;
                     match var.origin() {
                         VariableOrigin::Argument(_) | VariableOrigin::Local(_) => {
                             Some((var.origin(), var.var_type().clone()))
@@ -668,7 +702,7 @@ impl<'a> SsaRebuilder<'a> {
                     .into_iter()
                     .flat_map(|members| members.iter())
                     .filter_map(|&idx| {
-                        let t = self.ssa.variables[idx].var_type();
+                        let t = self.ssa.variables.get(idx)?.var_type();
                         if t.is_unknown() {
                             None
                         } else {
@@ -688,7 +722,9 @@ impl<'a> SsaRebuilder<'a> {
                 let keep = if has_canonical_origin {
                     // Tier 1: origin + type matching
                     component_members.iter().any(|&idx| {
-                        let var = &self.ssa.variables[idx];
+                        let Some(var) = self.ssa.variables.get(idx) else {
+                            return false;
+                        };
                         match var.origin() {
                             VariableOrigin::Argument(_) | VariableOrigin::Local(_) => {
                                 canonical_origin_types
@@ -704,7 +740,7 @@ impl<'a> SsaRebuilder<'a> {
                     let comp_type: Option<SsaType> = component_members
                         .iter()
                         .filter_map(|&idx| {
-                            let t = self.ssa.variables[idx].var_type();
+                            let t = self.ssa.variables.get(idx)?.var_type();
                             if t.is_unknown() {
                                 None
                             } else {
@@ -726,10 +762,12 @@ impl<'a> SsaRebuilder<'a> {
                 }
 
                 let new_group = next_new_group;
-                next_new_group += 1;
+                next_new_group = next_new_group.saturating_add(1);
                 for &idx in component_members {
-                    let var_id = self.ssa.variables[idx].id();
-                    updates.push((var_id, new_group));
+                    let Some(var) = self.ssa.variables.get(idx) else {
+                        continue;
+                    };
+                    updates.push((var.id(), new_group));
                 }
             }
         }
@@ -757,7 +795,7 @@ impl<'a> SsaRebuilder<'a> {
             .filter(|&g| g != u32::MAX)
             .max()
             .unwrap_or(next_new_group);
-        let mut next_split_group = max_group_so_far + 1;
+        let mut next_split_group = max_group_so_far.saturating_add(1);
         let mut split_updates: Vec<(SsaVarId, u32)> = Vec::new();
 
         for block in &self.ssa.blocks {
@@ -777,11 +815,11 @@ impl<'a> SsaRebuilder<'a> {
                     if *already_seen {
                         // Third+ definition — also split
                         split_updates.push((dest, next_split_group));
-                        next_split_group += 1;
+                        next_split_group = next_split_group.saturating_add(1);
                     } else {
                         // Second definition — split this one
                         split_updates.push((dest, next_split_group));
-                        next_split_group += 1;
+                        next_split_group = next_split_group.saturating_add(1);
                         *already_seen = true;
                     }
                 } else {
@@ -837,7 +875,7 @@ impl<'a> SsaRebuilder<'a> {
                 .or_insert(VariableOrigin::Argument(i as u16));
         }
         for i in 0..self.ssa.num_locals {
-            let group = self.ssa.num_args as u32 + i as u32;
+            let group = (self.ssa.num_args as u32).saturating_add(i as u32);
             self.group_origins
                 .entry(group)
                 .or_insert(VariableOrigin::Local(i as u16));
@@ -859,7 +897,7 @@ impl<'a> SsaRebuilder<'a> {
         // Update next_group to be above all existing groups
         let max_existing = self.ssa.rename_groups.iter().copied().max().unwrap_or(0);
         if max_existing != u32::MAX {
-            self.next_group = self.next_group.max(max_existing + 1);
+            self.next_group = self.next_group.max(max_existing.saturating_add(1));
         }
     }
 
@@ -871,7 +909,8 @@ impl<'a> SsaRebuilder<'a> {
                     SsaOp::LoadLocal { dest, local_index } => {
                         let dest_group = self.ssa.rename_group(*dest);
                         if dest_group != u32::MAX && !self.group_types.contains_key(&dest_group) {
-                            let local_group = self.ssa.num_args as u32 + *local_index as u32;
+                            let local_group =
+                                (self.ssa.num_args as u32).saturating_add(*local_index as u32);
                             if let Some(local_type) = self.group_types.get(&local_group).cloned() {
                                 self.group_types.insert(dest_group, local_type);
                             }
@@ -996,7 +1035,7 @@ impl<'a> SsaRebuilder<'a> {
                 .or_insert(VariableOrigin::Phi);
             if self.ssa.rename_group(var_id) == u32::MAX {
                 let group = self.next_group;
-                self.next_group += 1;
+                self.next_group = self.next_group.saturating_add(1);
                 self.ssa.set_rename_group(var_id, group);
                 self.group_origins.insert(group, VariableOrigin::Phi);
                 if let Some(inferred) = inferred_type {
@@ -1023,8 +1062,10 @@ impl<'a> SsaRebuilder<'a> {
         // during rename.
         for block_idx in 0..self.ssa.blocks.len() {
             if !self.reachable.contains(block_idx) {
-                self.ssa.blocks[block_idx].instructions_mut().clear();
-                self.ssa.blocks[block_idx].phi_nodes_mut().clear();
+                if let Some(b) = self.ssa.blocks.get_mut(block_idx) {
+                    b.instructions_mut().clear();
+                    b.phi_nodes_mut().clear();
+                }
             }
         }
 
@@ -1135,12 +1176,16 @@ impl<'a> SsaRebuilder<'a> {
 
             // Merge dominance frontiers
             for b in handler_reachable.iter() {
-                if b < local_df.len() {
-                    if b >= self.dominance_frontiers.len() {
-                        self.dominance_frontiers
-                            .resize(b + 1, BitSet::new(block_count));
-                    }
-                    self.dominance_frontiers[b].union_with(&local_df[b]);
+                let Some(local_b) = local_df.get(b) else {
+                    continue;
+                };
+                if b >= self.dominance_frontiers.len() {
+                    let new_len = b.checked_add(1).unwrap_or(self.dominance_frontiers.len());
+                    self.dominance_frontiers
+                        .resize(new_len, BitSet::new(block_count));
+                }
+                if let Some(slot) = self.dominance_frontiers.get_mut(b) {
+                    slot.union_with(local_b);
                 }
             }
         }
@@ -1156,7 +1201,7 @@ impl<'a> SsaRebuilder<'a> {
         // Only ORIGINAL .NET locals have default-initialization at entry.
         // `num_locals == original_num_locals` always now (no inflation).
         for i in 0..self.ssa.num_locals {
-            let group = self.ssa.num_args as u32 + i as u32;
+            let group = (self.ssa.num_args as u32).saturating_add(i as u32);
             self.defs.entry(group).or_default().insert(0);
         }
 
@@ -1218,7 +1263,7 @@ impl<'a> SsaRebuilder<'a> {
                     SsaOp::LoadLocal { dest, local_index }
                         if consumed_vars.contains(dest.index()) =>
                     {
-                        let group = self.ssa.num_args as u32 + *local_index as u32;
+                        let group = (self.ssa.num_args as u32).saturating_add(*local_index as u32);
                         use_sites
                             .entry(group)
                             .or_insert_with(|| BitSet::new(block_count))
@@ -1715,7 +1760,7 @@ impl<'a> SsaRebuilder<'a> {
                                     match origin {
                                         VariableOrigin::Argument(idx) => idx as u32,
                                         VariableOrigin::Local(idx) => {
-                                            ctx.num_args as u32 + idx as u32
+                                            (ctx.num_args as u32).saturating_add(idx as u32)
                                         }
                                         VariableOrigin::Phi => u32::MAX,
                                     }
@@ -1729,7 +1774,8 @@ impl<'a> SsaRebuilder<'a> {
 
         for (i, (group, origin, old_result)) in phi_info.iter().enumerate() {
             let version = *next_version.get(group).unwrap_or(&0);
-            *next_version.entry(*group).or_insert(0) += 1;
+            let entry = next_version.entry(*group).or_insert(0);
+            *entry = entry.saturating_add(1);
 
             let var_type = ctx
                 .group_types
@@ -1747,7 +1793,8 @@ impl<'a> SsaRebuilder<'a> {
             }
 
             version_stacks.entry(*group).or_default().push(new_var_id);
-            *pushed_counts.entry(*group).or_insert(0) += 1;
+            let pc = pushed_counts.entry(*group).or_insert(0);
+            *pc = pc.saturating_add(1);
 
             if *old_result != new_var_id {
                 rename_map.insert(*old_result, new_var_id);
@@ -1781,7 +1828,7 @@ impl<'a> SsaRebuilder<'a> {
                         let load_target_group = match instr.op() {
                             SsaOp::LoadArg { arg_index, .. } => Some(*arg_index as u32),
                             SsaOp::LoadLocal { local_index, .. } => {
-                                Some(ctx.num_args as u32 + *local_index as u32)
+                                Some((ctx.num_args as u32).saturating_add(*local_index as u32))
                             }
                             _ => None,
                         };
@@ -1839,7 +1886,8 @@ impl<'a> SsaRebuilder<'a> {
                                 .entry(dest_group)
                                 .or_default()
                                 .push(reaching_def);
-                            *pushed_counts.entry(dest_group).or_insert(0) += 1;
+                            let pc = pushed_counts.entry(dest_group).or_insert(0);
+                            *pc = pc.saturating_add(1);
                         }
                         // Convert to Nop since the value is the reaching definition
                         if let Some(block) = ssa.block_mut(block_idx) {
@@ -1856,7 +1904,8 @@ impl<'a> SsaRebuilder<'a> {
                 if group != u32::MAX {
                     if let Some(origin) = origin {
                         let version = *next_version.get(&group).unwrap_or(&0);
-                        *next_version.entry(group).or_insert(0) += 1;
+                        let nv = next_version.entry(group).or_insert(0);
+                        *nv = nv.saturating_add(1);
 
                         // Use per-variable type first (preserves stack-derived local types),
                         // fall back to per-group type
@@ -1881,7 +1930,8 @@ impl<'a> SsaRebuilder<'a> {
                         }
 
                         version_stacks.entry(group).or_default().push(new_var_id);
-                        *pushed_counts.entry(group).or_insert(0) += 1;
+                        let pc = pushed_counts.entry(group).or_insert(0);
+                        *pc = pc.saturating_add(1);
 
                         if *old_dest != new_var_id {
                             rename_map.insert(*old_dest, new_var_id);
@@ -1926,7 +1976,7 @@ impl<'a> SsaRebuilder<'a> {
                                             match phi.origin() {
                                                 VariableOrigin::Argument(idx) => idx as u32,
                                                 VariableOrigin::Local(idx) => {
-                                                    ctx.num_args as u32 + idx as u32
+                                                    (ctx.num_args as u32).saturating_add(idx as u32)
                                                 }
                                                 VariableOrigin::Phi => u32::MAX,
                                             }

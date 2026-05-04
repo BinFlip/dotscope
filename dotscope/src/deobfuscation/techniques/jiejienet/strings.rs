@@ -118,10 +118,18 @@ impl Technique for JiejieNetStrings {
                 let sig = &method.signature;
 
                 // Check for dcsoft signature: string(byte[], int64)
+                let p0_is_szarray = sig
+                    .params
+                    .first()
+                    .is_some_and(|p| matches!(p.base, TypeSignature::SzArray(_)));
+                let p1_is_i8 = sig
+                    .params
+                    .get(1)
+                    .is_some_and(|p| matches!(p.base, TypeSignature::I8));
                 if matches!(sig.return_type.base, TypeSignature::String)
                     && sig.params.len() == 2
-                    && matches!(sig.params[0].base, TypeSignature::SzArray(_))
-                    && matches!(sig.params[1].base, TypeSignature::I8)
+                    && p0_is_szarray
+                    && p1_is_i8
                     && method.is_static()
                 {
                     dcsoft_token = Some(method.token);
@@ -357,11 +365,11 @@ fn is_byte_array_data_container(cil_type: &CilType) -> bool {
     }
 
     // Check nested types for ExplicitLayout (RVA-backed data storage)
-    let mut explicit_layout_count = 0;
+    let mut explicit_layout_count: usize = 0;
     for (_, nested_ref) in cil_type.nested_types.iter() {
         if let Some(nested) = nested_ref.upgrade() {
             if nested.flags.layout() == crate::metadata::tables::TypeAttributes::EXPLICIT_LAYOUT {
-                explicit_layout_count += 1;
+                explicit_layout_count = explicit_layout_count.saturating_add(1);
             }
         }
     }

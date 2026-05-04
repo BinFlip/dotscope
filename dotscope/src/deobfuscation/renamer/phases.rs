@@ -499,11 +499,10 @@ fn build_phases_from_boundaries(
     let mut phases = Vec::new();
 
     for (i, &start) in boundaries.iter().enumerate() {
-        let end = if i + 1 < boundaries.len() {
-            boundaries[i + 1]
-        } else {
-            block_count
-        };
+        let end = boundaries
+            .get(i.saturating_add(1))
+            .copied()
+            .unwrap_or(block_count);
 
         if start >= block_count {
             continue;
@@ -595,24 +594,32 @@ fn detect_back_edges(
     in_stack: &mut [bool],
     boundaries: &mut HashSet<usize>,
 ) {
-    if block_idx >= ssa.blocks().len() {
+    let blocks = ssa.blocks();
+    let Some(block) = blocks.get(block_idx) else {
         return;
+    };
+    if let Some(slot) = visited.get_mut(block_idx) {
+        *slot = true;
     }
-    visited[block_idx] = true;
-    in_stack[block_idx] = true;
+    if let Some(slot) = in_stack.get_mut(block_idx) {
+        *slot = true;
+    }
 
-    for succ in ssa.blocks()[block_idx].successors() {
+    let successors = block.successors();
+    for succ in successors {
         if succ < visited.len() {
-            if in_stack[succ] {
+            if in_stack.get(succ).copied().unwrap_or(false) {
                 // Back-edge found: succ is a loop header
                 boundaries.insert(succ);
-            } else if !visited[succ] {
+            } else if !visited.get(succ).copied().unwrap_or(true) {
                 detect_back_edges(ssa, succ, visited, in_stack, boundaries);
             }
         }
     }
 
-    in_stack[block_idx] = false;
+    if let Some(slot) = in_stack.get_mut(block_idx) {
+        *slot = false;
+    }
 }
 
 /// Detects contiguous blocks with heavy bitwise/arithmetic and no calls.
@@ -627,12 +634,12 @@ fn detect_back_edges(
 /// * `boundaries` - Set of boundary block indices to populate.
 fn detect_transform_boundaries(ssa: &SsaFunction, boundaries: &mut HashSet<usize>) {
     let blocks = ssa.blocks();
-    let mut consecutive_transform = 0;
+    let mut consecutive_transform: u32 = 0;
 
     for (block_idx, block) in blocks.iter().enumerate() {
         let mut has_calls = false;
-        let mut bitwise_count = 0u32;
-        let mut arithmetic_count = 0u32;
+        let mut bitwise_count: u32 = 0;
+        let mut arithmetic_count: u32 = 0;
 
         for instr in block.instructions() {
             match instr.op() {
@@ -645,25 +652,25 @@ fn detect_transform_boundaries(ssa: &SsaFunction, boundaries: &mut HashSet<usize
                 | SsaOp::Not { .. }
                 | SsaOp::Shl { .. }
                 | SsaOp::Shr { .. } => {
-                    bitwise_count += 1;
+                    bitwise_count = bitwise_count.saturating_add(1);
                 }
                 SsaOp::Add { .. }
                 | SsaOp::Sub { .. }
                 | SsaOp::Mul { .. }
                 | SsaOp::Div { .. }
                 | SsaOp::Rem { .. } => {
-                    arithmetic_count += 1;
+                    arithmetic_count = arithmetic_count.saturating_add(1);
                 }
                 _ => {}
             }
         }
 
-        if !has_calls && (bitwise_count + arithmetic_count) >= 3 {
+        if !has_calls && bitwise_count.saturating_add(arithmetic_count) >= 3 {
             if consecutive_transform == 0 {
                 // Start of transform region
                 boundaries.insert(block_idx);
             }
-            consecutive_transform += 1;
+            consecutive_transform = consecutive_transform.saturating_add(1);
         } else {
             if consecutive_transform >= 3 {
                 // End of transform region, start new phase
@@ -687,19 +694,19 @@ fn detect_transform_boundaries(ssa: &SsaFunction, boundaries: &mut HashSet<usize
 fn classify_op_into_profile(op: &SsaOp, profile: &mut OpcodeProfile) {
     match op {
         SsaOp::Call { .. } | SsaOp::CallVirt { .. } | SsaOp::CallIndirect { .. } => {
-            profile.calls += 1;
+            profile.calls = profile.calls.saturating_add(1);
         }
         SsaOp::Const {
             value: ConstValue::String(_) | ConstValue::DecryptedString(_),
             ..
         } => {
-            profile.strings += 1;
+            profile.strings = profile.strings.saturating_add(1);
         }
         SsaOp::LoadField { .. }
         | SsaOp::StoreField { .. }
         | SsaOp::LoadStaticField { .. }
         | SsaOp::StoreStaticField { .. } => {
-            profile.field_io += 1;
+            profile.field_io = profile.field_io.saturating_add(1);
         }
         SsaOp::And { .. }
         | SsaOp::Or { .. }
@@ -707,7 +714,7 @@ fn classify_op_into_profile(op: &SsaOp, profile: &mut OpcodeProfile) {
         | SsaOp::Not { .. }
         | SsaOp::Shl { .. }
         | SsaOp::Shr { .. } => {
-            profile.bitwise += 1;
+            profile.bitwise = profile.bitwise.saturating_add(1);
         }
         SsaOp::Add { .. }
         | SsaOp::AddOvf { .. }
@@ -718,23 +725,23 @@ fn classify_op_into_profile(op: &SsaOp, profile: &mut OpcodeProfile) {
         | SsaOp::Div { .. }
         | SsaOp::Rem { .. }
         | SsaOp::Neg { .. } => {
-            profile.arithmetic += 1;
+            profile.arithmetic = profile.arithmetic.saturating_add(1);
         }
         SsaOp::NewArr { .. }
         | SsaOp::LoadElement { .. }
         | SsaOp::StoreElement { .. }
         | SsaOp::ArrayLength { .. } => {
-            profile.array += 1;
+            profile.array = profile.array.saturating_add(1);
         }
         SsaOp::Ceq { .. }
         | SsaOp::Clt { .. }
         | SsaOp::Cgt { .. }
         | SsaOp::Branch { .. }
         | SsaOp::BranchCmp { .. } => {
-            profile.comparison += 1;
+            profile.comparison = profile.comparison.saturating_add(1);
         }
         SsaOp::Conv { .. } => {
-            profile.conversion += 1;
+            profile.conversion = profile.conversion.saturating_add(1);
         }
         _ => {}
     }

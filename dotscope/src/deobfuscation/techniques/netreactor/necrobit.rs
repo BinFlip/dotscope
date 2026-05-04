@@ -537,35 +537,67 @@ fn is_necrobit_data_array(data: &[u8]) -> bool {
         return false;
     }
 
-    let read_u32 = |off: usize| -> u32 {
-        u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+    let read_u32 = |off: usize| -> Option<u32> {
+        let slice = data.get(off..off.checked_add(4)?)?;
+        let arr: [u8; 4] = slice.try_into().ok()?;
+        Some(u32::from_le_bytes(arr))
     };
 
-    let first_token = read_u32(0);
+    let Some(first_token) = read_u32(0) else {
+        return false;
+    };
     if first_token >> 24 != 0x06 {
         return false;
     }
 
-    let group_count = read_u32(16) as usize;
+    let Some(group_count) = read_u32(16) else {
+        return false;
+    };
+    let group_count = group_count as usize;
 
     if group_count > 0 && group_count <= 500 {
         // Variant A: group entries + method_count + per-method IL records
-        let header_end = 24 + group_count * 8;
-        if header_end + 4 > data.len() {
+        let Some(header_end) = group_count
+            .checked_mul(8)
+            .and_then(|n| 24_usize.checked_add(n))
+        else {
+            return false;
+        };
+        let Some(header_end_plus_4) = header_end.checked_add(4) else {
+            return false;
+        };
+        if header_end_plus_4 > data.len() {
             return false;
         }
-        let method_count = read_u32(header_end) as usize;
+        let Some(method_count) = read_u32(header_end) else {
+            return false;
+        };
+        let method_count = method_count as usize;
         if method_count == 0 || method_count > 5000 {
             return false;
         }
-        header_end + 4 + method_count * 12 <= data.len() + method_count * 8
+        let Some(lhs) = method_count
+            .checked_mul(12)
+            .and_then(|n| header_end_plus_4.checked_add(n))
+        else {
+            return false;
+        };
+        let Some(rhs) = method_count
+            .checked_mul(8)
+            .and_then(|n| data.len().checked_add(n))
+        else {
+            return false;
+        };
+        lhs <= rhs
     } else if group_count == 0 {
         // Variant B: complete method bodies start at offset 24.
         // Validate by checking if the first entry has a valid method body header.
         if data.len() < 36 {
             return false;
         }
-        let body_header_byte = data[32]; // offset 24 + 8 (RVA + v2)
+        let Some(&body_header_byte) = data.get(32) else {
+            return false;
+        }; // offset 24 + 8 (RVA + v2)
         let is_fat = body_header_byte & 0x03 == 0x03;
         let is_tiny = body_header_byte & 0x03 == 0x02;
         is_fat || is_tiny
@@ -601,7 +633,13 @@ fn find_variant_a_blob(process: &EmulationProcess) -> Option<Vec<u8>> {
         if !is_necrobit_data_array(&bytes) {
             continue;
         }
-        let group_count = u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]) as usize;
+        let Some(gc_slice) = bytes.get(16..20) else {
+            continue;
+        };
+        let Ok(gc_arr) = <[u8; 4]>::try_from(gc_slice) else {
+            continue;
+        };
+        let group_count = u32::from_le_bytes(gc_arr) as usize;
         if group_count == 0 {
             continue; // variant B — wrong path
         }
@@ -621,8 +659,15 @@ fn find_variant_a_blob(process: &EmulationProcess) -> Option<Vec<u8>> {
 /// [`MethodBody::from_raw`] (skips bounds-checking against the stub's
 /// 4-byte code_size) and [`MethodBody::write_to`] for serialization.
 fn parse_variant_a_blob(data: &[u8], assembly: &CilObject) -> Result<Vec<(Token, Vec<u8>)>> {
-    let read_u32 = |off: usize| -> u32 {
-        u32::from_le_bytes([data[off], data[off + 1], data[off + 2], data[off + 3]])
+    let read_u32 = |off: usize| -> Result<u32> {
+        let end = off
+            .checked_add(4)
+            .ok_or_else(|| Error::Deobfuscation("offset overflow in blob read".into()))?;
+        let slice = data.get(off..end).ok_or(out_of_bounds_error!())?;
+        let arr: [u8; 4] = slice.try_into().map_err(|_| {
+            Error::Deobfuscation("blob read: 4-byte slice conversion failed".into())
+        })?;
+        Ok(u32::from_le_bytes(arr))
     };
 
     if data.len() < 24 {
@@ -631,9 +676,17 @@ fn parse_variant_a_blob(data: &[u8], assembly: &CilObject) -> Result<Vec<(Token,
         ));
     }
 
-    let group_count = read_u32(16) as usize;
-    let header_end = 24 + group_count * 8;
-    if data.len() < header_end + 4 {
+    let group_count = read_u32(16)? as usize;
+    let header_end = 24_usize
+        .checked_add(group_count.checked_mul(8).ok_or_else(|| {
+            Error::Deobfuscation("group_count * 8 overflow in variant-A header".into())
+        })?)
+        .ok_or_else(|| Error::Deobfuscation("header_end overflow in variant-A header".into()))?;
+    if data.len()
+        < header_end.checked_add(4).ok_or_else(|| {
+            Error::Deobfuscation("header_end + 4 overflow in variant-A header".into())
+        })?
+    {
         return Err(Error::Deobfuscation(
             "Decrypted data too small for group entries".to_string(),
         ));
@@ -644,13 +697,24 @@ fn parse_variant_a_blob(data: &[u8], assembly: &CilObject) -> Result<Vec<(Token,
     //   FatHdr entries (top byte != 0x11):           patch flags+maxstack at header+0
     let mut header_patches: HashMap<u32, u32> = HashMap::new();
     for i in 0..group_count {
-        let rva = read_u32(24 + i * 8);
-        let val = read_u32(24 + i * 8 + 4);
+        let entry_off = 24_usize
+            .checked_add(i.checked_mul(8).ok_or_else(|| {
+                Error::Deobfuscation("group entry offset overflow in variant-A blob".into())
+            })?)
+            .ok_or_else(|| {
+                Error::Deobfuscation("group entry offset overflow in variant-A blob".into())
+            })?;
+        let rva = read_u32(entry_off)?;
+        let val = read_u32(entry_off.checked_add(4).ok_or_else(|| {
+            Error::Deobfuscation("group entry val offset overflow in variant-A blob".into())
+        })?)?;
         header_patches.insert(rva, val);
     }
 
-    let method_count = read_u32(header_end) as usize;
-    let mut offset = header_end + 4;
+    let method_count = read_u32(header_end)? as usize;
+    let mut offset = header_end
+        .checked_add(4)
+        .ok_or_else(|| Error::Deobfuscation("offset overflow after header_end".into()))?;
 
     // RVA → MethodDef token. Variant A's per-method records reference the IL
     // start address (RVA + 1 for tiny, RVA + 12 for fat), so a hit at
@@ -666,41 +730,57 @@ fn parse_variant_a_blob(data: &[u8], assembly: &CilObject) -> Result<Vec<(Token,
     let mut bodies = Vec::new();
 
     for _ in 0..method_count {
-        if offset + 12 > data.len() {
+        let record_end = offset.checked_add(12).ok_or_else(|| {
+            Error::Deobfuscation("record offset overflow in variant-A blob".into())
+        })?;
+        if record_end > data.len() {
             break;
         }
-        let il_start_rva = read_u32(offset);
-        let v2 = read_u32(offset + 4);
-        let il_size = read_u32(offset + 8) as usize;
-        offset += 12;
+        let il_start_rva = read_u32(offset)?;
+        let v2 =
+            read_u32(offset.checked_add(4).ok_or_else(|| {
+                Error::Deobfuscation("v2 offset overflow in variant-A blob".into())
+            })?)?;
+        let il_size = read_u32(offset.checked_add(8).ok_or_else(|| {
+            Error::Deobfuscation("il_size offset overflow in variant-A blob".into())
+        })?)? as usize;
+        offset = record_end;
 
         if il_start_rva == 0 && v2 == 0 && il_size == 0 {
             break;
         }
-        if offset + il_size > data.len() {
+        let il_end = offset
+            .checked_add(il_size)
+            .ok_or_else(|| Error::Deobfuscation("il_end overflow in variant-A blob".into()))?;
+        if il_end > data.len() {
             log::warn!(
                 "NecroBit: truncated IL data at RVA 0x{il_start_rva:04X} (need {il_size}, have {})",
-                data.len() - offset
+                data.len().saturating_sub(offset)
             );
             break;
         }
 
-        let il_bytes = &data[offset..offset + il_size];
-        offset += il_size;
+        let il_bytes = data.get(offset..il_end).ok_or(out_of_bounds_error!())?;
+        offset = il_end;
 
-        let (method_token, is_fat) = if let Some(&token) = rva_to_token.get(&(il_start_rva - 1)) {
-            (token, false)
-        } else if let Some(&token) = rva_to_token.get(&(il_start_rva - 12)) {
-            (token, true)
-        } else {
-            log::warn!("NecroBit: no method found for IL start RVA 0x{il_start_rva:04X}");
-            continue;
-        };
+        let tiny_key = il_start_rva.checked_sub(1);
+        let fat_key = il_start_rva.checked_sub(12);
+        let (method_token, is_fat) =
+            if let Some(&token) = tiny_key.and_then(|k| rva_to_token.get(&k)) {
+                (token, false)
+            } else if let Some(&token) = fat_key.and_then(|k| rva_to_token.get(&k)) {
+                (token, true)
+            } else {
+                log::warn!("NecroBit: no method found for IL start RVA 0x{il_start_rva:04X}");
+                continue;
+            };
 
         let body_bytes = if is_fat {
-            let method_rva = il_start_rva - 12;
+            let method_rva = il_start_rva.checked_sub(12).ok_or_else(|| {
+                Error::Deobfuscation("method_rva underflow for fat method".into())
+            })?;
             let (max_stack, is_init_local, local_var_sig_token) =
-                resolve_fat_header_metadata(method_rva, v2, &header_patches);
+                resolve_fat_header_metadata(method_rva, v2, &header_patches)?;
             let exception_handlers = read_on_disk_exception_handlers(assembly, method_rva);
 
             let new_body = MethodBody {
@@ -714,7 +794,7 @@ fn parse_variant_a_blob(data: &[u8], assembly: &CilObject) -> Result<Vec<(Token,
                 exception_handlers,
             };
 
-            let mut buf = Vec::with_capacity(12 + il_size + 64);
+            let mut buf = Vec::with_capacity(12_usize.saturating_add(il_size).saturating_add(64));
             new_body
                 .write_to(&mut buf, il_bytes)
                 .map_err(|e| Error::Deobfuscation(format!("encode fat body: {e}")))?;
@@ -737,7 +817,7 @@ fn parse_variant_a_blob(data: &[u8], assembly: &CilObject) -> Result<Vec<(Token,
                 is_exception_data: false,
                 exception_handlers: Vec::new(),
             };
-            let mut buf = Vec::with_capacity(1 + il_size);
+            let mut buf = Vec::with_capacity(1_usize.saturating_add(il_size));
             new_body
                 .write_to(&mut buf, il_bytes)
                 .map_err(|e| Error::Deobfuscation(format!("encode tiny body: {e}")))?;
@@ -763,10 +843,13 @@ fn resolve_fat_header_metadata(
     method_rva: u32,
     v2: u32,
     header_patches: &HashMap<u32, u32>,
-) -> (usize, bool, u32) {
+) -> Result<(usize, bool, u32)> {
     // StandAloneSig entries patch the LocalVarSig field (at header + 8).
+    let sig_key = method_rva.checked_add(8).ok_or_else(|| {
+        Error::Deobfuscation("method_rva + 8 overflow in fat header lookup".into())
+    })?;
     let local_var_sig_token = header_patches
-        .get(&(method_rva + 8))
+        .get(&sig_key)
         .copied()
         .filter(|v| (v >> 24) == 0x11)
         .unwrap_or(0);
@@ -786,7 +869,7 @@ fn resolve_fat_header_metadata(
     };
 
     let is_init_local = (flags_and_size & 0x0010) != 0;
-    (maxstack as usize, is_init_local, local_var_sig_token)
+    Ok((maxstack as usize, is_init_local, local_var_sig_token))
 }
 
 /// Returns the structured exception handlers from the on-disk stub method
@@ -847,7 +930,9 @@ fn extract_bodies_from_image(
             continue;
         };
 
-        let addr = image_base + u64::from(rva);
+        let addr = image_base.checked_add(u64::from(rva)).ok_or_else(|| {
+            Error::Deobfuscation("addr overflow computing image_base + rva".into())
+        })?;
         let available = image_size.saturating_sub(u64::from(rva)) as usize;
         if available == 0 {
             continue;
@@ -856,7 +941,7 @@ fn extract_bodies_from_image(
         let buffer = match addr_space.read(addr, available) {
             Ok(b) => b,
             Err(_) => {
-                read_failures += 1;
+                read_failures = read_failures.saturating_add(1);
                 continue;
             }
         };
@@ -864,7 +949,7 @@ fn extract_bodies_from_image(
         let body = match MethodBody::from(&buffer) {
             Ok(b) => b,
             Err(_) => {
-                parse_failures += 1;
+                parse_failures = parse_failures.saturating_add(1);
                 continue;
             }
         };
@@ -875,15 +960,15 @@ fn extract_bodies_from_image(
         // here a variant-B fallback run on a variant-A binary would silently
         // overwrite real bodies with fat-wrapped stubs.
         if body.size_code == 4 {
-            still_stubs += 1;
+            still_stubs = still_stubs.saturating_add(1);
             continue;
         }
 
         let total_size = body.size();
-        if total_size > buffer.len() {
+        let Some(body_slice) = buffer.get(..total_size) else {
             continue;
-        }
-        bodies.push((token, buffer[..total_size].to_vec()));
+        };
+        bodies.push((token, body_slice.to_vec()));
     }
 
     if bodies.is_empty() && !stub_tokens.is_empty() {

@@ -259,18 +259,19 @@ impl MethodRef {
         self.weak_ref.upgrade()
     }
 
-    /// Get a strong reference to the method, panicking if the method has been dropped.
+    /// Get a strong reference to the method, returning an error if it has been dropped.
     ///
-    /// Use this when you're certain the method should still exist. This provides
-    /// a convenient way to access the method without handling the `Option` case.
+    /// Use this when you expect the method to still exist. The provided message is
+    /// included in the returned error if the underlying weak reference can no longer
+    /// be upgraded.
     ///
     /// # Arguments
     ///
-    /// * `msg` - Error message to display if the method has been dropped
+    /// * `msg` - Diagnostic message included in the returned error if the method has been dropped
     ///
-    /// # Panics
+    /// # Errors
     ///
-    /// Panics if the method has been dropped and the weak reference cannot be upgraded.
+    /// Returns [`crate::Error::Malformed`] if the underlying method has been dropped.
     ///
     /// # Examples
     ///
@@ -282,16 +283,16 @@ impl MethodRef {
     /// if let Some(entry) = assembly.methods().iter().next() {
     ///     let method = entry.value();
     ///     let method_ref = dotscope::metadata::method::MethodRef::new(&method);
-    ///     
-    ///     // Use expect when you're certain the method should exist
-    ///     let method = method_ref.expect("Method should still be available");
+    ///
+    ///     let method = method_ref.expect("Method should still be available")?;
     ///     println!("Accessed method: {}", method.name);
     /// }
     /// # Ok::<(), dotscope::Error>(())
     /// ```
-    #[must_use]
-    pub fn expect(&self, msg: &str) -> MethodRc {
-        self.weak_ref.upgrade().expect(msg)
+    pub fn expect(&self, msg: &str) -> Result<MethodRc> {
+        self.weak_ref
+            .upgrade()
+            .ok_or_else(|| malformed_error!("{}", msg))
     }
 
     /// Check if the referenced method is still alive.
@@ -1166,7 +1167,11 @@ impl Method {
             ));
         }
 
-        let mut body = MethodBody::from(&file.data()[method_offset..])?;
+        let mut body = MethodBody::from(
+            file.data()
+                .get(method_offset..)
+                .ok_or(out_of_bounds_error!())?,
+        )?;
         if body.local_var_sig_token != 0 {
             self.parse_local_variables(&body, blobs, sigs, types)?;
         }
@@ -1291,7 +1296,11 @@ impl Method {
                 )?;
             } else {
                 // Regular parameters (1-indexed in metadata)
-                let index = (parameter.sequence - 1) as usize;
+                let index = parameter
+                    .sequence
+                    .checked_sub(1)
+                    .ok_or_else(|| malformed_error!("Parameter sequence underflow"))?
+                    as usize;
                 if let Some(param_signature) = self.signature.params.get(index) {
                     parameter.apply_signature(
                         param_signature,
@@ -1450,7 +1459,11 @@ impl Method {
         })?;
 
         // Compute argument and local counts
-        let num_args = self.signature.params.len() + usize::from(self.signature.has_this);
+        let num_args = self
+            .signature
+            .params
+            .len()
+            .saturating_add(usize::from(self.signature.has_this));
         let declared_locals = self.local_vars.count();
 
         // If no locals are declared (e.g., Tiny Format method body), infer from IL usage.
@@ -1476,68 +1489,73 @@ impl Method {
                 // Block offsets are absolute file offsets. Get base offset from first block.
                 let base_offset = blocks.first().map_or(0, |b| b.offset);
 
-                let ssa_handlers: Vec<SsaExceptionHandler> = body
-                    .exception_handlers
-                    .iter()
-                    .enumerate()
-                    .map(|(handler_idx, eh)| {
-                        // Map offsets to block indices (add base_offset to convert relative to absolute)
-                        let try_start_block = Self::find_block_at_offset(
-                            blocks,
-                            base_offset + eh.try_offset as usize,
-                        );
-                        let try_end_block = Self::find_block_at_offset(
-                            blocks,
-                            base_offset + (eh.try_offset + eh.try_length) as usize,
-                        );
+                let mut ssa_handlers: Vec<SsaExceptionHandler> =
+                    Vec::with_capacity(body.exception_handlers.len());
+                for (handler_idx, eh) in body.exception_handlers.iter().enumerate() {
+                    let try_offset_abs = base_offset
+                        .checked_add(eh.try_offset as usize)
+                        .ok_or_else(|| malformed_error!("Exception handler try_offset overflow"))?;
+                    let try_end_rel = (eh.try_offset as usize)
+                        .checked_add(eh.try_length as usize)
+                        .ok_or_else(|| malformed_error!("Exception handler try region overflow"))?;
+                    let try_end_abs = base_offset
+                        .checked_add(try_end_rel)
+                        .ok_or_else(|| malformed_error!("Exception handler try end overflow"))?;
+                    let handler_offset_abs = base_offset
+                        .checked_add(eh.handler_offset as usize)
+                        .ok_or_else(|| {
+                            malformed_error!("Exception handler handler_offset overflow")
+                        })?;
+                    let handler_end_rel = (eh.handler_offset as usize)
+                        .checked_add(eh.handler_length as usize)
+                        .ok_or_else(|| malformed_error!("Exception handler region overflow"))?;
+                    let handler_end_abs = base_offset
+                        .checked_add(handler_end_rel)
+                        .ok_or_else(|| malformed_error!("Exception handler end overflow"))?;
 
-                        // For handler blocks, use the handler_entry info from decoder if available
-                        let handler_start_block =
-                            Self::find_handler_entry_block(blocks, handler_idx).or_else(|| {
-                                Self::find_block_at_offset(
-                                    blocks,
-                                    base_offset + eh.handler_offset as usize,
-                                )
-                            });
-                        let handler_end_block = Self::find_block_at_offset(
-                            blocks,
-                            base_offset + (eh.handler_offset + eh.handler_length) as usize,
-                        );
+                    // Map offsets to block indices (add base_offset to convert relative to absolute)
+                    let try_start_block = Self::find_block_at_offset(blocks, try_offset_abs);
+                    let try_end_block = Self::find_block_at_offset(blocks, try_end_abs);
 
-                        let filter_start_block = if eh.flags == ExceptionHandlerFlags::FILTER {
-                            Self::find_block_at_offset(
-                                blocks,
-                                base_offset + eh.filter_offset as usize,
-                            )
-                        } else {
-                            None
-                        };
+                    // For handler blocks, use the handler_entry info from decoder if available
+                    let handler_start_block = Self::find_handler_entry_block(blocks, handler_idx)
+                        .or_else(|| Self::find_block_at_offset(blocks, handler_offset_abs));
+                    let handler_end_block = Self::find_block_at_offset(blocks, handler_end_abs);
 
-                        // Get the class token for catch handlers
-                        let class_token_or_filter = if eh.flags == ExceptionHandlerFlags::EXCEPTION
-                        {
-                            eh.handler.as_ref().map_or(0, |t| t.token.value())
-                        } else if eh.flags == ExceptionHandlerFlags::FILTER {
-                            eh.filter_offset
-                        } else {
-                            0
-                        };
+                    let filter_start_block = if eh.flags == ExceptionHandlerFlags::FILTER {
+                        let filter_offset_abs = base_offset
+                            .checked_add(eh.filter_offset as usize)
+                            .ok_or_else(|| {
+                                malformed_error!("Exception handler filter_offset overflow")
+                            })?;
+                        Self::find_block_at_offset(blocks, filter_offset_abs)
+                    } else {
+                        None
+                    };
 
-                        SsaExceptionHandler {
-                            flags: eh.flags,
-                            try_offset: eh.try_offset,
-                            try_length: eh.try_length,
-                            handler_offset: eh.handler_offset,
-                            handler_length: eh.handler_length,
-                            class_token_or_filter,
-                            try_start_block,
-                            try_end_block,
-                            handler_start_block,
-                            handler_end_block,
-                            filter_start_block,
-                        }
-                    })
-                    .collect();
+                    // Get the class token for catch handlers
+                    let class_token_or_filter = if eh.flags == ExceptionHandlerFlags::EXCEPTION {
+                        eh.handler.as_ref().map_or(0, |t| t.token.value())
+                    } else if eh.flags == ExceptionHandlerFlags::FILTER {
+                        eh.filter_offset
+                    } else {
+                        0
+                    };
+
+                    ssa_handlers.push(SsaExceptionHandler {
+                        flags: eh.flags,
+                        try_offset: eh.try_offset,
+                        try_length: eh.try_length,
+                        handler_offset: eh.handler_offset,
+                        handler_length: eh.handler_length,
+                        class_token_or_filter,
+                        try_start_block,
+                        try_end_block,
+                        handler_start_block,
+                        handler_end_block,
+                        filter_start_block,
+                    });
+                }
 
                 ssa.set_exception_handlers(ssa_handlers);
             }
@@ -1596,7 +1614,7 @@ impl Method {
             }
         }
 
-        max_index.map_or(0, |i| i + 1)
+        max_index.map_or(0, |i| i.saturating_add(1))
     }
 
     /// Finds the block index that starts at or contains the given offset.
@@ -1609,7 +1627,7 @@ impl Method {
         // If no exact match, find block containing the offset
         blocks
             .iter()
-            .position(|b| offset >= b.offset && offset < b.offset + b.size)
+            .position(|b| offset >= b.offset && offset < b.offset.saturating_add(b.size))
     }
 
     /// Finds the block that is marked as an entry point for the given handler index.
@@ -1735,7 +1753,12 @@ impl Method {
         // If fat format with exceptions, align to 4 bytes and add exception handlers
         if has_exceptions {
             // Align to 4-byte boundary
-            let padding = (4 - (result.len() % 4)) % 4;
+            let remainder = result.len() % 4;
+            let padding = if remainder == 0 {
+                0
+            } else {
+                4usize.saturating_sub(remainder)
+            };
             result.extend(std::iter::repeat_n(0u8, padding));
 
             // Encode and append exception handlers
@@ -1765,7 +1788,8 @@ impl Method {
         for block in blocks {
             for instruction in &block.instructions {
                 // instruction.size is u64, safely convert to usize
-                code_size += usize::try_from(instruction.size).ok()?;
+                let size = usize::try_from(instruction.size).ok()?;
+                code_size = code_size.checked_add(size)?;
             }
         }
 
@@ -1774,14 +1798,14 @@ impl Method {
         let has_locals = body.local_var_sig_token != 0;
         let needs_fat = code_size > 63 || body.max_stack > 8 || has_locals || has_exceptions;
 
-        let header_size = if needs_fat { 12 } else { 1 };
+        let header_size: usize = if needs_fat { 12 } else { 1 };
 
-        let mut total = header_size + code_size;
+        let mut total = header_size.checked_add(code_size)?;
 
         // Add exception handler section size if needed
         if has_exceptions {
             // Align to 4 bytes
-            total = (total + 3) & !3;
+            total = total.checked_add(3)? & !3;
 
             // Calculate exception section size
             let handler_count = body.exception_handlers.len();
@@ -1794,13 +1818,12 @@ impl Method {
                         || h.handler_length > 0xFF
                 });
 
-            if needs_fat_exceptions {
-                // Fat format: 4-byte header + 24 bytes per handler
-                total += 4 + handler_count * 24;
-            } else {
-                // Small format: 4-byte header + 12 bytes per handler
-                total += 4 + handler_count * 12;
-            }
+            let per_handler = if needs_fat_exceptions { 24 } else { 12 };
+            // Fat format: 4-byte header + 24 bytes per handler
+            // Small format: 4-byte header + 12 bytes per handler
+            let handlers_size = handler_count.checked_mul(per_handler)?;
+            let section_size = handlers_size.checked_add(4)?;
+            total = total.checked_add(section_size)?;
         }
 
         Some(total)

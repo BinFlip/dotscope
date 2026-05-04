@@ -47,7 +47,7 @@ impl Technique for BitMonoRenamer {
 
             // Check type name for spaces (skip angle-bracket compiler-generated names)
             if cil_type.name.contains(' ') && !cil_type.name.starts_with('<') {
-                space_name_count += 1;
+                space_name_count = space_name_count.saturating_add(1);
             }
 
             // Check method names
@@ -59,7 +59,7 @@ impl Technique for BitMonoRenamer {
                     continue;
                 };
                 if method.name.contains(' ') && !method.name.starts_with('<') {
-                    space_name_count += 1;
+                    space_name_count = space_name_count.saturating_add(1);
                 }
             }
         }

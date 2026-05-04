@@ -623,11 +623,18 @@ impl HeapObject {
     /// object header overhead and data storage, but is not exact.
     #[must_use]
     pub fn estimated_size(&self) -> usize {
+        // All sizes are estimates for in-memory tracking; saturating arithmetic
+        // is correct here — overflow only matters for pathological inputs and
+        // saturated `usize::MAX` correctly signals "huge" for limit checks.
         match self {
-            HeapObject::String(s) => 24 + s.len() * 2, // Object header + UTF-16
-            HeapObject::Array { elements, .. } => 24 + elements.len() * 8,
-            HeapObject::MultiArray { elements, .. } => 32 + elements.len() * 8,
-            HeapObject::Object { fields, .. } => 24 + fields.len() * 16,
+            HeapObject::String(s) => s.len().saturating_mul(2).saturating_add(24), // Object header + UTF-16
+            HeapObject::Array { elements, .. } => {
+                elements.len().saturating_mul(8).saturating_add(24)
+            }
+            HeapObject::MultiArray { elements, .. } => {
+                elements.len().saturating_mul(8).saturating_add(32)
+            }
+            HeapObject::Object { fields, .. } => fields.len().saturating_mul(16).saturating_add(24),
             HeapObject::TypedReference { .. }
             | HeapObject::BoxedValue { .. }
             | HeapObject::CryptoAlgorithm { .. }
@@ -638,28 +645,38 @@ impl HeapObject {
             | HeapObject::ReflectionParameter { .. }
             | HeapObject::DynamicMethod { .. } => 32,
             HeapObject::ILGenerator { .. } => 128,
-            HeapObject::CryptoTransform { key, iv, .. } => 48 + key.len() + iv.len(),
+            HeapObject::CryptoTransform { key, iv, .. } => {
+                48usize.saturating_add(key.len()).saturating_add(iv.len())
+            }
             HeapObject::Delegate { .. } => 48,
             HeapObject::Encoding { .. } => 24,
-            HeapObject::SymmetricAlgorithm { key, iv, .. } => {
-                32 + key.as_ref().map_or(0, Vec::len) + iv.as_ref().map_or(0, Vec::len)
+            HeapObject::SymmetricAlgorithm { key, iv, .. } => 32usize
+                .saturating_add(key.as_ref().map_or(0, Vec::len))
+                .saturating_add(iv.as_ref().map_or(0, Vec::len)),
+            HeapObject::Dictionary { entries } => {
+                entries.len().saturating_mul(32).saturating_add(48)
             }
-            HeapObject::Dictionary { entries } => 48 + entries.len() * 32,
-            HeapObject::List { elements } => 32 + elements.len() * 8,
-            HeapObject::StringBuilder { buffer, .. } => 32 + buffer.len(),
-            HeapObject::Stack { elements } => 32 + elements.len() * 8,
-            HeapObject::Queue { elements } => 32 + elements.len() * 8,
-            HeapObject::HashSet { elements } => 48 + elements.len() * 16,
-            HeapObject::KeyDerivation { password, salt, .. } => 48 + password.len() + salt.len(),
-            HeapObject::Stream { data, .. } => 32 + data.len(),
+            HeapObject::List { elements } => elements.len().saturating_mul(8).saturating_add(32),
+            HeapObject::StringBuilder { buffer, .. } => 32usize.saturating_add(buffer.len()),
+            HeapObject::Stack { elements } => elements.len().saturating_mul(8).saturating_add(32),
+            HeapObject::Queue { elements } => elements.len().saturating_mul(8).saturating_add(32),
+            HeapObject::HashSet { elements } => {
+                elements.len().saturating_mul(16).saturating_add(48)
+            }
+            HeapObject::KeyDerivation { password, salt, .. } => 48usize
+                .saturating_add(password.len())
+                .saturating_add(salt.len()),
+            HeapObject::Stream { data, .. } => 32usize.saturating_add(data.len()),
             HeapObject::CryptoStream {
                 transformed_data,
                 write_buffer,
                 ..
-            } => 64 + transformed_data.as_ref().map_or(0, Vec::len) + write_buffer.len(),
+            } => 64usize
+                .saturating_add(transformed_data.as_ref().map_or(0, Vec::len))
+                .saturating_add(write_buffer.len()),
             HeapObject::CompressedStream {
                 decompressed_data, ..
-            } => 48 + decompressed_data.as_ref().map_or(0, Vec::len),
+            } => 48usize.saturating_add(decompressed_data.as_ref().map_or(0, Vec::len)),
         }
     }
 }
@@ -967,7 +984,8 @@ impl ManagedHeap {
     /// Creates a managed heap with default size (64MB).
     #[must_use]
     pub fn default_size() -> Self {
-        Self::new(64 * 1024 * 1024)
+        // 64 * 1024 * 1024 = 64 MiB
+        Self::new(64usize.saturating_mul(1024).saturating_mul(1024))
     }
 
     /// Checks if allocation would exceed memory limit.
@@ -976,7 +994,7 @@ impl ManagedHeap {
     /// allocation would exceed [`max_size`](Self::max_size).
     pub(crate) fn check_allocation(&self, size: usize) -> Result<()> {
         let current = self.current_size.load(Ordering::Relaxed);
-        if current + size > self.max_size {
+        if current.saturating_add(size) > self.max_size {
             return Err(EmulationError::HeapMemoryLimitExceeded {
                 current,
                 limit: self.max_size,

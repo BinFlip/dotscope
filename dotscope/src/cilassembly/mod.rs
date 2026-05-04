@@ -146,7 +146,7 @@ use crate::{
         tables::{AssemblyRefRaw, CodedIndex, CodedIndexType, TableDataOwned, TableId},
         token::Token,
     },
-    CilObject, Result, ValidationConfig,
+    CilObject, Error, Result, ValidationConfig,
 };
 
 mod builders;
@@ -553,7 +553,7 @@ impl CilAssembly {
         // Add the original resource size since new resources are appended after original ones
         // This ensures ManifestResource.offset_field points to the correct location
         let original_size = self.view.cor20header().resource_size;
-        new_offset + original_size
+        new_offset.saturating_add(original_size)
     }
 
     /// Updates an existing string in the string heap at the specified index.
@@ -914,7 +914,7 @@ impl CilAssembly {
             .changes
             .table_changes
             .entry(table_id)
-            .or_insert_with(|| TableModifications::new_sparse(original_count + 1));
+            .or_insert_with(|| TableModifications::new_sparse(original_count.saturating_add(1)));
 
         let operation = Operation::Update(rid, new_row);
         let table_operation = TableOperation::new(operation);
@@ -944,7 +944,7 @@ impl CilAssembly {
             .changes
             .table_changes
             .entry(table_id)
-            .or_insert_with(|| TableModifications::new_sparse(original_count + 1));
+            .or_insert_with(|| TableModifications::new_sparse(original_count.saturating_add(1)));
 
         let operation = Operation::Delete(rid);
         let table_operation = TableOperation::new(operation);
@@ -977,7 +977,7 @@ impl CilAssembly {
             .changes
             .table_changes
             .entry(table_id)
-            .or_insert_with(|| TableModifications::new_sparse(original_count + 1));
+            .or_insert_with(|| TableModifications::new_sparse(original_count.saturating_add(1)));
 
         let new_rid = table_changes.next_rid()?;
         let operation = Operation::Insert(new_rid, row);
@@ -1232,7 +1232,9 @@ impl CilAssembly {
             modifications.next_rid()
         } else {
             // No modifications yet - next RID is original count + 1
-            Ok(self.original_table_row_count(table_id) + 1)
+            self.original_table_row_count(table_id)
+                .checked_add(1)
+                .ok_or_else(|| Error::LayoutFailed("table row count overflow".to_string()))
         }
     }
 
@@ -1704,7 +1706,7 @@ impl CilAssembly {
                         // Convert 0-based index to 1-based RID
                         return Some(CodedIndex::new(
                             TableId::AssemblyRef,
-                            u32::try_from(index + 1).unwrap_or(u32::MAX),
+                            u32::try_from(index.saturating_add(1)).unwrap_or(u32::MAX),
                             CodedIndexType::Implementation,
                         ));
                     }

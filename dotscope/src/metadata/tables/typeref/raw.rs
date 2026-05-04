@@ -176,9 +176,10 @@ impl TableRow for TypeRefRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* resolution_scope */  sizes.coded_index_bytes(CodedIndexType::ResolutionScope) +
-            /* type_namespace */    sizes.str_bytes() +
-            /* type_name */         sizes.str_bytes()
+            /* resolution_scope */ sizes.coded_index_bytes(CodedIndexType::ResolutionScope)
+            /* type_namespace */   .saturating_add(sizes.str_bytes())
+            /* type_name */        .saturating_add(sizes.str_bytes())
+
         )
     }
 }

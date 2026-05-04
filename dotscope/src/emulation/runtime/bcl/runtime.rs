@@ -339,19 +339,19 @@ fn runtime_helpers_initialize_array_pre(
     // args[0] = array (ObjectRef)
     // args[1] = field handle (NativeInt/I32 containing token value)
 
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(None);
-    }
+    };
 
     // Get the array reference
-    let array_ref = match &ctx.args[0] {
+    let array_ref = match arg0 {
         EmValue::ObjectRef(r) => *r,
         _ => return PreHookResult::Bypass(None),
     };
 
     // Get the field token from the RuntimeFieldHandle
     #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-    let field_token = match &ctx.args[1] {
+    let field_token = match arg1 {
         EmValue::I32(v) => (*v).cast_unsigned(),
         EmValue::NativeInt(v) | EmValue::I64(v) => *v as u32,
         _ => return PreHookResult::Bypass(None),
@@ -414,74 +414,75 @@ fn runtime_helpers_initialize_array_pre(
         return PreHookResult::Bypass(None);
     };
 
-    // Calculate total bytes to read
-    let total_bytes = array_len * element_size;
-    let bytes_to_read = total_bytes.min(pe_data.len() - file_offset);
+    // Calculate total bytes to read (saturating: out-of-range simply truncates the copy)
+    let total_bytes = array_len.saturating_mul(element_size);
+    let remaining = pe_data.len().saturating_sub(file_offset);
+    let bytes_to_read = total_bytes.min(remaining);
 
     // Read the bytes from the PE file
-    let data = &pe_data[file_offset..file_offset + bytes_to_read];
+    let Some(end) = file_offset.checked_add(bytes_to_read) else {
+        return PreHookResult::Bypass(None);
+    };
+    let Some(data) = pe_data.get(file_offset..end) else {
+        return PreHookResult::Bypass(None);
+    };
 
     // Set each element in the array based on element type
     for i in 0..array_len {
-        let byte_offset = i * element_size;
-        if byte_offset + element_size > data.len() {
+        let Some(byte_offset) = i.checked_mul(element_size) else {
             break;
-        }
+        };
+        let Some(end_offset) = byte_offset.checked_add(element_size) else {
+            break;
+        };
+        let Some(elem_bytes) = data.get(byte_offset..end_offset) else {
+            break;
+        };
 
         let value = match element_type {
             CilFlavor::Boolean | CilFlavor::I1 | CilFlavor::U1 => {
-                EmValue::I32(i32::from(data[byte_offset]))
+                let Some(b) = elem_bytes.first() else {
+                    break;
+                };
+                EmValue::I32(i32::from(*b))
             }
             CilFlavor::Char | CilFlavor::I2 | CilFlavor::U2 => {
-                let bytes = [data[byte_offset], data[byte_offset + 1]];
+                let Ok(bytes) = <[u8; 2]>::try_from(elem_bytes) else {
+                    break;
+                };
                 EmValue::I32(i32::from(i16::from_le_bytes(bytes)))
             }
             CilFlavor::I4 | CilFlavor::U4 => {
-                let bytes = [
-                    data[byte_offset],
-                    data[byte_offset + 1],
-                    data[byte_offset + 2],
-                    data[byte_offset + 3],
-                ];
+                let Ok(bytes) = <[u8; 4]>::try_from(elem_bytes) else {
+                    break;
+                };
                 EmValue::I32(i32::from_le_bytes(bytes))
             }
             CilFlavor::R4 => {
-                let bytes = [
-                    data[byte_offset],
-                    data[byte_offset + 1],
-                    data[byte_offset + 2],
-                    data[byte_offset + 3],
-                ];
+                let Ok(bytes) = <[u8; 4]>::try_from(elem_bytes) else {
+                    break;
+                };
                 EmValue::F32(f32::from_le_bytes(bytes))
             }
             CilFlavor::I8 | CilFlavor::U8 => {
-                let bytes = [
-                    data[byte_offset],
-                    data[byte_offset + 1],
-                    data[byte_offset + 2],
-                    data[byte_offset + 3],
-                    data[byte_offset + 4],
-                    data[byte_offset + 5],
-                    data[byte_offset + 6],
-                    data[byte_offset + 7],
-                ];
+                let Ok(bytes) = <[u8; 8]>::try_from(elem_bytes) else {
+                    break;
+                };
                 EmValue::I64(i64::from_le_bytes(bytes))
             }
             CilFlavor::R8 => {
-                let bytes = [
-                    data[byte_offset],
-                    data[byte_offset + 1],
-                    data[byte_offset + 2],
-                    data[byte_offset + 3],
-                    data[byte_offset + 4],
-                    data[byte_offset + 5],
-                    data[byte_offset + 6],
-                    data[byte_offset + 7],
-                ];
+                let Ok(bytes) = <[u8; 8]>::try_from(elem_bytes) else {
+                    break;
+                };
                 EmValue::F64(f64::from_le_bytes(bytes))
             }
             // For other types, treat as bytes
-            _ => EmValue::I32(i32::from(data[byte_offset])),
+            _ => {
+                let Some(b) = elem_bytes.first() else {
+                    break;
+                };
+                EmValue::I32(i32::from(*b))
+            }
         };
 
         try_hook!(thread.heap_mut().set_array_element(array_ref, i, value));
@@ -532,12 +533,12 @@ fn runtime_helpers_equals_pre(
     ctx: &HookContext<'_>,
     _thread: &mut EmulationThread,
 ) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::I32(0))); // false
-    }
+    };
 
     // Reference equality
-    let equal = match (&ctx.args[0], &ctx.args[1]) {
+    let equal = match (arg0, arg1) {
         (EmValue::ObjectRef(a), EmValue::ObjectRef(b)) => a.id() == b.id(),
         (EmValue::Null, EmValue::Null) => true,
         _ => false,
@@ -636,18 +637,14 @@ fn runtime_helpers_prepare_noop_pre(
 fn object_equals_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
     // Instance overload: this.Equals(other)
     if let Some(this) = ctx.this {
-        let other = if ctx.args.is_empty() {
-            &EmValue::Null
-        } else {
-            &ctx.args[0]
-        };
+        let other = ctx.args.first().unwrap_or(&EmValue::Null);
         let equal = this.clr_equals(other);
         return PreHookResult::Bypass(Some(EmValue::I32(i32::from(equal))));
     }
 
     // Static overload: Object.Equals(a, b)
-    if ctx.args.len() >= 2 {
-        let equal = ctx.args[0].clr_equals(&ctx.args[1]);
+    if let (Some(a), Some(b)) = (ctx.args.first(), ctx.args.get(1)) {
+        let equal = a.clr_equals(b);
         return PreHookResult::Bypass(Some(EmValue::I32(i32::from(equal))));
     }
 
@@ -821,11 +818,7 @@ fn valuetype_equals_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
     };
 
-    let other = if ctx.args.is_empty() {
-        &EmValue::Null
-    } else {
-        &ctx.args[0]
-    };
+    let other = ctx.args.first().unwrap_or(&EmValue::Null);
 
     // Fast path: direct EmValue comparison (unboxed value types on the stack)
     if this_val.clr_equals(other) {
@@ -965,8 +958,8 @@ fn unsafe_byte_offset_pre(_ctx: &HookContext<'_>, _thread: &mut EmulationThread)
 ///
 /// Compares the two arguments for reference equality.
 fn unsafe_are_same_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() >= 2 {
-        let same = ctx.args[0].clr_equals(&ctx.args[1]);
+    if let (Some(a), Some(b)) = (ctx.args.first(), ctx.args.get(1)) {
+        let same = a.clr_equals(b);
         PreHookResult::Bypass(Some(EmValue::I32(i32::from(same))))
     } else {
         PreHookResult::Bypass(Some(EmValue::I32(0)))

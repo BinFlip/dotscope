@@ -138,16 +138,16 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
             Direction::Forward => {
                 // Entry block gets boundary value
                 let entry = cfg.entry().index();
-                if entry < num_blocks {
-                    self.in_states[entry] = boundary;
+                if let Some(slot) = self.in_states.get_mut(entry) {
+                    *slot = boundary;
                 }
             }
             Direction::Backward => {
                 // Exit blocks get boundary value
                 for exit in cfg.exits() {
                     let idx = exit.index();
-                    if idx < num_blocks {
-                        self.out_states[idx] = boundary.clone();
+                    if let Some(slot) = self.out_states.get_mut(idx) {
+                        *slot = boundary.clone();
                     }
                 }
             }
@@ -161,9 +161,9 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
 
         for node in order {
             let idx = node.index();
-            if idx < num_blocks {
+            if let Some(slot) = self.in_worklist.get_mut(idx) {
                 self.worklist.push_back(idx);
-                self.in_worklist[idx] = true;
+                *slot = true;
             }
         }
     }
@@ -174,8 +174,10 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
         A::Lattice: Clone,
     {
         while let Some(block_idx) = self.worklist.pop_front() {
-            self.in_worklist[block_idx] = false;
-            self.iterations += 1;
+            if let Some(slot) = self.in_worklist.get_mut(block_idx) {
+                *slot = false;
+            }
+            self.iterations = self.iterations.saturating_add(1);
 
             let changed = match A::DIRECTION {
                 Direction::Forward => self.process_forward(block_idx, ssa, cfg),
@@ -203,28 +205,35 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     {
         // Compute input by meeting all predecessor outputs
         let node = NodeId::new(block_idx);
+        let Some(current_in) = self.in_states.get(block_idx).cloned() else {
+            return false;
+        };
         let mut input = if cfg.predecessors(node).next().is_none() {
             // Entry block or unreachable - keep current in_state
-            self.in_states[block_idx].clone()
+            current_in.clone()
         } else {
             // Meet all predecessor outputs
             let mut result: Option<A::Lattice> = None;
             for pred in cfg.predecessors(node) {
-                let pred_out = &self.out_states[pred.index()];
+                let Some(pred_out) = self.out_states.get(pred.index()) else {
+                    continue;
+                };
                 result = Some(match result {
                     None => pred_out.clone(),
                     Some(acc) => acc.meet(pred_out),
                 });
             }
-            result.unwrap_or_else(|| self.in_states[block_idx].clone())
+            result.unwrap_or_else(|| current_in.clone())
         };
 
         // Special case: entry block keeps its boundary value
         if node == cfg.entry() {
-            input = self.in_states[block_idx].clone();
+            input = current_in.clone();
         }
 
-        self.in_states[block_idx] = input.clone();
+        if let Some(slot) = self.in_states.get_mut(block_idx) {
+            *slot = input.clone();
+        }
 
         // Apply transfer function
         let Some(block) = ssa.block(block_idx) else {
@@ -233,8 +242,11 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
         let output = self.analysis.transfer(block_idx, block, &input, ssa);
 
         // Check if output changed
-        let changed = output != self.out_states[block_idx];
-        self.out_states[block_idx] = output;
+        let Some(out_slot) = self.out_states.get_mut(block_idx) else {
+            return false;
+        };
+        let changed = output != *out_slot;
+        *out_slot = output;
 
         changed
     }
@@ -253,28 +265,35 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     {
         // Compute output by meeting all successor inputs
         let node = NodeId::new(block_idx);
+        let Some(current_out) = self.out_states.get(block_idx).cloned() else {
+            return false;
+        };
         let mut output = if cfg.successors(node).next().is_none() {
             // Exit block or dead end - keep current out_state
-            self.out_states[block_idx].clone()
+            current_out.clone()
         } else {
             // Meet all successor inputs
             let mut result: Option<A::Lattice> = None;
             for succ in cfg.successors(node) {
-                let succ_in = &self.in_states[succ.index()];
+                let Some(succ_in) = self.in_states.get(succ.index()) else {
+                    continue;
+                };
                 result = Some(match result {
                     None => succ_in.clone(),
                     Some(acc) => acc.meet(succ_in),
                 });
             }
-            result.unwrap_or_else(|| self.out_states[block_idx].clone())
+            result.unwrap_or_else(|| current_out.clone())
         };
 
         // Special case: exit blocks keep their boundary value
         if cfg.exits().contains(&node) {
-            output = self.out_states[block_idx].clone();
+            output = current_out.clone();
         }
 
-        self.out_states[block_idx] = output.clone();
+        if let Some(slot) = self.out_states.get_mut(block_idx) {
+            *slot = output.clone();
+        }
 
         // Apply transfer function (backward: input = transfer(output))
         let Some(block) = ssa.block(block_idx) else {
@@ -283,8 +302,11 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
         let input = self.analysis.transfer(block_idx, block, &output, ssa);
 
         // Check if input changed
-        let changed = input != self.in_states[block_idx];
-        self.in_states[block_idx] = input;
+        let Some(in_slot) = self.in_states.get_mut(block_idx) else {
+            return false;
+        };
+        let changed = input != *in_slot;
+        *in_slot = input;
 
         changed
     }
@@ -293,25 +315,26 @@ impl<A: DataFlowAnalysis> DataFlowSolver<A> {
     fn add_affected_to_worklist<C: DataFlowCfg>(&mut self, block_idx: usize, cfg: &C) {
         let node = NodeId::new(block_idx);
 
+        let enqueue = |idx: usize, list: &mut Vec<bool>, work: &mut VecDeque<usize>| {
+            if let Some(slot) = list.get_mut(idx) {
+                if !*slot {
+                    work.push_back(idx);
+                    *slot = true;
+                }
+            }
+        };
+
         match A::DIRECTION {
             Direction::Forward => {
                 // Forward: successors are affected
                 for succ in cfg.successors(node) {
-                    let idx = succ.index();
-                    if idx < self.in_worklist.len() && !self.in_worklist[idx] {
-                        self.worklist.push_back(idx);
-                        self.in_worklist[idx] = true;
-                    }
+                    enqueue(succ.index(), &mut self.in_worklist, &mut self.worklist);
                 }
             }
             Direction::Backward => {
                 // Backward: predecessors are affected
                 for pred in cfg.predecessors(node) {
-                    let idx = pred.index();
-                    if idx < self.in_worklist.len() && !self.in_worklist[idx] {
-                        self.worklist.push_back(idx);
-                        self.in_worklist[idx] = true;
-                    }
+                    enqueue(pred.index(), &mut self.in_worklist, &mut self.worklist);
                 }
             }
         }

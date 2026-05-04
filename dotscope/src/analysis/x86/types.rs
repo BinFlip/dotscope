@@ -963,7 +963,7 @@ impl X86DecodedInstruction {
     #[inline]
     #[must_use]
     pub fn end_offset(&self) -> u64 {
-        self.offset + self.length as u64
+        self.offset.saturating_add(self.length as u64)
     }
 }
 

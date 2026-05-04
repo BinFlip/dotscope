@@ -121,7 +121,7 @@ impl SsaFunction {
                 block_remap.push(None); // This block will be removed
             } else {
                 block_remap.push(Some(new_index));
-                new_index += 1;
+                new_index = new_index.saturating_add(1);
             }
         }
 
@@ -131,15 +131,17 @@ impl SsaFunction {
         let mut redirect_map: BTreeMap<usize, usize> = BTreeMap::new();
 
         for old_index in 0..self.blocks.len() {
-            if block_remap[old_index].is_none() {
+            if matches!(block_remap.get(old_index), Some(None)) {
                 // This block is being removed - find where it would jump to
                 if let Some(target) = self.find_ultimate_target(old_index, &block_remap) {
                     redirect_map.insert(old_index, target);
                 } else {
                     // Can't find a redirect target - we must keep this block.
                     // Reassign it a new index.
-                    block_remap[old_index] = Some(new_index);
-                    new_index += 1;
+                    if let Some(slot) = block_remap.get_mut(old_index) {
+                        *slot = Some(new_index);
+                        new_index = new_index.saturating_add(1);
+                    }
                 }
             }
         }
@@ -182,7 +184,9 @@ impl SsaFunction {
                 .filter_map(|&old_pred| block_remap.get(old_pred).and_then(|opt| *opt))
                 .collect();
 
-            let block = &mut self.blocks[block_idx];
+            let Some(block) = self.blocks.get_mut(block_idx) else {
+                continue;
+            };
             for phi in block.phi_nodes_mut() {
                 // Collect changes first (to avoid borrow issues)
                 let mut changes: Vec<(usize, Option<PhiOperand>, Vec<PhiOperand>)> = Vec::new();
@@ -264,7 +268,7 @@ impl SsaFunction {
         // Phase 6: Remove empty blocks and compact block indices.
         let mut kept_blocks: Vec<SsaBlock> = Vec::with_capacity(new_index);
         for (old_index, block) in self.blocks.drain(..).enumerate() {
-            if block_remap[old_index].is_some() {
+            if matches!(block_remap.get(old_index), Some(Some(_))) {
                 kept_blocks.push(block);
             }
         }
@@ -355,7 +359,7 @@ impl SsaFunction {
                     // In CIL semantics, empty blocks fall through to the next block.
                     if terminator.is_none() && block.instructions().is_empty() {
                         // Try to fall through to the next block
-                        let next_block = current + 1;
+                        let next_block = current.saturating_add(1);
                         if next_block < self.blocks.len() {
                             if let Some(Some(new_idx)) = block_remap.get(next_block) {
                                 // Next block exists in new layout

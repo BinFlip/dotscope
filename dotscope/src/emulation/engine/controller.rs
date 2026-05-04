@@ -67,7 +67,7 @@ use crate::{
         token::Token,
         typesystem::CilFlavor,
     },
-    CilObject, Result,
+    CilObject, Error, Result,
 };
 
 /// Control flow directive returned by extracted handler methods.
@@ -1331,7 +1331,7 @@ impl EmulationController {
         current_method: Token,
         err: crate::Error,
     ) -> Result<LoopAction> {
-        let crate::Error::Emulation(ref emu_err) = err else {
+        let Error::Emulation(ref emu_err) = err else {
             return Err(err);
         };
         if !emu_err.is_clr_exception() {
@@ -2041,9 +2041,9 @@ impl EmulationController {
 
         // Save return info from the current frame before popping it.
         // The tail-called method must return to our CALLER, not to us.
-        let mut popped = thread
-            .pop_frame()
-            .expect("tail call requires an active frame");
+        let mut popped = thread.pop_frame().ok_or(EmulationError::InternalError {
+            description: "tail call requires an active frame".to_string(),
+        })?;
         let return_method = popped.return_method();
         let return_offset = popped.return_offset();
         let caller_stack = popped.take_caller_stack();
@@ -2100,9 +2100,9 @@ impl EmulationController {
             }
         }
 
-        let mut popped = thread
-            .pop_frame()
-            .expect("tail call requires an active frame");
+        let mut popped = thread.pop_frame().ok_or(EmulationError::InternalError {
+            description: "tail call requires an active frame".to_string(),
+        })?;
         let return_method = popped.return_method();
         let return_offset = popped.return_offset();
         let caller_stack = popped.take_caller_stack();
@@ -2252,7 +2252,7 @@ impl EmulationController {
         let param_count = method_sig.param_count as usize;
         let has_this = method_sig.has_this;
         let total_args = if has_this {
-            param_count + 1
+            param_count.saturating_add(1)
         } else {
             param_count
         };
@@ -2460,7 +2460,7 @@ impl EmulationController {
         let param_count = target_method.signature.params.len();
         let is_instance = !context.is_static_method(method)?;
         let total_args = if is_instance {
-            param_count + 1
+            param_count.saturating_add(1)
         } else {
             param_count
         };
@@ -2720,18 +2720,25 @@ impl EmulationController {
 
 impl Default for EmulationController {
     fn default() -> Self {
-        let address_space = Arc::new(AddressSpace::new());
-        let fake_objects = SharedFakeObjects::new(address_space.managed_heap());
-        let context = Arc::new(ThreadContext::new(
-            address_space,
-            Arc::new(RwLock::new(RuntimeState::new())),
-            Arc::new(CaptureContext::default()),
-            Arc::new(EmulationConfig::default()),
-            None,
-            fake_objects,
-            Arc::new(VirtualFs::new()),
-        ));
-        Self::new(context, None).expect("default EmulationController creation should not fail")
+        // Loop with a fresh RwLock each iteration. `CallResolver::new` only fails
+        // on RwLock poison, which is impossible on a freshly-allocated lock; the
+        // loop is therefore guaranteed to terminate on the first iteration.
+        loop {
+            let address_space = Arc::new(AddressSpace::new());
+            let fake_objects = SharedFakeObjects::new(address_space.managed_heap());
+            let context = Arc::new(ThreadContext::new(
+                address_space,
+                Arc::new(RwLock::new(RuntimeState::new())),
+                Arc::new(CaptureContext::default()),
+                Arc::new(EmulationConfig::default()),
+                None,
+                fake_objects,
+                Arc::new(VirtualFs::new()),
+            ));
+            if let Ok(ctrl) = Self::new(context, None) {
+                return ctrl;
+            }
+        }
     }
 }
 

@@ -174,7 +174,7 @@ impl PassScheduler {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::SsaError`] if a cycle is detected in the capability
+    /// Returns [`crate::Error::SsaError`] if a cycle is detected in the capability
     /// dependencies, including the names of the passes involved in the cycle.
     fn compute_layer_assignment(&self) -> Result<Vec<usize>> {
         let n = self.passes.len();
@@ -203,7 +203,9 @@ impl PassScheduler {
                 if let Some(provider_indices) = providers.get(&cap) {
                     for &j in provider_indices {
                         if j != i {
-                            deps[i].push(j);
+                            if let Some(slot) = deps.get_mut(i) {
+                                slot.push(j);
+                            }
                             let _ = graph.add_edge(j, i, ());
                         }
                     }
@@ -214,7 +216,10 @@ impl PassScheduler {
         // Validate the DAG is acyclic via topological sort
         if graph.topological_sort().is_none() {
             if let Some(cycle) = graph.find_any_cycle() {
-                let names: Vec<&str> = cycle.iter().map(|&i| self.passes[i].0.name()).collect();
+                let names: Vec<&str> = cycle
+                    .iter()
+                    .filter_map(|&i| self.passes.get(i).map(|p| p.0.name()))
+                    .collect();
                 return Err(Error::SsaError(format!(
                     "Cycle detected in pass capability dependencies: {}",
                     names.join(" → ")
@@ -232,9 +237,17 @@ impl PassScheduler {
         while changed {
             changed = false;
             for i in 0..n {
-                for &dep in &deps[i] {
-                    if layer[i] <= layer[dep] {
-                        layer[i] = layer[dep] + 1;
+                let dep_list = match deps.get(i) {
+                    Some(d) => d.clone(),
+                    None => continue,
+                };
+                for dep in dep_list {
+                    let layer_i = layer.get(i).copied().unwrap_or(0);
+                    let layer_dep = layer.get(dep).copied().unwrap_or(0);
+                    if layer_i <= layer_dep {
+                        if let Some(slot) = layer.get_mut(i) {
+                            *slot = layer_dep.saturating_add(1);
+                        }
                         changed = true;
                     }
                 }
@@ -247,14 +260,15 @@ impl PassScheduler {
             debug!(
                 "Capability scheduling: {} passes across {} layers",
                 n,
-                max_layer + 1
+                max_layer.saturating_add(1)
             );
             for (i, (pass, fallback)) in self.passes.iter().enumerate() {
-                if layer[i] != *fallback {
+                let layer_i = layer.get(i).copied().unwrap_or(*fallback);
+                if layer_i != *fallback {
                     debug!(
                         "  pass '{}': layer {} (moved from fallback {})",
                         pass.name(),
-                        layer[i],
+                        layer_i,
                         fallback
                     );
                 }
@@ -500,7 +514,10 @@ impl PassScheduler {
         iteration_modified: Option<&DashSet<Token>>,
     ) -> Result<bool> {
         for &idx in indices {
-            all_passes[idx].0.initialize(ctx)?;
+            let pass_entry = all_passes.get_mut(idx).ok_or_else(|| {
+                Error::SsaError(format!("scheduler: pass index {idx} out of bounds"))
+            })?;
+            pass_entry.0.initialize(ctx)?;
         }
 
         let dirty_set = state.map(|s| &s.method_dirty);
@@ -509,14 +526,20 @@ impl PassScheduler {
         let any_changed = AtomicBool::new(false);
 
         for &idx in indices {
-            let pass = &all_passes[idx].0;
+            let pass_entry = all_passes.get(idx).ok_or_else(|| {
+                Error::SsaError(format!("scheduler: pass index {idx} out of bounds"))
+            })?;
+            let pass = &pass_entry.0;
             if pass.is_global() && pass.run_global(ctx, assembly)? {
                 any_changed.store(true, Ordering::Relaxed);
             }
         }
 
         for &idx in indices {
-            let pass = &all_passes[idx].0;
+            let pass_entry = all_passes.get(idx).ok_or_else(|| {
+                Error::SsaError(format!("scheduler: pass index {idx} out of bounds"))
+            })?;
+            let pass = &pass_entry.0;
             if pass.is_global() {
                 continue;
             }
@@ -536,7 +559,10 @@ impl PassScheduler {
         }
 
         for &idx in indices {
-            all_passes[idx].0.finalize(ctx)?;
+            let pass_entry = all_passes.get_mut(idx).ok_or_else(|| {
+                Error::SsaError(format!("scheduler: pass index {idx} out of bounds"))
+            })?;
+            pass_entry.0.finalize(ctx)?;
         }
 
         Ok(any_changed.load(Ordering::Relaxed))
@@ -712,21 +738,27 @@ impl PassScheduler {
         let layer_assignment = self.compute_layer_assignment()?;
 
         // Group pass indices by layer, then discard empty layers
-        let num_layers = layer_assignment.iter().copied().max().map_or(0, |m| m + 1);
+        let num_layers = layer_assignment
+            .iter()
+            .copied()
+            .max()
+            .map_or(0, |m| m.saturating_add(1));
         let mut layer_indices: Vec<Vec<usize>> = vec![vec![]; num_layers];
         for (i, &layer) in layer_assignment.iter().enumerate() {
-            layer_indices[layer].push(i);
+            if let Some(slot) = layer_indices.get_mut(layer) {
+                slot.push(i);
+            }
         }
         layer_indices.retain(|layer| !layer.is_empty());
 
-        let mut stable_count = 0;
-        let mut iterations = 0;
+        let mut stable_count: usize = 0;
+        let mut iterations: usize = 0;
         let max_phase = self.max_phase_iterations;
         let max_iterations = self.max_iterations;
         let stable_iterations = self.stable_iterations;
 
         for iteration in 0..max_iterations {
-            iterations = iteration + 1;
+            iterations = iteration.saturating_add(1);
             debug!("Pipeline iteration {}/{}", iterations, max_iterations);
 
             // Track which methods are modified in this iteration so we can
@@ -790,7 +822,7 @@ impl PassScheduler {
             if iteration_changed {
                 stable_count = 0;
             } else {
-                stable_count += 1;
+                stable_count = stable_count.saturating_add(1);
                 if stable_count >= stable_iterations {
                     debug!("Pipeline stable after {} iterations", iterations);
                     break;

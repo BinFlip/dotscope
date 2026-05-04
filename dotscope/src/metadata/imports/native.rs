@@ -106,7 +106,7 @@ use std::collections::HashMap;
 
 use crate::{
     file::pe::Import,
-    utils::{write_le_at, write_string_at},
+    utils::{to_u32, write_le_at, write_string_at},
     Result,
 };
 
@@ -473,7 +473,7 @@ impl NativeImports {
             ));
         }
 
-        let iat_rva = self.allocate_iat_rva();
+        let iat_rva = self.allocate_iat_rva()?;
 
         let function = Import {
             dll: dll_name.to_owned(),
@@ -556,7 +556,7 @@ impl NativeImports {
             ));
         }
 
-        let iat_rva = self.allocate_iat_rva();
+        let iat_rva = self.allocate_iat_rva()?;
         let descriptor = self
             .descriptors
             .get_mut(dll_name)
@@ -772,57 +772,20 @@ impl NativeImports {
         let mut updated_entries = HashMap::new();
 
         for (old_rva, mut entry) in self.iat_entries.drain() {
-            #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-            let new_rva = if rva_delta >= 0 {
-                old_rva.checked_add(rva_delta as u32)
-            } else {
-                old_rva.checked_sub((-rva_delta) as u32)
-            };
-
-            match new_rva {
-                Some(rva) => {
-                    entry.rva = rva;
-                    updated_entries.insert(rva, entry);
-                }
-                None => {
-                    return Err(malformed_error!("RVA delta would cause overflow"));
-                }
-            }
+            let new_rva = adjust_rva(old_rva, rva_delta)?;
+            entry.rva = new_rva;
+            updated_entries.insert(new_rva, entry);
         }
 
         self.iat_entries = updated_entries;
 
         for descriptor in self.descriptors.values_mut() {
             for function in &mut descriptor.functions {
-                #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-                let new_rva = if rva_delta >= 0 {
-                    function.rva.checked_add(rva_delta as u32)
-                } else {
-                    function.rva.checked_sub((-rva_delta) as u32)
-                };
-
-                match new_rva {
-                    Some(rva) => function.rva = rva,
-                    None => {
-                        return Err(malformed_error!("RVA delta would cause overflow"));
-                    }
-                }
+                function.rva = adjust_rva(function.rva, rva_delta)?;
             }
         }
 
-        #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
-        let new_next_rva = if rva_delta >= 0 {
-            self.next_iat_rva.checked_add(rva_delta as u32)
-        } else {
-            self.next_iat_rva.checked_sub((-rva_delta) as u32)
-        };
-
-        match new_next_rva {
-            Some(rva) => self.next_iat_rva = rva,
-            None => {
-                return Err(malformed_error!("RVA delta would cause overflow"));
-            }
-        }
+        self.next_iat_rva = adjust_rva(self.next_iat_rva, rva_delta)?;
 
         Ok(())
     }
@@ -832,10 +795,16 @@ impl NativeImports {
     /// Returns the next available RVA for IAT allocation and increments
     /// the internal counter by the appropriate entry size (4 bytes for PE32,
     /// 8 bytes for PE32+). Used internally when adding new function imports.
-    fn allocate_iat_rva(&mut self) -> u32 {
+    ///
+    /// # Errors
+    /// Returns an error if the IAT RVA counter would overflow.
+    fn allocate_iat_rva(&mut self) -> Result<u32> {
         let rva = self.next_iat_rva;
-        self.next_iat_rva += self.iat_entry_size();
-        rva
+        self.next_iat_rva = self
+            .next_iat_rva
+            .checked_add(self.iat_entry_size())
+            .ok_or_else(|| malformed_error!("IAT RVA counter overflow"))?;
+        Ok(rva)
     }
 
     /// Calculate the total size of the Import Address Table (IAT) in bytes.
@@ -848,17 +817,28 @@ impl NativeImports {
     ///
     /// # Returns
     /// Total IAT size in bytes.
-    #[must_use]
-    pub fn iat_byte_size(&self, is_pe32_plus: bool) -> usize {
-        let entry_size = if is_pe32_plus { 8 } else { 4 };
-        let mut total_entries = 0;
+    ///
+    /// # Errors
+    /// Returns an error if the computed size would overflow `usize`.
+    pub fn iat_byte_size(&self, is_pe32_plus: bool) -> Result<usize> {
+        let entry_size: usize = if is_pe32_plus { 8 } else { 4 };
+        let mut total_entries: usize = 0;
 
         for descriptor in self.descriptors.values() {
             // Each DLL needs: function entries + 1 null terminator
-            total_entries += descriptor.functions.len() + 1;
+            let dll_entries = descriptor
+                .functions
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("IAT entry count overflow"))?;
+            total_entries = total_entries
+                .checked_add(dll_entries)
+                .ok_or_else(|| malformed_error!("IAT entry count overflow"))?;
         }
 
-        total_entries * entry_size
+        total_entries
+            .checked_mul(entry_size)
+            .ok_or_else(|| malformed_error!("IAT byte size overflow"))
     }
 
     /// Build the IAT (Import Address Table) bytes for .NET PE generation.
@@ -882,8 +862,8 @@ impl NativeImports {
             return Ok(Vec::new());
         }
 
-        let entry_size = if is_pe32_plus { 8 } else { 4 };
-        let mut iat_bytes = Vec::with_capacity(self.iat_byte_size(is_pe32_plus));
+        let entry_size: usize = if is_pe32_plus { 8 } else { 4 };
+        let mut iat_bytes = Vec::with_capacity(self.iat_byte_size(is_pe32_plus)?);
 
         // Sort descriptors for deterministic ordering (mscoree.dll should be first when building import list)
         let mut descriptors_sorted: Vec<_> = self.descriptors.values().collect();
@@ -891,28 +871,52 @@ impl NativeImports {
 
         // Calculate where strings will be in the import table
         // Layout: descriptors + null descriptor + ILT entries + strings
-        let descriptor_size = (self.descriptors.len() + 1) * 20; // +1 for null terminator
+        let descriptor_count_with_null = self
+            .descriptors
+            .len()
+            .checked_add(1)
+            .ok_or_else(|| malformed_error!("Descriptor count overflow"))?;
+        let descriptor_size = descriptor_count_with_null
+            .checked_mul(20)
+            .ok_or_else(|| malformed_error!("Descriptor table size overflow"))?;
 
-        let mut total_ilt_entries = 0;
+        let mut total_ilt_entries: usize = 0;
         for desc in &descriptors_sorted {
-            total_ilt_entries += desc.functions.len() + 1; // +1 for null terminator per DLL
+            let dll_entries = desc
+                .functions
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("ILT entry count overflow"))?;
+            total_ilt_entries = total_ilt_entries
+                .checked_add(dll_entries)
+                .ok_or_else(|| malformed_error!("ILT entry count overflow"))?;
         }
-        let ilt_size = total_ilt_entries * entry_size;
+        let ilt_size = total_ilt_entries
+            .checked_mul(entry_size)
+            .ok_or_else(|| malformed_error!("ILT byte size overflow"))?;
 
         // Strings start after descriptors and ILT
-        // Safe: PE import table sizes always fit in u32
-        #[allow(clippy::cast_possible_truncation)]
-        let strings_start_rva = import_table_rva + (descriptor_size + ilt_size) as u32;
+        let header_size = descriptor_size
+            .checked_add(ilt_size)
+            .ok_or_else(|| malformed_error!("Import table header size overflow"))?;
+        let strings_start_rva = import_table_rva
+            .checked_add(to_u32(header_size)?)
+            .ok_or_else(|| malformed_error!("Strings start RVA overflow"))?;
 
         // Calculate hint/name RVAs for each function
         let mut current_string_rva = strings_start_rva;
 
         // First pass: calculate DLL name RVAs (they come first in strings)
         let mut dll_name_end_rva = current_string_rva;
-        #[allow(clippy::cast_possible_truncation)]
         for desc in &descriptors_sorted {
-            // Safe: PE import table sizes always fit in u32
-            dll_name_end_rva += (desc.dll_name.len() + 1) as u32; // +1 for null terminator
+            let dll_name_size = desc
+                .dll_name
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("DLL name size overflow"))?;
+            dll_name_end_rva = dll_name_end_rva
+                .checked_add(to_u32(dll_name_size)?)
+                .ok_or_else(|| malformed_error!("DLL name RVA overflow"))?;
         }
 
         // Function hint/names come after DLL names
@@ -947,12 +951,18 @@ impl NativeImports {
                 }
 
                 // Advance string RVA for named imports
-                #[allow(clippy::cast_possible_truncation)]
                 if let Some(function_name) = function.name.as_ref() {
-                    current_string_rva += 2; // hint (2 bytes)
-                                             // Safe: PE import table sizes always fit in u32
-                    current_string_rva += (function_name.len() + 1) as u32;
-                    // name + null
+                    // hint (2 bytes) + name + null
+                    let name_size = function_name
+                        .len()
+                        .checked_add(1)
+                        .ok_or_else(|| malformed_error!("Function name size overflow"))?;
+                    let advance = name_size
+                        .checked_add(2)
+                        .ok_or_else(|| malformed_error!("Hint/name advance overflow"))?;
+                    current_string_rva = current_string_rva
+                        .checked_add(to_u32(advance)?)
+                        .ok_or_else(|| malformed_error!("String RVA overflow"))?;
                 }
             }
 
@@ -994,74 +1004,119 @@ impl NativeImports {
             return Ok(Vec::new());
         }
 
-        let entry_size = if is_pe32_plus { 8 } else { 4 };
+        let entry_size: usize = if is_pe32_plus { 8 } else { 4 };
 
         // Sort descriptors for deterministic ordering
         let mut descriptors_sorted: Vec<_> = self.descriptors.values().collect();
         descriptors_sorted.sort_by_key(|d| d.dll_name.to_lowercase());
 
         // Calculate layout sizes
-        let descriptor_table_size = (descriptors_sorted.len() + 1) * 20; // +1 for null terminator
+        let descriptor_count_with_null = descriptors_sorted
+            .len()
+            .checked_add(1)
+            .ok_or_else(|| malformed_error!("Descriptor count overflow"))?;
+        let descriptor_table_size = descriptor_count_with_null
+            .checked_mul(20)
+            .ok_or_else(|| malformed_error!("Descriptor table size overflow"))?;
 
         // Calculate total ILT size
-        let mut total_ilt_entries = 0;
+        let mut total_ilt_entries: usize = 0;
         for desc in &descriptors_sorted {
-            total_ilt_entries += desc.functions.len() + 1; // +1 for null terminator per DLL
+            let dll_entries = desc
+                .functions
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("ILT entry count overflow"))?;
+            total_ilt_entries = total_ilt_entries
+                .checked_add(dll_entries)
+                .ok_or_else(|| malformed_error!("ILT entry count overflow"))?;
         }
-        let ilt_size = total_ilt_entries * entry_size;
+        let ilt_size = total_ilt_entries
+            .checked_mul(entry_size)
+            .ok_or_else(|| malformed_error!("ILT byte size overflow"))?;
 
         // Calculate total string size
-        let mut total_string_size = 0;
+        let mut total_string_size: usize = 0;
         for desc in &descriptors_sorted {
-            total_string_size += desc.dll_name.len() + 1; // DLL name + null
+            // DLL name + null
+            let dll_size = desc
+                .dll_name
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("DLL name size overflow"))?;
+            total_string_size = total_string_size
+                .checked_add(dll_size)
+                .ok_or_else(|| malformed_error!("String table size overflow"))?;
             for func in &desc.functions {
                 if let Some(ref name) = func.name {
-                    total_string_size += 2 + name.len() + 1; // hint + name + null
+                    // hint + name + null
+                    let name_size = name
+                        .len()
+                        .checked_add(3)
+                        .ok_or_else(|| malformed_error!("Function name size overflow"))?;
+                    total_string_size = total_string_size
+                        .checked_add(name_size)
+                        .ok_or_else(|| malformed_error!("String table size overflow"))?;
                 }
             }
         }
 
-        // Allocate buffer
-        let total_size = descriptor_table_size + ilt_size + total_string_size + 16; // +16 for alignment padding
+        // Allocate buffer (+16 for alignment padding)
+        let total_size = descriptor_table_size
+            .checked_add(ilt_size)
+            .and_then(|s| s.checked_add(total_string_size))
+            .and_then(|s| s.checked_add(16))
+            .ok_or_else(|| malformed_error!("Import table total size overflow"))?;
         let mut data = vec![0u8; total_size];
         let mut offset = 0;
 
         // Calculate RVAs
-        // Safe: PE import table sizes always fit in u32
-        #[allow(clippy::cast_possible_truncation)]
-        let ilt_start_rva = table_rva + descriptor_table_size as u32;
-        // Safe: PE import table sizes always fit in u32
-        #[allow(clippy::cast_possible_truncation)]
-        let strings_start_rva = ilt_start_rva + ilt_size as u32;
+        let ilt_start_rva = table_rva
+            .checked_add(to_u32(descriptor_table_size)?)
+            .ok_or_else(|| malformed_error!("ILT start RVA overflow"))?;
+        let strings_start_rva = ilt_start_rva
+            .checked_add(to_u32(ilt_size)?)
+            .ok_or_else(|| malformed_error!("Strings start RVA overflow"))?;
 
         // Build ILT offset map and string RVAs
         let mut ilt_rva = ilt_start_rva;
-        let mut iat_offset = 0u32; // Offset within IAT for each DLL
+        let mut iat_offset: u32 = 0; // Offset within IAT for each DLL
 
         // Pre-calculate DLL name RVAs
         let mut dll_name_rvas = Vec::with_capacity(descriptors_sorted.len());
         let mut current_dll_name_rva = strings_start_rva;
-        #[allow(clippy::cast_possible_truncation)]
         for desc in &descriptors_sorted {
             dll_name_rvas.push(current_dll_name_rva);
-            // Safe: PE import table sizes always fit in u32
-            current_dll_name_rva += (desc.dll_name.len() + 1) as u32;
+            let dll_size = desc
+                .dll_name
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("DLL name size overflow"))?;
+            current_dll_name_rva = current_dll_name_rva
+                .checked_add(to_u32(dll_size)?)
+                .ok_or_else(|| malformed_error!("DLL name RVA overflow"))?;
         }
 
         // Pre-calculate function name RVAs
         let mut current_func_name_rva = current_dll_name_rva;
         let mut func_name_rvas: Vec<Vec<u64>> = Vec::with_capacity(descriptors_sorted.len());
 
-        #[allow(clippy::cast_possible_truncation)]
         for desc in &descriptors_sorted {
             let mut rvas = Vec::with_capacity(desc.functions.len());
             for func in &desc.functions {
                 if let Some(function_name) = func.name.as_ref() {
                     rvas.push(u64::from(current_func_name_rva));
-                    current_func_name_rva += 2; // hint
-                                                // Safe: PE import table sizes always fit in u32
-                    current_func_name_rva += (function_name.len() + 1) as u32;
-                // name + null
+                    // hint (2 bytes) + name + null
+                    let name_size = function_name
+                        .len()
+                        .checked_add(1)
+                        .ok_or_else(|| malformed_error!("Function name size overflow"))?;
+                    let advance = name_size
+                        .checked_add(2)
+                        .ok_or_else(|| malformed_error!("Hint/name advance overflow"))?;
+                    current_func_name_rva = current_func_name_rva
+                        .checked_add(to_u32(advance)?)
+                        .ok_or_else(|| malformed_error!("Function name RVA overflow"))?;
                 } else {
                     rvas.push(0); // Will use ordinal
                 }
@@ -1070,10 +1125,13 @@ impl NativeImports {
         }
 
         // Write import descriptors
-        #[allow(clippy::cast_possible_truncation)]
         for (i, desc) in descriptors_sorted.iter().enumerate() {
             let desc_ilt_rva = ilt_rva;
-            let desc_iat_rva = iat_rva + iat_offset;
+            let desc_iat_rva = iat_rva
+                .checked_add(iat_offset)
+                .ok_or_else(|| malformed_error!("IAT RVA overflow"))?;
+
+            let dll_name_rva = *dll_name_rvas.get(i).ok_or(out_of_bounds_error!())?;
 
             // OriginalFirstThunk (ILT RVA)
             write_le_at::<u32>(&mut data, &mut offset, desc_ilt_rva)?;
@@ -1082,15 +1140,26 @@ impl NativeImports {
             // ForwarderChain
             write_le_at::<u32>(&mut data, &mut offset, 0)?;
             // Name (DLL name RVA)
-            write_le_at::<u32>(&mut data, &mut offset, dll_name_rvas[i])?;
+            write_le_at::<u32>(&mut data, &mut offset, dll_name_rva)?;
             // FirstThunk (IAT RVA - points to external IAT)
             write_le_at::<u32>(&mut data, &mut offset, desc_iat_rva)?;
 
-            // Update offsets for next descriptor
-            // Safe: PE import table sizes always fit in u32
-            let entries_for_dll = desc.functions.len() + 1; // +1 for null terminator
-            ilt_rva += (entries_for_dll * entry_size) as u32;
-            iat_offset += (entries_for_dll * entry_size) as u32;
+            // Update offsets for next descriptor (+1 for null terminator)
+            let entries_for_dll = desc
+                .functions
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("ILT entry count overflow"))?;
+            let dll_size = entries_for_dll
+                .checked_mul(entry_size)
+                .ok_or_else(|| malformed_error!("ILT DLL size overflow"))?;
+            let dll_size_u32 = to_u32(dll_size)?;
+            ilt_rva = ilt_rva
+                .checked_add(dll_size_u32)
+                .ok_or_else(|| malformed_error!("ILT RVA overflow"))?;
+            iat_offset = iat_offset
+                .checked_add(dll_size_u32)
+                .ok_or_else(|| malformed_error!("IAT offset overflow"))?;
         }
 
         // Write null terminator descriptor
@@ -1100,6 +1169,7 @@ impl NativeImports {
 
         // Write ILT entries
         for (i, desc) in descriptors_sorted.iter().enumerate() {
+            let dll_func_rvas = func_name_rvas.get(i).ok_or(out_of_bounds_error!())?;
             for (j, func) in desc.functions.iter().enumerate() {
                 let ilt_value = if func.name.is_none() {
                     // Ordinal import
@@ -1114,7 +1184,7 @@ impl NativeImports {
                     }
                 } else {
                     // Named import - use pre-calculated RVA
-                    func_name_rvas[i][j]
+                    *dll_func_rvas.get(j).ok_or(out_of_bounds_error!())?
                 };
 
                 if is_pe32_plus {
@@ -1151,10 +1221,12 @@ impl NativeImports {
 
         // Align to 4 bytes
         while offset % 4 != 0 {
-            if offset < data.len() {
-                data[offset] = 0;
+            if let Some(slot) = data.get_mut(offset) {
+                *slot = 0;
             }
-            offset += 1;
+            offset = offset
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("Alignment offset overflow"))?;
         }
 
         // Truncate to actual size
@@ -1167,6 +1239,25 @@ impl NativeImports {
 impl Default for NativeImports {
     fn default() -> Self {
         Self::new()
+    }
+}
+
+/// Apply a signed delta to a u32 RVA, returning an error on overflow.
+fn adjust_rva(rva: u32, delta: i64) -> Result<u32> {
+    if delta >= 0 {
+        let abs_delta =
+            u32::try_from(delta).map_err(|_| malformed_error!("RVA delta exceeds u32 range"))?;
+        rva.checked_add(abs_delta)
+            .ok_or_else(|| malformed_error!("RVA delta would cause overflow"))
+    } else {
+        // Negate without overflow even when delta == i64::MIN
+        let abs_delta_i64 = delta
+            .checked_neg()
+            .ok_or_else(|| malformed_error!("RVA delta magnitude overflow"))?;
+        let abs_delta = u32::try_from(abs_delta_i64)
+            .map_err(|_| malformed_error!("RVA delta exceeds u32 range"))?;
+        rva.checked_sub(abs_delta)
+            .ok_or_else(|| malformed_error!("RVA delta would cause overflow"))
     }
 }
 

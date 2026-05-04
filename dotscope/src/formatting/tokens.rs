@@ -100,7 +100,7 @@ pub(super) fn resolve_token(assembly: &CilObject, token: Token) -> Option<String
                 .and_then(|us| us.get(token.row() as usize).ok())
                 .map(|s| {
                     let s = s.to_string_lossy();
-                    let mut escaped = String::with_capacity(s.len() + 2);
+                    let mut escaped = String::with_capacity(s.len().saturating_add(2));
                     escaped.push('"');
                     for ch in s.chars() {
                         match ch {

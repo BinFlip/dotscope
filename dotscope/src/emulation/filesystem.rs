@@ -165,10 +165,13 @@ impl VirtualFs {
         let mut normalized = path.to_lowercase().replace('\\', "/");
         // Strip leading drive letter (e.g., "c:/...")
         if normalized.len() >= 3
-            && normalized.as_bytes()[0].is_ascii_alphabetic()
-            && &normalized[1..3] == ":/"
+            && normalized
+                .as_bytes()
+                .first()
+                .is_some_and(u8::is_ascii_alphabetic)
+            && normalized.get(1..3) == Some(":/")
         {
-            normalized = normalized[2..].to_string();
+            normalized = normalized.get(2..).unwrap_or("").to_string();
         }
         // Strip leading slash for consistency
         normalized.trim_start_matches('/').to_string()

@@ -112,30 +112,40 @@ impl X86Function {
         let mut leaders = BTreeSet::new();
 
         // First instruction is always a leader
-        leaders.insert(instructions[0].offset);
+        if let Some(first) = instructions.first() {
+            leaders.insert(first.offset);
+        }
 
         // Find jump targets and fallthrough points
         for (i, instr) in instructions.iter().enumerate() {
+            let next_idx = i.saturating_add(1);
+            let next_offset = instructions.get(next_idx).map(|x| x.offset);
             match &instr.instruction {
                 X86Instruction::Jmp { target } => {
-                    // Target is a leader
-                    leaders.insert(*target - base_address);
+                    if let Some(rel) = target.checked_sub(base_address) {
+                        leaders.insert(rel);
+                    }
                 }
                 X86Instruction::Jcc { target, .. } => {
-                    // Target is a leader
-                    leaders.insert(*target - base_address);
+                    if let Some(rel) = target.checked_sub(base_address) {
+                        leaders.insert(rel);
+                    }
                     // Fallthrough is also a leader (instruction after this one)
-                    if i + 1 < instructions.len() {
-                        leaders.insert(instructions[i + 1].offset);
+                    if let Some(off) = next_offset {
+                        leaders.insert(off);
                     }
                 }
                 // Instruction after call is a leader (call returns)
-                X86Instruction::Call { .. } if i + 1 < instructions.len() => {
-                    leaders.insert(instructions[i + 1].offset);
+                X86Instruction::Call { .. } => {
+                    if let Some(off) = next_offset {
+                        leaders.insert(off);
+                    }
                 }
                 // Instruction after ret is a leader (if any)
-                X86Instruction::Ret if i + 1 < instructions.len() => {
-                    leaders.insert(instructions[i + 1].offset);
+                X86Instruction::Ret => {
+                    if let Some(off) = next_offset {
+                        leaders.insert(off);
+                    }
                 }
                 _ => {}
             }
@@ -160,7 +170,10 @@ impl X86Function {
             };
 
             // Find end of this block (exclusive)
-            let end_offset = leader_list.get(block_idx + 1).copied().unwrap_or(u64::MAX);
+            let end_offset = leader_list
+                .get(block_idx.saturating_add(1))
+                .copied()
+                .unwrap_or(u64::MAX);
 
             // Collect instructions for this block
             let mut block_instrs = Vec::new();
@@ -199,7 +212,7 @@ impl X86Function {
 
         // Step 5: Build the DirectedGraph
         let mut graph: DirectedGraph<'static, X86BasicBlock, X86EdgeKind> =
-            DirectedGraph::with_capacity(blocks.len(), blocks.len() * 2);
+            DirectedGraph::with_capacity(blocks.len(), blocks.len().saturating_mul(2));
 
         // Add all blocks as nodes
         for block in blocks {
@@ -324,23 +337,31 @@ impl X86Function {
             in_stack: &mut [bool],
         ) -> bool {
             let idx = node.index();
-            visited[idx] = true;
-            in_stack[idx] = true;
+            if let Some(slot) = visited.get_mut(idx) {
+                *slot = true;
+            }
+            if let Some(slot) = in_stack.get_mut(idx) {
+                *slot = true;
+            }
 
             for succ in func.graph.successors(node) {
                 let succ_idx = succ.index();
-                if in_stack[succ_idx] {
+                if in_stack.get(succ_idx).copied().unwrap_or(false) {
                     // This is a back edge (n -> succ where succ is on the stack)
                     // For reducibility, succ must dominate node
                     if !doms.dominates(succ, node) {
                         return false;
                     }
-                } else if !visited[succ_idx] && !dfs_check(succ, func, doms, visited, in_stack) {
+                } else if !visited.get(succ_idx).copied().unwrap_or(false)
+                    && !dfs_check(succ, func, doms, visited, in_stack)
+                {
                     return false;
                 }
             }
 
-            in_stack[idx] = false;
+            if let Some(slot) = in_stack.get_mut(idx) {
+                *slot = false;
+            }
             true
         }
 
@@ -403,22 +424,24 @@ fn compute_edges(
     if let Some(term) = block.terminator() {
         match term {
             X86Instruction::Jmp { target } => {
-                let target_offset = target - base_address;
-                if let Some(&block_idx) = offset_to_block.get(&target_offset) {
-                    edges.push((block_idx, X86EdgeKind::Unconditional));
+                if let Some(target_offset) = target.checked_sub(base_address) {
+                    if let Some(&block_idx) = offset_to_block.get(&target_offset) {
+                        edges.push((block_idx, X86EdgeKind::Unconditional));
+                    }
                 }
             }
             X86Instruction::Jcc { target, condition } => {
                 // Conditional jump: two edges
                 // 1. Target (condition true)
-                let target_offset = target - base_address;
-                if let Some(&block_idx) = offset_to_block.get(&target_offset) {
-                    edges.push((
-                        block_idx,
-                        X86EdgeKind::ConditionalTrue {
-                            condition: *condition,
-                        },
-                    ));
+                if let Some(target_offset) = target.checked_sub(base_address) {
+                    if let Some(&block_idx) = offset_to_block.get(&target_offset) {
+                        edges.push((
+                            block_idx,
+                            X86EdgeKind::ConditionalTrue {
+                                condition: *condition,
+                            },
+                        ));
+                    }
                 }
                 // 2. Fallthrough (condition false)
                 if let Some(&block_idx) = offset_to_block.get(&block.end_offset) {

@@ -119,9 +119,9 @@ impl<'a> SsaCfg<'a> {
                     .unwrap_or_default();
 
                 for succ in block_succs {
-                    if succ < block_count {
+                    if let Some(slot) = predecessors.get_mut(succ) {
                         block_succs_list.push(succ);
-                        predecessors[succ].push(block_idx);
+                        slot.push(block_idx);
                     }
                 }
             }
@@ -139,10 +139,16 @@ impl<'a> SsaCfg<'a> {
             {
                 if handler_start < block_count
                     && try_start < block_count
-                    && !predecessors[handler_start].contains(&try_start)
+                    && !predecessors
+                        .get(handler_start)
+                        .is_some_and(|p| p.contains(&try_start))
                 {
-                    successors[try_start].push(handler_start);
-                    predecessors[handler_start].push(try_start);
+                    if let Some(slot) = successors.get_mut(try_start) {
+                        slot.push(handler_start);
+                    }
+                    if let Some(slot) = predecessors.get_mut(handler_start) {
+                        slot.push(try_start);
+                    }
                 }
             }
         }

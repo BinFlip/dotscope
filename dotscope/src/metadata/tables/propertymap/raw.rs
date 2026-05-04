@@ -102,10 +102,13 @@ impl PropertyMapRaw {
             return Ok(Arc::new(boxcar::Vec::new()));
         }
 
-        let next_row_id = self.rid + 1;
+        let next_row_id = self
+            .rid
+            .checked_add(1)
+            .ok_or_else(|| malformed_error!("PropertyMap rid overflow: {}", self.rid))?;
         let start = self.property_list as usize;
         let end = if next_row_id > map.row_count {
-            properties.len() + 1
+            properties.len().saturating_add(1)
         } else {
             match map.get(next_row_id) {
                 Some(next_row) => next_row.property_list as usize,
@@ -118,11 +121,11 @@ impl PropertyMapRaw {
             }
         };
 
-        if start > properties.len() || end > (properties.len() + 1) || end < start {
+        if start > properties.len() || end > properties.len().saturating_add(1) || end < start {
             return Ok(Arc::new(boxcar::Vec::new()));
         }
 
-        let property_list = Arc::new(boxcar::Vec::with_capacity(end - start));
+        let property_list = Arc::new(boxcar::Vec::with_capacity(end.saturating_sub(start)));
         for counter in start..end {
             let actual_property_token = if property_ptr.is_empty() {
                 let token_value = counter | 0x1700_0000;
@@ -187,7 +190,7 @@ impl PropertyMapRaw {
     /// ## Arguments
     /// * `types` - The [`crate::metadata::typesystem::TypeRegistry`] for resolving parent types
     /// * `properties` - Map of all resolved `Property` entries for lookup
-    /// * `property_ptr` - Map of `PropertyPtr` entries for indirection resolution  
+    /// * `property_ptr` - Map of `PropertyPtr` entries for indirection resolution
     /// * `map` - The `PropertyMap` table for determining property ranges
     ///
     /// ## Returns
@@ -291,8 +294,9 @@ impl TableRow for PropertyMapRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* parent */        sizes.table_index_bytes(TableId::TypeDef) +
-            /* property_list */ sizes.table_index_bytes(TableId::Property)
+            /* parent */        sizes.table_index_bytes(TableId::TypeDef)
+            /* property_list */ .saturating_add(sizes.table_index_bytes(TableId::Property))
+
         )
     }
 }

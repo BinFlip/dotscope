@@ -130,16 +130,15 @@ impl SsaPass for ArrayInitRestorationPass {
                         }
 
                         // Resolve the index argument to a constant
-                        let Some(ConstValue::I32(index)) = constants.get(&args[0]) else {
+                        let Some(arg0) = args.first() else { continue };
+                        let Some(ConstValue::I32(index)) = constants.get(arg0) else {
                             continue;
                         };
 
                         let index = *index as usize;
-                        if index >= self.field_tokens.len() {
+                        let Some(&field_token) = self.field_tokens.get(index) else {
                             continue;
-                        }
-
-                        let field_token = self.field_tokens[index];
+                        };
 
                         // Replace Call with Const(FieldHandle(...))
                         if let Some(dest) = dest {
@@ -162,15 +161,17 @@ impl SsaPass for ArrayInitRestorationPass {
                         if method_token == init_method && args.len() == 3 {
                             // Replace Call(MyInitializeArray, array, handle, xorKey)
                             // with Call(RuntimeHelpers.InitializeArray, array, handle)
-                            replacements.push((
-                                block_idx,
-                                instr_idx,
-                                SsaOp::Call {
-                                    dest: *dest,
-                                    method: MethodRef::new(init_target),
-                                    args: vec![args[0], args[1]],
-                                },
-                            ));
+                            if let (Some(&a0), Some(&a1)) = (args.first(), args.get(1)) {
+                                replacements.push((
+                                    block_idx,
+                                    instr_idx,
+                                    SsaOp::Call {
+                                        dest: *dest,
+                                        method: MethodRef::new(init_target),
+                                        args: vec![a0, a1],
+                                    },
+                                ));
+                            }
                         }
                     }
                 }

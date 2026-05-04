@@ -287,8 +287,11 @@ fn extract_xor_key_from_cctor(assembly: &CilObject, cctor_token: Token) -> Optio
     let instructions: Vec<_> = method.instructions().collect();
 
     for window in instructions.windows(3) {
-        if window[0].mnemonic == "xor" && window[2].mnemonic == "xor" {
-            if let Some(val) = window[1].get_i32_operand() {
+        let (Some(w0), Some(w1), Some(w2)) = (window.first(), window.get(1), window.get(2)) else {
+            continue;
+        };
+        if w0.mnemonic == "xor" && w2.mnemonic == "xor" {
+            if let Some(val) = w1.get_i32_operand() {
                 if (0..=255).contains(&val) {
                     #[allow(clippy::cast_sign_loss, clippy::cast_possible_truncation)]
                     return Some(val as u8);

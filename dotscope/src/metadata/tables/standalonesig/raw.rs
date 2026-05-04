@@ -105,7 +105,9 @@ impl StandAloneSigRaw {
             ));
         }
 
-        let first_byte = sig_data[0];
+        let first_byte = *sig_data.first().ok_or_else(|| {
+            malformed_error!("StandAloneSig blob is empty at index {}", self.signature)
+        })?;
         let parsed_signature = match first_byte {
             SIGNATURE_HEADER::LOCAL_SIG => {
                 let locals = parse_local_var_signature(sig_data)?;
@@ -179,6 +181,7 @@ impl TableRow for StandAloneSigRaw {
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
             /* signature */ sizes.blob_bytes()
+
         )
     }
 }

@@ -51,7 +51,7 @@ pub(super) fn format_method_body(
         0
     };
 
-    let code_start_rva = u64::from(method.rva.unwrap_or(0)) + header_size;
+    let code_start_rva = u64::from(method.rva.unwrap_or(0)).saturating_add(header_size);
 
     // Build exception block layout for interleaving
     let layout = method
@@ -87,7 +87,7 @@ pub(super) fn format_method_body(
                             | BlockEvent::HandlerOpen { .. }
                             | BlockEvent::FilterOpen
                     ) {
-                        nesting_depth += 1;
+                        nesting_depth = nesting_depth.saturating_add(1);
                     }
                 }
             }
@@ -110,7 +110,7 @@ pub(super) fn format_method_body_raw(
     asm: &CilObject,
 ) -> io::Result<()> {
     let header_size = method.body.get().map_or(0, |b| b.size_header as u64);
-    let code_start_rva = u64::from(method.rva.unwrap_or(0)) + header_size;
+    let code_start_rva = u64::from(method.rva.unwrap_or(0)).saturating_add(header_size);
     for instruction in method.instructions() {
         format_instruction(opts, w, instruction, code_start_rva, asm, 2)?;
     }
@@ -173,7 +173,7 @@ fn format_locals(w: &mut dyn Write, method: &Method, asm: &CilObject) -> io::Res
         let pinned = if local.is_pinned { " pinned" } else { "" };
         let byref = if local.is_byref { "&" } else { "" };
 
-        let comma = if i < count - 1 { "," } else { "" };
+        let comma = if i.saturating_add(1) < count { "," } else { "" };
         writeln!(w, "      [{i}] {type_name}{pinned}{byref} V_{i}{comma}")?;
     }
 
@@ -286,11 +286,15 @@ fn format_operand(
                     } else {
                         "???".to_string()
                     };
-                    let suffix = if i == offsets.len() - 1 { ")" } else { "," };
+                    let suffix = if i.saturating_add(1) == offsets.len() {
+                        ")"
+                    } else {
+                        ","
+                    };
                     result.push_str(&format!("                    {label}{suffix}\n"));
                 }
                 // Remove trailing newline — writeln in format_instruction adds one
-                result.truncate(result.len() - 1);
+                result.truncate(result.len().saturating_sub(1));
                 result
             }
         }
@@ -326,8 +330,8 @@ fn format_instruction_bytes(w: &mut dyn Write, instruction: &Instruction) -> io:
         Operand::Target(_) => {
             // CIL instruction sizes are small (max ~10 bytes), truncation is safe
             #[allow(clippy::cast_possible_truncation)]
-            let operand_size =
-                instruction.size as usize - if instruction.prefix != 0 { 2 } else { 1 };
+            let operand_size = (instruction.size as usize)
+                .saturating_sub(if instruction.prefix != 0 { 2 } else { 1 });
             bytes.extend(std::iter::repeat_n(0x00, operand_size));
         }
         Operand::Token(tok) => {

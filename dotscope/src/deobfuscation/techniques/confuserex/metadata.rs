@@ -124,12 +124,16 @@ impl Technique for ConfuserExMetadata {
         if let Some(module_table) = tables.table::<ModuleRaw>() {
             for row in module_table {
                 if row.name == CONFUSEREX_MARKER || row.name as usize >= strings_size {
-                    findings.invalid_entries += 1;
-                    findings.patches.push(CxMetadataPatch {
-                        offset: row.offset + 2, // name field offset within Module row
-                        size: if strings_size > 0xFFFF { 4 } else { 2 },
-                        corrected: 0,
-                    });
+                    findings.invalid_entries = findings.invalid_entries.saturating_add(1);
+                    // Skip rows where the file offset would overflow when adding the
+                    // name field offset within the Module row.
+                    if let Some(name_offset) = row.offset.checked_add(2) {
+                        findings.patches.push(CxMetadataPatch {
+                            offset: name_offset,
+                            size: if strings_size > 0xFFFF { 4 } else { 2 },
+                            corrected: 0,
+                        });
+                    }
                 }
             }
         }
@@ -138,7 +142,7 @@ impl Technique for ConfuserExMetadata {
         if let Some(assembly_table) = tables.table::<AssemblyRaw>() {
             for row in assembly_table {
                 if row.name == CONFUSEREX_MARKER || row.name as usize >= strings_size {
-                    findings.invalid_entries += 1;
+                    findings.invalid_entries = findings.invalid_entries.saturating_add(1);
                 }
             }
         }
@@ -147,7 +151,7 @@ impl Technique for ConfuserExMetadata {
         if let Some(declsec_table) = tables.table::<DeclSecurityRaw>() {
             for row in declsec_table {
                 if row.action == CONFUSEREX_MARKER_16 || row.action > 0x000E {
-                    findings.invalid_entries += 1;
+                    findings.invalid_entries = findings.invalid_entries.saturating_add(1);
                 }
             }
         }
@@ -156,7 +160,7 @@ impl Technique for ConfuserExMetadata {
         if let Some(typeref_table) = tables.table::<TypeRefRaw>() {
             for row in typeref_table {
                 if row.resolution_scope.tag == TableId::Module && row.resolution_scope.row == 0 {
-                    findings.invalid_entries += 1;
+                    findings.invalid_entries = findings.invalid_entries.saturating_add(1);
                 }
             }
         }
@@ -228,11 +232,11 @@ impl Technique for ConfuserExMetadata {
         for patch in &findings.patches {
             match patch.size {
                 2 => match assembly.write_le::<u16>(patch.offset, patch.corrected as u16) {
-                    Ok(_) => patched += 1,
+                    Ok(_) => patched = patched.saturating_add(1),
                     Err(e) => return Some(Err(e)),
                 },
                 4 => match assembly.write_le::<u32>(patch.offset, patch.corrected) {
-                    Ok(_) => patched += 1,
+                    Ok(_) => patched = patched.saturating_add(1),
                     Err(e) => return Some(Err(e)),
                 },
                 _ => {}
@@ -284,53 +288,88 @@ fn check_duplicate_streams(assembly: &CilObject) -> bool {
     // Parse stream count from metadata root header.
     // Metadata root layout: signature(4) + major(2) + minor(2) + reserved(4) + version_len(4)
     let header_base = metadata_offset;
-    if header_base + 16 > data.len() {
+    let Some(header_end) = header_base.checked_add(16) else {
+        return false;
+    };
+    if header_end > data.len() {
         return false;
     }
 
-    let version_len = u32::from_le_bytes(
-        data[header_base + 12..header_base + 16]
-            .try_into()
-            .unwrap_or_default(),
-    ) as usize;
+    let Some(version_len_start) = header_base.checked_add(12) else {
+        return false;
+    };
+    let Some(version_bytes) = data.get(version_len_start..header_end) else {
+        return false;
+    };
+    let version_len = u32::from_le_bytes(version_bytes.try_into().unwrap_or_default()) as usize;
     // Align version length to 4 bytes
-    let aligned_len = (version_len + 3) & !3;
-    let flags_offset = header_base + 16 + aligned_len;
+    let aligned_len = match version_len.checked_add(3) {
+        Some(v) => v & !3,
+        None => return false,
+    };
+    let Some(flags_offset) = header_end.checked_add(aligned_len) else {
+        return false;
+    };
 
-    if flags_offset + 4 > data.len() {
+    let Some(streams_end) = flags_offset.checked_add(4) else {
+        return false;
+    };
+    if streams_end > data.len() {
         return false;
     }
 
     // flags(2) + streams(2)
-    let stream_count = u16::from_le_bytes(
-        data[flags_offset + 2..flags_offset + 4]
-            .try_into()
-            .unwrap_or_default(),
-    ) as usize;
+    let Some(stream_count_start) = flags_offset.checked_add(2) else {
+        return false;
+    };
+    let Some(stream_count_bytes) = data.get(stream_count_start..streams_end) else {
+        return false;
+    };
+    let stream_count =
+        u16::from_le_bytes(stream_count_bytes.try_into().unwrap_or_default()) as usize;
 
     // Walk stream headers and check for duplicate names.
     let mut seen_names = std::collections::HashSet::new();
-    let mut pos = flags_offset + 4;
+    let mut pos = streams_end;
 
     for _ in 0..stream_count {
-        if pos + 8 > data.len() {
+        let Some(after_header) = pos.checked_add(8) else {
+            break;
+        };
+        if after_header > data.len() {
             break;
         }
         // offset(4) + size(4) + name (null-terminated, 4-byte aligned)
-        pos += 8;
+        pos = after_header;
 
         // Read stream name
         let name_start = pos;
-        while pos < data.len() && data[pos] != 0 {
-            pos += 1;
+        while let Some(&byte) = data.get(pos) {
+            if byte == 0 {
+                break;
+            }
+            let Some(next) = pos.checked_add(1) else {
+                return false;
+            };
+            pos = next;
         }
         if pos >= data.len() {
             break;
         }
-        let name = std::str::from_utf8(&data[name_start..pos]).unwrap_or("");
-        pos += 1; // skip null terminator
-                  // Align to 4 bytes
-        pos = (pos + 3) & !3;
+        let name_bytes = match data.get(name_start..pos) {
+            Some(b) => b,
+            None => break,
+        };
+        let name = std::str::from_utf8(name_bytes).unwrap_or("");
+        pos = match pos.checked_add(1) {
+            Some(v) => v,
+            None => break,
+        };
+        // Align to 4 bytes
+        pos = match pos.checked_add(3) {
+            Some(v) => v & !3,
+            None => break,
+        };
 
         if !name.is_empty() && !seen_names.insert(name.to_string()) {
             return true;

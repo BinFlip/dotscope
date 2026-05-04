@@ -306,7 +306,7 @@ pub enum Error {
     /// This error occurs when looking up a type by token that doesn't
     /// exist in the loaded metadata or type system registry.
     ///
-    /// The associated [`crate::metadata::token::Token`] identifies which type was not found.
+    /// The associated [`Token`] identifies which type was not found.
     #[error("Failed to find type in TypeSystem - {0}")]
     TypeNotFound(Token),
 

@@ -85,17 +85,20 @@ impl Technique for BitMonoCalli {
             let method = method_entry.value();
             let instructions: Vec<_> = method.instructions().collect();
 
-            let mut method_sites = 0usize;
-            let mut i = 0;
+            let mut method_sites: usize = 0;
+            let mut i: usize = 0;
             while i < instructions.len() {
-                if instructions[i].mnemonic == "calli" {
+                let Some(instr_at_i) = instructions.get(i) else {
+                    break;
+                };
+                if instr_at_i.mnemonic == "calli" {
                     // Walk backwards up to 12 instructions looking for the
                     // characteristic BitMono trampoline pattern:
                     //   ldtoken <Module> -> GetTypeFromHandle -> get_Module
                     //   -> ldc.i4 <token> -> ResolveMethod -> get_MethodHandle
                     //   -> GetFunctionPointer -> calli
                     let window_start = i.saturating_sub(12);
-                    let window = &instructions[window_start..i];
+                    let window = instructions.get(window_start..i).unwrap_or(&[]);
 
                     let has_ldtoken = window.iter().any(|instr| instr.mnemonic == "ldtoken");
                     let has_trampoline_api = window.iter().any(|instr| {
@@ -108,15 +111,15 @@ impl Technique for BitMonoCalli {
                     });
 
                     if has_ldtoken && has_trampoline_api {
-                        method_sites += 1;
+                        method_sites = method_sites.saturating_add(1);
                     }
                 }
-                i += 1;
+                i = i.saturating_add(1);
             }
 
             if method_sites > 0 {
                 method_tokens.insert(method.token);
-                site_count += method_sites;
+                site_count = site_count.saturating_add(method_sites);
             }
         }
 
@@ -143,7 +146,7 @@ impl Technique for BitMonoCalli {
         for entry in ctx.ssa_functions.iter() {
             let count = count_resolve_method_calli_sites(entry.value(), assembly);
             if count > 0 {
-                site_count += count;
+                site_count = site_count.saturating_add(count);
                 method_tokens.insert(*entry.key());
             }
         }

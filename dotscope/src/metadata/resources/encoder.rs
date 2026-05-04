@@ -866,9 +866,19 @@ impl DotNetResourceEncoder {
         buffer.extend_from_slice(resource_set_type.as_bytes());
 
         // Calculate header size and update placeholder
-        let header_size = buffer.len() - header_size_pos - 4;
+        let header_size = buffer
+            .len()
+            .checked_sub(header_size_pos)
+            .and_then(|v| v.checked_sub(4))
+            .ok_or_else(|| malformed_error!("Resource header size underflow"))?;
         let header_size_bytes = to_u32(header_size)?.to_le_bytes();
-        buffer[header_size_pos..header_size_pos + 4].copy_from_slice(&header_size_bytes);
+        let header_end = header_size_pos
+            .checked_add(4)
+            .ok_or_else(|| malformed_error!("Resource header position overflow"))?;
+        buffer
+            .get_mut(header_size_pos..header_end)
+            .ok_or(out_of_bounds_error!())?
+            .copy_from_slice(&header_size_bytes);
 
         // Runtime Resource Reader Header
         buffer.extend_from_slice(&self.version.to_le_bytes()); // RR version
@@ -903,15 +913,26 @@ impl DotNetResourceEncoder {
         let mut name_section_layout = Vec::new();
         let mut name_offset = 0u32;
         for (_, resource_index) in &name_hashes {
-            let (name, _) = &self.resources[*resource_index];
+            let (name, _) = self
+                .resources
+                .get(*resource_index)
+                .ok_or(out_of_bounds_error!())?;
             let name_utf16: Vec<u16> = name.encode_utf16().collect();
-            let byte_count = name_utf16.len() * 2;
+            let byte_count = name_utf16
+                .len()
+                .checked_mul(2)
+                .ok_or_else(|| malformed_error!("Resource name byte count overflow"))?;
             #[allow(clippy::cast_possible_truncation)] // compressed_uint_size returns at most 4
             let len_size = compressed_uint_size(byte_count) as u32;
-            let entry_size = len_size + to_u32(byte_count)? + 4;
+            let entry_size = len_size
+                .checked_add(to_u32(byte_count)?)
+                .and_then(|v| v.checked_add(4))
+                .ok_or_else(|| malformed_error!("Resource entry size overflow"))?;
 
             name_section_layout.push(name_offset);
-            name_offset += entry_size;
+            name_offset = name_offset
+                .checked_add(entry_size)
+                .ok_or_else(|| malformed_error!("Resource name offset overflow"))?;
         }
 
         // Write position table (in sorted hash order)
@@ -923,7 +944,10 @@ impl DotNetResourceEncoder {
         let mut data_offsets = Vec::new();
         let mut data_offset = 0u32;
         for (_, resource_index) in &name_hashes {
-            let (_, resource_type) = &self.resources[*resource_index];
+            let (_, resource_type) = self
+                .resources
+                .get(*resource_index)
+                .ok_or(out_of_bounds_error!())?;
 
             data_offsets.push(data_offset);
 
@@ -936,7 +960,10 @@ impl DotNetResourceEncoder {
             };
 
             let data_size = resource_type.data_size().ok_or(Error::NotSupported)?;
-            data_offset += type_code_size + data_size;
+            data_offset = data_offset
+                .checked_add(type_code_size)
+                .and_then(|v| v.checked_add(data_size))
+                .ok_or_else(|| malformed_error!("Resource data offset overflow"))?;
         }
 
         // Reserve space for data section offset - we'll update it after writing the name section
@@ -945,9 +972,15 @@ impl DotNetResourceEncoder {
 
         // Write resource names and data offsets (in sorted hash order)
         for (i, (_, resource_index)) in name_hashes.iter().enumerate() {
-            let (name, _) = &self.resources[*resource_index];
+            let (name, _) = self
+                .resources
+                .get(*resource_index)
+                .ok_or(out_of_bounds_error!())?;
             let name_utf16: Vec<u16> = name.encode_utf16().collect();
-            let byte_count = name_utf16.len() * 2;
+            let byte_count = name_utf16
+                .len()
+                .checked_mul(2)
+                .ok_or_else(|| malformed_error!("Resource name byte count overflow"))?;
 
             // Write byte count, not character count
             write_compressed_uint(to_u32(byte_count)?, &mut buffer);
@@ -956,7 +989,8 @@ impl DotNetResourceEncoder {
                 buffer.extend_from_slice(&utf16_char.to_le_bytes());
             }
 
-            buffer.extend_from_slice(&data_offsets[i].to_le_bytes());
+            let data_offset_value = data_offsets.get(i).ok_or(out_of_bounds_error!())?;
+            buffer.extend_from_slice(&data_offset_value.to_le_bytes());
         }
 
         // Calculate the actual data section offset following Microsoft's ResourceWriter exactly
@@ -964,18 +998,35 @@ impl DotNetResourceEncoder {
         // Standard .NET convention: offset is relative to magic number position, requiring +4 adjustment in parser
         // For embedded resources, we need to be careful about the offset calculation
         // The offset should point to where the data actually starts in the file
-        let actual_data_section_offset = buffer.len() - 4; // -4 to account for size prefix
+        let actual_data_section_offset = buffer
+            .len()
+            .checked_sub(4)
+            .ok_or_else(|| malformed_error!("Resource data section offset underflow"))?; // -4 to account for size prefix
         let data_section_offset_value = to_u32(actual_data_section_offset)?.to_le_bytes();
-        buffer[data_section_offset_pos..data_section_offset_pos + 4]
+        let data_section_end = data_section_offset_pos
+            .checked_add(4)
+            .ok_or_else(|| malformed_error!("Resource data section position overflow"))?;
+        buffer
+            .get_mut(data_section_offset_pos..data_section_end)
+            .ok_or(out_of_bounds_error!())?
             .copy_from_slice(&data_section_offset_value);
 
         // Write resource data (in sorted hash order)
         self.write_resource_data_sorted(&mut buffer, &name_hashes)?;
 
         // Update the size field at the beginning
-        let total_size = buffer.len() - 4; // Exclude the size field itself
+        let total_size = buffer
+            .len()
+            .checked_sub(4)
+            .ok_or_else(|| malformed_error!("Resource total size underflow"))?; // Exclude the size field itself
         let size_bytes = to_u32(total_size)?.to_le_bytes();
-        buffer[size_placeholder_pos..size_placeholder_pos + 4].copy_from_slice(&size_bytes);
+        let size_end = size_placeholder_pos
+            .checked_add(4)
+            .ok_or_else(|| malformed_error!("Resource size placeholder position overflow"))?;
+        buffer
+            .get_mut(size_placeholder_pos..size_end)
+            .ok_or(out_of_bounds_error!())?
+            .copy_from_slice(&size_bytes);
 
         Ok(buffer)
     }
@@ -1024,7 +1075,10 @@ impl DotNetResourceEncoder {
         name_hashes: &[(u32, usize)],
     ) -> Result<()> {
         for (_, resource_index) in name_hashes {
-            let (_, resource_type) = &self.resources[*resource_index];
+            let (_, resource_type) = self
+                .resources
+                .get(*resource_index)
+                .ok_or(out_of_bounds_error!())?;
 
             // Use Microsoft's ResourceTypeCode enum values exactly
             let type_code = match resource_type {

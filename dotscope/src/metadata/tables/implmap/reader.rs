@@ -28,7 +28,7 @@ impl RowReadable for ImplMapRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ImplMapRaw {
             rid,
-            token: Token::new(0x1C00_0000 + rid),
+            token: Token::new(0x1C00_0000u32.saturating_add(rid)),
             offset: *offset,
             mapping_flags: u32::from(read_le_at::<u16>(data, offset)?),
             member_forwarded: CodedIndex::read(

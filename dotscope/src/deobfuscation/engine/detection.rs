@@ -38,7 +38,9 @@ impl DeobfuscationEngine {
             if ctx.initialized_techniques.contains(tech.id()) {
                 continue;
             }
-            let detection = detections.get(tech.id()).unwrap();
+            let Some(detection) = detections.get(tech.id()) else {
+                continue;
+            };
             tech.initialize(ctx, assembly, detection, detections);
             ctx.initialized_techniques.insert(tech.id());
         }
@@ -73,7 +75,9 @@ impl DeobfuscationEngine {
             let Some(phase) = tech.ssa_phase() else {
                 continue;
             };
-            let detection = detections.get(tech.id()).unwrap();
+            let Some(detection) = detections.get(tech.id()) else {
+                continue;
+            };
 
             // Initialize if not already done
             if !ctx.initialized_techniques.contains(tech.id()) {

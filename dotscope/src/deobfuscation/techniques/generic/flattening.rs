@@ -110,7 +110,7 @@ impl Technique for GenericFlattening {
                 .collect();
 
             if !method_dispatchers.is_empty() {
-                total_dispatchers += method_dispatchers.len();
+                total_dispatchers = total_dispatchers.saturating_add(method_dispatchers.len());
                 dispatchers_by_method.insert(method_token, method_dispatchers);
             }
         }

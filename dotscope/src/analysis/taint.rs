@@ -312,13 +312,13 @@ impl TaintAnalysis {
     ///
     /// * `ssa` - The SSA function to analyze.
     pub fn propagate(&mut self, ssa: &SsaFunction) {
-        let mut iterations = 0;
+        let mut iterations: usize = 0;
 
         loop {
             if iterations >= self.config.max_iterations {
                 break;
             }
-            iterations += 1;
+            iterations = iterations.saturating_add(1);
 
             let mut changed = false;
 

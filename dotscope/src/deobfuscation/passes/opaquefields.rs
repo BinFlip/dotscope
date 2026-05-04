@@ -311,7 +311,7 @@ impl<'a> FieldResolver<'a> {
 
         let mut current_val = static_val;
         for (i, &field_token) in field_chain.iter().enumerate() {
-            let is_last = i == field_chain.len() - 1;
+            let is_last = i == field_chain.len().saturating_sub(1);
 
             match &current_val {
                 EmValue::ObjectRef(heap_ref) => {
@@ -419,7 +419,10 @@ impl SsaPass for OpaqueFieldPredicatePass {
     }
 
     fn initialize(&mut self, _ctx: &CompilerContext) -> Result<()> {
-        let remaining = self.affected_methods.len() - self.processed_methods.len();
+        let remaining = self
+            .affected_methods
+            .len()
+            .saturating_sub(self.processed_methods.len());
         if remaining > 0 {
             debug!(
                 "Opaque field predicate pass: {} unique static fields in {} remaining methods ({} already processed)",

@@ -94,14 +94,14 @@ impl ManagedHeap {
             })?;
         match state.objects.get(&heap_ref.id()) {
             Some(HeapObject::Array { elements, .. }) => {
-                if index >= elements.len() {
+                if let Some(elem) = elements.get(index) {
+                    Ok(elem.clone())
+                } else {
                     Err(EmulationError::ArrayIndexOutOfBounds {
                         index: i64::try_from(index).unwrap_or(i64::MAX),
                         length: elements.len(),
                     }
                     .into())
-                } else {
-                    Ok(elements[index].clone())
                 }
             }
             Some(other) => Err(EmulationError::HeapTypeMismatch {
@@ -134,15 +134,16 @@ impl ManagedHeap {
             })?;
         match state.objects.get_mut(&heap_ref.id()) {
             Some(HeapObject::Array { elements, .. }) => {
-                if index >= elements.len() {
+                let len = elements.len();
+                if let Some(slot) = elements.get_mut(index) {
+                    *slot = value;
+                    Ok(())
+                } else {
                     Err(EmulationError::ArrayIndexOutOfBounds {
                         index: i64::try_from(index).unwrap_or(i64::MAX),
-                        length: elements.len(),
+                        length: len,
                     }
                     .into())
-                } else {
-                    elements[index] = value;
-                    Ok(())
                 }
             }
             Some(other) => Err(EmulationError::HeapTypeMismatch {
@@ -295,7 +296,8 @@ impl ManagedHeap {
                 let element_size = element_type.element_size(ptr_size);
                 match element_size {
                     Some(element_size) => {
-                        let mut bytes = Vec::with_capacity(elements.len() * element_size);
+                        let mut bytes =
+                            Vec::with_capacity(elements.len().saturating_mul(element_size));
                         let mut valid = true;
                         for e in elements {
                             match e {

@@ -181,9 +181,10 @@ impl TableRow for ParamRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* flags */     2 +
-            /* sequence */  2 +
-            /* name */      sizes.str_bytes()
+            /* flags */    2u8
+            /* sequence */ .saturating_add(2)
+            /* name */     .saturating_add(sizes.str_bytes())
+
         )
     }
 }

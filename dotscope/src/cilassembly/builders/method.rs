@@ -844,7 +844,10 @@ impl MethodBuilder {
         let param_start_index = assembly.next_rid(TableId::Param)?;
 
         for (sequence, (name, _param_type)) in parameters.iter().enumerate() {
-            let param_sequence = u32::try_from(sequence + 1)
+            let one_based = sequence
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("Parameter sequence overflow"))?;
+            let param_sequence = u32::try_from(one_based)
                 .map_err(|_| malformed_error!("Parameter sequence exceeds u32 range"))?; // Parameters start at sequence 1
 
             ParamBuilder::new()

@@ -493,7 +493,7 @@ pub fn schedule_finally_blocks(
     // The last one scheduled will be popped first
     for (i, (handler_offset, _)) in finally_blocks.iter().enumerate() {
         // The last finally should have the actual leave target
-        let target = if i == finally_blocks.len() - 1 {
+        let target = if i == finally_blocks.len().saturating_sub(1) {
             Some(leave_target)
         } else {
             None

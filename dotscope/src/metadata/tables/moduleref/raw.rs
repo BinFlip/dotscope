@@ -142,6 +142,7 @@ impl TableRow for ModuleRefRaw {
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
             /* name */ sizes.str_bytes()
+
         )
     }
 }

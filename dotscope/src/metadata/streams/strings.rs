@@ -532,7 +532,7 @@ impl<'a> Strings<'a> {
     /// - [`Strings::iter`]: Sequential iteration over all heap strings
     /// - [ECMA-335 II.24.2.3](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Strings heap format specification
     pub fn from(data: &[u8]) -> Result<Strings<'_>> {
-        if data.is_empty() || data[0] != 0 {
+        if data.first() != Some(&0) {
             return Err(malformed_error!("Provided #String heap is empty"));
         }
 
@@ -773,7 +773,8 @@ impl<'a> Strings<'a> {
         // If profiling shows this is a bottleneck, callers should:
         // 1. Cache results at the call site for repeated access
         // 2. Use the iterator for bulk processing (avoids repeated bounds checks)
-        match CStr::from_bytes_until_nul(&self.data[index..]) {
+        let slice = self.data.get(index..).ok_or(out_of_bounds_error!())?;
+        match CStr::from_bytes_until_nul(slice) {
             Ok(result) => match result.to_str() {
                 Ok(result) => Ok(result),
                 Err(_) => Err(malformed_error!("Invalid string at index - {}", index)),
@@ -1295,7 +1296,7 @@ impl<'a> Iterator for StringsIterator<'a> {
         match self.strings.get(self.position) {
             Ok(string) => {
                 // Move position past this string and its null terminator
-                self.position += string.len() + 1;
+                self.position = self.position.saturating_add(string.len()).saturating_add(1);
                 Some((start_position, string))
             }
             Err(_) => None,

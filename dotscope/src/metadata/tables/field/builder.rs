@@ -136,7 +136,7 @@ impl FieldBuilder {
     ///
     /// # Returns
     ///
-    /// A [`crate::metadata::token::Token`] representing the newly created field, or an error if
+    /// A [`Token`] representing the newly created field, or an error if
     /// validation fails or required fields are missing.
     ///
     /// # Errors

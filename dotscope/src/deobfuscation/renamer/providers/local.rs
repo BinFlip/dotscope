@@ -28,7 +28,7 @@ use crate::{
     deobfuscation::renamer::{
         context::RenameContext, prompt, validate, RenameProvider, SmartRenameConfig,
     },
-    Result,
+    Error, Result,
 };
 
 /// System prompt for identifier naming via chat API.
@@ -161,7 +161,7 @@ impl LocalProvider {
         let response = state
             .runtime
             .block_on(state.model.send_chat_request(request))
-            .map_err(|e| crate::Error::Deobfuscation(format!("Model inference failed: {e}")))?;
+            .map_err(|e| Error::Deobfuscation(format!("Model inference failed: {e}")))?;
 
         if let Some(choice) = response.choices.first() {
             log::debug!(
@@ -202,18 +202,17 @@ impl RenameProvider for LocalProvider {
     /// - The tokio runtime cannot be created
     fn initialize(&mut self) -> Result<()> {
         if !self.config.model_path.exists() {
-            return Err(crate::Error::Deobfuscation(format!(
+            return Err(Error::Deobfuscation(format!(
                 "Smart rename model not found: {}",
                 self.config.model_path.display()
             )));
         }
 
-        let runtime = Runtime::new().map_err(|e| {
-            crate::Error::Deobfuscation(format!("Failed to create tokio runtime: {e}"))
-        })?;
+        let runtime = Runtime::new()
+            .map_err(|e| Error::Deobfuscation(format!("Failed to create tokio runtime: {e}")))?;
 
         let model_path = self.config.model_path.canonicalize().map_err(|e| {
-            crate::Error::Deobfuscation(format!(
+            Error::Deobfuscation(format!(
                 "Failed to resolve model path {}: {e}",
                 self.config.model_path.display()
             ))
@@ -239,7 +238,7 @@ impl RenameProvider for LocalProvider {
             builder
                 .build()
                 .await
-                .map_err(|e| crate::Error::Deobfuscation(format!("Model load failed: {e}")))
+                .map_err(|e| Error::Deobfuscation(format!("Model load failed: {e}")))
         })?;
 
         log::info!(

@@ -347,7 +347,10 @@ impl Identity {
             }
         };
         // Token is the last 8 bytes of the hash as little-endian u64
-        read_le::<u64>(&hash[hash.len() - 8..])
+        let start = hash.len().saturating_sub(8);
+        read_le::<u64>(hash.get(start..).ok_or_else(|| {
+            malformed_error!("Hash output is too short to extract public key token")
+        })?)
     }
 }
 

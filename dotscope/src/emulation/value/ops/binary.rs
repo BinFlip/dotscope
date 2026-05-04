@@ -646,35 +646,50 @@ impl EmValue {
         match (self, other) {
             (EmValue::I32(a), EmValue::I32(b)) => {
                 if unsigned {
-                    Ok(EmValue::I32(((*a as u32) / (*b as u32)) as i32))
+                    let q = (*a as u32)
+                        .checked_div(*b as u32)
+                        .ok_or(EmulationError::DivisionByZero)?;
+                    Ok(EmValue::I32(q as i32))
                 } else {
                     // Handle MIN / -1 overflow case
                     if *a == i32::MIN && *b == -1 {
                         Ok(EmValue::I32(i32::MIN)) // Wrapping behavior
                     } else {
-                        Ok(EmValue::I32(a / b))
+                        let q = a.checked_div(*b).ok_or(EmulationError::DivisionByZero)?;
+                        Ok(EmValue::I32(q))
                     }
                 }
             }
             (EmValue::I64(a), EmValue::I64(b)) => {
                 if unsigned {
-                    Ok(EmValue::I64(((*a as u64) / (*b as u64)) as i64))
+                    let q = (*a as u64)
+                        .checked_div(*b as u64)
+                        .ok_or(EmulationError::DivisionByZero)?;
+                    Ok(EmValue::I64(q as i64))
                 } else if *a == i64::MIN && *b == -1 {
                     Ok(EmValue::I64(i64::MIN))
                 } else {
-                    Ok(EmValue::I64(a / b))
+                    let q = a.checked_div(*b).ok_or(EmulationError::DivisionByZero)?;
+                    Ok(EmValue::I64(q))
                 }
             }
             (EmValue::NativeInt(a), EmValue::NativeInt(b)) => {
                 if unsigned {
-                    Ok(EmValue::NativeInt(((*a as u64) / (*b as u64)) as i64))
+                    let q = (*a as u64)
+                        .checked_div(*b as u64)
+                        .ok_or(EmulationError::DivisionByZero)?;
+                    Ok(EmValue::NativeInt(q as i64))
                 } else if *a == i64::MIN && *b == -1 {
                     Ok(EmValue::NativeInt(i64::MIN))
                 } else {
-                    Ok(EmValue::NativeInt(a / b))
+                    let q = a.checked_div(*b).ok_or(EmulationError::DivisionByZero)?;
+                    Ok(EmValue::NativeInt(q))
                 }
             }
-            (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => Ok(EmValue::NativeUInt(a / b)),
+            (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => {
+                let q = a.checked_div(*b).ok_or(EmulationError::DivisionByZero)?;
+                Ok(EmValue::NativeUInt(q))
+            }
             (EmValue::F32(a), EmValue::F32(b)) => Ok(EmValue::F32(a / b)),
             (EmValue::F64(a), EmValue::F64(b)) => Ok(EmValue::F64(a / b)),
             (a, b) => Err(EmulationError::InvalidOperationTypes {
@@ -702,35 +717,50 @@ impl EmValue {
         match (self, other) {
             (EmValue::I32(a), EmValue::I32(b)) => {
                 if unsigned {
-                    Ok(EmValue::I32(((*a as u32) % (*b as u32)) as i32))
+                    let r = (*a as u32)
+                        .checked_rem(*b as u32)
+                        .ok_or(EmulationError::DivisionByZero)?;
+                    Ok(EmValue::I32(r as i32))
                 } else {
                     // Handle MIN % -1 case (result is 0)
                     if *a == i32::MIN && *b == -1 {
                         Ok(EmValue::I32(0))
                     } else {
-                        Ok(EmValue::I32(a % b))
+                        let r = a.checked_rem(*b).ok_or(EmulationError::DivisionByZero)?;
+                        Ok(EmValue::I32(r))
                     }
                 }
             }
             (EmValue::I64(a), EmValue::I64(b)) => {
                 if unsigned {
-                    Ok(EmValue::I64(((*a as u64) % (*b as u64)) as i64))
+                    let r = (*a as u64)
+                        .checked_rem(*b as u64)
+                        .ok_or(EmulationError::DivisionByZero)?;
+                    Ok(EmValue::I64(r as i64))
                 } else if *a == i64::MIN && *b == -1 {
                     Ok(EmValue::I64(0))
                 } else {
-                    Ok(EmValue::I64(a % b))
+                    let r = a.checked_rem(*b).ok_or(EmulationError::DivisionByZero)?;
+                    Ok(EmValue::I64(r))
                 }
             }
             (EmValue::NativeInt(a), EmValue::NativeInt(b)) => {
                 if unsigned {
-                    Ok(EmValue::NativeInt(((*a as u64) % (*b as u64)) as i64))
+                    let r = (*a as u64)
+                        .checked_rem(*b as u64)
+                        .ok_or(EmulationError::DivisionByZero)?;
+                    Ok(EmValue::NativeInt(r as i64))
                 } else if *a == i64::MIN && *b == -1 {
                     Ok(EmValue::NativeInt(0))
                 } else {
-                    Ok(EmValue::NativeInt(a % b))
+                    let r = a.checked_rem(*b).ok_or(EmulationError::DivisionByZero)?;
+                    Ok(EmValue::NativeInt(r))
                 }
             }
-            (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => Ok(EmValue::NativeUInt(a % b)),
+            (EmValue::NativeUInt(a), EmValue::NativeUInt(b)) => {
+                let r = a.checked_rem(*b).ok_or(EmulationError::DivisionByZero)?;
+                Ok(EmValue::NativeUInt(r))
+            }
             (EmValue::F32(a), EmValue::F32(b)) => Ok(EmValue::F32(a % b)),
             (EmValue::F64(a), EmValue::F64(b)) => Ok(EmValue::F64(a % b)),
             (a, b) => Err(EmulationError::InvalidOperationTypes {

@@ -568,16 +568,16 @@ fn assembly_get_manifest_resource_names_pre(
 fn delegate_ctor_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
     // .ctor(object target, native int methodPtr) — args[0] = target, args[1] = method pointer
     if ctx.args.len() == 2 {
-        let target = match &ctx.args[0] {
-            EmValue::ObjectRef(href) => Some(*href),
+        let target = match ctx.args.first() {
+            Some(EmValue::ObjectRef(href)) => Some(*href),
             _ => None,
         };
 
-        let method_token = match &ctx.args[1] {
-            EmValue::UnmanagedPtr(ptr) => Some(Token::new(*ptr as u32)),
-            EmValue::I32(v) => Some(Token::new(*v as u32)),
-            EmValue::I64(v) => Some(Token::new(*v as u32)),
-            EmValue::NativeInt(v) => Some(Token::new(*v as u32)),
+        let method_token = match ctx.args.get(1) {
+            Some(EmValue::UnmanagedPtr(ptr)) => Some(Token::new(*ptr as u32)),
+            Some(EmValue::I32(v)) => Some(Token::new(*v as u32)),
+            Some(EmValue::I64(v)) => Some(Token::new(*v as u32)),
+            Some(EmValue::NativeInt(v)) => Some(Token::new(*v as u32)),
             _ => None,
         };
 

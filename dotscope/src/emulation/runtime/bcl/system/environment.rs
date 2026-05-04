@@ -279,7 +279,12 @@ fn get_tick_count_pre(_ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
     let config = &thread.config().environment;
     let divisor = config.tick_count_divisor.max(1); // avoid division by zero
     #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-    let ticks = config.tick_count_base + (thread.instructions_executed() / divisor) as i64;
+    let ticks = config.tick_count_base.saturating_add(
+        thread
+            .instructions_executed()
+            .checked_div(divisor)
+            .unwrap_or(0) as i64,
+    );
     PreHookResult::Bypass(Some(EmValue::I32(ticks as i32)))
 }
 
@@ -297,7 +302,12 @@ fn get_tick_count64_pre(_ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
     let config = &thread.config().environment;
     let divisor = config.tick_count_divisor.max(1); // avoid division by zero
     #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
-    let ticks = config.tick_count_base + (thread.instructions_executed() / divisor) as i64;
+    let ticks = config.tick_count_base.saturating_add(
+        thread
+            .instructions_executed()
+            .checked_div(divisor)
+            .unwrap_or(0) as i64,
+    );
     PreHookResult::Bypass(Some(EmValue::I64(ticks)))
 }
 

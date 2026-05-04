@@ -386,9 +386,10 @@ impl EventLog {
     /// Counts events grouped by kind.
     #[must_use]
     pub fn count_by_kind(&self) -> HashMap<EventKind, usize> {
-        let mut counts = HashMap::new();
+        let mut counts: HashMap<EventKind, usize> = HashMap::new();
         for (_, event) in &self.events {
-            *counts.entry(event.kind).or_insert(0) += 1;
+            let entry = counts.entry(event.kind).or_insert(0);
+            *entry = entry.saturating_add(1);
         }
         counts
     }
@@ -399,10 +400,11 @@ impl EventLog {
     /// iterating the entire log.
     #[must_use]
     pub fn count_by_kind_since(&self, offset: usize) -> HashMap<EventKind, usize> {
-        let mut counts = HashMap::new();
+        let mut counts: HashMap<EventKind, usize> = HashMap::new();
         for (idx, event) in &self.events {
             if idx >= offset {
-                *counts.entry(event.kind).or_insert(0) += 1;
+                let entry = counts.entry(event.kind).or_insert(0);
+                *entry = entry.saturating_add(1);
             }
         }
         counts

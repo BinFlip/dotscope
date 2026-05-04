@@ -265,10 +265,13 @@ impl CilTypeRef {
     ///
     /// A strong reference to the type.
     ///
-    /// ## Panics
+    /// ## Returns
     ///
-    /// Panics if the referenced type has been dropped and the weak reference
-    /// cannot be upgraded to a strong reference.
+    /// Returns `Some` with a strong reference if the type is still alive, or
+    /// `None` if the type has been dropped (i.e. the weak reference cannot
+    /// be upgraded). The `msg` argument is kept for backwards compatibility
+    /// but no longer used for panicking; the crate forbids panics in
+    /// production code.
     ///
     /// ## Example
     ///
@@ -280,14 +283,14 @@ impl CilTypeRef {
     /// # let my_type: Arc<CilType> = unimplemented!();
     /// let type_ref = CilTypeRef::new(&my_type);
     ///
-    /// // This will panic if my_type has been dropped
-    /// let strong_ref = type_ref.expect("Type should still be alive");
-    /// println!("Type: {}", strong_ref.name);
+    /// if let Some(strong_ref) = type_ref.expect("Type should still be alive") {
+    ///     println!("Type: {}", strong_ref.name);
+    /// }
     /// # }
     /// ```
     #[must_use]
-    pub fn expect(&self, msg: &str) -> CilTypeRc {
-        self.weak_ref.upgrade().expect(msg)
+    pub fn expect(&self, _msg: &str) -> Option<CilTypeRc> {
+        self.weak_ref.upgrade()
     }
 
     /// Checks if the referenced type is still alive.
@@ -505,7 +508,7 @@ impl<'a> Iterator for CilTypeRefListIter<'a> {
         if self.index < self.list.count() {
             // boxcar::Vec returns Option from get(), and we need to handle it
             let result = self.list.get(self.index);
-            self.index += 1;
+            self.index = self.index.saturating_add(1);
             result
         } else {
             None
@@ -1580,7 +1583,7 @@ impl CilFlavor {
             CilFlavor::I4 | CilFlavor::U4 | CilFlavor::R4 => Some(4),
             CilFlavor::I8 | CilFlavor::U8 | CilFlavor::R8 => Some(8),
             CilFlavor::I | CilFlavor::U => Some(ptr_size.bytes()),
-            CilFlavor::TypedRef { .. } => Some(ptr_size.bytes() * 2),
+            CilFlavor::TypedRef { .. } => Some(ptr_size.bytes().saturating_mul(2)),
             // Reference types are pointer-sized
             CilFlavor::Object
             | CilFlavor::String

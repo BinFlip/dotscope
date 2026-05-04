@@ -190,7 +190,7 @@ impl Technique for BitMonoStrings {
                     if !decryptor_set.contains(&call_token) {
                         continue;
                     }
-                    call_site_count += 1;
+                    call_site_count = call_site_count.saturating_add(1);
 
                     // Trace LoadStaticField args to collect infrastructure field tokens
                     for arg in args {
@@ -433,7 +433,9 @@ fn extract_crypto_parameters(ssa: &SsaFunction, assembly: &CilObject) -> CryptoP
                     if let Some(name) = resolve_type_name(assembly, ctor.token()) {
                         if name.contains("Rfc2898DeriveBytes") && args.len() >= 3 {
                             // 3rd arg (index 2) is the iteration count
-                            if let Some(ConstValue::I32(iters)) = const_map.get(&args[2]) {
+                            if let Some(ConstValue::I32(iters)) =
+                                args.get(2).and_then(|a| const_map.get(a))
+                            {
                                 if *iters > 0 {
                                     params.iterations = *iters as u32;
                                 }
@@ -449,7 +451,9 @@ fn extract_crypto_parameters(ssa: &SsaFunction, assembly: &CilObject) -> CryptoP
                     if let Some(name) = assembly.resolve_method_name(method.token()) {
                         if name == "GetBytes" && args.len() == 2 {
                             // args[0] = this (Rfc2898DeriveBytes instance), args[1] = size
-                            if let Some(ConstValue::I32(size)) = const_map.get(&args[1]) {
+                            if let Some(ConstValue::I32(size)) =
+                                args.get(1).and_then(|a| const_map.get(a))
+                            {
                                 if *size > 0 {
                                     get_bytes_sizes.push(*size as u32);
                                 }

@@ -166,20 +166,20 @@ impl ProxyDevirtualizationPass {
 
         // Find the call instruction (Call, CallVirt, or NewObj)
         let mut call_info: Option<(&MethodRef, &[SsaVarId], Option<SsaVarId>, ForwardKind)> = None;
-        let mut call_count = 0;
+        let mut call_count: usize = 0;
 
         for instr in instructions {
             match instr.op() {
                 SsaOp::Call { method, args, dest } => {
-                    call_count += 1;
+                    call_count = call_count.saturating_add(1);
                     call_info = Some((method, args, *dest, ForwardKind::Call));
                 }
                 SsaOp::CallVirt { method, args, dest } => {
-                    call_count += 1;
+                    call_count = call_count.saturating_add(1);
                     call_info = Some((method, args, *dest, ForwardKind::CallVirt));
                 }
                 SsaOp::NewObj { ctor, args, dest } => {
-                    call_count += 1;
+                    call_count = call_count.saturating_add(1);
                     call_info = Some((ctor, args, Some(*dest), ForwardKind::NewObj));
                 }
                 // These are allowed in proxy methods
@@ -648,10 +648,19 @@ impl ProxyDevirtualizationPass {
             // Insert const instructions before the call site
             let instrs = block.instructions_mut();
             for (i, const_op) in const_ops.into_iter().enumerate() {
-                instrs.insert(call_instr_idx + i, SsaInstruction::synthetic(const_op));
+                let Some(insert_idx) = call_instr_idx.checked_add(i) else {
+                    return false;
+                };
+                instrs.insert(insert_idx, SsaInstruction::synthetic(const_op));
             }
             // The call instruction shifted by the number of inserted consts
-            instrs[call_instr_idx + num_consts].set_op(new_op);
+            let Some(call_idx) = call_instr_idx.checked_add(num_consts) else {
+                return false;
+            };
+            let Some(call_instr) = instrs.get_mut(call_idx) else {
+                return false;
+            };
+            call_instr.set_op(new_op);
             changes
                 .record(EventKind::MethodInlined)
                 .at(caller_token, call_instr_idx)

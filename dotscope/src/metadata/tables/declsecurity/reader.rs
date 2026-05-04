@@ -34,7 +34,7 @@ impl RowReadable for DeclSecurityRaw {
 
         Ok(DeclSecurityRaw {
             rid,
-            token: Token::new(0x0E00_0000 + rid),
+            token: Token::new(0x0E00_0000u32.saturating_add(rid)),
             offset: offset_org,
             action,
             parent: CodedIndex::read(data, offset, sizes, CodedIndexType::HasDeclSecurity)?,

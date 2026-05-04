@@ -30,11 +30,12 @@ pub(super) fn list_range(
     child_count: u32,
     get_list_start: impl Fn(u32) -> Option<u32>,
 ) -> std::ops::Range<u32> {
-    let start = get_list_start(owner_rid).unwrap_or(child_count + 1);
+    let sentinel = child_count.saturating_add(1);
+    let start = get_list_start(owner_rid).unwrap_or(sentinel);
     let end = if owner_rid < owner_count {
-        get_list_start(owner_rid + 1).unwrap_or(child_count + 1)
+        get_list_start(owner_rid.saturating_add(1)).unwrap_or(sentinel)
     } else {
-        child_count + 1
+        sentinel
     };
     start..end
 }
@@ -59,11 +60,11 @@ pub(super) fn remove_candidates_not_alive(
     candidates: &BTreeSet<u32>,
     alive: &HashSet<u32>,
 ) -> (usize, HashSet<u32>) {
-    let mut removed = 0;
+    let mut removed: usize = 0;
     let mut deleted_rids = HashSet::new();
     for &rid in candidates.iter().rev() {
         if !alive.contains(&rid) && try_remove(assembly, table_id, rid) {
-            removed += 1;
+            removed = removed.saturating_add(1);
             deleted_rids.insert(rid);
         }
     }
@@ -89,8 +90,8 @@ pub(crate) fn with_method_body(
         let Ok(offset) = file.rva_to_offset(effective_rva as usize) else {
             return;
         };
-        if offset < original_data.len() {
-            callback(&original_data[offset..], effective_rva as usize);
+        if let Some(slice) = original_data.get(offset..) {
+            callback(slice, effective_rva as usize);
         }
     }
 }

@@ -303,9 +303,9 @@ impl MemoryRegion {
         let mut pages = Vec::with_capacity(num_pages);
 
         for i in 0..num_pages {
-            let start = i * PAGE_SIZE;
-            let end = (start + PAGE_SIZE).min(data.len());
-            let chunk = &data[start..end];
+            let start = i.saturating_mul(PAGE_SIZE);
+            let end = start.saturating_add(PAGE_SIZE).min(data.len());
+            let chunk = data.get(start..end).unwrap_or(&[]);
             pages.push(Page::from_slice(chunk));
         }
 
@@ -409,7 +409,7 @@ impl MemoryRegion {
     /// Returns the end address (exclusive) of this region.
     #[must_use]
     pub fn end(&self) -> u64 {
-        self.base + self.size as u64
+        self.base.saturating_add(self.size as u64)
     }
 
     /// Returns `true` if the address falls within this region.
@@ -421,7 +421,10 @@ impl MemoryRegion {
     /// Returns `true` if the entire address range falls within this region.
     #[must_use]
     pub fn contains_range(&self, address: u64, len: usize) -> bool {
-        address >= self.base && (address + len as u64) <= self.end()
+        let Some(range_end) = address.checked_add(len as u64) else {
+            return false;
+        };
+        address >= self.base && range_end <= self.end()
     }
 
     /// Returns the default protection flags for this region.
@@ -470,11 +473,10 @@ impl MemoryRegion {
         if let Some(ref sections) = self.sections {
             // Safe: offset within a memory region always fits in u32
             #[allow(clippy::cast_possible_truncation)]
-            let rva = (address - self.base) as u32;
+            let rva = address.saturating_sub(self.base) as u32;
             for section in sections.iter() {
-                if rva >= section.virtual_address
-                    && rva < section.virtual_address + section.virtual_size
-                {
+                let section_end = section.virtual_address.saturating_add(section.virtual_size);
+                if rva >= section.virtual_address && rva < section_end {
                     return Ok(section.protection);
                 }
             }
@@ -507,32 +509,26 @@ impl MemoryRegion {
 
         // Safe: offset within a memory region always fits in usize
         #[allow(clippy::cast_possible_truncation)]
-        let offset = (address - self.base) as usize;
+        let offset = address.saturating_sub(self.base) as usize;
         let mut result = vec![0u8; len];
         let mut bytes_read = 0;
 
         while bytes_read < len {
-            let current_offset = offset + bytes_read;
+            let current_offset = offset.checked_add(bytes_read)?;
             let page_index = current_offset / PAGE_SIZE;
             let page_offset = current_offset % PAGE_SIZE;
 
-            if page_index >= self.pages.len() {
+            let page = self.pages.get(page_index)?;
+
+            let remaining = len.checked_sub(bytes_read)?;
+            let bytes_in_page = PAGE_SIZE.saturating_sub(page_offset).min(remaining);
+            let read_end = bytes_read.checked_add(bytes_in_page)?;
+            let dest = result.get_mut(bytes_read..read_end)?;
+
+            if page.read(page_offset, dest).is_err() {
                 return None;
             }
-
-            let bytes_in_page = (PAGE_SIZE - page_offset).min(len - bytes_read);
-            let page = &self.pages[page_index];
-
-            if page
-                .read(
-                    page_offset,
-                    &mut result[bytes_read..bytes_read + bytes_in_page],
-                )
-                .is_err()
-            {
-                return None;
-            }
-            bytes_read += bytes_in_page;
+            bytes_read = bytes_read.saturating_add(bytes_in_page);
         }
 
         Some(result)
@@ -561,31 +557,35 @@ impl MemoryRegion {
 
         // Safe: offset within a memory region always fits in usize
         #[allow(clippy::cast_possible_truncation)]
-        let offset = (address - self.base) as usize;
+        let offset = address.saturating_sub(self.base) as usize;
         let mut bytes_written = 0;
 
         while bytes_written < bytes.len() {
-            let current_offset = offset + bytes_written;
+            let Some(current_offset) = offset.checked_add(bytes_written) else {
+                return false;
+            };
             let page_index = current_offset / PAGE_SIZE;
             let page_offset = current_offset % PAGE_SIZE;
 
-            if page_index >= self.pages.len() {
+            let Some(page) = self.pages.get(page_index) else {
+                return false;
+            };
+
+            let Some(remaining) = bytes.len().checked_sub(bytes_written) else {
+                return false;
+            };
+            let bytes_in_page = PAGE_SIZE.saturating_sub(page_offset).min(remaining);
+            let Some(write_end) = bytes_written.checked_add(bytes_in_page) else {
+                return false;
+            };
+            let Some(src) = bytes.get(bytes_written..write_end) else {
+                return false;
+            };
+
+            if page.write(page_offset, src).is_err() {
                 return false;
             }
-
-            let bytes_in_page = (PAGE_SIZE - page_offset).min(bytes.len() - bytes_written);
-            let page = &self.pages[page_index];
-
-            if page
-                .write(
-                    page_offset,
-                    &bytes[bytes_written..bytes_written + bytes_in_page],
-                )
-                .is_err()
-            {
-                return false;
-            }
-            bytes_written += bytes_in_page;
+            bytes_written = bytes_written.saturating_add(bytes_in_page);
         }
 
         true

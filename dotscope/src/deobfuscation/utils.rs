@@ -207,14 +207,14 @@ pub(crate) fn build_call_site_counts(
             if instr.mnemonic == "call" || instr.mnemonic == "callvirt" {
                 if let Some(token) = instr.get_token_operand() {
                     if let Some(count) = counts.get_mut(&token) {
-                        *count += 1;
+                        *count = count.saturating_add(1);
                     } else if token.is_table(TableId::MemberRef) {
                         let resolved = memberref_cache
                             .entry(token)
                             .or_insert_with(|| assembly.resolver().resolve_memberref_method(token));
                         if let Some(resolved_token) = resolved {
                             if let Some(count) = counts.get_mut(resolved_token) {
-                                *count += 1;
+                                *count = count.saturating_add(1);
                             }
                         }
                     }
@@ -562,24 +562,32 @@ pub(crate) fn build_init_array_map(assembly: &CilObject) -> HashMap<Token, Token
                 continue;
             }
 
-            if i < 1 || i + 1 >= instructions.len() {
+            let Some(next_idx) = i.checked_add(1) else {
+                continue;
+            };
+            if i < 1 || next_idx >= instructions.len() {
                 continue;
             }
 
             // Find ldtoken before the call (within 3 instructions back)
             let mut backing_field_token = None;
             for j in (0..i).rev() {
-                if instructions[j].mnemonic == "ldtoken" {
-                    backing_field_token = instructions[j].get_token_operand();
+                let Some(prev_instr) = instructions.get(j) else {
+                    break;
+                };
+                if prev_instr.mnemonic == "ldtoken" {
+                    backing_field_token = prev_instr.get_token_operand();
                     break;
                 }
-                if i - j > 3 {
+                if i.saturating_sub(j) > 3 {
                     break;
                 }
             }
 
             // Find stsfld after the call
-            let stsfld_instr = &instructions[i + 1];
+            let Some(stsfld_instr) = instructions.get(next_idx) else {
+                continue;
+            };
             if stsfld_instr.mnemonic != "stsfld" {
                 continue;
             }
@@ -605,8 +613,12 @@ pub(crate) fn is_guid_name(name: &str) -> bool {
         return false;
     }
     let bytes = name.as_bytes();
-    if bytes[8] != b'-' || bytes[13] != b'-' || bytes[18] != b'-' || bytes[23] != b'-' {
-        return false;
+    let dash_positions = [8usize, 13, 18, 23];
+    for &pos in &dash_positions {
+        match bytes.get(pos) {
+            Some(&b'-') => {}
+            _ => return false,
+        }
     }
     bytes.iter().enumerate().all(|(i, &b)| {
         if i == 8 || i == 13 || i == 18 || i == 23 {

@@ -114,7 +114,7 @@ impl TypeDefRaw {
     ///
     /// ## Arguments
     /// * `get_ref` - Closure to resolve coded indexes to type references
-    /// * `strings` - The #String heap for resolving names and namespaces  
+    /// * `strings` - The #String heap for resolving names and namespaces
     /// * `fields` - Map of all processed Field entries indexed by token
     /// * `field_ptr` - Map of `FieldPtr` entries for indirection resolution
     /// * `methods` - Map of all processed Method entries indexed by token
@@ -149,30 +149,53 @@ impl TypeDefRaw {
     where
         F: Fn(&CodedIndex) -> CilTypeReference,
     {
-        let (end_fields, end_methods) = if self.rid + 1 > defs.row_count {
-            (fields.len() + 1, methods.len() + 1)
+        let next_rid = self.rid.checked_add(1).ok_or_else(|| {
+            malformed_error!("TypeDef rid overflow when computing next rid: {}", self.rid)
+        })?;
+
+        let (end_fields, end_methods) = if next_rid > defs.row_count {
+            let fields_end = fields
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("Field count overflow: {}", fields.len()))?;
+            let methods_end = methods
+                .len()
+                .checked_add(1)
+                .ok_or_else(|| malformed_error!("Method count overflow: {}", methods.len()))?;
+            (fields_end, methods_end)
         } else {
-            match defs.get(self.rid + 1) {
+            match defs.get(next_rid) {
                 Some(next_row) => (next_row.field_list as usize, next_row.method_list as usize),
                 None => {
                     return Err(malformed_error!(
                         "Failed to resolve fields_end from next row - {}",
-                        self.rid + 1
+                        next_rid
                     ))
                 }
             }
         };
 
         let start_fields = self.field_list as usize;
+        let fields_len_plus_one = fields
+            .len()
+            .checked_add(1)
+            .ok_or_else(|| malformed_error!("Field count overflow: {}", fields.len()))?;
         let type_fields = if self.field_list == 0
             || fields.is_empty()
-            || end_fields > fields.len() + 1
+            || end_fields > fields_len_plus_one
             || start_fields > fields.len()
             || end_fields <= start_fields
         {
             Arc::new(boxcar::Vec::new())
         } else {
-            let type_fields = Arc::new(boxcar::Vec::with_capacity(end_fields - start_fields));
+            let capacity = end_fields.checked_sub(start_fields).ok_or_else(|| {
+                malformed_error!(
+                    "TypeDef field range invalid: end {} < start {}",
+                    end_fields,
+                    start_fields
+                )
+            })?;
+            let type_fields = Arc::new(boxcar::Vec::with_capacity(capacity));
             for counter in start_fields..end_fields {
                 let actual_field_token = if field_ptr.is_empty() {
                     Token::new(u32::try_from(counter | 0x0400_0000).map_err(|_| {
@@ -226,15 +249,26 @@ impl TypeDefRaw {
         };
 
         let start_methods = self.method_list as usize;
+        let methods_len_plus_one = methods
+            .len()
+            .checked_add(1)
+            .ok_or_else(|| malformed_error!("Method count overflow: {}", methods.len()))?;
         let type_methods = if self.method_list == 0
             || methods.is_empty()
-            || end_methods > methods.len() + 1
+            || end_methods > methods_len_plus_one
             || start_methods > methods.len()
             || end_methods < start_methods
         {
             Arc::new(boxcar::Vec::new())
         } else {
-            let type_methods = Arc::new(boxcar::Vec::with_capacity(end_methods - start_methods));
+            let capacity = end_methods.checked_sub(start_methods).ok_or_else(|| {
+                malformed_error!(
+                    "TypeDef method range invalid: end {} < start {}",
+                    end_methods,
+                    start_methods
+                )
+            })?;
+            let type_methods = Arc::new(boxcar::Vec::with_capacity(capacity));
             for counter in start_methods..end_methods {
                 let actual_method_token = if method_ptr.is_empty() {
                     Token::new(u32::try_from(counter | 0x0600_0000).map_err(|_| {
@@ -393,12 +427,13 @@ impl TableRow for TypeDefRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* flags */             4 +
-            /* type_name */         sizes.str_bytes() +
-            /* type_namespace */    sizes.str_bytes() +
-            /* extends */           sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef) +
-            /* field_list */        sizes.table_index_bytes(TableId::Field) +
-            /* method_list */       sizes.table_index_bytes(TableId::MethodDef)
+            /* flags */          4u8
+            /* type_name */      .saturating_add(sizes.str_bytes())
+            /* type_namespace */ .saturating_add(sizes.str_bytes())
+            /* extends */        .saturating_add(sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef))
+            /* field_list */     .saturating_add(sizes.table_index_bytes(TableId::Field))
+            /* method_list */    .saturating_add(sizes.table_index_bytes(TableId::MethodDef))
+
         )
     }
 }

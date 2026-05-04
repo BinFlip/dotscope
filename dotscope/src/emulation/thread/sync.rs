@@ -196,7 +196,7 @@ impl MonitorState {
                 true
             }
             Some(owner) if owner == thread_id => {
-                self.recursion_count += 1;
+                self.recursion_count = self.recursion_count.saturating_add(1);
                 true
             }
             _ => false,
@@ -224,7 +224,7 @@ impl MonitorState {
     pub fn exit(&mut self, thread_id: ThreadId) -> Result<bool, SyncError> {
         match self.owner {
             Some(owner) if owner == thread_id => {
-                self.recursion_count -= 1;
+                self.recursion_count = self.recursion_count.saturating_sub(1);
                 if self.recursion_count == 0 {
                     self.owner = None;
                     Ok(true)
@@ -290,7 +290,7 @@ impl MutexState {
                 true
             }
             Some(owner) if owner == thread_id => {
-                self.recursion_count += 1;
+                self.recursion_count = self.recursion_count.saturating_add(1);
                 true
             }
             _ => false,
@@ -318,7 +318,7 @@ impl MutexState {
     pub fn release(&mut self, thread_id: ThreadId) -> Result<bool, SyncError> {
         match self.owner {
             Some(owner) if owner == thread_id => {
-                self.recursion_count -= 1;
+                self.recursion_count = self.recursion_count.saturating_sub(1);
                 if self.recursion_count == 0 {
                     self.owner = None;
                     Ok(true)
@@ -415,7 +415,7 @@ impl SemaphoreState {
     /// was zero.
     pub fn try_acquire(&mut self) -> bool {
         if self.count > 0 {
-            self.count -= 1;
+            self.count = self.count.saturating_sub(1);
             true
         } else {
             false

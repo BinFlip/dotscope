@@ -275,8 +275,8 @@ fn string_substring_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
         .and_then(|r| r.ok())
         .unwrap_or(0);
 
-    let substring: String = if ctx.args.len() > 1 {
-        let length = usize::try_from(&ctx.args[1]).unwrap_or(0);
+    let substring: String = if let Some(len_arg) = ctx.args.get(1) {
+        let length = usize::try_from(len_arg).unwrap_or(0);
         s.chars().skip(start).take(length).collect()
     } else {
         s.chars().skip(start).collect()
@@ -429,16 +429,16 @@ fn string_replace_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pr
         return PreHookResult::Bypass(Some(EmValue::Null));
     };
 
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::ObjectRef(*href)));
-    }
+    };
 
     let s = match thread.heap().get_string(*href) {
         Ok(s) => s.to_string(),
         Err(e) => return PreHookResult::Error(format!("heap allocation failed: {e}")),
     };
 
-    let result = match (&ctx.args[0], &ctx.args[1]) {
+    let result = match (arg0, arg1) {
         (EmValue::Char(old), EmValue::Char(new)) => s.replace(*old, &new.to_string()),
         (EmValue::ObjectRef(old_ref), EmValue::ObjectRef(new_ref)) => {
             let old_str = thread
@@ -734,7 +734,8 @@ fn string_pad_left_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
     let result = if s.len() >= total_width {
         s
     } else {
-        let padding: String = std::iter::repeat_n(pad_char, total_width - s.len()).collect();
+        let padding: String =
+            std::iter::repeat_n(pad_char, total_width.saturating_sub(s.len())).collect();
         format!("{padding}{s}")
     };
 
@@ -790,7 +791,8 @@ fn string_pad_right_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
     let result = if s.len() >= total_width {
         s
     } else {
-        let padding: String = std::iter::repeat_n(pad_char, total_width - s.len()).collect();
+        let padding: String =
+            std::iter::repeat_n(pad_char, total_width.saturating_sub(s.len())).collect();
         format!("{s}{padding}")
     };
 
@@ -847,11 +849,11 @@ fn string_is_null_or_empty_pre(
 ///
 /// A single string with elements separated by the separator
 fn string_join_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::Null));
-    }
+    };
 
-    let separator = if let EmValue::ObjectRef(href) = &ctx.args[0] {
+    let separator = if let EmValue::ObjectRef(href) = arg0 {
         thread
             .heap()
             .get_string(*href)
@@ -861,7 +863,7 @@ fn string_join_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHo
         String::new()
     };
 
-    let array_ref = match &ctx.args[1] {
+    let array_ref = match arg1 {
         EmValue::ObjectRef(r) => *r,
         _ => return PreHookResult::Bypass(Some(EmValue::Null)),
     };
@@ -909,11 +911,11 @@ fn string_join_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHo
 ///
 /// A formatted string with placeholders replaced by argument values
 fn string_format_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(first_arg) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::Null));
-    }
+    };
 
-    let format_str = match &ctx.args[0] {
+    let format_str = match first_arg {
         EmValue::ObjectRef(href) => match thread.heap().get_string(*href) {
             Ok(s) => s.to_string(),
             Err(e) => return PreHookResult::Error(format!("heap allocation failed: {e}")),

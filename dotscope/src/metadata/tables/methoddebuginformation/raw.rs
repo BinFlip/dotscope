@@ -222,8 +222,9 @@ impl TableRow for MethodDebugInformationRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            sizes.table_index_bytes(TableId::Document) + // document
-            sizes.blob_bytes()  // sequence_points
+            /* document */        sizes.table_index_bytes(TableId::Document)
+            /* sequence_points */ .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

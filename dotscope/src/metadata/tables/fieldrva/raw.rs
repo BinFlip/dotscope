@@ -165,8 +165,9 @@ impl TableRow for FieldRvaRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* rva */   4 +
-            /* field */ sizes.table_index_bytes(TableId::Field)
+            /* rva */   4u8
+            /* field */ .saturating_add(sizes.table_index_bytes(TableId::Field))
+
         )
     }
 }

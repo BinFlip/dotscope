@@ -122,10 +122,11 @@ impl LiveVariables {
             for phi in block.phi_nodes() {
                 for op in phi.operands() {
                     let pred = op.predecessor();
-                    if pred < use_sets.len() {
-                        if let Some(var_idx) = ssa.var_index(op.value()) {
-                            if !def_sets[pred].contains(var_idx) {
-                                use_sets[pred].insert(var_idx);
+                    if let Some(var_idx) = ssa.var_index(op.value()) {
+                        let already_def = def_sets.get(pred).is_some_and(|s| s.contains(var_idx));
+                        if !already_def {
+                            if let Some(slot) = use_sets.get_mut(pred) {
+                                slot.insert(var_idx);
                             }
                         }
                     }
@@ -189,10 +190,14 @@ impl DataFlowAnalysis for LiveVariables {
         let mut result = output.live.clone();
 
         // Remove definitions (OUT - DEF)
-        result.difference_with(&self.def_sets[block_id]);
+        if let Some(d) = self.def_sets.get(block_id) {
+            result.difference_with(d);
+        }
 
         // Add uses (USE ∪ ...)
-        result.union_with(&self.use_sets[block_id]);
+        if let Some(u) = self.use_sets.get(block_id) {
+            result.union_with(u);
+        }
 
         LivenessResult { live: result }
     }

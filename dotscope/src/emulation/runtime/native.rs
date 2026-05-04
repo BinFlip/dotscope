@@ -255,34 +255,41 @@ fn register_virtual_protect(manager: &HookManager) -> Result<()> {
                 }
 
                 // Validate lpAddress is not null
-                let lp_address = match &args[0] {
-                    EmValue::UnmanagedPtr(addr) if *addr != 0 => *addr,
-                    EmValue::NativeInt(addr) if *addr > 0 => (*addr).cast_unsigned(),
-                    EmValue::NativeUInt(addr) if *addr > 0 => *addr,
+                let lp_address = match args.first() {
+                    Some(EmValue::UnmanagedPtr(addr)) if *addr != 0 => *addr,
+                    Some(EmValue::NativeInt(addr)) if *addr > 0 => (*addr).cast_unsigned(),
+                    Some(EmValue::NativeUInt(addr)) if *addr > 0 => *addr,
                     _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
                 };
 
                 // Validate dwSize is non-zero
                 #[allow(clippy::cast_possible_truncation)]
-                let dw_size = match &args[1] {
-                    EmValue::I32(size) if *size > 0 => (*size).cast_unsigned() as usize,
-                    EmValue::NativeInt(size) if *size > 0 => (*size).cast_unsigned() as usize,
-                    EmValue::NativeUInt(size) if *size > 0 => *size as usize,
+                let dw_size = match args.get(1) {
+                    Some(EmValue::I32(size)) if *size > 0 => (*size).cast_unsigned() as usize,
+                    Some(EmValue::NativeInt(size)) if *size > 0 => (*size).cast_unsigned() as usize,
+                    Some(EmValue::NativeUInt(size)) if *size > 0 => *size as usize,
                     _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
                 };
 
                 // Get the new protection value
                 #[allow(clippy::cast_possible_truncation)]
-                let fl_new_protect = match &args[2] {
-                    EmValue::I32(p) => (*p).cast_unsigned(),
-                    EmValue::NativeInt(p) => (*p).cast_unsigned() as u32,
-                    EmValue::NativeUInt(p) => *p as u32,
+                let fl_new_protect = match args.get(2) {
+                    Some(EmValue::I32(p)) => (*p).cast_unsigned(),
+                    Some(EmValue::NativeInt(p)) => (*p).cast_unsigned() as u32,
+                    Some(EmValue::NativeUInt(p)) => *p as u32,
                     _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
                 };
 
                 // Check if address range is valid
                 let space = thread.address_space();
-                if !space.is_valid(lp_address) || !space.is_valid(lp_address + dw_size as u64 - 1) {
+                let last_addr = match (dw_size as u64)
+                    .checked_sub(1)
+                    .and_then(|s| lp_address.checked_add(s))
+                {
+                    Some(v) => v,
+                    None => return PreHookResult::Bypass(Some(EmValue::I32(0))),
+                };
+                if !space.is_valid(lp_address) || !space.is_valid(last_addr) {
                     return PreHookResult::Bypass(Some(EmValue::I32(0)));
                 }
 
@@ -297,15 +304,18 @@ fn register_virtual_protect(manager: &HookManager) -> Result<()> {
 
                 // Write old protection value to the out parameter
                 let old_protect_value = EmValue::I32(old_protect_windows.cast_signed());
-                match &args[3] {
-                    EmValue::ManagedPtr(ptr)
+                match args.get(3) {
+                    None => {
+                        // missing arg - treat as null pointer (allowed)
+                    }
+                    Some(EmValue::ManagedPtr(ptr))
                         if thread
                             .store_through_pointer(ptr, old_protect_value)
                             .is_err() =>
                     {
                         return PreHookResult::Bypass(Some(EmValue::I32(0)));
                     }
-                    EmValue::UnmanagedPtr(addr) if *addr != 0 => {
+                    Some(EmValue::UnmanagedPtr(addr)) if *addr != 0 => {
                         let old_protect_bytes = old_protect_windows.to_le_bytes();
                         if thread
                             .address_space()
@@ -315,7 +325,7 @@ fn register_virtual_protect(manager: &HookManager) -> Result<()> {
                             return PreHookResult::Bypass(Some(EmValue::I32(0)));
                         }
                     }
-                    EmValue::NativeInt(addr) if *addr > 0 => {
+                    Some(EmValue::NativeInt(addr)) if *addr > 0 => {
                         let old_protect_bytes = old_protect_windows.to_le_bytes();
                         if thread
                             .address_space()
@@ -325,7 +335,7 @@ fn register_virtual_protect(manager: &HookManager) -> Result<()> {
                             return PreHookResult::Bypass(Some(EmValue::I32(0)));
                         }
                     }
-                    EmValue::NativeUInt(addr) if *addr > 0 => {
+                    Some(EmValue::NativeUInt(addr)) if *addr > 0 => {
                         let old_protect_bytes = old_protect_windows.to_le_bytes();
                         if thread
                             .address_space()
@@ -404,16 +414,11 @@ fn register_virtual_free(manager: &HookManager) -> Result<()> {
                 // Returns BOOL: 1 = success, 0 = failure
                 let args = ctx.args;
 
-                // Validate we have enough arguments
-                if args.is_empty() {
-                    return PreHookResult::Bypass(Some(EmValue::I32(0)));
-                }
-
                 // Validate lpAddress is not null
-                let lp_address = match &args[0] {
-                    EmValue::UnmanagedPtr(addr) if *addr != 0 => *addr,
-                    EmValue::NativeInt(addr) if *addr > 0 => (*addr).cast_unsigned(),
-                    EmValue::NativeUInt(addr) if *addr > 0 => *addr,
+                let lp_address = match args.first() {
+                    Some(EmValue::UnmanagedPtr(addr)) if *addr != 0 => *addr,
+                    Some(EmValue::NativeInt(addr)) if *addr > 0 => (*addr).cast_unsigned(),
+                    Some(EmValue::NativeUInt(addr)) if *addr > 0 => *addr,
                     _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
                 };
 
@@ -612,25 +617,20 @@ fn register_check_remote_debugger_present(manager: &HookManager) -> Result<()> {
                 // Returns BOOL: 1 = success, 0 = failure
                 let args = ctx.args;
 
-                // Validate we have enough arguments
-                if args.len() < 2 {
-                    return PreHookResult::Bypass(Some(EmValue::I32(0)));
-                }
-
                 // Validate hProcess is a valid handle (-1 for current process, or non-null)
-                match &args[0] {
-                    EmValue::NativeInt(-1) => {} // Current process pseudo-handle is valid
-                    EmValue::NativeInt(h) if *h > 0 => {}
-                    EmValue::NativeUInt(h) if *h > 0 => {}
-                    EmValue::UnmanagedPtr(h) if *h > 0 => {}
+                match args.first() {
+                    Some(EmValue::NativeInt(-1)) => {} // Current process pseudo-handle is valid
+                    Some(EmValue::NativeInt(h)) if *h > 0 => {}
+                    Some(EmValue::NativeUInt(h)) if *h > 0 => {}
+                    Some(EmValue::UnmanagedPtr(h)) if *h > 0 => {}
                     _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
                 }
 
                 // Get output pointer address - must be valid
-                let output_addr = match &args[1] {
-                    EmValue::UnmanagedPtr(addr) if *addr != 0 => *addr,
-                    EmValue::NativeInt(addr) if *addr > 0 => (*addr).cast_unsigned(),
-                    EmValue::NativeUInt(addr) if *addr > 0 => *addr,
+                let output_addr = match args.get(1) {
+                    Some(EmValue::UnmanagedPtr(addr)) if *addr != 0 => *addr,
+                    Some(EmValue::NativeInt(addr)) if *addr > 0 => (*addr).cast_unsigned(),
+                    Some(EmValue::NativeUInt(addr)) if *addr > 0 => *addr,
                     _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
                 };
 

@@ -61,7 +61,7 @@ impl BitSet {
         // Clear the excess bits in the last word
         if !capacity.is_multiple_of(64) {
             if let Some(last) = words.last_mut() {
-                *last = (1u64 << (capacity % 64)) - 1;
+                *last = (1u64 << (capacity % 64)).saturating_sub(1);
             }
         }
 
@@ -95,8 +95,11 @@ impl BitSet {
         let word = index / 64;
         let bit = index % 64;
         let mask = 1u64 << bit;
-        let was_set = self.words[word] & mask != 0;
-        self.words[word] |= mask;
+        let Some(slot) = self.words.get_mut(word) else {
+            return false;
+        };
+        let was_set = *slot & mask != 0;
+        *slot |= mask;
         !was_set
     }
 
@@ -109,7 +112,9 @@ impl BitSet {
         assert!(index < self.len, "index out of bounds");
         let word = index / 64;
         let bit = index % 64;
-        self.words[word] &= !(1u64 << bit);
+        if let Some(slot) = self.words.get_mut(word) {
+            *slot &= !(1u64 << bit);
+        }
     }
 
     /// Returns `true` if the bit at the given index is set.
@@ -122,7 +127,9 @@ impl BitSet {
         assert!(index < self.len, "index out of bounds");
         let word = index / 64;
         let bit = index % 64;
-        (self.words[word] & (1u64 << bit)) != 0
+        self.words
+            .get(word)
+            .is_some_and(|w| (w & (1u64 << bit)) != 0)
     }
 
     /// Returns the number of bits set.
@@ -146,7 +153,7 @@ impl BitSet {
         // Clear excess bits in last word
         if !self.len.is_multiple_of(64) {
             if let Some(last) = self.words.last_mut() {
-                *last = (1u64 << (self.len % 64)) - 1;
+                *last = (1u64 << (self.len % 64)).saturating_sub(1);
             }
         }
     }
@@ -231,18 +238,22 @@ impl Iterator for BitSetIter<'_> {
 
     fn next(&mut self) -> Option<Self::Item> {
         while self.word_idx < self.set.words.len() {
-            let word = self.set.words[self.word_idx];
+            let word = *self.set.words.get(self.word_idx)?;
             while self.bit_idx < 64 {
-                let idx = self.word_idx * 64 + self.bit_idx;
+                let idx = self
+                    .word_idx
+                    .checked_mul(64)
+                    .and_then(|v| v.checked_add(self.bit_idx))?;
                 if idx >= self.set.len {
                     return None;
                 }
-                self.bit_idx += 1;
-                if (word & (1u64 << (self.bit_idx - 1))) != 0 {
+                let bit = self.bit_idx;
+                self.bit_idx = self.bit_idx.saturating_add(1);
+                if (word & (1u64 << bit)) != 0 {
                     return Some(idx);
                 }
             }
-            self.word_idx += 1;
+            self.word_idx = self.word_idx.saturating_add(1);
             self.bit_idx = 0;
         }
         None

@@ -191,7 +191,7 @@ impl Technique for ConfuserExNativeHelpers {
             log::warn!(
                 "Converted {}/{} native x86 methods to CIL (failures: {})",
                 stats.converted,
-                stats.converted + stats.failed,
+                stats.converted.saturating_add(stats.failed),
                 stats.errors.join(", ")
             );
         }

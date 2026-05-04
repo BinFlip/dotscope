@@ -133,8 +133,12 @@ impl ControlFlowSimplificationPass {
                             .copied()
                             .filter(|&t| t != block_idx)
                             .collect();
-                        if !non_self.is_empty() && non_self.iter().all(|t| *t == non_self[0]) {
-                            Some((block_idx, non_self[0]))
+                        if let Some(&first) = non_self.first() {
+                            if non_self.iter().all(|t| *t == first) {
+                                Some((block_idx, first))
+                            } else {
+                                None
+                            }
                         } else {
                             None
                         }
@@ -172,7 +176,7 @@ impl ControlFlowSimplificationPass {
             .map(|&t| (t, resolve_chain(trampolines, t)))
             .collect();
 
-        let mut threaded_count = 0;
+        let mut threaded_count: usize = 0;
 
         for block_idx in 0..ssa.block_count() {
             if let Some(block) = ssa.block_mut(block_idx) {
@@ -194,7 +198,7 @@ impl ControlFlowSimplificationPass {
                             .record(EventKind::ControlFlowRestructured)
                             .at(method_token, block_idx)
                             .message(format!("jump threaded: {old_targets:?} -> {new_targets:?}"));
-                        threaded_count += 1;
+                        threaded_count = threaded_count.saturating_add(1);
                     }
                 }
             }
@@ -223,7 +227,7 @@ impl ControlFlowSimplificationPass {
         method_token: Token,
         changes: &mut EventLog,
     ) -> usize {
-        let mut simplified_count = 0;
+        let mut simplified_count: usize = 0;
 
         for &(block_idx, target) in same_target_branches {
             if let Some(block) = ssa.block_mut(block_idx) {
@@ -235,7 +239,7 @@ impl ControlFlowSimplificationPass {
                         .message(format!(
                             "branch to same target simplified: B{block_idx} branch -> jump B{target}"
                         ));
-                    simplified_count += 1;
+                    simplified_count = simplified_count.saturating_add(1);
                 }
             }
         }
@@ -261,7 +265,7 @@ impl ControlFlowSimplificationPass {
         method_token: Token,
         changes: &mut EventLog,
     ) -> usize {
-        let mut removed_count = 0;
+        let mut removed_count: usize = 0;
 
         for &(block_idx, start_idx) in dead_tails {
             if let Some(block) = ssa.block_mut(block_idx) {
@@ -269,7 +273,7 @@ impl ControlFlowSimplificationPass {
                 let to_remove = instr_count.saturating_sub(start_idx);
                 for _ in 0..to_remove {
                     block.instructions_mut().pop();
-                    removed_count += 1;
+                    removed_count = removed_count.saturating_add(1);
                 }
                 if to_remove > 0 {
                     changes
@@ -297,29 +301,39 @@ impl ControlFlowSimplificationPass {
     ///
     /// The total number of changes made during this iteration.
     fn run_iteration(ssa: &mut SsaFunction, method_token: Token, changes: &mut EventLog) -> usize {
-        let mut total_changes = 0;
+        let mut total_changes: usize = 0;
 
         // Step 1: Find and apply jump threading (don't skip entry block)
         let trampolines = ssa.find_trampoline_blocks(false);
         if !trampolines.is_empty() {
-            total_changes += Self::apply_jump_threading(ssa, &trampolines, method_token, changes);
+            total_changes = total_changes.saturating_add(Self::apply_jump_threading(
+                ssa,
+                &trampolines,
+                method_token,
+                changes,
+            ));
         }
 
         // Step 2: Simplify branches to same target (also resolves through trampolines)
         let same_target_branches = Self::find_same_target_branches(ssa, &trampolines);
         if !same_target_branches.is_empty() {
-            total_changes += Self::simplify_same_target_branches(
+            total_changes = total_changes.saturating_add(Self::simplify_same_target_branches(
                 ssa,
                 &same_target_branches,
                 method_token,
                 changes,
-            );
+            ));
         }
 
         // Step 3: Remove dead tails
         let dead_tails = find_dead_tails(ssa);
         if !dead_tails.is_empty() {
-            total_changes += Self::remove_dead_tails(ssa, &dead_tails, method_token, changes);
+            total_changes = total_changes.saturating_add(Self::remove_dead_tails(
+                ssa,
+                &dead_tails,
+                method_token,
+                changes,
+            ));
         }
 
         total_changes

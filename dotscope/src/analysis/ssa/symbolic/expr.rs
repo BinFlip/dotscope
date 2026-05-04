@@ -683,8 +683,10 @@ impl SymbolicExpr {
     pub fn depth(&self) -> usize {
         match self {
             Self::Constant(_) | Self::Variable(_) | Self::NamedVar(_) => 0,
-            Self::Unary { operand, .. } => 1 + operand.depth(),
-            Self::Binary { left, right, .. } => 1 + left.depth().max(right.depth()),
+            Self::Unary { operand, .. } => 1usize.saturating_add(operand.depth()),
+            Self::Binary { left, right, .. } => {
+                1usize.saturating_add(left.depth().max(right.depth()))
+            }
         }
     }
 }

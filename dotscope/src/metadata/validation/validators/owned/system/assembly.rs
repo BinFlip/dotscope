@@ -257,14 +257,20 @@ impl OwnedAssemblyValidator {
         match parts.len() {
             1 => {
                 // Language only (e.g., "en", "fr")
-                parts[0].len() == 2 && parts[0].chars().all(|c| c.is_ascii_lowercase())
+                let Some(lang) = parts.first() else {
+                    return false;
+                };
+                lang.len() == 2 && lang.chars().all(|c| c.is_ascii_lowercase())
             }
             2 => {
                 // Language-Country (e.g., "en-US", "fr-FR")
-                parts[0].len() == 2
-                    && parts[0].chars().all(|c| c.is_ascii_lowercase())
-                    && parts[1].len() == 2
-                    && parts[1].chars().all(|c| c.is_ascii_uppercase())
+                let (Some(lang), Some(country)) = (parts.first(), parts.get(1)) else {
+                    return false;
+                };
+                lang.len() == 2
+                    && lang.chars().all(|c| c.is_ascii_lowercase())
+                    && country.len() == 2
+                    && country.chars().all(|c| c.is_ascii_uppercase())
             }
             _ => false,
         }

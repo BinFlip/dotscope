@@ -317,7 +317,12 @@ impl MethodSpecBuilder {
             ));
         }
 
-        let arg_count = instantiation[0];
+        let arg_count = *instantiation.first().ok_or_else(|| {
+            Error::ModificationInvalid(
+                "Instantiation signature must contain at least the generic argument count"
+                    .to_string(),
+            )
+        })?;
         if arg_count == 0 {
             return Err(Error::ModificationInvalid(
                 "Generic argument count cannot be zero".to_string(),

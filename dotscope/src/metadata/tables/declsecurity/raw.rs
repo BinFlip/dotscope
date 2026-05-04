@@ -247,9 +247,10 @@ impl TableRow for DeclSecurityRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* action */         2 +
-            /* parent */         sizes.coded_index_bytes(CodedIndexType::HasDeclSecurity) +
-            /* permission_set */ sizes.blob_bytes()
+            /* action */         2u8
+            /* parent */         .saturating_add(sizes.coded_index_bytes(CodedIndexType::HasDeclSecurity))
+            /* permission_set */ .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

@@ -363,9 +363,13 @@ fn find_decryption_sites(
         let mut all_found = true;
 
         for (arg_idx, arg_var) in args.iter().enumerate() {
-            if let Some(&(blk, idx, token)) = ldsfld_index.get(arg_var) {
-                ldsfld_locations[arg_idx] = (blk, idx);
-                field_tokens[arg_idx] = token;
+            if let (Some(&(blk, idx, token)), Some(loc), Some(tok)) = (
+                ldsfld_index.get(arg_var),
+                ldsfld_locations.get_mut(arg_idx),
+                field_tokens.get_mut(arg_idx),
+            ) {
+                *loc = (blk, idx);
+                *tok = token;
             } else {
                 all_found = false;
                 break;

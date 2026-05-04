@@ -256,7 +256,9 @@ impl ProjectLoader {
         info!(
             "Project loaded: {}/{} assemblies",
             result.success_count(),
-            result.success_count() + result.failure_count()
+            result
+                .success_count()
+                .saturating_add(result.failure_count())
         );
         Ok(result)
     }

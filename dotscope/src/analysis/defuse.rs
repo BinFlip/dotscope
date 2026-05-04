@@ -163,7 +163,7 @@ impl DefUseIndex {
         let max_var_idx = ssa
             .variables()
             .iter()
-            .map(|v| v.id().index() + 1)
+            .map(|v| v.id().index().saturating_add(1))
             .max()
             .unwrap_or(0);
         let bitset_capacity = max_var_idx.max(variable_count);
@@ -591,9 +591,13 @@ impl DefUseIndex {
     /// The single use site, or `None` if the variable has zero or multiple uses.
     #[must_use]
     pub fn single_use_site(&self, var: SsaVarId) -> Option<UseSite> {
-        self.uses
-            .get(&var)
-            .and_then(|uses| if uses.len() == 1 { Some(uses[0]) } else { None })
+        self.uses.get(&var).and_then(|uses| {
+            if uses.len() == 1 {
+                uses.first().copied()
+            } else {
+                None
+            }
+        })
     }
 }
 

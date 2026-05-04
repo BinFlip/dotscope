@@ -1012,34 +1012,41 @@ impl<'a> TablesHeader<'a> {
             return Err(out_of_bounds_error!());
         }
 
-        let valid_bitvec = read_le::<u64>(&data[8..])?;
+        let valid_bitvec = read_le::<u64>(data.get(8..).ok_or(out_of_bounds_error!())?)?;
         if valid_bitvec == 0 {
             return Err(malformed_error!("No valid rows in any of the tables"));
         }
 
+        let tables_offset = 24usize
+            .checked_add((valid_bitvec.count_ones() as usize).saturating_mul(4))
+            .ok_or_else(|| malformed_error!("Tables header offset overflow"))?;
+        let table_capacity = (TableId::CustomDebugInformation as usize).saturating_add(1);
+
         let mut tables_header = TablesHeader {
-            major_version: read_le::<u8>(&data[4..])?,
-            minor_version: read_le::<u8>(&data[5..])?,
+            major_version: read_le::<u8>(data.get(4..).ok_or(out_of_bounds_error!())?)?,
+            minor_version: read_le::<u8>(data.get(5..).ok_or(out_of_bounds_error!())?)?,
             valid: valid_bitvec,
-            sorted: read_le::<u64>(&data[16..])?,
+            sorted: read_le::<u64>(data.get(16..).ok_or(out_of_bounds_error!())?)?,
             info: Arc::new(TableInfo::new(data, valid_bitvec)?),
-            tables_offset: (24 + valid_bitvec.count_ones() * 4) as usize,
-            tables: Vec::with_capacity(TableId::CustomDebugInformation as usize + 1),
+            tables_offset,
+            tables: Vec::with_capacity(table_capacity),
         };
 
         // with_capacity has allocated the buffer, but we can't 'insert' elements, only push
         // to make the vector grow - as .insert doesn't adjust length, only push does.
-        tables_header
-            .tables
-            .resize_with(TableId::CustomDebugInformation as usize + 1, || None);
+        tables_header.tables.resize_with(table_capacity, || None);
 
-        let mut current_offset = tables_header.tables_offset as usize;
+        let mut current_offset = tables_header.tables_offset;
         for table_id in TableId::iter() {
             if current_offset > data.len() {
                 return Err(out_of_bounds_error!());
             }
 
-            tables_header.add_table(&data[current_offset..], table_id, &mut current_offset)?;
+            tables_header.add_table(
+                data.get(current_offset..).ok_or(out_of_bounds_error!())?,
+                table_id,
+                &mut current_offset,
+            )?;
         }
 
         Ok(tables_header)
@@ -1546,7 +1553,7 @@ impl<'a> TablesHeader<'a> {
     pub fn header_size(&self) -> usize {
         // Fixed header: 24 bytes
         // Row counts: 4 bytes per present table
-        24 + (self.valid.count_ones() as usize * 4)
+        24usize.saturating_add((self.valid.count_ones() as usize).saturating_mul(4))
     }
 }
 

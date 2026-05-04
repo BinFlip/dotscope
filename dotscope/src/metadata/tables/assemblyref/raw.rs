@@ -21,7 +21,7 @@
 //!
 //! The `AssemblyRef` table (0x23) contains zero or more rows with these fields:
 //! - **`MajorVersion`** (2 bytes): Major version number
-//! - **`MinorVersion`** (2 bytes): Minor version number  
+//! - **`MinorVersion`** (2 bytes): Minor version number
 //! - **`BuildNumber`** (2 bytes): Build number
 //! - **`RevisionNumber`** (2 bytes): Revision number
 //! - **Flags** (4 bytes): Assembly flags bitmask
@@ -240,15 +240,16 @@ impl TableRow for AssemblyRefRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* major_version */       2 +
-            /* minor_version */       2 +
-            /* build_number */        2 +
-            /* revision_number */     2 +
-            /* flags */               4 +
-            /* public_key_or_token */ sizes.blob_bytes() +
-            /* name */                sizes.str_bytes() +
-            /* culture */             sizes.str_bytes() +
-            /* hash_value */          sizes.blob_bytes()
+            /* major_version */       2u8
+            /* minor_version */       .saturating_add(2)
+            /* build_number */        .saturating_add(2)
+            /* revision_number */     .saturating_add(2)
+            /* flags */               .saturating_add(4)
+            /* public_key_or_token */ .saturating_add(sizes.blob_bytes())
+            /* name */                .saturating_add(sizes.str_bytes())
+            /* culture */             .saturating_add(sizes.str_bytes())
+            /* hash_value */          .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

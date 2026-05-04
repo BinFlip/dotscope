@@ -121,7 +121,7 @@ impl BlockMergingPass {
         // Maps: (trampoline, ultimate_target) → [predecessor blocks that were redirected]
         let mut redirected_preds: BTreeMap<(usize, usize), Vec<usize>> = BTreeMap::new();
 
-        let mut redirected = 0;
+        let mut redirected: usize = 0;
 
         // Update all branch targets in all blocks
         for block_idx in 0..ssa.block_count() {
@@ -150,7 +150,7 @@ impl BlockMergingPass {
                             .message(format!(
                                 "redirected through trampoline: {old_targets:?} -> {new_targets:?}"
                             ));
-                        redirected += 1;
+                        redirected = redirected.saturating_add(1);
                     }
                 }
             }
@@ -216,7 +216,7 @@ impl BlockMergingPass {
         method_token: Token,
         changes: &mut EventLog,
     ) -> usize {
-        let mut cleared = 0;
+        let mut cleared: usize = 0;
 
         for &block_idx in trampolines.keys() {
             if let Some(block) = ssa.block_mut(block_idx) {
@@ -226,7 +226,7 @@ impl BlockMergingPass {
                         .record(EventKind::BlockRemoved)
                         .at(method_token, block_idx)
                         .message(format!("cleared trampoline block B{block_idx}"));
-                    cleared += 1;
+                    cleared = cleared.saturating_add(1);
                 }
             }
         }
@@ -250,7 +250,7 @@ impl BlockMergingPass {
             Self::redirect_to_ultimate_targets(ssa, &trampolines, method_token, changes);
         let cleared = Self::clear_trampolines(ssa, &trampolines, method_token, changes);
 
-        redirected + cleared
+        redirected.saturating_add(cleared)
     }
 
     /// Merges blocks connected by a single edge.
@@ -275,7 +275,7 @@ impl BlockMergingPass {
         changes: &mut EventLog,
         max_iterations: usize,
     ) -> usize {
-        let mut merged = 0;
+        let mut merged: usize = 0;
 
         // Collect exception handler boundary blocks.
         //
@@ -312,7 +312,7 @@ impl BlockMergingPass {
 
         // Iterate until fixed point.
         for _ in 0..max_iterations {
-            let mut iteration_merges = 0;
+            let mut iteration_merges: usize = 0;
 
             // Build predecessor counts for all blocks.
             let block_count = ssa.block_count();
@@ -326,13 +326,19 @@ impl BlockMergingPass {
                     .unwrap_or_default();
                 for succ in successors {
                     if succ < block_count {
-                        pred_counts[succ] += 1;
-                        pred_of[succ] = Some(idx);
+                        if let Some(c) = pred_counts.get_mut(succ) {
+                            *c = c.saturating_add(1);
+                        }
+                        if let Some(p) = pred_of.get_mut(succ) {
+                            *p = Some(idx);
+                        }
                     }
                 }
             }
             // Entry block has an implicit edge.
-            pred_counts[0] += 1;
+            if let Some(c) = pred_counts.get_mut(0) {
+                *c = c.saturating_add(1);
+            }
 
             // Find mergeable pairs: A -> B where A's terminator is Jump(B),
             // B has exactly 1 predecessor, and neither is a handler boundary.
@@ -349,7 +355,7 @@ impl BlockMergingPass {
                 if b_idx >= block_count || b_idx == a_idx {
                     continue;
                 }
-                if pred_counts[b_idx] != 1 {
+                if pred_counts.get(b_idx).copied().unwrap_or(0) != 1 {
                     continue;
                 }
                 if no_merge_from.contains(a_idx) || no_merge_into.contains(b_idx) {
@@ -443,10 +449,10 @@ impl BlockMergingPass {
                     .at(method_token, b_idx)
                     .message(format!("coalesced B{b_idx} into B{a_idx}"));
 
-                iteration_merges += 1;
+                iteration_merges = iteration_merges.saturating_add(1);
             }
 
-            merged += iteration_merges;
+            merged = merged.saturating_add(iteration_merges);
             if iteration_merges == 0 {
                 break;
             }
@@ -483,7 +489,7 @@ impl BlockMergingPass {
         let preds = ssa.block_predecessors(target);
         let target_has_phis = ssa.block(target).is_none_or(|b| !b.phi_nodes().is_empty());
 
-        if preds.len() == 1 && preds[0] == 0 && !target_has_phis {
+        if preds.len() == 1 && preds.first().copied() == Some(0) && !target_has_phis {
             // Safe to inline: B_target's only external predecessor is B0 and it
             // has no phis. Move B_target's instructions into B0.
             let target_instrs = ssa

@@ -224,7 +224,13 @@ impl OwnedInheritanceValidator {
         visiting.insert(type_ptr);
 
         if let Some(base_type) = type_entry.base() {
-            self.check_inheritance_cycles(&base_type, visited, visiting, context, depth + 1)?;
+            self.check_inheritance_cycles(
+                &base_type,
+                visited,
+                visiting,
+                context,
+                depth.saturating_add(1),
+            )?;
         }
 
         for (_, entry) in type_entry.interfaces.iter() {
@@ -234,7 +240,7 @@ impl OwnedInheritanceValidator {
                     visited,
                     visiting,
                     context,
-                    depth + 1,
+                    depth.saturating_add(1),
                 )?;
             }
         }

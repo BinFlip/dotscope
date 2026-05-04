@@ -190,7 +190,7 @@ impl RawOperationValidator {
                         }
 
                         // Validate RID allocation is sequential from next_rid
-                        if *rid >= *next_rid + 1000 {
+                        if *rid >= next_rid.saturating_add(1000) {
                             return Err(malformed_error!(
                                 "Insert operation for table {:?} has RID {} too far ahead of next available RID {} - potential RID exhaustion",
                                 table_id,
@@ -292,8 +292,8 @@ impl RawOperationValidator {
                         }
 
                         // Track multiple updates to the same RID (allowed with timestamp ordering)
-                        let update_count = update_rids.entry(*rid).or_insert(0);
-                        *update_count += 1;
+                        let update_count: &mut u32 = update_rids.entry(*rid).or_insert(0);
+                        *update_count = update_count.saturating_add(1);
 
                         if *update_count > 10 {
                             return Err(malformed_error!(
@@ -430,12 +430,14 @@ impl RawOperationValidator {
             if let TableModifications::Sparse { operations, .. } = modifications {
                 // Validate operations are chronologically ordered
                 for window in operations.windows(2) {
-                    if window[0].timestamp > window[1].timestamp {
+                    let first = window.first().ok_or(out_of_bounds_error!())?;
+                    let second = window.get(1).ok_or(out_of_bounds_error!())?;
+                    if first.timestamp > second.timestamp {
                         return Err(malformed_error!(
                             "Operations for table {:?} are not chronologically ordered - timestamp {} > {}",
                             table_id,
-                            window[0].timestamp,
-                            window[1].timestamp
+                            first.timestamp,
+                            second.timestamp
                         ));
                     }
                 }

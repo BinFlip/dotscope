@@ -104,7 +104,7 @@ impl<'a> PipelineRun<'a> {
             if pipeline_iteration > 0 {
                 info!(
                     "Pipeline iteration {}: ByteTransform requested, re-running byte transforms",
-                    pipeline_iteration + 1
+                    pipeline_iteration.saturating_add(1)
                 );
                 assembly = self.run_byte_transforms(assembly)?;
                 self.record_detections();
@@ -174,7 +174,9 @@ impl<'a> PipelineRun<'a> {
             if self.detections.is_transformed(tech.id()) {
                 continue;
             }
-            let detection = self.detections.get(tech.id()).unwrap();
+            let Some(detection) = self.detections.get(tech.id()) else {
+                continue;
+            };
             let tech_start = Instant::now();
             let Some(transform_result) =
                 tech.byte_transform(&mut working, detection, &self.detections)
@@ -308,8 +310,8 @@ impl<'a> PipelineRun<'a> {
             }
             info!(
                 "[technique] SSA re-detected (outer {}, round {}): {}",
-                outer_iteration + 1,
-                *detection_round + 1,
+                outer_iteration.saturating_add(1),
+                detection_round.saturating_add(1),
                 tech.name()
             );
             self.detections.merge(tech.id(), ssa_det);
@@ -320,13 +322,13 @@ impl<'a> PipelineRun<'a> {
             return Ok(false);
         }
 
-        *detection_round += 1;
+        *detection_round = detection_round.saturating_add(1);
         self.record_detections();
 
         let passes_before = scheduler.pass_count();
         self.engine
             .initialize_and_create_passes(ctx, assembly_arc, &self.detections, scheduler);
-        let passes_added = scheduler.pass_count() - passes_before;
+        let passes_added = scheduler.pass_count().saturating_sub(passes_before);
         self.engine.configure_no_inline(ctx);
 
         if passes_added > 0 {
@@ -479,7 +481,7 @@ impl<'a> PipelineRun<'a> {
 
             let round_iterations =
                 scheduler.run_pipeline(ctx, assembly_arc, Some(&ctx.processing_state))?;
-            self.iterations += round_iterations;
+            self.iterations = self.iterations.saturating_add(round_iterations);
 
             let has_pending_work_items = !ctx.work_queue.is_empty();
             let mut detection_added_work = false;
@@ -501,7 +503,7 @@ impl<'a> PipelineRun<'a> {
             if !has_work {
                 debug!(
                     "SSA fixpoint reached after {} iteration(s)",
-                    outer_iteration + 1
+                    outer_iteration.saturating_add(1)
                 );
                 break;
             }
@@ -650,8 +652,11 @@ impl<'a> PipelineRun<'a> {
         }
 
         if neutralized {
-            self.iterations +=
-                scheduler.run_pipeline(ctx, assembly_arc, Some(&ctx.processing_state))?;
+            self.iterations = self.iterations.saturating_add(scheduler.run_pipeline(
+                ctx,
+                assembly_arc,
+                Some(&ctx.processing_state),
+            )?);
         }
 
         Ok(())

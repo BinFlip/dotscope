@@ -71,15 +71,16 @@ impl GenericConstants {
             }
 
             let param_count = method.signature.params.len();
+            let first_param_base = method.signature.params.first().map(|p| &p.base);
 
             // int32(int32) — integer constant accessor
             let is_int_accessor = param_count == 1
-                && matches!(method.signature.params[0].base, TypeSignature::I4)
+                && matches!(first_param_base, Some(TypeSignature::I4))
                 && matches!(method.signature.return_type.base, TypeSignature::I4);
 
             // object(int32) — generic constant accessor
             let is_obj_accessor = param_count == 1
-                && matches!(method.signature.params[0].base, TypeSignature::I4)
+                && matches!(first_param_base, Some(TypeSignature::I4))
                 && matches!(method.signature.return_type.base, TypeSignature::Object);
 
             if !is_int_accessor && !is_obj_accessor {
@@ -180,7 +181,7 @@ impl Technique for GenericConstants {
 
                     // Direct match
                     if let Some(c) = counts.get_mut(&token) {
-                        *c += 1;
+                        *c = c.saturating_add(1);
                         continue;
                     }
 
@@ -191,7 +192,7 @@ impl Technique for GenericConstants {
                             .or_insert_with(|| assembly.resolver().resolve_memberref_method(token));
                         if let Some(resolved_token) = resolved {
                             if let Some(c) = counts.get_mut(resolved_token) {
-                                *c += 1;
+                                *c = c.saturating_add(1);
                             }
                         }
                     }

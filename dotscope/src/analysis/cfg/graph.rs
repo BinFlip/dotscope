@@ -112,7 +112,7 @@ impl ControlFlowGraph<'static> {
 
         let block_count = blocks.len();
         let mut graph: DirectedGraph<BasicBlock, CfgEdge> =
-            DirectedGraph::with_capacity(block_count, block_count * 2);
+            DirectedGraph::with_capacity(block_count, block_count.saturating_mul(2));
 
         // First pass: add all blocks as nodes
         let node_ids: Vec<NodeId> = blocks
@@ -144,7 +144,9 @@ impl ControlFlowGraph<'static> {
                     )));
                 }
 
-                let target_node = node_ids[succ_idx];
+                let target_node = *node_ids
+                    .get(succ_idx)
+                    .ok_or_else(|| GraphError(format!("missing node id {succ_idx}")))?;
                 let edge_kind = Self::classify_edge(flow_type, idx, successors.len());
                 let edge = CfgEdge::new(succ_idx, edge_kind);
 
@@ -153,7 +155,9 @@ impl ControlFlowGraph<'static> {
         }
 
         // Identify entry and exit blocks
-        let entry = node_ids[0]; // Method entry is always block 0
+        let entry = *node_ids
+            .first()
+            .ok_or_else(|| GraphError("method has no entry block".into()))?; // Method entry is always block 0
         let mut exits: Vec<NodeId> = Vec::new();
         for &node_id in &node_ids {
             let block = graph.node(node_id).ok_or_else(|| {
@@ -314,7 +318,7 @@ impl<'a> ControlFlowGraph<'a> {
             }
             Some(FlowType::Switch) => {
                 // For switches: last successor is default, others are cases
-                if successor_index == successor_count - 1 && successor_count > 1 {
+                if successor_count > 1 && successor_index == successor_count.saturating_sub(1) {
                     CfgEdgeKind::Switch { case_value: None }
                 } else {
                     // Switch case indices are bounded by the number of successors,

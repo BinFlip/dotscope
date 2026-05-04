@@ -178,9 +178,10 @@ impl TableRow for FileRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* flags */      4 +
-            /* name */       sizes.str_bytes() +
-            /* hash_value */ sizes.blob_bytes()
+            /* flags */      4u8
+            /* name */       .saturating_add(sizes.str_bytes())
+            /* hash_value */ .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

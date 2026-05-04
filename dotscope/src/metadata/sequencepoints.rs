@@ -282,7 +282,7 @@ impl SequencePoints {
             let il_offset_value = if is_first {
                 point.il_offset
             } else {
-                point.il_offset - prev_il_offset
+                point.il_offset.saturating_sub(prev_il_offset)
             };
             write_compressed_uint(il_offset_value, &mut buffer);
 
@@ -291,7 +291,7 @@ impl SequencePoints {
                 write_compressed_uint(point.start_line, &mut buffer);
             } else {
                 #[allow(clippy::cast_possible_wrap)]
-                let delta = point.start_line as i32 - prev_start_line as i32;
+                let delta = (point.start_line as i32).wrapping_sub(prev_start_line as i32);
                 write_compressed_int(delta, &mut buffer);
             }
 
@@ -299,16 +299,16 @@ impl SequencePoints {
             if is_first {
                 write_compressed_uint(u32::from(point.start_col), &mut buffer);
             } else {
-                let delta = i32::from(point.start_col) - i32::from(prev_start_col);
+                let delta = i32::from(point.start_col).wrapping_sub(i32::from(prev_start_col));
                 write_compressed_int(delta, &mut buffer);
             }
 
             // End Line Delta (unsigned delta from start line)
-            let end_line_delta = point.end_line - point.start_line;
+            let end_line_delta = point.end_line.saturating_sub(point.start_line);
             write_compressed_uint(end_line_delta, &mut buffer);
 
             // End Column Delta (unsigned delta from start column)
-            let end_col_delta = point.end_col - point.start_col;
+            let end_col_delta = point.end_col.saturating_sub(point.start_col);
             write_compressed_uint(u32::from(end_col_delta), &mut buffer);
 
             // Update previous values for next iteration
@@ -348,7 +348,9 @@ pub fn parse_sequence_points(blob: &[u8]) -> Result<SequencePoints> {
         il_offset = if first {
             il_offset_delta
         } else {
-            il_offset + il_offset_delta
+            il_offset
+                .checked_add(il_offset_delta)
+                .ok_or_else(|| malformed_error!("IL offset overflow in sequence points"))?
         };
 
         let start_line_delta = if first {
@@ -385,8 +387,12 @@ pub fn parse_sequence_points(blob: &[u8]) -> Result<SequencePoints> {
         let end_line_delta = parser.read_compressed_uint()?;
         #[allow(clippy::cast_possible_truncation)]
         let end_col_delta = parser.read_compressed_uint()? as u16;
-        let end_line = start_line + end_line_delta;
-        let end_col = start_col + end_col_delta;
+        let end_line = start_line
+            .checked_add(end_line_delta)
+            .ok_or_else(|| malformed_error!("End line overflow in sequence points"))?;
+        let end_col = start_col
+            .checked_add(end_col_delta)
+            .ok_or_else(|| malformed_error!("End column overflow in sequence points"))?;
 
         let is_hidden = start_line == HIDDEN_SEQUENCE_POINT_LINE;
         points.push(SequencePoint {

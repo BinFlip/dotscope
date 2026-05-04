@@ -833,8 +833,8 @@ impl<'a> CascadeRenamer<'a> {
         if let Some(method) = self.assembly.method(&method_token) {
             // param.sequence is 1-based (0 = return type), so index = sequence - 1
             let sig_index = (param_sequence as usize).saturating_sub(1);
-            if sig_index < method.signature.params.len() {
-                context.dotnet_type = Some(method.signature.params[sig_index].to_string());
+            if let Some(param) = method.signature.params.get(sig_index) {
+                context.dotnet_type = Some(param.to_string());
             }
         }
 
@@ -984,7 +984,7 @@ impl<'a> CascadeRenamer<'a> {
                 self.reserve_name(scope_key, &candidate);
                 return candidate;
             }
-            suffix += 1;
+            suffix = suffix.saturating_add(1);
         }
     }
 
@@ -1025,13 +1025,15 @@ fn build_param_owner_map(
         }
 
         // End is next method's param_list or end of table
+        let next_method_rid = method_rid.saturating_add(1);
+        let param_end_default = param_row_count.saturating_add(1);
         let param_end = if method_rid < methoddef_table.row_count {
             methoddef_table
-                .get(method_rid + 1)
+                .get(next_method_rid)
                 .map(|next| next.param_list)
-                .unwrap_or(param_row_count + 1)
+                .unwrap_or(param_end_default)
         } else {
-            param_row_count + 1
+            param_end_default
         };
 
         for param_rid in param_start..param_end {
@@ -1062,13 +1064,15 @@ fn build_member_owner_map(
             continue;
         }
 
+        let next_type_rid = type_rid.saturating_add(1);
+        let end_default = member_row_count.saturating_add(1);
         let end = if type_rid < typedef_table.row_count {
             typedef_table
-                .get(type_rid + 1)
+                .get(next_type_rid)
                 .map(|next| get_list_start(&next))
-                .unwrap_or(member_row_count + 1)
+                .unwrap_or(end_default)
         } else {
-            member_row_count + 1
+            end_default
         };
 
         for member_rid in start..end {
@@ -1099,12 +1103,10 @@ fn generate_phase_label_from_context(
     _prefix: &str,
     _suffix: &str,
 ) -> Option<String> {
-    if !phase.call_targets.is_empty() {
-        // Use the first call target as a label
-        let first = &phase.call_targets[0];
+    if let Some(first) = phase.call_targets.first() {
         // Extract just the method name part
         let label = if let Some(idx) = first.rfind("::") {
-            &first[idx + 2..]
+            first.get(idx.saturating_add(2)..).unwrap_or(first.as_str())
         } else {
             first.as_str()
         };

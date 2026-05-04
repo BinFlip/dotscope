@@ -295,8 +295,14 @@ fn extract_ticks_from_this(ctx: &HookContext<'_>, _thread: &EmulationThread) -> 
 
 /// Converts a Unix timestamp (seconds since 1970-01-01 00:00:00 UTC) to .NET
 /// ticks (100-nanosecond intervals since 0001-01-01 00:00:00 UTC).
+///
+/// Returns [`FALLBACK_TICKS`] if the multiplication or addition overflows
+/// (would only happen for absurd timestamp values that don't represent real dates).
 fn unix_to_ticks(unix_timestamp: u32) -> i64 {
-    UNIX_EPOCH_TICKS + i64::from(unix_timestamp) * TICKS_PER_SECOND
+    i64::from(unix_timestamp)
+        .checked_mul(TICKS_PER_SECOND)
+        .and_then(|secs_ticks| UNIX_EPOCH_TICKS.checked_add(secs_ticks))
+        .unwrap_or(FALLBACK_TICKS)
 }
 
 /// Returns the PE build timestamp as .NET ticks.
@@ -324,13 +330,25 @@ fn is_leap_year(year: i32) -> bool {
 }
 
 /// Returns the number of days in the given month (1-based) of the given year.
+///
+/// Returns 0 if `month` is out of the valid 1..=12 range (so callers using
+/// this for validation will reject the date).
 fn days_in_month(year: i32, month: i32) -> i32 {
     let table = if is_leap_year(year) {
         &DAYS_TO_MONTH_366
     } else {
         &DAYS_TO_MONTH_365
     };
-    (table[month as usize] - table[(month - 1) as usize]) as i32
+    let Ok(m) = usize::try_from(month) else {
+        return 0;
+    };
+    let Some(prev) = m.checked_sub(1) else {
+        return 0;
+    };
+    let (Some(end), Some(start)) = (table.get(m), table.get(prev)) else {
+        return 0;
+    };
+    end.saturating_sub(*start) as i32
 }
 
 /// Computes .NET ticks from a Gregorian date (year, month, day).
@@ -351,10 +369,25 @@ fn date_to_ticks(year: i32, month: i32, day: i32) -> i64 {
     } else {
         &DAYS_TO_MONTH_365
     };
-    let y = year - 1;
-    let total_days =
-        y * 365 + y / 4 - y / 100 + y / 400 + table[(month - 1) as usize] as i32 + day - 1;
-    i64::from(total_days) * TICKS_PER_DAY
+    // year is validated to 1..=9999, so y is 0..=9998 and all sub-products
+    // (y*365, y/4, y/100, y/400) are well within i32 range.
+    let y = year.saturating_sub(1);
+    let Ok(month_idx) = usize::try_from(month.saturating_sub(1)) else {
+        return 0;
+    };
+    let Some(table_entry) = table.get(month_idx) else {
+        return 0;
+    };
+    let table_days = *table_entry as i32;
+    let total_days = y
+        .saturating_mul(365)
+        .saturating_add(y / 4)
+        .saturating_sub(y / 100)
+        .saturating_add(y / 400)
+        .saturating_add(table_days)
+        .saturating_add(day)
+        .saturating_sub(1);
+    i64::from(total_days).saturating_mul(TICKS_PER_DAY)
 }
 
 /// Extracts the Gregorian (year, month, day) from a .NET ticks value.
@@ -364,28 +397,36 @@ fn date_to_ticks(year: i32, month: i32, day: i32) -> i64 {
 /// Gregorian cycle (146,097 days per cycle).
 fn ticks_to_date(ticks: i64) -> (i32, i32, i32) {
     let ticks = ticks & 0x3FFF_FFFF_FFFF_FFFF;
+    // total_days for the supported DateTime range fits comfortably in i32.
     let total_days = (ticks / TICKS_PER_DAY) as i32;
 
-    // Compute year from total days using the 400-year cycle.
+    // Compute year from total days using the 400-year cycle. All intermediate
+    // values are bounded by total_days (<= ~3.65M for year 9999), well within
+    // i32 range, so saturating arithmetic is purely defensive.
     let y400 = total_days / 146_097;
-    let mut remaining = total_days - y400 * 146_097;
+    let mut remaining = total_days.saturating_sub(y400.saturating_mul(146_097));
 
     let mut y100 = remaining / 36_524;
     if y100 == 4 {
         y100 = 3;
     }
-    remaining -= y100 * 36_524;
+    remaining = remaining.saturating_sub(y100.saturating_mul(36_524));
 
     let y4 = remaining / 1_461;
-    remaining -= y4 * 1_461;
+    remaining = remaining.saturating_sub(y4.saturating_mul(1_461));
 
     let mut y1 = remaining / 365;
     if y1 == 4 {
         y1 = 3;
     }
 
-    let year = y400 * 400 + y100 * 100 + y4 * 4 + y1 + 1;
-    remaining -= y1 * 365;
+    let year = y400
+        .saturating_mul(400)
+        .saturating_add(y100.saturating_mul(100))
+        .saturating_add(y4.saturating_mul(4))
+        .saturating_add(y1)
+        .saturating_add(1);
+    remaining = remaining.saturating_sub(y1.saturating_mul(365));
 
     let table = if is_leap_year(year) {
         &DAYS_TO_MONTH_366
@@ -393,11 +434,12 @@ fn ticks_to_date(ticks: i64) -> (i32, i32, i32) {
         &DAYS_TO_MONTH_365
     };
 
-    let mut month = 1;
-    while month < 12 && remaining >= table[month] as i32 {
-        month += 1;
+    let mut month: usize = 1;
+    while month < 12 && table.get(month).is_some_and(|&t| remaining >= t as i32) {
+        month = month.saturating_add(1);
     }
-    let day = remaining - table[month - 1] as i32 + 1;
+    let prev_month_days = table.get(month.saturating_sub(1)).copied().unwrap_or(0) as i32;
+    let day = remaining.saturating_sub(prev_month_days).saturating_add(1);
 
     (year, month as i32, day)
 }
@@ -413,17 +455,17 @@ fn datetime_ctor_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> Pr
         // .ctor(long ticks) — `this` is arg[0] for value type ctors, ticks is arg[1]
         // or ticks is the only arg if this is passed separately
         1 => {
-            if let Some(ticks) = extract_ticks(&ctx.args[0]) {
+            if let Some(ticks) = ctx.args.first().and_then(extract_ticks) {
                 return PreHookResult::Bypass(Some(EmValue::I64(ticks)));
             }
             PreHookResult::Continue
         }
         2 => {
             // Could be .ctor(this, ticks) or .ctor(ticks, DateTimeKind)
-            if let Some(ticks) = extract_ticks(&ctx.args[0]) {
+            if let Some(ticks) = ctx.args.first().and_then(extract_ticks) {
                 return PreHookResult::Bypass(Some(EmValue::I64(ticks)));
             }
-            if let Some(ticks) = extract_ticks(&ctx.args[1]) {
+            if let Some(ticks) = ctx.args.get(1).and_then(extract_ticks) {
                 return PreHookResult::Bypass(Some(EmValue::I64(ticks)));
             }
             PreHookResult::Continue
@@ -433,15 +475,15 @@ fn datetime_ctor_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> Pr
             let (y, m, d) = if n >= 4 {
                 // this, year, month, day
                 (
-                    extract_i32(&ctx.args[1]),
-                    extract_i32(&ctx.args[2]),
-                    extract_i32(&ctx.args[3]),
+                    ctx.args.get(1).and_then(extract_i32),
+                    ctx.args.get(2).and_then(extract_i32),
+                    ctx.args.get(3).and_then(extract_i32),
                 )
             } else {
                 (
-                    extract_i32(&ctx.args[0]),
-                    extract_i32(&ctx.args[1]),
-                    extract_i32(&ctx.args[2]),
+                    ctx.args.first().and_then(extract_i32),
+                    ctx.args.get(1).and_then(extract_i32),
+                    ctx.args.get(2).and_then(extract_i32),
                 )
             };
             if let (Some(year), Some(month), Some(day)) = (y, m, d) {
@@ -530,7 +572,10 @@ fn datetime_add_f64(
         })
         .unwrap_or(0.0);
     let delta = (amount * ticks_per_unit as f64) as i64;
-    PreHookResult::Bypass(Some(EmValue::I64(this_ticks + delta)))
+    // .NET DateTime arithmetic throws OverflowException on tick overflow; we
+    // saturate here to keep the hook fast-path usable instead of aborting.
+    let result = this_ticks.saturating_add(delta);
+    PreHookResult::Bypass(Some(EmValue::I64(result)))
 }
 
 /// Hook for `DateTime.AddDays(double)`.
@@ -557,7 +602,7 @@ fn datetime_add_seconds_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread)
 fn datetime_add_ticks_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
     let this_ticks = extract_ticks_from_this(ctx, thread).unwrap_or(0);
     let delta = ctx.args.last().and_then(extract_ticks).unwrap_or(0);
-    PreHookResult::Bypass(Some(EmValue::I64(this_ticks + delta)))
+    PreHookResult::Bypass(Some(EmValue::I64(this_ticks.saturating_add(delta))))
 }
 
 /// Hook for `DateTime.op_Subtraction(DateTime, DateTime) -> TimeSpan`.
@@ -568,13 +613,12 @@ fn datetime_op_subtraction_pre(
     ctx: &HookContext<'_>,
     _thread: &mut EmulationThread,
 ) -> PreHookResult {
-    if ctx.args.len() >= 2 {
-        let a = extract_ticks(&ctx.args[0]).unwrap_or(0);
-        let b = extract_ticks(&ctx.args[1]).unwrap_or(0);
-        PreHookResult::Bypass(Some(EmValue::I64(a - b)))
-    } else {
-        PreHookResult::Bypass(Some(EmValue::I64(0)))
-    }
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
+        return PreHookResult::Bypass(Some(EmValue::I64(0)));
+    };
+    let a = extract_ticks(arg0).unwrap_or(0);
+    let b = extract_ticks(arg1).unwrap_or(0);
+    PreHookResult::Bypass(Some(EmValue::I64(a.saturating_sub(b))))
 }
 
 /// Shared implementation for DateTime comparison operators.
@@ -582,13 +626,12 @@ fn datetime_op_subtraction_pre(
 /// Extracts ticks from both arguments, applies the given comparison function,
 /// and returns `I32(1)` for true or `I32(0)` for false.
 fn datetime_cmp(ctx: &HookContext<'_>, op: fn(i64, i64) -> bool) -> PreHookResult {
-    if ctx.args.len() >= 2 {
-        let a = extract_ticks(&ctx.args[0]).unwrap_or(0);
-        let b = extract_ticks(&ctx.args[1]).unwrap_or(0);
-        PreHookResult::Bypass(Some(EmValue::I32(i32::from(op(a, b)))))
-    } else {
-        PreHookResult::Bypass(Some(EmValue::I32(0)))
-    }
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
+        return PreHookResult::Bypass(Some(EmValue::I32(0)));
+    };
+    let a = extract_ticks(arg0).unwrap_or(0);
+    let b = extract_ticks(arg1).unwrap_or(0);
+    PreHookResult::Bypass(Some(EmValue::I32(i32::from(op(a, b)))))
 }
 
 /// Hook for `DateTime.op_GreaterThan`.

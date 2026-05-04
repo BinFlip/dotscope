@@ -413,12 +413,17 @@ fn marshal_get_hinstance_pre(
 /// - `startIndex`: Starting index in the array
 /// - `length`: Number of elements to copy
 fn marshal_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 4 {
+    let (Some(arg0), Some(arg1), Some(arg2), Some(arg3)) = (
+        ctx.args.first(),
+        ctx.args.get(1),
+        ctx.args.get(2),
+        ctx.args.get(3),
+    ) else {
         return PreHookResult::Bypass(None);
-    }
+    };
 
     // Check first arg type to determine which overload
-    let src_addr = match &ctx.args[0] {
+    let src_addr = match arg0 {
         EmValue::UnmanagedPtr(a) => Some(*a),
         EmValue::NativeInt(a) => Some((*a).cast_unsigned()),
         _ => None,
@@ -426,24 +431,27 @@ fn marshal_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreH
 
     if let Some(src_addr) = src_addr {
         // Overload: Copy(IntPtr source, byte[] dest, int startIndex, int length)
-        let dst_ref = match &ctx.args[1] {
+        let dst_ref = match arg1 {
             EmValue::ObjectRef(r) => *r,
             _ => return PreHookResult::Bypass(None),
         };
-        let start_idx = match &ctx.args[2] {
+        let start_idx = match arg2 {
             EmValue::I32(v) => (*v).cast_unsigned() as usize,
             _ => return PreHookResult::Bypass(None),
         };
-        let length = match &ctx.args[3] {
+        let length = match arg3 {
             EmValue::I32(v) => (*v).cast_unsigned() as usize,
             _ => return PreHookResult::Bypass(None),
         };
 
         if let Ok(bytes) = thread.address_space().read(src_addr, length) {
             for (i, &byte) in bytes.iter().enumerate() {
+                let Some(idx) = start_idx.checked_add(i) else {
+                    return PreHookResult::Bypass(None);
+                };
                 try_hook!(thread.heap_mut().set_array_element(
                     dst_ref,
-                    start_idx + i,
+                    idx,
                     EmValue::I32(i32::from(byte)),
                 ));
             }
@@ -452,29 +460,32 @@ fn marshal_copy_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreH
     }
 
     // Overload: Copy(byte[] source, int startIndex, IntPtr dest, int length)
-    let EmValue::ObjectRef(src_ref) = &ctx.args[0] else {
+    let EmValue::ObjectRef(src_ref) = arg0 else {
         return PreHookResult::Bypass(None);
     };
-    let start_idx = match &ctx.args[1] {
+    let start_idx = match arg1 {
         EmValue::I32(v) => (*v).cast_unsigned() as usize,
         _ => return PreHookResult::Bypass(None),
     };
-    let dest_addr = match &ctx.args[2] {
+    let dest_addr = match arg2 {
         EmValue::UnmanagedPtr(a) => *a,
         EmValue::NativeInt(a) => (*a).cast_unsigned(),
         _ => return PreHookResult::Bypass(None),
     };
-    let length = match &ctx.args[3] {
+    let length = match arg3 {
         EmValue::I32(v) => (*v).cast_unsigned() as usize,
         _ => return PreHookResult::Bypass(None),
     };
 
     let mut bytes = Vec::with_capacity(length);
     for i in 0..length {
+        let Some(idx) = start_idx.checked_add(i) else {
+            return PreHookResult::Bypass(None);
+        };
         #[allow(clippy::cast_possible_truncation)]
         let byte_val = thread
             .heap()
-            .get_array_element(*src_ref, start_idx + i)
+            .get_array_element(*src_ref, idx)
             .map(|elem| match elem {
                 EmValue::I32(v) => v.cast_unsigned() as u8,
                 _ => 0,
@@ -508,7 +519,8 @@ fn marshal_read_byte_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
     };
 
     if let Ok(bytes) = thread.address_space().read(addr, 1) {
-        PreHookResult::Bypass(Some(EmValue::I32(i32::from(bytes[0]))))
+        let byte = bytes.first().copied().unwrap_or(0);
+        PreHookResult::Bypass(Some(EmValue::I32(i32::from(byte))))
     } else {
         PreHookResult::Bypass(Some(EmValue::I32(0)))
     }
@@ -537,7 +549,10 @@ fn marshal_read_int32_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
     };
 
     if let Ok(bytes) = thread.address_space().read(addr, 4) {
-        let value = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let Some(slice) = bytes.get(0..4).and_then(|s| <[u8; 4]>::try_from(s).ok()) else {
+            return PreHookResult::Bypass(Some(EmValue::I32(0)));
+        };
+        let value = i32::from_le_bytes(slice);
         PreHookResult::Bypass(Some(EmValue::I32(value)))
     } else {
         PreHookResult::Bypass(Some(EmValue::I32(0)))
@@ -561,18 +576,18 @@ fn marshal_read_int32_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
 /// - `val`: Byte value to write
 /// - `o`: Object in unmanaged memory to write to (overload 3)
 fn marshal_write_byte_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(None);
-    }
+    };
 
-    let addr = match &ctx.args[0] {
+    let addr = match arg0 {
         EmValue::UnmanagedPtr(a) => *a,
         EmValue::NativeInt(a) => (*a).cast_unsigned(),
         _ => return PreHookResult::Bypass(None),
     };
 
     #[allow(clippy::cast_possible_truncation)]
-    let value = match &ctx.args[1] {
+    let value = match arg1 {
         EmValue::I32(v) => (*v).cast_unsigned() as u8,
         _ => return PreHookResult::Bypass(None),
     };
@@ -598,15 +613,15 @@ fn marshal_write_byte_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
 /// - `val`: 32-bit value to write
 /// - `o`: Object in unmanaged memory to write to (overload 3)
 fn marshal_write_int32_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
-        return PreHookResult::Bypass(None);
-    }
-
-    let Some(addr) = resolve_address(&ctx.args[0], thread) else {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(None);
     };
 
-    let value = match &ctx.args[1] {
+    let Some(addr) = resolve_address(arg0, thread) else {
+        return PreHookResult::Bypass(None);
+    };
+
+    let value = match arg1 {
         EmValue::I32(v) => *v,
         _ => return PreHookResult::Bypass(None),
     };
@@ -637,9 +652,10 @@ fn marshal_read_int64_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
     let addr = (base_addr as i64).wrapping_add(offset).cast_unsigned();
 
     if let Ok(bytes) = thread.address_space().read(addr, 8) {
-        let value = i64::from_le_bytes([
-            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-        ]);
+        let Some(slice) = bytes.get(0..8).and_then(|s| <[u8; 8]>::try_from(s).ok()) else {
+            return PreHookResult::Bypass(Some(EmValue::I64(0)));
+        };
+        let value = i64::from_le_bytes(slice);
         PreHookResult::Bypass(Some(EmValue::I64(value)))
     } else {
         PreHookResult::Bypass(Some(EmValue::I64(0)))
@@ -670,7 +686,10 @@ fn marshal_read_int16_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
     let addr = (base_addr as i64).wrapping_add(offset).cast_unsigned();
 
     if let Ok(bytes) = thread.address_space().read(addr, 2) {
-        let value = i16::from_le_bytes([bytes[0], bytes[1]]);
+        let Some(slice) = bytes.get(0..2).and_then(|s| <[u8; 2]>::try_from(s).ok()) else {
+            return PreHookResult::Bypass(Some(EmValue::I32(0)));
+        };
+        let value = i16::from_le_bytes(slice);
         PreHookResult::Bypass(Some(EmValue::I32(i32::from(value))))
     } else {
         PreHookResult::Bypass(Some(EmValue::I32(0)))
@@ -703,11 +722,15 @@ fn marshal_read_intptr_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
     let ptr_size = ctx.pointer_size.bytes();
     if let Ok(bytes) = thread.address_space().read(addr, ptr_size) {
         let value = if ptr_size == 8 {
-            i64::from_le_bytes([
-                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6], bytes[7],
-            ])
+            let Some(slice) = bytes.get(0..8).and_then(|s| <[u8; 8]>::try_from(s).ok()) else {
+                return PreHookResult::Bypass(Some(EmValue::NativeInt(0)));
+            };
+            i64::from_le_bytes(slice)
         } else {
-            i64::from(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+            let Some(slice) = bytes.get(0..4).and_then(|s| <[u8; 4]>::try_from(s).ok()) else {
+                return PreHookResult::Bypass(Some(EmValue::NativeInt(0)));
+            };
+            i64::from(i32::from_le_bytes(slice))
         };
         PreHookResult::Bypass(Some(EmValue::NativeInt(value)))
     } else {
@@ -724,25 +747,25 @@ fn marshal_read_intptr_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
 /// - `Marshal.WriteInt64(IntPtr, Int64) -> void`
 /// - `Marshal.WriteInt64(IntPtr, Int32, Int64) -> void`
 fn marshal_write_int64_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(None);
-    }
+    };
 
-    let Some(addr) = resolve_address(&ctx.args[0], thread) else {
+    let Some(addr) = resolve_address(arg0, thread) else {
         return PreHookResult::Bypass(None);
     };
 
     // Two-arg form: WriteInt64(IntPtr, Int64)
     // Three-arg form: WriteInt64(IntPtr, Int32 offset, Int64)
-    let (offset, value) = if ctx.args.len() >= 3 {
-        let ofs = ctx.args[1].as_i32().map(i64::from).unwrap_or(0);
-        let val = match &ctx.args[2] {
+    let (offset, value) = if let Some(arg2) = ctx.args.get(2) {
+        let ofs = arg1.as_i32().map(i64::from).unwrap_or(0);
+        let val = match arg2 {
             EmValue::I64(v) | EmValue::NativeInt(v) => *v,
             _ => return PreHookResult::Bypass(None),
         };
         (ofs, val)
     } else {
-        let val = match &ctx.args[1] {
+        let val = match arg1 {
             EmValue::I64(v) | EmValue::NativeInt(v) => *v,
             _ => return PreHookResult::Bypass(None),
         };
@@ -763,24 +786,24 @@ fn marshal_write_int64_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
 /// - `Marshal.WriteInt16(IntPtr, Int16) -> void`
 /// - `Marshal.WriteInt16(IntPtr, Int32, Int16) -> void`
 fn marshal_write_int16_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(None);
-    }
+    };
 
-    let Some(addr) = resolve_address(&ctx.args[0], thread) else {
+    let Some(addr) = resolve_address(arg0, thread) else {
         return PreHookResult::Bypass(None);
     };
 
     // 3-arg overload: WriteInt16(IntPtr ptr, Int32 offset, Int16 value)
     // 2-arg overload: WriteInt16(IntPtr ptr, Int16 value)
-    let (offset, value_arg) = if ctx.args.len() >= 3 {
-        let off = match &ctx.args[1] {
+    let (offset, value_arg) = if let Some(arg2) = ctx.args.get(2) {
+        let off = match arg1 {
             EmValue::I32(v) => i64::from(*v),
             _ => 0,
         };
-        (off, &ctx.args[2])
+        (off, arg2)
     } else {
-        (0i64, &ctx.args[1])
+        (0i64, arg1)
     };
 
     #[allow(clippy::cast_possible_truncation)]
@@ -803,19 +826,19 @@ fn marshal_write_int16_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
 /// - `Marshal.WriteIntPtr(IntPtr, IntPtr) -> void`
 /// - `Marshal.WriteIntPtr(IntPtr, Int32, IntPtr) -> void`
 fn marshal_write_intptr_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(None);
-    }
+    };
 
-    let Some(addr) = resolve_address(&ctx.args[0], thread) else {
+    let Some(addr) = resolve_address(arg0, thread) else {
         return PreHookResult::Bypass(None);
     };
 
     // Two-arg form: WriteIntPtr(IntPtr, IntPtr)
     // Three-arg form: WriteIntPtr(IntPtr, Int32 offset, IntPtr)
-    let (offset, value) = if ctx.args.len() >= 3 {
-        let ofs = ctx.args[1].as_i32().map(i64::from).unwrap_or(0);
-        let val = match &ctx.args[2] {
+    let (offset, value) = if let Some(arg2) = ctx.args.get(2) {
+        let ofs = arg1.as_i32().map(i64::from).unwrap_or(0);
+        let val = match arg2 {
             EmValue::NativeInt(v) | EmValue::I64(v) => *v,
             EmValue::NativeUInt(v) | EmValue::UnmanagedPtr(v) => (*v).cast_signed(),
             EmValue::I32(v) => i64::from(*v),
@@ -823,7 +846,7 @@ fn marshal_write_intptr_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread)
         };
         (ofs, val)
     } else {
-        let val = match &ctx.args[1] {
+        let val = match arg1 {
             EmValue::NativeInt(v) | EmValue::I64(v) => *v,
             EmValue::NativeUInt(v) | EmValue::UnmanagedPtr(v) => (*v).cast_signed(),
             EmValue::I32(v) => i64::from(*v),
@@ -1176,17 +1199,17 @@ fn intptr_op_explicit_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) 
 /// - `pointer`: The pointer to add to
 /// - `offset`: The offset to add
 fn intptr_add_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::NativeInt(0)));
-    }
+    };
 
-    let ptr = match &ctx.args[0] {
+    let ptr = match arg0 {
         EmValue::NativeInt(v) => *v,
         EmValue::UnmanagedPtr(v) => (*v).cast_signed(),
         _ => return PreHookResult::Bypass(Some(EmValue::NativeInt(0))),
     };
 
-    let offset = match &ctx.args[1] {
+    let offset = match arg1 {
         EmValue::I32(v) => i64::from(*v),
         EmValue::I64(v) => *v,
         _ => return PreHookResult::Bypass(Some(EmValue::NativeInt(ptr))),

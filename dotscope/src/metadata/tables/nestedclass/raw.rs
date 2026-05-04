@@ -207,8 +207,9 @@ impl TableRow for NestedClassRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* nested_class */    sizes.table_index_bytes(TableId::TypeDef) +
-            /* enclosing_class */ sizes.table_index_bytes(TableId::TypeDef)
+            /* nested_class */    sizes.table_index_bytes(TableId::TypeDef)
+            /* enclosing_class */ .saturating_add(sizes.table_index_bytes(TableId::TypeDef))
+
         )
     }
 }

@@ -104,14 +104,15 @@ where
     let mut in_degree: Vec<usize> = vec![0; node_count];
     for node in graph.node_ids() {
         for _ in graph.predecessors(node) {
-            in_degree[node.index()] += 1;
+            let slot = in_degree.get_mut(node.index())?;
+            *slot = slot.saturating_add(1);
         }
     }
 
     // Initialize queue with nodes having in-degree 0
     let mut queue: VecDeque<NodeId> = VecDeque::new();
     for node in graph.node_ids() {
-        if in_degree[node.index()] == 0 {
+        if *in_degree.get(node.index())? == 0 {
             queue.push_back(node);
         }
     }
@@ -122,8 +123,9 @@ where
         result.push(node);
 
         for successor in graph.successors(node) {
-            in_degree[successor.index()] -= 1;
-            if in_degree[successor.index()] == 0 {
+            let slot = in_degree.get_mut(successor.index())?;
+            *slot = slot.saturating_sub(1);
+            if *slot == 0 {
                 queue.push_back(successor);
             }
         }

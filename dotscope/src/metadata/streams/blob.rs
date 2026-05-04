@@ -352,11 +352,10 @@ impl<'a> Blob<'a> {
     /// - [`iter`](Self::iter): Iterate over all blobs in the heap
     /// - [ECMA-335 II.24.2.4](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf): Blob heap specification
     pub fn from(data: &'a [u8]) -> Result<Blob<'a>> {
-        if data.is_empty() || data[0] != 0 {
-            return Err(malformed_error!("Invalid memory for #Blob heap"));
+        match data.first() {
+            Some(0) => Ok(Blob { data }),
+            _ => Err(malformed_error!("Invalid memory for #Blob heap")),
         }
-
-        Ok(Blob { data })
     }
 
     /// Retrieves a blob from the heap by its offset.
@@ -441,7 +440,7 @@ impl<'a> Blob<'a> {
             return Err(out_of_bounds_error!());
         }
 
-        let mut parser = Parser::new(&self.data[index..]);
+        let mut parser = Parser::new(self.data.get(index..).ok_or(out_of_bounds_error!())?);
         let len = parser.read_compressed_uint()? as usize;
         let skip = parser.pos();
 
@@ -453,11 +452,9 @@ impl<'a> Blob<'a> {
             return Err(out_of_bounds_error!());
         };
 
-        if data_start > self.data.len() || data_end > self.data.len() {
-            return Err(out_of_bounds_error!());
-        }
-
-        Ok(&self.data[data_start..data_end])
+        self.data
+            .get(data_start..data_end)
+            .ok_or(out_of_bounds_error!())
     }
 
     /// Returns an iterator over all blobs in the heap.
@@ -826,10 +823,14 @@ impl<'a> Iterator for BlobIterator<'a> {
         let start_position = self.position;
         match self.blob.get(self.position) {
             Ok(blob_data) => {
-                let mut parser = Parser::new(&self.blob.data[self.position..]);
+                let remainder = self.blob.data.get(self.position..)?;
+                let mut parser = Parser::new(remainder);
                 if parser.read_compressed_uint().is_ok() {
                     let length_bytes = parser.pos();
-                    self.position += length_bytes + blob_data.len();
+                    self.position = self
+                        .position
+                        .saturating_add(length_bytes)
+                        .saturating_add(blob_data.len());
                     Some((start_position, blob_data))
                 } else {
                     None

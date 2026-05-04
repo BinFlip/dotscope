@@ -149,10 +149,10 @@ where
     };
 
     // Second pass: remove in reverse order (mutable borrow)
-    let mut removed_count = 0;
+    let mut removed_count: usize = 0;
     for rid in orphan_rids.into_iter().rev() {
         if try_remove(assembly, T::TABLE_ID, rid) {
-            removed_count += 1;
+            removed_count = removed_count.saturating_add(1);
         }
     }
 
@@ -203,10 +203,10 @@ pub(super) fn remove_orphan_params(assembly: &mut CilAssembly, ctx: &DeletionCon
     orphan_params.sort_unstable_by(|a, b| b.cmp(a));
     orphan_params.dedup();
 
-    let mut removed_count = 0;
+    let mut removed_count: usize = 0;
     for rid in orphan_params {
         if try_remove(assembly, TableId::Param, rid) {
-            removed_count += 1;
+            removed_count = removed_count.saturating_add(1);
         }
     }
 
@@ -389,10 +389,10 @@ pub(super) fn remove_orphan_genericparam(
     let removed_rids: HashSet<u32> = orphan_rids.iter().copied().collect();
 
     // Second pass: remove
-    let mut removed_count = 0;
+    let mut removed_count: usize = 0;
     for rid in orphan_rids.into_iter().rev() {
         if try_remove(assembly, TableId::GenericParam, rid) {
-            removed_count += 1;
+            removed_count = removed_count.saturating_add(1);
         }
     }
 
@@ -499,11 +499,11 @@ pub(super) fn remove_orphan_events(
     orphan_events.sort_unstable_by(|a, b| b.cmp(a));
     orphan_events.dedup();
 
-    let mut removed = 0;
+    let mut removed: usize = 0;
     let mut deleted_tokens = HashSet::new();
     for rid in orphan_events {
         if try_remove(assembly, TableId::Event, rid) {
-            removed += 1;
+            removed = removed.saturating_add(1);
             deleted_tokens.insert(Token::from_parts(TableId::Event, rid));
         }
     }
@@ -560,11 +560,11 @@ pub(super) fn remove_orphan_properties(
     orphan_properties.sort_unstable_by(|a, b| b.cmp(a));
     orphan_properties.dedup();
 
-    let mut removed = 0;
+    let mut removed: usize = 0;
     let mut deleted_tokens = HashSet::new();
     for rid in orphan_properties {
         if try_remove(assembly, TableId::Property, rid) {
-            removed += 1;
+            removed = removed.saturating_add(1);
             deleted_tokens.insert(Token::from_parts(TableId::Property, rid));
         }
     }
@@ -590,10 +590,10 @@ pub(super) fn remove_orphan_standalonesigs(
 
     let alive = collect_referenced_standalonesig_rids(assembly);
 
-    let mut removed = 0;
+    let mut removed: usize = 0;
     for &rid in candidates.iter().rev() {
         if !alive.contains(&rid) && try_remove(assembly, TableId::StandAloneSig, rid) {
-            removed += 1;
+            removed = removed.saturating_add(1);
         }
     }
 
@@ -742,10 +742,10 @@ pub(super) fn remove_orphan_exportedtypes(assembly: &mut CilAssembly) -> (usize,
     };
 
     let mut deleted_rids = HashSet::new();
-    let mut removed = 0;
+    let mut removed: usize = 0;
     for rid in orphan_rids.into_iter().rev() {
         if try_remove(assembly, TableId::ExportedType, rid) {
-            removed += 1;
+            removed = removed.saturating_add(1);
             deleted_rids.insert(rid);
         }
     }
@@ -791,10 +791,10 @@ pub(super) fn remove_orphan_manifestresources(assembly: &mut CilAssembly) -> (us
     };
 
     let mut deleted_rids = HashSet::new();
-    let mut removed = 0;
+    let mut removed: usize = 0;
     for rid in orphan_rids.into_iter().rev() {
         if try_remove(assembly, TableId::ManifestResource, rid) {
-            removed += 1;
+            removed = removed.saturating_add(1);
             deleted_rids.insert(rid);
         }
     }

@@ -72,7 +72,7 @@ impl RowReadable for TypeRefRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(TypeRefRaw {
             rid,
-            token: Token::new(0x0100_0000 + rid),
+            token: Token::new(0x0100_0000u32.saturating_add(rid)),
             offset: *offset,
             resolution_scope: CodedIndex::read(
                 data,

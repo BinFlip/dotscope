@@ -240,7 +240,7 @@ impl FunctionVarAllocator {
     /// Allocates the next dense variable ID.
     pub fn alloc(&mut self) -> SsaVarId {
         let id = SsaVarId::from_index(self.next_id);
-        self.next_id += 1;
+        self.next_id = self.next_id.saturating_add(1);
         id
     }
 

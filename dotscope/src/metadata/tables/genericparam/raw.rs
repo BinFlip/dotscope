@@ -194,10 +194,11 @@ impl TableRow for GenericParamRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* number */ 2 +
-            /* flags */  2 +
-            /* owner */  sizes.coded_index_bytes(CodedIndexType::TypeOrMethodDef) +
-            /* name */   sizes.str_bytes()
+            /* number */ 2u8
+            /* flags */  .saturating_add(2)
+            /* owner */  .saturating_add(sizes.coded_index_bytes(CodedIndexType::TypeOrMethodDef))
+            /* name */   .saturating_add(sizes.str_bytes())
+
         )
     }
 }

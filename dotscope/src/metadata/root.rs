@@ -384,10 +384,10 @@ impl Root {
 
         let mut version_string: String = String::with_capacity(version_string_length as usize);
         for counter in 0..version_string_length {
-            version_string.push(char::from(read_le_at::<u8>(
-                data,
-                &mut (usize::from(VERSION_STRING_OFFSET) + counter as usize),
-            )?));
+            let mut pos = usize::from(VERSION_STRING_OFFSET)
+                .checked_add(counter as usize)
+                .ok_or_else(|| malformed_error!("version string offset overflow"))?;
+            version_string.push(char::from(read_le_at::<u8>(data, &mut pos)?));
         }
 
         // Validate version string format and content
@@ -415,15 +415,18 @@ impl Root {
         }
 
         // Stream count is located after: version_string + FLAGS_FIELD_SIZE
-        let mut stream_count_offset =
-            version_string.len() + usize::from(VERSION_STRING_OFFSET) + FLAGS_FIELD_SIZE;
+        let mut stream_count_offset = version_string
+            .len()
+            .checked_add(usize::from(VERSION_STRING_OFFSET))
+            .and_then(|v| v.checked_add(FLAGS_FIELD_SIZE))
+            .ok_or_else(|| malformed_error!("stream count offset overflow"))?;
         let stream_count = read_le_at::<u16>(data, &mut stream_count_offset)?;
 
         // Validate stream count: must have at least one stream, no more than MAX_STREAM_COUNT
-        if stream_count == 0
-            || stream_count > MAX_STREAM_COUNT
-            || (stream_count as usize * MIN_STREAM_HEADER_SIZE) > data.len()
-        {
+        let stream_count_size = (stream_count as usize)
+            .checked_mul(MIN_STREAM_HEADER_SIZE)
+            .ok_or_else(|| malformed_error!("stream count size overflow"))?;
+        if stream_count == 0 || stream_count > MAX_STREAM_COUNT || stream_count_size > data.len() {
             return Err(malformed_error!(
                 "Root: invalid stream count {} (must be 1-{}) [ECMA-335 §II.24.2.1]",
                 stream_count,
@@ -433,10 +436,12 @@ impl Root {
 
         let mut streams = Vec::with_capacity(stream_count as usize);
         // Stream directory starts after: version_string + FLAGS_FIELD_SIZE + STREAM_COUNT_FIELD_SIZE
-        let mut stream_offset = version_string.len()
-            + usize::from(VERSION_STRING_OFFSET)
-            + FLAGS_FIELD_SIZE
-            + STREAM_COUNT_FIELD_SIZE;
+        let mut stream_offset = version_string
+            .len()
+            .checked_add(usize::from(VERSION_STRING_OFFSET))
+            .and_then(|v| v.checked_add(FLAGS_FIELD_SIZE))
+            .and_then(|v| v.checked_add(STREAM_COUNT_FIELD_SIZE))
+            .ok_or_else(|| malformed_error!("stream directory offset overflow"))?;
         let mut streams_seen = [false; MAX_STREAM_COUNT as usize];
 
         for _i in 0..stream_count {
@@ -444,7 +449,8 @@ impl Root {
                 return Err(out_of_bounds_error!());
             }
 
-            let new_stream = StreamHeader::from(&data[stream_offset..])?;
+            let stream_data = data.get(stream_offset..).ok_or(out_of_bounds_error!())?;
+            let new_stream = StreamHeader::from(stream_data)?;
             if new_stream.offset as usize > data.len()
                 || new_stream.size as usize > data.len()
                 || new_stream.name.len() > MAX_STREAM_NAME_LENGTH
@@ -469,25 +475,44 @@ impl Root {
             }
 
             let stream_index = match new_stream.name.as_str() {
-                "#Strings" => 0,
+                "#Strings" => 0usize,
                 "#US" => 1,
                 "#Blob" => 2,
                 "#GUID" => 3,
                 "#~" => 4,
                 "#-" => 5,
-                _ => unreachable!("StreamHeader::from() should have validated the name"),
+                _ => {
+                    return Err(malformed_error!(
+                        "Root: unrecognized stream name '{}' [ECMA-335 §II.24.2.2]",
+                        new_stream.name
+                    ))
+                }
             };
 
-            if streams_seen[stream_index] {
+            if *streams_seen
+                .get(stream_index)
+                .ok_or(out_of_bounds_error!())?
+            {
                 return Err(malformed_error!(
                     "Root: duplicate stream '{}' found [ECMA-335 §II.24.2.2]",
                     new_stream.name
                 ));
             }
-            streams_seen[stream_index] = true;
+            *streams_seen
+                .get_mut(stream_index)
+                .ok_or(out_of_bounds_error!())? = true;
 
-            let name_aligned = ((new_stream.name.len() + 1) + 3) & !3;
-            stream_offset += STREAM_HEADER_FIXED_SIZE + name_aligned;
+            let name_aligned = new_stream
+                .name
+                .len()
+                .checked_add(1)
+                .and_then(|v| v.checked_add(3))
+                .ok_or_else(|| malformed_error!("stream name alignment overflow"))?
+                & !3usize;
+            stream_offset = stream_offset
+                .checked_add(STREAM_HEADER_FIXED_SIZE)
+                .and_then(|v| v.checked_add(name_aligned))
+                .ok_or_else(|| malformed_error!("stream offset overflow"))?;
 
             streams.push(new_stream);
         }
@@ -498,17 +523,28 @@ impl Root {
             ));
         }
 
+        let flags_offset = usize::from(VERSION_STRING_OFFSET)
+            .checked_add(version_string.len())
+            .ok_or_else(|| malformed_error!("flags offset overflow"))?;
+
         Ok(Root {
             signature,
-            major_version: read_le::<u16>(&data[FIELD_OFFSET_MAJOR_VERSION..])?,
-            minor_version: read_le::<u16>(&data[FIELD_OFFSET_MINOR_VERSION..])?,
-            reserved: read_le::<u32>(&data[FIELD_OFFSET_RESERVED..])?,
+            major_version: read_le::<u16>(
+                data.get(FIELD_OFFSET_MAJOR_VERSION..)
+                    .ok_or(out_of_bounds_error!())?,
+            )?,
+            minor_version: read_le::<u16>(
+                data.get(FIELD_OFFSET_MINOR_VERSION..)
+                    .ok_or(out_of_bounds_error!())?,
+            )?,
+            reserved: read_le::<u32>(
+                data.get(FIELD_OFFSET_RESERVED..)
+                    .ok_or(out_of_bounds_error!())?,
+            )?,
             length: u32::try_from(version_string.len()).map_err(|_| {
                 malformed_error!("Root: version string length too large [ECMA-335 §II.24.2.1]")
             })?,
-            flags: read_le::<u16>(
-                &data[usize::from(VERSION_STRING_OFFSET) + version_string.len()..],
-            )?,
+            flags: read_le::<u16>(data.get(flags_offset..).ok_or(out_of_bounds_error!())?)?,
             stream_number: u16::try_from(streams.len())
                 .map_err(|_| malformed_error!("Root: too many streams [ECMA-335 §II.24.2.1]"))?,
             stream_headers: streams,
@@ -599,7 +635,8 @@ impl Root {
         }
 
         for (i, &(start1, end1, name1)) in stream_ranges.iter().enumerate() {
-            for &(start2, end2, name2) in stream_ranges.iter().skip(i + 1) {
+            let skip = i.saturating_add(1);
+            for &(start2, end2, name2) in stream_ranges.iter().skip(skip) {
                 if start1 < end2 && start2 < end1 {
                     return Err(malformed_error!(
                         "Stream '{}' ({}..{}) overlaps with stream '{}' ({}..{})",
@@ -689,7 +726,11 @@ impl Root {
 
         // Version string length (padded to 4-byte boundary)
         let version_bytes = self.version.as_bytes();
-        let padded_len = (version_bytes.len() + 3) & !3;
+        let padded_len = version_bytes
+            .len()
+            .checked_add(3)
+            .ok_or_else(|| malformed_error!("Version string padded length overflow"))?
+            & !3usize;
         let padded_len_u32 = u32::try_from(padded_len).map_err(|_| {
             malformed_error!(
                 "Version string padded length {} exceeds u32 range",
@@ -700,7 +741,7 @@ impl Root {
 
         // Version string + null padding to 4-byte boundary
         writer.write_all(version_bytes)?;
-        let padding = padded_len - version_bytes.len();
+        let padding = padded_len.saturating_sub(version_bytes.len());
         if padding > 0 {
             writer.write_all(&vec![0u8; padding])?;
         }
@@ -755,19 +796,21 @@ impl Root {
     #[must_use]
     pub fn serialized_size(&self) -> usize {
         // Fixed fields: signature(4) + major(2) + minor(2) + reserved(4) + length(4) + flags(2) + stream_number(2)
-        let fixed_size = 20;
+        let fixed_size = 20usize;
 
         // Version string padded to 4-byte boundary
-        let version_padded = (self.version.len() + 3) & !3;
+        let version_padded = self.version.len().saturating_add(3) & !3usize;
 
         // Stream headers
         let streams_size: usize = self
             .stream_headers
             .iter()
             .map(crate::StreamHeader::serialized_size)
-            .sum();
+            .fold(0usize, usize::saturating_add);
 
-        fixed_size + version_padded + streams_size
+        fixed_size
+            .saturating_add(version_padded)
+            .saturating_add(streams_size)
     }
 }
 

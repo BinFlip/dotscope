@@ -2244,21 +2244,18 @@ fn delegate_combine_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
     let args = ctx.args;
 
     // Extract the two delegate arguments
-    let (a_ref, b_ref) = match args.len() {
-        2 => (args[0].as_object_ref(), args[1].as_object_ref()),
-        _ => return PreHookResult::Bypass(Some(EmValue::Null)),
+    let (Some(arg0), Some(arg1)) = (args.first(), args.get(1)) else {
+        return PreHookResult::Bypass(Some(EmValue::Null));
     };
+    let (a_ref_opt, b_ref_opt) = (arg0.as_object_ref(), arg1.as_object_ref());
 
     // Null-safe: Combine(null, x) = x, Combine(x, null) = x
-    if a_ref.is_none() {
-        return PreHookResult::Bypass(Some(args[1].clone()));
-    }
-    if b_ref.is_none() {
-        return PreHookResult::Bypass(Some(args[0].clone()));
-    }
-
-    let a_ref = a_ref.unwrap();
-    let b_ref = b_ref.unwrap();
+    let Some(a_ref) = a_ref_opt else {
+        return PreHookResult::Bypass(Some(arg1.clone()));
+    };
+    let Some(b_ref) = b_ref_opt else {
+        return PreHookResult::Bypass(Some(arg0.clone()));
+    };
 
     // Get invocation lists from both delegates
     let (type_token, mut entries) = match thread.heap().get(a_ref) {
@@ -2266,14 +2263,14 @@ fn delegate_combine_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
             type_token,
             invocation_list,
         }) => (type_token, invocation_list),
-        _ => return PreHookResult::Bypass(Some(args[0].clone())),
+        _ => return PreHookResult::Bypass(Some(arg0.clone())),
     };
 
     let b_entries = match thread.heap().get(b_ref) {
         Ok(HeapObject::Delegate {
             invocation_list, ..
         }) => invocation_list,
-        _ => return PreHookResult::Bypass(Some(args[0].clone())),
+        _ => return PreHookResult::Bypass(Some(arg0.clone())),
     };
 
     // Concatenate: a's entries followed by b's entries
@@ -2295,29 +2292,29 @@ fn delegate_combine_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
 fn delegate_remove_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
     let args = ctx.args;
 
+    let (Some(arg0), Some(arg1)) = (args.first(), args.get(1)) else {
+        return PreHookResult::Bypass(Some(EmValue::Null));
+    };
     if args.len() != 2 {
         return PreHookResult::Bypass(Some(EmValue::Null));
     }
 
-    let source_ref = args[0].as_object_ref();
-    let value_ref = args[1].as_object_ref();
+    let source_ref_opt = arg0.as_object_ref();
+    let value_ref_opt = arg1.as_object_ref();
 
-    if source_ref.is_none() {
+    let Some(source_ref) = source_ref_opt else {
         return PreHookResult::Bypass(Some(EmValue::Null));
-    }
-    if value_ref.is_none() {
-        return PreHookResult::Bypass(Some(args[0].clone()));
-    }
-
-    let source_ref = source_ref.unwrap();
-    let value_ref = value_ref.unwrap();
+    };
+    let Some(value_ref) = value_ref_opt else {
+        return PreHookResult::Bypass(Some(arg0.clone()));
+    };
 
     let (type_token, mut entries) = match thread.heap().get(source_ref) {
         Ok(HeapObject::Delegate {
             type_token,
             invocation_list,
         }) => (type_token, invocation_list),
-        _ => return PreHookResult::Bypass(Some(args[0].clone())),
+        _ => return PreHookResult::Bypass(Some(arg0.clone())),
     };
 
     let remove_token = match thread.heap().get(value_ref) {
@@ -2327,10 +2324,10 @@ fn delegate_remove_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> P
             if let Some(entry) = invocation_list.last() {
                 entry.method_token
             } else {
-                return PreHookResult::Bypass(Some(args[0].clone()));
+                return PreHookResult::Bypass(Some(arg0.clone()));
             }
         }
-        _ => return PreHookResult::Bypass(Some(args[0].clone())),
+        _ => return PreHookResult::Bypass(Some(arg0.clone())),
     };
 
     // Remove last matching entry
@@ -2666,7 +2663,7 @@ mod tests {
             runtime::hook::{HookContext, PreHookResult},
             EmValue,
         },
-        metadata::typesystem::PointerSize,
+        metadata::{token::Token, typesystem::PointerSize},
         test::emulation::create_test_thread,
     };
 
@@ -2675,7 +2672,7 @@ mod tests {
     #[test]
     fn test_get_module_hook() {
         let ctx = HookContext::new(
-            crate::metadata::token::Token::new(0x0A000001),
+            Token::new(0x0A000001),
             "System",
             "Type",
             "get_Module",
@@ -2695,7 +2692,7 @@ mod tests {
     fn test_get_type_from_handle_hook_with_arg() {
         let args = [EmValue::NativeInt(0x0200_0001)];
         let ctx = HookContext::new(
-            crate::metadata::token::Token::new(0x0A000001),
+            Token::new(0x0A000001),
             "System",
             "Type",
             "GetTypeFromHandle",
@@ -2715,7 +2712,7 @@ mod tests {
     #[test]
     fn test_get_type_from_handle_hook_no_arg_throws() {
         let ctx = HookContext::new(
-            crate::metadata::token::Token::new(0x0A000001),
+            Token::new(0x0A000001),
             "System",
             "Type",
             "GetTypeFromHandle",

@@ -74,7 +74,7 @@ impl RowReadable for AssemblyRefRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(AssemblyRefRaw {
             rid,
-            token: Token::new(0x2300_0000 + rid),
+            token: Token::new(0x2300_0000u32.saturating_add(rid)),
             offset: *offset,
             major_version: u32::from(read_le_at::<u16>(data, offset)?),
             minor_version: u32::from(read_le_at::<u16>(data, offset)?),

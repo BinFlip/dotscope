@@ -13,7 +13,7 @@ impl RowReadable for GenericParamRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(GenericParamRaw {
             rid,
-            token: Token::new(0x2A00_0000 + rid),
+            token: Token::new(0x2A00_0000u32.saturating_add(rid)),
             offset: *offset,
             number: u32::from(read_le_at::<u16>(data, offset)?),
             flags: u32::from(read_le_at::<u16>(data, offset)?),

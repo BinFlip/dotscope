@@ -264,7 +264,7 @@ impl From<Immediate> for u64 {
 /// # Thread Safety
 ///
 /// [`Operand`] is [`std::marker::Send`] and [`std::marker::Sync`] as all variants contain thread-safe types.
-/// This includes primitives, [`crate::assembly::instruction::Immediate`], [`crate::metadata::token::Token`], and [`std::vec::Vec`].
+/// This includes primitives, [`crate::assembly::instruction::Immediate`], [`Token`], and [`std::vec::Vec`].
 #[derive(Debug, Clone)]
 pub enum Operand {
     /// No operand present
@@ -892,7 +892,7 @@ impl fmt::Debug for Instruction {
                     write!(f, "0x{item:08X}")?;
                     // Limit output for very large switch tables
                     if i >= 5 && items.len() > 6 {
-                        write!(f, ", ...{} more", items.len() - 6)?;
+                        write!(f, ", ...{} more", items.len().saturating_sub(6))?;
                         break;
                     }
                 }
@@ -926,7 +926,11 @@ impl fmt::Debug for Instruction {
                 write!(f, "0x{target:08X}")?;
                 // Limit output for instructions with many targets
                 if i >= 3 && self.branch_targets.len() > 4 {
-                    write!(f, ", ...{} more", self.branch_targets.len() - 4)?;
+                    write!(
+                        f,
+                        ", ...{} more",
+                        self.branch_targets.len().saturating_sub(4)
+                    )?;
                     break;
                 }
             }

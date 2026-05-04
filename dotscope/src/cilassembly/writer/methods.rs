@@ -44,7 +44,7 @@ use crate::{
         method::{ExceptionHandlerFlags, MethodBody},
         tables::TableId,
     },
-    Parser, Result,
+    Error, Parser, Result,
 };
 
 /// UserString heap table ID (0x70) - used in ldstr tokens.
@@ -80,7 +80,7 @@ pub fn write_method_body(
 ) -> Result<u64> {
     // Fat headers require 4-byte alignment
     let start_pos = if body.is_fat {
-        align_to_4(offset)
+        offset.saturating_add(3) & !3u64
     } else {
         offset
     };
@@ -90,12 +90,6 @@ pub fn write_method_body(
     let bytes_written = body.write_to(&mut writer, il_code)?;
 
     Ok(bytes_written)
-}
-
-/// Aligns a position to a 4-byte boundary.
-#[inline]
-fn align_to_4(pos: u64) -> u64 {
-    (pos + 3) & !3
 }
 
 /// Remaps IL tokens in place using decode-and-patch approach.
@@ -177,10 +171,15 @@ pub fn remap_il_tokens(
                 // Token operand is the last 4 bytes of the instruction
                 // Safe: CIL method body offsets fit in usize
                 #[allow(clippy::cast_possible_truncation)]
-                let token_offset = instr.offset as usize + instr.size as usize - 4;
-                if token_offset + 4 <= il_bytes.len() {
-                    il_bytes[token_offset..token_offset + 4]
-                        .copy_from_slice(&new_value.to_le_bytes());
+                let instr_offset = instr.offset as usize;
+                #[allow(clippy::cast_possible_truncation)]
+                let instr_size = instr.size as usize;
+                if let Some(instr_end) = instr_offset.checked_add(instr_size) {
+                    if let Some(token_offset) = instr_end.checked_sub(4) {
+                        if let Some(dest) = il_bytes.get_mut(token_offset..instr_end) {
+                            dest.copy_from_slice(&new_value.to_le_bytes());
+                        }
+                    }
                 }
             }
         }
@@ -231,7 +230,14 @@ pub fn rebuild_method_body(
     };
 
     // Extract IL code from the body data
-    let mut il_code = body_data[body.size_header..body.size_header + body.size_code].to_vec();
+    let il_end = body
+        .size_header
+        .checked_add(body.size_code)
+        .ok_or_else(|| Error::LayoutFailed("Method body IL end offset overflow".to_string()))?;
+    let mut il_code = body_data
+        .get(body.size_header..il_end)
+        .ok_or_else(|| Error::LayoutFailed("Method body IL slice out of bounds".to_string()))?
+        .to_vec();
 
     // Remap IL tokens (metadata tokens, UserString references, placeholders)
     remap_il_tokens(&mut il_code, token_map, userstring_map, changes)?;

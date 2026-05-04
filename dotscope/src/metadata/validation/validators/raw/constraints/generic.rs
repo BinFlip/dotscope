@@ -315,10 +315,9 @@ impl RawGenericConstraintValidator {
         if let Some(constraint_table) = tables.table::<GenericParamConstraintRaw>() {
             for constraint in constraint_table {
                 let constraint_tables = constraint.constraint.ci_type.tables();
-                let constraint_table_type = if constraint_tables.len() == 1 {
-                    constraint_tables[0]
-                } else {
-                    continue;
+                let constraint_table_type = match constraint_tables {
+                    [single] if constraint_tables.len() == 1 => *single,
+                    _ => continue,
                 };
                 let constraint_row = constraint.constraint.row;
 

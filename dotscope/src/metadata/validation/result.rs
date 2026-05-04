@@ -277,14 +277,14 @@ impl ValidationResult {
     #[must_use]
     pub fn combine(results: Vec<ValidationResult>) -> Self {
         let mut combined_outcomes = Vec::new();
-        let mut total_validator_count = 0;
+        let mut total_validator_count: usize = 0;
         let mut total_duration = Duration::ZERO;
         let mut overall_success = true;
 
         for result in results {
             combined_outcomes.extend(result.outcomes);
-            total_validator_count += result.validator_count;
-            total_duration += result.duration;
+            total_validator_count = total_validator_count.saturating_add(result.validator_count);
+            total_duration = total_duration.saturating_add(result.duration);
             overall_success = overall_success && result.success;
         }
 
@@ -617,13 +617,13 @@ impl TwoStageValidationResult {
 
     /// Sets the Stage 1 validation result.
     pub fn set_stage1_result(&mut self, result: ValidationResult) {
-        self.total_duration += result.duration();
+        self.total_duration = self.total_duration.saturating_add(result.duration());
         self.stage1_result = Some(result);
     }
 
     /// Sets the Stage 2 validation result.
     pub fn set_stage2_result(&mut self, result: ValidationResult) {
-        self.total_duration += result.duration();
+        self.total_duration = self.total_duration.saturating_add(result.duration());
         self.stage2_result = Some(result);
     }
 

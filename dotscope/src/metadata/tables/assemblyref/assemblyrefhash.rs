@@ -83,7 +83,7 @@ use std::fmt::Write;
 /// # Performance
 /// Pre-allocates output string with exact capacity to avoid reallocations.
 fn bytes_to_hex(bytes: &[u8]) -> String {
-    let mut hex_string = String::with_capacity(bytes.len() * 2);
+    let mut hex_string = String::with_capacity(bytes.len().saturating_mul(2));
     for byte in bytes {
         let _ = write!(&mut hex_string, "{byte:02x}");
     }

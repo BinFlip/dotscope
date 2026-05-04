@@ -139,7 +139,9 @@ impl AlgebraicSimplificationPass {
     ) {
         for candidate in candidates {
             if let Some(block) = ssa.block_mut(candidate.block_idx) {
-                let instr = &mut block.instructions_mut()[candidate.instr_idx];
+                let Some(instr) = block.instructions_mut().get_mut(candidate.instr_idx) else {
+                    continue;
+                };
                 let new_op = match candidate.simplification {
                     Simplification::Constant(value) => SsaOp::Const {
                         dest: candidate.dest,

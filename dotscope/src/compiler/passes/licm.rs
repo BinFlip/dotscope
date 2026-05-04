@@ -105,7 +105,7 @@ impl SsaPass for LicmPass {
             return Ok(false);
         }
 
-        let mut total_hoisted = 0;
+        let mut total_hoisted: usize = 0;
 
         // Process loops from innermost to outermost.
         // This naturally propagates hoists through nesting levels: inner hoists
@@ -221,7 +221,8 @@ impl SsaPass for LicmPass {
                 // Count hoistable instructions per block
                 let mut hoist_count_per_block: HashMap<usize, usize> = HashMap::new();
                 for (block_idx, _) in &hoistable {
-                    *hoist_count_per_block.entry(*block_idx).or_insert(0) += 1;
+                    let entry = hoist_count_per_block.entry(*block_idx).or_insert(0);
+                    *entry = entry.saturating_add(1);
                 }
 
                 // Find blocks that would become trampolines
@@ -299,7 +300,7 @@ impl SsaPass for LicmPass {
                 if let Some(preheader_block) = ssa.block_mut(preheader.index()) {
                     let new_instr = SsaInstruction::synthetic(op.clone());
                     let instrs = preheader_block.instructions_mut();
-                    instrs.insert(insert_base + i, new_instr);
+                    instrs.insert(insert_base.saturating_add(i), new_instr);
                 }
 
                 // Remove from original location (replace with Nop)
@@ -309,7 +310,7 @@ impl SsaPass for LicmPass {
                     }
                 }
 
-                total_hoisted += 1;
+                total_hoisted = total_hoisted.saturating_add(1);
             }
 
             // Update phi operands at successor blocks. When all non-terminator

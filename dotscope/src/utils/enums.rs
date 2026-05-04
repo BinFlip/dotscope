@@ -194,7 +194,7 @@ impl EnumUtils {
                 return Self::check_enum_inheritance_with_registry_recursive(
                     &resolved_base,
                     registry,
-                    depth + 1,
+                    depth.saturating_add(1),
                 );
             }
         }

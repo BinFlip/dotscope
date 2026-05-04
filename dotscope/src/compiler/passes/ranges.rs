@@ -164,10 +164,12 @@ impl SsaPass for ValueRangePropagationPass {
                 } else {
                     ConstValue::False
                 };
-                block.instructions_mut()[instr_idx].set_op(SsaOp::Const {
-                    dest,
-                    value: const_value,
-                });
+                if let Some(instr) = block.instructions_mut().get_mut(instr_idx) {
+                    instr.set_op(SsaOp::Const {
+                        dest,
+                        value: const_value,
+                    });
+                }
                 changes
                     .record(EventKind::ConstantFolded)
                     .at(method_token, instr_idx)
@@ -367,10 +369,10 @@ impl RangeAnalysis {
         // Iteration limit to prevent infinite loops with widening ranges.
         // In practice, analysis should converge quickly for most methods.
         // If we hit this limit, we still have valid (possibly imprecise) results.
-        let mut iterations = 0;
+        let mut iterations: usize = 0;
 
         loop {
-            iterations += 1;
+            iterations = iterations.saturating_add(1);
             if iterations > self.max_iterations {
                 // Hit iteration limit - return with current results.
                 // This can happen with unbounded widening in loops.
@@ -516,8 +518,8 @@ impl RangeAnalysis {
 
                 if let Some(idx) = range.as_constant().and_then(|i| usize::try_from(i).ok()) {
                     // Known switch value
-                    if idx < targets.len() {
-                        self.add_cfg_edge(block_id, targets[idx]);
+                    if let Some(&target) = targets.get(idx) {
+                        self.add_cfg_edge(block_id, target);
                     } else {
                         self.add_cfg_edge(block_id, *default);
                     }
@@ -665,7 +667,7 @@ impl RangeAnalysis {
                         // Positive divisor: result in [0, n-1] if dividend is non-negative
                         let l = self.get_range(*left);
                         if l.is_always_non_negative() {
-                            return ValueRange::bounded(0, n - 1);
+                            return ValueRange::bounded(0, n.saturating_sub(1));
                         }
                     }
                 }

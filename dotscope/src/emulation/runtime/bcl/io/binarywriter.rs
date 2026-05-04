@@ -198,8 +198,8 @@ fn binary_writer_write_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
 
     // Try to use param_types for precise overload dispatch
     if let Some(param_types) = ctx.param_types {
-        if param_types.len() == 1 {
-            match param_types[0] {
+        if let Some(first_type) = param_types.first().filter(|_| param_types.len() == 1) {
+            match first_type {
                 // Write(Boolean) — 1 byte: 0 or 1
                 CilFlavor::Boolean => {
                     let v = match ctx.args.first() {
@@ -384,11 +384,11 @@ fn binary_writer_write_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) 
                 let offset = *offset as usize;
                 let count = *count as usize;
                 if let Some(bytes) = try_hook!(thread.heap().get_byte_array(*arr_ref)) {
-                    let end = (offset + count).min(bytes.len());
+                    let end = offset.saturating_add(count).min(bytes.len());
                     if offset < bytes.len() {
-                        try_hook!(thread
-                            .heap_mut()
-                            .write_to_stream(stream_ref, &bytes[offset..end]));
+                        if let Some(slice) = bytes.get(offset..end) {
+                            try_hook!(thread.heap_mut().write_to_stream(stream_ref, slice));
+                        }
                     }
                 }
             }
@@ -468,12 +468,12 @@ fn binary_writer_seek_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
     let new_pos = match origin {
         1 => {
             #[allow(clippy::cast_possible_wrap)]
-            let pos = current_pos as i64 + offset;
+            let pos = (current_pos as i64).saturating_add(offset);
             pos.max(0) as usize
         }
         2 => {
             #[allow(clippy::cast_possible_wrap)]
-            let pos = length as i64 + offset;
+            let pos = (length as i64).saturating_add(offset);
             pos.max(0) as usize
         }
         _ => offset.max(0) as usize,

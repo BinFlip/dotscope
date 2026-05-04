@@ -265,17 +265,22 @@ impl Technique for ConfuserExConstants {
                 let sig = &method.signature;
 
                 // Check for string(int32) signature
+                let first_param_is_i4 = sig
+                    .params
+                    .first()
+                    .is_some_and(|p| p.base == TypeSignature::I4);
+
                 let is_string_decryptor = sig.param_count_generic == 0
                     && sig.return_type.base == TypeSignature::String
                     && sig.params.len() == 1
-                    && sig.params[0].base == TypeSignature::I4;
+                    && first_param_is_i4;
 
                 // Check for generic T(int32) signature (param_count_generic == 1,
                 // return type is GenericParamMethod(0))
                 let is_generic_decryptor = sig.param_count_generic == 1
                     && matches!(sig.return_type.base, TypeSignature::GenericParamMethod(0))
                     && sig.params.len() == 1
-                    && sig.params[0].base == TypeSignature::I4;
+                    && first_param_is_i4;
 
                 if is_string_decryptor || is_generic_decryptor {
                     decryptor_tokens.push(method.token);
@@ -296,7 +301,7 @@ impl Technique for ConfuserExConstants {
                     }
                     if let Ok(offset) = file.rva_to_offset(row.rva as usize) {
                         let data = file.data();
-                        if offset < data.len() && data[offset] == LZMA_MAGIC {
+                        if data.get(offset).is_some_and(|b| *b == LZMA_MAGIC) {
                             has_lzma_fieldrva = true;
                             data_field_tokens.push(Token::from_parts(TableId::Field, row.field));
                         }

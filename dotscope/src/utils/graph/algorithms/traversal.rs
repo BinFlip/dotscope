@@ -67,7 +67,9 @@ impl<'g, G: Successors> DfsIterator<'g, G> {
         }
 
         let mut visited = vec![false; node_count];
-        visited[start.index()] = true;
+        if let Some(slot) = visited.get_mut(start.index()) {
+            *slot = true;
+        }
 
         DfsIterator {
             graph,
@@ -90,9 +92,11 @@ impl<G: Successors> Iterator for DfsIterator<'_, G> {
         // so that they are visited in the original order
         let successors: Vec<NodeId> = self.graph.successors(node).collect();
         for &succ in successors.iter().rev() {
-            if !self.visited[succ.index()] {
-                self.visited[succ.index()] = true;
-                self.stack.push(succ);
+            if let Some(slot) = self.visited.get_mut(succ.index()) {
+                if !*slot {
+                    *slot = true;
+                    self.stack.push(succ);
+                }
             }
         }
 
@@ -173,7 +177,9 @@ impl<'g, G: Successors> BfsIterator<'g, G> {
         }
 
         let mut visited = vec![false; node_count];
-        visited[start.index()] = true;
+        if let Some(slot) = visited.get_mut(start.index()) {
+            *slot = true;
+        }
 
         let mut queue = VecDeque::new();
         queue.push_back(start);
@@ -197,9 +203,11 @@ impl<G: Successors> Iterator for BfsIterator<'_, G> {
 
         // Enqueue unvisited successors
         for succ in self.graph.successors(node) {
-            if !self.visited[succ.index()] {
-                self.visited[succ.index()] = true;
-                self.queue.push_back(succ);
+            if let Some(slot) = self.visited.get_mut(succ.index()) {
+                if !*slot {
+                    *slot = true;
+                    self.queue.push_back(succ);
+                }
             }
         }
 
@@ -312,10 +320,13 @@ pub fn postorder<G: Successors>(graph: &G, start: NodeId) -> Vec<NodeId> {
     while let Some((node, state)) = stack.pop() {
         match state {
             State::Enter => {
-                if visited[node.index()] {
+                let Some(slot) = visited.get_mut(node.index()) else {
+                    continue;
+                };
+                if *slot {
                     continue;
                 }
-                visited[node.index()] = true;
+                *slot = true;
 
                 // Push exit state for this node (will be processed after children)
                 stack.push((node, State::Exit));
@@ -323,7 +334,7 @@ pub fn postorder<G: Successors>(graph: &G, start: NodeId) -> Vec<NodeId> {
                 // Push children in reverse order so they're processed in order
                 let successors: Vec<NodeId> = graph.successors(node).collect();
                 for &succ in successors.iter().rev() {
-                    if !visited[succ.index()] {
+                    if let Some(false) = visited.get(succ.index()).copied() {
                         stack.push((succ, State::Enter));
                     }
                 }

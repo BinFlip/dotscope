@@ -274,7 +274,7 @@ impl ClassLayoutBuilder {
             .parent
             .ok_or_else(|| Error::ModificationInvalid("Parent type is required".to_string()))?;
 
-        if packing_size != 0 && (packing_size & (packing_size - 1)) != 0 {
+        if packing_size != 0 && (packing_size & packing_size.saturating_sub(1)) != 0 {
             return Err(Error::ModificationInvalid(format!(
                 "Packing size must be 0 or a power of 2, got {packing_size}"
             )));

@@ -430,7 +430,10 @@ impl SsaPass for DelegateProxyResolutionPass {
     }
 
     fn initialize(&mut self, _ctx: &CompilerContext) -> Result<()> {
-        let remaining = self.affected_methods.len() - self.processed_methods.len();
+        let remaining = self
+            .affected_methods
+            .len()
+            .saturating_sub(self.processed_methods.len());
         if remaining > 0 {
             debug!(
                 "Delegate proxy resolution: {} delegate types, {} remaining methods ({} already processed)",
@@ -508,7 +511,11 @@ impl SsaPass for DelegateProxyResolutionPass {
                 };
 
                 // Build the replacement: drop the last arg (delegate instance)
-                let new_args: Vec<SsaVarId> = args[..args.len() - 1].to_vec();
+                let drop_to = args.len().saturating_sub(1);
+                let new_args: Vec<SsaVarId> = args
+                    .get(..drop_to)
+                    .map(<[SsaVarId]>::to_vec)
+                    .unwrap_or_default();
                 let target_method = SsaMethodRef::new(target_entry.method_token);
 
                 let new_op = if target_entry.is_virtual {

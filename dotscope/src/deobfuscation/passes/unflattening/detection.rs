@@ -338,7 +338,9 @@ impl<'a> CffDetector<'a> {
 
         // Pre-compute the dominator tree so candidate analysis can be parallel
         let _ = self.get_dom_tree();
-        let dom_tree = self.dom_tree.as_ref().unwrap();
+        let Some(dom_tree) = self.dom_tree.as_ref() else {
+            return Vec::new();
+        };
 
         let mut patterns: Vec<CffPattern> = candidates
             .into_par_iter()
@@ -450,7 +452,7 @@ impl<'a> CffDetector<'a> {
 
         // Pre-compute dominator tree once
         let _ = self.get_dom_tree();
-        let dom_tree = self.dom_tree.as_ref().unwrap();
+        let dom_tree = self.dom_tree.as_ref()?;
 
         // Score each candidate and pick the best
         let mut best_pattern: Option<CffPattern> = None;
@@ -558,7 +560,7 @@ impl<'a> CffDetector<'a> {
                 .instructions()
                 .iter()
                 .any(|i| i.op().successors().contains(&block_idx));
-            let effective_preds = pred_count + usize::from(has_self_loop);
+            let effective_preds = pred_count.saturating_add(usize::from(has_self_loop));
             return effective_preds >= 2;
         }
 
@@ -823,7 +825,7 @@ impl<'a> CffDetector<'a> {
                         }
                     }
                     SsaOp::Copy { src, .. } => {
-                        stack.push((*src, depth - 1));
+                        stack.push((*src, depth.saturating_sub(1)));
                     }
                     _ => {}
                 }
@@ -846,7 +848,7 @@ impl<'a> CffDetector<'a> {
                     // Push operands in reverse so pops happen in original order
                     // — matches the recursive "return first constant" semantics.
                     for op in phi.operands().iter().rev() {
-                        stack.push((op.value(), depth - 1));
+                        stack.push((op.value(), depth.saturating_sub(1)));
                     }
                     break;
                 }
@@ -1140,7 +1142,7 @@ fn can_reach_dispatcher(
         }
         for succ in ssa.block_successors(block) {
             if !visited.contains(succ) {
-                queue.push_back((succ, depth + 1));
+                queue.push_back((succ, depth.saturating_add(1)));
             }
         }
     }

@@ -179,8 +179,9 @@ impl TableRow for InterfaceImplRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* class */     sizes.table_index_bytes(TableId::TypeDef) +
-            /* interface */ sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef)
+            /* class */     sizes.table_index_bytes(TableId::TypeDef)
+            /* interface */ .saturating_add(sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef))
+
         )
     }
 }

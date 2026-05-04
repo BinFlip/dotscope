@@ -44,7 +44,7 @@ impl RowReadable for CustomDebugInformationRaw {
 
         Ok(CustomDebugInformationRaw {
             rid,
-            token: Token::new(0x3700_0000 + rid),
+            token: Token::new(0x3700_0000u32.saturating_add(rid)),
             offset: offset_org,
             parent,
             kind,

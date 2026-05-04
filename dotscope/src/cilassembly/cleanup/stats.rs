@@ -43,7 +43,8 @@ impl CleanupStats {
     /// Adds `count` to the removal counter for the given table.
     pub fn add(&mut self, table: TableId, count: usize) {
         if count > 0 {
-            *self.removals.entry(table).or_insert(0) += count;
+            let entry = self.removals.entry(table).or_insert(0);
+            *entry = entry.saturating_add(count);
         }
     }
 
@@ -69,7 +70,9 @@ impl CleanupStats {
     /// This is the sum of compacted strings, blobs, and GUIDs.
     #[must_use]
     pub fn heap_entries_compacted(&self) -> usize {
-        self.strings_compacted + self.blobs_compacted + self.guids_compacted
+        self.strings_compacted
+            .saturating_add(self.blobs_compacted)
+            .saturating_add(self.guids_compacted)
     }
 
     /// Returns the count of primary items removed (types, methods, fields).
@@ -78,7 +81,9 @@ impl CleanupStats {
     /// as opposed to orphaned entries that were removed as a consequence.
     #[must_use]
     pub fn primary_removed(&self) -> usize {
-        self.get(TableId::TypeDef) + self.get(TableId::MethodDef) + self.get(TableId::Field)
+        self.get(TableId::TypeDef)
+            .saturating_add(self.get(TableId::MethodDef))
+            .saturating_add(self.get(TableId::Field))
     }
 
     /// Returns the count of orphaned metadata entries removed.
@@ -87,7 +92,9 @@ impl CleanupStats {
     /// primary deletions were applied (e.g., parameters of deleted methods).
     #[must_use]
     pub fn orphans_removed(&self) -> usize {
-        self.total_removed() - self.primary_removed() - self.get(TableId::CustomAttribute)
+        self.total_removed()
+            .saturating_sub(self.primary_removed())
+            .saturating_sub(self.get(TableId::CustomAttribute))
     }
 
     /// Merges stats from another cleanup operation into this one.
@@ -98,10 +105,14 @@ impl CleanupStats {
         for (&table, &count) in &other.removals {
             self.add(table, count);
         }
-        self.sections_excluded += other.sections_excluded;
-        self.strings_compacted += other.strings_compacted;
-        self.blobs_compacted += other.blobs_compacted;
-        self.guids_compacted += other.guids_compacted;
+        self.sections_excluded = self
+            .sections_excluded
+            .saturating_add(other.sections_excluded);
+        self.strings_compacted = self
+            .strings_compacted
+            .saturating_add(other.strings_compacted);
+        self.blobs_compacted = self.blobs_compacted.saturating_add(other.blobs_compacted);
+        self.guids_compacted = self.guids_compacted.saturating_add(other.guids_compacted);
     }
 }
 

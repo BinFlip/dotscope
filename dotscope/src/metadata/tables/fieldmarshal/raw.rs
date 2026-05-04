@@ -223,8 +223,9 @@ impl TableRow for FieldMarshalRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* parent */      sizes.coded_index_bytes(CodedIndexType::HasFieldMarshal) +
-            /* native_type */ sizes.blob_bytes()
+            /* parent */      sizes.coded_index_bytes(CodedIndexType::HasFieldMarshal)
+            /* native_type */ .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

@@ -371,7 +371,7 @@ impl<'a> SsaVerifier<'a> {
                 .flat_map(|phi| phi.operands().iter().map(|op| op.predecessor()))
                 .max()
                 .unwrap_or(0);
-            let capacity = block_count.max(max_phi_pred + 1).max(1);
+            let capacity = block_count.max(max_phi_pred.saturating_add(1)).max(1);
             let mut preds = BitSet::new(capacity);
             for &p in pred_list {
                 if p < capacity {
@@ -463,8 +463,9 @@ impl<'a> SsaVerifier<'a> {
             .map(|v| v.id().index())
             .max()
             .unwrap_or(0);
-        let capacity = (max_block_var + 1)
-            .max(max_reg_var + 1)
+        let capacity = max_block_var
+            .saturating_add(1)
+            .max(max_reg_var.saturating_add(1))
             .max(variable_count)
             .max(1);
         let mut registered = BitSet::new(capacity);

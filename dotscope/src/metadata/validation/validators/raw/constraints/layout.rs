@@ -336,8 +336,12 @@ impl RawLayoutConstraintValidator {
 
                     for (index, typedef_entry) in typedef_rows.iter().enumerate() {
                         let start_field = typedef_entry.field_list;
-                        let end_field = if index + 1 < typedef_rows.len() {
-                            typedef_rows[index + 1].field_list
+                        let next_index = index.saturating_add(1);
+                        let end_field = if next_index < typedef_rows.len() {
+                            typedef_rows
+                                .get(next_index)
+                                .ok_or(out_of_bounds_error!())?
+                                .field_list
                         } else {
                             u32::MAX
                         };
@@ -557,8 +561,8 @@ impl RawLayoutConstraintValidator {
                     fields.sort_by_key(|f| f.field_offset);
 
                     for window in fields.windows(2) {
-                        let field1 = &window[0];
-                        let field2 = &window[1];
+                        let field1 = window.first().ok_or(out_of_bounds_error!())?;
+                        let field2 = window.get(1).ok_or(out_of_bounds_error!())?;
                         let gap = field2.field_offset.saturating_sub(field1.field_offset);
 
                         if gap > 1_048_576 {

@@ -221,11 +221,7 @@ fn extract_native_string(
     let offset = file.rva_to_offset(rva as usize).ok()?;
     let data = file.data();
 
-    if offset >= data.len() {
-        return None;
-    }
-
-    let native_bytes = &data[offset..];
+    let native_bytes = data.get(offset..)?;
 
     // Use traversal-based disassembly to find where the code ends.
     // This follows control flow edges (including trampolines, call targets,
@@ -235,17 +231,13 @@ fn extract_native_string(
         return None;
     }
 
-    let string_bytes = &native_bytes[prefix_len..];
+    let string_bytes = native_bytes.get(prefix_len..)?;
 
     // Detect encoding: if the second byte is 0x00 and first byte is printable ASCII,
     // the data is likely UTF-16LE (e.g., "Hello" = 48 00 65 00 6C 00 ...).
     // This check must come before the ASCII attempt, which would find the 0x00 at
     // position 1 and incorrectly return just the first character.
-    let looks_like_utf16 = string_bytes.len() >= 4
-        && string_bytes[0] != 0
-        && string_bytes[1] == 0
-        && string_bytes[2] != 0
-        && string_bytes[3] == 0;
+    let looks_like_utf16 = matches!(string_bytes, [b0, 0, b2, 0, ..] if *b0 != 0 && *b2 != 0);
 
     if looks_like_utf16 {
         // Try UTF-16LE first (char* constructor)
@@ -257,8 +249,10 @@ fn extract_native_string(
     // Try UTF-8/ASCII (sbyte* constructor)
     if let Some(null_pos) = string_bytes.iter().position(|&b| b == 0) {
         if null_pos > 0 {
-            if let Ok(s) = std::str::from_utf8(&string_bytes[..null_pos]) {
-                return Some(s.to_string());
+            if let Some(slice) = string_bytes.get(..null_pos) {
+                if let Ok(s) = std::str::from_utf8(slice) {
+                    return Some(s.to_string());
+                }
             }
         }
     }

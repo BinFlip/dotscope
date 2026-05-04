@@ -392,7 +392,7 @@ fn stream_read_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHo
     for (i, &byte) in bytes.iter().enumerate() {
         try_hook!(thread.heap_mut().set_array_element(
             buffer_ref,
-            offset + i,
+            offset.saturating_add(i),
             EmValue::I32(i32::from(byte)),
         ));
     }
@@ -460,9 +460,9 @@ fn stream_write_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreH
     };
 
     // Extract the slice to write
-    let end = (offset + count).min(buffer_data.len());
-    let bytes_to_write = if offset < buffer_data.len() {
-        &buffer_data[offset..end]
+    let end = offset.saturating_add(count).min(buffer_data.len());
+    let bytes_to_write: &[u8] = if offset < buffer_data.len() {
+        buffer_data.get(offset..end).unwrap_or(&[])
     } else {
         &[]
     };
@@ -640,14 +640,14 @@ fn stream_seek_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHo
             // Current
             // Safe: stream positions fit in i64
             #[allow(clippy::cast_possible_wrap)]
-            let pos = current_pos as i64 + offset;
+            let pos = (current_pos as i64).saturating_add(offset);
             pos.max(0) as usize
         }
         2 => {
             // End
             // Safe: stream positions fit in i64
             #[allow(clippy::cast_possible_wrap)]
-            let pos = length as i64 + offset;
+            let pos = (length as i64).saturating_add(offset);
             pos.max(0) as usize
         }
         // Begin (0) and default
@@ -764,7 +764,7 @@ fn stream_copy_to_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pr
     // original CopyTo behavior — read remaining bytes, advance position.
     if let Some((data, position)) = try_hook!(thread.heap().get_stream_data(src_ref)) {
         if position < data.len() {
-            let remaining = &data[position..];
+            let remaining: &[u8] = data.get(position..).unwrap_or(&[]);
             try_hook!(thread.heap_mut().write_to_stream(dst_ref, remaining));
         }
         let len = data.len();
@@ -787,8 +787,8 @@ fn stream_copy_to_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pr
             else {
                 return PreHookResult::Bypass(None);
             };
-            let effective = if underlying_pos < compressed_data.len() {
-                &compressed_data[underlying_pos..]
+            let effective: &[u8] = if underlying_pos < compressed_data.len() {
+                compressed_data.get(underlying_pos..).unwrap_or(&[])
             } else {
                 &[]
             };
@@ -823,8 +823,8 @@ fn stream_copy_to_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> Pr
             else {
                 return PreHookResult::Bypass(None);
             };
-            let effective = if underlying_pos < stream_data.len() {
-                &stream_data[underlying_pos..]
+            let effective: &[u8] = if underlying_pos < stream_data.len() {
+                stream_data.get(underlying_pos..).unwrap_or(&[])
             } else {
                 &[]
             };

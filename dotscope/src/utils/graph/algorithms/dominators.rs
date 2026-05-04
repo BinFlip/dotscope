@@ -78,19 +78,16 @@ impl DominatorTree {
         self.entry
     }
 
-    /// Returns the immediate dominator of a node, or `None` for the entry node.
+    /// Returns the immediate dominator of a node, or `None` for the entry node
+    /// or for nodes whose index is out of bounds.
     ///
     /// The immediate dominator is the closest strict dominator of the node.
-    ///
-    /// # Panics
-    ///
-    /// Panics if the node index is out of bounds.
     #[inline]
     pub fn immediate_dominator(&self, node: NodeId) -> Option<NodeId> {
         if node == self.entry {
             None
         } else {
-            Some(self.idom[node.index()])
+            self.idom.get(node.index()).copied()
         }
     }
 
@@ -115,10 +112,9 @@ impl DominatorTree {
         let mut current = b;
         while current != self.entry {
             // Check for unreachable nodes (sentinel value) or out-of-bounds
-            if current.index() >= self.node_count {
+            let Some(&idom) = self.idom.get(current.index()) else {
                 return false;
-            }
-            let idom = self.idom[current.index()];
+            };
             if idom == a {
                 return true;
             }
@@ -171,13 +167,21 @@ impl DominatorTree {
 
     /// Returns the depth of a node in the dominator tree.
     ///
-    /// The entry node has depth 0.
+    /// The entry node has depth 0. Returns 0 for nodes whose index is out of
+    /// bounds or that are unreachable from the entry.
     pub fn depth(&self, node: NodeId) -> usize {
-        let mut depth = 0;
+        let mut depth: usize = 0;
         let mut current = node;
         while current != self.entry {
-            current = self.idom[current.index()];
-            depth += 1;
+            let Some(&idom) = self.idom.get(current.index()) else {
+                return depth;
+            };
+            // Sentinel idom (== current) means unreachable: stop walking.
+            if idom == current {
+                return depth;
+            }
+            current = idom;
+            depth = depth.saturating_add(1);
         }
         depth
     }
@@ -190,11 +194,7 @@ impl DominatorTree {
     ///
     /// O(1) — children are pre-computed during dominator tree construction.
     pub fn children(&self, node: NodeId) -> &[NodeId] {
-        if node.index() < self.children.len() {
-            &self.children[node.index()]
-        } else {
-            &[]
-        }
+        self.children.get(node.index()).map_or(&[], Vec::as_slice)
     }
 
     /// Returns the number of nodes in the dominator tree.
@@ -220,7 +220,7 @@ impl Iterator for DominatorIterator<'_> {
             self.current = None;
             Some(current)
         } else {
-            self.current = Some(self.tree.idom[current.index()]);
+            self.current = self.tree.idom.get(current.index()).copied();
             Some(current)
         }
     }
@@ -312,14 +312,17 @@ where
     lt.compute(graph, &predecessors);
 
     // Build children list in a single O(V) pass from the idom array
-    let mut children = vec![Vec::new(); node_count];
+    let mut children: Vec<Vec<NodeId>> = vec![Vec::new(); node_count];
     for i in 0..node_count {
         let node = NodeId::new(i);
-        if node != entry {
-            let parent = lt.idom[i];
-            if parent.index() < node_count {
-                children[parent.index()].push(node);
-            }
+        if node == entry {
+            continue;
+        }
+        let Some(parent) = lt.idom.get(i).copied() else {
+            continue;
+        };
+        if let Some(slot) = children.get_mut(parent.index()) {
+            slot.push(node);
         }
     }
 
@@ -346,11 +349,13 @@ where
 /// Returns a vector where `result[i]` contains all predecessors of node `i`.
 fn precompute_predecessors<G: Successors>(graph: &G) -> Vec<Vec<NodeId>> {
     let n = graph.node_count();
-    let mut preds = vec![Vec::new(); n];
+    let mut preds: Vec<Vec<NodeId>> = vec![Vec::new(); n];
     for i in 0..n {
         let v = NodeId::new(i);
         for succ in graph.successors(v) {
-            preds[succ.index()].push(v);
+            if let Some(slot) = preds.get_mut(succ.index()) {
+                slot.push(v);
+            }
         }
     }
     preds
@@ -383,6 +388,29 @@ struct LengauerTarjan {
 }
 
 impl LengauerTarjan {
+    /// Sentinel NodeId representing "uninitialized" or "out-of-graph" values.
+    #[inline]
+    fn sentinel() -> NodeId {
+        NodeId::new(usize::MAX)
+    }
+
+    #[inline]
+    fn get_node(slice: &[NodeId], i: usize) -> NodeId {
+        slice.get(i).copied().unwrap_or(Self::sentinel())
+    }
+
+    #[inline]
+    fn get_dfnum(&self, n: NodeId) -> usize {
+        self.dfnum.get(n.index()).copied().unwrap_or(0)
+    }
+
+    #[inline]
+    fn set_node(slice: &mut [NodeId], i: usize, value: NodeId) {
+        if let Some(slot) = slice.get_mut(i) {
+            *slot = value;
+        }
+    }
+
     fn new(n: usize, entry: NodeId) -> Self {
         let sentinel = NodeId::new(usize::MAX);
         Self {
@@ -406,58 +434,69 @@ impl LengauerTarjan {
 
         // Process nodes in reverse DFS order (excluding entry)
         for i in (1..self.dfs_counter).rev() {
-            let w = self.vertex[i];
-            let parent_w = self.parent[w.index()];
+            let w = Self::get_node(&self.vertex, i);
+            let parent_w = Self::get_node(&self.parent, w.index());
 
             // Phase 2: Compute semidominators
             // semi(w) = min { v : v -> w is a CFG edge and dfnum(v) < dfnum(w) } ∪
             //           { semi(u) : u -> w via tree edges where dfnum(u) > dfnum(w) }
-            for v in &predecessors[w.index()] {
+            let preds_w: &[NodeId] = predecessors.get(w.index()).map_or(&[], Vec::as_slice);
+            for v in preds_w {
                 let v = *v;
-                if self.dfnum[v.index()] == 0 {
+                if self.get_dfnum(v) == 0 {
                     // v is unreachable from entry, skip
                     continue;
                 }
                 let u = self.eval(v);
-                if self.dfnum[self.semi[u.index()].index()]
-                    < self.dfnum[self.semi[w.index()].index()]
-                {
-                    self.semi[w.index()] = self.semi[u.index()];
+                let semi_u = Self::get_node(&self.semi, u.index());
+                let semi_w = Self::get_node(&self.semi, w.index());
+                if self.get_dfnum(semi_u) < self.get_dfnum(semi_w) {
+                    Self::set_node(&mut self.semi, w.index(), semi_u);
                 }
             }
 
             // Add w to bucket of its semidominator
-            let semi_w = self.semi[w.index()];
-            self.bucket[semi_w.index()].push(w);
+            let semi_w = Self::get_node(&self.semi, w.index());
+            if let Some(bucket) = self.bucket.get_mut(semi_w.index()) {
+                bucket.push(w);
+            }
 
             // Link w into the forest
             self.link(parent_w, w);
 
             // Phase 3: Implicitly compute immediate dominators
             // Process bucket of parent(w)
-            let bucket = std::mem::take(&mut self.bucket[parent_w.index()]);
+            let bucket = self
+                .bucket
+                .get_mut(parent_w.index())
+                .map_or_else(Vec::new, std::mem::take);
             for v in bucket {
                 let u = self.eval(v);
-                if self.semi[u.index()] == self.semi[v.index()] {
+                let semi_u = Self::get_node(&self.semi, u.index());
+                let semi_v = Self::get_node(&self.semi, v.index());
+                if semi_u == semi_v {
                     // idom(v) = semi(v) = parent(w)
-                    self.idom[v.index()] = parent_w;
+                    Self::set_node(&mut self.idom, v.index(), parent_w);
                 } else {
                     // idom(v) = idom(u) (will be computed later)
-                    self.idom[v.index()] = u;
+                    Self::set_node(&mut self.idom, v.index(), u);
                 }
             }
         }
 
         // Phase 4: Explicitly compute immediate dominators
         for i in 1..self.dfs_counter {
-            let w = self.vertex[i];
-            if self.idom[w.index()] != self.semi[w.index()] {
-                self.idom[w.index()] = self.idom[self.idom[w.index()].index()];
+            let w = Self::get_node(&self.vertex, i);
+            let idom_w = Self::get_node(&self.idom, w.index());
+            let semi_w = Self::get_node(&self.semi, w.index());
+            if idom_w != semi_w {
+                let idom_idom = Self::get_node(&self.idom, idom_w.index());
+                Self::set_node(&mut self.idom, w.index(), idom_idom);
             }
         }
 
         // Entry node dominates itself
-        self.idom[self.entry.index()] = self.entry;
+        Self::set_node(&mut self.idom, self.entry.index(), self.entry);
     }
 
     /// DFS traversal to assign DFS numbers and build DFS tree.
@@ -471,17 +510,21 @@ impl LengauerTarjan {
                 continue;
             }
 
-            if self.dfnum[idx] != 0 {
+            if self.dfnum.get(idx).copied().unwrap_or(0) != 0 {
                 continue;
             }
 
-            self.dfs_counter += 1;
-            self.dfnum[idx] = self.dfs_counter;
-            self.vertex[self.dfs_counter - 1] = node;
+            self.dfs_counter = self.dfs_counter.saturating_add(1);
+            if let Some(slot) = self.dfnum.get_mut(idx) {
+                *slot = self.dfs_counter;
+            }
+            // dfs_counter is at least 1 here, so subtracting 1 is safe.
+            let vertex_idx = self.dfs_counter.saturating_sub(1);
+            Self::set_node(&mut self.vertex, vertex_idx, node);
 
             for succ in graph.successors(node) {
-                if self.dfnum[succ.index()] == 0 {
-                    self.parent[succ.index()] = node;
+                if self.get_dfnum(succ) == 0 {
+                    Self::set_node(&mut self.parent, succ.index(), node);
                     stack.push((succ, false));
                 }
             }
@@ -490,18 +533,18 @@ impl LengauerTarjan {
 
     /// Link v as a child of w in the spanning forest.
     fn link(&mut self, w: NodeId, v: NodeId) {
-        self.ancestor[v.index()] = w;
+        Self::set_node(&mut self.ancestor, v.index(), w);
     }
 
     /// Evaluate: find the node with minimum semidominator on the path to the root.
     fn eval(&mut self, v: NodeId) -> NodeId {
-        let sentinel = NodeId::new(usize::MAX);
-        if self.ancestor[v.index()] == sentinel {
+        let sentinel = Self::sentinel();
+        if Self::get_node(&self.ancestor, v.index()) == sentinel {
             return v;
         }
 
         self.compress(v);
-        self.best[v.index()]
+        Self::get_node(&self.best, v.index())
     }
 
     /// Path compression for the forest (iterative).
@@ -511,32 +554,38 @@ impl LengauerTarjan {
     /// This avoids O(V) recursion depth that can overflow the stack on large
     /// CFF-obfuscated CFGs (500+ blocks).
     fn compress(&mut self, v: NodeId) {
-        let sentinel = NodeId::new(usize::MAX);
+        let sentinel = Self::sentinel();
 
         // Phase 1: collect the path from v upward until we reach a node
         // whose ancestor is the forest root (ancestor == sentinel).
         let mut path = Vec::new();
         let mut u = v;
-        while self.ancestor[self.ancestor[u.index()].index()] != sentinel {
+        loop {
+            let anc_u = Self::get_node(&self.ancestor, u.index());
+            let anc_anc_u = Self::get_node(&self.ancestor, anc_u.index());
+            if anc_anc_u == sentinel {
+                break;
+            }
             path.push(u);
-            u = self.ancestor[u.index()];
+            u = anc_u;
         }
 
         // Phase 2: walk the path in reverse (top-down) to propagate best
         // values and flatten ancestor pointers — same semantics as the
         // recursive version's post-order updates.
         for &node in path.iter().rev() {
-            let ancestor_node = self.ancestor[node.index()];
-            let best_ancestor = self.best[ancestor_node.index()];
-            let best_node = self.best[node.index()];
+            let ancestor_node = Self::get_node(&self.ancestor, node.index());
+            let best_ancestor = Self::get_node(&self.best, ancestor_node.index());
+            let best_node = Self::get_node(&self.best, node.index());
 
-            if self.dfnum[self.semi[best_ancestor.index()].index()]
-                < self.dfnum[self.semi[best_node.index()].index()]
-            {
-                self.best[node.index()] = best_ancestor;
+            let semi_ba = Self::get_node(&self.semi, best_ancestor.index());
+            let semi_bn = Self::get_node(&self.semi, best_node.index());
+            if self.get_dfnum(semi_ba) < self.get_dfnum(semi_bn) {
+                Self::set_node(&mut self.best, node.index(), best_ancestor);
             }
 
-            self.ancestor[node.index()] = self.ancestor[ancestor_node.index()];
+            let new_anc = Self::get_node(&self.ancestor, ancestor_node.index());
+            Self::set_node(&mut self.ancestor, node.index(), new_anc);
         }
     }
 }
@@ -614,7 +663,9 @@ where
             let mut runner = pred;
             // Guard against unreachable nodes (their index may be invalid/sentinel)
             while Some(runner) != idom_node && runner != dom_tree.entry() && runner.index() < n {
-                frontiers[runner.index()].insert(node.index());
+                if let Some(slot) = frontiers.get_mut(runner.index()) {
+                    slot.insert(node.index());
+                }
                 if let Some(idom) = dom_tree.immediate_dominator(runner) {
                     // Check for sentinel value (unreachable node)
                     if idom.index() >= n {
@@ -627,7 +678,9 @@ where
             }
             // Also check entry if needed (guard against invalid index)
             if Some(runner) != idom_node && runner == dom_tree.entry() && runner.index() < n {
-                frontiers[runner.index()].insert(node.index());
+                if let Some(slot) = frontiers.get_mut(runner.index()) {
+                    slot.insert(node.index());
+                }
             }
         }
     }

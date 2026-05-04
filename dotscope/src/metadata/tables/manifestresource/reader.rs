@@ -15,7 +15,7 @@ impl RowReadable for ManifestResourceRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ManifestResourceRaw {
             rid,
-            token: Token::new(0x2800_0000 + rid),
+            token: Token::new(0x2800_0000u32.saturating_add(rid)),
             offset: *offset,
             offset_field: read_le_at::<u32>(data, offset)?,
             flags: read_le_at::<u32>(data, offset)?,

@@ -172,7 +172,7 @@ impl UnmanagedMemory {
     /// Returns [`EmulationError::HeapMemoryLimitExceeded`] if allocation would
     /// exceed the memory limit.
     pub fn alloc(&mut self, size: usize) -> Result<UnmanagedRef> {
-        if self.current_size + size > self.max_size {
+        if self.current_size.saturating_add(size) > self.max_size {
             return Err(EmulationError::HeapMemoryLimitExceeded {
                 current: self.current_size,
                 limit: self.max_size,
@@ -181,12 +181,12 @@ impl UnmanagedMemory {
         }
 
         let address = self.next_address;
-        self.next_address += size as u64;
+        let next = self.next_address.saturating_add(size as u64);
         // Align next allocation to 16 bytes
-        self.next_address = (self.next_address + 15) & !15;
+        self.next_address = next.saturating_add(15) & !15;
 
         self.regions.insert(address, InternalRegion::new(size));
-        self.current_size += size;
+        self.current_size = self.current_size.saturating_add(size);
 
         Ok(UnmanagedRef::new(address))
     }
@@ -234,9 +234,10 @@ impl UnmanagedMemory {
 
         // Search for a region that contains this address (slow path)
         for (&base, region) in &self.regions {
-            if region.valid && address >= base && address < base + region.size() as u64 {
+            let region_end = base.saturating_add(region.size() as u64);
+            if region.valid && address >= base && address < region_end {
                 #[allow(clippy::cast_possible_truncation)] // Offset bounded by region size
-                let offset = (address - base) as usize;
+                let offset = address.saturating_sub(base) as usize;
                 return Some((region, offset));
             }
         }
@@ -262,7 +263,8 @@ impl UnmanagedMemory {
         // Search for containing region
         if found_base.is_none() {
             for (&base, region) in &self.regions {
-                if region.valid && address >= base && address < base + region.size() as u64 {
+                let region_end = base.saturating_add(region.size() as u64);
+                if region.valid && address >= base && address < region_end {
                     found_base = Some(base);
                     break;
                 }
@@ -272,7 +274,7 @@ impl UnmanagedMemory {
         if let Some(base) = found_base {
             if let Some(region) = self.regions.get_mut(&base) {
                 #[allow(clippy::cast_possible_truncation)] // Offset bounded by region size
-                let offset = (address - base) as usize;
+                let offset = address.saturating_sub(base) as usize;
                 return Some((region, offset));
             }
         }
@@ -303,15 +305,21 @@ impl UnmanagedMemory {
                 reason: "address not in any allocated region",
             })?;
 
-        if offset + size > region.size() {
-            return Err(EmulationError::InvalidPointer {
+        let end = offset
+            .checked_add(size)
+            .ok_or(EmulationError::InvalidPointer {
+                address,
+                reason: "read length overflows",
+            })?;
+        let slice = region
+            .data
+            .get(offset..end)
+            .ok_or(EmulationError::InvalidPointer {
                 address,
                 reason: "read would exceed region bounds",
-            }
-            .into());
-        }
+            })?;
 
-        Ok(region.data[offset..offset + size].to_vec())
+        Ok(slice.to_vec())
     }
 
     /// Writes bytes to unmanaged memory.
@@ -333,15 +341,21 @@ impl UnmanagedMemory {
                     reason: "address not in any allocated region",
                 })?;
 
-        if offset + data.len() > region.size() {
-            return Err(EmulationError::InvalidPointer {
+        let end = offset
+            .checked_add(data.len())
+            .ok_or(EmulationError::InvalidPointer {
+                address,
+                reason: "write length overflows",
+            })?;
+        let dest = region
+            .data
+            .get_mut(offset..end)
+            .ok_or(EmulationError::InvalidPointer {
                 address,
                 reason: "write would exceed region bounds",
-            }
-            .into());
-        }
+            })?;
 
-        region.data[offset..offset + data.len()].copy_from_slice(data);
+        dest.copy_from_slice(data);
         Ok(())
     }
 
@@ -398,15 +412,21 @@ impl UnmanagedMemory {
                     reason: "address not in any allocated region",
                 })?;
 
-        if offset + size > region.size() {
-            return Err(EmulationError::InvalidPointer {
+        let end = offset
+            .checked_add(size)
+            .ok_or(EmulationError::InvalidPointer {
+                address,
+                reason: "memset length overflows",
+            })?;
+        let dest = region
+            .data
+            .get_mut(offset..end)
+            .ok_or(EmulationError::InvalidPointer {
                 address,
                 reason: "memset would exceed region bounds",
-            }
-            .into());
-        }
+            })?;
 
-        region.data[offset..offset + size].fill(value);
+        dest.fill(value);
         Ok(())
     }
 
@@ -486,7 +506,7 @@ impl UnmanagedMemory {
         }
 
         let size = data.len();
-        if self.current_size + size > self.max_size {
+        if self.current_size.saturating_add(size) > self.max_size {
             return Err(EmulationError::HeapMemoryLimitExceeded {
                 current: self.current_size,
                 limit: self.max_size,
@@ -497,12 +517,12 @@ impl UnmanagedMemory {
         let mut region = InternalRegion::new(size);
         region.data.copy_from_slice(data);
         self.regions.insert(address, region);
-        self.current_size += size;
+        self.current_size = self.current_size.saturating_add(size);
 
         // Update next_address if this allocation would conflict
-        let end_address = address + size as u64;
+        let end_address = address.saturating_add(size as u64);
         if end_address > self.next_address {
-            self.next_address = (end_address + 15) & !15;
+            self.next_address = end_address.saturating_add(15) & !15;
         }
 
         Ok(UnmanagedRef::new(address))

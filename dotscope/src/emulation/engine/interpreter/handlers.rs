@@ -483,10 +483,8 @@ impl Interpreter {
             return Err(Self::invalid_operand(instruction, "switch branch targets"));
         }
 
-        if index < branch_targets.len() {
-            Ok(StepResult::Branch {
-                target: branch_targets[index],
-            })
+        if let Some(&target) = branch_targets.get(index) {
+            Ok(StepResult::Branch { target })
         } else {
             // Fall through if index is out of range
             Ok(StepResult::Continue)
@@ -674,13 +672,13 @@ impl Interpreter {
                 }
                 HeapObject::Array { elements, .. } if elements.len() == 1 => {
                     // Check if it's a single-element array containing an integer
-                    if let Some(int_val) = elements[0].try_to_i64() {
+                    if let Some(int_val) = elements.first().and_then(EmValue::try_to_i64) {
                         return Some(int_val);
                     }
                 }
                 HeapObject::MultiArray { elements, .. } if elements.len() == 1 => {
                     // Check if it's a single-element multi-array
-                    if let Some(int_val) = elements[0].try_to_i64() {
+                    if let Some(int_val) = elements.first().and_then(EmValue::try_to_i64) {
                         return Some(int_val);
                     }
                 }
@@ -781,9 +779,9 @@ impl Interpreter {
                             .into());
                         }
 
-                        let array_idx = usize::try_from(idx).ok().filter(|&i| i < elements.len());
-                        match array_idx {
-                            Some(i) => elements[i].clone(),
+                        let array_idx = usize::try_from(idx).ok();
+                        match array_idx.and_then(|i| elements.get(i)) {
+                            Some(v) => v.clone(),
                             None => {
                                 return Err(EmulationError::ArrayIndexOutOfBounds {
                                     index: idx,
@@ -1119,21 +1117,12 @@ impl Interpreter {
                         let local_value = frame
                             .and_then(|f| f.locals().get(usize::from(*idx)).ok())
                             .cloned();
-                        match local_value.as_ref() {
-                            Some(EmValue::ObjectRef(href)) => load_from_href(thread, *href),
-                            Some(EmValue::ValueType { .. }) | Some(EmValue::Void) => {
-                                load_from_valuetype(thread, local_value.unwrap())
+                        match local_value {
+                            Some(EmValue::ObjectRef(href)) => load_from_href(thread, href),
+                            Some(v @ (EmValue::ValueType { .. } | EmValue::Void)) => {
+                                load_from_valuetype(thread, v)
                             }
-                            Some(_) => {
-                                let value = thread.deref_pointer(&ptr)?;
-                                if matches!(value, EmValue::ValueType { .. } | EmValue::Void) {
-                                    load_from_valuetype(thread, value)
-                                } else {
-                                    thread.push(value)?;
-                                    Ok(StepResult::Continue)
-                                }
-                            }
-                            None => {
+                            _ => {
                                 let value = thread.deref_pointer(&ptr)?;
                                 if matches!(value, EmValue::ValueType { .. } | EmValue::Void) {
                                     load_from_valuetype(thread, value)
@@ -1151,21 +1140,12 @@ impl Interpreter {
                         let arg_value = frame
                             .and_then(|f| f.arguments().get(usize::from(*idx)).ok())
                             .cloned();
-                        match arg_value.as_ref() {
-                            Some(EmValue::ObjectRef(href)) => load_from_href(thread, *href),
-                            Some(EmValue::ValueType { .. }) | Some(EmValue::Void) => {
-                                load_from_valuetype(thread, arg_value.unwrap())
+                        match arg_value {
+                            Some(EmValue::ObjectRef(href)) => load_from_href(thread, href),
+                            Some(v @ (EmValue::ValueType { .. } | EmValue::Void)) => {
+                                load_from_valuetype(thread, v)
                             }
-                            Some(_) => {
-                                let value = thread.deref_pointer(&ptr)?;
-                                if matches!(value, EmValue::ValueType { .. } | EmValue::Void) {
-                                    load_from_valuetype(thread, value)
-                                } else {
-                                    thread.push(value)?;
-                                    Ok(StepResult::Continue)
-                                }
-                            }
-                            None => {
+                            _ => {
                                 let value = thread.deref_pointer(&ptr)?;
                                 if matches!(value, EmValue::ValueType { .. } | EmValue::Void) {
                                     load_from_valuetype(thread, value)
@@ -1288,7 +1268,9 @@ impl Interpreter {
                         while fields.len() <= field_idx {
                             fields.push(EmValue::I32(0)); // Default to 0
                         }
-                        fields[field_idx] = value;
+                        if let Some(slot) = fields.get_mut(field_idx) {
+                            *slot = value;
+                        }
                         return Some(EmValue::ValueType { type_token, fields });
                     }
                 }
@@ -1323,19 +1305,16 @@ impl Interpreter {
                             .or_else(|| thread.current_frame());
                         let local_value =
                             frame.and_then(|f| f.locals().get(local_idx).ok()).cloned();
-                        match local_value.as_ref() {
+                        match local_value {
                             Some(EmValue::ObjectRef(href)) => {
                                 let heap = thread.heap_mut();
-                                heap.set_field(*href, field_token, value)?;
+                                heap.set_field(href, field_token, value)?;
                                 Ok(StepResult::Continue)
                             }
-                            Some(EmValue::ValueType { .. }) => {
-                                if let Some(updated) = store_into_valuetype(
-                                    thread,
-                                    local_value.unwrap(),
-                                    field_token,
-                                    value.clone(),
-                                ) {
+                            Some(vt @ EmValue::ValueType { .. }) => {
+                                if let Some(updated) =
+                                    store_into_valuetype(thread, vt, field_token, value.clone())
+                                {
                                     // Write back to the owning frame
                                     thread
                                         .resolve_frame_mut(ptr.frame_depth)
@@ -1364,19 +1343,16 @@ impl Interpreter {
                             .or_else(|| thread.current_frame());
                         let arg_value =
                             frame.and_then(|f| f.arguments().get(arg_idx).ok()).cloned();
-                        match arg_value.as_ref() {
+                        match arg_value {
                             Some(EmValue::ObjectRef(href)) => {
                                 let heap = thread.heap_mut();
-                                heap.set_field(*href, field_token, value)?;
+                                heap.set_field(href, field_token, value)?;
                                 Ok(StepResult::Continue)
                             }
-                            Some(EmValue::ValueType { .. }) => {
-                                if let Some(updated) = store_into_valuetype(
-                                    thread,
-                                    arg_value.unwrap(),
-                                    field_token,
-                                    value.clone(),
-                                ) {
+                            Some(vt @ EmValue::ValueType { .. }) => {
+                                if let Some(updated) =
+                                    store_into_valuetype(thread, vt, field_token, value.clone())
+                                {
                                     thread
                                         .resolve_frame_mut(ptr.frame_depth)
                                         .ok_or_else(|| EmulationError::InternalError {
@@ -1545,77 +1521,90 @@ impl Interpreter {
                     _ => unreachable!(),
                 };
 
+                // Helper: read an exact-sized little-endian array from the address space.
+                // The address_space.read API returns the requested number of bytes on
+                // success; a length mismatch indicates an internal invariant violation.
+                let read_exact = |size: usize| -> Result<Vec<u8>> {
+                    let bytes = address_space.read(ptr_addr, size)?;
+                    if bytes.len() != size {
+                        return Err(EmulationError::InternalError {
+                            description: format!(
+                                "address space read returned {} bytes, expected {}",
+                                bytes.len(),
+                                size
+                            ),
+                        }
+                        .into());
+                    }
+                    Ok(bytes)
+                };
+                let read_array_2 = || -> Result<[u8; 2]> {
+                    let bytes = read_exact(2)?;
+                    <[u8; 2]>::try_from(bytes.as_slice()).map_err(|_| out_of_bounds_error!())
+                };
+                let read_array_4 = || -> Result<[u8; 4]> {
+                    let bytes = read_exact(4)?;
+                    <[u8; 4]>::try_from(bytes.as_slice()).map_err(|_| out_of_bounds_error!())
+                };
+                let read_array_8 = || -> Result<[u8; 8]> {
+                    let bytes = read_exact(8)?;
+                    <[u8; 8]>::try_from(bytes.as_slice()).map_err(|_| out_of_bounds_error!())
+                };
+
                 // Read from address space based on read_size and expected_type
                 let value = match (expected_type, read_size) {
                     // Small integer reads (1 or 2 bytes) that widen to I32
                     (&CilFlavor::I4, 1) => {
-                        let bytes = address_space.read(ptr_addr, 1)?;
+                        let bytes = read_exact(1)?;
+                        let b0 = *bytes.first().ok_or(out_of_bounds_error!())?;
                         let val = if signed {
                             // Intentional wrap-around for sign extension from u8 to i8
-                            i32::from(bytes[0].cast_signed())
+                            i32::from(b0.cast_signed())
                         } else {
-                            i32::from(bytes[0])
+                            i32::from(b0)
                         };
                         EmValue::I32(val)
                     }
                     (&CilFlavor::I4, 2) => {
-                        let bytes = address_space.read(ptr_addr, 2)?;
+                        let arr = read_array_2()?;
                         let val = if signed {
-                            i32::from(i16::from_le_bytes([bytes[0], bytes[1]]))
+                            i32::from(i16::from_le_bytes(arr))
                         } else {
-                            i32::from(u16::from_le_bytes([bytes[0], bytes[1]]))
+                            i32::from(u16::from_le_bytes(arr))
                         };
                         EmValue::I32(val)
                     }
                     (&CilFlavor::I4, _) => {
-                        let bytes = address_space.read(ptr_addr, 4)?;
-                        let val = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                        let val = i32::from_le_bytes(read_array_4()?);
                         EmValue::I32(val)
                     }
                     (&CilFlavor::I8, _) => {
-                        let bytes = address_space.read(ptr_addr, 8)?;
-                        let val = i64::from_le_bytes([
-                            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
-                            bytes[7],
-                        ]);
+                        let val = i64::from_le_bytes(read_array_8()?);
                         EmValue::I64(val)
                     }
                     (&CilFlavor::I, _) => {
                         // Native int is pointer-sized: 4 bytes on PE32, 8 bytes on PE32+
-                        let bytes = address_space.read(ptr_addr, read_size)?;
                         let val = if read_size == 4 {
-                            i64::from(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                            i64::from(i32::from_le_bytes(read_array_4()?))
                         } else {
-                            i64::from_le_bytes([
-                                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
-                                bytes[6], bytes[7],
-                            ])
+                            i64::from_le_bytes(read_array_8()?)
                         };
                         EmValue::NativeInt(val)
                     }
                     (&CilFlavor::R4, _) => {
-                        let bytes = address_space.read(ptr_addr, 4)?;
-                        let val = f32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+                        let val = f32::from_le_bytes(read_array_4()?);
                         EmValue::F32(val)
                     }
                     (&CilFlavor::R8, _) => {
-                        let bytes = address_space.read(ptr_addr, 8)?;
-                        let val = f64::from_le_bytes([
-                            bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5], bytes[6],
-                            bytes[7],
-                        ]);
+                        let val = f64::from_le_bytes(read_array_8()?);
                         EmValue::F64(val)
                     }
                     (&CilFlavor::Object, _) => {
                         // For object references, treat as pointer-sized value
-                        let bytes = address_space.read(ptr_addr, read_size)?;
                         let val = if read_size == 4 {
-                            u64::from(u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]))
+                            u64::from(u32::from_le_bytes(read_array_4()?))
                         } else {
-                            u64::from_le_bytes([
-                                bytes[0], bytes[1], bytes[2], bytes[3], bytes[4], bytes[5],
-                                bytes[6], bytes[7],
-                            ])
+                            u64::from_le_bytes(read_array_8()?)
                         };
                         EmValue::UnmanagedPtr(val)
                     }

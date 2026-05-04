@@ -306,7 +306,7 @@ impl ThreadScheduler {
     /// A unique thread ID that has not been used before in this scheduler.
     pub fn allocate_thread_id(&mut self) -> ThreadId {
         let id = ThreadId::new(self.next_thread_id);
-        self.next_thread_id += 1;
+        self.next_thread_id = self.next_thread_id.saturating_add(1);
         id
     }
 
@@ -324,7 +324,9 @@ impl ThreadScheduler {
     /// in the ready queue.
     #[must_use]
     pub fn ready_count(&self) -> usize {
-        self.ready_queue.len() + usize::from(self.current.is_some())
+        self.ready_queue
+            .len()
+            .saturating_add(usize::from(self.current.is_some()))
     }
 
     /// Returns the ID of the currently running thread, if any.
@@ -392,7 +394,7 @@ impl ThreadScheduler {
     /// Enqueue a thread as ready to run.
     fn enqueue_ready(&mut self, id: ThreadId, priority: ThreadPriority) {
         let sequence = self.next_sequence;
-        self.next_sequence += 1;
+        self.next_sequence = self.next_sequence.saturating_add(1);
         self.ready_queue.push(ScheduleEntry {
             priority,
             thread_id: id,
@@ -480,8 +482,8 @@ impl ThreadScheduler {
     /// }
     /// ```
     pub fn record_instruction(&mut self) -> bool {
-        self.total_instructions += 1;
-        self.quantum_used += 1;
+        self.total_instructions = self.total_instructions.saturating_add(1);
+        self.quantum_used = self.quantum_used.saturating_add(1);
 
         if let Some(id) = self.current {
             if let Some(thread) = self.threads.get_mut(&id) {

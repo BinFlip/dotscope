@@ -118,7 +118,7 @@ impl CallGraph {
         let types = assembly.types();
 
         let mut graph: DirectedGraph<CallGraphNode, CallType> =
-            DirectedGraph::with_capacity(method_count, method_count * 4);
+            DirectedGraph::with_capacity(method_count, method_count.saturating_mul(4));
         let mut token_to_node: HashMap<Token, NodeId> = HashMap::with_capacity(method_count);
 
         // First pass: add all internal methods as nodes
@@ -882,7 +882,7 @@ impl CallGraph {
             .count();
 
         let internal_methods = self.nodes().filter(|n| !n.is_external_ref).count();
-        let external_refs = self.graph.node_count() - internal_methods;
+        let external_refs = self.graph.node_count().saturating_sub(internal_methods);
 
         CallGraphStats {
             method_count: internal_methods,

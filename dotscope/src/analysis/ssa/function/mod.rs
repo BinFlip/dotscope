@@ -418,7 +418,7 @@ impl SsaFunction {
         let from_vars = self
             .variables
             .iter()
-            .map(|v| v.id().index() + 1)
+            .map(|v| v.id().index().saturating_add(1))
             .max()
             .unwrap_or(0);
         let from_blocks = self
@@ -439,7 +439,7 @@ impl SsaFunction {
                 phi_ids.chain(instr_ids)
             })
             .max()
-            .map_or(0, |m| m + 1);
+            .map_or(0, |m| m.saturating_add(1));
         from_vars.max(from_blocks).max(self.variables.len())
     }
 
@@ -583,7 +583,8 @@ impl SsaFunction {
         self.variables.push(var);
         // Extend rename_groups to keep it in sync (default u32::MAX = no group)
         if self.rename_groups.len() <= id.index() {
-            self.rename_groups.resize(id.index() + 1, u32::MAX);
+            self.rename_groups
+                .resize(id.index().saturating_add(1), u32::MAX);
         }
         id
     }
@@ -656,8 +657,10 @@ impl SsaFunction {
             let old_id = var.id();
             let new_id = SsaVarId::from_index(index);
             // Carry over the rename group from the old position
-            if old_id.index() < old_groups.len() {
-                new_groups[index] = old_groups[old_id.index()];
+            if let Some(&old_group) = old_groups.get(old_id.index()) {
+                if let Some(slot) = new_groups.get_mut(index) {
+                    *slot = old_group;
+                }
             }
             if old_id != new_id {
                 remap.insert(old_id, new_id);
@@ -812,9 +815,11 @@ impl SsaFunction {
     pub(crate) fn set_rename_group(&mut self, var_id: SsaVarId, group: u32) {
         let idx = var_id.index();
         if idx >= self.rename_groups.len() {
-            self.rename_groups.resize(idx + 1, u32::MAX);
+            self.rename_groups.resize(idx.saturating_add(1), u32::MAX);
         }
-        self.rename_groups[idx] = group;
+        if let Some(slot) = self.rename_groups.get_mut(idx) {
+            *slot = group;
+        }
     }
 
     /// Rebuilds SSA form after CFG modifications (e.g., control flow unflattening).

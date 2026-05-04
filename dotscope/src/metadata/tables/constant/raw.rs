@@ -10,7 +10,7 @@
 //! The Constant table (0x0B) contains zero or more rows with these fields:
 //! - **Type** (1 byte): Element type of the constant (`ELEMENT_TYPE`_* enumeration)
 //! - **Padding** (1 byte): Reserved padding byte (must be zero)
-//! - **Parent** (2/4 bytes): `HasConstant` coded index into Field, Property, or Param tables  
+//! - **Parent** (2/4 bytes): `HasConstant` coded index into Field, Property, or Param tables
 //! - **Value** (2/4 bytes): Blob heap index containing the constant's binary data
 //!
 //! # Reference
@@ -241,10 +241,11 @@ impl TableRow for ConstantRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* base */    1 +
-            /* padding */ 1 +
-            /* parent */  sizes.coded_index_bytes(CodedIndexType::HasConstant) +
-            /* value */   sizes.blob_bytes()
+            /* base */    1u8
+            /* padding */ .saturating_add(1)
+            /* parent */  .saturating_add(sizes.coded_index_bytes(CodedIndexType::HasConstant))
+            /* value */   .saturating_add(sizes.blob_bytes())
+
         )
     }
 }

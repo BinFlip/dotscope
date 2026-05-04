@@ -402,20 +402,17 @@ impl CilPrimitiveData {
     pub fn from_bytes(type_byte: u8, data: &[u8]) -> Result<Self> {
         match type_byte {
             ELEMENT_TYPE::BOOLEAN => {
-                if data.is_empty() {
-                    Err(out_of_bounds_error!())
-                } else {
-                    Ok(CilPrimitiveData::Boolean(data[0] != 0))
-                }
+                let b = data.first().ok_or(out_of_bounds_error!())?;
+                Ok(CilPrimitiveData::Boolean(*b != 0))
             }
             ELEMENT_TYPE::CHAR => {
-                if data.len() < 2 {
-                    Err(out_of_bounds_error!())
-                } else {
-                    let code = u16::from_le_bytes([data[0], data[1]]);
-                    // .NET System.Char is a UTF-16 code unit, so any u16 value is valid
-                    Ok(CilPrimitiveData::Char(code))
-                }
+                let bytes = data.get(0..2).ok_or(out_of_bounds_error!())?;
+                let code = u16::from_le_bytes([
+                    *bytes.first().ok_or(out_of_bounds_error!())?,
+                    *bytes.get(1).ok_or(out_of_bounds_error!())?,
+                ]);
+                // .NET System.Char is a UTF-16 code unit, so any u16 value is valid
+                Ok(CilPrimitiveData::Char(code))
             }
             ELEMENT_TYPE::I1 => Ok(CilPrimitiveData::I1(read_le::<i8>(data)?)),
             ELEMENT_TYPE::U1 => Ok(CilPrimitiveData::U1(read_le::<u8>(data)?)),
@@ -441,10 +438,12 @@ impl CilPrimitiveData {
                     ));
                 }
 
-                let utf16_chars: Vec<u16> = data
-                    .chunks_exact(2)
-                    .map(|chunk| u16::from_le_bytes([chunk[0], chunk[1]]))
-                    .collect();
+                let mut utf16_chars: Vec<u16> = Vec::with_capacity(data.len() / 2);
+                for chunk in data.chunks_exact(2) {
+                    let b0 = *chunk.first().ok_or(out_of_bounds_error!())?;
+                    let b1 = *chunk.get(1).ok_or(out_of_bounds_error!())?;
+                    utf16_chars.push(u16::from_le_bytes([b0, b1]));
+                }
 
                 match String::from_utf16(&utf16_chars) {
                     Ok(utf_string) => Ok(CilPrimitiveData::String(utf_string)),
@@ -1335,7 +1334,7 @@ impl CilPrimitive {
             CilPrimitiveData::I(value) => value.to_le_bytes().to_vec(),
             CilPrimitiveData::String(value) => {
                 let utf16_chars: Vec<u16> = value.encode_utf16().collect();
-                let mut bytes = Vec::with_capacity(utf16_chars.len() * 2);
+                let mut bytes = Vec::with_capacity(utf16_chars.len().saturating_mul(2));
                 for ch in utf16_chars {
                     bytes.extend_from_slice(&ch.to_le_bytes());
                 }

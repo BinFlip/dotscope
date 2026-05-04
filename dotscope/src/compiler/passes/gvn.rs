@@ -164,7 +164,7 @@ impl GlobalValueNumberingPass {
         // including phi operands, then nop-out the dead instruction.
         // This prevents ping-ponging with DCE: without nop-out, DCE would find
         // the dead instruction as "new work" on the next normalization iteration.
-        let mut total_replaced = 0;
+        let mut total_replaced: usize = 0;
         for (redundant_var, original_var, block_idx, instr_idx) in &redundant {
             let result = ssa.replace_uses_including_phis(*redundant_var, *original_var);
             if result.replaced > 0 {
@@ -175,7 +175,7 @@ impl GlobalValueNumberingPass {
                         "GVN: {redundant_var} → {original_var} ({} uses)",
                         result.replaced
                     ));
-                total_replaced += result.replaced;
+                total_replaced = total_replaced.saturating_add(result.replaced);
             }
             // Nop-out the redundant instruction so rebuild_ssa's strip_nops
             // removes it. This avoids leaving dead instructions for DCE to find.

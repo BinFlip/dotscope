@@ -41,7 +41,7 @@ use crate::{
     },
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     metadata::token::Token,
-    CilObject, Result,
+    CilObject, Error, Result,
 };
 
 /// SSA pass that replaces JIEJIE.NET typeof container calls with
@@ -124,22 +124,23 @@ impl SsaPass for TypeOfRestorationPass {
                     }
 
                     // Resolve the index argument to a constant
-                    let Some(ConstValue::I32(index)) = constants.get(&args[0]) else {
+                    let Some(arg0) = args.first() else { continue };
+                    let Some(ConstValue::I32(index)) = constants.get(arg0) else {
                         continue;
                     };
 
                     let index = *index as usize;
-                    if index >= self.type_tokens.len() {
+                    let Some(&type_token) = self.type_tokens.get(index) else {
                         debug!(
                             "jiejie-typeof: index {} out of bounds (max {}), skipping",
                             index,
                             self.type_tokens.len()
                         );
                         continue;
-                    }
+                    };
 
                     if let Some(dest) = dest {
-                        replacements.push((block_idx, instr_idx, self.type_tokens[index], *dest));
+                        replacements.push((block_idx, instr_idx, type_token, *dest));
                     }
                 }
             }
@@ -186,9 +187,15 @@ impl SsaPass for TypeOfRestorationPass {
                 args: vec![handle_var],
             });
 
-            ssa.blocks_mut()[*block_idx]
+            let block = ssa.blocks_mut().get_mut(*block_idx).ok_or_else(|| {
+                Error::Deobfuscation(format!(
+                    "jiejie-typeof: block index {} out of bounds",
+                    *block_idx
+                ))
+            })?;
+            block
                 .instructions_mut()
-                .insert(instr_idx + 1, call_instr);
+                .insert(instr_idx.saturating_add(1), call_instr);
 
             ctx.events.record(EventKind::ValueResolved);
         }

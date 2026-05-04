@@ -280,9 +280,10 @@ impl TableRow for ClassLayoutRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* packing_size */ 2 +
-            /* class_size */   4 +
-            /* parent */       sizes.table_index_bytes(TableId::TypeDef)
+            /* packing_size */ 2u8
+            /* class_size */   .saturating_add(4)
+            /* parent */       .saturating_add(sizes.table_index_bytes(TableId::TypeDef))
+
         )
     }
 }

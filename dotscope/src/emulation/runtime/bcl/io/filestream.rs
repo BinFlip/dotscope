@@ -307,16 +307,19 @@ fn extract_nth_string_arg(
 
 /// Extracts the filename portion from a path (after last `\` or `/`).
 fn path_filename(path: &str) -> &str {
-    path.rfind(['\\', '/']).map_or(path, |pos| &path[pos + 1..])
+    match path.rfind(['\\', '/']) {
+        Some(pos) => path.get(pos.saturating_add(1)..).unwrap_or(path),
+        None => path,
+    }
 }
 
 /// Returns true if a path is rooted (starts with drive letter like `C:` or `\` or `/`).
 fn is_rooted(path: &str) -> bool {
     let bytes = path.as_bytes();
-    if bytes.is_empty() {
+    let Some(&first) = bytes.first() else {
         return false;
-    }
-    bytes[0] == b'\\' || bytes[0] == b'/' || (bytes.len() >= 2 && bytes[1] == b':')
+    };
+    first == b'\\' || first == b'/' || bytes.get(1).is_some_and(|&b| b == b':')
 }
 
 /// Allocates a string on the heap and returns a bypass result, or Null on error.
@@ -684,14 +687,15 @@ fn path_get_path_root_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         None => return PreHookResult::Bypass(Some(EmValue::Null)),
     };
     let bytes = path.as_bytes();
-    let root = if bytes.len() >= 3 && bytes[1] == b':' && (bytes[2] == b'\\' || bytes[2] == b'/') {
+    let root = if bytes.get(1) == Some(&b':') && matches!(bytes.get(2), Some(&b'\\') | Some(&b'/'))
+    {
         // Drive letter root: "C:\"
-        &path[..3]
-    } else if bytes.len() >= 2 && bytes[1] == b':' {
+        path.get(..3).unwrap_or("")
+    } else if bytes.get(1) == Some(&b':') {
         // Drive letter without trailing sep: "C:"
-        &path[..2]
-    } else if !bytes.is_empty() && (bytes[0] == b'\\' || bytes[0] == b'/') {
-        &path[..1]
+        path.get(..2).unwrap_or("")
+    } else if matches!(bytes.first(), Some(&b'\\') | Some(&b'/')) {
+        path.get(..1).unwrap_or("")
     } else {
         ""
     };
@@ -883,11 +887,7 @@ fn streamreader_read_to_end_pre(
 
     // Try plain Stream first (most common path)
     if let Some(text) = try_hook!(thread.heap().with_stream(stream_ref, |data, position| {
-        let remaining = if *position < data.len() {
-            &data[*position..]
-        } else {
-            &[]
-        };
+        let remaining: &[u8] = data.get(*position..).unwrap_or(&[]);
         let text = String::from_utf8_lossy(remaining).into_owned();
         *position = data.len(); // Advance to end
         text
@@ -909,11 +909,7 @@ fn streamreader_read_to_end_pre(
         let decrypted = if let Some((data, pos)) =
             try_hook!(thread.heap().get_crypto_stream_transformed(stream_ref))
         {
-            if pos < data.len() {
-                data[pos..].to_vec()
-            } else {
-                vec![]
-            }
+            data.get(pos..).map(<[u8]>::to_vec).unwrap_or_default()
         } else {
             // No cached data — perform the crypto transform now
             let Some((stream_data, underlying_pos)) =
@@ -922,11 +918,7 @@ fn streamreader_read_to_end_pre(
                 return PreHookResult::Bypass(Some(EmValue::Null));
             };
 
-            let effective_data = if underlying_pos < stream_data.len() {
-                &stream_data[underlying_pos..]
-            } else {
-                &[]
-            };
+            let effective_data: &[u8] = stream_data.get(underlying_pos..).unwrap_or(&[]);
 
             let transformed = if let Some((algorithm, key, iv, is_encryptor, cmode, padding)) =
                 try_hook!(thread.heap().get_crypto_transform_info(transform_ref))
@@ -979,21 +971,25 @@ fn streamreader_read_line_pre(
             return None; // EOF
         }
 
-        let remaining = &data[*position..];
+        let remaining: &[u8] = data.get(*position..)?;
         let (line_bytes, advance) = if let Some(nl_pos) = remaining.iter().position(|&b| b == b'\n')
         {
-            let line_end = if nl_pos > 0 && remaining[nl_pos - 1] == b'\r' {
-                nl_pos - 1 // Strip \r from \r\n
-            } else {
-                nl_pos
-            };
-            (&remaining[..line_end], nl_pos + 1) // Skip past the \n
+            let line_end =
+                if nl_pos > 0 && remaining.get(nl_pos.saturating_sub(1)).copied() == Some(b'\r') {
+                    nl_pos.saturating_sub(1) // Strip \r from \r\n
+                } else {
+                    nl_pos
+                };
+            (
+                remaining.get(..line_end).unwrap_or(&[]),
+                nl_pos.saturating_add(1),
+            ) // Skip past the \n
         } else {
             // No newline found — return rest of stream
             (remaining, remaining.len())
         };
 
-        *position += advance;
+        *position = position.saturating_add(advance);
         Some(String::from_utf8_lossy(line_bytes).into_owned())
     })) {
         Some(opt) => opt,
@@ -1033,11 +1029,7 @@ fn streamreader_peek_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
 
     // Zero-copy peek — read byte at current position without advancing
     let value = try_hook!(thread.heap().with_stream(stream_ref, |data, position| {
-        if *position < data.len() {
-            data[*position] as i32
-        } else {
-            -1
-        }
+        data.get(*position).map_or(-1, |&b| b as i32)
     }));
 
     PreHookResult::Bypass(Some(EmValue::I32(value.unwrap_or(-1))))

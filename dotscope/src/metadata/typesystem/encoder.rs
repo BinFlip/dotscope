@@ -224,19 +224,23 @@ impl TypeSignatureEncoder {
             // Reference and pointer types
             TypeSignature::ByRef(inner) => {
                 buffer.push(0x10); // ELEMENT_TYPE_BYREF
-                Self::encode_type_signature_internal(inner, buffer, depth + 1)?;
+                Self::encode_type_signature_internal(inner, buffer, depth.saturating_add(1))?;
             }
 
             TypeSignature::Ptr(pointer) => {
                 buffer.push(0x0F); // ELEMENT_TYPE_PTR
                                    // Encode custom modifiers
                 Self::encode_custom_modifiers(&pointer.modifiers, buffer)?;
-                Self::encode_type_signature_internal(&pointer.base, buffer, depth + 1)?;
+                Self::encode_type_signature_internal(
+                    &pointer.base,
+                    buffer,
+                    depth.saturating_add(1),
+                )?;
             }
 
             TypeSignature::Pinned(inner) => {
                 buffer.push(0x45); // ELEMENT_TYPE_PINNED
-                Self::encode_type_signature_internal(inner, buffer, depth + 1)?;
+                Self::encode_type_signature_internal(inner, buffer, depth.saturating_add(1))?;
             }
 
             // Array types
@@ -244,12 +248,12 @@ impl TypeSignatureEncoder {
                 buffer.push(0x1D); // ELEMENT_TYPE_SZARRAY
                                    // Encode custom modifiers
                 Self::encode_custom_modifiers(&array.modifiers, buffer)?;
-                Self::encode_type_signature_internal(&array.base, buffer, depth + 1)?;
+                Self::encode_type_signature_internal(&array.base, buffer, depth.saturating_add(1))?;
             }
 
             TypeSignature::Array(array) => {
                 buffer.push(0x14); // ELEMENT_TYPE_ARRAY
-                Self::encode_type_signature_internal(&array.base, buffer, depth + 1)?;
+                Self::encode_type_signature_internal(&array.base, buffer, depth.saturating_add(1))?;
                 write_compressed_uint(array.rank, buffer);
 
                 // Collect sizes and lower bounds from dimensions
@@ -296,7 +300,7 @@ impl TypeSignatureEncoder {
             // Generic type instantiation
             TypeSignature::GenericInst(base_type, type_args) => {
                 buffer.push(0x15); // ELEMENT_TYPE_GENERICINST
-                Self::encode_type_signature_internal(base_type, buffer, depth + 1)?;
+                Self::encode_type_signature_internal(base_type, buffer, depth.saturating_add(1))?;
                 write_compressed_uint(
                     u32::try_from(type_args.len()).map_err(|_| {
                         malformed_error!(
@@ -307,7 +311,11 @@ impl TypeSignatureEncoder {
                     buffer,
                 );
                 for type_arg in type_args {
-                    Self::encode_type_signature_internal(type_arg, buffer, depth + 1)?;
+                    Self::encode_type_signature_internal(
+                        type_arg,
+                        buffer,
+                        depth.saturating_add(1),
+                    )?;
                 }
             }
 

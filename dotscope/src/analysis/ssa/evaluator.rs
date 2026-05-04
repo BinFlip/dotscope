@@ -988,7 +988,9 @@ impl<'a> SsaEvaluator<'a> {
     pub fn evaluate_path(&mut self, path: &[usize]) {
         for (i, &block_idx) in path.iter().enumerate() {
             if i > 0 {
-                self.set_predecessor(Some(path[i - 1]));
+                if let Some(&prev) = path.get(i.saturating_sub(1)) {
+                    self.set_predecessor(Some(prev));
+                }
             }
             self.evaluate_block(block_idx);
         }
@@ -1026,17 +1028,21 @@ impl<'a> SsaEvaluator<'a> {
             // Evaluate all loop blocks
             for (i, &block_idx) in loop_blocks.iter().enumerate() {
                 if i > 0 {
-                    self.set_predecessor(Some(loop_blocks[i - 1]));
+                    if let Some(&prev) = loop_blocks.get(i.saturating_sub(1)) {
+                        self.set_predecessor(Some(prev));
+                    }
                 } else if loop_blocks.len() > 1 {
                     // First block - predecessor is the last block (loop back edge)
-                    self.set_predecessor(Some(loop_blocks[loop_blocks.len() - 1]));
+                    if let Some(&last) = loop_blocks.last() {
+                        self.set_predecessor(Some(last));
+                    }
                 }
                 self.evaluate_block(block_idx);
             }
 
             // Check if values changed
             if self.values_match(&snapshot) {
-                return iteration + 1;
+                return iteration.saturating_add(1);
             }
         }
 
@@ -1090,7 +1096,9 @@ impl<'a> SsaEvaluator<'a> {
         for _ in 0..iterations {
             for (i, &block_idx) in loop_blocks.iter().enumerate() {
                 if i > 0 {
-                    self.set_predecessor(Some(loop_blocks[i - 1]));
+                    if let Some(&prev) = loop_blocks.get(i.saturating_sub(1)) {
+                        self.set_predecessor(Some(prev));
+                    }
                 }
                 self.evaluate_block(block_idx);
             }
@@ -1588,7 +1596,9 @@ impl<'a> SsaEvaluator<'a> {
         // Recursively resolve operands first
         for operand in op.uses() {
             if !self.values.contains_key(&operand) {
-                if let Some(resolved) = self.resolve_with_trace(operand, max_depth - 1) {
+                if let Some(resolved) =
+                    self.resolve_with_trace(operand, max_depth.saturating_sub(1))
+                {
                     self.values.insert(operand, resolved);
                 }
             }
@@ -1646,7 +1656,7 @@ impl<'a> SsaEvaluator<'a> {
 
         let Some(instr) = terminator else {
             // No terminator - fall through to next block if it exists
-            let next_idx = block_idx + 1;
+            let next_idx = block_idx.saturating_add(1);
             if next_idx < self.ssa.block_count() {
                 return ControlFlow::Continue(next_idx);
             }
@@ -1715,8 +1725,8 @@ impl<'a> SsaEvaluator<'a> {
                 Some(v) => {
                     #[allow(clippy::cast_possible_truncation)]
                     let idx = v as usize;
-                    if idx < targets.len() {
-                        ControlFlow::Continue(targets[idx])
+                    if let Some(&target) = targets.get(idx) {
+                        ControlFlow::Continue(target)
                     } else {
                         ControlFlow::Continue(*default)
                     }

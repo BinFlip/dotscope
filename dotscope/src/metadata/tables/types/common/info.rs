@@ -96,7 +96,7 @@ impl TableRowInfo {
         } else {
             let zeros = rows.leading_zeros();
             // Safe: 32 - zeros is always <= 32, fits in u8
-            (32 - zeros) as u8
+            32u8.saturating_sub(zeros as u8)
         };
 
         Self {
@@ -219,8 +219,10 @@ impl TableInfo {
     ///
     /// * [ECMA-335 Partition II, Section 24.2.6](https://ecma-international.org/wp-content/uploads/ECMA-335_6th_edition_june_2012.pdf) - #~ Stream
     pub fn new(data: &[u8], valid_bitvec: u64) -> Result<Self> {
-        let mut table_info =
-            vec![TableRowInfo::default(); TableId::CustomDebugInformation as usize + 1];
+        let table_info_len = (TableId::CustomDebugInformation as usize)
+            .checked_add(1)
+            .ok_or_else(|| malformed_error!("Table info size overflow"))?;
+        let mut table_info = vec![TableRowInfo::default(); table_info_len];
         let mut next_row_offset = 24;
 
         for table_id in TableId::iter() {
@@ -239,10 +241,13 @@ impl TableInfo {
                 continue;
             }
 
-            table_info[table_id as usize] = TableRowInfo::new(row_count);
+            let slot = table_info
+                .get_mut(table_id as usize)
+                .ok_or(out_of_bounds_error!())?;
+            *slot = TableRowInfo::new(row_count);
         }
 
-        let heap_size_flags = read_le::<u8>(&data[6..])?;
+        let heap_size_flags = read_le::<u8>(data.get(6..).ok_or(out_of_bounds_error!())?)?;
         let mut table_info = TableInfo {
             rows: table_info,
             coded_indexes: vec![0; CodedIndexType::COUNT],
@@ -346,7 +351,7 @@ impl TableInfo {
             clippy::cast_precision_loss
         )]
         let tag_bits = (tables.len() as f32).log2().ceil() as u8;
-        let tag_mask = (1 << tag_bits) - 1;
+        let tag_mask = (1u32 << tag_bits).saturating_sub(1);
 
         let tag = value & tag_mask;
         let index = value >> tag_bits;
@@ -355,7 +360,8 @@ impl TableInfo {
             return Err(out_of_bounds_error!());
         }
 
-        Ok((tables[tag as usize], index))
+        let table = *tables.get(tag as usize).ok_or(out_of_bounds_error!())?;
+        Ok((table, index))
     }
 
     /// Encodes a table identifier and row index into a coded index value.
@@ -456,7 +462,7 @@ impl TableInfo {
     /// `false` if 2-byte indices are sufficient.
     #[must_use]
     pub fn is_large(&self, id: TableId) -> bool {
-        self.rows[id as usize].is_large
+        self.rows.get(id as usize).is_some_and(|info| info.is_large)
     }
 
     /// Returns whether the #String heap uses large (4-byte) indices.
@@ -554,7 +560,15 @@ impl TableInfo {
     /// A reference to the [`TableRowInfo`] for the specified table.
     #[must_use]
     pub fn get(&self, table: TableId) -> &TableRowInfo {
-        &self.rows[table as usize]
+        // The `rows` vector is sized to cover every TableId variant, so this lookup
+        // is always in range. Fall back to a static default to keep the lint happy
+        // and to avoid panics on malformed inputs.
+        static DEFAULT: TableRowInfo = TableRowInfo {
+            rows: 0,
+            bits: 1,
+            is_large: false,
+        };
+        self.rows.get(table as usize).unwrap_or(&DEFAULT)
     }
 
     /// Returns the number of bits required to represent an index into a specific table.
@@ -572,7 +586,7 @@ impl TableInfo {
     /// The number of bits required to represent table indices (1-32).
     #[must_use]
     pub fn table_index_bits(&self, table_id: TableId) -> u8 {
-        self.rows[table_id as usize].bits
+        self.rows.get(table_id as usize).map_or(1, |info| info.bits)
     }
 
     /// Returns the number of bytes required to represent an index into a specific table.
@@ -589,7 +603,8 @@ impl TableInfo {
     /// Either `2` for small tables or `4` for large tables.
     #[must_use]
     pub fn table_index_bytes(&self, table_id: TableId) -> u8 {
-        if self.rows[table_id as usize].bits > 16 {
+        let bits = self.rows.get(table_id as usize).map_or(1, |info| info.bits);
+        if bits > 16 {
             4
         } else {
             2
@@ -611,7 +626,10 @@ impl TableInfo {
     /// The number of bits required to represent coded indices of this type.
     #[must_use]
     pub fn coded_index_bits(&self, coded_index_type: CodedIndexType) -> u8 {
-        self.coded_indexes[coded_index_type as usize]
+        self.coded_indexes
+            .get(coded_index_type as usize)
+            .copied()
+            .unwrap_or(0)
     }
 
     /// Returns the cached byte size for a specific coded index type.
@@ -628,7 +646,12 @@ impl TableInfo {
     /// Either `2` for coded indices that fit in 16 bits or `4` for larger coded indices.
     #[must_use]
     pub fn coded_index_bytes(&self, coded_index_type: CodedIndexType) -> u8 {
-        if self.coded_indexes[coded_index_type as usize] > 16 {
+        let bits = self
+            .coded_indexes
+            .get(coded_index_type as usize)
+            .copied()
+            .unwrap_or(0);
+        if bits > 16 {
             4
         } else {
             2
@@ -663,7 +686,7 @@ impl TableInfo {
             clippy::cast_precision_loss
         )]
         let tag_bits = (tables.len() as f32).log2().ceil() as u8;
-        max_bits + tag_bits
+        max_bits.saturating_add(tag_bits)
     }
 
     /// Calculates and caches the bit sizes required for all coded index types.
@@ -674,7 +697,9 @@ impl TableInfo {
     fn calculate_coded_index_bits(&mut self) {
         for coded_index in CodedIndexType::iter() {
             let size = self.calculate_coded_index_size(coded_index);
-            self.coded_indexes[coded_index as usize] = size;
+            if let Some(slot) = self.coded_indexes.get_mut(coded_index as usize) {
+                *slot = size;
+            }
         }
     }
 
@@ -722,7 +747,7 @@ impl TableInfo {
     /// The number of rows in the specified table (0 if table is not present).
     #[must_use]
     pub fn row_count(&self, table_id: TableId) -> u32 {
-        self.rows[table_id as usize].rows
+        self.rows.get(table_id as usize).map_or(0, |info| info.rows)
     }
 
     /// Creates a new `TableInfo` with modified row counts for specified tables.
@@ -759,7 +784,9 @@ impl TableInfo {
     ) -> TableInfo {
         let mut rows = self.rows.clone();
         for (table_id, count) in new_counts {
-            rows[table_id as usize] = TableRowInfo::new(count);
+            if let Some(slot) = rows.get_mut(table_id as usize) {
+                *slot = TableRowInfo::new(count);
+            }
         }
 
         let mut new_info = TableInfo {

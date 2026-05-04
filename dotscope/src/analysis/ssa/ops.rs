@@ -1235,13 +1235,13 @@ impl SsaOp {
     ///
     /// The number of replacements made.
     pub fn replace_uses(&mut self, old_var: SsaVarId, new_var: SsaVarId) -> usize {
-        let mut count = 0;
+        let mut count: usize = 0;
 
         // Helper closure to replace a variable
         let mut replace = |var: &mut SsaVarId| {
             if *var == old_var {
                 *var = new_var;
-                count += 1;
+                count = count.saturating_add(1);
             }
         };
 
@@ -2575,7 +2575,7 @@ impl SsaOp {
                 // Indirect call pops args + function pointer
                 // args.len() will never exceed u32 for CIL methods
                 #[allow(clippy::cast_possible_truncation)]
-                let pops = args.len() as u32 + 1;
+                let pops = (args.len() as u32).saturating_add(1);
                 let pushes = u32::from(dest.is_some());
                 (pops, pushes)
             }

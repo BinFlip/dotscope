@@ -248,7 +248,11 @@ impl<'a> SemanticAnalyzer<'a> {
             let semantics = self.compute_block_semantics(block_idx);
             self.block_cache.insert(block_idx, semantics);
         }
-        &self.block_cache[&block_idx]
+        // Just inserted above if missing; fall back to inserting a default if for any
+        // reason the entry is gone (cannot happen with current logic, but avoids panics).
+        self.block_cache
+            .entry(block_idx)
+            .or_insert_with(|| BlockSemantics::new(block_idx))
     }
 
     /// Computes semantic information for a block.
@@ -267,11 +271,11 @@ impl<'a> SemanticAnalyzer<'a> {
         }
 
         // Analyze instructions
-        let mut const_assignments = 0;
-        let mut add_sub_ops = 0;
-        let mut call_count = 0;
-        let mut store_count = 0;
-        let mut comparison_count = 0;
+        let mut const_assignments: usize = 0;
+        let mut add_sub_ops: usize = 0;
+        let mut call_count: usize = 0;
+        let mut store_count: usize = 0;
+        let mut comparison_count: usize = 0;
         let mut has_return = false;
         let mut has_branch = false;
         let mut has_switch = false;
@@ -279,26 +283,26 @@ impl<'a> SemanticAnalyzer<'a> {
         for instr in block.instructions() {
             match instr.op() {
                 SsaOp::Const { dest, .. } => {
-                    const_assignments += 1;
+                    const_assignments = const_assignments.saturating_add(1);
                     semantics.initialized_vars.push(*dest);
                 }
                 SsaOp::Add { dest, .. } | SsaOp::Sub { dest, .. } => {
-                    add_sub_ops += 1;
+                    add_sub_ops = add_sub_ops.saturating_add(1);
                     semantics.updated_vars.push(*dest);
                 }
                 SsaOp::Call { .. } | SsaOp::CallVirt { .. } | SsaOp::NewObj { .. } => {
-                    call_count += 1;
+                    call_count = call_count.saturating_add(1);
                     semantics.has_side_effects = true;
                 }
                 SsaOp::StoreField { .. }
                 | SsaOp::StoreStaticField { .. }
                 | SsaOp::StoreElement { .. }
                 | SsaOp::StoreIndirect { .. } => {
-                    store_count += 1;
+                    store_count = store_count.saturating_add(1);
                     semantics.has_side_effects = true;
                 }
                 SsaOp::Clt { .. } | SsaOp::Cgt { .. } | SsaOp::Ceq { .. } => {
-                    comparison_count += 1;
+                    comparison_count = comparison_count.saturating_add(1);
                     semantics.has_comparison = true;
                 }
                 SsaOp::Branch { .. } => {

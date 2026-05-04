@@ -428,12 +428,12 @@ impl PermissionSet {
     /// # Errors
     /// Returns an error if the data is empty or malformed.
     pub fn new(data: &[u8]) -> Result<Self> {
-        if data.is_empty() {
-            return Err(malformed_error!("PermissionSet data is empty"));
-        }
+        let first = *data
+            .first()
+            .ok_or_else(|| malformed_error!("PermissionSet data is empty"))?;
 
         // Determine format from first byte
-        let (format, permissions) = match data[0] {
+        let (format, permissions) = match first {
             /* '.' - Binary format marker */
             0x2E => Self::parse_binary_format(data)?,
             /* '<' - XML format marker */
@@ -674,7 +674,7 @@ impl PermissionSet {
         }
 
         let xml_start = b"<Perm";
-        if &data[0..5] != xml_start {
+        if data.get(0..5) != Some(xml_start.as_slice()) {
             return Err(malformed_error!("Invalid XML permission set format"));
         }
 
@@ -948,7 +948,8 @@ impl PermissionSet {
         // If the class name contains assembly info (e.g., "Class, Assembly, Version=..."),
         // extract the assembly name directly
         if let Some(comma_pos) = class_name.find(',') {
-            let after_comma = &class_name[comma_pos + 1..];
+            let next = comma_pos.saturating_add(1);
+            let after_comma = class_name.get(next..).unwrap_or("");
             // Extract assembly name (first part after the comma, before next comma or end)
             let assembly_part = after_comma.split(',').next().unwrap_or("").trim();
             if !assembly_part.is_empty() {
@@ -987,8 +988,8 @@ impl PermissionSet {
             // Return namespace-based guess rather than "Unknown"
             // Extract first two parts of namespace as assembly guess
             let parts: Vec<&str> = class_name.split('.').collect();
-            if parts.len() >= 2 {
-                format!("{}.{}", parts[0], parts[1])
+            if let (Some(p0), Some(p1)) = (parts.first(), parts.get(1)) {
+                format!("{p0}.{p1}")
             } else {
                 "mscorlib".to_string() // Default to mscorlib for unrecognized types
             }

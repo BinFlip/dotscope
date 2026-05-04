@@ -124,7 +124,7 @@ impl<'a> UserStrings<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn from(data: &'a [u8]) -> Result<UserStrings<'a>> {
-        if data.is_empty() || data[0] != 0 {
+        if data.first().copied() != Some(0) {
             return Err(out_of_bounds_error!());
         }
 
@@ -174,7 +174,9 @@ impl<'a> UserStrings<'a> {
         }
 
         let (total_bytes, compressed_length_size) = read_compressed_int_at(self.data, index)?;
-        let data_start = index + compressed_length_size;
+        let data_start = index
+            .checked_add(compressed_length_size)
+            .ok_or_else(|| malformed_error!("User string offset overflow at index {}", index))?;
 
         if total_bytes == 0 {
             return Err(malformed_error!(
@@ -190,9 +192,13 @@ impl<'a> UserStrings<'a> {
 
         // Total bytes includes UTF-16 data + terminator byte (1 byte)
         // So actual UTF-16 data is total_bytes - 1
-        let utf16_length = total_bytes - 1;
+        let utf16_length = total_bytes
+            .checked_sub(1)
+            .ok_or_else(|| malformed_error!("User string length underflow at index {}", index))?;
 
-        let total_data_end = data_start + total_bytes;
+        let total_data_end = data_start
+            .checked_add(total_bytes)
+            .ok_or_else(|| malformed_error!("User string end overflow at index {}", index))?;
         if total_data_end > self.data.len() {
             return Err(out_of_bounds_error!());
         }
@@ -201,8 +207,13 @@ impl<'a> UserStrings<'a> {
             return Err(malformed_error!("Invalid UTF-16 length at index {}", index));
         }
 
-        let utf16_data_end = data_start + utf16_length;
-        let utf16_data = &self.data[data_start..utf16_data_end];
+        let utf16_data_end = data_start
+            .checked_add(utf16_length)
+            .ok_or_else(|| malformed_error!("User string data end overflow at index {}", index))?;
+        let utf16_data = self
+            .data
+            .get(data_start..utf16_data_end)
+            .ok_or(out_of_bounds_error!())?;
 
         // Convert byte slice to u16 slice for UTF-16 string construction.
         //
@@ -472,30 +483,33 @@ impl<'a> Iterator for UserStringsIterator<'a> {
                 read_compressed_int(self.user_strings.data, &mut self.position)
             {
                 // Reset position since read_compressed_int advanced it
-                self.position -= consumed;
+                self.position = self.position.saturating_sub(consumed);
                 (length, consumed)
             } else {
                 // Try to skip over bad data by advancing one byte and trying again
-                self.position += 1;
-                recovery_attempts += 1;
+                self.position = self.position.saturating_add(1);
+                recovery_attempts = recovery_attempts.saturating_add(1);
                 continue;
             };
 
             // Handle zero-length entries (invalid according to .NET spec, but may exist in malformed data)
             if total_bytes == 0 {
-                self.position += compressed_length_size;
-                recovery_attempts += 1;
+                self.position = self.position.saturating_add(compressed_length_size);
+                recovery_attempts = recovery_attempts.saturating_add(1);
                 continue;
             }
 
             let Ok(string) = self.user_strings.get(start_position) else {
-                // Skip over the malformed entry
-                self.position += compressed_length_size + total_bytes;
-                recovery_attempts += 1;
+                // Skip over the malformed entry. On overflow, bail out cleanly.
+                let skip = compressed_length_size.checked_add(total_bytes)?;
+                let next = self.position.checked_add(skip)?;
+                self.position = next;
+                recovery_attempts = recovery_attempts.saturating_add(1);
                 continue;
             };
 
-            let new_position = self.position + compressed_length_size + total_bytes;
+            let skip = compressed_length_size.checked_add(total_bytes)?;
+            let new_position = self.position.checked_add(skip)?;
             self.position = new_position;
 
             return Some((start_position, string));

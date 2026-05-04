@@ -76,11 +76,11 @@ fn bitconverter_get_bytes_pre(
     ctx: &HookContext<'_>,
     thread: &mut EmulationThread,
 ) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::Null));
-    }
+    };
 
-    let bytes = match &ctx.args[0] {
+    let bytes = match arg {
         EmValue::I32(v) => LeBytes::from_4(v.to_le_bytes()),
         EmValue::I64(v) | EmValue::NativeInt(v) => LeBytes::from_8(v.to_le_bytes()),
         EmValue::F32(v) => LeBytes::from_4(v.to_le_bytes()),
@@ -109,29 +109,29 @@ fn bitconverter_get_bytes_pre(
 /// - `value`: Byte array containing the bytes to convert
 /// - `startIndex`: Starting position within the array
 fn bitconverter_to_int32_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
-    }
+    };
 
-    let Some(bytes) = (match &ctx.args[0] {
+    let Some(bytes) = (match arg0 {
         EmValue::ObjectRef(handle) => try_hook!(thread.heap().get_byte_array(*handle)),
         _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
     }) else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
     };
 
-    let start_index = usize::try_from(&ctx.args[1]).unwrap_or(usize::MAX);
-    if start_index.saturating_add(4) > bytes.len() {
+    let start_index = usize::try_from(arg1).unwrap_or(usize::MAX);
+    let Some(end_index) = start_index.checked_add(4) else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
-    }
+    };
+    let Some(slice) = bytes
+        .get(start_index..end_index)
+        .and_then(|s| <[u8; 4]>::try_from(s).ok())
+    else {
+        return PreHookResult::Bypass(Some(EmValue::I32(0)));
+    };
 
-    let value = i32::from_le_bytes([
-        bytes[start_index],
-        bytes[start_index + 1],
-        bytes[start_index + 2],
-        bytes[start_index + 3],
-    ]);
-
+    let value = i32::from_le_bytes(slice);
     PreHookResult::Bypass(Some(EmValue::I32(value)))
 }
 
@@ -148,33 +148,29 @@ fn bitconverter_to_int32_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread
 /// - `value`: Byte array containing the bytes to convert
 /// - `startIndex`: Starting position within the array
 fn bitconverter_to_int64_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::I64(0)));
-    }
+    };
 
-    let Some(bytes) = (match &ctx.args[0] {
+    let Some(bytes) = (match arg0 {
         EmValue::ObjectRef(handle) => try_hook!(thread.heap().get_byte_array(*handle)),
         _ => return PreHookResult::Bypass(Some(EmValue::I64(0))),
     }) else {
         return PreHookResult::Bypass(Some(EmValue::I64(0)));
     };
 
-    let start_index = usize::try_from(&ctx.args[1]).unwrap_or(usize::MAX);
-    if start_index.saturating_add(8) > bytes.len() {
+    let start_index = usize::try_from(arg1).unwrap_or(usize::MAX);
+    let Some(end_index) = start_index.checked_add(8) else {
         return PreHookResult::Bypass(Some(EmValue::I64(0)));
-    }
+    };
+    let Some(slice) = bytes
+        .get(start_index..end_index)
+        .and_then(|s| <[u8; 8]>::try_from(s).ok())
+    else {
+        return PreHookResult::Bypass(Some(EmValue::I64(0)));
+    };
 
-    let value = i64::from_le_bytes([
-        bytes[start_index],
-        bytes[start_index + 1],
-        bytes[start_index + 2],
-        bytes[start_index + 3],
-        bytes[start_index + 4],
-        bytes[start_index + 5],
-        bytes[start_index + 6],
-        bytes[start_index + 7],
-    ]);
-
+    let value = i64::from_le_bytes(slice);
     PreHookResult::Bypass(Some(EmValue::I64(value)))
 }
 
@@ -194,28 +190,29 @@ fn bitconverter_to_uint32_pre(
     ctx: &HookContext<'_>,
     thread: &mut EmulationThread,
 ) -> PreHookResult {
-    if ctx.args.len() < 2 {
+    let (Some(arg0), Some(arg1)) = (ctx.args.first(), ctx.args.get(1)) else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
-    }
+    };
 
-    let Some(bytes) = (match &ctx.args[0] {
+    let Some(bytes) = (match arg0 {
         EmValue::ObjectRef(handle) => try_hook!(thread.heap().get_byte_array(*handle)),
         _ => return PreHookResult::Bypass(Some(EmValue::I32(0))),
     }) else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
     };
 
-    let start_index = usize::try_from(&ctx.args[1]).unwrap_or(usize::MAX);
-    if start_index.saturating_add(4) > bytes.len() {
+    let start_index = usize::try_from(arg1).unwrap_or(usize::MAX);
+    let Some(end_index) = start_index.checked_add(4) else {
         return PreHookResult::Bypass(Some(EmValue::I32(0)));
-    }
+    };
+    let Some(slice) = bytes
+        .get(start_index..end_index)
+        .and_then(|s| <[u8; 4]>::try_from(s).ok())
+    else {
+        return PreHookResult::Bypass(Some(EmValue::I32(0)));
+    };
 
-    let value = u32::from_le_bytes([
-        bytes[start_index],
-        bytes[start_index + 1],
-        bytes[start_index + 2],
-        bytes[start_index + 3],
-    ]);
+    let value = u32::from_le_bytes(slice);
 
     #[allow(clippy::cast_possible_wrap)]
     let signed_value = value as i32;

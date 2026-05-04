@@ -248,7 +248,7 @@ impl Technique for ConfuserExResources {
         }
 
         // Insert each extracted resource.
-        let mut inserted_count = 0;
+        let mut inserted_count: usize = 0;
         for resource in &extracted_resources {
             let builder = ManifestResourceBuilder::new()
                 .name(&resource.name)
@@ -257,7 +257,7 @@ impl Technique for ConfuserExResources {
 
             match builder.build(&mut cil_assembly) {
                 Ok(_) => {
-                    inserted_count += 1;
+                    inserted_count = inserted_count.saturating_add(1);
                     log::info!(
                         "Inserted resource: {} ({} bytes)",
                         resource.name,
@@ -342,7 +342,7 @@ fn try_emulate_resource_handler(
     let mut resources = Vec::new();
     for captured_asm in process.capture().assemblies().iter() {
         let data = &captured_asm.data;
-        if data.len() < 2 || data[0] != b'M' || data[1] != b'Z' {
+        if data.first() != Some(&b'M') || data.get(1) != Some(&b'Z') {
             continue;
         }
 

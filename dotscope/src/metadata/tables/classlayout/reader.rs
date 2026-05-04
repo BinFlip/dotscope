@@ -19,7 +19,7 @@ impl RowReadable for ClassLayoutRaw {
 
         Ok(ClassLayoutRaw {
             rid,
-            token: Token::new(0x0F00_0000 + rid),
+            token: Token::new(0x0F00_0000u32.saturating_add(rid)),
             offset: offset_org,
             packing_size,
             class_size,

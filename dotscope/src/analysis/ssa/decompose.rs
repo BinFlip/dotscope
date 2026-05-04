@@ -619,34 +619,28 @@ fn decompose_standard_instruction(
             // brfalse.s, brfalse
             // For conditional branches, successors[0] is the branch target, successors[1] is fallthrough
             uses.first().and_then(|&condition| {
-                if successors.len() >= 2 {
-                    // brfalse: jumps to target if false, falls through if true
-                    // successors[0] = branch target (false path), successors[1] = fallthrough (true path)
-                    Some(SsaOp::Branch {
-                        condition,
-                        true_target: successors[1],  // fallthrough
-                        false_target: successors[0], // branch target
-                    })
-                } else {
-                    None
-                }
+                let target = successors.first().copied()?;
+                let fallthrough = successors.get(1).copied()?;
+                // brfalse: jumps to target if false, falls through if true
+                Some(SsaOp::Branch {
+                    condition,
+                    true_target: fallthrough,
+                    false_target: target,
+                })
             })
         }
         0x2D | 0x3A => {
             // brtrue.s, brtrue
             // For conditional branches, successors[0] is the branch target, successors[1] is fallthrough
             uses.first().and_then(|&condition| {
-                if successors.len() >= 2 {
-                    // brtrue: jumps to target if true, falls through if false
-                    // successors[0] = branch target (true path), successors[1] = fallthrough (false path)
-                    Some(SsaOp::Branch {
-                        condition,
-                        true_target: successors[0],  // branch target
-                        false_target: successors[1], // fallthrough
-                    })
-                } else {
-                    None
-                }
+                let target = successors.first().copied()?;
+                let fallthrough = successors.get(1).copied()?;
+                // brtrue: jumps to target if true, falls through if false
+                Some(SsaOp::Branch {
+                    condition,
+                    true_target: target,
+                    false_target: fallthrough,
+                })
             })
         }
 
@@ -698,8 +692,9 @@ fn decompose_standard_instruction(
             uses.first().and_then(|&value| {
                 if successors.len() >= 2 {
                     // Last successor is the default, rest are case targets
-                    let default = *successors.last().unwrap_or(&0);
-                    let targets: Vec<usize> = successors[..successors.len() - 1].to_vec();
+                    let last_idx = successors.len().checked_sub(1)?;
+                    let default = successors.get(last_idx).copied().unwrap_or(0);
+                    let targets: Vec<usize> = successors.get(..last_idx)?.to_vec();
                     Some(SsaOp::Switch {
                         value,
                         targets,
@@ -804,7 +799,11 @@ fn decompose_standard_instruction(
             // calli
             if let Some(signature) = extract_signature_token(&instr.operand) {
                 let (fptr, args) = if let Some(&fptr) = uses.last() {
-                    let args = uses[..uses.len() - 1].to_vec();
+                    let last_idx = uses.len().saturating_sub(1);
+                    let args = uses
+                        .get(..last_idx)
+                        .map(<[SsaVarId]>::to_vec)
+                        .unwrap_or_default();
                     (fptr, args)
                 } else {
                     (SsaVarId::from_index(0), vec![])
@@ -1430,18 +1429,16 @@ fn comparison_branch(
     unsigned: bool,
 ) -> Option<SsaOp> {
     if let (Some(&left), Some(&right)) = (uses.first(), uses.get(1)) {
-        if successors.len() >= 2 {
-            Some(SsaOp::BranchCmp {
-                left,
-                right,
-                cmp,
-                unsigned,
-                true_target: successors[0],
-                false_target: successors[1],
-            })
-        } else {
-            None
-        }
+        let true_target = successors.first().copied()?;
+        let false_target = successors.get(1).copied()?;
+        Some(SsaOp::BranchCmp {
+            left,
+            right,
+            cmp,
+            unsigned,
+            true_target,
+            false_target,
+        })
     } else {
         None
     }

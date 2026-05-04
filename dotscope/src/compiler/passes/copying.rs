@@ -93,7 +93,7 @@ impl CopyPropagationPass {
     /// `rebuild_ssa` calls then assign the entry value (null) to all uses
     /// of Local(0), corrupting the data flow.
     fn protect_sole_local_defs(ssa: &SsaFunction, copies: &mut BTreeMap<SsaVarId, SsaVarId>) {
-        let real_local_limit = (ssa.num_args() + ssa.num_locals()) as u32;
+        let real_local_limit = ssa.num_args().saturating_add(ssa.num_locals()) as u32;
 
         // Count instruction-based definitions per local/argument group.
         let mut group_def_count: BTreeMap<u32, usize> = BTreeMap::new();
@@ -102,7 +102,8 @@ impl CopyPropagationPass {
                 if let Some(dest) = instr.op().dest() {
                     let group = ssa.rename_group(dest);
                     if group < real_local_limit {
-                        *group_def_count.entry(group).or_insert(0) += 1;
+                        let counter = group_def_count.entry(group).or_insert(0);
+                        *counter = counter.saturating_add(1);
                     }
                 }
             }
@@ -112,7 +113,10 @@ impl CopyPropagationPass {
         // These are the groups at risk: after copy-prop eliminates the bridging
         // Copy, rebuild_ssa's rename may not be able to reconstruct the correct
         // reaching definition through phi chains.
-        let group_bound = ssa.num_locals() + ssa.num_args() + 1;
+        let group_bound = ssa
+            .num_locals()
+            .saturating_add(ssa.num_args())
+            .saturating_add(1);
         let mut groups_in_phis = BitSet::new(group_bound);
         for block in ssa.blocks() {
             for phi in block.phi_nodes() {
@@ -138,7 +142,7 @@ impl CopyPropagationPass {
         for block in ssa.blocks() {
             for instr in block.instructions() {
                 if let SsaOp::LoadLocalAddr { local_index, .. } = instr.op() {
-                    let group = ssa.num_args() as u32 + *local_index as u32;
+                    let group = (ssa.num_args() as u32).saturating_add(*local_index as u32);
                     if group < real_local_limit {
                         address_taken_groups.insert(group as usize);
                     }

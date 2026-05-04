@@ -55,7 +55,7 @@ use crate::{
         token::Token,
         typesystem::wellknown,
     },
-    CilObject, Result,
+    CilObject, Error, Result,
 };
 
 /// Findings from RuntimeFieldHandleContainer detection.
@@ -137,7 +137,10 @@ impl Technique for JiejieNetArrays {
                 // Accessor: static, single int32 param, returns value type (RuntimeFieldHandle)
                 if method.is_static()
                     && sig.params.len() == 1
-                    && matches!(sig.params[0].base, TypeSignature::I4)
+                    && sig
+                        .params
+                        .first()
+                        .is_some_and(|p| matches!(p.base, TypeSignature::I4))
                     && matches!(sig.return_type.base, TypeSignature::ValueType(_))
                 {
                     accessor_token = Some(method.token);
@@ -386,17 +389,20 @@ fn find_my_initialize_array(assembly: &CilObject) -> (Option<Token>, Option<Toke
             let params = &method.signature.params;
 
             // First param: Class (System.Array)
-            if !matches!(params[0].base, TypeSignature::Class(_)) {
+            let Some(p0) = params.first() else { continue };
+            if !matches!(p0.base, TypeSignature::Class(_)) {
                 continue;
             }
 
             // Second param: ValueType (RuntimeFieldHandle)
-            if !matches!(params[1].base, TypeSignature::ValueType(_)) {
+            let Some(p1) = params.get(1) else { continue };
+            if !matches!(p1.base, TypeSignature::ValueType(_)) {
                 continue;
             }
 
             // Third param: I4 (the XOR key)
-            if !matches!(params[2].base, TypeSignature::I4) {
+            let Some(p2) = params.get(2) else { continue };
+            if !matches!(p2.base, TypeSignature::I4) {
                 continue;
             }
 
@@ -506,8 +512,8 @@ fn extract_init_array_call_sites(
 
                 if let (Some(xor_key), Some(index)) = (xor_key, field_index) {
                     let index = index as usize;
-                    if index < field_tokens.len() {
-                        entries.push((field_tokens[index], xor_key));
+                    if let Some(&token) = field_tokens.get(index) {
+                        entries.push((token, xor_key));
                     }
                 }
             }
@@ -606,7 +612,7 @@ fn emulate_delta_chain_cctor(assembly: &CilObject, cctor_token: Token) -> HashMa
     let offset_map: HashMap<u32, usize> = instructions
         .iter()
         .enumerate()
-        .map(|(i, instr)| (instr.offset as u32 - base_offset, i))
+        .map(|(i, instr)| ((instr.offset as u32).wrapping_sub(base_offset), i))
         .collect();
 
     let mut stack: Vec<i64> = Vec::new();
@@ -614,13 +620,16 @@ fn emulate_delta_chain_cctor(assembly: &CilObject, cctor_token: Token) -> HashMa
     let mut visited = 0u32; // safety counter
 
     while pc < instructions.len() {
-        visited += 1;
+        visited = visited.saturating_add(1);
         if visited > 1000 {
             break; // safety limit
         }
 
-        let instr = instructions[pc];
-        pc += 1;
+        let Some(instr) = instructions.get(pc) else {
+            break;
+        };
+        let instr = *instr;
+        pc = pc.saturating_add(1);
 
         match instr.mnemonic {
             "ldc.i8" => {
@@ -669,10 +678,10 @@ fn emulate_delta_chain_cctor(assembly: &CilObject, cctor_token: Token) -> HashMa
                         // Relative offset from end of instruction.
                         // IL offset of this instr = file_offset - base_offset
                         // End of instr = IL offset + instr size
-                        let il_off = instr.offset as u32 - base_offset;
-                        let instr_size = instructions
-                            .get(pc)
-                            .map_or(0, |next| next.offset as u32 - instr.offset as u32);
+                        let il_off = (instr.offset as u32).wrapping_sub(base_offset);
+                        let instr_size = instructions.get(pc).map_or(0, |next| {
+                            (next.offset as u32).wrapping_sub(instr.offset as u32)
+                        });
                         // For the last case (no next), use standard br sizes
                         let size = if instr_size > 0 {
                             instr_size
@@ -681,14 +690,18 @@ fn emulate_delta_chain_cctor(assembly: &CilObject, cctor_token: Token) -> HashMa
                         } else {
                             2
                         };
-                        Some((il_off + size).wrapping_add(*rel as u32))
+                        Some(il_off.wrapping_add(size).wrapping_add(*rel as u32))
                     }
                     Operand::Immediate(Immediate::Int8(rel)) => {
-                        let il_off = instr.offset as u32 - base_offset;
-                        let instr_size = instructions
-                            .get(pc)
-                            .map_or(2, |next| next.offset as u32 - instr.offset as u32);
-                        Some((il_off + instr_size).wrapping_add(*rel as i32 as u32))
+                        let il_off = (instr.offset as u32).wrapping_sub(base_offset);
+                        let instr_size = instructions.get(pc).map_or(2, |next| {
+                            (next.offset as u32).wrapping_sub(instr.offset as u32)
+                        });
+                        Some(
+                            il_off
+                                .wrapping_add(instr_size)
+                                .wrapping_add(*rel as i32 as u32),
+                        )
                     }
                     _ => None,
                 };
@@ -717,7 +730,9 @@ fn find_preceding_i32_value(
 ) -> Option<i32> {
     // Search backward from pos-1, limited distance
     for j in (0..pos).rev() {
-        let instr = instructions[j];
+        let Some(instr) = instructions.get(j) else {
+            break;
+        };
         // Try direct ldc.i4* constant
         if let Some(val) = instr.get_ldc_i4_value() {
             return Some(val);
@@ -731,7 +746,7 @@ fn find_preceding_i32_value(
             }
         }
         // Stop searching after a few instructions
-        if pos - j > 5 {
+        if pos.saturating_sub(j) > 5 {
             break;
         }
     }
@@ -748,7 +763,9 @@ fn find_preceding_get_handle_index(
 ) -> Option<i32> {
     // Search backward for `call GetHandle` (the accessor)
     for j in (0..pos).rev() {
-        let instr = instructions[j];
+        let Some(instr) = instructions.get(j) else {
+            break;
+        };
         if instr.mnemonic == "call" {
             if let Operand::Token(t) = &instr.operand {
                 if *t == accessor_token {
@@ -758,7 +775,7 @@ fn find_preceding_get_handle_index(
             }
         }
         // Don't search too far back
-        if pos - j > 10 {
+        if pos.saturating_sub(j) > 10 {
             break;
         }
     }
@@ -779,17 +796,17 @@ fn decrypt_field_rva_data_to_bytes(
 
     let tables = assembly
         .tables()
-        .ok_or_else(|| crate::Error::Other("No metadata tables available".to_string()))?;
+        .ok_or_else(|| Error::Other("No metadata tables available".to_string()))?;
     let fieldrva_table = tables
         .table::<FieldRvaRaw>()
-        .ok_or_else(|| crate::Error::Other("No FieldRVA table found".to_string()))?;
+        .ok_or_else(|| Error::Other("No FieldRVA table found".to_string()))?;
 
     let field_rid = field_token.row();
     let rva_entry = fieldrva_table
         .iter()
         .find(|row| row.field == field_rid)
         .ok_or_else(|| {
-            crate::Error::Other(format!(
+            Error::Other(format!(
                 "No FieldRVA entry for field 0x{:08X}",
                 field_token.value(),
             ))
@@ -826,25 +843,24 @@ fn calculate_field_data_size(assembly: &CilObject, field_rid: u32) -> Result<usi
 
     let tables = assembly
         .tables()
-        .ok_or_else(|| crate::Error::Other("No metadata tables".to_string()))?;
+        .ok_or_else(|| Error::Other("No metadata tables".to_string()))?;
 
     let field_table = tables
         .table::<FieldRaw>()
-        .ok_or_else(|| crate::Error::Other("No Field table".to_string()))?;
+        .ok_or_else(|| Error::Other("No Field table".to_string()))?;
     let field_row = field_table
         .iter()
         .find(|r| r.rid == field_rid)
-        .ok_or_else(|| crate::Error::Other(format!("Field {field_rid} not found")))?;
+        .ok_or_else(|| Error::Other(format!("Field {field_rid} not found")))?;
 
     let blobs = assembly
         .blob()
-        .ok_or_else(|| crate::Error::Other("No blob heap".to_string()))?;
+        .ok_or_else(|| Error::Other("No blob heap".to_string()))?;
     let sig_data = blobs
         .get(field_row.signature as usize)
-        .map_err(|_| crate::Error::Other(format!("Cannot read signature for field {field_rid}")))?;
-    let field_sig = parse_field_signature(sig_data).map_err(|e| {
-        crate::Error::Other(format!("Cannot parse field {field_rid} signature: {e}"))
-    })?;
+        .map_err(|_| Error::Other(format!("Cannot read signature for field {field_rid}")))?;
+    let field_sig = parse_field_signature(sig_data)
+        .map_err(|e| Error::Other(format!("Cannot parse field {field_rid} signature: {e}")))?;
 
     // Try primitive size first
     let ptr_size = crate::metadata::typesystem::PointerSize::from_pe(assembly.file().pe().is_64bit);
@@ -866,7 +882,7 @@ fn calculate_field_data_size(assembly: &CilObject, field_rid: u32) -> Result<usi
         }
     }
 
-    Err(crate::Error::Other(format!(
+    Err(Error::Other(format!(
         "Cannot determine size for field {field_rid}"
     )))
 }
@@ -880,12 +896,14 @@ fn xor_decrypt_array_data(data: &mut [u8], xor_key: i32) {
     let mut key = xor_key;
     // Iterate from end to start in 4-byte blocks
     for i in (0..block_count).rev() {
-        let offset = i * 4;
+        let offset = i.saturating_mul(4);
         let key_bytes = key.to_le_bytes();
-        data[offset] ^= key_bytes[0];
-        data[offset + 1] ^= key_bytes[1];
-        data[offset + 2] ^= key_bytes[2];
-        data[offset + 3] ^= key_bytes[3];
+        let Some(block) = data.get_mut(offset..offset.saturating_add(4)) else {
+            break;
+        };
+        for (b, k) in block.iter_mut().zip(key_bytes.iter()) {
+            *b ^= *k;
+        }
         key = key.wrapping_add(13);
     }
 }

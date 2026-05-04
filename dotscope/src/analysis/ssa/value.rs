@@ -853,45 +853,44 @@ impl ConstValue {
         .map(|v| v.mask_native(ptr_size))
     }
 
-    /// Attempts to divide two constants.
+    /// Attempts to divide two constants. Uses `checked_div`/`checked_rem` so
+    /// MIN/-1 overflows fold to `None` rather than wrapping silently.
     #[must_use]
     pub fn div(&self, other: &Self, ptr_size: PointerSize) -> Option<Self> {
         match (self, other) {
-            (Self::I8(a), Self::I8(b)) if *b != 0 => Some(Self::I8(a.wrapping_div(*b))),
-            (Self::I16(a), Self::I16(b)) if *b != 0 => Some(Self::I16(a.wrapping_div(*b))),
-            (Self::I32(a), Self::I32(b)) if *b != 0 => Some(Self::I32(a.wrapping_div(*b))),
-            (Self::I64(a), Self::I64(b)) if *b != 0 => Some(Self::I64(a.wrapping_div(*b))),
-            (Self::U8(a), Self::U8(b)) if *b != 0 => Some(Self::U8(a / b)),
-            (Self::U16(a), Self::U16(b)) if *b != 0 => Some(Self::U16(a / b)),
-            (Self::U32(a), Self::U32(b)) if *b != 0 => Some(Self::U32(a / b)),
-            (Self::U64(a), Self::U64(b)) if *b != 0 => Some(Self::U64(a / b)),
-            (Self::NativeInt(a), Self::NativeInt(b)) if *b != 0 => {
-                Some(Self::NativeInt(a.wrapping_div(*b)))
-            }
-            (Self::NativeUInt(a), Self::NativeUInt(b)) if *b != 0 => Some(Self::NativeUInt(a / b)),
-            (Self::F32(a), Self::F32(b)) => Some(Self::F32(a / b)), // Float div by zero is inf
+            (Self::I8(a), Self::I8(b)) => a.checked_div(*b).map(Self::I8),
+            (Self::I16(a), Self::I16(b)) => a.checked_div(*b).map(Self::I16),
+            (Self::I32(a), Self::I32(b)) => a.checked_div(*b).map(Self::I32),
+            (Self::I64(a), Self::I64(b)) => a.checked_div(*b).map(Self::I64),
+            (Self::U8(a), Self::U8(b)) => a.checked_div(*b).map(Self::U8),
+            (Self::U16(a), Self::U16(b)) => a.checked_div(*b).map(Self::U16),
+            (Self::U32(a), Self::U32(b)) => a.checked_div(*b).map(Self::U32),
+            (Self::U64(a), Self::U64(b)) => a.checked_div(*b).map(Self::U64),
+            (Self::NativeInt(a), Self::NativeInt(b)) => a.checked_div(*b).map(Self::NativeInt),
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => a.checked_div(*b).map(Self::NativeUInt),
+            // Float div by zero is inf — IEEE 754 has no panic, no overflow.
+            (Self::F32(a), Self::F32(b)) => Some(Self::F32(a / b)),
             (Self::F64(a), Self::F64(b)) => Some(Self::F64(a / b)),
             _ => None,
         }
         .map(|v| v.mask_native(ptr_size))
     }
 
-    /// Attempts to compute remainder (modulo) of two constants.
+    /// Attempts to compute remainder (modulo) of two constants. Uses
+    /// `checked_rem` so MIN%-1 overflows fold to `None`.
     #[must_use]
     pub fn rem(&self, other: &Self, ptr_size: PointerSize) -> Option<Self> {
         match (self, other) {
-            (Self::I8(a), Self::I8(b)) if *b != 0 => Some(Self::I8(a.wrapping_rem(*b))),
-            (Self::I16(a), Self::I16(b)) if *b != 0 => Some(Self::I16(a.wrapping_rem(*b))),
-            (Self::I32(a), Self::I32(b)) if *b != 0 => Some(Self::I32(a.wrapping_rem(*b))),
-            (Self::I64(a), Self::I64(b)) if *b != 0 => Some(Self::I64(a.wrapping_rem(*b))),
-            (Self::U8(a), Self::U8(b)) if *b != 0 => Some(Self::U8(a % b)),
-            (Self::U16(a), Self::U16(b)) if *b != 0 => Some(Self::U16(a % b)),
-            (Self::U32(a), Self::U32(b)) if *b != 0 => Some(Self::U32(a % b)),
-            (Self::U64(a), Self::U64(b)) if *b != 0 => Some(Self::U64(a % b)),
-            (Self::NativeInt(a), Self::NativeInt(b)) if *b != 0 => {
-                Some(Self::NativeInt(a.wrapping_rem(*b)))
-            }
-            (Self::NativeUInt(a), Self::NativeUInt(b)) if *b != 0 => Some(Self::NativeUInt(a % b)),
+            (Self::I8(a), Self::I8(b)) => a.checked_rem(*b).map(Self::I8),
+            (Self::I16(a), Self::I16(b)) => a.checked_rem(*b).map(Self::I16),
+            (Self::I32(a), Self::I32(b)) => a.checked_rem(*b).map(Self::I32),
+            (Self::I64(a), Self::I64(b)) => a.checked_rem(*b).map(Self::I64),
+            (Self::U8(a), Self::U8(b)) => a.checked_rem(*b).map(Self::U8),
+            (Self::U16(a), Self::U16(b)) => a.checked_rem(*b).map(Self::U16),
+            (Self::U32(a), Self::U32(b)) => a.checked_rem(*b).map(Self::U32),
+            (Self::U64(a), Self::U64(b)) => a.checked_rem(*b).map(Self::U64),
+            (Self::NativeInt(a), Self::NativeInt(b)) => a.checked_rem(*b).map(Self::NativeInt),
+            (Self::NativeUInt(a), Self::NativeUInt(b)) => a.checked_rem(*b).map(Self::NativeUInt),
             (Self::F32(a), Self::F32(b)) => Some(Self::F32(a % b)),
             (Self::F64(a), Self::F64(b)) => Some(Self::F64(a % b)),
             _ => None,
@@ -1234,7 +1233,9 @@ impl fmt::Display for ConstValue {
                 write!(
                     f,
                     "array[{}x{}]<0x{:08X}>",
-                    data.len() / element_size.max(&1),
+                    data.len()
+                        .checked_div(*element_size.max(&1))
+                        .unwrap_or(data.len()),
                     element_size,
                     element_type_token.value()
                 )
@@ -1264,7 +1265,7 @@ impl fmt::Display for ConstValue {
 ///
 /// # Errors
 ///
-/// Returns [`Error::SsaError`] for non-numeric `ConstValue` variants
+/// Returns [`crate::Error::SsaError`] for non-numeric `ConstValue` variants
 /// (`String`, `DecryptedString`, `Null`, `Type`, `MethodHandle`, `FieldHandle`)
 /// since these cannot be represented as immediate values. Handle these cases
 /// with pattern matching before conversion.
@@ -1544,8 +1545,10 @@ impl ComputedValue {
     pub fn normalized(self) -> Self {
         if self.op.is_commutative() && self.operands.len() == 2 {
             let mut ops = self.operands;
-            if ops[0].index() > ops[1].index() {
-                ops.swap(0, 1);
+            if let (Some(a), Some(b)) = (ops.first(), ops.get(1)) {
+                if a.index() > b.index() {
+                    ops.swap(0, 1);
+                }
             }
             Self {
                 op: self.op,

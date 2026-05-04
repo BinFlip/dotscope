@@ -33,7 +33,7 @@ use crate::{
         },
         token::Token,
     },
-    Result,
+    Error, Result,
 };
 
 /// Remaps TypeDef, TypeRef, and TypeSpec tokens in a signature blob.
@@ -70,7 +70,9 @@ pub fn remap_signature_tokens(
     }
 
     // Determine signature type from header byte
-    let header = signature[0];
+    let header = *signature
+        .first()
+        .ok_or_else(|| Error::LayoutFailed("Cannot remap signature: empty buffer".to_string()))?;
 
     // Check for signature type markers
     if header == SIGNATURE_HEADER::LOCAL_SIG {

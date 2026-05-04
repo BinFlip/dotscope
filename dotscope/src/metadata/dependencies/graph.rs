@@ -399,9 +399,13 @@ impl AssemblyDependencyGraph {
 
         // Add reversed edges between SCCs (for loading order: dependencies first)
         for node_idx in 0..graph.node_count() {
-            let source_scc = node_to_scc[node_idx];
+            let Some(&source_scc) = node_to_scc.get(node_idx) else {
+                continue;
+            };
             for successor in graph.successors(NodeId::new(node_idx)) {
-                let target_scc = node_to_scc[successor.index()];
+                let Some(&target_scc) = node_to_scc.get(successor.index()) else {
+                    continue;
+                };
                 if source_scc != target_scc {
                     // target_scc should come before source_scc in loading order
                     // So we add edge: target_scc -> source_scc
@@ -428,7 +432,10 @@ impl AssemblyDependencyGraph {
         let mut result = Vec::with_capacity(graph.node_count());
         for scc_node_id in scc_order {
             let scc_idx = scc_node_id.index();
-            for &node_id in &sccs[scc_idx] {
+            let Some(scc) = sccs.get(scc_idx) else {
+                continue;
+            };
+            for &node_id in scc {
                 if let Some(identity) = indexed_graph.get_key(node_id) {
                     result.push(identity.clone());
                 }
@@ -593,7 +600,7 @@ impl AssemblyDependencyGraph {
                 1
             } else {
                 // Different assemblies: count each new one
-                usize::from(source_is_new) + usize::from(target_is_new)
+                usize::from(source_is_new).saturating_add(usize::from(target_is_new))
             };
 
         if new_assemblies > 0 {

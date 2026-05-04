@@ -1537,7 +1537,8 @@ impl TypeRegistry {
             for (index, arg_type) in generic_args.iter().enumerate() {
                 let rid = u32::try_from(index)
                     .map_err(|_| malformed_error!("Generic argument index too large"))?
-                    + 1;
+                    .checked_add(1)
+                    .ok_or_else(|| malformed_error!("Generic argument rid overflow"))?;
                 let token_value = 0x2B00_0000_u32
                     .checked_add(
                         u32::try_from(index)

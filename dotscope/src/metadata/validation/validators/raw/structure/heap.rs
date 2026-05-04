@@ -398,12 +398,12 @@ impl RawHeapValidator {
     /// - Individual GUID access fails unexpectedly
     fn validate_guid_heap_content(assembly_view: &CilAssemblyView) -> Result<()> {
         if let Some(guids) = assembly_view.guids() {
-            let mut guid_count = 0;
+            let mut guid_count: usize = 0;
 
             // Validate accessibility through iteration
             // Note: The GUID iterator returns (1-based index, GUID), not byte offsets
             for (one_based_index, guid_data) in guids.iter() {
-                guid_count += 1;
+                guid_count = guid_count.saturating_add(1);
 
                 // Verify GUID data is properly accessible
                 let guid_bytes = guid_data.to_bytes();

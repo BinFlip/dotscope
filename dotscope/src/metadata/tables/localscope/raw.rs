@@ -29,7 +29,7 @@ use std::sync::Arc;
 ///
 /// Each `LocalScope` table entry consists of:
 /// - Method: Simple index into `MethodDef` table
-/// - `ImportScope`: Simple index into `ImportScope` table  
+/// - `ImportScope`: Simple index into `ImportScope` table
 /// - `VariableList`: Simple index into `LocalVariable` table
 /// - `ConstantList`: Simple index into `LocalConstant` table
 /// - `StartOffset`: 4-byte unsigned integer (IL offset)
@@ -112,50 +112,76 @@ impl LocalScopeRaw {
         constants: &LocalConstantMap,
         scope_table: &MetadataTable<LocalScopeRaw>,
     ) -> Result<LocalScopeRc> {
-        let method_token = Token::new(0x0600_0000 + self.method);
+        let method_token = Token::new(
+            0x0600_0000_u32
+                .checked_add(self.method)
+                .ok_or_else(|| malformed_error!("Method token overflow: {}", self.method))?,
+        );
         let method = methods
             .get(&method_token)
             .ok_or_else(|| malformed_error!("Invalid method index {} in LocalScope", self.method))?
             .value()
             .clone();
 
-        let import_scope = if self.import_scope == 0 {
-            None
-        } else {
-            let import_token = Token::new(0x3500_0000 + self.import_scope);
-            Some(
-                import_scopes
-                    .get(&import_token)
-                    .ok_or_else(|| {
-                        malformed_error!(
-                            "Invalid import scope index {} in LocalScope",
-                            self.import_scope
-                        )
-                    })?
-                    .value()
-                    .clone(),
+        let import_scope =
+            if self.import_scope == 0 {
+                None
+            } else {
+                let import_token =
+                    Token::new(0x3500_0000_u32.checked_add(self.import_scope).ok_or_else(
+                        || malformed_error!("ImportScope token overflow: {}", self.import_scope),
+                    )?);
+                Some(
+                    import_scopes
+                        .get(&import_token)
+                        .ok_or_else(|| {
+                            malformed_error!(
+                                "Invalid import scope index {} in LocalScope",
+                                self.import_scope
+                            )
+                        })?
+                        .value()
+                        .clone(),
+                )
+            };
+
+        let next_rid = self.rid.checked_add(1).ok_or_else(|| {
+            malformed_error!(
+                "LocalScope rid overflow when computing next rid: {}",
+                self.rid
             )
-        };
+        })?;
 
         let variables = if self.variable_list == 0 {
             Arc::new(boxcar::Vec::new())
         } else {
             let start = self.variable_list;
 
-            #[allow(clippy::cast_possible_truncation)]
-            let end = if let Some(next_scope) = scope_table.get(self.rid + 1) {
+            let end = if let Some(next_scope) = scope_table.get(next_rid) {
                 if next_scope.variable_list != 0 {
                     next_scope.variable_list
                 } else {
-                    variables.len() as u32 + 1
+                    let len = u32::try_from(variables.len()).map_err(|_| {
+                        malformed_error!("LocalVariable count exceeds u32: {}", variables.len())
+                    })?;
+                    len.checked_add(1).ok_or_else(|| {
+                        malformed_error!("LocalVariable end index overflow: {}", len)
+                    })?
                 }
             } else {
-                variables.len() as u32 + 1
+                let len = u32::try_from(variables.len()).map_err(|_| {
+                    malformed_error!("LocalVariable count exceeds u32: {}", variables.len())
+                })?;
+                len.checked_add(1)
+                    .ok_or_else(|| malformed_error!("LocalVariable end index overflow: {}", len))?
             };
 
             let list = Arc::new(boxcar::Vec::new());
             for i in start..end {
-                let var_token = Token::new(0x3300_0000 + i);
+                let var_token_value = 0x3300_0000_u32
+                    .checked_add(i)
+                    .ok_or_else(|| malformed_error!("LocalVariable token overflow: {}", i))?;
+                let var_token = Token::new(var_token_value);
                 if let Some(var_entry) = variables.get(&var_token) {
                     list.push(var_entry.value().clone());
                 }
@@ -168,20 +194,31 @@ impl LocalScopeRaw {
         } else {
             let start = self.constant_list;
 
-            #[allow(clippy::cast_possible_truncation)]
-            let end = if let Some(next_scope) = scope_table.get(self.rid + 1) {
+            let end = if let Some(next_scope) = scope_table.get(next_rid) {
                 if next_scope.constant_list != 0 {
                     next_scope.constant_list
                 } else {
-                    constants.len() as u32 + 1
+                    let len = u32::try_from(constants.len()).map_err(|_| {
+                        malformed_error!("LocalConstant count exceeds u32: {}", constants.len())
+                    })?;
+                    len.checked_add(1).ok_or_else(|| {
+                        malformed_error!("LocalConstant end index overflow: {}", len)
+                    })?
                 }
             } else {
-                constants.len() as u32 + 1
+                let len = u32::try_from(constants.len()).map_err(|_| {
+                    malformed_error!("LocalConstant count exceeds u32: {}", constants.len())
+                })?;
+                len.checked_add(1)
+                    .ok_or_else(|| malformed_error!("LocalConstant end index overflow: {}", len))?
             };
 
             let list = Arc::new(boxcar::Vec::new());
             for i in start..end {
-                let const_token = Token::new(0x3400_0000 + i);
+                let const_token_value = 0x3400_0000_u32
+                    .checked_add(i)
+                    .ok_or_else(|| malformed_error!("LocalConstant token overflow: {}", i))?;
+                let const_token = Token::new(const_token_value);
                 if let Some(const_entry) = constants.get(&const_token) {
                     list.push(const_entry.value().clone());
                 }
@@ -220,12 +257,13 @@ impl TableRow for LocalScopeRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* method */        sizes.table_index_bytes(TableId::MethodDef) +
-            /* import_scope */  sizes.table_index_bytes(TableId::ImportScope) +
-            /* variable_list */ sizes.table_index_bytes(TableId::LocalVariable) +
-            /* constant_list */ sizes.table_index_bytes(TableId::LocalConstant) +
-            /* start_offset */  4 +
-            /* length */        4
+            /* method */        sizes.table_index_bytes(TableId::MethodDef)
+            /* import_scope */  .saturating_add(sizes.table_index_bytes(TableId::ImportScope))
+            /* variable_list */ .saturating_add(sizes.table_index_bytes(TableId::LocalVariable))
+            /* constant_list */ .saturating_add(sizes.table_index_bytes(TableId::LocalConstant))
+            /* start_offset */  .saturating_add(4)
+            /* length */        .saturating_add(4)
+
         )
     }
 }

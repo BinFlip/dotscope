@@ -20,7 +20,7 @@ use crate::{
         },
         mono::{compilation::compile_debug, Architecture, TestCapabilities},
     },
-    CilObject, Result,
+    CilObject, Error, Result,
 };
 
 /// Path to Mono 4.8 framework assemblies for dependency resolution.
@@ -124,13 +124,13 @@ impl AnalysisTestRunner {
         let capabilities = TestCapabilities::detect();
 
         if !capabilities.can_test() {
-            return Err(crate::Error::Other(
+            return Err(Error::Other(
                 "No C# compiler available for analysis tests".to_string(),
             ));
         }
 
         let temp_dir = tempfile::TempDir::new()
-            .map_err(|e| crate::Error::Other(format!("Failed to create temp dir: {}", e)))?;
+            .map_err(|e| Error::Other(format!("Failed to create temp dir: {}", e)))?;
 
         Ok(Self {
             capabilities,
@@ -172,7 +172,7 @@ impl AnalysisTestRunner {
         )?;
 
         if !result.is_success() {
-            return Err(crate::Error::Other(format!(
+            return Err(Error::Other(format!(
                 "Compilation failed: {}",
                 result.error.unwrap_or_else(|| "Unknown error".to_string())
             )));
@@ -212,7 +212,7 @@ impl AnalysisTestRunner {
         let assembly = project_result
             .project
             .get_primary()
-            .ok_or_else(|| crate::Error::Other("Failed to get primary assembly".to_string()))?;
+            .ok_or_else(|| Error::Other("Failed to get primary assembly".to_string()))?;
 
         self.assembly = Some(assembly.clone());
         Ok(assembly)

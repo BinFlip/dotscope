@@ -639,17 +639,19 @@ impl SsaFunction {
 
             // Remainder (state % N) or bitwise AND (state & mask): trace left operand
             SsaOp::Rem { left, .. } | SsaOp::And { left, .. } => {
-                self.trace_to_phi_impl(*left, target_block, depth + 1)
+                self.trace_to_phi_impl(*left, target_block, depth.saturating_add(1))
             }
 
             // XOR operation (e.g., state ^ key): try both operands
             SsaOp::Xor { left, right, .. } => {
                 // Try left first
-                if let Some(phi) = self.trace_to_phi_impl(*left, target_block, depth + 1) {
+                if let Some(phi) =
+                    self.trace_to_phi_impl(*left, target_block, depth.saturating_add(1))
+                {
                     return Some(phi);
                 }
                 // Then try right (XOR is commutative)
-                self.trace_to_phi_impl(*right, target_block, depth + 1)
+                self.trace_to_phi_impl(*right, target_block, depth.saturating_add(1))
             }
 
             // Arithmetic operations (ConfuserEx uses mul/add/sub for state transformation)
@@ -658,20 +660,24 @@ impl SsaFunction {
             | SsaOp::Add { left, right, .. }
             | SsaOp::Sub { left, right, .. } => {
                 // Try left first (usually where the state variable is)
-                if let Some(phi) = self.trace_to_phi_impl(*left, target_block, depth + 1) {
+                if let Some(phi) =
+                    self.trace_to_phi_impl(*left, target_block, depth.saturating_add(1))
+                {
                     return Some(phi);
                 }
                 // Then try right
-                self.trace_to_phi_impl(*right, target_block, depth + 1)
+                self.trace_to_phi_impl(*right, target_block, depth.saturating_add(1))
             }
 
             // Shift operations: trace the value operand
             SsaOp::Shr { value, .. } | SsaOp::Shl { value, .. } => {
-                self.trace_to_phi_impl(*value, target_block, depth + 1)
+                self.trace_to_phi_impl(*value, target_block, depth.saturating_add(1))
             }
 
             // Copy: trace through to source
-            SsaOp::Copy { src, .. } => self.trace_to_phi_impl(*src, target_block, depth + 1),
+            SsaOp::Copy { src, .. } => {
+                self.trace_to_phi_impl(*src, target_block, depth.saturating_add(1))
+            }
 
             // For other operations (including constants), the variable cannot be traced to a PHI
             _ => None,
@@ -799,8 +805,14 @@ impl SsaFunction {
         }
 
         // Determine block count from successor map keys
-        let block_count = successor_map.keys().copied().max().map_or(0, |m| m + 1);
-        let block_count = block_count.max(from + 1).max(to + 1);
+        let block_count = successor_map
+            .keys()
+            .copied()
+            .max()
+            .map_or(0, |m| m.saturating_add(1));
+        let block_count = block_count
+            .max(from.saturating_add(1))
+            .max(to.saturating_add(1));
         let mut visited = BitSet::new(block_count);
         let mut worklist = vec![from];
 
@@ -910,14 +922,16 @@ impl SsaFunction {
             // Count phi node operands
             for phi in block.phi_nodes() {
                 for operand in phi.operands() {
-                    *counts.entry(operand.value()).or_insert(0) += 1;
+                    let entry = counts.entry(operand.value()).or_insert(0_usize);
+                    *entry = entry.saturating_add(1);
                 }
             }
 
             // Count instruction operands
             for instr in block.instructions() {
                 for var in instr.op().uses() {
-                    *counts.entry(var).or_insert(0) += 1;
+                    let entry = counts.entry(var).or_insert(0_usize);
+                    *entry = entry.saturating_add(1);
                 }
             }
         }
@@ -1076,10 +1090,11 @@ impl SsaFunction {
 
         // If all returns are the same constant
         if constants_found.iter().all(Option::is_some) {
-            let first = &constants_found[0];
-            if constants_found.iter().all(|c| c == first) {
-                if let Some(const_val) = first {
-                    return ReturnInfo::Constant(const_val.clone());
+            if let Some(first) = constants_found.first() {
+                if constants_found.iter().all(|c| c == first) {
+                    if let Some(const_val) = first {
+                        return ReturnInfo::Constant(const_val.clone());
+                    }
                 }
             }
         }

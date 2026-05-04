@@ -157,7 +157,8 @@ impl TableRow for EncMapRaw {
     ///
     /// ## Returns
     /// Always returns 4 bytes for the fixed token field.
+    #[rustfmt::skip]
     fn row_size(_sizes: &TableInfoRef) -> u32 {
-        4 // Token field (4 bytes)
+        4 // token
     }
 }

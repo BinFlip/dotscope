@@ -124,11 +124,7 @@ impl Dispatcher {
         // Cast to usize for indexing - transform result is always non-negative after modulo/and operations
         #[allow(clippy::cast_sign_loss)]
         let index = self.transform.apply(state) as usize;
-        if index < self.cases.len() {
-            self.cases[index]
-        } else {
-            self.default
-        }
+        self.cases.get(index).copied().unwrap_or(self.default)
     }
 
     /// Refreshes variable IDs against the current SSA.
@@ -272,13 +268,13 @@ impl StateTransform {
             Self::Modulo(n) => {
                 // Use unsigned modulo for consistency with CIL rem.un
                 let u_state = state.cast_unsigned();
-                (u_state % n).cast_signed()
+                u_state.checked_rem(*n).unwrap_or(0).cast_signed()
             }
             Self::XorModulo { xor_key, divisor } => {
                 // ConfuserEx pattern: (state ^ key) % N
                 let xored = state ^ xor_key;
                 let u_xored = xored.cast_unsigned();
-                (u_xored % divisor).cast_signed()
+                u_xored.checked_rem(*divisor).unwrap_or(0).cast_signed()
             }
             Self::And(mask) => state & (*mask).cast_signed(),
             Self::Shr(amount) => {
@@ -432,11 +428,7 @@ impl DispatcherInfo {
                 // Cast to usize for indexing - transform result is always non-negative after modulo/and operations
                 #[allow(clippy::cast_sign_loss)]
                 let index = transform.apply(case_value) as usize;
-                if index < cases.len() {
-                    Some(cases[index])
-                } else {
-                    Some(*default)
-                }
+                Some(cases.get(index).copied().unwrap_or(*default))
             }
             Self::IfElseChain {
                 comparisons,

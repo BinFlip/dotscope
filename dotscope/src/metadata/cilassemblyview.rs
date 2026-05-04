@@ -214,7 +214,10 @@ impl<'a> CilAssemblyViewData<'a> {
             return Err(out_of_bounds_error!());
         }
 
-        let cor20_header = Cor20Header::read(&data[clr_offset..clr_end])?;
+        let cor20_header = Cor20Header::read(
+            data.get(clr_offset..clr_end)
+                .ok_or(out_of_bounds_error!())?,
+        )?;
         debug!(
             "PE header: CLR {}.{}, metadata at RVA 0x{:X}",
             cor20_header.major_runtime_version,
@@ -231,7 +234,9 @@ impl<'a> CilAssemblyViewData<'a> {
             return Err(out_of_bounds_error!());
         }
 
-        let metadata_slice = &data[metadata_offset..metadata_end];
+        let metadata_slice = data
+            .get(metadata_offset..metadata_end)
+            .ok_or(out_of_bounds_error!())?;
         let metadata_root = Root::read(metadata_slice)?;
         let stream_names: Vec<&str> = metadata_root
             .stream_headers
@@ -266,7 +271,9 @@ impl<'a> CilAssemblyViewData<'a> {
                 return Err(out_of_bounds_error!());
             }
 
-            let stream_data = &metadata_slice[stream_offset..stream_end];
+            let stream_data = metadata_slice
+                .get(stream_offset..stream_end)
+                .ok_or(out_of_bounds_error!())?;
 
             match stream.name.as_str() {
                 "#~" | "#-" => {
@@ -773,7 +780,7 @@ impl CilAssemblyView {
         // before returning the owned `file: Arc<File>` — leaving count = 1.
         let heads = self.into_heads();
         Arc::try_unwrap(heads.file).map_err(|_| {
-            crate::Error::Other(
+            Error::Other(
                 "CilAssemblyView::into_file: Arc<File> has unexpected extra owners".to_string(),
             )
         })

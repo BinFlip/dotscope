@@ -905,7 +905,7 @@ impl Imports {
     /// Get an iterator over all imports in the container.
     ///
     /// Returns an iterator that yields [`crossbeam_skiplist::map::Entry`] instances,
-    /// each containing a ([`crate::metadata::token::Token`], [`crate::metadata::imports::ImportRc`]) pair.
+    /// each containing a ([`Token`], [`crate::metadata::imports::ImportRc`]) pair.
     /// The iteration order is sorted by token value due to the skip map's ordering properties.
     ///
     /// # Iterator Properties
@@ -993,8 +993,8 @@ impl Imports {
     /// This method is thread-safe and can be called concurrently from multiple threads.
     pub fn by_name(&self, name: &str) -> Option<ImportRc> {
         if let Some(tokens) = self.by_name.get(name) {
-            if !tokens.is_empty() {
-                if let Some(token) = self.data.get(&tokens[0]) {
+            if let Some(first) = tokens.first() {
+                if let Some(token) = self.data.get(first) {
                     return Some(token.value().clone());
                 }
             }
@@ -1076,8 +1076,8 @@ impl Imports {
     /// ```
     pub fn by_fullname(&self, name: &str) -> Option<ImportRc> {
         if let Some(tokens) = self.by_fullname.get(name) {
-            if !tokens.is_empty() {
-                if let Some(token) = self.data.get(&tokens[0]) {
+            if let Some(first) = tokens.first() {
+                if let Some(token) = self.data.get(first) {
                     return Some(token.value().clone());
                 }
             }

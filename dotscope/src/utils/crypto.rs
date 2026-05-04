@@ -343,12 +343,12 @@ pub fn derive_pbkdf1_key(password: &[u8], salt: &[u8], iterations: u32, key_len:
 
     if key_len <= 20 {
         // Simple case: just return the first key_len bytes
-        base_key[..key_len].to_vec()
+        base_key.get(..key_len).unwrap_or(&[]).to_vec()
     } else {
         // Extended output using .NET's proprietary extension
         // For each additional block: SHA1(counter_string || base_key)
         let mut result = base_key.to_vec();
-        let mut counter = 1u32;
+        let mut counter: u32 = 1;
 
         while result.len() < key_len {
             let mut hasher = sha1::Sha1::new();
@@ -357,7 +357,7 @@ pub fn derive_pbkdf1_key(password: &[u8], salt: &[u8], iterations: u32, key_len:
             hasher.update(base_key);
             let block = hasher.finalize();
             result.extend_from_slice(&block);
-            counter += 1;
+            counter = counter.saturating_add(1);
         }
 
         result.truncate(key_len);
@@ -495,10 +495,18 @@ where
         return None;
     }
     if is_encryptor {
-        let cipher = E::new_from_slices(key, &iv[..block_size]).ok()?;
-        let padded_len = ((data.len() / block_size) + 1) * block_size;
+        let iv_slice = iv.get(..block_size)?;
+        let cipher = E::new_from_slices(key, iv_slice).ok()?;
+        // block_size is small (8 or 16); checked arithmetic guards against overflow
+        // for absurdly large `data.len()` from adversarial input.
+        let padded_len = data
+            .len()
+            .checked_div(block_size)?
+            .checked_add(1)?
+            .checked_mul(block_size)?;
         let mut buf = vec![0u8; padded_len];
-        buf[..data.len()].copy_from_slice(data);
+        let buf_prefix = buf.get_mut(..data.len())?;
+        buf_prefix.copy_from_slice(data);
         let result = match padding {
             1 => cipher
                 .encrypt_padded::<NoPadding>(&mut buf, data.len())
@@ -517,7 +525,8 @@ where
         if data.is_empty() {
             return None;
         }
-        let cipher = D::new_from_slices(key, &iv[..block_size]).ok()?;
+        let iv_slice = iv.get(..block_size)?;
+        let cipher = D::new_from_slices(key, iv_slice).ok()?;
         let mut buf = data.to_vec();
         let result = match padding {
             1 | 3 => cipher.decrypt_padded::<NoPadding>(&mut buf).ok()?,
@@ -541,9 +550,16 @@ where
 {
     if is_encryptor {
         let cipher = E::new_from_slice(key).ok()?;
-        let padded_len = ((data.len() / block_size) + 1) * block_size;
+        // block_size is small (8 or 16); checked arithmetic guards against overflow
+        // for absurdly large `data.len()` from adversarial input.
+        let padded_len = data
+            .len()
+            .checked_div(block_size)?
+            .checked_add(1)?
+            .checked_mul(block_size)?;
         let mut buf = vec![0u8; padded_len];
-        buf[..data.len()].copy_from_slice(data);
+        let buf_prefix = buf.get_mut(..data.len())?;
+        buf_prefix.copy_from_slice(data);
         let result = match padding {
             1 => cipher
                 .encrypt_padded::<NoPadding>(&mut buf, data.len())
@@ -679,17 +695,32 @@ pub fn verify_rsa_pkcs1v15(
         return false;
     }
     let mut em = vec![0u8; k];
-    em[k - m_bytes.len()..].copy_from_slice(&m_bytes);
+    // k >= m_bytes.len() was just verified above; subtraction is safe.
+    let Some(em_offset) = k.checked_sub(m_bytes.len()) else {
+        return false;
+    };
+    let Some(em_tail) = em.get_mut(em_offset..) else {
+        return false;
+    };
+    em_tail.copy_from_slice(&m_bytes);
 
     // RFC 8017 §9.2: EMSA-PKCS1-v1.5 verification
     // Expected: 0x00 0x01 [0xFF padding] 0x00 [DigestInfo prefix] [hash]
-    let t_len = digest_prefix.len() + hash.len();
-    if k < t_len + 11 {
+    let Some(t_len) = digest_prefix.len().checked_add(hash.len()) else {
+        return false;
+    };
+    let Some(min_k) = t_len.checked_add(11) else {
+        return false;
+    };
+    if k < min_k {
         return false;
     }
 
     // Build expected encoding and compare in constant position.
-    let ps_len = k - t_len - 3;
+    // k >= t_len + 11 implies k - t_len - 3 >= 8, so this subtraction is safe.
+    let Some(ps_len) = k.checked_sub(t_len).and_then(|v| v.checked_sub(3)) else {
+        return false;
+    };
     let mut expected = Vec::with_capacity(k);
     expected.push(0x00);
     expected.push(0x01);
@@ -755,7 +786,10 @@ pub fn derive_key_iv(
     salt: &[u8],
     params: &CryptoParameters,
 ) -> (Vec<u8>, Vec<u8>) {
-    let output_len = params.key_size + params.iv_size;
+    // Sizes come from configuration extracted via SSA from a decryptor body.
+    // Saturating addition avoids overflow on absurd values (in which case
+    // we degrade to empty key/iv rather than panicking).
+    let output_len = params.key_size.saturating_add(params.iv_size);
     let derived = derive_pbkdf2_key(
         password,
         salt,
@@ -763,10 +797,12 @@ pub fn derive_key_iv(
         output_len,
         params.hash_algorithm,
     );
-    (
-        derived[..params.key_size].to_vec(),
-        derived[params.key_size..output_len].to_vec(),
-    )
+    let key = derived.get(..params.key_size).unwrap_or(&[]).to_vec();
+    let iv = derived
+        .get(params.key_size..output_len)
+        .unwrap_or(&[])
+        .to_vec();
+    (key, iv)
 }
 
 #[cfg(test)]

@@ -312,7 +312,7 @@ impl ModuleBuilder {
             .name
             .ok_or_else(|| Error::ModificationInvalid("name field is required".to_string()))?;
 
-        let existing_count = assembly.next_rid(TableId::Module)? - 1;
+        let existing_count = assembly.next_rid(TableId::Module)?.saturating_sub(1);
         if existing_count > 0 {
             return Err(Error::ModificationInvalid(
                 "Module table already contains an entry. Only one module per assembly is allowed."

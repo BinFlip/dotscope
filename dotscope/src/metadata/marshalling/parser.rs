@@ -217,14 +217,14 @@ impl<'a> MarshallingParser<'a> {
     /// # Errors
     /// Returns an error if the native type cannot be parsed or recursion limit is exceeded
     pub fn parse_native_type(&mut self) -> Result<NativeType> {
-        self.depth += 1;
+        self.depth = self.depth.saturating_add(1);
         if self.depth >= MAX_RECURSION_DEPTH {
-            self.depth -= 1;
+            self.depth = self.depth.saturating_sub(1);
             return Err(RecursionLimit(MAX_RECURSION_DEPTH));
         }
 
         let result = self.parse_native_type_inner();
-        self.depth -= 1;
+        self.depth = self.depth.saturating_sub(1);
         result
     }
 

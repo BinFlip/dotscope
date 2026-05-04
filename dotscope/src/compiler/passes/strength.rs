@@ -194,7 +194,7 @@ impl<'a> ReductionChecker<'a> {
         };
         let value = const_value.as_i64()?;
         let _exponent = is_power_of_two(value)?;
-        let mask = value - 1; // 2^n - 1
+        let mask = value.checked_sub(1)?; // 2^n - 1
 
         let uses = self.index.use_count(divisor_var);
         if uses != 1 || self.used_constants.contains(divisor_var.index()) {
@@ -363,21 +363,26 @@ impl StrengthReductionPass {
         for candidate in candidates {
             // First, update the constant definition
             if let Some(block) = ssa.block_mut(candidate.const_block) {
-                let const_instr = &mut block.instructions_mut()[candidate.const_instr];
-                const_instr.set_op(SsaOp::Const {
-                    dest: candidate.const_var,
-                    value: candidate.new_const_value,
-                });
+                if let Some(const_instr) = block.instructions_mut().get_mut(candidate.const_instr) {
+                    const_instr.set_op(SsaOp::Const {
+                        dest: candidate.const_var,
+                        value: candidate.new_const_value,
+                    });
+                }
             }
 
             // Then, update the operation
             if let Some(block) = ssa.block_mut(candidate.location.block_idx) {
-                let instr = &mut block.instructions_mut()[candidate.location.instr_idx];
-                instr.set_op(candidate.new_op);
-                changes
-                    .record(EventKind::StrengthReduced)
-                    .at(method_token, candidate.location.instr_idx)
-                    .message(&candidate.description);
+                if let Some(instr) = block
+                    .instructions_mut()
+                    .get_mut(candidate.location.instr_idx)
+                {
+                    instr.set_op(candidate.new_op);
+                    changes
+                        .record(EventKind::StrengthReduced)
+                        .at(method_token, candidate.location.instr_idx)
+                        .message(&candidate.description);
+                }
             }
         }
     }

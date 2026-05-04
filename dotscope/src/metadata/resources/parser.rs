@@ -527,7 +527,8 @@ impl Resource {
         if second_u32 == RESOURCE_MAGIC {
             // Embedded resource format: [size][magic][header...]
             let size = first_u32 as usize;
-            if size > (data.len() - 4) || size < 8 {
+            let max_size = data.len().saturating_sub(4);
+            if size > max_size || size < 8 {
                 return Err(malformed_error!("Invalid embedded resource size: {}", size));
             }
             Ok(true)
@@ -640,7 +641,7 @@ impl Resource {
         }
 
         // Check for debug string in V2 debug builds ("***DEBUG***")
-        if res.rr_version == 2 && (data.len() - parser.pos()) >= 11 {
+        if res.rr_version == 2 && data.len().saturating_sub(parser.pos()) >= 11 {
             res.is_debug = Self::try_parse_debug_marker(parser);
         }
 
@@ -745,18 +746,23 @@ impl Resource {
     ///
     /// The total number of padding bytes skipped (alignment + PAD patterns).
     fn skip_padding(parser: &mut Parser, data: &[u8]) -> Result<usize> {
-        let mut padding_count = 0;
+        let mut padding_count: usize = 0;
 
         // Standard 8-byte alignment
         let align_bytes = parser.pos() & 7;
         if align_bytes != 0 {
-            let padding_to_skip = 8 - align_bytes;
-            padding_count += padding_to_skip;
+            let padding_to_skip = 8usize.wrapping_sub(align_bytes);
+            padding_count = padding_count
+                .checked_add(padding_to_skip)
+                .ok_or_else(|| malformed_error!("padding count overflow"))?;
             parser.advance_by(padding_to_skip)?;
         }
 
         // Check for additional explicit PAD patterns (some .NET implementations add these)
-        padding_count += Self::skip_pad_patterns(parser, data)?;
+        let pad_pattern_count = Self::skip_pad_patterns(parser, data)?;
+        padding_count = padding_count
+            .checked_add(pad_pattern_count)
+            .ok_or_else(|| malformed_error!("padding count overflow"))?;
 
         Ok(padding_count)
     }
@@ -784,11 +790,17 @@ impl Resource {
     ///
     /// The total number of PAD pattern bytes skipped.
     fn skip_pad_patterns(parser: &mut Parser, data: &[u8]) -> Result<usize> {
-        let mut padding_count = 0;
+        let mut padding_count: usize = 0;
 
-        while parser.pos() + 4 <= data.len() {
+        loop {
             let pos = parser.pos();
-            let remaining = data.len() - pos;
+            let Some(end4) = pos.checked_add(4) else {
+                break;
+            };
+            if end4 > data.len() {
+                break;
+            }
+            let remaining = data.len().saturating_sub(pos);
 
             // Need at least 3 bytes to check for "PAD"
             if remaining < 3 {
@@ -796,16 +808,23 @@ impl Resource {
             }
 
             // Check for "PAD" pattern
-            if data[pos] == b'P' && data[pos + 1] == b'A' && data[pos + 2] == b'D' {
+            let p0 = data.get(pos).copied();
+            let p1 = pos.checked_add(1).and_then(|i| data.get(i).copied());
+            let p2 = pos.checked_add(2).and_then(|i| data.get(i).copied());
+            if p0 == Some(b'P') && p1 == Some(b'A') && p2 == Some(b'D') {
                 parser.advance_by(3)?;
-                padding_count += 3;
+                padding_count = padding_count
+                    .checked_add(3)
+                    .ok_or_else(|| malformed_error!("PAD pattern padding overflow"))?;
 
                 // Check for additional padding byte after PAD ('P' or '\0')
                 if parser.pos() < data.len() {
-                    let next_byte = data[parser.pos()];
-                    if next_byte == b'P' || next_byte == 0 {
+                    let next_byte = data.get(parser.pos()).copied();
+                    if next_byte == Some(b'P') || next_byte == Some(0) {
                         parser.advance()?;
-                        padding_count += 1;
+                        padding_count = padding_count
+                            .checked_add(1)
+                            .ok_or_else(|| malformed_error!("PAD pattern padding overflow"))?;
                     }
                 }
             } else {
@@ -942,7 +961,15 @@ impl Resource {
         let mut parser = Parser::new(data);
 
         for i in 0..count {
-            let name_pos = self.name_section_offset + self.name_positions[i] as usize;
+            let name_pos_offset = *self
+                .name_positions
+                .get(i)
+                .ok_or_else(|| malformed_error!("name_positions index {} out of bounds", i))?
+                as usize;
+            let name_pos = self
+                .name_section_offset
+                .checked_add(name_pos_offset)
+                .ok_or_else(|| malformed_error!("name position overflow"))?;
             parser.seek(name_pos)?;
 
             let name = parser.read_prefixed_string_utf16()?;
@@ -950,10 +977,15 @@ impl Resource {
 
             let data_pos = if self.is_embedded_resource {
                 // Embedded resources: offset calculated from magic number position, need +4 for size field
-                self.data_section_offset + type_offset as usize + 4
+                self.data_section_offset
+                    .checked_add(type_offset as usize)
+                    .and_then(|v| v.checked_add(4))
+                    .ok_or_else(|| malformed_error!("embedded resource data position overflow"))?
             } else {
                 // Standalone .resources files: use direct offset
-                self.data_section_offset + type_offset as usize
+                self.data_section_offset
+                    .checked_add(type_offset as usize)
+                    .ok_or_else(|| malformed_error!("standalone resource data position overflow"))?
             };
 
             // Validate data position bounds
@@ -972,8 +1004,7 @@ impl Resource {
                 if type_index == u32::MAX {
                     // -1 encoded as 7-bit represents null
                     ResourceType::Null
-                } else if (type_index as usize) < self.type_names.len() {
-                    let type_name = &self.type_names[type_index as usize];
+                } else if let Some(type_name) = self.type_names.get(type_index as usize) {
                     ResourceType::from_type_name(type_name, &mut parser)?
                 } else {
                     return Err(malformed_error!("Invalid type index: {}", type_index));
@@ -987,20 +1018,20 @@ impl Resource {
                     // No type table - this file uses only primitive types (direct type codes)
                     // Common in resource files that contain only strings/primitives
                     ResourceType::from_type_byte(type_code, &mut parser)?
+                } else if let Some(type_name) = self.type_names.get(type_code as usize) {
+                    ResourceType::from_type_name(type_name, &mut parser)?
                 } else {
-                    // Has type table - type code is an index into the type table
-                    if (type_code as usize) < self.type_names.len() {
-                        let type_name = &self.type_names[type_code as usize];
-                        ResourceType::from_type_name(type_name, &mut parser)?
-                    } else {
-                        return Err(malformed_error!("Invalid type index: {}", type_code));
-                    }
+                    return Err(malformed_error!("Invalid type index: {}", type_code));
                 }
             };
 
+            let name_hash = *self
+                .name_hashes
+                .get(i)
+                .ok_or_else(|| malformed_error!("name_hashes index {} out of bounds", i))?;
             let result = ResourceEntry {
                 name: name.clone(),
-                name_hash: self.name_hashes[i],
+                name_hash,
                 data: resource_data,
             };
 
@@ -1133,18 +1164,29 @@ impl Resource {
         let mut parser = Parser::new(data);
 
         for i in 0..count {
-            let name_pos = self.name_section_offset + self.name_positions[i] as usize;
+            let name_pos_offset = *self
+                .name_positions
+                .get(i)
+                .ok_or_else(|| malformed_error!("name_positions index {} out of bounds", i))?
+                as usize;
+            let name_pos = self
+                .name_section_offset
+                .checked_add(name_pos_offset)
+                .ok_or_else(|| malformed_error!("name position overflow"))?;
             parser.seek(name_pos)?;
 
             let name = parser.read_prefixed_string_utf16()?;
             let type_offset = parser.read_le::<u32>()?;
 
             let data_pos = if self.is_embedded_resource {
-                // Embedded resources: offset calculated from magic number position, need +4 for size field
-                self.data_section_offset + type_offset as usize + 4
+                self.data_section_offset
+                    .checked_add(type_offset as usize)
+                    .and_then(|v| v.checked_add(4))
+                    .ok_or_else(|| malformed_error!("embedded resource data position overflow"))?
             } else {
-                // Standalone .resources files: use direct offset
-                self.data_section_offset + type_offset as usize
+                self.data_section_offset
+                    .checked_add(type_offset as usize)
+                    .ok_or_else(|| malformed_error!("standalone resource data position overflow"))?
             };
 
             // Validate data position bounds
@@ -1163,8 +1205,7 @@ impl Resource {
                 if type_index == u32::MAX {
                     // -1 encoded as 7-bit represents null
                     ResourceTypeRef::Null
-                } else if (type_index as usize) < self.type_names.len() {
-                    let type_name = &self.type_names[type_index as usize];
+                } else if let Some(type_name) = self.type_names.get(type_index as usize) {
                     ResourceTypeRef::from_type_name_ref(type_name, &mut parser, data)?
                 } else {
                     return Err(malformed_error!("Invalid type index: {}", type_index));
@@ -1177,20 +1218,20 @@ impl Resource {
                 if self.type_names.is_empty() {
                     // No type table - this file uses only primitive types (direct type codes)
                     ResourceTypeRef::from_type_byte_ref(type_code, &mut parser, data)?
+                } else if let Some(type_name) = self.type_names.get(type_code as usize) {
+                    ResourceTypeRef::from_type_name_ref(type_name, &mut parser, data)?
                 } else {
-                    // Has type table - type code is an index into the type table
-                    if (type_code as usize) < self.type_names.len() {
-                        let type_name = &self.type_names[type_code as usize];
-                        ResourceTypeRef::from_type_name_ref(type_name, &mut parser, data)?
-                    } else {
-                        return Err(malformed_error!("Invalid type index: {}", type_code));
-                    }
+                    return Err(malformed_error!("Invalid type index: {}", type_code));
                 }
             };
 
+            let name_hash = *self
+                .name_hashes
+                .get(i)
+                .ok_or_else(|| malformed_error!("name_hashes index {} out of bounds", i))?;
             let result = ResourceEntryRef {
                 name: name.clone(),
-                name_hash: self.name_hashes[i],
+                name_hash,
                 data: resource_data,
             };
 

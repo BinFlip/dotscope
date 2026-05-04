@@ -457,7 +457,7 @@ impl<'a, N: Clone, E> DirectedGraph<'a, N, E> {
     ///
     /// # Errors
     ///
-    /// Returns [`Error::GraphError`] if either `source` or `target` node does not exist
+    /// Returns [`crate::Error::GraphError`] if either `source` or `target` node does not exist
     /// in the graph.
     pub fn add_edge(&mut self, source: NodeId, target: NodeId, data: E) -> Result<EdgeId> {
         if source.index() >= self.nodes.len() {
@@ -482,8 +482,22 @@ impl<'a, N: Clone, E> DirectedGraph<'a, N, E> {
             data,
         });
 
-        self.outgoing[source.index()].push(id);
-        self.incoming[target.index()].push(id);
+        self.outgoing
+            .get_mut(source.index())
+            .ok_or_else(|| {
+                Error::GraphError(format!(
+                    "outgoing adjacency missing for source node {source}"
+                ))
+            })?
+            .push(id);
+        self.incoming
+            .get_mut(target.index())
+            .ok_or_else(|| {
+                Error::GraphError(format!(
+                    "incoming adjacency missing for target node {target}"
+                ))
+            })?
+            .push(id);
 
         Ok(id)
     }
@@ -636,9 +650,11 @@ impl<'a, N: Clone, E> DirectedGraph<'a, N, E> {
     /// assert_eq!(successors.len(), 2);
     /// ```
     pub fn successors(&self, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        self.outgoing[node.index()]
-            .iter()
-            .map(|&edge_id| self.edges[edge_id.index()].target)
+        self.outgoing
+            .get(node.index())
+            .into_iter()
+            .flatten()
+            .filter_map(|&edge_id| self.edges.get(edge_id.index()).map(|e| e.target))
     }
 
     /// Returns an iterator over the predecessors of the given node.
@@ -674,9 +690,11 @@ impl<'a, N: Clone, E> DirectedGraph<'a, N, E> {
     /// assert_eq!(predecessors.len(), 2);
     /// ```
     pub fn predecessors(&self, node: NodeId) -> impl Iterator<Item = NodeId> + '_ {
-        self.incoming[node.index()]
-            .iter()
-            .map(|&edge_id| self.edges[edge_id.index()].source)
+        self.incoming
+            .get(node.index())
+            .into_iter()
+            .flatten()
+            .filter_map(|&edge_id| self.edges.get(edge_id.index()).map(|e| e.source))
     }
 
     /// Returns an iterator over outgoing edges from the given node.
@@ -712,9 +730,11 @@ impl<'a, N: Clone, E> DirectedGraph<'a, N, E> {
     /// }
     /// ```
     pub fn outgoing_edges(&self, node: NodeId) -> impl Iterator<Item = (EdgeId, &E)> + '_ {
-        self.outgoing[node.index()]
-            .iter()
-            .map(|&edge_id| (edge_id, &self.edges[edge_id.index()].data))
+        self.outgoing
+            .get(node.index())
+            .into_iter()
+            .flatten()
+            .filter_map(|&edge_id| self.edges.get(edge_id.index()).map(|e| (edge_id, &e.data)))
     }
 
     /// Returns an iterator over incoming edges to the given node.
@@ -734,9 +754,11 @@ impl<'a, N: Clone, E> DirectedGraph<'a, N, E> {
     ///
     /// Panics if `node` is not a valid node in the graph.
     pub fn incoming_edges(&self, node: NodeId) -> impl Iterator<Item = (EdgeId, &E)> + '_ {
-        self.incoming[node.index()]
-            .iter()
-            .map(|&edge_id| (edge_id, &self.edges[edge_id.index()].data))
+        self.incoming
+            .get(node.index())
+            .into_iter()
+            .flatten()
+            .filter_map(|&edge_id| self.edges.get(edge_id.index()).map(|e| (edge_id, &e.data)))
     }
 
     /// Returns the out-degree (number of outgoing edges) of a node.
@@ -771,7 +793,7 @@ impl<'a, N: Clone, E> DirectedGraph<'a, N, E> {
     /// ```
     #[must_use]
     pub fn out_degree(&self, node: NodeId) -> usize {
-        self.outgoing[node.index()].len()
+        self.outgoing.get(node.index()).map_or(0, Vec::len)
     }
 
     /// Returns the in-degree (number of incoming edges) of a node.
@@ -806,7 +828,7 @@ impl<'a, N: Clone, E> DirectedGraph<'a, N, E> {
     /// ```
     #[must_use]
     pub fn in_degree(&self, node: NodeId) -> usize {
-        self.incoming[node.index()].len()
+        self.incoming.get(node.index()).map_or(0, Vec::len)
     }
 
     /// Returns `true` if the graph contains no nodes.
@@ -946,18 +968,22 @@ impl<N: Clone, E> GraphBase for DirectedGraph<'_, N, E> {
 // Implement the Successors trait
 impl<N: Clone, E> Successors for DirectedGraph<'_, N, E> {
     fn successors(&self, node: NodeId) -> impl Iterator<Item = NodeId> {
-        self.outgoing[node.index()]
-            .iter()
-            .map(|&edge_id| self.edges[edge_id.index()].target)
+        self.outgoing
+            .get(node.index())
+            .into_iter()
+            .flatten()
+            .filter_map(|&edge_id| self.edges.get(edge_id.index()).map(|e| e.target))
     }
 }
 
 // Implement the Predecessors trait
 impl<N: Clone, E> Predecessors for DirectedGraph<'_, N, E> {
     fn predecessors(&self, node: NodeId) -> impl Iterator<Item = NodeId> {
-        self.incoming[node.index()]
-            .iter()
-            .map(|&edge_id| self.edges[edge_id.index()].source)
+        self.incoming
+            .get(node.index())
+            .into_iter()
+            .flatten()
+            .filter_map(|&edge_id| self.edges.get(edge_id.index()).map(|e| e.source))
     }
 }
 

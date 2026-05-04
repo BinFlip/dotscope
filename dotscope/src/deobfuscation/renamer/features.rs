@@ -148,7 +148,7 @@ pub fn build_opcode_profile(ssa: &SsaFunction) -> OpcodeProfile {
         match instr.op() {
             // Calls
             SsaOp::Call { .. } | SsaOp::CallVirt { .. } | SsaOp::CallIndirect { .. } => {
-                profile.calls += 1;
+                profile.calls = profile.calls.saturating_add(1);
             }
 
             // Strings
@@ -156,7 +156,7 @@ pub fn build_opcode_profile(ssa: &SsaFunction) -> OpcodeProfile {
                 value: ConstValue::String(_) | ConstValue::DecryptedString(_),
                 ..
             } => {
-                profile.strings += 1;
+                profile.strings = profile.strings.saturating_add(1);
             }
 
             // Field I/O
@@ -166,7 +166,7 @@ pub fn build_opcode_profile(ssa: &SsaFunction) -> OpcodeProfile {
             | SsaOp::StoreStaticField { .. }
             | SsaOp::LoadFieldAddr { .. }
             | SsaOp::LoadStaticFieldAddr { .. } => {
-                profile.field_io += 1;
+                profile.field_io = profile.field_io.saturating_add(1);
             }
 
             // Bitwise
@@ -176,7 +176,7 @@ pub fn build_opcode_profile(ssa: &SsaFunction) -> OpcodeProfile {
             | SsaOp::Not { .. }
             | SsaOp::Shl { .. }
             | SsaOp::Shr { .. } => {
-                profile.bitwise += 1;
+                profile.bitwise = profile.bitwise.saturating_add(1);
             }
 
             // Arithmetic
@@ -189,7 +189,7 @@ pub fn build_opcode_profile(ssa: &SsaFunction) -> OpcodeProfile {
             | SsaOp::Div { .. }
             | SsaOp::Rem { .. }
             | SsaOp::Neg { .. } => {
-                profile.arithmetic += 1;
+                profile.arithmetic = profile.arithmetic.saturating_add(1);
             }
 
             // Array
@@ -198,7 +198,7 @@ pub fn build_opcode_profile(ssa: &SsaFunction) -> OpcodeProfile {
             | SsaOp::StoreElement { .. }
             | SsaOp::LoadElementAddr { .. }
             | SsaOp::ArrayLength { .. } => {
-                profile.array += 1;
+                profile.array = profile.array.saturating_add(1);
             }
 
             // Comparison
@@ -207,12 +207,12 @@ pub fn build_opcode_profile(ssa: &SsaFunction) -> OpcodeProfile {
             | SsaOp::Cgt { .. }
             | SsaOp::Branch { .. }
             | SsaOp::BranchCmp { .. } => {
-                profile.comparison += 1;
+                profile.comparison = profile.comparison.saturating_add(1);
             }
 
             // Conversion
             SsaOp::Conv { .. } => {
-                profile.conversion += 1;
+                profile.conversion = profile.conversion.saturating_add(1);
             }
 
             _ => {}
@@ -312,8 +312,11 @@ pub fn collect_call_site_context(
         // the call site (e.g., format strings loaded before String.Format which
         // comes after the method call whose result is being formatted).
         let window_start = idx.saturating_sub(5);
-        let window_end = (idx + 6).min(all_instrs.len());
-        for (_, _, nearby_instr) in &all_instrs[window_start..window_end] {
+        let window_end = idx.saturating_add(6).min(all_instrs.len());
+        let Some(window) = all_instrs.get(window_start..window_end) else {
+            continue;
+        };
+        for (_, _, nearby_instr) in window {
             if let SsaOp::Const { value, .. } = nearby_instr.op() {
                 match value {
                     ConstValue::DecryptedString(s)
@@ -341,7 +344,7 @@ pub fn collect_call_site_context(
 
         // Check if the return value feeds into another call
         if let Some(dest_var) = dest {
-            for (_, _, later_instr) in all_instrs.iter().skip(idx + 1).take(5) {
+            for (_, _, later_instr) in all_instrs.iter().skip(idx.saturating_add(1)).take(5) {
                 let (usage_token, usage_args) = match later_instr.op() {
                     SsaOp::Call { method, args, .. } => (method.token(), args),
                     SsaOp::CallVirt { method, args, .. } => (method.token(), args),

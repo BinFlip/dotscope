@@ -42,7 +42,7 @@ impl ExecutionStats {
 
     /// Increments the instruction counter.
     pub fn increment_instructions(&mut self) {
-        self.instructions_executed += 1;
+        self.instructions_executed = self.instructions_executed.saturating_add(1);
     }
 
     /// Returns the elapsed time since execution started.

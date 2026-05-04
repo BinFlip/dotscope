@@ -263,8 +263,9 @@ impl TableRow for AssemblyRefProcessorRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* processor */    4 +
-            /* assembly_ref */ sizes.table_index_bytes(TableId::AssemblyRef)
+            /* processor */    4u8
+            /* assembly_ref */ .saturating_add(sizes.table_index_bytes(TableId::AssemblyRef))
+
         )
     }
 }

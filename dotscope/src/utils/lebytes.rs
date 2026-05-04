@@ -83,7 +83,9 @@ impl LeBytes {
     /// Returns the bytes as a slice.
     #[inline]
     pub fn as_slice(&self) -> &[u8] {
-        &self.buf[..self.len as usize]
+        // SAFETY-equivalent: `self.len` is always <= 8 (clamped at construction).
+        let len = (self.len as usize).min(self.buf.len());
+        self.buf.get(..len).unwrap_or(&[])
     }
 
     /// Returns the number of bytes.
@@ -152,8 +154,8 @@ impl Iterator for LeBytesIter {
     #[inline]
     fn next(&mut self) -> Option<u8> {
         if self.pos < self.bytes.len {
-            let b = self.bytes.buf[self.pos as usize];
-            self.pos += 1;
+            let b = *self.bytes.buf.get(self.pos as usize)?;
+            self.pos = self.pos.saturating_add(1u8);
             Some(b)
         } else {
             None
@@ -162,7 +164,7 @@ impl Iterator for LeBytesIter {
 
     #[inline]
     fn size_hint(&self) -> (usize, Option<usize>) {
-        let remaining = (self.bytes.len - self.pos) as usize;
+        let remaining = self.bytes.len.saturating_sub(self.pos) as usize;
         (remaining, Some(remaining))
     }
 }

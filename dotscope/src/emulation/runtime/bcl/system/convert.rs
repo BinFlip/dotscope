@@ -217,11 +217,11 @@ pub fn register(manager: &HookManager) -> Result<()> {
 ///
 /// A Base64-encoded string representation of the byte array.
 fn to_base64_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::Null));
-    }
+    };
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let EmValue::ObjectRef(handle) = arg0 {
         if let Some(bytes) = try_hook!(thread.heap().get_byte_array(*handle)) {
             let encoded = base64_encode(&bytes);
             match thread.heap_mut().alloc_string(&encoded) {
@@ -252,11 +252,11 @@ fn to_base64_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> 
 ///
 /// A byte array containing the decoded data, or `null` if decoding fails.
 fn from_base64_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(EmValue::Null));
-    }
+    };
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let EmValue::ObjectRef(handle) = arg0 {
         if let Ok(s) = thread.heap().get_string(*handle) {
             if let Some(decoded) = base64_decode(&s) {
                 match thread.heap_mut().alloc_byte_array(&decoded) {
@@ -298,10 +298,10 @@ fn from_base64_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
 ///
 /// The converted unsigned 8-bit integer value.
 fn to_byte_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(0_u8.into()));
-    }
-    PreHookResult::Bypass(Some(ctx.args[0].to_u8_cil().into()))
+    };
+    PreHookResult::Bypass(Some(arg0.to_u8_cil().into()))
 }
 
 /// Hook for `System.Convert.ToSByte` method.
@@ -331,10 +331,10 @@ fn to_byte_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookR
 ///
 /// The converted signed 8-bit integer value.
 fn to_sbyte_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(0_i8.into()));
-    }
-    PreHookResult::Bypass(Some(ctx.args[0].to_i8_cil().into()))
+    };
+    PreHookResult::Bypass(Some(arg0.to_i8_cil().into()))
 }
 
 /// Hook for `System.Convert.ToInt16` method.
@@ -364,10 +364,10 @@ fn to_sbyte_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHook
 ///
 /// The converted signed 16-bit integer value.
 fn to_int16_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(0_i16.into()));
-    }
-    PreHookResult::Bypass(Some(ctx.args[0].to_i16_cil().into()))
+    };
+    PreHookResult::Bypass(Some(arg0.to_i16_cil().into()))
 }
 
 /// Hook for `System.Convert.ToUInt16` method.
@@ -397,10 +397,10 @@ fn to_int16_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHook
 ///
 /// The converted unsigned 16-bit integer value.
 fn to_uint16_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(0_u16.into()));
-    }
-    PreHookResult::Bypass(Some(ctx.args[0].to_u16_cil().into()))
+    };
+    PreHookResult::Bypass(Some(arg0.to_u16_cil().into()))
 }
 
 /// Hook for `System.Convert.ToInt32` method.
@@ -434,11 +434,11 @@ fn to_uint16_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHoo
 ///
 /// The converted signed 32-bit integer value.
 fn to_int32_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(0_i32.into()));
-    }
+    };
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let EmValue::ObjectRef(handle) = arg0 {
         if let Ok(s) = thread.heap_mut().get_string(*handle) {
             if let Ok(n) = s.parse::<i32>() {
                 return PreHookResult::Bypass(Some(n.into()));
@@ -446,7 +446,7 @@ fn to_int32_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookR
         }
         return PreHookResult::Bypass(Some(0_i32.into()));
     }
-    PreHookResult::Bypass(Some(ctx.args[0].to_i32_cil().into()))
+    PreHookResult::Bypass(Some(arg0.to_i32_cil().into()))
 }
 
 /// Hook for `System.Convert.ToUInt32` method.
@@ -478,13 +478,13 @@ fn to_int32_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookR
 ///
 /// The converted unsigned 32-bit integer value.
 fn to_uint32_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(0_i32.into()));
-    }
+    };
     // Store as i32 with u32 bit pattern (CIL semantics)
     // Bit-cast from u32 to i32 preserves the bit pattern - wrapping is intentional
     #[allow(clippy::cast_possible_wrap)]
-    let value = ctx.args[0].to_u32_cil() as i32;
+    let value = arg0.to_u32_cil() as i32;
     PreHookResult::Bypass(Some(value.into()))
 }
 
@@ -519,11 +519,11 @@ fn to_uint32_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHoo
 ///
 /// The converted signed 64-bit integer value.
 fn to_int64_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(0_i64.into()));
-    }
+    };
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let EmValue::ObjectRef(handle) = arg0 {
         if let Ok(s) = thread.heap_mut().get_string(*handle) {
             if let Ok(n) = s.parse::<i64>() {
                 return PreHookResult::Bypass(Some(n.into()));
@@ -531,7 +531,7 @@ fn to_int64_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookR
         }
         return PreHookResult::Bypass(Some(0_i64.into()));
     }
-    PreHookResult::Bypass(Some(ctx.args[0].to_i64_cil().into()))
+    PreHookResult::Bypass(Some(arg0.to_i64_cil().into()))
 }
 
 /// Hook for `System.Convert.ToUInt64` method.
@@ -563,13 +563,13 @@ fn to_int64_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookR
 ///
 /// The converted unsigned 64-bit integer value.
 fn to_uint64_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(0_i64.into()));
-    }
+    };
     // Store as i64 with u64 bit pattern (CIL semantics)
     // Bit-cast from u64 to i64 preserves the bit pattern - wrapping is intentional
     #[allow(clippy::cast_possible_wrap)]
-    let value = ctx.args[0].to_u64_cil() as i64;
+    let value = arg0.to_u64_cil() as i64;
     PreHookResult::Bypass(Some(value.into()))
 }
 
@@ -599,11 +599,11 @@ fn to_uint64_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHoo
 ///
 /// The converted 32-bit floating-point value.
 fn to_single_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(0.0_f32.into()));
-    }
+    };
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let EmValue::ObjectRef(handle) = arg0 {
         if let Ok(s) = thread.heap_mut().get_string(*handle) {
             if let Ok(f) = s.parse::<f32>() {
                 return PreHookResult::Bypass(Some(f.into()));
@@ -611,7 +611,7 @@ fn to_single_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHook
         }
         return PreHookResult::Bypass(Some(0.0_f32.into()));
     }
-    PreHookResult::Bypass(Some(ctx.args[0].to_f32_cil().into()))
+    PreHookResult::Bypass(Some(arg0.to_f32_cil().into()))
 }
 
 /// Hook for `System.Convert.ToDouble` method.
@@ -640,11 +640,11 @@ fn to_single_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHook
 ///
 /// The converted 64-bit floating-point value.
 fn to_double_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(0.0_f64.into()));
-    }
+    };
 
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let EmValue::ObjectRef(handle) = arg0 {
         if let Ok(s) = thread.heap_mut().get_string(*handle) {
             if let Ok(f) = s.parse::<f64>() {
                 return PreHookResult::Bypass(Some(f.into()));
@@ -652,7 +652,7 @@ fn to_double_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHook
         }
         return PreHookResult::Bypass(Some(0.0_f64.into()));
     }
-    PreHookResult::Bypass(Some(ctx.args[0].to_f64_cil().into()))
+    PreHookResult::Bypass(Some(arg0.to_f64_cil().into()))
 }
 
 /// Hook for `System.Convert.ToChar` method.
@@ -678,11 +678,11 @@ fn to_double_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHook
 ///
 /// The converted Unicode character (stored as `UInt16`).
 fn to_char_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(0_u16.into()));
-    }
+    };
     // Char is stored as u16 in I32 (CIL semantics)
-    PreHookResult::Bypass(Some(ctx.args[0].to_u16_cil().into()))
+    PreHookResult::Bypass(Some(arg0.to_u16_cil().into()))
 }
 
 /// Hook for `System.Convert.ToBoolean` method.
@@ -713,12 +713,12 @@ fn to_char_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> PreHookR
 ///
 /// `true` if the value is non-zero, "true", or "1"; otherwise `false`.
 fn to_boolean_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return PreHookResult::Bypass(Some(false.into()));
-    }
+    };
 
     // String parsing needs special handling
-    if let EmValue::ObjectRef(handle) = &ctx.args[0] {
+    if let EmValue::ObjectRef(handle) = arg0 {
         if let Ok(s) = thread.heap().get_string(*handle) {
             return PreHookResult::Bypass(Some(
                 (s.eq_ignore_ascii_case("true") || &*s == "1").into(),
@@ -726,7 +726,7 @@ fn to_boolean_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHoo
         }
         return PreHookResult::Bypass(Some(false.into()));
     }
-    PreHookResult::Bypass(Some(ctx.args[0].to_bool_cil().into()))
+    PreHookResult::Bypass(Some(arg0.to_bool_cil().into()))
 }
 
 /// Hook for `System.Convert.ToString` method.
@@ -759,14 +759,14 @@ fn to_boolean_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHoo
 ///
 /// The string representation of the value.
 fn to_string_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -> PreHookResult {
-    if ctx.args.is_empty() {
+    let Some(arg0) = ctx.args.first() else {
         return match thread.heap_mut().alloc_string("") {
             Ok(handle) => PreHookResult::Bypass(Some(EmValue::ObjectRef(handle))),
             Err(e) => PreHookResult::Error(format!("heap allocation failed: {e}")),
         };
-    }
+    };
 
-    let s = match &ctx.args[0] {
+    let s = match arg0 {
         EmValue::I32(n) => n.to_string(),
         EmValue::I64(n) => n.to_string(),
         EmValue::F32(f) => f.to_string(),

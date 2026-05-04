@@ -115,49 +115,37 @@ pub fn parse(asm: &CilObject) -> Option<VtFixupContext> {
     let mut entries = Vec::with_capacity(num_entries);
 
     for i in 0..num_entries {
-        let base = i * 8;
-        if base + 8 > data.len() {
-            break;
-        }
-        let entry_rva =
-            u32::from_le_bytes([data[base], data[base + 1], data[base + 2], data[base + 3]]);
-        let count = u16::from_le_bytes([data[base + 4], data[base + 5]]);
-        let flags = u16::from_le_bytes([data[base + 6], data[base + 7]]);
+        let base = i.checked_mul(8)?;
+        let end = base.checked_add(8)?;
+        let chunk = data.get(base..end)?;
+        let entry_rva = u32::from_le_bytes(chunk.get(0..4)?.try_into().ok()?);
+        let count = u16::from_le_bytes(chunk.get(4..6)?.try_into().ok()?);
+        let flags = u16::from_le_bytes(chunk.get(6..8)?.try_into().ok()?);
 
         let slot_size: usize = if flags & COR_VTABLE_64BIT != 0 { 8 } else { 4 };
 
         // Read method tokens at the entry's RVA
         let mut tokens = Vec::with_capacity(count as usize);
         if let Ok(tok_offset) = file.rva_to_offset(entry_rva as usize) {
-            let tok_data_len = (count as usize) * slot_size;
+            let tok_data_len = (count as usize).saturating_mul(slot_size);
             if let Ok(tok_data) = file.data_slice(tok_offset, tok_data_len) {
                 for j in 0..count as usize {
-                    let slot_base = j * slot_size;
+                    let Some(slot_base) = j.checked_mul(slot_size) else {
+                        break;
+                    };
                     let token = if slot_size == 8 {
                         // 64-bit slot: read u64, truncate to u32 (high 32 bits are padding)
-                        if slot_base + 8 <= tok_data.len() {
-                            u64::from_le_bytes([
-                                tok_data[slot_base],
-                                tok_data[slot_base + 1],
-                                tok_data[slot_base + 2],
-                                tok_data[slot_base + 3],
-                                tok_data[slot_base + 4],
-                                tok_data[slot_base + 5],
-                                tok_data[slot_base + 6],
-                                tok_data[slot_base + 7],
-                            ]) as u32
-                        } else {
-                            0
-                        }
-                    } else if slot_base + 4 <= tok_data.len() {
-                        u32::from_le_bytes([
-                            tok_data[slot_base],
-                            tok_data[slot_base + 1],
-                            tok_data[slot_base + 2],
-                            tok_data[slot_base + 3],
-                        ])
+                        slot_base
+                            .checked_add(8)
+                            .and_then(|end| tok_data.get(slot_base..end))
+                            .and_then(|s| <[u8; 8]>::try_from(s).ok())
+                            .map_or(0u32, |b| u64::from_le_bytes(b) as u32)
                     } else {
-                        0
+                        slot_base
+                            .checked_add(4)
+                            .and_then(|end| tok_data.get(slot_base..end))
+                            .and_then(|s| <[u8; 4]>::try_from(s).ok())
+                            .map_or(0u32, u32::from_le_bytes)
                     };
                     tokens.push(token);
                 }
@@ -177,7 +165,12 @@ pub fn parse(asm: &CilObject) -> Option<VtFixupContext> {
     for (i, entry) in entries.iter().enumerate() {
         for (j, &token) in entry.tokens.iter().enumerate() {
             if token != 0 {
-                vtentry_map.entry(token).or_default().push((i + 1, j + 1));
+                let entry_idx = i.checked_add(1)?;
+                let slot_idx = j.checked_add(1)?;
+                vtentry_map
+                    .entry(token)
+                    .or_default()
+                    .push((entry_idx, slot_idx));
             }
         }
     }
@@ -202,12 +195,19 @@ pub fn parse(asm: &CilObject) -> Option<VtFixupContext> {
                 .rva
                 .saturating_add(u32::from(entry.count).saturating_mul(slot_size));
             if addr >= entry.rva && addr < range_end {
-                let slot_offset = addr - entry.rva;
-                if slot_offset % slot_size == 0 {
-                    let slot_idx = (slot_offset / slot_size) as usize;
-                    if let Some(&token) = entry.tokens.get(slot_idx) {
-                        if token != 0 {
-                            export_map.insert(token, (func.ordinal, func.name.clone()));
+                let Some(slot_offset) = addr.checked_sub(entry.rva) else {
+                    break;
+                };
+                let Some(rem) = slot_offset.checked_rem(slot_size) else {
+                    break;
+                };
+                if rem == 0 {
+                    if let Some(slot_div) = slot_offset.checked_div(slot_size) {
+                        let slot_idx = slot_div as usize;
+                        if let Some(&token) = entry.tokens.get(slot_idx) {
+                            if token != 0 {
+                                export_map.insert(token, (func.ordinal, func.name.clone()));
+                            }
                         }
                     }
                 }

@@ -150,17 +150,17 @@ pub fn resolve_newobj(
     if !hook_handled && method.is_code_runtime() && arg_values.len() == 2 {
         if let Some(ref decl_type) = declaring_type {
             if is_delegate_type(decl_type) {
-                let target = match &arg_values[0] {
-                    EmValue::ObjectRef(href) => Some(*href),
-                    EmValue::Null => None,
+                let target = match arg_values.first() {
+                    Some(EmValue::ObjectRef(href)) => Some(*href),
+                    Some(EmValue::Null) => None,
                     _ => None,
                 };
 
-                let method_token_value = match &arg_values[1] {
-                    EmValue::UnmanagedPtr(ptr) => Some(Token::new(*ptr as u32)),
-                    EmValue::I32(v) => Some(Token::new(*v as u32)),
-                    EmValue::I64(v) => Some(Token::new(*v as u32)),
-                    EmValue::NativeInt(v) => Some(Token::new(*v as u32)),
+                let method_token_value = match arg_values.get(1) {
+                    Some(EmValue::UnmanagedPtr(ptr)) => Some(Token::new(*ptr as u32)),
+                    Some(EmValue::I32(v)) => Some(Token::new(*v as u32)),
+                    Some(EmValue::I64(v)) => Some(Token::new(*v as u32)),
+                    Some(EmValue::NativeInt(v)) => Some(Token::new(*v as u32)),
                     _ => None,
                 };
 
@@ -289,17 +289,17 @@ fn resolve_newobj_memberref(
     if args.len() == 2 {
         if let Some(cil_type) = context.get_type(type_token) {
             if is_delegate_type(&cil_type) {
-                let target = match &args[0] {
-                    EmValue::ObjectRef(href) => Some(*href),
-                    EmValue::Null => None,
+                let target = match args.first() {
+                    Some(EmValue::ObjectRef(href)) => Some(*href),
+                    Some(EmValue::Null) => None,
                     _ => None,
                 };
 
-                let method_token_value = match &args[1] {
-                    EmValue::UnmanagedPtr(ptr) => Some(Token::new(*ptr as u32)),
-                    EmValue::I32(v) => Some(Token::new(*v as u32)),
-                    EmValue::I64(v) => Some(Token::new(*v as u32)),
-                    EmValue::NativeInt(v) => Some(Token::new(*v as u32)),
+                let method_token_value = match args.get(1) {
+                    Some(EmValue::UnmanagedPtr(ptr)) => Some(Token::new(*ptr as u32)),
+                    Some(EmValue::I32(v)) => Some(Token::new(*v as u32)),
+                    Some(EmValue::I64(v)) => Some(Token::new(*v as u32)),
+                    Some(EmValue::NativeInt(v)) => Some(Token::new(*v as u32)),
                     _ => None,
                 };
 

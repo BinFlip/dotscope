@@ -140,7 +140,9 @@ impl DataFlowAnalysis for ReachingDefinitions {
     ) -> Self::Lattice {
         // OUT = GEN ∪ IN (no KILL in SSA since each variable is defined once)
         let mut result = input.defs.clone();
-        result.union_with(&self.gen_sets[block_id]);
+        if let Some(gen) = self.gen_sets.get(block_id) {
+            result.union_with(gen);
+        }
         ReachingDefsResult { defs: result }
     }
 }

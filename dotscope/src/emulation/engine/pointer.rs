@@ -92,18 +92,18 @@ impl InstructionPointer {
     /// Returns the offset of the next instruction (fall-through address).
     #[must_use]
     pub fn next_offset(&self) -> u32 {
-        self.offset + self.current_size
+        self.offset.saturating_add(self.current_size)
     }
 
     /// Advances to the next instruction (sequential execution).
     pub fn advance(&mut self, instruction_size: u32) {
-        self.offset += instruction_size;
+        self.offset = self.offset.saturating_add(instruction_size);
         self.current_size = 0;
     }
 
     /// Advances using the stored current instruction size.
     pub fn advance_current(&mut self) {
-        self.offset += self.current_size;
+        self.offset = self.offset.saturating_add(self.current_size);
         self.current_size = 0;
     }
 

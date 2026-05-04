@@ -273,7 +273,9 @@ impl Output {
             )));
         }
 
-        Ok(&mut self.as_mut_slice()[start..end])
+        self.as_mut_slice().get_mut(start..end).ok_or_else(|| {
+            Error::LayoutFailed(format!("Range {start}..{end} exceeds buffer of size {len}"))
+        })
     }
 
     /// Gets a mutable slice starting at the given offset with the specified size.
@@ -287,7 +289,11 @@ impl Output {
     /// # Errors
     /// Returns [`crate::Error::MmapFailed`] if the range is invalid or exceeds buffer bounds.
     pub fn get_mut_slice(&mut self, start: usize, size: usize) -> Result<&mut [u8]> {
-        let end = start + size;
+        let end = start.checked_add(size).ok_or_else(|| {
+            Error::LayoutFailed(format!(
+                "Slice end overflows usize: start={start}, size={size}"
+            ))
+        })?;
         let len = self.size();
         if end > len {
             return Err(Error::MmapFailed(format!(
@@ -311,7 +317,13 @@ impl Output {
         let start = usize::try_from(offset).map_err(|_| {
             Error::MmapFailed(format!("Offset {offset} too large for target architecture"))
         })?;
-        let end = start + data.len();
+        let end = start.checked_add(data.len()).ok_or_else(|| {
+            Error::LayoutFailed(format!(
+                "Write end overflows usize: offset={}, len={}",
+                offset,
+                data.len()
+            ))
+        })?;
         let len = self.size();
 
         if end > len {
@@ -323,7 +335,12 @@ impl Output {
             )));
         }
 
-        self.as_mut_slice()[start..end].copy_from_slice(data);
+        let dest = self.as_mut_slice().get_mut(start..end).ok_or_else(|| {
+            Error::LayoutFailed(format!(
+                "Slice {start}..{end} out of bounds for buffer size {len}"
+            ))
+        })?;
+        dest.copy_from_slice(data);
         Ok(())
     }
 
@@ -342,7 +359,13 @@ impl Output {
         let start = usize::try_from(offset).map_err(|_| {
             Error::MmapFailed(format!("Offset {offset} too large for target architecture"))
         })?;
-        let end = start + buffer.len();
+        let end = start.checked_add(buffer.len()).ok_or_else(|| {
+            Error::LayoutFailed(format!(
+                "Read end overflows usize: offset={}, len={}",
+                offset,
+                buffer.len()
+            ))
+        })?;
         let len = self.size();
 
         if end > len {
@@ -354,7 +377,12 @@ impl Output {
             )));
         }
 
-        buffer.copy_from_slice(&self.as_slice()[start..end]);
+        let src = self.as_slice().get(start..end).ok_or_else(|| {
+            Error::LayoutFailed(format!(
+                "Slice {start}..{end} out of bounds for buffer size {len}"
+            ))
+        })?;
+        buffer.copy_from_slice(src);
         Ok(())
     }
 
@@ -387,8 +415,16 @@ impl Output {
             Error::MmapFailed(format!("Size {size} too large for target architecture"))
         })?;
 
-        let source_end = source_start + copy_size;
-        let target_end = target_start + copy_size;
+        let source_end = source_start.checked_add(copy_size).ok_or_else(|| {
+            Error::LayoutFailed(format!(
+                "Source range end overflows usize: start={source_start}, size={copy_size}"
+            ))
+        })?;
+        let target_end = target_start.checked_add(copy_size).ok_or_else(|| {
+            Error::LayoutFailed(format!(
+                "Target range end overflows usize: start={target_start}, size={copy_size}"
+            ))
+        })?;
         let len = self.size();
 
         // Validate bounds
@@ -456,7 +492,10 @@ impl Output {
             )));
         }
 
-        self.as_mut_slice()[index] = byte;
+        let cell = self.as_mut_slice().get_mut(index).ok_or_else(|| {
+            Error::LayoutFailed(format!("Index {index} out of bounds for buffer size {len}"))
+        })?;
+        *cell = byte;
         Ok(())
     }
 
@@ -514,7 +553,13 @@ impl Output {
         write_compressed_uint(value, &mut buffer);
 
         self.write_at(offset, &buffer)?;
-        Ok(offset + buffer.len() as u64)
+        offset.checked_add(buffer.len() as u64).ok_or_else(|| {
+            Error::LayoutFailed(format!(
+                "Offset {} + buffer length {} overflows u64",
+                offset,
+                buffer.len()
+            ))
+        })
     }
 
     /// Writes data with automatic 4-byte alignment padding.
@@ -535,10 +580,19 @@ impl Output {
     pub fn write_aligned_data(&mut self, offset: u64, data: &[u8]) -> Result<u64> {
         // Write the data
         self.write_at(offset, data)?;
-        let data_end = offset + data.len() as u64;
+        let data_end = offset.checked_add(data.len() as u64).ok_or_else(|| {
+            Error::LayoutFailed(format!(
+                "Offset {} + data length {} overflows u64",
+                offset,
+                data.len()
+            ))
+        })?;
 
-        // Calculate padding needed for 4-byte alignment
-        let padding_needed = (4 - (data.len() % 4)) % 4;
+        // Calculate padding needed for 4-byte alignment.
+        // `data.len() % 4` is in [0, 3]; subtraction from 4 yields [1, 4]; final
+        // `% 4` brings it back to [0, 3]. Use checked operations to satisfy lints.
+        let rem = data.len() % 4;
+        let padding_needed = 4usize.saturating_sub(rem) % 4;
 
         if padding_needed > 0 {
             // Fill padding with 0xFF bytes to prevent creation of valid heap entries
@@ -553,7 +607,11 @@ impl Output {
             padding_slice.fill(0xFF);
         }
 
-        Ok(data_end + padding_needed as u64)
+        data_end.checked_add(padding_needed as u64).ok_or_else(|| {
+            Error::LayoutFailed(format!(
+                "Aligned end overflows u64: data_end={data_end}, padding={padding_needed}"
+            ))
+        })
     }
 
     /// Writes data and returns the next position for sequential writing.
@@ -573,7 +631,13 @@ impl Output {
     pub fn write_and_advance(&mut self, position: &mut usize, data: &[u8]) -> Result<()> {
         let slice = self.get_mut_slice(*position, data.len())?;
         slice.copy_from_slice(data);
-        *position += data.len();
+        *position = position.checked_add(data.len()).ok_or_else(|| {
+            Error::LayoutFailed(format!(
+                "Position {} + data length {} overflows usize",
+                *position,
+                data.len()
+            ))
+        })?;
         Ok(())
     }
 
@@ -613,8 +677,14 @@ impl Output {
     /// # Errors
     /// Returns [`crate::Error::MmapFailed`] if the padding would exceed file bounds.
     pub fn add_heap_padding(&mut self, current_pos: usize, heap_start: usize) -> Result<()> {
-        let bytes_written = current_pos - heap_start;
-        let padding_needed = (4 - (bytes_written % 4)) % 4;
+        let bytes_written = current_pos.checked_sub(heap_start).ok_or_else(|| {
+            Error::LayoutFailed(format!(
+                "Heap padding called with current_pos={current_pos} < heap_start={heap_start}"
+            ))
+        })?;
+        // `bytes_written % 4` is in [0, 3]; final modulo brings the result to [0, 3].
+        let rem = bytes_written % 4;
+        let padding_needed = 4usize.saturating_sub(rem) % 4;
 
         if padding_needed > 0 {
             self.fill_region(current_pos as u64, padding_needed, 0xFF)?;
@@ -919,7 +989,13 @@ impl std::io::Write for OutputWriter<'_> {
         self.output
             .write_at(self.position, buf)
             .map_err(|e| std::io::Error::other(e.to_string()))?;
-        self.position += buf.len() as u64;
+        self.position = self.position.checked_add(buf.len() as u64).ok_or_else(|| {
+            std::io::Error::other(format!(
+                "Position {} + buffer length {} overflows u64",
+                self.position,
+                buf.len()
+            ))
+        })?;
         Ok(buf.len())
     }
 

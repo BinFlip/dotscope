@@ -140,6 +140,7 @@ impl TableRow for FieldPtrRaw {
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
             /* field */ sizes.table_index_bytes(TableId::Field)
+
         )
     }
 }

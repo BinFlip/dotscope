@@ -95,7 +95,7 @@ where
     // Run Tarjan's algorithm from each unvisited node
     for i in 0..node_count {
         let node = NodeId::new(i);
-        if state.index[i].is_none() {
+        if state.index.get(i).copied().flatten().is_none() {
             state.strongconnect(graph, node);
         }
     }
@@ -135,35 +135,49 @@ impl TarjanState {
         let v_idx = v.index();
 
         // Set the depth index for v
-        self.index[v_idx] = Some(self.current_index);
-        self.lowlink[v_idx] = self.current_index;
-        self.current_index += 1;
+        if let Some(slot) = self.index.get_mut(v_idx) {
+            *slot = Some(self.current_index);
+        }
+        if let Some(slot) = self.lowlink.get_mut(v_idx) {
+            *slot = self.current_index;
+        }
+        self.current_index = self.current_index.saturating_add(1);
         self.stack.push(v);
-        self.on_stack[v_idx] = true;
+        if let Some(slot) = self.on_stack.get_mut(v_idx) {
+            *slot = true;
+        }
 
         // Consider successors of v
         for w in graph.successors(v) {
             let w_idx = w.index();
 
-            if self.index[w_idx].is_none() {
+            let w_index_visited = self.index.get(w_idx).copied().flatten();
+            if w_index_visited.is_none() {
                 // Successor w has not yet been visited; recurse
                 self.strongconnect(graph, w);
-                self.lowlink[v_idx] = self.lowlink[v_idx].min(self.lowlink[w_idx]);
-            } else if self.on_stack[w_idx] {
+                let lw = self.lowlink.get(w_idx).copied().unwrap_or(usize::MAX);
+                if let Some(slot) = self.lowlink.get_mut(v_idx) {
+                    *slot = (*slot).min(lw);
+                }
+            } else if self.on_stack.get(w_idx).copied().unwrap_or(false) {
                 // Successor w is on stack and hence in the current SCC
-                // Note: index[w] is valid here because w has been visited
-                if let Some(idx) = self.index[w_idx] {
-                    self.lowlink[v_idx] = self.lowlink[v_idx].min(idx);
+                if let Some(idx) = w_index_visited {
+                    if let Some(slot) = self.lowlink.get_mut(v_idx) {
+                        *slot = (*slot).min(idx);
+                    }
                 }
             }
         }
 
         // If v is a root node, pop the stack and generate an SCC
-        if let Some(idx) = self.index[v_idx] {
-            if self.lowlink[v_idx] == idx {
+        let v_index = self.index.get(v_idx).copied().flatten();
+        if let Some(idx) = v_index {
+            if self.lowlink.get(v_idx).copied().unwrap_or(usize::MAX) == idx {
                 let mut scc = Vec::new();
                 while let Some(w) = self.stack.pop() {
-                    self.on_stack[w.index()] = false;
+                    if let Some(slot) = self.on_stack.get_mut(w.index()) {
+                        *slot = false;
+                    }
                     scc.push(w);
                     if w == v {
                         break;
@@ -222,10 +236,12 @@ where
     let node_count = graph.node_count();
 
     // Build mapping from node to SCC index
-    let mut node_to_scc = vec![0; node_count];
+    let mut node_to_scc = vec![0usize; node_count];
     for (scc_idx, scc) in sccs.iter().enumerate() {
         for &node in scc {
-            node_to_scc[node.index()] = scc_idx;
+            if let Some(slot) = node_to_scc.get_mut(node.index()) {
+                *slot = scc_idx;
+            }
         }
     }
 
@@ -235,10 +251,10 @@ where
 
     for i in 0..node_count {
         let from_node = NodeId::new(i);
-        let from_scc = node_to_scc[i];
+        let from_scc = node_to_scc.get(i).copied().unwrap_or(0);
 
         for to_node in graph.successors(from_node) {
-            let to_scc = node_to_scc[to_node.index()];
+            let to_scc = node_to_scc.get(to_node.index()).copied().unwrap_or(0);
 
             if from_scc != to_scc && seen_edges.insert((from_scc, to_scc)) {
                 edges.push((from_scc, to_scc));

@@ -72,7 +72,7 @@ pub struct SsaExceptionHandler {
 /// When an end-boundary block is removed during canonicalization, we need to find the
 /// next block that survived to preserve the boundary semantics.
 fn find_next_surviving(block_remap: &[Option<usize>], start: usize) -> Option<usize> {
-    block_remap[start..].iter().find_map(|entry| *entry)
+    block_remap.get(start..)?.iter().find_map(|entry| *entry)
 }
 
 impl SsaExceptionHandler {

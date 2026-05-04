@@ -13,7 +13,7 @@ impl RowReadable for LocalConstantRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(LocalConstantRaw {
             rid,
-            token: Token::new(0x3400_0000 + rid),
+            token: Token::new(0x3400_0000u32.saturating_add(rid)),
             offset: *offset,
             name: read_le_at_dyn(data, offset, sizes.is_large_str())?,
             signature: read_le_at_dyn(data, offset, sizes.is_large_blob())?,

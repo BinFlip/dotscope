@@ -159,7 +159,7 @@
 //! - **ECMA-335 II.24.2.2**: Stream header format and directory structure
 //! - **ECMA-335 II.24.2**: Complete metadata stream architecture overview
 
-use crate::{utils::read_le, Result};
+use crate::{utils::read_le_at, Result};
 use std::io::Write;
 
 /// ECMA-335 compliant stream header providing metadata stream location and identification.
@@ -509,8 +509,9 @@ impl StreamHeader {
             return Err(out_of_bounds_error!());
         }
 
-        let offset = read_le::<u32>(data)?;
-        let size = read_le::<u32>(&data[4..])?;
+        let mut cursor = 0_usize;
+        let offset = read_le_at::<u32>(data, &mut cursor)?;
+        let size = read_le_at::<u32>(data, &mut cursor)?;
 
         // ECMA-335 II.24.2.2 says stream sizes "shall be a multiple of 4", but many real-world
         // .NET tools (AsmResolver, Mono's writer, etc.) produce unaligned sizes. The .NET runtime
@@ -533,9 +534,13 @@ impl StreamHeader {
             ));
         }
 
+        // After the 8-byte header, parse the name (max 32 chars or until end of data).
+        // `cursor` is currently 8 because we read two u32s.
+        let name_remaining = data.len().saturating_sub(cursor);
+        let max_name_bytes = std::cmp::min(32, name_remaining);
         let mut name = String::with_capacity(32);
-        for counter in 0..std::cmp::min(32, data.len() - 8) {
-            let name_char = read_le::<u8>(&data[8 + counter..])?;
+        for _ in 0..max_name_bytes {
+            let name_char = read_le_at::<u8>(data, &mut cursor)?;
             if name_char == 0 {
                 break;
             }
@@ -611,9 +616,22 @@ impl StreamHeader {
 
         // Pad to 4-byte boundary
         // Name length + 1 (null terminator), padded to multiple of 4
-        let name_with_null = self.name.len() + 1;
-        let padded_len = (name_with_null + 3) & !3;
-        let padding = padded_len - name_with_null;
+        let name_with_null = self.name.len().checked_add(1).ok_or_else(|| {
+            malformed_error!("StreamHeader name length overflow: {}", self.name.len())
+        })?;
+        let padded_len = name_with_null.checked_add(3).ok_or_else(|| {
+            malformed_error!(
+                "StreamHeader padded length overflow: {} + 3",
+                name_with_null
+            )
+        })? & !3;
+        let padding = padded_len.checked_sub(name_with_null).ok_or_else(|| {
+            malformed_error!(
+                "StreamHeader padding underflow: padded={} name_with_null={}",
+                padded_len,
+                name_with_null
+            )
+        })?;
         if padding > 0 {
             writer.write_all(&vec![0u8; padding])?;
         }
@@ -653,9 +671,10 @@ impl StreamHeader {
     /// ```
     #[must_use]
     pub fn serialized_size(&self) -> usize {
-        let name_with_null = self.name.len() + 1;
-        let padded_name = (name_with_null + 3) & !3;
-        8 + padded_name // offset (4) + size (4) + padded name
+        let name_with_null = self.name.len().saturating_add(1);
+        let padded_name = name_with_null.saturating_add(3) & !3;
+        // offset (4) + size (4) + padded name
+        8_usize.saturating_add(padded_name)
     }
 }
 

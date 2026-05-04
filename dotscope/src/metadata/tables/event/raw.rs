@@ -177,9 +177,10 @@ impl TableRow for EventRaw {
     #[rustfmt::skip]
     fn row_size(sizes: &TableInfoRef) -> u32 {
         u32::from(
-            /* flags */      2 +
-            /* name */       sizes.str_bytes() +
-            /* event_type */ sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef)
+            /* flags */      2u8
+            /* name */       .saturating_add(sizes.str_bytes())
+            /* event_type */ .saturating_add(sizes.coded_index_bytes(CodedIndexType::TypeDefOrRef))
+
         )
     }
 }

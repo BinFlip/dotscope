@@ -16,7 +16,7 @@ impl RowReadable for GenericParamConstraintRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(GenericParamConstraintRaw {
             rid,
-            token: Token::new(0x2C00_0000 + rid),
+            token: Token::new(0x2C00_0000u32.saturating_add(rid)),
             offset: *offset,
             owner: read_le_at_dyn(data, offset, sizes.is_large(TableId::GenericParam))?,
             constraint: CodedIndex::read(data, offset, sizes, CodedIndexType::TypeDefOrRef)?,

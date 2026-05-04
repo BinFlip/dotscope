@@ -13,7 +13,7 @@ impl RowReadable for ImportScopeRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, sizes: &TableInfoRef) -> Result<Self> {
         Ok(ImportScopeRaw {
             rid,
-            token: Token::new(0x3500_0000 + rid),
+            token: Token::new(0x3500_0000u32.saturating_add(rid)),
             offset: *offset,
             parent: read_le_at_dyn(data, offset, sizes.is_large(TableId::ImportScope))?,
             imports: read_le_at_dyn(data, offset, sizes.is_large_blob())?,

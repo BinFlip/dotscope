@@ -298,11 +298,14 @@ impl<'a> Parser<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn advance_by(&mut self, step: usize) -> Result<()> {
-        if self.position + step > self.data.len() {
+        let new_pos = self
+            .position
+            .checked_add(step)
+            .ok_or(out_of_bounds_error!())?;
+        if new_pos > self.data.len() {
             return Err(out_of_bounds_error!());
         }
-
-        self.position += step;
+        self.position = new_pos;
         Ok(())
     }
 
@@ -360,10 +363,10 @@ impl<'a> Parser<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn peek_byte(&self) -> Result<u8> {
-        if self.position >= self.data.len() {
-            return Err(out_of_bounds_error!());
-        }
-        Ok(self.data[self.position])
+        self.data
+            .get(self.position)
+            .copied()
+            .ok_or(out_of_bounds_error!())
     }
 
     /// Peek at a value of type `T` in little-endian format without advancing the position.
@@ -472,11 +475,22 @@ impl<'a> Parser<'a> {
     /// # Ok::<(), dotscope::Error>(())
     /// ```
     pub fn align(&mut self, alignment: usize) -> Result<()> {
-        let padding = (alignment - (self.position % alignment)) % alignment;
-        if self.position + padding > self.data.len() {
+        let rem = self
+            .position
+            .checked_rem(alignment)
+            .ok_or(out_of_bounds_error!())?;
+        let padding = alignment
+            .wrapping_sub(rem)
+            .checked_rem(alignment)
+            .ok_or(out_of_bounds_error!())?;
+        let new_pos = self
+            .position
+            .checked_add(padding)
+            .ok_or(out_of_bounds_error!())?;
+        if new_pos > self.data.len() {
             return Err(out_of_bounds_error!());
         }
-        self.position += padding;
+        self.position = new_pos;
         Ok(())
     }
 
@@ -611,8 +625,11 @@ impl<'a> Parser<'a> {
             result
         } else {
             #[allow(clippy::cast_possible_wrap)]
-            let result = -((unsigned >> 1) as i32 + 1);
-            result
+            let half = (unsigned >> 1) as i32;
+            // -(half + 1): reproduces the ECMA-335 negative encoding while
+            // matching the existing release-mode wrapping behaviour for
+            // out-of-range inputs (half == i32::MAX).
+            half.wrapping_add(1).wrapping_neg()
         };
 
         Ok(signed)
@@ -665,8 +682,15 @@ impl<'a> Parser<'a> {
         };
 
         let table_index = compressed_token >> 2;
+        let token = table.checked_add(table_index).ok_or_else(|| {
+            malformed_error!(
+                "Compressed token index overflows table base: {} + {}",
+                table,
+                table_index
+            )
+        })?;
 
-        Ok(Token::new(table + table_index))
+        Ok(Token::new(token))
     }
 
     /// Read a 7-bit encoded integer (used in .NET for variable-length encoding).
@@ -697,18 +721,16 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn read_7bit_encoded_int(&mut self) -> Result<u32> {
         let mut value = 0u32;
-        let mut shift = 0;
+        let mut shift: u32 = 0;
 
         loop {
-            if self.position >= self.data.len() {
-                return Err(out_of_bounds_error!());
-            }
-
-            let byte = self.data[self.position];
-            self.position += 1;
+            let byte = *self.data.get(self.position).ok_or(out_of_bounds_error!())?;
+            self.position = self.position.checked_add(1).ok_or(out_of_bounds_error!())?;
 
             value |= u32::from(byte & 0x7F) << shift;
-            shift += 7;
+            shift = shift
+                .checked_add(7)
+                .ok_or_else(|| malformed_error!("7-bit encoded integer overflow"))?;
 
             if (byte & 0x80) == 0 {
                 break;
@@ -755,17 +777,20 @@ impl<'a> Parser<'a> {
         let start = self.position;
         let mut end = start;
 
-        while end < self.data.len() && self.data[end] != 0 {
-            end += 1;
+        while let Some(&b) = self.data.get(end) {
+            if b == 0 {
+                break;
+            }
+            end = end.checked_add(1).ok_or(out_of_bounds_error!())?;
         }
 
         // Handle two cases:
         // 1. Found null terminator (end < data.len()): normal null-terminated string
         // 2. Reached end of data (end == data.len()): string without null terminator (valid case)
-        let string_data = &self.data[start..end];
+        let string_data = self.data.get(start..end).ok_or(out_of_bounds_error!())?;
 
         if end < self.data.len() {
-            self.position = end + 1;
+            self.position = end.checked_add(1).ok_or(out_of_bounds_error!())?;
         } else {
             self.position = end;
         }
@@ -804,19 +829,20 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn read_prefixed_string_utf8(&mut self) -> Result<String> {
         let length = self.read_7bit_encoded_int()? as usize;
+        let end = self
+            .position
+            .checked_add(length)
+            .ok_or(out_of_bounds_error!())?;
 
-        if self.position + length > self.data.len() {
-            return Err(out_of_bounds_error!());
-        }
-
-        let string_data = &self.data[self.position..self.position + length];
-        self.position += length;
+        let start = self.position;
+        let string_data = self.data.get(start..end).ok_or(out_of_bounds_error!())?;
+        self.position = end;
 
         String::from_utf8(string_data.to_vec()).map_err(|e| {
             malformed_error!(
                 "Invalid UTF-8 string at offset {}-{}: {}",
-                self.position - length,
-                self.position,
+                start,
+                end,
                 e.utf8_error()
             )
         })
@@ -858,19 +884,17 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn read_prefixed_string_utf8_ref(&mut self) -> Result<&'a str> {
         let length = self.read_7bit_encoded_int()? as usize;
+        let start = self.position;
+        let end = start.checked_add(length).ok_or(out_of_bounds_error!())?;
 
-        if self.position + length > self.data.len() {
-            return Err(out_of_bounds_error!());
-        }
-
-        let string_data = &self.data[self.position..self.position + length];
-        self.position += length;
+        let string_data = self.data.get(start..end).ok_or(out_of_bounds_error!())?;
+        self.position = end;
 
         std::str::from_utf8(string_data).map_err(|_| {
             malformed_error!(
                 "Invalid UTF-8 string at position {} - {} - {:?}",
-                self.position - length,
-                self.position,
+                start,
+                end,
                 string_data
             )
         })
@@ -901,19 +925,17 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn read_compressed_string_utf8(&mut self) -> Result<String> {
         let length = self.read_compressed_uint()? as usize;
+        let start = self.position;
+        let end = start.checked_add(length).ok_or(out_of_bounds_error!())?;
 
-        if self.position + length > self.data.len() {
-            return Err(out_of_bounds_error!());
-        }
-
-        let string_data = &self.data[self.position..self.position + length];
-        self.position += length;
+        let string_data = self.data.get(start..end).ok_or(out_of_bounds_error!())?;
+        self.position = end;
 
         String::from_utf8(string_data.to_vec()).map_err(|e| {
             malformed_error!(
                 "Invalid UTF-8 compressed string at offset {}-{}: {}",
-                self.position - length,
-                self.position,
+                start,
+                end,
                 e.utf8_error()
             )
         })
@@ -1038,7 +1060,10 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn read_bytes(&mut self, length: usize) -> Result<&'a [u8]> {
         let end = self.calc_end_position(length)?;
-        let bytes = &self.data[self.position..end];
+        let bytes = self
+            .data
+            .get(self.position..end)
+            .ok_or(out_of_bounds_error!())?;
         self.position = end;
         Ok(bytes)
     }
@@ -1068,7 +1093,11 @@ impl<'a> Parser<'a> {
     /// ```
     pub fn read_prefixed_string_utf16(&mut self) -> Result<String> {
         let length = self.read_7bit_encoded_int()? as usize;
-        if self.position + length > self.data.len() {
+        let end = self
+            .position
+            .checked_add(length)
+            .ok_or(out_of_bounds_error!())?;
+        if end > self.data.len() {
             return Err(out_of_bounds_error!());
         }
 
@@ -1076,8 +1105,9 @@ impl<'a> Parser<'a> {
             return Err(malformed_error!("Invalid UTF-16 length - {}", length));
         }
 
-        let mut utf16_chars: Vec<u16> = Vec::with_capacity(length / 2);
-        for _ in 0..length / 2 {
+        let char_count = length / 2;
+        let mut utf16_chars: Vec<u16> = Vec::with_capacity(char_count);
+        for _ in 0..char_count {
             let char = self.read_le::<u16>()?;
             utf16_chars.push(char);
         }

@@ -79,7 +79,9 @@ impl CompactionStats {
     /// This is the sum of removed strings, blobs, and GUIDs.
     #[must_use]
     pub fn total_removed(&self) -> usize {
-        self.strings + self.blobs + self.guids
+        self.strings
+            .saturating_add(self.blobs)
+            .saturating_add(self.guids)
     }
 }
 
@@ -140,7 +142,9 @@ pub(crate) fn mark_unreferenced_heap_entries(
                     // Calculate the byte range of this string entry
                     // Safe: .NET heap offsets always fit in u32
                     #[allow(clippy::cast_possible_truncation)]
-                    let str_end = offset_u32 + content.len() as u32 + 1; // +1 for null terminator
+                    let content_len = content.len() as u32;
+                    // +1 for null terminator. Saturate on overflow (unreachable in practice).
+                    let str_end = offset_u32.saturating_add(content_len).saturating_add(1);
 
                     // Check if ANY referenced offset falls within this string's range
                     let has_reference = ref_strings
@@ -202,17 +206,17 @@ pub(crate) fn mark_unreferenced_heap_entries(
     // Mark unreferenced entries for removal
     for offset in unreferenced_strings {
         assembly.string_remove(offset)?;
-        stats.strings += 1;
+        stats.strings = stats.strings.saturating_add(1);
     }
 
     for offset in unreferenced_blobs {
         assembly.blob_remove(offset)?;
-        stats.blobs += 1;
+        stats.blobs = stats.blobs.saturating_add(1);
     }
 
     for index in unreferenced_guids {
         assembly.guid_remove(index)?;
-        stats.guids += 1;
+        stats.guids = stats.guids.saturating_add(1);
     }
 
     Ok(stats)
@@ -419,7 +423,7 @@ fn scan_table_data_owned_rows(
 
         // Safe: .NET heap offsets always fit in u32
         #[allow(clippy::cast_possible_truncation)]
-        let rid = (idx + 1) as u32;
+        let rid = idx.saturating_add(1) as u32;
         let mut offset = 0;
         if row_data
             .row_write(&mut row_buffer, &mut offset, rid, table_info)
@@ -442,7 +446,10 @@ fn extract_heap_refs_from_row(
     ref_guids: &mut HashSet<u32>,
 ) {
     for field in heap_fields {
-        if field.offset + field.size > row_buffer.len() {
+        let Some(field_end) = field.offset.checked_add(field.size) else {
+            continue;
+        };
+        if field_end > row_buffer.len() {
             continue;
         }
 

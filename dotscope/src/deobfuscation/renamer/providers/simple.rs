@@ -37,7 +37,7 @@ impl SimpleNameGenerator {
     /// Names are uppercase base-26: `A`, `B`, ..., `Z`, `AA`, `AB`, ...
     pub fn next_type_name(&mut self) -> String {
         let name = Self::index_to_name(self.types);
-        self.types += 1;
+        self.types = self.types.saturating_add(1);
         name
     }
 
@@ -46,7 +46,7 @@ impl SimpleNameGenerator {
     /// Names are lowercase base-26: `a`, `b`, ..., `z`, `aa`, `ab`, ...
     pub fn next_method_name(&mut self) -> String {
         let name = Self::index_to_name_lower(self.methods);
-        self.methods += 1;
+        self.methods = self.methods.saturating_add(1);
         name
     }
 
@@ -56,7 +56,7 @@ impl SimpleNameGenerator {
     /// sequence: `f_a`, `f_b`, ..., `f_z`, `f_aa`, ...
     pub fn next_field_name(&mut self) -> String {
         let name = format!("f_{}", Self::index_to_name_lower(self.fields));
-        self.fields += 1;
+        self.fields = self.fields.saturating_add(1);
         name
     }
 
@@ -66,7 +66,7 @@ impl SimpleNameGenerator {
     /// sequence: `p_a`, `p_b`, ..., `p_z`, `p_aa`, ...
     pub fn next_param_name(&mut self) -> String {
         let name = format!("p_{}", Self::index_to_name_lower(self.params));
-        self.params += 1;
+        self.params = self.params.saturating_add(1);
         name
     }
 
@@ -77,13 +77,13 @@ impl SimpleNameGenerator {
     pub fn index_to_name(mut index: usize) -> String {
         let mut result = String::new();
         loop {
-            let remainder = index % 26;
+            let remainder = index.checked_rem(26).unwrap_or(0);
             #[allow(clippy::cast_possible_truncation)]
-            result.insert(0, (b'A' + remainder as u8) as char);
+            result.insert(0, (b'A'.saturating_add(remainder as u8)) as char);
             if index < 26 {
                 break;
             }
-            index = index / 26 - 1;
+            index = index.checked_div(26).unwrap_or(0).saturating_sub(1);
         }
         result
     }
@@ -96,13 +96,13 @@ impl SimpleNameGenerator {
     pub fn index_to_name_lower(mut index: usize) -> String {
         let mut result = String::new();
         loop {
-            let remainder = index % 26;
+            let remainder = index.checked_rem(26).unwrap_or(0);
             #[allow(clippy::cast_possible_truncation)]
-            result.insert(0, (b'a' + remainder as u8) as char);
+            result.insert(0, (b'a'.saturating_add(remainder as u8)) as char);
             if index < 26 {
                 break;
             }
-            index = index / 26 - 1;
+            index = index.checked_div(26).unwrap_or(0).saturating_sub(1);
         }
         result
     }

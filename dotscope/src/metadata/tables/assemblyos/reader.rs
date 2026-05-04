@@ -69,7 +69,7 @@ impl RowReadable for AssemblyOsRaw {
     fn row_read(data: &[u8], offset: &mut usize, rid: u32, _sizes: &TableInfoRef) -> Result<Self> {
         Ok(AssemblyOsRaw {
             rid,
-            token: Token::new(0x2200_0000 + rid),
+            token: Token::new(0x2200_0000u32.saturating_add(rid)),
             offset: *offset,
             os_platform_id: read_le_at::<u32>(data, offset)?,
             os_major_version: read_le_at::<u32>(data, offset)?,

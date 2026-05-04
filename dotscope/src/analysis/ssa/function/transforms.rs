@@ -102,7 +102,10 @@ impl SsaFunction {
         self.blocks
             .iter_mut()
             .map(|block| block.replace_uses(old_var, new_var))
-            .fold(ReplaceResult::default(), |acc, r| acc + r)
+            .fold(ReplaceResult::default(), |acc, r| ReplaceResult {
+                replaced: acc.replaced.saturating_add(r.replaced),
+                skipped: acc.skipped.saturating_add(r.skipped),
+            })
     }
 
     /// Replaces all uses of `old_var` with `new_var`, including in PHI operands.
@@ -133,7 +136,10 @@ impl SsaFunction {
         self.blocks
             .iter_mut()
             .map(|block| block.replace_uses_including_phis(old_var, new_var))
-            .fold(ReplaceResult::default(), |acc, r| acc + r)
+            .fold(ReplaceResult::default(), |acc, r| ReplaceResult {
+                replaced: acc.replaced.saturating_add(r.replaced),
+                skipped: acc.skipped.saturating_add(r.skipped),
+            })
     }
 
     /// Replaces all uses of `old_var` with `new_var` within a specific block.
@@ -173,7 +179,7 @@ impl SsaFunction {
         copies: &BTreeMap<SsaVarId, SsaVarId>,
     ) -> CopyPropagationResult {
         let variable_count = self.var_id_capacity();
-        let mut total_replaced = 0;
+        let mut total_replaced: usize = 0;
         let mut fully_propagated = BitSet::new(variable_count);
         let mut partially_propagated = BitSet::new(variable_count);
 
@@ -190,7 +196,7 @@ impl SsaFunction {
                 } else {
                     partially_propagated.insert(dest.index());
                 }
-                total_replaced += result.replaced;
+                total_replaced = total_replaced.saturating_add(result.replaced);
             }
         }
 
@@ -278,7 +284,7 @@ impl SsaFunction {
             }
         }
 
-        let mut pruned = 0;
+        let mut pruned: usize = 0;
 
         for block_idx in reachable.iter() {
             if let Some(block) = self.block_mut(block_idx) {
@@ -314,7 +320,7 @@ impl SsaFunction {
                     let mut keep_iter = to_keep.iter();
                     operands.retain(|_| *keep_iter.next().unwrap_or(&true));
 
-                    pruned += original_len - operands.len();
+                    pruned = pruned.saturating_add(original_len.saturating_sub(operands.len()));
                 }
             }
         }
@@ -339,7 +345,9 @@ impl SsaFunction {
                 for use_var in instr.op().uses() {
                     if let Some(var) = self.var_index(use_var) {
                         let use_site = UseSite::instruction(block_idx, instr_idx);
-                        self.variables[var].add_use(use_site);
+                        if let Some(slot) = self.variables.get_mut(var) {
+                            slot.add_use(use_site);
+                        }
                     }
                 }
             }
@@ -349,7 +357,9 @@ impl SsaFunction {
                 for operand in phi.operands() {
                     if let Some(var) = self.var_index(operand.value()) {
                         let use_site = UseSite::phi_operand(block_idx, phi_idx);
-                        self.variables[var].add_use(use_site);
+                        if let Some(slot) = self.variables.get_mut(var) {
+                            slot.add_use(use_site);
+                        }
                     }
                 }
             }
@@ -441,7 +451,7 @@ impl SsaFunction {
     ///
     /// The number of phis eliminated.
     pub fn eliminate_trivial_phis(&mut self, options: &TrivialPhiOptions) -> usize {
-        let mut total_eliminated = 0;
+        let mut total_eliminated: usize = 0;
         let block_count = self.blocks.len();
 
         // Precompute reachability data if in reachable mode
@@ -495,9 +505,11 @@ impl SsaFunction {
                         .filter(|&v| v != result)
                         .collect();
 
-                    if unique_sources.len() == 1 {
-                        let source = *unique_sources.iter().next().unwrap();
-
+                    if let Some(&source) = unique_sources
+                        .iter()
+                        .next()
+                        .filter(|_| unique_sources.len() == 1)
+                    {
                         let is_self_ref = match (&var_def_block, options.reachable) {
                             (Some(vdb), Some(reachable)) => self
                                 .would_create_self_reference_reachable(
@@ -531,8 +543,11 @@ impl SsaFunction {
                                 .filter(|&v| v != result)
                                 .collect();
 
-                            if unique_reachable.len() == 1 {
-                                let source = *unique_reachable.iter().next().unwrap();
+                            if let Some(&source) = unique_reachable
+                                .iter()
+                                .next()
+                                .filter(|_| unique_reachable.len() == 1)
+                            {
                                 let is_self_ref = match (&var_def_block, options.reachable) {
                                     (Some(vdb), Some(reachable)) => self
                                         .would_create_self_reference_reachable(
@@ -597,7 +612,7 @@ impl SsaFunction {
                     break;
                 }
 
-                total_eliminated += trivial_set.count();
+                total_eliminated = total_eliminated.saturating_add(trivial_set.count());
                 for block in &mut self.blocks {
                     block.phi_nodes_mut().retain(|phi| {
                         let idx = phi.result().index();
@@ -620,7 +635,7 @@ impl SsaFunction {
                 for (result, _) in &trivial_phis {
                     trivial_set.insert(result.index());
                 }
-                total_eliminated += trivial_set.count();
+                total_eliminated = total_eliminated.saturating_add(trivial_set.count());
                 for block in &mut self.blocks {
                     block.phi_nodes_mut().retain(|phi| {
                         let idx = phi.result().index();
@@ -745,7 +760,7 @@ impl SsaFunction {
         let remap = self.reassign_dense_ids();
         self.remap_var_ids_in_blocks(&remap);
         self.rebuild_origin_versions();
-        original_count - self.variables.len()
+        original_count.saturating_sub(self.variables.len())
     }
 
     /// Reassigns all variable IDs to dense contiguous indices (0..N-1) and
@@ -772,8 +787,7 @@ impl SsaFunction {
         let mut remap: BTreeMap<(usize, usize), usize> = BTreeMap::new();
         let mut nop_sites: BTreeSet<(usize, usize)> = BTreeSet::new();
 
-        for block_idx in 0..self.blocks.len() {
-            let block = &mut self.blocks[block_idx];
+        for (block_idx, block) in self.blocks.iter_mut().enumerate() {
             let instructions = block.instructions_mut();
 
             if !instructions.iter().any(|i| matches!(i.op(), SsaOp::Nop)) {
@@ -788,7 +802,7 @@ impl SsaFunction {
                     if old_idx != new_idx {
                         remap.insert((block_idx, old_idx), new_idx);
                     }
-                    new_idx += 1;
+                    new_idx = new_idx.saturating_add(1);
                 }
             }
 
@@ -819,9 +833,11 @@ impl SsaFunction {
         for var in &mut self.variables {
             let site = var.def_site();
             if let Some(instr_idx) = site.instruction {
-                if site.block >= block_instr_counts.len()
-                    || instr_idx >= block_instr_counts[site.block]
-                {
+                let out_of_bounds = match block_instr_counts.get(site.block) {
+                    Some(&count) => instr_idx >= count,
+                    None => true,
+                };
+                if out_of_bounds {
                     var.set_def_site(DefSite::entry());
                 }
             }
@@ -998,7 +1014,8 @@ impl SsaFunction {
 
         // Determine the actual range of local indices (may exceed num_locals
         // when stack-originated locals have indices >= original num_locals)
-        let max_local_idx = used_locals.iter().copied().max().unwrap_or(0) as usize + 1;
+        let max_local_idx =
+            (used_locals.iter().copied().max().unwrap_or(0) as usize).saturating_add(1);
         let remap_size = max_local_idx.max(self.num_locals);
 
         // If no optimization needed (all locals used or no locals), return identity mapping
@@ -1015,7 +1032,9 @@ impl SsaFunction {
         for (new_idx, &old_idx) in sorted_used.iter().enumerate() {
             #[allow(clippy::cast_possible_truncation)]
             let new_idx_u16 = new_idx as u16;
-            remap[old_idx as usize] = Some(new_idx_u16);
+            if let Some(slot) = remap.get_mut(old_idx as usize) {
+                *slot = Some(new_idx_u16);
+            }
         }
 
         let new_num_locals = sorted_used.len();
@@ -1023,7 +1042,7 @@ impl SsaFunction {
         // Phase 3: Update all variable origins
         for var in &mut self.variables {
             if let VariableOrigin::Local(idx) = var.origin() {
-                if let Some(new_idx) = remap[idx as usize] {
+                if let Some(Some(new_idx)) = remap.get(idx as usize).copied() {
                     var.set_origin(VariableOrigin::Local(new_idx));
                 }
             }
@@ -1033,7 +1052,7 @@ impl SsaFunction {
         for block in &mut self.blocks {
             for phi in block.phi_nodes_mut() {
                 if let VariableOrigin::Local(idx) = phi.origin() {
-                    if let Some(new_idx) = remap[idx as usize] {
+                    if let Some(Some(new_idx)) = remap.get(idx as usize).copied() {
                         phi.set_origin(VariableOrigin::Local(new_idx));
                     }
                 }
@@ -1046,7 +1065,7 @@ impl SsaFunction {
                 match instr.op_mut() {
                     SsaOp::LoadLocal { local_index, .. }
                     | SsaOp::LoadLocalAddr { local_index, .. } => {
-                        if let Some(new_idx) = remap[*local_index as usize] {
+                        if let Some(Some(new_idx)) = remap.get(*local_index as usize).copied() {
                             *local_index = new_idx;
                         }
                     }
@@ -1128,8 +1147,8 @@ impl SsaFunction {
         // First, populate with any provided temporary types (highest priority for temps)
         for (idx, typ) in temp_types {
             let idx = *idx as usize;
-            if idx < local_types.len() {
-                local_types[idx] = Some(typ.clone());
+            if let Some(slot) = local_types.get_mut(idx) {
+                *slot = Some(typ.clone());
             }
         }
 
@@ -1137,10 +1156,12 @@ impl SsaFunction {
         for var in &self.variables {
             if let VariableOrigin::Local(idx) = var.origin() {
                 let idx = idx as usize;
-                if idx < local_types.len() && local_types[idx].is_none() {
-                    let var_type = var.var_type();
-                    if !var_type.is_unknown() {
-                        local_types[idx] = Some(var_type.clone());
+                if let Some(slot) = local_types.get_mut(idx) {
+                    if slot.is_none() {
+                        let var_type = var.var_type();
+                        if !var_type.is_unknown() {
+                            *slot = Some(var_type.clone());
+                        }
                     }
                 }
             }
@@ -1151,11 +1172,13 @@ impl SsaFunction {
             for phi in block.phi_nodes() {
                 if let VariableOrigin::Local(idx) = phi.origin() {
                     let idx = idx as usize;
-                    if idx < local_types.len() && local_types[idx].is_none() {
-                        if let Some(var) = self.variable(phi.result()) {
-                            let var_type = var.var_type();
-                            if !var_type.is_unknown() {
-                                local_types[idx] = Some(var_type.clone());
+                    if let Some(slot) = local_types.get_mut(idx) {
+                        if slot.is_none() {
+                            if let Some(var) = self.variable(phi.result()) {
+                                let var_type = var.var_type();
+                                if !var_type.is_unknown() {
+                                    *slot = Some(var_type.clone());
+                                }
                             }
                         }
                     }
@@ -1262,7 +1285,7 @@ impl SsaFunction {
             }
         }
 
-        let needed = max_local_idx.map_or(0, |idx| idx as usize + 1);
+        let needed = max_local_idx.map_or(0, |idx| (idx as usize).saturating_add(1));
         self.num_locals = needed.max(self.original_num_locals);
     }
 }

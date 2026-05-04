@@ -735,7 +735,7 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
 
     if needs_fat_format {
         // Fat format: 4-byte header + 24 bytes per handler
-        let section_size = 4 + (handlers.len() * 24);
+        let section_size = 4usize.saturating_add(handlers.len().saturating_mul(24));
 
         // Section header (fat format)
         section.extend_from_slice(&[
@@ -780,7 +780,7 @@ pub fn encode_exception_handlers(handlers: &[ExceptionHandler]) -> Result<Vec<u8
         }
     } else {
         // Small format: 4-byte header + 12 bytes per handler
-        let section_size = 4 + (handlers.len() * 12);
+        let section_size = 4usize.saturating_add(handlers.len().saturating_mul(12));
 
         // Section header (small format)
         let section_size_u8 = u8::try_from(section_size).map_err(|_| {

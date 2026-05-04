@@ -68,8 +68,8 @@ impl std::ops::Add for ReplaceResult {
     type Output = Self;
     fn add(self, rhs: Self) -> Self {
         Self {
-            replaced: self.replaced + rhs.replaced,
-            skipped: self.skipped + rhs.skipped,
+            replaced: self.replaced.saturating_add(rhs.replaced),
+            skipped: self.skipped.saturating_add(rhs.skipped),
         }
     }
 }
@@ -375,8 +375,8 @@ impl SsaBlock {
     /// need to also replace PHI operands (like eliminating trivial PHIs), use
     /// `replace_uses_including_phis`.
     pub fn replace_uses(&mut self, old_var: SsaVarId, new_var: SsaVarId) -> ReplaceResult {
-        let mut replaced = 0;
-        let mut skipped = 0;
+        let mut replaced: usize = 0;
+        let mut skipped: usize = 0;
 
         for instr in &mut self.instructions {
             let op = instr.op_mut();
@@ -384,12 +384,12 @@ impl SsaBlock {
             if let Some(dest) = op.dest() {
                 if dest == new_var {
                     if op.uses().contains(&old_var) {
-                        skipped += 1;
+                        skipped = skipped.saturating_add(1);
                     }
                     continue;
                 }
             }
-            replaced += op.replace_uses(old_var, new_var);
+            replaced = replaced.saturating_add(op.replace_uses(old_var, new_var));
         }
 
         ReplaceResult { replaced, skipped }
@@ -442,7 +442,7 @@ impl SsaBlock {
             for operand in phi.operands_mut() {
                 if operand.value() == old_var {
                     *operand = PhiOperand::new(new_var, operand.predecessor());
-                    result.replaced += 1;
+                    result.replaced = result.replaced.saturating_add(1);
                 }
             }
         }
@@ -489,7 +489,7 @@ impl SsaBlock {
         }
 
         // That operation must be an unconditional control transfer
-        match self.instructions[0].op() {
+        match self.instructions.first()?.op() {
             SsaOp::Jump { target } | SsaOp::Leave { target } => Some(*target),
             _ => None,
         }
@@ -572,7 +572,10 @@ impl SsaBlock {
         // Only for non-terminator instructions
         let mut def_index: HashMap<SsaVarId, usize> = HashMap::new();
         for &idx in &non_terminator_indices {
-            if let Some(dest) = self.instructions[idx].def() {
+            let Some(instr) = self.instructions.get(idx) else {
+                continue;
+            };
+            if let Some(dest) = instr.def() {
                 def_index.insert(dest, idx);
             }
         }
@@ -584,7 +587,7 @@ impl SsaBlock {
             .iter()
             .map(|phi| phi.result().index())
             .max()
-            .map_or(0, |m| m + 1);
+            .map_or(0, |m| m.saturating_add(1));
         let mut phi_defs = BitSet::new(max_phi_var);
         for phi in &self.phi_nodes {
             phi_defs.insert(phi.result().index());
@@ -608,7 +611,9 @@ impl SsaBlock {
         let mut prev_side_effect_pos: Option<usize> = None;
 
         for (pos, &idx) in non_terminator_indices.iter().enumerate() {
-            let instr = &self.instructions[idx];
+            let Some(instr) = self.instructions.get(idx) else {
+                continue;
+            };
 
             // Add data dependencies (def-use chains)
             for used in &instr.uses() {
@@ -621,8 +626,12 @@ impl SsaBlock {
                     if dep_idx != idx {
                         if let Some(&dep_pos) = idx_to_pos.get(&dep_idx) {
                             // instruction at pos depends on instruction at dep_pos
-                            deps[pos].insert(dep_pos);
-                            rdeps[dep_pos].insert(pos);
+                            if let Some(d) = deps.get_mut(pos) {
+                                d.insert(dep_pos);
+                            }
+                            if let Some(r) = rdeps.get_mut(dep_pos) {
+                                r.insert(pos);
+                            }
                         }
                     }
                 }
@@ -634,8 +643,12 @@ impl SsaBlock {
             if !instr.op().is_pure() {
                 if let Some(prev_pos) = prev_side_effect_pos {
                     // This side-effecting instruction depends on the previous one
-                    deps[pos].insert(prev_pos);
-                    rdeps[prev_pos].insert(pos);
+                    if let Some(d) = deps.get_mut(pos) {
+                        d.insert(prev_pos);
+                    }
+                    if let Some(r) = rdeps.get_mut(prev_pos) {
+                        r.insert(pos);
+                    }
                 }
                 prev_side_effect_pos = Some(pos);
             }
@@ -658,10 +671,15 @@ impl SsaBlock {
             sorted_positions.push(pos);
 
             // Reduce in_degree for dependents
-            for dep_pos in rdeps[pos].iter() {
-                in_degree[dep_pos] -= 1;
-                if in_degree[dep_pos] == 0 {
-                    ready.push_back(dep_pos);
+            let Some(rd) = rdeps.get(pos) else {
+                continue;
+            };
+            for dep_pos in rd.iter() {
+                if let Some(slot) = in_degree.get_mut(dep_pos) {
+                    *slot = slot.saturating_sub(1);
+                    if *slot == 0 {
+                        ready.push_back(dep_pos);
+                    }
                 }
             }
         }
@@ -678,8 +696,10 @@ impl SsaBlock {
 
         // First add non-terminator instructions in sorted order
         for pos in sorted_positions {
-            let original_idx = non_terminator_indices[pos];
-            if let Some(instr) = temp[original_idx].take() {
+            let Some(&original_idx) = non_terminator_indices.get(pos) else {
+                continue;
+            };
+            if let Some(instr) = temp.get_mut(original_idx).and_then(Option::take) {
                 self.instructions.push(instr);
             }
         }

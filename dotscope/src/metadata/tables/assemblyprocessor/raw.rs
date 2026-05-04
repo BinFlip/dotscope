@@ -72,7 +72,7 @@ use crate::{
 ///
 /// All fields contain direct integer values rather than heap indexes:
 /// - No string heap references
-/// - No blob heap references  
+/// - No blob heap references
 /// - All data is self-contained within the table row
 ///
 /// # Architecture Identifiers

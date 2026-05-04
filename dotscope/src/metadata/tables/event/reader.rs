@@ -19,7 +19,7 @@ impl RowReadable for EventRaw {
 
         Ok(EventRaw {
             rid,
-            token: Token::new(0x1400_0000 + rid),
+            token: Token::new(0x1400_0000u32.saturating_add(rid)),
             offset: offset_org,
             flags,
             name,

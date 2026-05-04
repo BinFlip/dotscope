@@ -262,11 +262,11 @@ impl SsaPass for SentinelTaintRemovalPass {
                             .find(|&&(bi, ii, _)| bi == block_idx && ii == instr_idx)
                         {
                             instr.set_op(SsaOp::Jump { target });
-                            neutralized += 1;
+                            neutralized = neutralized.saturating_add(1);
                         }
                     } else {
                         instr.set_op(SsaOp::Nop);
-                        neutralized += 1;
+                        neutralized = neutralized.saturating_add(1);
                     }
                 }
             }
@@ -279,7 +279,7 @@ impl SsaPass for SentinelTaintRemovalPass {
             if let Some(block) = ssa.block_mut(block_idx) {
                 if phi_idx < block.phi_nodes().len() {
                     block.phi_nodes_mut().remove(phi_idx);
-                    neutralized += 1;
+                    neutralized = neutralized.saturating_add(1);
                 }
             }
         }

@@ -185,11 +185,15 @@ impl<'a> ConstEvaluator<'a> {
         // Copy needs recursive evaluation that the shared helper cannot provide,
         // because it resolves a variable rather than performing arithmetic.
         if let SsaOp::Copy { src, .. } = op {
-            return self.evaluate_var_depth(*src, depth + 1);
+            return self.evaluate_var_depth(*src, depth.saturating_add(1));
         }
 
         let ptr_size = self.pointer_size;
-        evaluate_const_op(op, |var| self.evaluate_var_depth(var, depth + 1), ptr_size)
+        evaluate_const_op(
+            op,
+            |var| self.evaluate_var_depth(var, depth.saturating_add(1)),
+            ptr_size,
+        )
     }
 
     /// Returns all computed constants.

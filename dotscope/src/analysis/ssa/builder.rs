@@ -135,7 +135,7 @@ impl SsaFunctionBuilder {
     ///
     /// Uses `Phi` origin since stack temporaries are not real CIL locals.
     fn alloc_stack_var(&mut self) -> SsaVarId {
-        self.next_stack_slot += 1;
+        self.next_stack_slot = self.next_stack_slot.saturating_add(1);
         self.alloc_var_with_origin(VariableOrigin::Phi)
     }
 
@@ -211,25 +211,33 @@ pub struct SsaFunctionContext<'a> {
 impl SsaFunctionContext<'_> {
     /// Gets the argument variable at the specified index and sets its type.
     ///
-    /// # Panics
-    ///
-    /// Panics if `index >= num_args`.
+    /// If `index >= num_args`, allocates a fresh stack variable instead. This
+    /// keeps construction non-panicking; misuse will surface during type
+    /// validation in [`SsaFunctionBuilder::build`].
     #[must_use]
     pub fn arg(&mut self, index: usize, ty: SsaType) -> SsaVarId {
-        let id = self.builder.arg_vars[index];
-        self.builder.variables[id.index()].3 = ty;
+        let Some(&id) = self.builder.arg_vars.get(index) else {
+            return self.builder.alloc_stack_var_typed(ty);
+        };
+        if let Some(entry) = self.builder.variables.get_mut(id.index()) {
+            entry.3 = ty;
+        }
         id
     }
 
     /// Gets the local variable at the specified index and sets its type.
     ///
-    /// # Panics
-    ///
-    /// Panics if `index >= num_locals`.
+    /// If `index >= num_locals`, allocates a fresh stack variable instead. This
+    /// keeps construction non-panicking; misuse will surface during type
+    /// validation in [`SsaFunctionBuilder::build`].
     #[must_use]
     pub fn local(&mut self, index: usize, ty: SsaType) -> SsaVarId {
-        let id = self.builder.local_vars[index];
-        self.builder.variables[id.index()].3 = ty;
+        let Some(&id) = self.builder.local_vars.get(index) else {
+            return self.builder.alloc_stack_var_typed(ty);
+        };
+        if let Some(entry) = self.builder.variables.get_mut(id.index()) {
+            entry.3 = ty;
+        }
         id
     }
 

@@ -107,7 +107,7 @@ impl<'a> LoaderGraph<'a> {
             let key = LoaderKey::Special {
                 sequence: self.special_counter,
             };
-            self.special_counter += 1;
+            self.special_counter = self.special_counter.saturating_add(1);
             key
         };
 
@@ -377,12 +377,15 @@ impl<'a> LoaderGraph<'a> {
             let _ = writeln!(result, "Level {level_idx}: [");
             for loader in level {
                 // Find the LoaderKey for this loader
-                let loader_key = self
+                let Some(loader_key) = self
                     .loaders
                     .iter()
                     .find(|(_, &l)| std::ptr::eq(*loader, l))
                     .map(|(key, _)| key)
-                    .expect("Loader not found in graph");
+                else {
+                    let _ = writeln!(result, "  <unknown loader> (depends on: ?)");
+                    continue;
+                };
 
                 let deps = self.dependencies.get(loader_key).map_or_else(
                     || "None".to_string(),

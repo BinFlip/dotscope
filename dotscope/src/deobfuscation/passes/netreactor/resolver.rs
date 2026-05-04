@@ -85,7 +85,10 @@ impl SsaPass for TokenResolverPass {
                     let Some(dest_var) = dest else {
                         continue;
                     };
-                    let Some(const_val) = constants.get(&args[0]) else {
+                    let Some(arg0) = args.first() else {
+                        continue;
+                    };
+                    let Some(const_val) = constants.get(arg0) else {
                         continue;
                     };
                     let raw_token = match const_val {

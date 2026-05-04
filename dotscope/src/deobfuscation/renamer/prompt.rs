@@ -121,7 +121,11 @@ fn build_method_prompt(context: &RenameContext, max_phases: usize) -> (String, S
         // Large method: use phase narrative
         let phases = truncate_phases(&context.phase_narrative, max_phases);
         for (i, phase) in phases.iter().enumerate() {
-            prefix.push_str(&format!("// Phase {}: {}\n", i + 1, phase.label));
+            prefix.push_str(&format!(
+                "// Phase {}: {}\n",
+                i.saturating_add(1),
+                phase.label
+            ));
             if !phase.call_targets.is_empty() {
                 let calls = phase.call_targets.join(", ");
                 prefix.push_str(&format!("//   [calls: {calls}]\n"));
@@ -462,8 +466,13 @@ fn truncate_phases(phases: &[PhaseInfo], max_phases: usize) -> Vec<&PhaseInfo> {
 
     let half = max_phases / 2;
     let mut result: Vec<&PhaseInfo> = Vec::new();
-    result.extend(&phases[..half]);
-    result.extend(&phases[phases.len() - half..]);
+    if let Some(front) = phases.get(..half) {
+        result.extend(front);
+    }
+    let tail_start = phases.len().saturating_sub(half);
+    if let Some(back) = phases.get(tail_start..) {
+        result.extend(back);
+    }
     result
 }
 

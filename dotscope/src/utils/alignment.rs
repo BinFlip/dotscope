@@ -59,7 +59,7 @@
 /// ```
 #[inline]
 pub fn align_to_4_bytes(value: u64) -> u64 {
-    (value + 3) & !3
+    value.saturating_add(3) & !3
 }
 
 /// Aligns a value to an arbitrary power-of-2 boundary for PE sections and memory layout.
@@ -106,7 +106,8 @@ pub fn align_to(value: u64, alignment: u64) -> u64 {
         alignment.is_power_of_two(),
         "alignment must be a power of 2, got {alignment}"
     );
-    (value + alignment - 1) & !(alignment - 1)
+    let mask = alignment.saturating_sub(1);
+    value.saturating_add(mask) & !mask
 }
 
 #[cfg(test)]

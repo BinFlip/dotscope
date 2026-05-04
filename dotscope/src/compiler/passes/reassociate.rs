@@ -382,22 +382,24 @@ impl ReassociationPass {
                 }
 
                 // Update the inner operation to just use base_var and the combined constant
-                let inner_instr = &mut block.instructions_mut()[candidate.inner_instr];
-                inner_instr.set_op(Self::make_op(
-                    candidate.op_kind,
-                    candidate.inner_dest,
-                    candidate.base_var,
-                    candidate.const1_var,
-                ));
+                if let Some(inner_instr) = block.instructions_mut().get_mut(candidate.inner_instr) {
+                    inner_instr.set_op(Self::make_op(
+                        candidate.op_kind,
+                        candidate.inner_dest,
+                        candidate.base_var,
+                        candidate.const1_var,
+                    ));
+                }
             }
 
             // Replace the outer operation with a Copy from the inner result
             if let Some(block) = ssa.block_mut(candidate.block_idx) {
-                let outer_instr = &mut block.instructions_mut()[candidate.instr_idx];
-                outer_instr.set_op(SsaOp::Copy {
-                    dest: candidate.dest,
-                    src: candidate.inner_dest,
-                });
+                if let Some(outer_instr) = block.instructions_mut().get_mut(candidate.instr_idx) {
+                    outer_instr.set_op(SsaOp::Copy {
+                        dest: candidate.dest,
+                        src: candidate.inner_dest,
+                    });
+                }
             }
 
             modified.insert((candidate.inner_block, candidate.inner_instr));

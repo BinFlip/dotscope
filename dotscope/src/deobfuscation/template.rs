@@ -305,11 +305,11 @@ impl EmulationTemplatePool {
         // Multi-pass fork-based warmup for the targeted .cctors
         let mut completed: HashSet<Token> = HashSet::new();
         let mut permanently_failed: HashSet<Token> = HashSet::new();
-        let mut pass = 0;
+        let mut pass: u32 = 0;
 
         loop {
-            pass += 1;
-            let mut new_completions = 0;
+            pass = pass.saturating_add(1);
+            let mut new_completions: u32 = 0;
 
             for cctor in cctors {
                 if completed.contains(cctor) || permanently_failed.contains(cctor) {
@@ -328,7 +328,7 @@ impl EmulationTemplatePool {
                         );
                         process = fork;
                         completed.insert(*cctor);
-                        new_completions += 1;
+                        new_completions = new_completions.saturating_add(1);
                     }
                     Ok(EmulationOutcome::UnhandledException { instructions, .. }) => {
                         debug!(
@@ -337,7 +337,7 @@ impl EmulationTemplatePool {
                         );
                         process = fork;
                         permanently_failed.insert(*cctor);
-                        new_completions += 1;
+                        new_completions = new_completions.saturating_add(1);
                     }
                     Ok(EmulationOutcome::LimitReached { ref limit, .. }) => {
                         debug!(
@@ -346,7 +346,7 @@ impl EmulationTemplatePool {
                         );
                         process = fork;
                         permanently_failed.insert(*cctor);
-                        new_completions += 1;
+                        new_completions = new_completions.saturating_add(1);
                     }
                     Ok(outcome) => {
                         debug!(
@@ -370,7 +370,7 @@ impl EmulationTemplatePool {
                         if is_resource_limit {
                             process = fork;
                             permanently_failed.insert(*cctor);
-                            new_completions += 1;
+                            new_completions = new_completions.saturating_add(1);
                         } else if pass == 1 {
                             debug!(
                                 "Targeted warmup: .cctor 0x{:08X} failed: {} (pass {})",
@@ -442,7 +442,7 @@ impl EmulationTemplatePool {
         let mut permanently_failed = HashSet::new();
 
         for pass in 1..=self.config.emulation.warmup_retry_passes {
-            let mut new_completions = 0;
+            let mut new_completions: u32 = 0;
 
             for (warmup_token, warmup_args) in &warmup_methods {
                 if completed.contains(warmup_token) || permanently_failed.contains(warmup_token) {
@@ -462,7 +462,7 @@ impl EmulationTemplatePool {
                         );
                         *process = fork;
                         completed.insert(*warmup_token);
-                        new_completions += 1;
+                        new_completions = new_completions.saturating_add(1);
                     }
                     Ok(EmulationOutcome::UnhandledException { instructions, .. }) => {
                         debug!(
@@ -471,7 +471,7 @@ impl EmulationTemplatePool {
                         );
                         *process = fork;
                         permanently_failed.insert(*warmup_token);
-                        new_completions += 1;
+                        new_completions = new_completions.saturating_add(1);
                     }
                     Ok(EmulationOutcome::LimitReached { ref limit, .. }) => {
                         debug!(
@@ -480,7 +480,7 @@ impl EmulationTemplatePool {
                         );
                         *process = fork;
                         permanently_failed.insert(*warmup_token);
-                        new_completions += 1;
+                        new_completions = new_completions.saturating_add(1);
                     }
                     Ok(outcome) => {
                         debug!(
@@ -508,7 +508,7 @@ impl EmulationTemplatePool {
                             );
                             *process = fork;
                             permanently_failed.insert(*warmup_token);
-                            new_completions += 1;
+                            new_completions = new_completions.saturating_add(1);
                         } else if pass == 1 {
                             debug!(
                                 "Template warmup: 0x{:08X} failed: {} (pass {})",

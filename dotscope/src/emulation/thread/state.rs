@@ -360,7 +360,7 @@ impl ThreadCallFrame {
     ///
     /// Typically called after executing an instruction to move to the next one.
     pub fn advance_ip(&mut self, delta: u32) {
-        self.instruction_offset += delta;
+        self.instruction_offset = self.instruction_offset.saturating_add(delta);
     }
 
     /// Returns whether the caller expects a return value.
@@ -1027,7 +1027,8 @@ impl EmulationThread {
         // Arguments are pushed left-to-right, so arg0 is at depth (count-1)
         // and argN is at depth 0 (top of stack)
         for i in 0..count {
-            args.push(self.eval_stack.peek_at(count - 1 - i)?.clone());
+            let depth = count.saturating_sub(1).saturating_sub(i);
+            args.push(self.eval_stack.peek_at(depth)?.clone());
         }
         Ok(args)
     }
@@ -1113,7 +1114,9 @@ impl EmulationThread {
             }
         };
 
-        let total_size = length * elem_size;
+        let total_size = length
+            .checked_mul(elem_size)
+            .ok_or(EmulationError::ArithmeticOverflow)?;
         let base_addr = self
             .context
             .address_space
@@ -1124,7 +1127,13 @@ impl EmulationThread {
             .address_space
             .register_pinned_array(base_addr, array, elem_size, length)?;
 
-        let element_addr = base_addr + (index * elem_size) as u64 + u64::from(offset);
+        let index_offset = index
+            .checked_mul(elem_size)
+            .ok_or(EmulationError::ArithmeticOverflow)?;
+        let element_addr = base_addr
+            .checked_add(index_offset as u64)
+            .and_then(|a| a.checked_add(u64::from(offset)))
+            .ok_or(EmulationError::ArithmeticOverflow)?;
         Ok(element_addr)
     }
 
@@ -1149,7 +1158,7 @@ impl EmulationThread {
     ///
     /// Called by the interpreter after each instruction.
     pub fn increment_instructions(&mut self) {
-        self.instructions_executed += 1;
+        self.instructions_executed = self.instructions_executed.saturating_add(1);
     }
 
     /// Returns the method token of the currently executing method.

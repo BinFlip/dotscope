@@ -470,18 +470,15 @@ fn binary_reader_read_string_pre(
     let Some(result) = try_hook!(thread.heap().with_stream(stream_ref, |data, position| {
         // Read 7-bit encoded length (LEB128-style)
         let mut length: usize = 0;
-        let mut shift = 0;
+        let mut shift: u32 = 0;
         loop {
-            if *position >= data.len() {
-                return None;
-            }
-            let byte = data[*position];
-            *position += 1;
+            let &byte = data.get(*position)?;
+            *position = position.saturating_add(1);
             length |= ((byte & 0x7F) as usize) << shift;
             if byte & 0x80 == 0 {
                 break;
             }
-            shift += 7;
+            shift = shift.saturating_add(7);
             // Prevent infinite loop on malformed data
             if shift > 35 {
                 break;
@@ -489,12 +486,10 @@ fn binary_reader_read_string_pre(
         }
 
         // Read the string bytes — return None if not enough data
-        if *position + length > data.len() {
-            return None;
-        }
-
-        let s = String::from_utf8_lossy(&data[*position..*position + length]).into_owned();
-        *position += length;
+        let end = position.checked_add(length)?;
+        let slice = data.get(*position..end)?;
+        let s = String::from_utf8_lossy(slice).into_owned();
+        *position = end;
         Some(s)
     })) else {
         return PreHookResult::throw_end_of_stream();
@@ -537,15 +532,17 @@ fn binary_reader_read_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
         0 => {
             let Some(result) =
                 try_hook!(thread.heap().with_stream(stream_ref, |data, position| {
-                    if *position >= data.len() {
+                    let Some(remaining) = data.get(*position..) else {
+                        return -1_i32;
+                    };
+                    if remaining.is_empty() {
                         return -1_i32;
                     }
 
                     // Read a single UTF-8 character
-                    let remaining = &data[*position..];
                     let s = String::from_utf8_lossy(remaining);
                     if let Some(ch) = s.chars().next() {
-                        *position += ch.len_utf8();
+                        *position = position.saturating_add(ch.len_utf8());
                         #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
                         {
                             ch as i32
@@ -576,9 +573,12 @@ fn binary_reader_read_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) -
             };
 
             for (i, &byte) in bytes.iter().enumerate() {
+                let Some(idx) = offset.checked_add(i) else {
+                    break;
+                };
                 try_hook!(thread.heap_mut().set_array_element(
                     buffer_ref,
-                    offset + i,
+                    idx,
                     EmValue::I32(i32::from(byte)),
                 ));
             }
@@ -675,15 +675,15 @@ fn binary_reader_read_char_pre(
     };
 
     let Some(result) = try_hook!(thread.heap().with_stream(stream_ref, |data, position| {
-        if *position >= data.len() {
+        let remaining = data.get(*position..)?;
+        if remaining.is_empty() {
             return None;
         }
 
         // Decode one UTF-8 character from the stream
-        let remaining = &data[*position..];
         let s = String::from_utf8_lossy(remaining);
         if let Some(ch) = s.chars().next() {
-            *position += ch.len_utf8();
+            *position = position.saturating_add(ch.len_utf8());
             #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]
             Some(ch as i32)
         } else {
@@ -735,14 +735,16 @@ fn binary_reader_read_chars_pre(
         // Decode `count` UTF-8 characters
         let mut chars = Vec::with_capacity(count);
         for _ in 0..count {
-            if *position >= data.len() {
+            let Some(remaining) = data.get(*position..) else {
+                break;
+            };
+            if remaining.is_empty() {
                 break;
             }
-            let remaining = &data[*position..];
             let s = String::from_utf8_lossy(remaining);
             if let Some(ch) = s.chars().next() {
                 chars.push(ch);
-                *position += ch.len_utf8();
+                *position = position.saturating_add(ch.len_utf8());
             } else {
                 break;
             }
@@ -1023,22 +1025,21 @@ fn binary_reader_read_7bit_encoded_int_pre(
         }
 
         let mut value: u32 = 0;
-        let mut shift = 0;
+        let mut shift: u32 = 0;
         loop {
-            if *position >= data.len() {
-                return Read7BitResult::EndOfStream;
-            }
             if shift > 35 {
                 // .NET throws FormatException for too many bytes
                 return Read7BitResult::FormatError;
             }
-            let byte = data[*position];
-            *position += 1;
+            let Some(&byte) = data.get(*position) else {
+                return Read7BitResult::EndOfStream;
+            };
+            *position = position.saturating_add(1);
             value |= u32::from(byte & 0x7F) << shift;
             if byte & 0x80 == 0 {
                 break;
             }
-            shift += 7;
+            shift = shift.saturating_add(7);
         }
         Read7BitResult::Ok(value)
     })) else {
@@ -1080,12 +1081,14 @@ fn binary_reader_peek_char_pre(
 
     // Peek without advancing position
     let Some(result) = try_hook!(thread.heap().with_stream(stream_ref, |data, position| {
-        if *position >= data.len() {
+        let Some(remaining) = data.get(*position..) else {
+            return -1_i32;
+        };
+        if remaining.is_empty() {
             return -1_i32;
         }
 
         // Decode one UTF-8 character without advancing position
-        let remaining = &data[*position..];
         let s = String::from_utf8_lossy(remaining);
         if let Some(ch) = s.chars().next() {
             #[allow(clippy::cast_possible_wrap, clippy::cast_possible_truncation)]

@@ -463,7 +463,7 @@ impl<'a> SignatureParser<'a> {
 
         while let Some(work) = work_stack.pop() {
             // Check nesting depth limit
-            if work_stack.len() + result_stack.len() > MAX_NESTING_DEPTH {
+            if work_stack.len().saturating_add(result_stack.len()) > MAX_NESTING_DEPTH {
                 return Err(DepthLimitExceeded(MAX_NESTING_DEPTH));
             }
 
@@ -632,13 +632,23 @@ impl<'a> SignatureParser<'a> {
                         }
                         ELEMENT_TYPE::CMOD_REQD => {
                             // We consumed the CMOD_REQD byte, go back so parse_custom_mods can handle it
-                            self.parser.seek(self.parser.pos() - 1)?;
+                            let prev_pos = self
+                                .parser
+                                .pos()
+                                .checked_sub(1)
+                                .ok_or_else(|| malformed_error!("Parser position underflow"))?;
+                            self.parser.seek(prev_pos)?;
                             let modifiers = self.parse_custom_mods()?;
                             result_stack.push(TypeSignature::ModifiedRequired(modifiers));
                         }
                         ELEMENT_TYPE::CMOD_OPT => {
                             // We consumed the CMOD_OPT byte, go back so parse_custom_mods can handle it
-                            self.parser.seek(self.parser.pos() - 1)?;
+                            let prev_pos = self
+                                .parser
+                                .pos()
+                                .checked_sub(1)
+                                .ok_or_else(|| malformed_error!("Parser position underflow"))?;
+                            self.parser.seek(prev_pos)?;
                             let modifiers = self.parse_custom_mods()?;
                             result_stack.push(TypeSignature::ModifiedOptional(modifiers));
                         }
@@ -682,7 +692,7 @@ impl<'a> SignatureParser<'a> {
                 WorkItem::BuildGenericInst { arg_count } => {
                     // Stack has: base_type, arg1, arg2, ..., argN (top is argN)
                     // We need to pop argN...arg1 in reverse, then base_type
-                    if result_stack.len() < (arg_count as usize + 1) {
+                    if result_stack.len() < (arg_count as usize).saturating_add(1) {
                         return Err(malformed_error!(
                             "Insufficient types on stack for GENERICINST"
                         ));
@@ -801,7 +811,12 @@ impl<'a> SignatureParser<'a> {
                 Ok(())
             }
             ELEMENT_TYPE::CMOD_REQD | ELEMENT_TYPE::CMOD_OPT => {
-                self.parser.seek(self.parser.pos() - 1)?;
+                let prev_pos = self
+                    .parser
+                    .pos()
+                    .checked_sub(1)
+                    .ok_or_else(|| malformed_error!("Parser position underflow"))?;
+                self.parser.seek(prev_pos)?;
                 let _ = self.parse_custom_mods()?;
                 Ok(())
             }

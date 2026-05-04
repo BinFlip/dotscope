@@ -60,10 +60,11 @@ pub fn find_dead_tails(ssa: &SsaFunction) -> Vec<(usize, usize)> {
     ssa.iter_blocks()
         .filter_map(|(block_idx, block)| {
             // Find first terminator
+            let last_idx = block.instruction_count().checked_sub(1)?;
             for (instr_idx, instr) in block.instructions().iter().enumerate() {
-                if instr.op().is_terminator() && instr_idx < block.instruction_count() - 1 {
+                if instr.op().is_terminator() && instr_idx < last_idx {
                     // There are instructions after the terminator
-                    return Some((block_idx, instr_idx + 1));
+                    return Some((block_idx, instr_idx.saturating_add(1)));
                 }
             }
             None
@@ -565,9 +566,10 @@ impl DeadCodeEliminationPass {
                                 format!("dead {}", instr.mnemonic())
                             };
                             instr.set_op(SsaOp::Nop);
+                            let location = block_idx.saturating_mul(1000).saturating_add(instr_idx);
                             changes
                                 .record(EventKind::InstructionRemoved)
-                                .at(method_token, block_idx * 1000 + instr_idx)
+                                .at(method_token, location)
                                 .message(message);
                         }
                     }
@@ -647,7 +649,7 @@ impl DeadCodeEliminationPass {
         method_token: Token,
         changes: &mut EventLog,
     ) -> usize {
-        let mut simplified = 0;
+        let mut simplified: usize = 0;
 
         // Process in reverse order by phi_idx within each block
         let mut by_block: BTreeMap<usize, Vec<(usize, Option<SsaVarId>)>> = BTreeMap::new();
@@ -670,7 +672,7 @@ impl DeadCodeEliminationPass {
                             .record(EventKind::PhiSimplified)
                             .at(method_token, block_idx)
                             .message(format!("replaced with {replacement_var}"));
-                        simplified += 1;
+                        simplified = simplified.saturating_add(1);
                     }
                 } else {
                     // All self-references - just remove the phi
@@ -679,7 +681,7 @@ impl DeadCodeEliminationPass {
                             .record(EventKind::PhiSimplified)
                             .at(method_token, block_idx)
                             .message("removed self-referential phi");
-                        simplified += 1;
+                        simplified = simplified.saturating_add(1);
                     }
                 }
             }
@@ -710,7 +712,7 @@ impl DeadCodeEliminationPass {
         method_token: Token,
         changes: &mut EventLog,
     ) -> usize {
-        let mut cleared = 0;
+        let mut cleared: usize = 0;
         let total_blocks = ssa.block_count();
 
         for block_idx in 0..total_blocks {
@@ -722,7 +724,7 @@ impl DeadCodeEliminationPass {
                             .record(EventKind::BlockRemoved)
                             .at(method_token, block_idx)
                             .message(format!("removed unreachable block {block_idx}"));
-                        cleared += 1;
+                        cleared = cleared.saturating_add(1);
                     }
                 }
             }
@@ -806,7 +808,7 @@ impl DeadCodeEliminationPass {
             by_block.entry(block_idx).or_default().push(instr_idx);
         }
 
-        let mut removed = 0;
+        let mut removed: usize = 0;
 
         for (block_idx, mut indices) in by_block {
             // Sort in reverse order to remove from end first (preserves indices)
@@ -822,11 +824,12 @@ impl DeadCodeEliminationPass {
                             .map_or("unknown", SsaInstruction::mnemonic);
 
                         block.instructions_mut().remove(instr_idx);
+                        let location = block_idx.saturating_mul(1000).saturating_add(instr_idx);
                         changes
                             .record(EventKind::InstructionRemoved)
-                            .at(method_token, block_idx * 1000 + instr_idx)
+                            .at(method_token, location)
                             .message(format!("removed op-less instruction: {mnemonic}"));
-                        removed += 1;
+                        removed = removed.saturating_add(1);
                     }
                 }
             }
@@ -857,7 +860,7 @@ impl DeadCodeEliminationPass {
         method_token: Token,
         changes: &mut EventLog,
     ) -> usize {
-        let mut removed = 0;
+        let mut removed: usize = 0;
 
         for block_idx in reachable.iter() {
             if let Some(block) = ssa.block_mut(block_idx) {
@@ -866,14 +869,14 @@ impl DeadCodeEliminationPass {
                     .instructions_mut()
                     .retain(|instr| !matches!(instr.op(), SsaOp::Nop));
                 let new_len = block.instructions().len();
-                let nops_removed = original_len - new_len;
+                let nops_removed = original_len.saturating_sub(new_len);
 
                 if nops_removed > 0 {
                     changes
                         .record(EventKind::InstructionRemoved)
                         .at(method_token, block_idx)
                         .message(format!("removed {nops_removed} Nop instructions"));
-                    removed += nops_removed;
+                    removed = removed.saturating_add(nops_removed);
                 }
             }
         }
@@ -908,30 +911,50 @@ impl DeadCodeEliminationPass {
     /// The total number of changes made during this iteration. Zero indicates
     /// the algorithm has reached a fixed point.
     fn run_iteration(ssa: &mut SsaFunction, method_token: Token, changes: &mut EventLog) -> usize {
-        let mut total_changes = 0;
+        let mut total_changes: usize = 0;
 
         // Step 1: Find reachable blocks
         let reachable = Self::find_reachable_blocks(ssa);
 
         // Step 2: Clear unreachable blocks
-        total_changes += Self::clear_unreachable_blocks(ssa, &reachable, method_token, changes);
+        total_changes = total_changes.saturating_add(Self::clear_unreachable_blocks(
+            ssa,
+            &reachable,
+            method_token,
+            changes,
+        ));
 
         // Step 3: Remove op-less instructions (stack simulation artifacts like ldloc/ldarg
         // that weren't decomposed to SSA operations)
         let opless = Self::find_opless_instructions(ssa, &reachable);
-        total_changes += Self::remove_opless_instructions(ssa, &opless, method_token, changes);
+        total_changes = total_changes.saturating_add(Self::remove_opless_instructions(
+            ssa,
+            &opless,
+            method_token,
+            changes,
+        ));
 
         // Step 4: Remove Nop instructions (simplifies CFG for block merging)
-        total_changes += Self::remove_nop_instructions(ssa, &reachable, method_token, changes);
+        total_changes = total_changes.saturating_add(Self::remove_nop_instructions(
+            ssa,
+            &reachable,
+            method_token,
+            changes,
+        ));
 
         // Step 5: Prune phi operands from unreachable predecessors
-        total_changes += ssa.prune_phi_operands(&reachable);
+        total_changes = total_changes.saturating_add(ssa.prune_phi_operands(&reachable));
         let reachable_set: BTreeSet<usize> = reachable.iter().collect();
 
         // Step 6: Find and simplify trivial phis (doesn't need liveness)
         // Trivial phis are identified purely by structure (all operands same or self-referential)
         let trivial_phis = PhiAnalyzer::new(ssa).find_all_trivial(&reachable_set);
-        total_changes += Self::simplify_trivial_phis(ssa, &trivial_phis, method_token, changes);
+        total_changes = total_changes.saturating_add(Self::simplify_trivial_phis(
+            ssa,
+            &trivial_phis,
+            method_token,
+            changes,
+        ));
 
         // Step 7: Recompute reachability after phi simplification
         let reachable = Self::find_reachable_blocks(ssa);
@@ -956,13 +979,13 @@ impl DeadCodeEliminationPass {
         }
 
         Self::remove_phis(ssa, &dead_phis, method_token, changes);
-        total_changes += dead_phis.len();
+        total_changes = total_changes.saturating_add(dead_phis.len());
 
         // Step 10: Find and remove dead definitions (pure ops with unused results)
         let dead_defs = Self::find_dead_definitions(ssa, &reachable, &live, &dead_phi_results);
         let c10 = dead_defs.len();
         Self::remove_instructions(ssa, &dead_defs, method_token, changes);
-        total_changes += c10;
+        total_changes = total_changes.saturating_add(c10);
 
         // Step 10b: Clean up Nops created by remove_instructions (which replaces
         // dead instructions with Nop to preserve indices). Without this, the next

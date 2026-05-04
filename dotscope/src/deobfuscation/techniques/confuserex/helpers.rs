@@ -81,18 +81,19 @@ pub(super) fn extract_method_body_at_rva(memory: &[u8], rva: u32) -> Option<Vec<
         return None;
     }
 
-    let available = memory.len() - rva_usize;
+    let available = memory.len().saturating_sub(rva_usize);
     let read_size = available.min(MAX_METHOD_BODY_SIZE);
-    let body_slice = &memory[rva_usize..rva_usize + read_size];
+    let body_end = rva_usize.checked_add(read_size)?;
+    let body_slice = memory.get(rva_usize..body_end)?;
 
     let body = MethodBody::from(body_slice).ok()?;
 
     let il_start = body.size_header;
-    let il_end = il_start + body.size_code;
+    let il_end = il_start.checked_add(body.size_code)?;
     if il_end > body_slice.len() {
         return None;
     }
-    let il_code = &body_slice[il_start..il_end];
+    let il_code = body_slice.get(il_start..il_end)?;
 
     let mut output = Vec::new();
     body.write_to(&mut output, il_code).ok()?;
@@ -112,7 +113,7 @@ pub(super) fn extract_decrypted_field_data(
     virtual_image: &[u8],
 ) -> (Vec<(u32, u32, Vec<u8>)>, usize) {
     let mut fields = Vec::new();
-    let mut failed_count = 0;
+    let mut failed_count: usize = 0;
 
     let Some(tables) = assembly.tables() else {
         return (fields, failed_count);
@@ -128,17 +129,21 @@ pub(super) fn extract_decrypted_field_data(
         }
 
         let Some(field_size) = get_field_data_size(assembly, row.field) else {
-            failed_count += 1;
+            failed_count = failed_count.saturating_add(1);
             continue;
         };
 
         let rva_usize = rva as usize;
-        if rva_usize + field_size > virtual_image.len() {
-            failed_count += 1;
+        let Some(end) = rva_usize.checked_add(field_size) else {
+            failed_count = failed_count.saturating_add(1);
             continue;
-        }
+        };
+        let Some(slice) = virtual_image.get(rva_usize..end) else {
+            failed_count = failed_count.saturating_add(1);
+            continue;
+        };
 
-        let data = virtual_image[rva_usize..rva_usize + field_size].to_vec();
+        let data = slice.to_vec();
         fields.push((row.rid, rva, data));
     }
 

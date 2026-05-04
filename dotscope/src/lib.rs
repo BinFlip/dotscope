@@ -15,7 +15,26 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #![doc(html_no_source)]
-#![deny(missing_docs)]
+// This crate is used for malware analysis: every input byte is
+// adversarial and must not be allowed to panic the parser.
+#![deny(
+    missing_docs,
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing
+)]
+#![cfg_attr(
+    test,
+    allow(
+        clippy::unwrap_used,
+        clippy::expect_used,
+        clippy::panic,
+        clippy::arithmetic_side_effects,
+        clippy::indexing_slicing
+    )
+)]
 #![allow(dead_code)]
 //#![deny(unsafe_code)]
 // - 'userstring.rs' uses a transmute for converting a &[u8] to &[u16]

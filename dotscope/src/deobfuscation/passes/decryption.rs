@@ -454,15 +454,15 @@ impl DecryptionPass {
         // where the return type is a type parameter. Try to extract the actual value.
         if let EmValue::ValueType { fields, .. } = em_value {
             // If the ValueType has a single field that's an ObjectRef, try to get string from it
-            if fields.len() == 1 {
-                if let EmValue::ObjectRef(href) = &fields[0] {
+            if let Some(first_field) = fields.first().filter(|_| fields.len() == 1) {
+                if let EmValue::ObjectRef(href) = first_field {
                     if let Ok(s) = thread.heap().get_string(*href) {
                         return Some(ConstValue::DecryptedString(s.to_string()));
                     }
                 }
                 // Try primitive conversion on the single field (but not if it's Null)
-                if !matches!(fields[0], EmValue::Null) {
-                    if let Some(cv) = fields[0].to_const_value() {
+                if !matches!(first_field, EmValue::Null) {
+                    if let Some(cv) = first_field.to_const_value() {
                         return Some(cv);
                     }
                 }
@@ -634,7 +634,14 @@ impl DecryptionPass {
             }
 
             // Simulate the feeding update call itself
-            let feeding_update = &state_updates[call_site.feeding_update_idx];
+            let Some(feeding_update) = state_updates.get(call_site.feeding_update_idx) else {
+                failures.push((
+                    call_site.decryptor,
+                    location,
+                    FailureReason::NonConstantArgs,
+                ));
+                continue;
+            };
 
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let flag = resolver
@@ -813,7 +820,9 @@ impl DecryptionPass {
         resolver: &mut ValueResolver<'_>,
     ) -> bool {
         for &idx in relevant_updates {
-            let update = &all_updates[idx];
+            let Some(update) = all_updates.get(idx) else {
+                return false;
+            };
 
             #[allow(clippy::cast_possible_truncation, clippy::cast_sign_loss)]
             let flag = resolver
@@ -856,7 +865,13 @@ impl DecryptionPass {
                     *changed = true;
                     changes
                         .record(EventKind::InstructionRemoved)
-                        .at(method_token, update.block_idx * 1000 + update.instr_idx)
+                        .at(
+                            method_token,
+                            update
+                                .block_idx
+                                .saturating_mul(1000)
+                                .saturating_add(update.instr_idx),
+                        )
                         .message(format!(
                             "replaced state machine update call with const (result {:?})",
                             update.dest
@@ -885,7 +900,10 @@ impl DecryptionPass {
                     *changed = true;
                     changes
                         .record(EventKind::InstructionRemoved)
-                        .at(method_token, block_idx * 1000 + instr_idx)
+                        .at(
+                            method_token,
+                            block_idx.saturating_mul(1000).saturating_add(instr_idx),
+                        )
                         .message("removed state machine initialization call");
                 }
             }
@@ -986,7 +1004,7 @@ impl SsaPass for DecryptionPass {
                     continue;
                 };
 
-                let location = block_idx * 1000 + instr_idx;
+                let location = block_idx.saturating_mul(1000).saturating_add(instr_idx);
 
                 if self.decryptors.is_already_decrypted(method_token, location) {
                     continue;
@@ -1060,7 +1078,10 @@ impl SsaPass for DecryptionPass {
             };
             changes
                 .record(event_kind)
-                .at(method_token, block_idx * 1000 + instr_idx)
+                .at(
+                    method_token,
+                    block_idx.saturating_mul(1000).saturating_add(instr_idx),
+                )
                 .message(format!("decrypted: {value}"));
 
             ctx.add_known_value(method_token, dest, value.clone());

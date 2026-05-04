@@ -76,18 +76,22 @@ fn has_cycle_dfs<G: Successors>(
 ) -> bool {
     let idx = node.index();
 
-    if in_stack[idx] {
+    if in_stack.get(idx).copied().unwrap_or(false) {
         // Found a back edge - cycle detected
         return true;
     }
 
-    if visited[idx] {
+    if visited.get(idx).copied().unwrap_or(false) {
         // Already processed this node in a different path, no cycle here
         return false;
     }
 
-    visited[idx] = true;
-    in_stack[idx] = true;
+    if let Some(slot) = visited.get_mut(idx) {
+        *slot = true;
+    }
+    if let Some(slot) = in_stack.get_mut(idx) {
+        *slot = true;
+    }
 
     for successor in graph.successors(node) {
         if has_cycle_dfs(graph, successor, visited, in_stack) {
@@ -95,7 +99,9 @@ fn has_cycle_dfs<G: Successors>(
         }
     }
 
-    in_stack[idx] = false;
+    if let Some(slot) = in_stack.get_mut(idx) {
+        *slot = false;
+    }
     false
 }
 
@@ -163,20 +169,24 @@ fn find_cycle_dfs<G: Successors>(
 ) -> Option<Vec<NodeId>> {
     let idx = node.index();
 
-    if in_stack[idx] {
+    if in_stack.get(idx).copied().unwrap_or(false) {
         // Found a back edge - extract the cycle
         let cycle_start_pos = path.iter().position(|&n| n == node)?;
-        let mut cycle: Vec<NodeId> = path[cycle_start_pos..].to_vec();
+        let mut cycle: Vec<NodeId> = path.get(cycle_start_pos..)?.to_vec();
         cycle.push(node); // Close the cycle
         return Some(cycle);
     }
 
-    if visited[idx] {
+    if visited.get(idx).copied().unwrap_or(false) {
         return None;
     }
 
-    visited[idx] = true;
-    in_stack[idx] = true;
+    if let Some(slot) = visited.get_mut(idx) {
+        *slot = true;
+    }
+    if let Some(slot) = in_stack.get_mut(idx) {
+        *slot = true;
+    }
     path.push(node);
 
     for successor in graph.successors(node) {
@@ -186,7 +196,9 @@ fn find_cycle_dfs<G: Successors>(
     }
 
     path.pop();
-    in_stack[idx] = false;
+    if let Some(slot) = in_stack.get_mut(idx) {
+        *slot = false;
+    }
     None
 }
 

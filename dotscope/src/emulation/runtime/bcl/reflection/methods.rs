@@ -936,13 +936,13 @@ fn il_generator_emit_pre(ctx: &HookContext<'_>, thread: &mut EmulationThread) ->
 /// operand type from the instruction tables.
 fn build_immediate_operand(opcode: u16, value: i32) -> Option<Operand> {
     let op_type = if opcode < u16::from(INSTRUCTIONS_MAX) {
-        INSTRUCTIONS[opcode as usize].op_type
+        INSTRUCTIONS.get(opcode as usize)?.op_type
     } else if opcode >= 0xFE00 {
         let sub = (opcode & 0xFF) as usize;
         if sub >= usize::from(INSTRUCTIONS_FE_MAX) {
             return None;
         }
-        INSTRUCTIONS_FE[sub].op_type
+        INSTRUCTIONS_FE.get(sub)?.op_type
     } else {
         return None;
     };
@@ -1332,7 +1332,7 @@ mod tests {
             runtime::hook::{HookContext, PreHookResult},
             EmValue,
         },
-        metadata::typesystem::PointerSize,
+        metadata::{token::Token, typesystem::PointerSize},
         test::emulation::create_test_thread,
     };
 
@@ -1341,7 +1341,7 @@ mod tests {
     #[test]
     fn test_method_invoke_hook() {
         let ctx = HookContext::new(
-            crate::metadata::token::Token::new(0x0A000001),
+            Token::new(0x0A000001),
             "System.Reflection",
             "MethodBase",
             "Invoke",
