@@ -920,7 +920,7 @@ mod tests {
     use crate::{
         emulation::{
             engine::EmulationError,
-            value::{BinaryOp, EmValue},
+            value::{BinaryOp, EmValue, HeapRef},
         },
         metadata::typesystem::PointerSize,
         Error,
@@ -1211,7 +1211,6 @@ mod tests {
 
     #[test]
     fn test_bitwise_and_objectref_i32() {
-        use crate::emulation::value::HeapRef;
         let obj = EmValue::ObjectRef(HeapRef::new(0xDEAD_BEEF));
         let mask = EmValue::I32(0x0000_FFFF_u32 as i32);
         let result = obj
@@ -1230,7 +1229,6 @@ mod tests {
 
     #[test]
     fn test_bitwise_xor_objectref_i32() {
-        use crate::emulation::value::HeapRef;
         let obj = EmValue::ObjectRef(HeapRef::new(42));
         let key = EmValue::I32(99);
         let result = obj

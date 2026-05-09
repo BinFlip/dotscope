@@ -39,9 +39,9 @@
 use std::{any::Any, collections::HashMap, sync::Arc};
 
 use crate::{
-    analysis::x86_native_body_size,
+    analysis::{x86_native_body_size, CilTarget},
     cilassembly::CleanupRequest,
-    compiler::{PassPhase, SsaPass},
+    compiler::{CompilerContext, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::bitmono::UnmanagedStringReversalPass,
@@ -161,7 +161,7 @@ impl Technique for BitMonoUnmanaged {
         _ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<UnmanagedFindings>() else {
             return Vec::new();
         };

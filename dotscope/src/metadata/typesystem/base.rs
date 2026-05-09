@@ -83,10 +83,9 @@
 //! - [`crate::metadata::typesystem`] - Higher-level type system operations
 
 use std::{
-    fmt,
+    fmt::{self, Debug, Formatter},
     hash::{Hash, Hasher},
-    sync::Arc,
-    sync::Weak,
+    sync::{Arc, Weak},
 };
 
 use crate::{
@@ -684,8 +683,8 @@ pub enum CilTypeReference {
     None,
 }
 
-impl std::fmt::Debug for CilTypeReference {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Debug for CilTypeReference {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             CilTypeReference::TypeRef(_) => write!(f, "CilTypeReference::TypeRef(...)"),
             CilTypeReference::TypeDef(_) => write!(f, "CilTypeReference::TypeDef(...)"),
@@ -1765,76 +1764,11 @@ impl From<&TypeSignature> for CilFlavor {
 
 /// Target pointer width for native int/uint types.
 ///
-/// Per ECMA-335, `native int` and `native uint` (`System.IntPtr` / `System.UIntPtr`)
-/// are pointer-sized: 4 bytes on PE32 (32-bit) targets, 8 bytes on PE32+ (64-bit) targets.
+/// Re-exported from `analyssa::PointerSize`. The implementation moved to analyssa
+/// so the IR core's generic arithmetic methods (which need pointer-width
+/// masking) don't have to depend on `dotscope::metadata`.
 ///
-/// Derived from the PE header: PE32 → `Bit32`, PE32+ → `Bit64`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub enum PointerSize {
-    /// 32-bit target (4-byte pointers)
-    Bit32,
-    /// 64-bit target (8-byte pointers)
-    Bit64,
-}
-
-impl PointerSize {
-    /// Creates a `PointerSize` from the PE header's bitness flag.
-    ///
-    /// PE32 binaries are 32-bit (`Bit32`), PE32+ binaries are 64-bit (`Bit64`).
-    ///
-    /// # Arguments
-    ///
-    /// * `is_64bit` - `true` for PE32+ (64-bit), `false` for PE32 (32-bit)
-    #[must_use]
-    pub fn from_pe(is_64bit: bool) -> Self {
-        if is_64bit {
-            Self::Bit64
-        } else {
-            Self::Bit32
-        }
-    }
-
-    /// Returns the pointer size in bytes.
-    #[must_use]
-    pub fn bytes(self) -> usize {
-        match self {
-            Self::Bit32 => 4,
-            Self::Bit64 => 8,
-        }
-    }
-
-    /// Returns the pointer size in bits.
-    #[must_use]
-    pub fn bits(self) -> u32 {
-        match self {
-            Self::Bit32 => 32,
-            Self::Bit64 => 64,
-        }
-    }
-
-    /// Masks and sign-extends a signed value to the target pointer width.
-    #[must_use]
-    pub fn mask_signed(self, value: i64) -> i64 {
-        match self {
-            Self::Bit32 => {
-                #[allow(clippy::cast_possible_truncation)]
-                let truncated = value as i32;
-                i64::from(truncated)
-            }
-            Self::Bit64 => value,
-        }
-    }
-
-    /// Masks and zero-extends an unsigned value to the target pointer width.
-    #[must_use]
-    pub fn mask_unsigned(self, value: u64) -> u64 {
-        match self {
-            Self::Bit32 => {
-                #[allow(clippy::cast_possible_truncation)]
-                let truncated = value as u32;
-                u64::from(truncated)
-            }
-            Self::Bit64 => value,
-        }
-    }
-}
+/// Per ECMA-335, `native int` and `native uint` (`System.IntPtr` /
+/// `System.UIntPtr`) are pointer-sized: 4 bytes on PE32, 8 bytes on PE32+.
+/// Use [`PointerSize::from_pe`] to derive from the PE header.
+pub use analyssa::PointerSize;

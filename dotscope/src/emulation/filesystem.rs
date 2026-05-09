@@ -194,9 +194,11 @@ impl Default for VirtualFs {
 
 #[cfg(test)]
 mod tests {
+    use std::io::Write;
+
     use cowfile::CowFile;
 
-    use crate::emulation::filesystem::VirtualFs;
+    use super::*;
 
     #[test]
     fn test_normalize_path() {
@@ -237,7 +239,6 @@ mod tests {
 
     #[test]
     fn test_fork_from_disk() {
-        use std::io::Write;
         let mut tmpfile = tempfile::NamedTempFile::new().unwrap();
         tmpfile.write_all(&[0xDE, 0xAD]).unwrap();
         tmpfile.flush().unwrap();

@@ -1,3 +1,12 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    missing_docs
+)]
+
 //! Deobfuscation pipeline tests with exact IL verification.
 //!
 //! All tests follow the same rigorous pattern:

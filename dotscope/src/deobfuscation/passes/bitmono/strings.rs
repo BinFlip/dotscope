@@ -47,7 +47,7 @@ use std::{
 };
 
 use crate::{
-    analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, ConstValue, MethodRef, SsaFunction, SsaOp, SsaVarId},
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     deobfuscation::{
         techniques::BitMonoStringFindings,
@@ -185,7 +185,7 @@ impl StringDecryptionPass {
     }
 }
 
-impl SsaPass for StringDecryptionPass {
+impl SsaPass<CilTarget, CompilerContext> for StringDecryptionPass {
     fn name(&self) -> &'static str {
         "BitMonoStringDecryption"
     }
@@ -201,10 +201,15 @@ impl SsaPass for StringDecryptionPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly_arc = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("StringDecryptionPass requires an assembly"))?;
+        let assembly: &CilObject = &assembly_arc;
+        let ctx = host;
+        let method_token = method.0;
         let mut changed = false;
 
         // Build LoadStaticField index once for the entire method

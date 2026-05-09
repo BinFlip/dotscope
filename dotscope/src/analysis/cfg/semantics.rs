@@ -43,9 +43,10 @@
 
 use std::collections::HashMap;
 
-use crate::{
-    analysis::{cfg::InductionVar, LoopInfo, SsaFunction, SsaOp, SsaVarId},
-    utils::BitSet,
+use analyssa::BitSet;
+
+use crate::analysis::{
+    cfg::InductionVar, CilTarget, LoopInfo, SsaFunction, SsaOp, SsaVarId, Target,
 };
 
 /// Semantic role of a basic block.
@@ -216,18 +217,18 @@ impl LoopSemantics {
 }
 
 /// Analyzes semantic roles of blocks in an SSA function.
-pub struct SemanticAnalyzer<'a> {
-    ssa: &'a SsaFunction,
+pub struct SemanticAnalyzer<'a, T: Target = CilTarget> {
+    ssa: &'a SsaFunction<T>,
     /// Cache of block semantics.
     block_cache: HashMap<usize, BlockSemantics>,
     /// Known dispatcher blocks.
     dispatcher_blocks: BitSet,
 }
 
-impl<'a> SemanticAnalyzer<'a> {
+impl<'a, T: Target> SemanticAnalyzer<'a, T> {
     /// Creates a new semantic analyzer for the given SSA function.
     #[must_use]
-    pub fn new(ssa: &'a SsaFunction) -> Self {
+    pub fn new(ssa: &'a SsaFunction<T>) -> Self {
         Self {
             ssa,
             block_cache: HashMap::new(),

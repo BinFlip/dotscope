@@ -21,12 +21,15 @@
 //! - Construction: Single-threaded only
 //! - Generated plans: Thread-safe for parallel execution
 //!
-use std::collections::{HashMap, HashSet};
-use std::fmt::Write;
+use std::{
+    collections::{HashMap, HashSet},
+    fmt::Write,
+};
+
+use analyssa::graph::IndexedGraph;
 
 use crate::{
     metadata::{loader::MetadataLoader, tables::TableId},
-    utils::graph::IndexedGraph,
     Error::GraphError,
     Result,
 };
@@ -134,12 +137,8 @@ impl<'a> LoaderGraph<'a> {
     /// Returns `GraphError` if a loader depends on a table without a registered loader,
     /// or if circular dependencies are detected (debug builds).
     pub fn build_relationships(&mut self) -> Result<()> {
-        self.dependencies
-            .values_mut()
-            .for_each(std::collections::HashSet::clear);
-        self.dependents
-            .values_mut()
-            .for_each(std::collections::HashSet::clear);
+        self.dependencies.values_mut().for_each(HashSet::clear);
+        self.dependents.values_mut().for_each(HashSet::clear);
 
         for (loader_key, loader) in &self.loaders {
             for dep_table_id in loader.dependencies() {

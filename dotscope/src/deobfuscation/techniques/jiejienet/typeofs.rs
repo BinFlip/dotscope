@@ -22,8 +22,9 @@
 use std::{any::Any, sync::Arc};
 
 use crate::{
+    analysis::CilTarget,
     assembly::Operand,
-    compiler::{PassPhase, SsaPass},
+    compiler::{CompilerContext, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::jiejienet::TypeOfRestorationPass,
@@ -197,7 +198,7 @@ impl Technique for JiejieNetTypeOf {
         _ctx: &AnalysisContext,
         detection: &Detection,
         assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<TypeOfFindings>() else {
             return Vec::new();
         };

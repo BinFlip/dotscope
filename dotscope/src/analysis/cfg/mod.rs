@@ -12,8 +12,11 @@
 //! # Key Components
 //!
 //! - [`ControlFlowGraph`] - The main CFG structure wrapping basic blocks
-//! - [`CfgEdge`] - Edge representation with control flow semantics
-//! - [`CfgEdgeKind`] - Classification of edge types (unconditional, conditional, etc.)
+//! - [`CfgEdge`] / [`CfgEdgeKind`] - Edges and their control-flow classification
+//! - [`LoopAnalyzer`] / [`LoopForest`] / [`LoopInfo`] - Loop detection (re-exported
+//!   from `analyssa::analysis::loops` / `analyssa::analysis::loop_analyzer`)
+//! - [`SemanticAnalyzer`] / [`BlockSemantics`] / [`LoopSemantics`] - Higher-level
+//!   block- and loop-role classification used by deobfuscation passes
 //!
 //! # Edge Types
 //!
@@ -82,18 +85,23 @@
 //! access after construction. The lazy-initialized dominator tree and loop info
 //! use [`std::sync::OnceLock`] for thread-safe initialization.
 
-mod analyzer;
 mod edge;
 mod graph;
-mod loops;
 mod semantics;
 
-pub use analyzer::LoopAnalyzer;
-#[cfg(feature = "compiler")]
-pub use analyzer::SsaLoopAnalysis;
 pub use edge::{CfgEdge, CfgEdgeKind};
 pub use graph::ControlFlowGraph;
-#[cfg(feature = "x86")]
-pub use loops::has_back_edges;
-pub use loops::{detect_loops, InductionVar, LoopForest, LoopInfo};
 pub use semantics::{BlockSemantics, LoopSemantics, SemanticAnalyzer};
+
+// `LoopAnalyzer` and the extended-loop primitives live analyssa-side. CIL
+// callers reach them through these aliases / re-exports.
+use crate::analysis::ssa::CilTarget;
+
+#[cfg(feature = "compiler")]
+pub use analyssa::analysis::loop_analyzer::SsaLoopAnalysis;
+#[cfg(feature = "x86")]
+pub use analyssa::analysis::loops::has_back_edges;
+pub use analyssa::analysis::loops::{detect_loops, InductionVar, LoopForest, LoopInfo};
+
+/// CIL-defaulted alias of [`analyssa::analysis::loop_analyzer::LoopAnalyzer`].
+pub type LoopAnalyzer<'a, T = CilTarget> = analyssa::analysis::loop_analyzer::LoopAnalyzer<'a, T>;

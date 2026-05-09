@@ -41,14 +41,14 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, RwLockReadGuard},
 };
 
 use dashmap::DashSet;
 use log::debug;
 
 use crate::{
-    analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, ConstValue, MethodRef, SsaFunction, SsaOp, SsaVarId},
     compiler::{CompilerContext, EventKind, ModificationScope, PassCapability, SsaPass},
     deobfuscation::{utils::build_def_map, EmulationTemplatePool, ProcessCell},
     emulation::{EmValue, EmulationProcess, HeapRef},
@@ -190,9 +190,7 @@ impl OpaqueFieldPredicatePass {
     ///
     /// Delegates to [`ProcessCell::ensure_initialized`] with a fork +
     /// targeted warmup closure.
-    fn ensure_initialized(
-        &self,
-    ) -> Result<std::sync::RwLockReadGuard<'_, Option<EmulationProcess>>> {
+    fn ensure_initialized(&self) -> Result<RwLockReadGuard<'_, Option<EmulationProcess>>> {
         self.lazy_process
             .ensure_initialized(|| self.create_process_from_pool(), |_| {})
     }
@@ -396,7 +394,7 @@ fn trace_field_chain(
     None // Exceeded max depth
 }
 
-impl SsaPass for OpaqueFieldPredicatePass {
+impl SsaPass<CilTarget, CompilerContext> for OpaqueFieldPredicatePass {
     fn name(&self) -> &'static str {
         "opaque-field-predicate-removal"
     }
@@ -413,12 +411,11 @@ impl SsaPass for OpaqueFieldPredicatePass {
         &[PassCapability::ResolvedStaticFields]
     }
 
-    fn should_run(&self, method_token: Token, _ctx: &CompilerContext) -> bool {
-        self.affected_methods.contains(&method_token)
-            && !self.processed_methods.contains(&method_token)
+    fn should_run(&self, method: &MethodRef, _host: &CompilerContext) -> bool {
+        self.affected_methods.contains(&method.0) && !self.processed_methods.contains(&method.0)
     }
 
-    fn initialize(&mut self, _ctx: &CompilerContext) -> Result<()> {
+    fn initialize(&mut self, _host: &CompilerContext) -> analyssa::Result<()> {
         let remaining = self
             .affected_methods
             .len()
@@ -438,10 +435,15 @@ impl SsaPass for OpaqueFieldPredicatePass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly_arc = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("OpaqueFieldPredicatePass requires an assembly"))?;
+        let assembly: &CilObject = &assembly_arc;
+        let ctx = host;
+        let method_token = method.0;
         let guard = self.ensure_initialized()?;
         let Some(process) = guard.as_ref() else {
             return Ok(false);
@@ -679,9 +681,9 @@ impl SsaPass for OpaqueFieldPredicatePass {
         Ok(changed)
     }
 
-    fn finalize(&mut self, _ctx: &CompilerContext) -> Result<()> {
+    fn finalize(&mut self, _host: &CompilerContext) -> analyssa::Result<()> {
         // Clear the emulation process to release its Arc<CilObject> reference.
         // This is needed so the assembly can be unwrapped for code generation.
-        self.lazy_process.clear()
+        self.lazy_process.clear().map_err(Into::into)
     }
 }

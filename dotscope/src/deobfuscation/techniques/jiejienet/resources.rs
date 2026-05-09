@@ -47,10 +47,10 @@ use std::{any::Any, collections::HashMap, sync::Arc};
 use log::debug;
 
 use crate::{
-    analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, ConstValue, SsaFunction, SsaOp, SsaVarId},
     assembly::{Immediate, Operand},
     cilassembly::GeneratorConfig,
-    compiler::{EventKind, EventLog, PassPhase, SsaPass},
+    compiler::{CompilerContext, EventKind, EventLog, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::jiejienet::{ResourceRestorationPass, ResourceTarget},
@@ -324,7 +324,7 @@ impl Technique for JiejieNetResources {
         _ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<ResourceFindings>() else {
             return Vec::new();
         };

@@ -918,6 +918,7 @@ fn unsafe_sizeof_pre(ctx: &HookContext<'_>, _thread: &mut EmulationThread) -> Pr
     let size = match ctx.pointer_size {
         PointerSize::Bit64 => 8,
         PointerSize::Bit32 => 4,
+        PointerSize::Bit8 | PointerSize::Bit16 | PointerSize::Bit128 => 0,
     };
     PreHookResult::Bypass(Some(EmValue::I32(size)))
 }

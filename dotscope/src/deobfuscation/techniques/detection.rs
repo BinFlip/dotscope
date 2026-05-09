@@ -165,8 +165,9 @@ impl Detections {
     /// Returns the current generation counter.
     ///
     /// Incremented on any mutation that could affect technique sorting
-    /// (insert, merge, merge_all). Used by [`TechniqueRegistry`] to
-    /// invalidate its sorted cache.
+    /// (insert, merge, merge_all). Used by
+    /// [`TechniqueRegistry`](crate::deobfuscation::techniques::TechniqueRegistry)
+    /// to invalidate its sorted cache.
     #[must_use]
     pub fn generation(&self) -> u64 {
         self.generation

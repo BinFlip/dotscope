@@ -1,67 +1,53 @@
-//! Data flow analysis framework for SSA form.
-//!
-//! This module provides a generic framework for computing properties that
-//! propagate along control flow edges. It supports both forward and backward
-//! analyses using a worklist-based solver.
-//!
-//! # Architecture
-//!
-//! The framework is built around three core abstractions:
-//!
-//! - **Lattice**: Defines the domain of abstract values with meet/join operations
-//! - **Analysis**: Specifies transfer functions and boundary conditions
-//! - **Solver**: Iteratively computes fixpoints using a worklist algorithm
-//!
-//! # Analyses Provided
-//!
-//! - [`ReachingDefinitions`]: Tracks which definitions may reach each program point
-//! - [`LiveVariables`]: Determines which variables are live at each program point
-//! - [`ConstantPropagation`]: Sparse conditional constant propagation (SCCP)
-//!
-//! # Example
-//!
-//! ```rust,ignore
-//! use dotscope::analysis::{ConstantPropagation, DataFlowSolver, SsaFunction};
-//!
-//! // Build SSA form
-//! let ssa = SsaConverter::build(&graph, num_args, num_locals, resolver)?;
-//!
-//! // Run constant propagation
-//! let analysis = ConstantPropagation::new(PointerSize::Bit64);
-//! let mut solver = DataFlowSolver::new(analysis, &ssa, &graph);
-//! solver.solve();
-//!
-//! // Query results
-//! for var in ssa.variables() {
-//!     if let Some(value) = solver.get_value(var.id()) {
-//!         println!("{}: {}", var.id(), value);
-//!     }
-//! }
-//! ```
-//!
-//! # Thread Safety
-//!
-//! All types in this module are `Send` and `Sync`.
+//! Re-export shim — dataflow framework + analyses live in
+//! `analyssa::analysis::dataflow`. CIL-defaulted aliases preserve historical
+//! `dotscope::analysis::*` API.
 
-mod framework;
-mod lattice;
-mod liveness;
-mod reaching;
-mod sccp;
-mod solver;
+use analyssa::graph::{NodeId, RootedGraph};
 
-pub use framework::{AnalysisResults, DataFlowAnalysis, Direction};
-pub use liveness::{LiveVariables, LivenessResult};
-pub use reaching::ReachingDefinitions;
-pub use sccp::{ConstantPropagation, ScalarValue, SccpResult};
-pub use solver::DataFlowSolver;
+use crate::analysis::{ssa::CilTarget, ControlFlowGraph};
 
+pub use analyssa::analysis::dataflow::{
+    framework::{AnalysisResults, DataFlowAnalysis, DataFlowCfg, Direction},
+    liveness::{LiveVariables, LivenessResult},
+    reaching::ReachingDefinitions,
+};
+
+/// CIL-defaulted alias of [`analyssa::analysis::dataflow::sccp::ConstantPropagation`].
+pub type ConstantPropagation<T = CilTarget> =
+    analyssa::analysis::dataflow::sccp::ConstantPropagation<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::dataflow::sccp::ScalarValue`].
+pub type ScalarValue<T = CilTarget> = analyssa::analysis::dataflow::sccp::ScalarValue<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::dataflow::sccp::SccpResult`].
+pub type SccpResult<T = CilTarget> = analyssa::analysis::dataflow::sccp::SccpResult<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::dataflow::solver::DataFlowSolver`].
+pub type DataFlowSolver<A, T = CilTarget> =
+    analyssa::analysis::dataflow::solver::DataFlowSolver<T, A>;
+
+// `DataFlowCfg` impl for the CIL `ControlFlowGraph`. The SsaCfg impl lives
+// analyssa-side. Both must be available so dataflow analyses run on either CFG.
+impl DataFlowCfg for ControlFlowGraph<'_> {
+    fn entry(&self) -> NodeId {
+        RootedGraph::entry(self)
+    }
+
+    fn exits(&self) -> Vec<NodeId> {
+        self.exits().to_vec()
+    }
+
+    fn postorder(&self) -> Vec<NodeId> {
+        self.postorder()
+    }
+
+    fn reverse_postorder(&self) -> Vec<NodeId> {
+        self.reverse_postorder()
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
 
     use crate::{
-        analysis::{cfg::ControlFlowGraph, ssa::SsaConverter},
+        analysis::{cfg::ControlFlowGraph, ssa::SsaConverter, SsaFunction},
         assembly::{decode_blocks, InstructionAssembler},
         metadata::typesystem::PointerSize,
         test::TestTypeProvider,
@@ -80,7 +66,7 @@ mod tests {
         assembler: InstructionAssembler,
         num_args: usize,
         num_locals: usize,
-    ) -> (crate::analysis::SsaFunction, ControlFlowGraph<'static>) {
+    ) -> (SsaFunction, ControlFlowGraph<'static>) {
         let cfg = build_cfg(assembler);
         let ssa = SsaConverter::build(
             &cfg,

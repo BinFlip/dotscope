@@ -40,9 +40,9 @@ use std::{
 use log::debug;
 
 use crate::{
-    analysis::{SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, SsaFunction, SsaOp, SsaVarId},
     cilassembly::CleanupRequest,
-    compiler::{PassPhase, SsaPass},
+    compiler::{CompilerContext, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::{
@@ -374,12 +374,12 @@ impl Technique for GenericDelegateProxy {
         ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(combined) = detection.findings::<CallIndirectionFindings>() else {
             return Vec::new();
         };
 
-        let mut passes: Vec<Box<dyn SsaPass>> = Vec::new();
+        let mut passes: Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> = Vec::new();
 
         // Delegate proxy resolution pass (emulation-based)
         let delegate = &combined.delegate;

@@ -29,14 +29,14 @@
 
 use std::{
     collections::{HashMap, HashSet},
-    sync::Arc,
+    sync::{Arc, RwLockReadGuard},
 };
 
 use dashmap::{DashMap, DashSet};
 use log::debug;
 
 use crate::{
-    analysis::{MethodRef as SsaMethodRef, SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, MethodRef, MethodRef as SsaMethodRef, SsaFunction, SsaOp, SsaVarId},
     assembly::{FlowType, Instruction, Operand},
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     deobfuscation::{utils::build_def_map, EmulationTemplatePool, ProcessCell},
@@ -173,9 +173,7 @@ impl DelegateProxyResolutionPass {
     /// Delegates to [`ProcessCell::ensure_initialized`] with a fork +
     /// targeted warmup closure and a post-init callback that extracts delegate
     /// targets from the emulated state.
-    fn ensure_initialized(
-        &self,
-    ) -> Result<std::sync::RwLockReadGuard<'_, Option<EmulationProcess>>> {
+    fn ensure_initialized(&self) -> Result<RwLockReadGuard<'_, Option<EmulationProcess>>> {
         self.lazy_process.ensure_initialized(
             || self.create_process_from_pool(),
             |process| self.extract_targets(process),
@@ -411,7 +409,7 @@ fn resolve_synthetic_target(instructions: &[Instruction]) -> Option<(Token, bool
     call_token.map(|token| (token, is_callvirt))
 }
 
-impl SsaPass for DelegateProxyResolutionPass {
+impl SsaPass<CilTarget, CompilerContext> for DelegateProxyResolutionPass {
     fn name(&self) -> &'static str {
         "delegate-proxy-resolution"
     }
@@ -424,12 +422,11 @@ impl SsaPass for DelegateProxyResolutionPass {
         ModificationScope::InstructionsOnly
     }
 
-    fn should_run(&self, method_token: Token, _ctx: &CompilerContext) -> bool {
-        self.affected_methods.contains(&method_token)
-            && !self.processed_methods.contains(&method_token)
+    fn should_run(&self, method: &MethodRef, _host: &CompilerContext) -> bool {
+        self.affected_methods.contains(&method.0) && !self.processed_methods.contains(&method.0)
     }
 
-    fn initialize(&mut self, _ctx: &CompilerContext) -> Result<()> {
+    fn initialize(&mut self, _host: &CompilerContext) -> analyssa::Result<()> {
         let remaining = self
             .affected_methods
             .len()
@@ -448,10 +445,11 @@ impl SsaPass for DelegateProxyResolutionPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        _assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let ctx = host;
+        let method_token = method.0;
         let guard = self.ensure_initialized()?;
         let Some(_process) = guard.as_ref() else {
             return Ok(false);
@@ -605,8 +603,8 @@ impl SsaPass for DelegateProxyResolutionPass {
         Ok(changed)
     }
 
-    fn finalize(&mut self, _ctx: &CompilerContext) -> Result<()> {
+    fn finalize(&mut self, _host: &CompilerContext) -> analyssa::Result<()> {
         // Clear the emulation process to release its Arc<CilObject> reference.
-        self.lazy_process.clear()
+        self.lazy_process.clear().map_err(Into::into)
     }
 }

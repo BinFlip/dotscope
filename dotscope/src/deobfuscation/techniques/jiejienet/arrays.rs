@@ -40,8 +40,9 @@
 use std::{any::Any, collections::HashMap, sync::Arc};
 
 use crate::{
-    assembly::{Immediate, Operand},
-    compiler::{EventLog, PassPhase, SsaPass},
+    analysis::CilTarget,
+    assembly::{Immediate, Instruction, Operand},
+    compiler::{CompilerContext, EventLog, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::jiejienet::ArrayInitRestorationPass,
@@ -53,7 +54,7 @@ use crate::{
         signatures::TypeSignature,
         tables::{FieldRvaRaw, TableId},
         token::Token,
-        typesystem::wellknown,
+        typesystem::{wellknown, PointerSize},
     },
     CilObject, Error, Result,
 };
@@ -300,7 +301,7 @@ impl Technique for JiejieNetArrays {
         _ctx: &AnalysisContext,
         detection: &Detection,
         assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<ArrayFindings>() else {
             return Vec::new();
         };
@@ -724,7 +725,7 @@ fn emulate_delta_chain_cctor(assembly: &CilObject, cctor_token: Token) -> HashMa
 /// Finds the i32 value from the nearest `ldc.i4*` or `ldsfld` (Int32ValueContainer)
 /// instruction preceding `pos`.
 fn find_preceding_i32_value(
-    instructions: &[&crate::assembly::Instruction],
+    instructions: &[&Instruction],
     pos: usize,
     container_values: &HashMap<Token, i32>,
 ) -> Option<i32> {
@@ -756,7 +757,7 @@ fn find_preceding_i32_value(
 /// Finds the i32 index constant preceding a `call GetHandle` instruction
 /// that occurs before `pos`.
 fn find_preceding_get_handle_index(
-    instructions: &[&crate::assembly::Instruction],
+    instructions: &[&Instruction],
     pos: usize,
     accessor_token: Token,
     container_values: &HashMap<Token, i32>,
@@ -863,7 +864,7 @@ fn calculate_field_data_size(assembly: &CilObject, field_rid: u32) -> Result<usi
         .map_err(|e| Error::Other(format!("Cannot parse field {field_rid} signature: {e}")))?;
 
     // Try primitive size first
-    let ptr_size = crate::metadata::typesystem::PointerSize::from_pe(assembly.file().pe().is_64bit);
+    let ptr_size = PointerSize::from_is_64bit(assembly.file().pe().is_64bit);
     if let Some(size) = field_sig.base.byte_size(ptr_size) {
         return Ok(size);
     }

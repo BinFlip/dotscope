@@ -39,6 +39,9 @@
 //! let ssa_function = translator.translate()?;
 //! ```
 
+use analyssa::graph::NodeId;
+use rustc_hash::{FxHashMap, FxHashSet};
+
 use crate::{
     analysis::{
         ssa::{
@@ -47,17 +50,15 @@ use crate::{
         },
         x86::{
             cfg::X86Function,
-            flags::{ArithmeticKind, ConditionEval, FlagState, FlagTestSource},
+            flags::{ArithmeticKind, ConditionEval, FlagProducer, FlagState, FlagTestSource},
             types::{
                 X86Condition, X86DecodedInstruction, X86Instruction, X86Memory, X86Operand,
                 X86Register,
             },
         },
     },
-    utils::graph::NodeId,
     Error, Result,
 };
-use rustc_hash::{FxHashMap, FxHashSet};
 
 /// Number of registers tracked (0-15 GPRs for x64, 16-21 segment registers).
 const MAX_REGISTERS: usize = 22;
@@ -574,6 +575,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: dst_var,
                     right: src_var,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 flags.set_arithmetic(res_var, dst_var, src_var, ArithmeticKind::Add);
@@ -604,6 +606,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: dst_var,
                     right: src_var,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 flags.set_arithmetic(res_var, dst_var, src_var, ArithmeticKind::Sub);
@@ -639,6 +642,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: src_var,
                     right: multiplier,
+                    flags: None,
                 }));
                 reg_state.set(*dst, res_var);
                 flags.set_arithmetic(res_var, src_var, multiplier, ArithmeticKind::Other);
@@ -658,6 +662,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: eax,
                     right: src_var,
+                    flags: None,
                 }));
                 reg_state.set(X86Register::Eax, res_var);
                 flags.set_arithmetic(res_var, eax, src_var, ArithmeticKind::Other);
@@ -673,6 +678,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 result.push(SsaInstruction::synthetic(SsaOp::Neg {
                     dest: res_var,
                     operand: dst_var,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 flags.set_arithmetic_unary(res_var);
@@ -702,6 +708,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: neg_cf,
                     left: cf,
                     right: one,
+                    flags: None,
                 }));
                 flags.set_carry(neg_cf);
             }
@@ -718,6 +725,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: dst_var,
                     right: one,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 // INC sets ZF/SF/OF but does NOT modify CF
@@ -736,6 +744,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: dst_var,
                     right: one,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 // DEC sets ZF/SF/OF but does NOT modify CF
@@ -760,6 +769,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: temp_var,
                     left: dst_var,
                     right: src_var,
+                    flags: None,
                 }));
                 // result = temp + CF
                 let res_var = self.create_variable(
@@ -771,6 +781,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: temp_var,
                     right: cf_var,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 flags.set_arithmetic(res_var, dst_var, src_var, ArithmeticKind::Add);
@@ -806,6 +817,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: new_cf,
                     left: cf1,
                     right: cf2,
+                    flags: None,
                 }));
                 flags.set_carry(new_cf);
             }
@@ -828,6 +840,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: temp_var,
                     left: dst_var,
                     right: src_var,
+                    flags: None,
                 }));
                 // result = temp - CF
                 let res_var = self.create_variable(
@@ -839,6 +852,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: temp_var,
                     right: cf_var,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 flags.set_arithmetic(res_var, dst_var, src_var, ArithmeticKind::Sub);
@@ -874,6 +888,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: new_cf,
                     left: cf1,
                     right: cf2,
+                    flags: None,
                 }));
                 flags.set_carry(new_cf);
             }
@@ -893,6 +908,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     left: eax,
                     right: src_var,
                     unsigned: true,
+                    flags: None,
                 }));
                 reg_state.set(X86Register::Eax, quot_var);
                 // Remainder → EDX
@@ -906,6 +922,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     left: eax,
                     right: src_var,
                     unsigned: true,
+                    flags: None,
                 }));
                 reg_state.set(X86Register::Edx, rem_var);
                 flags.set_arithmetic(quot_var, eax, src_var, ArithmeticKind::Other);
@@ -926,6 +943,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     left: eax,
                     right: src_var,
                     unsigned: false,
+                    flags: None,
                 }));
                 reg_state.set(X86Register::Eax, quot_var);
                 // Remainder → EDX
@@ -939,6 +957,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     left: eax,
                     right: src_var,
                     unsigned: false,
+                    flags: None,
                 }));
                 reg_state.set(X86Register::Edx, rem_var);
                 flags.set_arithmetic(quot_var, eax, src_var, ArithmeticKind::Other);
@@ -969,6 +988,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     value: val,
                     amount: c24,
                     unsigned: true,
+                    flags: None,
                 }));
                 let byte0 = self.create_variable(
                     VariableOrigin::Phi,
@@ -979,6 +999,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: byte0,
                     left: shr24,
                     right: mask_ff,
+                    flags: None,
                 }));
 
                 // byte1 = (val >> 8) & 0xFF00
@@ -992,6 +1013,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     value: val,
                     amount: c8,
                     unsigned: true,
+                    flags: None,
                 }));
                 let byte1 = self.create_variable(
                     VariableOrigin::Phi,
@@ -1002,6 +1024,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: byte1,
                     left: shr8,
                     right: mask_ff00,
+                    flags: None,
                 }));
 
                 // byte2 = (val << 8) & 0xFF0000
@@ -1014,6 +1037,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: shl8,
                     value: val,
                     amount: c8,
+                    flags: None,
                 }));
                 let byte2 = self.create_variable(
                     VariableOrigin::Phi,
@@ -1024,6 +1048,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: byte2,
                     left: shl8,
                     right: mask_ff0000,
+                    flags: None,
                 }));
 
                 // byte3 = (val << 24) & 0xFF000000
@@ -1036,6 +1061,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: shl24,
                     value: val,
                     amount: c24,
+                    flags: None,
                 }));
                 let byte3 = self.create_variable(
                     VariableOrigin::Phi,
@@ -1046,6 +1072,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: byte3,
                     left: shl24,
                     right: mask_ff000000,
+                    flags: None,
                 }));
 
                 // Combine: result = byte0 | byte1 | byte2 | byte3
@@ -1058,6 +1085,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: or01,
                     left: byte0,
                     right: byte1,
+                    flags: None,
                 }));
                 let or012 = self.create_variable(
                     VariableOrigin::Phi,
@@ -1068,6 +1096,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: or012,
                     left: or01,
                     right: byte2,
+                    flags: None,
                 }));
                 let res_var = self.create_variable(
                     VariableOrigin::Phi,
@@ -1078,6 +1107,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: or012,
                     right: byte3,
+                    flags: None,
                 }));
 
                 reg_state.set(*dst, res_var);
@@ -1107,6 +1137,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 result.push(SsaInstruction::synthetic(SsaOp::Neg {
                     dest: neg_cond,
                     operand: cond_var,
+                    flags: None,
                 }));
                 let xor_diff = self.create_variable(
                     VariableOrigin::Phi,
@@ -1117,6 +1148,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: xor_diff,
                     left: src_var,
                     right: dst_var,
+                    flags: None,
                 }));
                 let masked = self.create_variable(
                     VariableOrigin::Phi,
@@ -1127,6 +1159,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: masked,
                     left: xor_diff,
                     right: neg_cond,
+                    flags: None,
                 }));
                 let res_var = self.create_variable(
                     VariableOrigin::Phi,
@@ -1137,6 +1170,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: dst_var,
                     right: masked,
+                    flags: None,
                 }));
                 reg_state.set(*dst, res_var);
                 // Cmovcc doesn't modify flags
@@ -1179,6 +1213,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: dst_var,
                     right: src_var,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 self.set_operand_value(src, dst_var, reg_state, &mut result, block_idx)?;
@@ -1211,6 +1246,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: dst_var,
                     right: src_var,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 flags.set_arithmetic(res_var, dst_var, src_var, ArithmeticKind::LogicalOp);
@@ -1231,6 +1267,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: dst_var,
                     right: src_var,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 flags.set_arithmetic(res_var, dst_var, src_var, ArithmeticKind::LogicalOp);
@@ -1251,6 +1288,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     left: dst_var,
                     right: src_var,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 flags.set_arithmetic(res_var, dst_var, src_var, ArithmeticKind::LogicalOp);
@@ -1269,6 +1307,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 result.push(SsaInstruction::synthetic(SsaOp::Not {
                     dest: res_var,
                     operand: dst_var,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 // NOT doesn't affect flags (except in some specific cases)
@@ -1286,6 +1325,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: res_var,
                     value: dst_var,
                     amount: count_var,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 flags.set_arithmetic(res_var, dst_var, count_var, ArithmeticKind::Other);
@@ -1304,6 +1344,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     value: dst_var,
                     amount: count_var,
                     unsigned: true,
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 flags.set_arithmetic(res_var, dst_var, count_var, ArithmeticKind::Other);
@@ -1322,6 +1363,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     value: dst_var,
                     amount: count_var,
                     unsigned: false, // SAR is signed shift right
+                    flags: None,
                 }));
                 self.set_operand_value(dst, res_var, reg_state, &mut result, block_idx)?;
                 flags.set_arithmetic(res_var, dst_var, count_var, ArithmeticKind::Other);
@@ -1382,10 +1424,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 // Get comparison operands from flags
                 if let Some((cmp, left, right, unsigned)) = flags.get_branch_operands(*condition) {
                     // Handle TEST special case
-                    if matches!(
-                        flags.producer(),
-                        Some(crate::analysis::x86::flags::FlagProducer::Test { .. })
-                    ) {
+                    if matches!(flags.producer(), Some(FlagProducer::Test { .. })) {
                         // For TEST + JE/JNE, we need to compare (left & right) with 0
                         let and_result = self.create_variable(
                             VariableOrigin::Phi,
@@ -1396,6 +1435,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                             dest: and_result,
                             left,
                             right,
+                            flags: None,
                         }));
                         let zero = self.get_zero_constant(&mut result, block_idx);
                         result.push(SsaInstruction::synthetic(SsaOp::BranchCmp {
@@ -1474,6 +1514,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     value: eax,
                     amount: thirty_one,
                     unsigned: false,
+                    flags: None,
                 }));
                 reg_state.set(X86Register::Edx, edx_var);
             }
@@ -1633,6 +1674,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: and_result,
                     left,
                     right,
+                    flags: None,
                 }));
                 let zero = self.get_zero_constant(instrs, block_idx);
                 self.emit_comparison(cmp, and_result, zero, false, instrs, block_idx)
@@ -1698,6 +1740,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: result,
                     left: eq_result,
                     right: one,
+                    flags: None,
                 }));
             }
             CmpKind::Lt => {
@@ -1734,6 +1777,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: result,
                     left: gt_result,
                     right: one,
+                    flags: None,
                 }));
             }
             CmpKind::Ge => {
@@ -1754,6 +1798,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: result,
                     left: lt_result,
                     right: one,
+                    flags: None,
                 }));
             }
         }
@@ -1780,6 +1825,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: result,
                     left,
                     right,
+                    flags: None,
                 }));
                 result
             }
@@ -1793,6 +1839,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: result,
                     left,
                     right,
+                    flags: None,
                 }));
                 result
             }
@@ -1824,6 +1871,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             value,
             amount: shift_const,
             unsigned: true,
+            flags: None,
         }));
 
         // sign_bit = sign_shifted & 1
@@ -1837,6 +1885,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             dest: sign_bit,
             left: sign_shifted,
             right: one,
+            flags: None,
         }));
 
         if negated {
@@ -1851,6 +1900,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 dest: result,
                 left: sign_bit,
                 right: one2,
+                flags: None,
             }));
             Ok(result)
         } else {
@@ -1897,6 +1947,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                         dest: r,
                         left,
                         right,
+                        flags: None,
                     }));
                     r
                 };
@@ -1911,6 +1962,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: xor_lr,
                     left,
                     right,
+                    flags: None,
                 }));
 
                 let xor_ls = self.create_variable(
@@ -1922,6 +1974,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: xor_ls,
                     left,
                     right: sub_result,
+                    flags: None,
                 }));
 
                 let and_both = self.create_variable(
@@ -1933,6 +1986,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: and_both,
                     left: xor_lr,
                     right: xor_ls,
+                    flags: None,
                 }));
 
                 let shift_amount = if self.func.bitness == 64 { 63 } else { 31 };
@@ -1947,6 +2001,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     value: and_both,
                     amount: shift_const,
                     unsigned: true,
+                    flags: None,
                 }));
 
                 let one = self.get_constant(1, instrs, block_idx);
@@ -1959,6 +2014,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: of_bit,
                     left: shifted,
                     right: one,
+                    flags: None,
                 }));
                 of_bit
             }
@@ -1975,6 +2031,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: xor_lr,
                     left,
                     right: add_result,
+                    flags: None,
                 }));
 
                 let xor_rr = self.create_variable(
@@ -1986,6 +2043,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: xor_rr,
                     left: right,
                     right: add_result,
+                    flags: None,
                 }));
 
                 let and_both = self.create_variable(
@@ -1997,6 +2055,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: and_both,
                     left: xor_lr,
                     right: xor_rr,
+                    flags: None,
                 }));
 
                 let shift_amount = if self.func.bitness == 64 { 63 } else { 31 };
@@ -2011,6 +2070,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     value: and_both,
                     amount: shift_const,
                     unsigned: true,
+                    flags: None,
                 }));
 
                 let one = self.get_constant(1, instrs, block_idx);
@@ -2023,6 +2083,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: of_bit,
                     left: shifted,
                     right: one,
+                    flags: None,
                 }));
                 of_bit
             }
@@ -2060,6 +2121,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 dest: result_var,
                 left: of,
                 right: one,
+                flags: None,
             }));
             Ok(result_var)
         } else {
@@ -2091,6 +2153,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             dest: b,
             left: value,
             right: mask_ff,
+            flags: None,
         }));
 
         // b ^= b >> 4
@@ -2105,6 +2168,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             value: b,
             amount: c4,
             unsigned: true,
+            flags: None,
         }));
         let b1 = self.create_variable(
             VariableOrigin::Phi,
@@ -2115,6 +2179,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             dest: b1,
             left: b,
             right: shr4,
+            flags: None,
         }));
 
         // b ^= b >> 2
@@ -2129,6 +2194,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             value: b1,
             amount: c2,
             unsigned: true,
+            flags: None,
         }));
         let b2 = self.create_variable(
             VariableOrigin::Phi,
@@ -2139,6 +2205,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             dest: b2,
             left: b1,
             right: shr2,
+            flags: None,
         }));
 
         // b ^= b >> 1
@@ -2153,6 +2220,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             value: b2,
             amount: c1,
             unsigned: true,
+            flags: None,
         }));
         let b3 = self.create_variable(
             VariableOrigin::Phi,
@@ -2163,6 +2231,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             dest: b3,
             left: b2,
             right: shr1,
+            flags: None,
         }));
 
         // odd_parity = b3 & 1
@@ -2176,6 +2245,7 @@ impl<'a> X86ToSsaTranslator<'a> {
             dest: odd_parity,
             left: b3,
             right: one,
+            flags: None,
         }));
 
         if negated {
@@ -2193,6 +2263,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 dest: result,
                 left: odd_parity,
                 right: one2,
+                flags: None,
             }));
             Ok(result)
         }
@@ -2231,6 +2302,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                     dest: scaled_var,
                     left: index_val,
                     right: scale_const,
+                    flags: None,
                 }));
                 scaled_var
             };
@@ -2245,6 +2317,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 dest: new_addr,
                 left: addr,
                 right: scaled,
+                flags: None,
             }));
             addr = new_addr;
         }
@@ -2261,6 +2334,7 @@ impl<'a> X86ToSsaTranslator<'a> {
                 dest: new_addr,
                 left: addr,
                 right: disp_const,
+                flags: None,
             }));
             addr = new_addr;
         }

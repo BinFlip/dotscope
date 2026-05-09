@@ -51,11 +51,13 @@
 use std::{collections::HashSet, sync::Arc};
 
 use crate::{
-    compiler::{PassPhase, SsaPass},
+    analysis::CilTarget,
+    compiler::{CompilerContext, PassPhase, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
         passes::{SentinelCondition, SentinelTaintRemovalPass},
         techniques::{Detection, Evidence, Technique, TechniqueCategory},
+        utils::find_methods_calling_apis,
     },
     metadata::token::Token,
     CilObject,
@@ -95,7 +97,7 @@ impl Technique for BitMonoAntiDebug {
 
     fn detect(&self, assembly: &CilObject) -> Detection {
         let patterns = &["get_UtcNow", "op_Subtraction", "get_TotalMilliseconds"];
-        let matches = crate::deobfuscation::utils::find_methods_calling_apis(assembly, patterns);
+        let matches = find_methods_calling_apis(assembly, patterns);
 
         // Require all three sentinel APIs in the same method
         let method_tokens: HashSet<Token> = matches
@@ -131,7 +133,7 @@ impl Technique for BitMonoAntiDebug {
         _ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<BmAntiDebugFindings>() else {
             return Vec::new();
         };

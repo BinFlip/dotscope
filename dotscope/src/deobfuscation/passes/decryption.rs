@@ -67,7 +67,10 @@ use std::{
 use rayon::prelude::*;
 
 use crate::{
-    analysis::{ConstValue, SsaCfg, SsaFunction, SsaOp, SsaVarId, ValueResolver},
+    analysis::{
+        CilTarget, ConstValue, MethodRef, SsaCfg, SsaFunction, SsaOp, SsaVarId, TypeRef,
+        ValueResolver,
+    },
     compiler::{CompilerContext, EventKind, EventLog, ModificationScope, PassCapability, SsaPass},
     deobfuscation::{
         context::AnalysisContext,
@@ -82,11 +85,11 @@ use crate::{
         token::Token,
         typesystem::{CilFlavor, CilPrimitive, CilPrimitiveKind, PointerSize},
     },
-    utils::graph::{
-        algorithms::{compute_dominators, DominatorTree},
-        GraphBase, NodeId, RootedGraph,
-    },
     CilObject, Error, Result,
+};
+use analyssa::graph::{
+    algorithms::{compute_dominators, DominatorTree},
+    GraphBase, NodeId, RootedGraph,
 };
 
 /// Decryption pass for obfuscated constants and strings.
@@ -101,9 +104,10 @@ use crate::{
 ///
 /// # Emulation Template
 ///
-/// The pass uses the shared [`EmulationTemplatePool`] for O(1) CoW forks.
-/// The pool is warmed up once during engine initialization; this pass simply
-/// calls [`EmulationTemplatePool::fork()`] for each decryption attempt.
+/// The pass uses the shared emulation-template pool (an internal CoW snapshot
+/// store, see `crate::deobfuscation::context`) for O(1) forks. The pool is
+/// warmed up once during engine initialization; this pass forks a fresh
+/// emulator state from it for each decryption attempt.
 ///
 /// If the pool is unavailable (no techniques registered emulation hooks),
 /// decryption is silently skipped.
@@ -149,7 +153,7 @@ impl DecryptionPass {
     /// Creates a new constant decryption pass from an analysis context.
     ///
     /// Captures shared references to the context's decryptors and state machine
-    /// providers. Emulation is backed by the shared [`EmulationTemplatePool`]
+    /// providers. Emulation is backed by the shared emulation-template pool
     /// stored in the context (if available).
     ///
     /// # Arguments
@@ -442,7 +446,7 @@ impl DecryptionPass {
                     if let Some(token) = Self::resolve_flavor_to_typeref(&elem_flavor, thread) {
                         return Some(ConstValue::DecryptedArray {
                             data: bytes,
-                            element_type_token: token,
+                            element_type_ref: TypeRef::new(token),
                             element_size: elem_size,
                         });
                     }
@@ -911,7 +915,7 @@ impl DecryptionPass {
     }
 }
 
-impl SsaPass for DecryptionPass {
+impl SsaPass<CilTarget, CompilerContext> for DecryptionPass {
     fn name(&self) -> &'static str {
         "decryption"
     }
@@ -928,13 +932,13 @@ impl SsaPass for DecryptionPass {
         &[PassCapability::DecryptedStrings]
     }
 
-    fn initialize(&mut self, _ctx: &CompilerContext) -> Result<()> {
+    fn initialize(&mut self, _host: &CompilerContext) -> analyssa::Result<()> {
         // This pass relies on DecryptorContext being populated by obfuscator
         // detection before it runs. No additional setup needed.
         Ok(())
     }
 
-    fn finalize(&mut self, _ctx: &CompilerContext) -> Result<()> {
+    fn finalize(&mut self, _host: &CompilerContext) -> analyssa::Result<()> {
         // Pool lifecycle is managed by the engine — nothing to release here.
         Ok(())
     }
@@ -942,16 +946,21 @@ impl SsaPass for DecryptionPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly_arc = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("DecryptionPass requires an assembly"))?;
+        let assembly: &CilObject = &assembly_arc;
+        let ctx = host;
+        let method_token = method.0;
         // Early exit if no decryptors are registered
         if !self.decryptors.has_decryptors() {
             return Ok(false);
         }
 
-        let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
+        let ptr_size = PointerSize::from_is_64bit(assembly.file().pe().is_64bit);
 
         // Track whether any mode made changes
         let mut any_changed = false;
@@ -1134,7 +1143,9 @@ mod tests {
     /// Helper to create a minimal analysis context for testing.
     fn create_test_context() -> AnalysisContext {
         let call_graph = Arc::new(CallGraph::new());
-        AnalysisContext::new(call_graph)
+        let ctx = AnalysisContext::new(call_graph);
+        ctx.compiler.set_assembly(test_assembly_arc());
+        ctx
     }
 
     #[test]
@@ -1162,7 +1173,7 @@ mod tests {
 
         // No decryptors registered, should return false (no changes)
         let changed = pass
-            .run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc())
+            .run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx.compiler)
             .unwrap();
         assert!(!changed);
     }
@@ -1189,7 +1200,7 @@ mod tests {
 
         // Has decryptors but no calls to them
         let changed = pass
-            .run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc())
+            .run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx.compiler)
             .unwrap();
         assert!(!changed);
     }
@@ -1217,7 +1228,7 @@ mod tests {
 
         // Call without destination, can't replace
         let changed = pass
-            .run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc())
+            .run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx.compiler)
             .unwrap();
         assert!(!changed);
     }
@@ -1246,7 +1257,7 @@ mod tests {
 
         // Argument is not in known_values, should fail
         let changed = pass
-            .run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc())
+            .run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx.compiler)
             .unwrap();
         assert!(!changed);
 
@@ -1277,7 +1288,7 @@ mod tests {
             .unwrap();
 
         let changed = pass
-            .run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc())
+            .run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx.compiler)
             .unwrap();
         assert!(!changed);
     }
@@ -1313,7 +1324,7 @@ mod tests {
 
         // This will try to decrypt but fail (no assembly for emulation)
         // The point is that it recognized the MethodSpec as a decryptor call
-        let _ = pass.run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc());
+        let _ = pass.run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx.compiler);
 
         // Verify the MethodSpec was resolved to the decryptor and a failure was recorded
         // (failure because there's no assembly to emulate against)

@@ -35,10 +35,9 @@
 use std::collections::HashSet;
 
 use crate::{
-    analysis::{MethodRef, SsaFunction, SsaOp},
+    analysis::{CilTarget, MethodRef, SsaFunction, SsaOp},
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     metadata::token::Token,
-    CilObject, Result,
 };
 
 /// Rewrites NR resource-resolver shim calls in user code.
@@ -78,7 +77,7 @@ impl ResourceShimRewritePass {
     }
 }
 
-impl SsaPass for ResourceShimRewritePass {
+impl SsaPass<CilTarget, CompilerContext> for ResourceShimRewritePass {
     fn name(&self) -> &'static str {
         "netreactor-resource-shim-rewrite"
     }
@@ -95,10 +94,10 @@ impl SsaPass for ResourceShimRewritePass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
+        method: &MethodRef,
         ctx: &CompilerContext,
-        _assembly: &CilObject,
-    ) -> Result<bool> {
+    ) -> analyssa::Result<bool> {
+        let method_token = method.0;
         // Skip work for the resolver's own methods — the cleanup pipeline
         // deletes them wholesale, so rewriting here would be wasted.
         if self.shim_method_tokens.contains(&method_token) || self.lazy_init_token == method_token {
@@ -186,7 +185,9 @@ mod tests {
     };
 
     fn make_ctx() -> AnalysisContext {
-        AnalysisContext::new(Arc::new(CallGraph::new()))
+        let ctx = AnalysisContext::new(Arc::new(CallGraph::new()));
+        ctx.compiler.set_assembly(test_assembly_arc());
+        ctx
     }
 
     #[test]
@@ -208,7 +209,11 @@ mod tests {
         let pass = ResourceShimRewritePass::new(vec![shim], lazy_init, bcl);
         let ctx = make_ctx();
         let changed = pass
-            .run_on_method(&mut ssa, Token::new(0x06000003), &ctx, &test_assembly_arc())
+            .run_on_method(
+                &mut ssa,
+                &MethodRef::from(Token::new(0x06000003)),
+                &ctx.compiler,
+            )
             .unwrap();
         assert!(changed);
         let block = ssa.block(0).unwrap();
@@ -239,7 +244,11 @@ mod tests {
         let pass = ResourceShimRewritePass::new(vec![shim], lazy_init, bcl);
         let ctx = make_ctx();
         let changed = pass
-            .run_on_method(&mut ssa, Token::new(0x06000003), &ctx, &test_assembly_arc())
+            .run_on_method(
+                &mut ssa,
+                &MethodRef::from(Token::new(0x06000003)),
+                &ctx.compiler,
+            )
             .unwrap();
         assert!(changed);
         let block = ssa.block(0).unwrap();
@@ -265,7 +274,7 @@ mod tests {
         let ctx = make_ctx();
         // Running on the lazy_init method itself should NOT touch its body.
         let changed = pass
-            .run_on_method(&mut ssa, lazy_init, &ctx, &test_assembly_arc())
+            .run_on_method(&mut ssa, &MethodRef::from(lazy_init), &ctx.compiler)
             .unwrap();
         assert!(!changed);
     }
@@ -289,7 +298,11 @@ mod tests {
         let pass = ResourceShimRewritePass::new(vec![shim], lazy_init, bcl_unset);
         let ctx = make_ctx();
         let changed = pass
-            .run_on_method(&mut ssa, Token::new(0x06000003), &ctx, &test_assembly_arc())
+            .run_on_method(
+                &mut ssa,
+                &MethodRef::from(Token::new(0x06000003)),
+                &ctx.compiler,
+            )
             .unwrap();
         // Shim left intact — fallback is to leave the call alone.
         assert!(!changed);

@@ -36,12 +36,12 @@ use log::debug;
 
 use crate::{
     analysis::{
-        resolve_corelib_valuetype, ConstValue, DefSite, MethodRef, SsaFunction, SsaInstruction,
-        SsaOp, SsaVarId, TypeRef, VariableOrigin,
+        resolve_corelib_valuetype, CilTarget, ConstValue, DefSite, MethodRef, SsaFunction,
+        SsaInstruction, SsaOp, SsaVarId, TypeRef, VariableOrigin,
     },
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     metadata::token::Token,
-    CilObject, Error, Result,
+    CilObject, Error,
 };
 
 /// SSA pass that replaces JIEJIE.NET typeof container calls with
@@ -81,7 +81,7 @@ impl TypeOfRestorationPass {
     }
 }
 
-impl SsaPass for TypeOfRestorationPass {
+impl SsaPass<CilTarget, CompilerContext> for TypeOfRestorationPass {
     fn name(&self) -> &'static str {
         "jiejie-typeof-restore"
     }
@@ -97,10 +97,14 @@ impl SsaPass for TypeOfRestorationPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        _method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        _method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly_arc = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("TypeOfRestorationPass requires an assembly"))?;
+        let assembly: &CilObject = &assembly_arc;
+        let ctx = host;
         if self.type_tokens.is_empty() {
             return Ok(false);
         }

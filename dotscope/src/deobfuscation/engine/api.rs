@@ -54,7 +54,8 @@ impl DeobfuscationEngine {
     /// Runs technique detection on an assembly (IL-level and SSA-level).
     ///
     /// This is a detection-only API — no transforms are applied. It runs both
-    /// IL-level [`Technique::detect`] and SSA-level [`Technique::detect_ssa`]
+    /// IL-level [`Technique::detect`](crate::deobfuscation::techniques::Technique::detect)
+    /// and SSA-level [`Technique::detect_ssa`](crate::deobfuscation::techniques::Technique::detect_ssa)
     /// on each technique, catching patterns that require cross-block def-use
     /// chain analysis (e.g., BitMono string encryption, opaque field predicates,
     /// delegate proxies).

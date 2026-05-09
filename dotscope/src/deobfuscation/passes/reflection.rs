@@ -82,11 +82,13 @@ use std::collections::HashSet;
 use dashmap::DashSet;
 
 use crate::{
-    analysis::{ConstValue, FieldRef, MethodRef, SsaFunction, SsaOp, SsaVarId, VariableOrigin},
+    analysis::{
+        CilTarget, ConstValue, FieldRef, MethodRef, SsaFunction, SsaOp, SsaVarId, VariableOrigin,
+    },
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     deobfuscation::utils::is_method_named,
     metadata::token::Token,
-    CilObject, Result,
+    CilObject,
 };
 
 /// A detected reflection call site with its resolved target and location.
@@ -201,7 +203,7 @@ impl ReflectionDevirtualizationPass {
     }
 }
 
-impl SsaPass for ReflectionDevirtualizationPass {
+impl SsaPass<CilTarget, CompilerContext> for ReflectionDevirtualizationPass {
     fn name(&self) -> &'static str {
         "reflection-devirtualization"
     }
@@ -214,17 +216,22 @@ impl SsaPass for ReflectionDevirtualizationPass {
         ModificationScope::InstructionsOnly
     }
 
-    fn should_run(&self, method_token: Token, _ctx: &CompilerContext) -> bool {
-        self.target_methods.contains(&method_token) && !self.processed.contains(&method_token)
+    fn should_run(&self, method: &MethodRef, _host: &CompilerContext) -> bool {
+        self.target_methods.contains(&method.0) && !self.processed.contains(&method.0)
     }
 
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly_arc = host.assembly().ok_or_else(|| {
+            analyssa::Error::new("ReflectionDevirtualizationPass requires an assembly")
+        })?;
+        let assembly: &CilObject = &assembly_arc;
+        let ctx = host;
+        let method_token = method.0;
         let sites = find_reflection_sites(ssa, assembly);
         if sites.is_empty() {
             self.processed.insert(method_token);

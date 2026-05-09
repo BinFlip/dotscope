@@ -396,6 +396,8 @@ fn update_row_name_field(
 #[cfg(test)]
 mod tests {
     use std::collections::HashSet;
+    #[cfg(feature = "smart-rename")]
+    use std::path::PathBuf;
 
     use crate::{
         cilassembly::{CilAssembly, GeneratorConfig},
@@ -747,8 +749,6 @@ mod tests {
     #[ignore]
     #[cfg(feature = "smart-rename")]
     fn test_smart_rename_llm() {
-        use std::path::PathBuf;
-
         let model_path = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
             .join("../qwen2.5-coder-3b-instruct-q4_k_m.gguf");
         assert!(

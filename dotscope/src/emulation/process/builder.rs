@@ -136,7 +136,7 @@ fn populate_fieldrva_statics(assembly: &CilObject, address_space: &AddressSpace)
     let types = assembly.types();
     let file = assembly.file();
     let pe_data = file.data();
-    let ptr_size = PointerSize::from_pe(file.pe().is_64bit);
+    let ptr_size = PointerSize::from_is_64bit(file.pe().is_64bit);
 
     for row in fieldrva_table {
         if row.rva == 0 {

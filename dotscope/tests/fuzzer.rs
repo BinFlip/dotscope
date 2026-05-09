@@ -1,3 +1,7 @@
+//! Fuzzer corpus regression tests — load every file under `fuzz/corpus/` and
+//! `fuzz/artifacts/` through `CilObject::from_path` and assert we don't panic.
+//! Files are intentionally malformed; errors are expected, crashes are not.
+
 use std::{fs, path::PathBuf};
 
 use dotscope::metadata::cilobject::CilObject;

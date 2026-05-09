@@ -13,6 +13,7 @@ use std::{
 use dashmap::DashSet;
 
 use crate::{
+    analysis::CallGraph,
     compiler::{CompilerContext, ProcessingState},
     deobfuscation::{
         config::EngineConfig,
@@ -138,12 +139,12 @@ impl Deref for AnalysisContext {
 
 impl AnalysisContext {
     /// Creates a new analysis context with default configuration.
-    pub fn new(call_graph: Arc<crate::analysis::CallGraph>) -> Self {
+    pub fn new(call_graph: Arc<CallGraph>) -> Self {
         Self::with_config(call_graph, EngineConfig::default())
     }
 
     /// Creates a new analysis context with custom configuration.
-    pub fn with_config(call_graph: Arc<crate::analysis::CallGraph>, config: EngineConfig) -> Self {
+    pub fn with_config(call_graph: Arc<CallGraph>, config: EngineConfig) -> Self {
         Self {
             compiler: CompilerContext::new(call_graph),
             decryptors: Arc::new(DecryptorContext::new()),
@@ -305,14 +306,15 @@ impl AnalysisContext {
 
 #[cfg(test)]
 mod tests {
+    use std::{sync::Arc, thread};
+
+    use super::*;
+
     use crate::{
         analysis::{CallGraph, ConstValue, SsaVarId},
         compiler::CallSiteInfo,
-        deobfuscation::context::AnalysisContext,
         metadata::token::Token,
     };
-
-    use std::sync::Arc;
 
     #[test]
     fn test_call_site_info() {
@@ -392,8 +394,6 @@ mod tests {
 
     #[test]
     fn test_thread_safe_access() {
-        use std::thread;
-
         let call_graph = Arc::new(CallGraph::new());
         let ctx = Arc::new(AnalysisContext::new(call_graph));
 

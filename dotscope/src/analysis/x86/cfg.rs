@@ -4,15 +4,14 @@
 //! and their successor relationships. It leverages the existing graph infrastructure
 //! from [`crate::utils::graph`] for efficient analysis.
 
-use crate::{
-    analysis::{
-        cfg::has_back_edges,
-        x86::types::{X86DecodedInstruction, X86EdgeKind, X86Instruction},
-    },
-    utils::graph::{
-        algorithms::{compute_dominators, DominatorTree},
-        DirectedGraph, GraphBase, NodeId, Predecessors, RootedGraph, Successors,
-    },
+use analyssa::graph::{
+    algorithms::{compute_dominators, DominatorTree},
+    DirectedGraph, GraphBase, NodeId, Predecessors, RootedGraph, Successors,
+};
+
+use crate::analysis::{
+    cfg::has_back_edges,
+    x86::types::{X86DecodedInstruction, X86EdgeKind, X86Instruction},
 };
 use rustc_hash::FxHashMap;
 use std::{collections::BTreeSet, sync::OnceLock};
@@ -482,13 +481,12 @@ fn compute_edges(
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        analysis::x86::{
-            cfg::X86Function,
-            decoder::x86_decode_all,
-            types::{X86Condition, X86EdgeKind},
-        },
-        utils::graph::NodeId,
+    use analyssa::graph::NodeId;
+
+    use crate::analysis::x86::{
+        cfg::X86Function,
+        decoder::x86_decode_all,
+        types::{X86Condition, X86EdgeKind},
     };
 
     #[test]

@@ -21,14 +21,12 @@ use crate::{
         token::Token,
         typesystem::{CilTypeReference, TypeRegistry},
     },
-    utils::{
-        escape_dot,
-        graph::{
-            algorithms::{self, strongly_connected_components},
-            DirectedGraph, NodeId,
-        },
-    },
+    utils::escape_dot,
     CilObject, Result,
+};
+use analyssa::graph::{
+    algorithms::{self, strongly_connected_components},
+    DirectedGraph, NodeId,
 };
 
 /// Inter-procedural call graph for a .NET assembly.

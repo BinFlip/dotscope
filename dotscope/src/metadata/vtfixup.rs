@@ -15,9 +15,9 @@
 //!
 //! # Key Components
 //!
-//! - [`VtFixupEntry`] - A single parsed VTableFixup directory entry with RVA, flags, and tokens
-//! - [`VtFixupContext`] - Pre-computed context containing all entries plus method-to-slot and export maps
-//! - [`parse`] - Entry point that reads and correlates the VTableFixup directory
+//! - [`VtFixupEntry`](crate::metadata::vtfixup::VtFixupEntry) - A single parsed VTableFixup directory entry with RVA, flags, and tokens
+//! - [`VtFixupContext`](crate::metadata::vtfixup::VtFixupContext) - Pre-computed context containing all entries plus method-to-slot and export maps
+//! - [`parse`](crate::metadata::vtfixup::parse) - Entry point that reads and correlates the VTableFixup directory
 //!
 //! # Usage Examples
 //!
@@ -39,15 +39,17 @@
 //!
 //! # Thread Safety
 //!
-//! All types in this module are [`Send`] and [`Sync`]. The parsed [`VtFixupContext`]
-//! is immutable after construction and safe to share across threads.
+//! All types in this module are [`Send`] and [`Sync`]. The parsed
+//! [`VtFixupContext`](crate::metadata::vtfixup::VtFixupContext) is immutable after
+//! construction and safe to share across threads.
 //!
 //! # Integration
 //!
 //! This module integrates with:
 //! - [`crate::metadata::cor20header`] - Source of the VTableFixup directory RVA and size
 //! - [`crate::metadata::exports`] - Native PE export table for correlating exports with vtable slots
-//! - [`crate::formatting::vtfixup`] - Rendering of parsed data as ILAsm directives
+//! - [`crate::formatting::IlFormatter`] - Rendering of parsed data as ILAsm directives
+//!   (the actual `formatting::vtfixup` helper module is private; reach it via `IlFormatter`).
 
 use std::collections::HashMap;
 

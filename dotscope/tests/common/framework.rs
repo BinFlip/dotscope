@@ -1,3 +1,12 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    missing_docs
+)]
+
 //! Shared integration test framework for deobfuscation tests.
 //!
 //! Provides common types, harness functions, and assertion helpers used across

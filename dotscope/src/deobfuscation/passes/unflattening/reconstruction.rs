@@ -48,10 +48,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
+use analyssa::BitSet;
+
 use crate::{
     analysis::{SsaBlock, SsaFunction, SsaInstruction, SsaOp, SsaVarId},
     deobfuscation::passes::unflattening::tracer::{TraceNode, TraceTerminator, TraceTree},
-    utils::BitSet,
 };
 
 type PhiOperands = Vec<(usize, SsaVarId)>;
@@ -553,7 +554,7 @@ fn extract_redirects_from_node(
                             .unwrap_or(node.blocks_visited.len());
                         let interior_start = start_idx.saturating_add(1);
                         if end_idx > interior_start {
-                            let intermediate_blocks: std::collections::BTreeSet<usize> = node
+                            let intermediate_blocks: BTreeSet<usize> = node
                                 .blocks_visited
                                 .get(interior_start..end_idx)
                                 .map(|s| s.iter().copied().collect())

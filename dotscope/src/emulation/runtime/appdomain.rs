@@ -440,7 +440,8 @@ impl AppDomainState {
     /// Registers a parsed assembly loaded at runtime (e.g., via `Assembly.Load(byte[])`).
     ///
     /// Returns the index of the newly registered assembly, which can be stored
-    /// in [`ThreadCallFrame::assembly_index`] to associate frames with their
+    /// in [`ThreadCallFrame::assembly_index`](crate::emulation::ThreadCallFrame::assembly_index)
+    /// to associate frames with their
     /// originating assembly.
     ///
     /// # Arguments

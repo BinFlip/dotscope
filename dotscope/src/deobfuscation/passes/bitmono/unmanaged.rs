@@ -31,10 +31,9 @@
 use std::collections::HashMap;
 
 use crate::{
-    analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, ConstValue, MethodRef, SsaFunction, SsaOp, SsaVarId},
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     metadata::token::Token,
-    CilObject, Result,
 };
 
 /// SSA pass that replaces UnmanagedString call+newobj patterns with string constants.
@@ -57,7 +56,7 @@ pub struct UnmanagedStringReversalPass {
     pub(crate) native_string_map: HashMap<Token, String>,
 }
 
-impl SsaPass for UnmanagedStringReversalPass {
+impl SsaPass<CilTarget, CompilerContext> for UnmanagedStringReversalPass {
     fn name(&self) -> &'static str {
         "BitMonoUnmanagedString"
     }
@@ -73,10 +72,9 @@ impl SsaPass for UnmanagedStringReversalPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        _method_token: Token,
+        _method: &MethodRef,
         ctx: &CompilerContext,
-        _assembly: &CilObject,
-    ) -> Result<bool> {
+    ) -> analyssa::Result<bool> {
         let mut changed = false;
 
         for block_idx in 0..ssa.blocks().len() {

@@ -1,3 +1,12 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    missing_docs
+)]
+
 //! Shared assembly compatibility testing infrastructure.
 //!
 //! Provides common loading, comparison, and analysis logic for testing

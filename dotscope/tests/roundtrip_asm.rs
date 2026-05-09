@@ -1,3 +1,12 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    missing_docs
+)]
+
 //! Roundtrip tests for CIL instruction assembly and disassembly.
 //!
 //! These tests verify that our encoder and disassembler work perfectly together by:

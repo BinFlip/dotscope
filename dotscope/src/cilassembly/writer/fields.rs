@@ -316,7 +316,7 @@ pub fn write_field_data(ctx: &mut WriteContext) -> Result<()> {
     let view = ctx.assembly.view();
     let file = view.file();
     let changes = ctx.changes;
-    let ptr_size = PointerSize::from_pe(file.pe().is_64bit);
+    let ptr_size = PointerSize::from_is_64bit(file.pe().is_64bit);
 
     let entries = collect_field_data(view, file, changes, ptr_size)?;
 

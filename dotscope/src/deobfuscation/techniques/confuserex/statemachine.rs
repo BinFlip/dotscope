@@ -50,9 +50,9 @@ use crate::{
         typesystem::CilType,
     },
     prelude::FlowType,
-    utils::graph::NodeId,
     CilObject,
 };
+use analyssa::graph::NodeId;
 
 /// Information about a call site to a decryptor method.
 pub struct DetectedCallSite {

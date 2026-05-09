@@ -15,16 +15,12 @@
 // SPDX-License-Identifier: Apache-2.0
 
 #![doc(html_no_source)]
-// This crate is used for malware analysis: every input byte is
-// adversarial and must not be allowed to panic the parser.
-#![deny(
-    missing_docs,
-    clippy::unwrap_used,
-    clippy::expect_used,
-    clippy::panic,
-    clippy::arithmetic_side_effects,
-    clippy::indexing_slicing
-)]
+// The `missing_docs`, `clippy::unwrap_used`, `clippy::expect_used`,
+// `clippy::panic`, `clippy::arithmetic_side_effects`, and
+// `clippy::indexing_slicing` lints are declared in `Cargo.toml` under
+// `[lints]` so they enforce on every build regardless of the consuming
+// workspace. dotscope is used in malware-analysis pipelines where every
+// input byte is adversarial and the parser must not panic.
 #![cfg_attr(
     test,
     allow(

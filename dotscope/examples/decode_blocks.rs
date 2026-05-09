@@ -25,15 +25,14 @@ fn main() -> Result<()> {
     let code = [0x00, 0x2A]; // nop, ret
     let blocks = decode_blocks(&code, 0, 0x1000, None)?;
     println!("Number of basic blocks: {}", blocks.len());
-    println!(
-        "Instructions in first block: {}",
-        blocks[0].instructions.len()
-    );
-    for (i, instruction) in blocks[0].instructions.iter().enumerate() {
-        println!(
-            "  {}: {} (RVA: 0x{:X})",
-            i, instruction.mnemonic, instruction.rva
-        );
+    if let Some(first) = blocks.first() {
+        println!("Instructions in first block: {}", first.instructions.len());
+        for (i, instruction) in first.instructions.iter().enumerate() {
+            println!(
+                "  {}: {} (RVA: 0x{:X})",
+                i, instruction.mnemonic, instruction.rva
+            );
+        }
     }
 
     // Example: Conditional branch
@@ -68,9 +67,11 @@ fn main() -> Result<()> {
     ];
     let blocks = decode_blocks(&code, 0, 0x3000, Some(2))?;
     println!("Number of basic blocks: {}", blocks.len());
-    println!("Instructions in block: {}", blocks[0].instructions.len());
-    for instruction in &blocks[0].instructions {
-        println!("  {} (RVA: 0x{:X})", instruction.mnemonic, instruction.rva);
+    if let Some(first) = blocks.first() {
+        println!("Instructions in block: {}", first.instructions.len());
+        for instruction in &first.instructions {
+            println!("  {} (RVA: 0x{:X})", instruction.mnemonic, instruction.rva);
+        }
     }
 
     println!("\n✅ All examples completed successfully!");

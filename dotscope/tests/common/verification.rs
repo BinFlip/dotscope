@@ -1,3 +1,12 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    missing_docs
+)]
+
 //! Shared integration test verification framework.
 //!
 //! Provides SSA-based semantic verification for comparing original vs deobfuscated

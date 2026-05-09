@@ -1489,7 +1489,8 @@ impl CilObject {
     /// Returns the method definition for the given token, if it exists.
     ///
     /// This is a convenience accessor that looks up a method by its metadata token
-    /// and returns a cloned reference-counted pointer to the [`Method`] object. It
+    /// and returns a cloned reference-counted pointer to the
+    /// [`Method`](crate::metadata::method::Method) object. It
     /// eliminates the need to call [`methods()`](Self::methods), unwrap the `Entry`
     /// guard, and clone the value manually.
     ///
@@ -1499,7 +1500,8 @@ impl CilObject {
     ///
     /// # Returns
     ///
-    /// A reference-counted [`Method`] if a method with the given token exists, `None` otherwise.
+    /// A reference-counted [`Method`](crate::metadata::method::Method) if a method with the
+    /// given token exists, `None` otherwise.
     ///
     /// # Examples
     ///

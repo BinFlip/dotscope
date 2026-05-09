@@ -30,9 +30,9 @@ use crate::{
         types::{HandlerTrace, TraceNode, TraceStats, TraceTerminator},
     },
     metadata::{token::Token, typesystem::PointerSize},
-    utils::BitSet,
     CilObject,
 };
+use analyssa::BitSet;
 
 /// Traces exception handler entry blocks that were not visited by the main trace.
 ///

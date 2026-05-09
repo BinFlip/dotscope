@@ -1051,7 +1051,7 @@ impl ManagedHeap {
     ///
     /// This enables virtual dispatch and type checks on BCL wrapper objects
     /// that were allocated via factory methods. The token is stored in
-    /// `original_types` and takes priority in [`get_type_token`].
+    /// `original_types` and takes priority in [`Self::get_type_token`].
     ///
     /// # Errors
     ///

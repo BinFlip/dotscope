@@ -19,10 +19,9 @@
 use std::collections::HashSet;
 
 use crate::{
-    analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId, TypeRef},
+    analysis::{CilTarget, ConstValue, MethodRef, SsaFunction, SsaOp, SsaVarId, TypeRef},
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     metadata::token::Token,
-    CilObject, Result,
 };
 
 /// Folds `accessor(<const>)` calls into `ldtoken X` for the NR
@@ -45,7 +44,7 @@ impl TokenResolverPass {
     }
 }
 
-impl SsaPass for TokenResolverPass {
+impl SsaPass<CilTarget, CompilerContext> for TokenResolverPass {
     fn name(&self) -> &'static str {
         "netreactor-token-resolver"
     }
@@ -61,10 +60,9 @@ impl SsaPass for TokenResolverPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        _method_token: Token,
+        _method: &MethodRef,
         ctx: &CompilerContext,
-        _assembly: &CilObject,
-    ) -> Result<bool> {
+    ) -> analyssa::Result<bool> {
         if self.accessor_tokens.is_empty() {
             return Ok(false);
         }

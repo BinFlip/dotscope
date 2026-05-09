@@ -23,8 +23,9 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <path-to-dotnet-assembly>", args[0]);
+    let prog = args.first().map_or("comprehensive", String::as_str);
+    let Some(path_arg) = args.get(1) else {
+        eprintln!("Usage: {prog} <path-to-dotnet-assembly>");
         eprintln!();
         eprintln!("This example demonstrates advanced dotscope capabilities:");
         eprintln!("  • Complete metadata analysis");
@@ -33,9 +34,9 @@ fn main() -> Result<()> {
         eprintln!("  • Import/export analysis");
         eprintln!("  • Instruction-level analysis");
         return Ok(());
-    }
+    };
 
-    let path = Path::new(&args[1]);
+    let path = Path::new(path_arg);
     println!("🔍 Advanced analysis of: {}", path.display());
 
     // Load assembly using the prelude's CilObject
@@ -106,7 +107,8 @@ fn print_type_analysis(assembly: &CilObject) {
             &type_def.namespace
         };
 
-        *namespaces.entry(namespace.to_string()).or_insert(0) += 1;
+        let entry = namespaces.entry(namespace.to_string()).or_insert(0u64);
+        *entry = entry.saturating_add(1);
     }
 
     println!("  Top namespaces:");
@@ -138,15 +140,15 @@ fn print_method_analysis(assembly: &CilObject) {
 
     for entry in methods.iter().take(10) {
         let method = entry.value();
-        method_stats.total += 1;
+        method_stats.total = method_stats.total.saturating_add(1);
 
         // Check if it's a static method (simplified check)
         if method.name.starts_with("op_") || method.name == ".cctor" {
-            method_stats.static_methods += 1;
+            method_stats.static_methods = method_stats.static_methods.saturating_add(1);
         }
 
         if method.name.starts_with("get_") || method.name.starts_with("set_") {
-            method_stats.properties += 1;
+            method_stats.properties = method_stats.properties.saturating_add(1);
         }
 
         println!(
@@ -156,7 +158,7 @@ fn print_method_analysis(assembly: &CilObject) {
         );
 
         if let Some(body) = method.body.get() {
-            method_stats.with_body += 1;
+            method_stats.with_body = method_stats.with_body.saturating_add(1);
 
             println!(
                 "      - IL size: {} bytes, Max stack: {}",
@@ -196,15 +198,15 @@ fn print_import_analysis(assembly: &CilObject) {
         println!("  Sample imports:");
 
         // Now we can iterate over all imports!
-        let mut method_imports = 0;
-        let mut type_imports = 0;
+        let mut method_imports: u64 = 0;
+        let mut type_imports: u64 = 0;
 
         for entry in imports.cil().iter().take(10) {
             let (token, import) = (entry.key(), entry.value());
 
             match &import.import {
                 dotscope::metadata::imports::ImportType::Method(_) => {
-                    method_imports += 1;
+                    method_imports = method_imports.saturating_add(1u64);
                     if import.namespace.is_empty() {
                         println!(
                             "    Method: {} (Token: 0x{:08X})",
@@ -221,7 +223,7 @@ fn print_import_analysis(assembly: &CilObject) {
                     }
                 }
                 dotscope::metadata::imports::ImportType::Type(_) => {
-                    type_imports += 1;
+                    type_imports = type_imports.saturating_add(1u64);
                     if import.namespace.is_empty() {
                         println!("    Type: {} (Token: 0x{:08X})", import.name, token.value());
                     } else {
@@ -237,7 +239,10 @@ fn print_import_analysis(assembly: &CilObject) {
         }
 
         if imports.total_count() > 10 {
-            println!("    ... and {} more imports", imports.total_count() - 10);
+            println!(
+                "    ... and {} more imports",
+                imports.total_count().saturating_sub(10)
+            );
         }
 
         println!("  Import summary:");
@@ -257,17 +262,17 @@ fn print_instruction_analysis(assembly: &CilObject) {
 
     // Find methods with IL to analyze
     let methods = assembly.methods();
-    let mut instruction_count = 0;
-    let mut total_il_bytes = 0;
-    let mut methods_analyzed = 0;
+    let mut instruction_count: usize = 0;
+    let mut total_il_bytes: usize = 0;
+    let mut methods_analyzed: u64 = 0;
 
     for entry in methods.iter().take(5) {
         let method = entry.value();
 
         if let Some(body) = method.body.get() {
             println!("    Analyzing method: {}", method.name);
-            total_il_bytes += body.size_code;
-            methods_analyzed += 1;
+            total_il_bytes = total_il_bytes.saturating_add(body.size_code);
+            methods_analyzed = methods_analyzed.saturating_add(1u64);
 
             // Access basic blocks - they are automatically decoded when method is loaded
             let blocks: Vec<_> = method.blocks().collect();
@@ -279,7 +284,7 @@ fn print_instruction_analysis(assembly: &CilObject) {
                 // Show first few instructions from first block
                 if let Some((_, first_block)) = blocks.first() {
                     let inst_count = first_block.instructions.len();
-                    instruction_count += inst_count;
+                    instruction_count = instruction_count.saturating_add(inst_count);
 
                     println!("      - First block has {inst_count} instructions");
                     for (i, instruction) in first_block.instructions.iter().take(3).enumerate() {
@@ -291,7 +296,7 @@ fn print_instruction_analysis(assembly: &CilObject) {
                     if first_block.instructions.len() > 3 {
                         println!(
                             "        ... and {} more instructions",
-                            first_block.instructions.len() - 3
+                            first_block.instructions.len().saturating_sub(3)
                         );
                     }
                 }

@@ -129,6 +129,7 @@ fn test_optimized_return() {
         dest: v2,
         left: v0,
         right: v1,
+        flags: None,
     }));
     block.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(v2) }));
     ssa.add_block(block);
@@ -380,6 +381,7 @@ fn test_add_ovf_signed() {
                     left: a,
                     right: b,
                     unsigned: false,
+                    flags: None,
                 });
                 blk.ret_val(dest);
             });
@@ -400,6 +402,7 @@ fn test_add_ovf_unsigned() {
                     left: a,
                     right: b,
                     unsigned: true,
+                    flags: None,
                 });
                 blk.ret_val(dest);
             });
@@ -420,6 +423,7 @@ fn test_sub_ovf_signed() {
                     left: a,
                     right: b,
                     unsigned: false,
+                    flags: None,
                 });
                 blk.ret_val(dest);
             });
@@ -440,6 +444,7 @@ fn test_sub_ovf_unsigned() {
                     left: a,
                     right: b,
                     unsigned: true,
+                    flags: None,
                 });
                 blk.ret_val(dest);
             });
@@ -460,6 +465,7 @@ fn test_mul_ovf_signed() {
                     left: a,
                     right: b,
                     unsigned: false,
+                    flags: None,
                 });
                 blk.ret_val(dest);
             });
@@ -480,6 +486,7 @@ fn test_mul_ovf_unsigned() {
                     left: a,
                     right: b,
                     unsigned: true,
+                    flags: None,
                 });
                 blk.ret_val(dest);
             });
@@ -1596,6 +1603,7 @@ fn test_is_immediately_consumed_add_left() {
         dest: v2,
         left: var,
         right: v1,
+        flags: None,
     };
     assert!(gen.is_immediately_consumed(var, Some(&next)));
 }
@@ -1614,6 +1622,7 @@ fn test_is_immediately_consumed_right_operand_simple_left() {
         dest: v2,
         left: other_var,
         right: var,
+        flags: None,
     };
     // Should be consumed because left is a simple load
     assert!(gen.is_immediately_consumed(var, Some(&next)));
@@ -1631,6 +1640,7 @@ fn test_is_immediately_consumed_right_operand_complex_left() {
         dest: v2,
         left: other_var,
         right: var,
+        flags: None,
     };
     // Should NOT be consumed because left is not a simple load
     assert!(!gen.is_immediately_consumed(var, Some(&next)));
@@ -1649,6 +1659,7 @@ fn test_dup_optimization_same_arg_twice() {
                     dest: result,
                     left: x,
                     right: x,
+                    flags: None,
                 });
                 b.ret_val(result);
             });
@@ -1670,6 +1681,7 @@ fn test_dup_optimization_same_local_twice() {
                     dest: result,
                     left: x,
                     right: x,
+                    flags: None,
                 });
                 b.ret_val(result);
             });
@@ -1692,6 +1704,7 @@ fn test_no_dup_for_different_vars() {
                     dest: result,
                     left: x,
                     right: y,
+                    flags: None,
                 });
                 b.ret_val(result);
             });
@@ -1802,6 +1815,7 @@ fn test_loop_variable_phi_nodes() {
         dest: i_next_id,
         left: i_phi_id,
         right: one_id,
+        flags: None,
     }));
     block2.add_instruction(SsaInstruction::synthetic(SsaOp::Jump { target: 1 }));
     ssa.add_block(block2);
@@ -2019,6 +2033,7 @@ fn test_fibonacci_style_loop() {
         dest: temp_id,
         left: a_phi_id,
         right: b_phi_id,
+        flags: None,
     }));
     // i_next = i + 1
     block2.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
@@ -2029,6 +2044,7 @@ fn test_fibonacci_style_loop() {
         dest: i_next_id,
         left: i_phi_id,
         right: one_id,
+        flags: None,
     }));
     block2.add_instruction(SsaInstruction::synthetic(SsaOp::Jump { target: 1 }));
     ssa.add_block(block2);
@@ -2380,11 +2396,13 @@ fn test_factorial_style_loop() {
         dest: result_next_id,
         left: result_phi_id,
         right: i_phi_id,
+        flags: None,
     }));
     block2.add_instruction(SsaInstruction::synthetic(SsaOp::Sub {
         dest: i_next_id,
         left: i_phi_id,
         right: one_id,
+        flags: None,
     }));
     block2.add_instruction(SsaInstruction::synthetic(SsaOp::Jump { target: 1 }));
     ssa.add_block(block2);
@@ -2624,11 +2642,13 @@ fn test_nested_loop_pattern() {
         dest: sum_next_id,
         left: sum_inner_id,
         right: one_id,
+        flags: None,
     }));
     block4.add_instruction(SsaInstruction::synthetic(SsaOp::Add {
         dest: j_next_id,
         left: j_phi_id,
         right: one_id,
+        flags: None,
     }));
     block4.add_instruction(SsaInstruction::synthetic(SsaOp::Jump { target: 3 }));
     ssa.add_block(block4);
@@ -2643,6 +2663,7 @@ fn test_nested_loop_pattern() {
         dest: i_next_id,
         left: i_phi_id,
         right: one_id,
+        flags: None,
     }));
     block5.add_instruction(SsaInstruction::synthetic(SsaOp::Jump { target: 1 }));
     ssa.add_block(block5);
@@ -2801,6 +2822,7 @@ fn test_accumulator_with_early_exit() {
         dest: sum_next_id,
         left: sum_phi_id,
         right: i_phi_id,
+        flags: None,
     }));
     block2.add_instruction(SsaInstruction::synthetic(SsaOp::Const {
         dest: hundred_id,
@@ -2829,6 +2851,7 @@ fn test_accumulator_with_early_exit() {
         dest: i_next_id,
         left: i_phi_id,
         right: one_id,
+        flags: None,
     }));
     block3.add_instruction(SsaInstruction::synthetic(SsaOp::Jump { target: 1 }));
     ssa.add_block(block3);

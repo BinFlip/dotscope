@@ -35,18 +35,20 @@
 
 use std::collections::BTreeMap;
 
+use analyssa::BitSet;
+
 use crate::{
     analysis::{
-        simplify_op, CmpKind, ConstValue, ConstantPropagation, MethodRef, SccpResult,
-        SimplifyResult, SsaCfg, SsaEvaluator, SsaFunction, SsaOp, SsaType, SsaVarId,
+        simplify_op, CilTarget, CmpKind, ConstValue, ConstValueCilExt, ConstantPropagation,
+        MethodRef, SccpResult, SimplifyResult, SsaCfg, SsaEvaluator, SsaFunction, SsaOp, SsaType,
+        SsaVarId,
     },
     compiler::{
         pass::{ModificationScope, SsaPass},
         CompilerContext, EventKind, EventLog,
     },
-    metadata::{token::Token, typesystem::PointerSize},
-    utils::BitSet,
-    CilObject, Result,
+    metadata::{tables::TableId, token::Token, typesystem::PointerSize},
+    CilObject,
 };
 
 /// Checks whether `token` resolves to a method whose declaring type name contains `type_name`.
@@ -397,10 +399,11 @@ impl ConstantPropagationPass {
                 } = instr.op()
                 {
                     if let Some(operand_val) = constants.get(operand) {
+                        let ptr_bytes = ptr_size.bytes() as u32;
                         let result = if *overflow_check {
-                            operand_val.convert_to_checked(target, *unsigned, ptr_size)
+                            operand_val.convert_to_checked(target, *unsigned, ptr_bytes)
                         } else {
-                            operand_val.convert_to(target, *unsigned, ptr_size)
+                            operand_val.convert_to(target, *unsigned, ptr_bytes)
                         };
                         if let Some(result) = result {
                             new_constants.push((*dest, result, block_idx, instr_idx));
@@ -798,6 +801,7 @@ impl ConstantPropagationPass {
                 left,
                 right,
                 unsigned,
+                ..
             } => {
                 let l = constants.get(left)?;
                 let r = constants.get(right)?;
@@ -822,6 +826,7 @@ impl ConstantPropagationPass {
                 left,
                 right,
                 unsigned,
+                ..
             } => {
                 let l = constants.get(left)?;
                 let r = constants.get(right)?;
@@ -846,6 +851,7 @@ impl ConstantPropagationPass {
                 left,
                 right,
                 unsigned,
+                ..
             } => {
                 let l = constants.get(left)?;
                 let r = constants.get(right)?;
@@ -906,7 +912,7 @@ impl ConstantPropagationPass {
                 };
 
                 // Only handle MethodDef tokens (same-assembly methods)
-                if !callee_token.is_table(crate::metadata::tables::TableId::MethodDef) {
+                if !callee_token.is_table(TableId::MethodDef) {
                     continue;
                 }
 
@@ -984,6 +990,7 @@ impl ConstantPropagationPass {
                     left,
                     right,
                     unsigned,
+                    ..
                 } = instr.op()
                 {
                     let lval = constants
@@ -1392,8 +1399,8 @@ impl ConstantPropagationPass {
 
         for (block_idx, instr_idx, instr) in ssa.iter_instructions() {
             let (dest, operand, is_neg) = match instr.op() {
-                SsaOp::Neg { dest, operand } => (*dest, *operand, true),
-                SsaOp::Not { dest, operand } => (*dest, *operand, false),
+                SsaOp::Neg { dest, operand, .. } => (*dest, *operand, true),
+                SsaOp::Not { dest, operand, .. } => (*dest, *operand, false),
                 _ => continue,
             };
 
@@ -1439,10 +1446,12 @@ impl ConstantPropagationPass {
                     SsaOp::Neg {
                         dest: d,
                         operand: inner,
+                        ..
                     } if is_neg => (*d, *inner),
                     SsaOp::Not {
                         dest: d,
                         operand: inner,
+                        ..
                     } if !is_neg => (*d, *inner),
                     _ => break,
                 };
@@ -1498,11 +1507,13 @@ impl ConstantPropagationPass {
                             instr.set_op(SsaOp::Neg {
                                 dest: t.outermost_dest,
                                 operand: t.innermost_operand,
+                                flags: None,
                             });
                         } else {
                             instr.set_op(SsaOp::Not {
                                 dest: t.outermost_dest,
                                 operand: t.innermost_operand,
+                                flags: None,
                             });
                         }
                     }
@@ -1738,7 +1749,7 @@ impl ConstantPropagationPass {
     }
 }
 
-impl SsaPass for ConstantPropagationPass {
+impl SsaPass<CilTarget, CompilerContext> for ConstantPropagationPass {
     fn name(&self) -> &'static str {
         "constant-propagation"
     }
@@ -1754,12 +1765,15 @@ impl SsaPass for ConstantPropagationPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("ConstantPropagationPass requires an assembly"))?;
+        let method_token = method.0;
         let mut changes = EventLog::new();
-        let ptr_size = PointerSize::from_pe(assembly.file().pe().is_64bit);
+        let ptr_size = PointerSize::from_is_64bit(assembly.file().pe().is_64bit);
 
         // Run constant propagation and transformation
         let constants = Self::run_constant_propagation(
@@ -1768,17 +1782,17 @@ impl SsaPass for ConstantPropagationPass {
             &mut changes,
             ptr_size,
             self.max_iterations,
-            assembly,
+            &assembly,
         );
 
         // Cache the constants we found for other passes
         for (var, value) in &constants {
-            ctx.add_known_value(method_token, *var, value.clone());
+            host.add_known_value(method_token, *var, value.clone());
         }
 
         let changed = !changes.is_empty();
         if changed {
-            ctx.events.merge(&changes);
+            host.events.merge(&changes);
         }
         Ok(changed)
     }

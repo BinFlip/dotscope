@@ -34,14 +34,15 @@ use std::collections::BTreeMap;
 
 use crate::{
     analysis::{
-        DefSite, ReturnInfo, SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId, VariableOrigin,
+        CilTarget, DefSite, MethodRef, ReturnInfo, SsaFunction, SsaInstruction, SsaOp, SsaType,
+        SsaVarId, VariableOrigin,
     },
     compiler::{
         pass::{PassCapability, SsaPass},
         CompilerContext, EventKind, EventLog,
     },
     metadata::{tables::MemberRefSignature, token::Token, typesystem::CilTypeReference},
-    CilObject, Result,
+    CilObject,
 };
 
 /// A candidate call site for inlining.
@@ -705,7 +706,7 @@ impl InliningPass {
     }
 }
 
-impl SsaPass for InliningPass {
+impl SsaPass<CilTarget, CompilerContext> for InliningPass {
     fn name(&self) -> &'static str {
         "InliningPass"
     }
@@ -729,12 +730,15 @@ impl SsaPass for InliningPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly = host
+            .assembly()
+            .ok_or_else(|| analyssa::Error::new("InliningPass requires an assembly"))?;
+
         // Create method-specific inlining context
-        let mut inline_ctx = InliningContext::new(self, ssa, method_token, ctx, assembly);
+        let mut inline_ctx = InliningContext::new(self, ssa, method.0, host, &assembly);
 
         // Find all candidates
         let candidates = inline_ctx.find_candidates();
@@ -750,7 +754,7 @@ impl SsaPass for InliningPass {
         // Merge changes back to the analysis context
         let changed = inline_ctx.has_changes();
         if changed {
-            ctx.events.merge(&inline_ctx.into_changes());
+            host.events.merge(&inline_ctx.into_changes());
         }
         Ok(changed)
     }

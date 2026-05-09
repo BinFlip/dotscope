@@ -77,6 +77,12 @@ impl MethodRef {
     }
 }
 
+impl From<Token> for MethodRef {
+    fn from(token: Token) -> Self {
+        Self(token)
+    }
+}
+
 impl fmt::Display for MethodRef {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "MethodRef({})", self.0)
@@ -152,7 +158,6 @@ impl fmt::Display for SigRef {
 /// ```
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum SsaType {
-    // ========== Primitives ==========
     /// No return value (void).
     Void,
 
@@ -198,7 +203,6 @@ pub enum SsaType {
     /// Unicode character (System.Char).
     Char,
 
-    // ========== Reference Types ==========
     /// System.Object reference.
     Object,
 
@@ -227,7 +231,6 @@ pub enum SsaType {
     /// Managed reference (byref) to a type.
     ByRef(Box<SsaType>),
 
-    // ========== Special Types ==========
     /// Typed reference (System.TypedReference).
     TypedReference,
 
@@ -244,7 +247,6 @@ pub enum SsaType {
     /// Function pointer type.
     FnPtr(Box<FnPtrSig>),
 
-    // ========== Analysis Types ==========
     /// Known null constant (more precise than Object).
     Null,
 

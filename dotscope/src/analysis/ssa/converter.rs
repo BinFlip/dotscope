@@ -40,7 +40,7 @@ use crate::{
     analysis::{
         cfg::ControlFlowGraph,
         ssa::{
-            decompose::decompose_instruction, liveness, phis::place_pruned_phis,
+            decompose::decompose_instruction, liveness, place_pruned_phis,
             resolve_corelib_valuetype, ConstValue, DefSite, PhiNode, SimulationResult, SsaBlock,
             SsaFunction, SsaInstruction, SsaOp, SsaType, SsaVarId, StackSimulator, StackSlot,
             StackSlotSource, TypeProvider, UseSite, VariableOrigin,
@@ -53,11 +53,11 @@ use crate::{
         token::Token,
         typesystem::CilTypeReference,
     },
-    utils::{
-        graph::{algorithms::DominatorTree, NodeId},
-        BitSet,
-    },
     CilObject, Error, Result,
+};
+use analyssa::{
+    graph::{algorithms::DominatorTree, NodeId},
+    BitSet,
 };
 
 /// A variable definition record during SSA construction.
@@ -344,6 +344,25 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             | SsaOp::Shr { .. }
             | SsaOp::Neg { .. }
             | SsaOp::Not { .. }
+            // Rotate operations
+            | SsaOp::Rol { .. }
+            | SsaOp::Ror { .. }
+            | SsaOp::Rcl { .. }
+            | SsaOp::Rcr { .. }
+            // Bit manipulation operations
+            | SsaOp::BSwap { .. }
+            | SsaOp::BRev { .. }
+            | SsaOp::BitScanForward { .. }
+            | SsaOp::BitScanReverse { .. }
+            | SsaOp::Popcount { .. }
+            | SsaOp::Parity { .. }
+            // Atomic read-modify-write operations
+            | SsaOp::CmpXchg { .. }
+            | SsaOp::AtomicRmw { .. }
+            // Select produces values of varying types
+            | SsaOp::Select { .. }
+            // ReadFlags reads flag bits into an integer
+            | SsaOp::ReadFlags { .. }
             // Sizeof produces int32
             | SsaOp::SizeOf { .. } => SsaType::I32,
 
@@ -493,6 +512,10 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
             | SsaOp::Volatile
             | SsaOp::Unaligned { .. }
             | SsaOp::TailPrefix
+            | SsaOp::BranchFlags { .. }
+            | SsaOp::Fence { .. }
+            | SsaOp::InterruptReturn
+            | SsaOp::Unreachable
             | SsaOp::Readonly => SsaType::Unknown,
         }
     }
@@ -2780,6 +2803,8 @@ impl<'a, 'cfg> SsaConverter<'a, 'cfg> {
 mod tests {
     use super::*;
 
+    use std::collections::BTreeSet;
+
     use crate::{
         assembly::{decode_blocks, InstructionAssembler},
         test::TestTypeProvider,
@@ -3402,8 +3427,7 @@ mod tests {
             .expect("SSA construction failed");
 
         // For each phi node, verify all operand values reference valid variables
-        let var_ids: std::collections::BTreeSet<_> =
-            ssa.variables().iter().map(|v| v.id()).collect();
+        let var_ids: BTreeSet<_> = ssa.variables().iter().map(|v| v.id()).collect();
 
         for phi in ssa.all_phi_nodes() {
             for operand in phi.operands() {
@@ -3903,8 +3927,8 @@ mod tests {
             .expect("SSA construction failed");
 
         // Collect all variables used in the SSA
-        let mut all_uses = std::collections::BTreeSet::new();
-        let mut all_defs = std::collections::BTreeSet::new();
+        let mut all_uses = BTreeSet::new();
+        let mut all_defs = BTreeSet::new();
 
         for block in ssa.blocks() {
             for instr in block.instructions() {

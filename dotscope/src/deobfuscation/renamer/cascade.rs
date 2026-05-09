@@ -25,7 +25,7 @@ use crate::{
         utils::{is_obfuscated_name, is_special_name},
     },
     metadata::{
-        tables::{FieldRaw, MethodDefRaw, ParamRaw, TableId, TypeDefRaw},
+        tables::{FieldRaw, MetadataTable, MethodDefRaw, ParamRaw, TableId, TypeDefRaw},
         token::Token,
     },
     CilObject, Result,
@@ -1010,7 +1010,7 @@ impl<'a> CascadeRenamer<'a> {
 /// belonging to that method. The range extends to the next method's `param_list`
 /// or the end of the Param table.
 fn build_param_owner_map(
-    methoddef_table: &crate::metadata::tables::MetadataTable<'_, MethodDefRaw>,
+    methoddef_table: &MetadataTable<'_, MethodDefRaw>,
     param_row_count: u32,
 ) -> HashMap<u32, u32> {
     let mut map = HashMap::new();
@@ -1049,7 +1049,7 @@ fn build_param_owner_map(
 /// Works for both MethodDef and Field tables by using a closure to extract
 /// the list-start column (`method_list` or `field_list`) from each TypeDef row.
 fn build_member_owner_map(
-    typedef_table: &crate::metadata::tables::MetadataTable<'_, TypeDefRaw>,
+    typedef_table: &MetadataTable<'_, TypeDefRaw>,
     member_row_count: u32,
     get_list_start: fn(&TypeDefRaw) -> u32,
 ) -> HashMap<u32, u32> {
@@ -1128,6 +1128,8 @@ fn generate_phase_label_from_context(
 
 #[cfg(test)]
 mod tests {
+    use std::path::Path;
+
     use crate::{
         deobfuscation::{
             renamer::{
@@ -1238,7 +1240,7 @@ mod tests {
     #[test]
     fn test_cascade_on_bitmono_sample() {
         let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;
         }
@@ -1266,7 +1268,7 @@ mod tests {
     #[test]
     fn test_cascade_rename_patterns() {
         let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;
         }
@@ -1337,7 +1339,7 @@ mod tests {
     #[test]
     fn test_cascade_preserves_known_names() {
         let path = "tests/samples/packers/bitmono/0.39.0/original.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: original sample not found");
             return;
         }
@@ -1364,7 +1366,7 @@ mod tests {
     #[test]
     fn test_cascade_entry_counts() {
         let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;
         }
@@ -1416,7 +1418,7 @@ mod tests {
     #[test]
     fn test_cascade_respects_config() {
         let path = "tests/samples/packers/bitmono/0.39.0/bitmono_renamer.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;
         }
@@ -1458,7 +1460,7 @@ mod tests {
     #[test]
     fn test_cascade_ssa_context_populated() {
         let path = "tests/samples/packers/confuserex/1.6.0/original.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;
         }
@@ -1508,7 +1510,7 @@ mod tests {
     #[test]
     fn test_cascade_context_quality_on_obfuscated() {
         let path = "tests/samples/packers/confuserex/1.6.0/mkaring_maximum.exe";
-        if !std::path::Path::new(path).exists() {
+        if !Path::new(path).exists() {
             eprintln!("Skipping: sample not found");
             return;
         }
@@ -2014,9 +2016,7 @@ mod tests {
         eprintln!("  DIAGNOSTIC CONTEXT DUMP — original.exe (clean, unobfuscated)");
         eprintln!("========================================================================");
 
-        // ---------------------------------------------------------------
         // 1. Enumerate ALL types, methods, fields, params in metadata
-        // ---------------------------------------------------------------
         let tables = assembly.tables().expect("assembly should have tables");
         let strings = assembly.strings().expect("assembly should have strings");
 
@@ -2086,9 +2086,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 2. Build infrastructure (SSA + call graph) via CascadeRenamer
-        // ---------------------------------------------------------------
         let provider = SimpleProvider::new();
         let fallback = SimpleProvider::new();
         let config = SmartRenameConfig::default();
@@ -2137,9 +2135,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 3. For EACH method with SSA: dump all extracted features
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  PER-METHOD SSA FEATURE EXTRACTION");
         eprintln!("========================================================================");
@@ -2270,9 +2266,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 4. build_method_context() for each method
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  FULL RENAME CONTEXT (build_method_context)");
         eprintln!("========================================================================");
@@ -2329,9 +2323,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 5. Build param contexts
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  PARAMETER CONTEXTS");
         eprintln!("========================================================================");
@@ -2367,9 +2359,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 6. Build field contexts
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  FIELD CONTEXTS");
         eprintln!("========================================================================");
@@ -2395,9 +2385,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 7. Build type contexts
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  TYPE CONTEXTS");
         eprintln!("========================================================================");
@@ -2424,9 +2412,7 @@ mod tests {
             }
         }
 
-        // ---------------------------------------------------------------
         // 8. Run full cascade and dump entries
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  FULL CASCADE EXECUTION");
         eprintln!("========================================================================");
@@ -2449,9 +2435,7 @@ mod tests {
             eprintln!("  (No entries -- clean assembly has no obfuscated names, as expected)");
         }
 
-        // ---------------------------------------------------------------
         // 9. Call graph analysis
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  CALL GRAPH ANALYSIS");
         eprintln!("========================================================================");
@@ -2471,9 +2455,7 @@ mod tests {
             eprintln!("  (No call graph available)");
         }
 
-        // ---------------------------------------------------------------
         // 10. Summary statistics
-        // ---------------------------------------------------------------
         eprintln!("\n========================================================================");
         eprintln!("  SUMMARY");
         eprintln!("========================================================================");

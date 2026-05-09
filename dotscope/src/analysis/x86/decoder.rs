@@ -87,7 +87,7 @@ pub fn x86_decode_all(
 
 /// Result of traversal-based decoding.
 ///
-/// This struct is returned by [`x86_decode_function_traversal`] and contains
+/// This struct is returned by [`x86_decode_traversal`] and contains
 /// all instructions discovered by following control flow from the entry point.
 ///
 /// # Completeness
@@ -329,7 +329,7 @@ pub fn x86_decode_traversal(
 
 /// Determines the byte size of a native x86/x64 function body.
 ///
-/// Uses traversal-based decoding ([`x86_decode_function_traversal`]) to follow
+/// Uses traversal-based decoding ([`x86_decode_traversal`]) to follow
 /// control-flow edges from the entry point, making it robust against
 /// anti-disassembly tricks (junk bytes, embedded data, overlapping
 /// instructions) because only code reachable through actual control flow is

@@ -11,9 +11,12 @@ use std::{
 
 use log::{debug, info, warn};
 
+use analyssa::scheduling::SsaPass as AnalyssaSsaPass;
+
 use crate::{
+    analysis::{CilTarget, MethodRef},
     cilassembly::{expand_type_tokens, CleanupRequest},
-    compiler::{DeadMethodEliminationPass, EventLog, PassScheduler, SsaPass},
+    compiler::{CompilerContext, DeadMethodEliminationPass, EventLog, PassScheduler},
     deobfuscation::{
         cleanup::{build_cleanup_request, execute_cleanup},
         context::AnalysisContext,
@@ -559,7 +562,14 @@ impl<'a> PipelineRun<'a> {
     ) -> Result<(CilObject, DeobfuscationResult)> {
         if ctx.config.cleanup.remove_unused_methods {
             let dead_method_pass = DeadMethodEliminationPass::new();
-            let _ = dead_method_pass.run_global(&ctx, &assembly_arc)?;
+            // Ensure the assembly handle is set on the context so the
+            // global pass can reach it via the analyssa host trait.
+            ctx.compiler.set_assembly(assembly_arc.clone());
+            let _ = AnalyssaSsaPass::<CilTarget, CompilerContext>::run_global(
+                &dead_method_pass,
+                &ctx.compiler,
+            )
+            .map_err(|e| Error::SsaError(e.0))?;
         }
 
         let ssa_call_graph = ctx.build_ssa_call_graph();
@@ -638,9 +648,20 @@ impl<'a> PipelineRun<'a> {
         let pass = NeutralizationPass::new(&all_tokens);
         let mut neutralized = false;
         let method_tokens: Vec<Token> = ctx.ssa_functions.iter().map(|e| *e.key()).collect();
+        // Ensure the assembly handle is set on the context so passes can
+        // reach it through the analyssa host trait.
+        ctx.set_assembly(assembly_arc.clone());
         for method_token in &method_tokens {
             if let Some(mut ssa) = ctx.ssa_functions.get_mut(method_token) {
-                if pass.run_on_method(&mut ssa, *method_token, ctx, assembly_arc)? {
+                let method_ref = MethodRef::from(*method_token);
+                if AnalyssaSsaPass::<CilTarget, CompilerContext>::run_on_method(
+                    &pass,
+                    &mut ssa,
+                    &method_ref,
+                    ctx,
+                )
+                .map_err(|e| Error::SsaError(e.0))?
+                {
                     neutralized = true;
                     // Ensure neutralized methods get code-generated. Without this,
                     // methods modified only by neutralization keep their original IL
@@ -670,6 +691,13 @@ impl<'a> PipelineRun<'a> {
         if let Some(pool) = ctx.template_pool.get() {
             pool.release();
         }
+        // Drop the assembly reference held by `CompilerContext` so the
+        // strong-count can drop to one. The analyssa scheduler's
+        // `run_pipeline` already clears it on its own exit, but nested
+        // global-pass invocations (e.g. dead-method elimination outside
+        // the scheduler) and re-entrant pipeline iterations can leave a
+        // stray reference here.
+        ctx.compiler.clear_assembly();
         Arc::try_unwrap(assembly_arc).map_err(|_| {
             Error::Deobfuscation("Cannot unwrap assembly - still has other references".into())
         })

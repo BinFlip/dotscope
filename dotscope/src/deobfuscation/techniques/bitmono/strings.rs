@@ -54,12 +54,14 @@ use std::{
 #[cfg(feature = "legacy-crypto")]
 use crate::deobfuscation::passes::bitmono::StringDecryptionPass;
 use crate::{
-    analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, ConstValue, SsaFunction, SsaOp, SsaVarId},
     cilassembly::CleanupRequest,
-    compiler::{PassPhase, SsaPass},
+    compiler::{CompilerContext, PassPhase, SsaPass},
     deobfuscation::{
+        config::EngineConfig,
         context::AnalysisContext,
         techniques::{Detection, Evidence, Technique, TechniqueCategory},
+        utils::build_init_array_map,
     },
     metadata::{
         tables::{MemberRefRaw, TableId, TypeDefRaw, TypeRefRaw},
@@ -117,12 +119,12 @@ impl Technique for BitMonoStrings {
     }
 
     #[cfg(feature = "legacy-crypto")]
-    fn enabled(&self, _config: &crate::deobfuscation::config::EngineConfig) -> bool {
+    fn enabled(&self, _config: &EngineConfig) -> bool {
         true
     }
 
     #[cfg(not(feature = "legacy-crypto"))]
-    fn enabled(&self, _config: &crate::deobfuscation::config::EngineConfig) -> bool {
+    fn enabled(&self, _config: &EngineConfig) -> bool {
         false
     }
 
@@ -244,7 +246,7 @@ impl Technique for BitMonoStrings {
         _ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<StringFindings>() else {
             return Vec::new();
         };
@@ -260,7 +262,7 @@ impl Technique for BitMonoStrings {
         _ctx: &AnalysisContext,
         _detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         Vec::new()
     }
 
@@ -318,7 +320,7 @@ fn collect_constant_data_tokens(
     }
 
     // Build mapping: byte_array_field_token → backing_field_token
-    let init_map = crate::deobfuscation::utils::build_init_array_map(assembly);
+    let init_map = build_init_array_map(assembly);
     if init_map.is_empty() {
         return (constant_data_fields, constant_data_types);
     }

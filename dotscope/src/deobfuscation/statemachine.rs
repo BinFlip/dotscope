@@ -42,13 +42,18 @@
 //! - `init_ops = [Mul, Mul, Mul, Mul]`
 //! - `slot_ops = [Xor, Add, Xor, Sub]` (incremental mode operations)
 
-use std::{collections::HashSet, sync::Arc};
+use std::{
+    collections::HashSet,
+    fmt::{self, Debug, Display, Formatter},
+    sync::Arc,
+};
+
+use analyssa::graph::{algorithms::DominatorTree, NodeId};
 
 use crate::{
     analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
     compiler::CompilerContext,
     metadata::token::Token,
-    utils::graph::{algorithms::DominatorTree, NodeId},
     CilObject,
 };
 
@@ -160,7 +165,7 @@ pub struct CfgInfo<'a> {
 ///     }
 /// }
 /// ```
-pub trait StateMachineProvider: Send + Sync + std::fmt::Debug {
+pub trait StateMachineProvider: Send + Sync + Debug {
     /// Returns the name of this state machine provider (for diagnostics).
     fn name(&self) -> &'static str;
 
@@ -394,8 +399,8 @@ pub enum SsaOpKind {
     Neg,
 }
 
-impl std::fmt::Display for SsaOpKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+impl Display for SsaOpKind {
+    fn fmt(&self, f: &mut Formatter<'_>) -> fmt::Result {
         match self {
             Self::Xor => write!(f, "xor"),
             Self::Add => write!(f, "add"),

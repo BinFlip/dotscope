@@ -245,10 +245,6 @@ impl<T> HeapChanges<T> {
     }
 }
 
-// =============================================================================
-// String heap specialization
-// =============================================================================
-
 impl HeapChanges<String> {
     /// Creates a new string heap changes tracker.
     pub fn new_strings() -> Self {
@@ -299,10 +295,6 @@ impl HeapChanges<String> {
     }
 }
 
-// =============================================================================
-// Blob heap specialization
-// =============================================================================
-
 impl HeapChanges<Vec<u8>> {
     /// Creates a new blob heap changes tracker.
     pub fn new_blobs() -> Self {
@@ -333,10 +325,6 @@ impl HeapChanges<Vec<u8>> {
             .sum()
     }
 }
-
-// =============================================================================
-// GUID heap specialization
-// =============================================================================
 
 impl HeapChanges<[u8; 16]> {
     /// Creates a new GUID heap changes tracker.

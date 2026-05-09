@@ -11,9 +11,10 @@ use std::sync::{
 
 use dashmap::DashMap;
 
+use analyssa::graph::{algorithms, DirectedGraph, IndexedGraph, NodeId};
+
 use crate::{
     metadata::{dependencies::AssemblyDependency, identity::AssemblyIdentity},
-    utils::graph::{algorithms, DirectedGraph, IndexedGraph, NodeId},
     Error, Result,
 };
 
@@ -751,11 +752,13 @@ impl Default for AssemblyDependencyGraph {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    use std::{collections::HashMap, thread};
+
     use crate::{
         metadata::dependencies::DependencyType,
         test::helpers::dependencies::{create_test_dependency, create_test_identity},
     };
-    use std::thread;
 
     #[test]
     fn test_dependency_graph_creation() {
@@ -980,7 +983,7 @@ mod tests {
         assert_eq!(order.len(), 6);
 
         // Get positions
-        let positions: std::collections::HashMap<String, usize> = order
+        let positions: HashMap<String, usize> = order
             .iter()
             .enumerate()
             .map(|(i, id)| (id.name.clone(), i))

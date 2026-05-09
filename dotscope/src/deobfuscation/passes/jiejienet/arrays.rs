@@ -39,10 +39,9 @@
 //! ```
 
 use crate::{
-    analysis::{ConstValue, FieldRef, MethodRef, SsaFunction, SsaOp},
+    analysis::{CilTarget, ConstValue, FieldRef, MethodRef, SsaFunction, SsaOp},
     compiler::{CompilerContext, EventKind, ModificationScope, SsaPass},
     metadata::token::Token,
-    CilObject, Result,
 };
 
 /// SSA pass that replaces JIEJIE.NET field handle container calls with direct field handle constants
@@ -87,7 +86,7 @@ impl ArrayInitRestorationPass {
     }
 }
 
-impl SsaPass for ArrayInitRestorationPass {
+impl SsaPass<CilTarget, CompilerContext> for ArrayInitRestorationPass {
     fn name(&self) -> &'static str {
         "jiejie-array-init-restore"
     }
@@ -103,10 +102,9 @@ impl SsaPass for ArrayInitRestorationPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        _method_token: Token,
+        _method: &MethodRef,
         ctx: &CompilerContext,
-        _assembly: &CilObject,
-    ) -> Result<bool> {
+    ) -> analyssa::Result<bool> {
         if self.field_tokens.is_empty() {
             return Ok(false);
         }

@@ -5,17 +5,18 @@
 
 use std::{fmt::Write, sync::OnceLock};
 
+use analyssa::{
+    graph::{
+        algorithms::{self, DominatorTree},
+        DirectedGraph, EdgeId, GraphBase, NodeId, Predecessors, RootedGraph, Successors,
+    },
+    BitSet,
+};
+
 use crate::{
     analysis::cfg::{detect_loops, CfgEdge, CfgEdgeKind, LoopForest, LoopInfo},
     assembly::{BasicBlock, FlowType, Operand},
-    utils::{
-        escape_dot,
-        graph::{
-            algorithms::{self, DominatorTree},
-            DirectedGraph, EdgeId, GraphBase, NodeId, Predecessors, RootedGraph, Successors,
-        },
-        BitSet,
-    },
+    utils::escape_dot,
     Error::GraphError,
     Result,
 };

@@ -23,8 +23,9 @@ use std::{env, fs, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 2 {
-        eprintln!("Usage: {} <path-to-dotnet-assembly>", args[0]);
+    let prog = args.first().map_or("lowlevel", String::as_str);
+    let Some(path_arg) = args.get(1) else {
+        eprintln!("Usage: {prog} <path-to-dotnet-assembly>");
         eprintln!();
         eprintln!("This example demonstrates low-level API usage for binary parsing:");
         eprintln!("  • Direct PE structure parsing");
@@ -32,11 +33,11 @@ fn main() -> Result<()> {
         eprintln!("  • Working with byte buffers");
         eprintln!("  • Understanding dotscope internals");
         eprintln!();
-        eprintln!("Recommended: {} tests/samples/WindowsBase.dll", args[0]);
+        eprintln!("Recommended: {prog} tests/samples/WindowsBase.dll");
         return Ok(());
-    }
+    };
 
-    let path = Path::new(&args[1]);
+    let path = Path::new(path_arg);
     println!("🔧 Low-level analysis of: {}", path.display());
 
     // Step 1: Load the entire assembly into memory as Vec<u8>
@@ -64,7 +65,9 @@ fn main() -> Result<()> {
 
     // Step 3: Parse CLR metadata using low-level Cor20Header struct
     println!("\n=== Step 3: Parsing CLR Header using Cor20Header ===");
-    let (clr_rva, clr_size) = file.clr().expect("File should have CLR runtime header");
+    let (clr_rva, clr_size) = file
+        .clr()
+        .ok_or_else(|| dotscope::Error::Other("File should have CLR runtime header".into()))?;
     println!("CLR Runtime Header: RVA=0x{clr_rva:08X}, Size={clr_size} bytes");
 
     // Convert RVA to file offset and read CLR header
@@ -127,8 +130,12 @@ fn main() -> Result<()> {
         .find(|stream| stream.name == "#Strings")
     {
         println!("\n--- #Strings Stream ---");
-        let strings_data = &metadata_data[strings_stream.offset as usize
-            ..(strings_stream.offset + strings_stream.size) as usize];
+        let start = strings_stream.offset as usize;
+        let end = start.saturating_add(strings_stream.size as usize);
+        let Some(strings_data) = metadata_data.get(start..end) else {
+            println!("#Strings stream extends past metadata buffer; skipping");
+            return Ok(());
+        };
 
         match Strings::from(strings_data) {
             Ok(strings) => {
@@ -158,8 +165,12 @@ fn main() -> Result<()> {
         .find(|stream| stream.name == "#Blob")
     {
         println!("\n--- #Blob Stream ---");
-        let blob_data = &metadata_data
-            [blob_stream.offset as usize..(blob_stream.offset + blob_stream.size) as usize];
+        let start = blob_stream.offset as usize;
+        let end = start.saturating_add(blob_stream.size as usize);
+        let Some(blob_data) = metadata_data.get(start..end) else {
+            println!("#Blob stream extends past metadata buffer; skipping");
+            return Ok(());
+        };
 
         match Blob::from(blob_data) {
             Ok(blob) => {
@@ -186,8 +197,12 @@ fn main() -> Result<()> {
         .find(|stream| stream.name == "#US")
     {
         println!("\n--- #US Stream (User Strings) ---");
-        let us_data =
-            &metadata_data[us_stream.offset as usize..(us_stream.offset + us_stream.size) as usize];
+        let start = us_stream.offset as usize;
+        let end = start.saturating_add(us_stream.size as usize);
+        let Some(us_data) = metadata_data.get(start..end) else {
+            println!("#US stream extends past metadata buffer; skipping");
+            return Ok(());
+        };
 
         match UserStrings::from(us_data) {
             Ok(user_strings) => {
@@ -214,8 +229,12 @@ fn main() -> Result<()> {
         .find(|stream| stream.name == "#~")
     {
         println!("\n--- #~ Stream (Metadata Tables) using TablesHeader struct ---");
-        let tables_data = &metadata_data
-            [tables_stream.offset as usize..(tables_stream.offset + tables_stream.size) as usize];
+        let start = tables_stream.offset as usize;
+        let end = start.saturating_add(tables_stream.size as usize);
+        let Some(tables_data) = metadata_data.get(start..end) else {
+            println!("#~ stream extends past metadata buffer; skipping");
+            return Ok(());
+        };
 
         match TablesHeader::from(tables_data) {
             Ok(tables_header) => {
@@ -240,7 +259,10 @@ fn main() -> Result<()> {
                     println!("    {:?}: {} rows", summary.table_id, summary.row_count);
                 }
                 if summaries.len() > 10 {
-                    println!("    ... and {} more tables", summaries.len() - 10);
+                    println!(
+                        "    ... and {} more tables",
+                        summaries.len().saturating_sub(10)
+                    );
                 }
             }
             Err(e) => println!("Failed to parse TablesHeader: {e}"),

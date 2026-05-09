@@ -69,12 +69,9 @@
 //! }
 //! ```
 
-mod algebraic;
 mod callgraph;
 mod cfg;
 mod dataflow;
-mod defuse;
-mod range;
 mod ssa;
 mod taint;
 
@@ -82,8 +79,6 @@ mod taint;
 mod x86;
 
 // Re-export primary public types at module level
-pub use crate::utils::graph::NodeId;
-pub use algebraic::{simplify_op, SimplifyResult};
 pub use callgraph::{
     CallGraph, CallGraphNode, CallGraphStats, CallResolver, CallSite, CallTarget, CallType,
     ResolverStats,
@@ -93,18 +88,30 @@ pub use dataflow::{
     AnalysisResults, ConstantPropagation, DataFlowAnalysis, DataFlowSolver, Direction,
     LiveVariables, LivenessResult, ReachingDefinitions, ScalarValue, SccpResult,
 };
-pub use defuse::{DefUseIndex, Location};
-pub use range::ValueRange;
+
+// Direct re-exports from analyssa for the formerly-shimmed analyses.
+pub use analyssa::analysis::algebraic::simplify_op;
+pub use analyssa::analysis::defuse::Location;
+
+/// CIL-defaulted alias of [`analyssa::analysis::algebraic::SimplifyResult`].
+pub type SimplifyResult<T = ssa::CilTarget> = analyssa::analysis::algebraic::SimplifyResult<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::defuse::DefUseIndex`].
+pub type DefUseIndex<T = ssa::CilTarget> = analyssa::analysis::defuse::DefUseIndex<T>;
+/// CIL-defaulted alias of [`analyssa::analysis::range::ValueRange`].
+pub type ValueRange = analyssa::analysis::range::ValueRange;
+pub use analyssa::graph::NodeId;
 #[cfg(feature = "z3")]
 pub use ssa::Z3Solver;
 pub use ssa::{
-    resolve_corelib_valuetype, AbstractValue, BinaryOpKind, CmpKind, ConstValue, ControlFlow,
-    DefSite, FieldRef, MethodPurity, MethodRef, PhiAnalyzer, PhiNode, PhiOperand, ReturnInfo,
-    SsaBlock, SsaCfg, SsaConverter, SsaEvaluator, SsaExceptionHandler, SsaFunction,
-    SsaFunctionBuilder, SsaInstruction, SsaOp, SsaType, SsaVarId, SsaVariable, SymbolicEvaluator,
-    SymbolicExpr, SymbolicOp, TypeClass, TypeContext, TypeProvider, TypeRef, UnaryOpKind, UseSite,
-    ValueResolver, VariableOrigin,
+    resolve_corelib_valuetype, AbstractValue, BinaryOpKind, CilTarget, CmpKind, ConstEvaluator,
+    ConstValue, ConstValueCilExt, ControlFlow, DefSite, FieldRef, MethodPurity, MethodRef,
+    PhiAnalyzer, PhiNode, PhiOperand, ReturnInfo, SsaBlock, SsaCfg, SsaConverter, SsaEvaluator,
+    SsaExceptionHandler, SsaExceptionHandlerCilExt, SsaFunction, SsaFunctionBuilder,
+    SsaInstruction, SsaOp, SsaOpCilExt, SsaType, SsaVarId, SsaVariable, SymbolicEvaluator,
+    SymbolicExpr, SymbolicOp, Target, TypeClass, TypeContext, TypeProvider, TypeRef, UnaryOpKind,
+    UseSite, ValueResolver, VariableOrigin,
 };
+pub use ssa::{SsaFunctionCilExt, SsaFunctionSemanticsExt};
 pub use taint::{
     cff_taint_config, find_token_dependencies, PhiTaintMode, TaintAnalysis, TaintConfig,
     TokenTaintBuilder,
@@ -112,6 +119,7 @@ pub use taint::{
 
 // Re-export crate-internal types (used by other crate modules via crate::analysis::X)
 #[cfg(feature = "compiler")]
+#[allow(unused_imports)]
 pub(crate) use cfg::SsaLoopAnalysis;
 
 #[cfg(feature = "x86")]
@@ -124,10 +132,12 @@ pub use x86::{
 
 #[cfg(test)]
 mod tests {
+    use analyssa::graph::NodeId;
+
     use crate::{
         analysis::{CfgEdgeKind, ControlFlowGraph, SsaConverter, SsaFunction, VariableOrigin},
         assembly::{decode_blocks, InstructionAssembler},
-        utils::graph::NodeId,
+        test::TestTypeProvider,
     };
 
     /// Helper to build bytecode and decode it into a CFG.
@@ -144,7 +154,7 @@ mod tests {
             cfg,
             num_args,
             num_locals,
-            &crate::test::TestTypeProvider::new(num_args, num_locals),
+            &TestTypeProvider::new(num_args, num_locals),
         )
         .expect("SSA construction failed")
     }

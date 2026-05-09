@@ -88,16 +88,22 @@
 use std::{any::Any, collections::HashSet, sync::Arc};
 
 use crate::{
+    analysis::CilTarget,
     assembly::Operand,
     cilassembly::GeneratorConfig,
-    compiler::{EventKind, EventLog},
-    deobfuscation::techniques::{
-        netreactor::{helpers::find_resources_referenced_by_methods, hooks},
-        Detection, Detections, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+    compiler::{CompilerContext, EventKind, EventLog, PassPhase, SsaPass},
+    deobfuscation::{
+        context::AnalysisContext,
+        passes::netreactor::ResourceShimRewritePass,
+        techniques::{
+            netreactor::{helpers::find_resources_referenced_by_methods, hooks},
+            Detection, Detections, Evidence, Technique, TechniqueCategory, WorkingAssembly,
+        },
     },
-    emulation::{EmulationOutcome, ProcessBuilder},
+    emulation::{CapturedAssembly, EmulationOutcome, ProcessBuilder},
     error::Error,
     metadata::{
+        method::MethodRc,
         signatures::TypeSignature,
         tables::{ManifestResourceBuilder, TableId, TypeRefRaw},
         token::Token,
@@ -269,10 +275,10 @@ impl Technique for NetReactorResources {
 
     fn create_pass(
         &self,
-        _ctx: &crate::deobfuscation::context::AnalysisContext,
+        _ctx: &AnalysisContext,
         detection: &Detection,
         _assembly: &Arc<CilObject>,
-    ) -> Vec<Box<dyn crate::compiler::SsaPass>> {
+    ) -> Vec<Box<dyn SsaPass<CilTarget, CompilerContext>>> {
         let Some(findings) = detection.findings::<ResourceFindings>() else {
             return Vec::new();
         };
@@ -289,22 +295,20 @@ impl Technique for NetReactorResources {
         // NOT the reflective `Assembly.Load` wrappers (those are
         // emulator-only and are intercepted by the runtime hook in
         // `byte_transform`).
-        vec![Box::new(
-            crate::deobfuscation::passes::netreactor::ResourceShimRewritePass::new(
-                findings
-                    .get_manifest_resource_names_shim_tokens
-                    .iter()
-                    .copied(),
-                findings.lazy_init_token,
-                findings.bcl_get_manifest_resource_names,
-            ),
-        )]
+        vec![Box::new(ResourceShimRewritePass::new(
+            findings
+                .get_manifest_resource_names_shim_tokens
+                .iter()
+                .copied(),
+            findings.lazy_init_token,
+            findings.bcl_get_manifest_resource_names,
+        ))]
     }
 
-    fn ssa_phase(&self) -> Option<crate::compiler::PassPhase> {
+    fn ssa_phase(&self) -> Option<PassPhase> {
         // Same phase as the other NR shim folders — runs alongside the
         // value-folding stage so the rewrites land before final cleanup.
-        Some(crate::compiler::PassPhase::Value)
+        Some(PassPhase::Value)
     }
 
     fn byte_transform(
@@ -530,7 +534,7 @@ impl Technique for NetReactorResources {
 /// (offset out of range, external implementation) and empty bodies are
 /// skipped — they would not round-trip back into the deobfuscated
 /// output.
-fn harvest_resources(captured: &[crate::emulation::CapturedAssembly]) -> Vec<(String, Vec<u8>)> {
+fn harvest_resources(captured: &[CapturedAssembly]) -> Vec<(String, Vec<u8>)> {
     let mut out = Vec::new();
     for cap in captured {
         let parsed = match CilObject::from_mem_with_validation(
@@ -706,11 +710,7 @@ fn find_lazy_init(assembly: &CilObject, cil_type: &CilTypeRc) -> Option<Token> {
 }
 
 /// Returns true if `method`'s IL matches the lazy-init shape exactly.
-fn is_lazy_init_body(
-    assembly: &CilObject,
-    method: &crate::metadata::method::MethodRc,
-    cil_type: &CilTypeRc,
-) -> bool {
+fn is_lazy_init_body(assembly: &CilObject, method: &MethodRc, cil_type: &CilTypeRc) -> bool {
     // Strip nop/br.s noise to match the canonical shape regardless of whether
     // the protector inserted padding.
     let instrs: Vec<_> = method
@@ -1084,10 +1084,7 @@ fn find_assembly_load_shim_methods(assembly: &CilObject, cil_type: &CilTypeRc) -
 /// method that already passed the `(uint8[]) -> object` signature gate is
 /// strong enough — no legitimate static `(byte[]) -> object` method on a
 /// resolver-shape type does both.
-fn is_assembly_load_reflection_shim(
-    method: &crate::metadata::method::MethodRc,
-    assembly: &CilObject,
-) -> bool {
+fn is_assembly_load_reflection_shim(method: &MethodRc, assembly: &CilObject) -> bool {
     let mut saw_assembly_token = false;
     let mut saw_invoke_call = false;
     for instr in method.instructions() {
@@ -1132,9 +1129,14 @@ fn encrypted_resource_names(assembly: &CilObject, findings: &ResourceFindings) -
 
 #[cfg(test)]
 mod tests {
-    use std::sync::Arc;
-
     use super::*;
+
+    use std::{
+        env,
+        path::{Path, PathBuf},
+        sync::Arc,
+    };
+
     use crate::{
         emulation::{EmulationOutcome, ProcessBuilder, TracingConfig},
         metadata::validation::ValidationConfig,
@@ -1142,7 +1144,7 @@ mod tests {
 
     fn try_load_sample(name: &str) -> Option<CilObject> {
         let path = format!("tests/samples/packers/netreactor/7.5.0/{name}");
-        if !std::path::Path::new(&path).exists() {
+        if !Path::new(&path).exists() {
             eprintln!("Skipping test: sample not found at {path}");
             return None;
         }
@@ -1274,7 +1276,7 @@ mod tests {
         );
 
         let cilobject = Arc::new(assembly);
-        let trace_path = std::env::var("NR_TRACE").ok().map(std::path::PathBuf::from);
+        let trace_path = env::var("NR_TRACE").ok().map(PathBuf::from);
 
         let mut builder = ProcessBuilder::new()
             .assembly_arc(Arc::clone(&cilobject))

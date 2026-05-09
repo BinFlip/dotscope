@@ -47,12 +47,12 @@ use std::{
 use log::{debug, info, warn};
 
 use crate::{
-    analysis::{ConstValue, SsaFunction, SsaOp, SsaVarId},
+    analysis::{CilTarget, ConstValue, MethodRef, SsaFunction, SsaOp, SsaVarId},
     compiler::{CompilerContext, EventKind, ModificationScope, PassCapability, SsaPass},
     deobfuscation::{EmulationTemplatePool, ProcessCell},
     emulation::{EmValue, EmulationProcess},
     metadata::token::Token,
-    CilObject, Error, Result,
+    CilObject, Error,
 };
 
 /// Extracts an SSA [`ConstValue`] from a raw emulator value.
@@ -411,7 +411,7 @@ impl StaticFieldResolutionPass {
     }
 }
 
-impl SsaPass for StaticFieldResolutionPass {
+impl SsaPass<CilTarget, CompilerContext> for StaticFieldResolutionPass {
     fn name(&self) -> &'static str {
         self.pass_name
     }
@@ -428,7 +428,7 @@ impl SsaPass for StaticFieldResolutionPass {
         &self.capabilities
     }
 
-    fn initialize(&mut self, _ctx: &CompilerContext) -> Result<()> {
+    fn initialize(&mut self, _host: &CompilerContext) -> analyssa::Result<()> {
         // Eagerly initialize field values before parallel method processing.
         // This avoids a race condition where parallel run_on_method calls
         // compete on lazy initialization — losing threads would see empty
@@ -440,10 +440,14 @@ impl SsaPass for StaticFieldResolutionPass {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        _method_token: Token,
-        ctx: &CompilerContext,
-        assembly: &CilObject,
-    ) -> Result<bool> {
+        _method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let assembly_arc = host.assembly().ok_or_else(|| {
+            analyssa::Error::new("StaticFieldResolutionPass requires an assembly")
+        })?;
+        let assembly: &CilObject = &assembly_arc;
+        let ctx = host;
         if !self.ensure_initialized() {
             return Ok(false);
         }
@@ -499,8 +503,8 @@ impl SsaPass for StaticFieldResolutionPass {
         Ok(true)
     }
 
-    fn finalize(&mut self, _ctx: &CompilerContext) -> Result<()> {
+    fn finalize(&mut self, _host: &CompilerContext) -> analyssa::Result<()> {
         // Release the emulation process to free the Arc<CilObject> reference
-        self.lazy_process.clear()
+        self.lazy_process.clear().map_err(Into::into)
     }
 }

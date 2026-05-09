@@ -32,8 +32,9 @@ use std::{env, path::Path};
 
 fn main() -> Result<()> {
     let args: Vec<String> = env::args().collect();
-    if args.len() < 3 {
-        eprintln!("Usage: {} <source-assembly> <output-assembly>", args[0]);
+    let prog = args.first().map_or("modify", String::as_str);
+    let (Some(source_arg), Some(output_arg)) = (args.get(1), args.get(2)) else {
+        eprintln!("Usage: {prog} <source-assembly> <output-assembly>");
         eprintln!();
         eprintln!("This example demonstrates comprehensive .NET assembly modification:");
         eprintln!("  - Adding strings, blobs, GUIDs, and user strings to heaps");
@@ -42,12 +43,12 @@ fn main() -> Result<()> {
         eprintln!("  - Validating changes and writing modified assembly");
         eprintln!();
         eprintln!("Example:");
-        eprintln!("  {} input.dll modified.dll", args[0]);
+        eprintln!("  {prog} input.dll modified.dll");
         return Ok(());
-    }
+    };
 
-    let source_path = Path::new(&args[1]);
-    let output_path = Path::new(&args[2]);
+    let source_path = Path::new(source_arg);
+    let output_path = Path::new(output_arg);
 
     println!(".NET Assembly Modification Tool");
     println!("Source: {}", source_path.display());

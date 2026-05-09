@@ -17,7 +17,10 @@
 //! The confidence score combines these signals to distinguish CFF from normal
 //! loops or state machines.
 
-use std::collections::{HashSet, VecDeque};
+use std::{
+    cmp::Ordering,
+    collections::{HashSet, VecDeque},
+};
 
 use rayon::prelude::*;
 
@@ -28,13 +31,13 @@ use crate::{
         statevar::{identify_state_variable, StateVariable},
         UnflattenConfig,
     },
-    utils::{
-        graph::{
-            algorithms::{compute_dominators, DominatorTree},
-            GraphBase, NodeId, Successors,
-        },
-        BitSet,
+};
+use analyssa::{
+    graph::{
+        algorithms::{compute_dominators, DominatorTree},
+        GraphBase, NodeId, Successors,
     },
+    BitSet,
 };
 
 /// Entry point into a CFF region.
@@ -351,7 +354,7 @@ impl<'a> CffDetector<'a> {
         patterns.sort_by(|a, b| {
             b.confidence
                 .partial_cmp(&a.confidence)
-                .unwrap_or(std::cmp::Ordering::Equal)
+                .unwrap_or(Ordering::Equal)
         });
 
         patterns
@@ -1151,10 +1154,11 @@ fn can_reach_dispatcher(
 
 #[cfg(test)]
 mod tests {
+    use analyssa::BitSet;
+
     use crate::{
         analysis::SsaVarId,
         deobfuscation::passes::unflattening::dispatcher::{DispatcherInfo, StateTransform},
-        utils::BitSet,
     };
 
     use super::{CffPattern, EntryCondition, EntryPoint};

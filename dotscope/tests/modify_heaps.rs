@@ -1,3 +1,12 @@
+#![allow(
+    clippy::unwrap_used,
+    clippy::expect_used,
+    clippy::panic,
+    clippy::arithmetic_side_effects,
+    clippy::indexing_slicing,
+    missing_docs
+)]
+
 //! Heap modification integration tests.
 //!
 //! Tests for modifying metadata heaps (strings, blobs, GUIDs, userstrings) and verifying

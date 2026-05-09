@@ -33,12 +33,13 @@ use std::{
 
 use rayon::prelude::*;
 
+use analyssa::BitSet;
+
 use crate::{
     analysis::{
         AnalysisResults, DataFlowSolver, LiveVariables, LivenessResult, SsaCfg, SsaFunction, SsaOp,
         SsaType, SsaVarId, VariableOrigin,
     },
-    utils::BitSet,
     Error, Result,
 };
 

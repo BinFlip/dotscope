@@ -6,10 +6,8 @@
 
 use std::collections::HashMap;
 
-use crate::{
-    analysis::ssa::symbolic::{expr::SymbolicExpr, ops::SymbolicOp},
-    metadata::typesystem::PointerSize,
-};
+use crate::metadata::typesystem::PointerSize;
+use analyssa::analysis::symbolic::{expr::SymbolicExpr, ops::SymbolicOp};
 
 /// Z3-based constraint solver for symbolic expressions.
 ///
@@ -521,10 +519,8 @@ impl Z3Solver {
 
 #[cfg(test)]
 mod tests {
-    use crate::{
-        analysis::ssa::symbolic::{expr::SymbolicExpr, ops::SymbolicOp, solver::Z3Solver},
-        metadata::typesystem::PointerSize,
-    };
+    use crate::{analysis::ssa::symbolic::Z3Solver, metadata::typesystem::PointerSize};
+    use analyssa::analysis::symbolic::{expr::SymbolicExpr, ops::SymbolicOp};
 
     #[test]
     fn test_z3_simple_solve() {

@@ -93,6 +93,8 @@
 //! propagation in concurrent parsing and analysis operations.
 //!
 
+use std::io;
+
 use thiserror::Error;
 
 #[cfg(feature = "emulation")]
@@ -283,7 +285,7 @@ pub enum Error {
     /// Wraps standard I/O errors that can occur during file operations
     /// such as reading from disk, permission issues, or filesystem errors.
     #[error("{0}")]
-    Io(#[from] std::io::Error),
+    Io(#[from] io::Error),
 
     /// Other errors that don't fit specific categories.
     ///
@@ -693,5 +695,17 @@ impl From<cowfile::Error> for Error {
 impl From<EmulationError> for Error {
     fn from(err: EmulationError) -> Self {
         Error::Emulation(Box::new(err))
+    }
+}
+
+impl From<analyssa::GraphError> for Error {
+    fn from(err: analyssa::GraphError) -> Self {
+        Error::GraphError(err.0)
+    }
+}
+
+impl From<Error> for analyssa::Error {
+    fn from(err: Error) -> Self {
+        analyssa::Error::new(err.to_string())
     }
 }

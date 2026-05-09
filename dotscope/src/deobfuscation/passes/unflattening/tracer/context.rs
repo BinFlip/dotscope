@@ -14,13 +14,17 @@
 
 use std::{collections::BTreeSet, mem};
 
+use analyssa::BitSet;
+
 use crate::{
     analysis::{
         cff_taint_config, ConstValue, SsaEvaluator, SsaFunction, SsaOp, SsaVarId, SsaVariable,
         TaintAnalysis,
     },
-    deobfuscation::passes::unflattening::{tracer::types::TracedDispatcher, UnflattenConfig},
-    utils::BitSet,
+    deobfuscation::passes::unflattening::{
+        tracer::{helpers, types::TracedDispatcher},
+        UnflattenConfig,
+    },
     CilObject,
 };
 
@@ -274,7 +278,7 @@ impl<'a> TreeTraceContext<'a> {
     /// Encapsulates the borrow of both `ssa` and `state_tainted` within one method
     /// to avoid split-borrow issues at call sites.
     pub fn propagate_taint_forward(&mut self) {
-        super::helpers::propagate_taint_forward(self.ssa, &mut self.state_tainted);
+        helpers::propagate_taint_forward(self.ssa, &mut self.state_tainted);
     }
 
     /// Gets the current CFF state value (if we can determine it).

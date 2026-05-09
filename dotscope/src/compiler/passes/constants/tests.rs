@@ -1,7 +1,10 @@
 use std::{collections::BTreeMap, sync::Arc};
 
 use crate::{
-    analysis::{CallGraph, ConstValue, MethodRef, SsaFunctionBuilder, SsaOp, SsaType, SsaVarId},
+    analysis::{
+        CallGraph, ConstValue, ConstValueCilExt, MethodRef, SsaFunctionBuilder, SsaOp, SsaType,
+        SsaVarId,
+    },
     compiler::{
         passes::constants::{AlgebraicResult, ConstantPropagationPass},
         CompilerContext, EventLog, SsaPass,
@@ -10,10 +13,15 @@ use crate::{
     test::helpers::test_assembly_arc,
 };
 
-/// Creates a test compiler context.
+/// Creates a test compiler context with the standard test assembly
+/// pre-attached. The analyssa pass scheduler reaches the assembly through
+/// [`CompilerContext::assembly`], so passes that need it will fail
+/// without this setup.
 fn test_context() -> CompilerContext {
     let call_graph = Arc::new(CallGraph::new());
-    CompilerContext::new(call_graph)
+    let ctx = CompilerContext::new(call_graph);
+    ctx.set_assembly(test_assembly_arc());
+    ctx
 }
 
 #[test]
@@ -31,145 +39,142 @@ fn test_pass_default() {
 
 #[test]
 fn test_conv_i32_to_i8() {
-    let operand = ConstValue::I32(42);
+    let operand: ConstValue = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::I8, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::I8, false, 8),
         Some(ConstValue::I8(42))
     );
 }
 
 #[test]
 fn test_conv_i32_to_i8_truncate() {
-    let operand = ConstValue::I32(1000);
+    let operand: ConstValue = ConstValue::I32(1000);
     // 1000 truncated to i8 is -24 (1000 & 0xFF = 232, as signed = -24)
     assert_eq!(
-        operand.convert_to(&SsaType::I8, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::I8, false, 8),
         Some(ConstValue::I8(-24))
     );
 }
 
 #[test]
 fn test_conv_i32_to_i64() {
-    let operand = ConstValue::I32(-42);
+    let operand: ConstValue = ConstValue::I32(-42);
     assert_eq!(
-        operand.convert_to(&SsaType::I64, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::I64, false, 8),
         Some(ConstValue::I64(-42))
     );
 }
 
 #[test]
 fn test_conv_to_bool_nonzero() {
-    let operand = ConstValue::I32(42);
+    let operand: ConstValue = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::Bool, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::Bool, false, 8),
         Some(ConstValue::True)
     );
 }
 
 #[test]
 fn test_conv_to_bool_zero() {
-    let operand = ConstValue::I32(0);
+    let operand: ConstValue = ConstValue::I32(0);
     assert_eq!(
-        operand.convert_to(&SsaType::Bool, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::Bool, false, 8),
         Some(ConstValue::False)
     );
 }
 
 #[test]
 fn test_conv_to_f32() {
-    let operand = ConstValue::I32(42);
+    let operand: ConstValue = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::F32, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::F32, false, 8),
         Some(ConstValue::F32(42.0))
     );
 }
 
 #[test]
 fn test_conv_ovf_in_range() {
-    let operand = ConstValue::I32(100);
+    let operand: ConstValue = ConstValue::I32(100);
     assert_eq!(
-        operand.convert_to_checked(&SsaType::I8, false, PointerSize::Bit64),
+        operand.convert_to_checked(&SsaType::I8, false, 8),
         Some(ConstValue::I8(100))
     );
 }
 
 #[test]
 fn test_conv_ovf_out_of_range() {
-    let operand = ConstValue::I32(1000);
-    assert_eq!(
-        operand.convert_to_checked(&SsaType::I8, false, PointerSize::Bit64),
-        None
-    ); // Would overflow
+    let operand: ConstValue = ConstValue::I32(1000);
+    assert_eq!(operand.convert_to_checked(&SsaType::I8, false, 8), None); // Would overflow
 }
 
 #[test]
 fn test_conv_u8() {
-    let operand = ConstValue::I32(200);
+    let operand: ConstValue = ConstValue::I32(200);
     assert_eq!(
-        operand.convert_to(&SsaType::U8, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::U8, false, 8),
         Some(ConstValue::U8(200))
     );
 }
 
 #[test]
 fn test_conv_u16() {
-    let operand = ConstValue::I32(50000);
+    let operand: ConstValue = ConstValue::I32(50000);
     assert_eq!(
-        operand.convert_to(&SsaType::U16, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::U16, false, 8),
         Some(ConstValue::U16(50000))
     );
 }
 
 #[test]
 fn test_conv_u32() {
-    let operand = ConstValue::I64(3_000_000_000);
+    let operand: ConstValue = ConstValue::I64(3_000_000_000);
     assert_eq!(
-        operand.convert_to(&SsaType::U32, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::U32, false, 8),
         Some(ConstValue::U32(3_000_000_000))
     );
 }
 
 #[test]
 fn test_conv_u64() {
-    let operand = ConstValue::I32(42);
+    let operand: ConstValue = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::U64, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::U64, false, 8),
         Some(ConstValue::U64(42))
     );
 }
 
 #[test]
 fn test_conv_f64() {
-    let operand = ConstValue::I32(42);
+    let operand: ConstValue = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::F64, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::F64, false, 8),
         Some(ConstValue::F64(42.0))
     );
 }
 
 #[test]
 fn test_conv_native_int() {
-    let operand = ConstValue::I32(42);
+    let operand: ConstValue = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::NativeInt, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::NativeInt, false, 8),
         Some(ConstValue::NativeInt(42))
     );
 }
 
 #[test]
 fn test_conv_native_uint() {
-    let operand = ConstValue::I32(42);
+    let operand: ConstValue = ConstValue::I32(42);
     assert_eq!(
-        operand.convert_to(&SsaType::NativeUInt, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::NativeUInt, false, 8),
         Some(ConstValue::NativeUInt(42))
     );
 }
 
 #[test]
 fn test_conv_char() {
-    let operand = ConstValue::I32(65); // 'A'
+    let operand: ConstValue = ConstValue::I32(65); // 'A'
     assert_eq!(
-        operand.convert_to(&SsaType::Char, false, PointerSize::Bit64),
+        operand.convert_to(&SsaType::Char, false, 8),
         Some(ConstValue::U16(65))
     );
 }
@@ -187,6 +192,7 @@ fn test_identity_add_zero() {
         dest: v2,
         left: v0,
         right: v1,
+        flags: None,
     };
 
     let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
@@ -213,6 +219,7 @@ fn test_identity_mul_one() {
         dest: v2,
         left: v0,
         right: v1,
+        flags: None,
     };
 
     let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
@@ -238,6 +245,7 @@ fn test_identity_and_minus_one() {
         dest: v2,
         left: v0,
         right: v1,
+        flags: None,
     };
 
     let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
@@ -263,6 +271,7 @@ fn test_absorbing_mul_zero() {
         dest: v2,
         left: v0,
         right: v1,
+        flags: None,
     };
 
     let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
@@ -288,6 +297,7 @@ fn test_absorbing_and_zero() {
         dest: v2,
         left: v0,
         right: v1,
+        flags: None,
     };
 
     let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
@@ -313,6 +323,7 @@ fn test_absorbing_or_minus_one() {
         dest: v2,
         left: v0,
         right: v1,
+        flags: None,
     };
 
     let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
@@ -339,6 +350,7 @@ fn test_add_ovf_no_overflow() {
         left: v0,
         right: v1,
         unsigned: false,
+        flags: None,
     };
 
     let result = ConstantPropagationPass::check_overflow_op(&op, &constants, PointerSize::Bit64);
@@ -359,6 +371,7 @@ fn test_mul_ovf_with_zero() {
         left: v0,
         right: v1,
         unsigned: false,
+        flags: None,
     };
 
     // x * 0 = 0, even with overflow check
@@ -373,7 +386,7 @@ fn test_pass_empty_function() {
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
 
-    let result = pass.run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc());
+    let result = pass.run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx);
     assert!(result.is_ok());
     assert!(!result.unwrap());
 }
@@ -396,7 +409,7 @@ fn test_pass_simple_folding() {
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
 
-    let result = pass.run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc());
+    let result = pass.run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx);
     assert!(result.is_ok());
 
     // Check that v2 was folded to constant 8
@@ -431,7 +444,7 @@ fn test_pass_branch_simplification() {
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
 
-    let result = pass.run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc());
+    let result = pass.run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx);
     assert!(result.is_ok());
 
     // Check that branch was simplified to jump
@@ -464,7 +477,7 @@ fn test_pass_switch_simplification() {
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
 
-    let result = pass.run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc());
+    let result = pass.run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx);
     assert!(result.is_ok());
 
     // Check that switch was simplified to jump to target 2 (index 1)
@@ -496,7 +509,7 @@ fn test_constants_cached_in_context() {
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
 
-    let result = pass.run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc());
+    let result = pass.run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx);
     assert!(result.is_ok());
 
     // Check that constant was cached
@@ -516,6 +529,7 @@ fn test_identity_shl_zero() {
         dest: v2,
         value: v0,
         amount: v1,
+        flags: None,
     };
 
     let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
@@ -542,6 +556,7 @@ fn test_identity_shr_zero() {
         value: v0,
         amount: v1,
         unsigned: false,
+        flags: None,
     };
 
     let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
@@ -567,6 +582,7 @@ fn test_identity_xor_zero() {
         dest: v2,
         left: v0,
         right: v1,
+        flags: None,
     };
 
     let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
@@ -593,6 +609,7 @@ fn test_identity_div_one() {
         left: v0,
         right: v1,
         unsigned: false,
+        flags: None,
     };
 
     let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
@@ -618,6 +635,7 @@ fn test_identity_sub_zero() {
         dest: v2,
         left: v0,
         right: v1,
+        flags: None,
     };
 
     let result = ConstantPropagationPass::check_algebraic_identity(&op, &constants);
@@ -658,7 +676,7 @@ fn test_chained_constant_folding() {
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
 
-    let result = pass.run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc());
+    let result = pass.run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx);
     assert!(result.is_ok());
 
     // Check that v4 was folded to 10
@@ -683,7 +701,7 @@ fn test_branch_false_condition() {
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
 
-    let result = pass.run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc());
+    let result = pass.run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx);
     assert!(result.is_ok());
 
     // Check that branch was simplified to jump to false branch (target 2)
@@ -716,7 +734,7 @@ fn test_switch_out_of_range_uses_default() {
     let method_token = Token::new(0x0600_0001);
     let ctx = test_context();
 
-    let result = pass.run_on_method(&mut ssa, method_token, &ctx, &test_assembly_arc());
+    let result = pass.run_on_method(&mut ssa, &MethodRef::from(method_token), &ctx);
     assert!(result.is_ok());
 
     // Check that switch was simplified to jump to default (target 4)

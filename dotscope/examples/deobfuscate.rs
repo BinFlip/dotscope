@@ -128,7 +128,13 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
 
         if handle.is_finished() {
-            break handle.join().expect("Deobfuscation thread panicked");
+            match handle.join() {
+                Ok(value) => break value,
+                Err(_) => {
+                    eprintln!("Deobfuscation thread panicked");
+                    std::process::exit(1);
+                }
+            }
         }
 
         thread::sleep(std::time::Duration::from_millis(100));

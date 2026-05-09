@@ -154,7 +154,9 @@ pub fn build_call_site_skeleton(ssa: &SsaFunction, assembly: &CilObject) -> Opti
             }
 
             // Arithmetic
-            SsaOp::Add { dest, left, right }
+            SsaOp::Add {
+                dest, left, right, ..
+            }
             | SsaOp::AddOvf {
                 dest, left, right, ..
             } => {
@@ -165,7 +167,9 @@ pub fn build_call_site_skeleton(ssa: &SsaFunction, assembly: &CilObject) -> Opti
                     right.index()
                 ));
             }
-            SsaOp::Sub { dest, left, right }
+            SsaOp::Sub {
+                dest, left, right, ..
+            }
             | SsaOp::SubOvf {
                 dest, left, right, ..
             } => {
@@ -176,7 +180,9 @@ pub fn build_call_site_skeleton(ssa: &SsaFunction, assembly: &CilObject) -> Opti
                     right.index()
                 ));
             }
-            SsaOp::Mul { dest, left, right }
+            SsaOp::Mul {
+                dest, left, right, ..
+            }
             | SsaOp::MulOvf {
                 dest, left, right, ..
             } => {
@@ -207,7 +213,7 @@ pub fn build_call_site_skeleton(ssa: &SsaFunction, assembly: &CilObject) -> Opti
                     right.index()
                 ));
             }
-            SsaOp::Neg { dest, operand } => {
+            SsaOp::Neg { dest, operand, .. } => {
                 lines.push(format!(
                     "    var_{} = -var_{};",
                     dest.index(),
@@ -216,7 +222,9 @@ pub fn build_call_site_skeleton(ssa: &SsaFunction, assembly: &CilObject) -> Opti
             }
 
             // Bitwise
-            SsaOp::And { dest, left, right } => {
+            SsaOp::And {
+                dest, left, right, ..
+            } => {
                 lines.push(format!(
                     "    var_{} = var_{} & var_{};",
                     dest.index(),
@@ -224,7 +232,9 @@ pub fn build_call_site_skeleton(ssa: &SsaFunction, assembly: &CilObject) -> Opti
                     right.index()
                 ));
             }
-            SsaOp::Or { dest, left, right } => {
+            SsaOp::Or {
+                dest, left, right, ..
+            } => {
                 lines.push(format!(
                     "    var_{} = var_{} | var_{};",
                     dest.index(),
@@ -232,7 +242,9 @@ pub fn build_call_site_skeleton(ssa: &SsaFunction, assembly: &CilObject) -> Opti
                     right.index()
                 ));
             }
-            SsaOp::Xor { dest, left, right } => {
+            SsaOp::Xor {
+                dest, left, right, ..
+            } => {
                 lines.push(format!(
                     "    var_{} = var_{} ^ var_{};",
                     dest.index(),
@@ -240,7 +252,7 @@ pub fn build_call_site_skeleton(ssa: &SsaFunction, assembly: &CilObject) -> Opti
                     right.index()
                 ));
             }
-            SsaOp::Not { dest, operand } => {
+            SsaOp::Not { dest, operand, .. } => {
                 lines.push(format!(
                     "    var_{} = ~var_{};",
                     dest.index(),
@@ -251,6 +263,7 @@ pub fn build_call_site_skeleton(ssa: &SsaFunction, assembly: &CilObject) -> Opti
                 dest,
                 value,
                 amount,
+                ..
             } => {
                 lines.push(format!(
                     "    var_{} = var_{} << var_{};",

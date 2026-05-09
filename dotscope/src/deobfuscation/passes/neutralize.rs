@@ -39,10 +39,9 @@
 use std::collections::{HashMap, HashSet};
 
 use crate::{
-    analysis::{find_token_dependencies, SsaFunction, SsaOp},
+    analysis::{find_token_dependencies, CilTarget, ConstValue, MethodRef, SsaFunction, SsaOp},
     compiler::{CompilerContext, EventKind, SsaPass},
     metadata::token::Token,
-    CilObject, Result,
 };
 
 /// Action to perform on a tainted instruction during neutralization.
@@ -291,7 +290,7 @@ impl<'a> NeutralizationPass<'a> {
                     if matches!(
                         instr.op(),
                         SsaOp::Const {
-                            value: crate::analysis::ConstValue::DecryptedString(_),
+                            value: ConstValue::DecryptedString(_),
                             ..
                         }
                     ) {
@@ -359,7 +358,7 @@ impl<'a> NeutralizationPass<'a> {
     }
 }
 
-impl SsaPass for NeutralizationPass<'_> {
+impl SsaPass<CilTarget, CompilerContext> for NeutralizationPass<'_> {
     fn name(&self) -> &'static str {
         "neutralization"
     }
@@ -371,14 +370,14 @@ impl SsaPass for NeutralizationPass<'_> {
     fn run_on_method(
         &self,
         ssa: &mut SsaFunction,
-        method_token: Token,
-        ctx: &CompilerContext,
-        _assembly: &CilObject,
-    ) -> Result<bool> {
+        method: &MethodRef,
+        host: &CompilerContext,
+    ) -> analyssa::Result<bool> {
+        let method_token = method.0;
         let neutralized = self.neutralize_method(ssa);
 
         if neutralized > 0 {
-            ctx.events
+            host.events
                 .record(EventKind::InstructionRemoved)
                 .method(method_token)
                 .message(format!(
@@ -441,6 +440,7 @@ mod tests {
             dest: v2,
             left: v0,
             right: v1,
+            flags: None,
         }));
 
         b0.add_instruction(SsaInstruction::synthetic(SsaOp::Return { value: Some(v2) }));

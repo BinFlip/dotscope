@@ -80,7 +80,7 @@ use crate::{
 ///
 /// Contains the CIL bytecode, stack depth, local variable signatures, and remapped
 /// exception handlers. This is the bridge between code generation and
-/// [`crate::cilassembly::builders::MethodBodyBuilder::from_compilation`].
+/// [`MethodBodyBuilder::from_compilation`](crate::cilassembly::MethodBodyBuilder::from_compilation).
 pub struct CompilationResult {
     /// CIL bytecode.
     pub bytecode: Vec<u8>,
@@ -381,7 +381,7 @@ impl SsaCodeGenerator {
     ///
     /// This is the high-level entry point that wraps [`generate_with_assembly`](Self::generate_with_assembly)
     /// and adds local variable signature building and exception handler remapping.
-    /// The result contains everything needed for [`crate::cilassembly::builders::MethodBodyBuilder::from_compilation`]
+    /// The result contains everything needed for [`MethodBodyBuilder::from_compilation`](crate::cilassembly::MethodBodyBuilder::from_compilation)
     /// to assemble the final method body.
     ///
     /// # Arguments
@@ -853,14 +853,14 @@ impl SsaCodeGenerator {
                         value:
                             ConstValue::DecryptedArray {
                                 data,
-                                element_type_token,
+                                element_type_ref,
                                 element_size,
                             },
                         ..
                     } if !self.interned_arrays.contains_key(data) => {
                         if let Some(info) = self.intern_array_data(
                             data,
-                            *element_type_token,
+                            element_type_ref.token(),
                             *element_size,
                             assembly,
                         )? {
@@ -3448,7 +3448,8 @@ impl SsaCodeGenerator {
             | SsaOp::Leave { .. }
             | SsaOp::EndFinally
             | SsaOp::EndFilter { .. }
-            | SsaOp::BranchCmp { .. } => {
+            | SsaOp::BranchCmp { .. }
+            | SsaOp::BranchFlags { .. } => {
                 self.generate_branch_op(encoder, ssa, current_block_idx, op, next_block_idx)?;
             }
 
@@ -3494,8 +3495,30 @@ impl SsaCodeGenerator {
                 encoder.emit_instruction("readonly.", None)?;
             }
 
-            SsaOp::Phi { .. } => {
+            SsaOp::Phi { .. }
+            | SsaOp::Fence { .. }
+            | SsaOp::InterruptReturn
+            | SsaOp::Unreachable => {
                 // Phi nodes are eliminated during code generation - no instruction emitted
+            }
+            // Rotate and bit manipulation operations - not emitted as CIL primitives
+            SsaOp::Rol { .. }
+            | SsaOp::Ror { .. }
+            | SsaOp::Rcl { .. }
+            | SsaOp::Rcr { .. }
+            | SsaOp::BSwap { .. }
+            | SsaOp::BRev { .. }
+            | SsaOp::BitScanForward { .. }
+            | SsaOp::BitScanReverse { .. }
+            | SsaOp::Popcount { .. }
+            | SsaOp::Parity { .. }
+            | SsaOp::Select { .. }
+            | SsaOp::ReadFlags { .. }
+            | SsaOp::CmpXchg { .. }
+            | SsaOp::AtomicRmw { .. } => {
+                // These operations may appear in the shared SSA but are not
+                // directly expressible in CIL; they should have been lowered
+                // before code generation.
             }
         }
         Ok(())
@@ -4449,7 +4472,7 @@ impl SsaCodeGenerator {
             //   call InitializeArray       ; pop 2 (+1) — net: 1 value on stack
             ConstValue::DecryptedArray {
                 data,
-                element_type_token,
+                element_type_ref,
                 element_size,
             } => {
                 let elem_size = element_size.max(&1);
@@ -4457,7 +4480,8 @@ impl SsaCodeGenerator {
                 let num_elements = data.len().checked_div(*elem_size).unwrap_or(0);
 
                 emitter::emit_ldc_i4(encoder, num_elements as i32)?;
-                encoder.emit_instruction("newarr", Some(Operand::Token(*element_type_token)))?;
+                encoder
+                    .emit_instruction("newarr", Some(Operand::Token(element_type_ref.token())))?;
 
                 if let Some(info) = self.interned_arrays.get(data) {
                     // Compact: dup + ldtoken + call InitializeArray

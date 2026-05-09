@@ -420,6 +420,7 @@ impl CallSiteInfo {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::analysis::CilTarget;
 
     #[test]
     fn test_method_summary_default() {
@@ -433,13 +434,13 @@ mod tests {
 
     #[test]
     fn test_return_info() {
-        assert!(ReturnInfo::Void.is_known());
-        assert!(ReturnInfo::Constant(ConstValue::I32(42)).is_known());
-        assert!(!ReturnInfo::Dynamic.is_known());
+        assert!(ReturnInfo::<CilTarget>::Void.is_known());
+        assert!(ReturnInfo::<CilTarget>::Constant(ConstValue::I32(42)).is_known());
+        assert!(!ReturnInfo::<CilTarget>::Dynamic.is_known());
 
-        assert!(ReturnInfo::PassThrough(0).is_potentially_foldable());
-        assert!(ReturnInfo::PureComputation.is_potentially_foldable());
-        assert!(!ReturnInfo::Dynamic.is_potentially_foldable());
+        assert!(ReturnInfo::<CilTarget>::PassThrough(0).is_potentially_foldable());
+        assert!(ReturnInfo::<CilTarget>::PureComputation.is_potentially_foldable());
+        assert!(!ReturnInfo::<CilTarget>::Dynamic.is_potentially_foldable());
     }
 
     #[test]
