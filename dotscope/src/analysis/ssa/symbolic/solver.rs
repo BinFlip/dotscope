@@ -6,8 +6,10 @@
 
 use std::collections::HashMap;
 
-use crate::metadata::typesystem::PointerSize;
-use analyssa::analysis::symbolic::{expr::SymbolicExpr, ops::SymbolicOp};
+use crate::{analysis::ssa::CilTarget, metadata::typesystem::PointerSize};
+use analyssa::analysis::symbolic::{expr::SymbolicExpr as GenericSymbolicExpr, ops::SymbolicOp};
+
+type SymbolicExpr = GenericSymbolicExpr<CilTarget>;
 
 /// Z3-based constraint solver for symbolic expressions.
 ///
@@ -509,8 +511,20 @@ impl Z3Solver {
                     SymbolicOp::GeU => left_z3
                         .bvuge(&right_z3)
                         .ite(&z3::ast::BV::from_i64(1, 32), &z3::ast::BV::from_i64(0, 32)),
-                    // Unary ops shouldn't appear in binary context
-                    SymbolicOp::Neg | SymbolicOp::Not => left_z3,
+                    // Rotate operations.
+                    SymbolicOp::Rol => left_z3.bvrotl(&right_z3),
+                    SymbolicOp::Ror => left_z3.bvrotr(&right_z3),
+                    // Rotate-through-carry have no direct bitvector mapping.
+                    SymbolicOp::Rcl | SymbolicOp::Rcr => left_z3,
+                    // Unary ops shouldn't appear in binary context.
+                    SymbolicOp::Neg
+                    | SymbolicOp::Not
+                    | SymbolicOp::BSwap
+                    | SymbolicOp::BRev
+                    | SymbolicOp::BitScanForward
+                    | SymbolicOp::BitScanReverse
+                    | SymbolicOp::Popcount
+                    | SymbolicOp::Parity => left_z3,
                 }
             }
         }

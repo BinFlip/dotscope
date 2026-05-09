@@ -11,10 +11,11 @@
 
 use analyssa::{ir::value::ConstValue, PointerSize};
 
+#[cfg(feature = "compiler")]
+use crate::compiler::CilCapability;
 use crate::{
     analysis::ssa::types::{FieldRef, MethodRef, SigRef, SsaType, TypeRef},
     assembly::{FlowType, Instruction, InstructionCategory, Operand, StackBehavior},
-    compiler::CilCapability,
     metadata::{method::ExceptionHandlerFlags, signatures::SignatureLocalVariable},
 };
 
@@ -71,7 +72,10 @@ impl Target for CilTarget {
     type Type = SsaType;
     type OriginalInstruction = Instruction;
     type LocalSignature = SignatureLocalVariable;
+    #[cfg(feature = "compiler")]
     type Capability = CilCapability;
+    #[cfg(not(feature = "compiler"))]
+    type Capability = ();
 
     fn ptr_bytes(&self) -> u32 {
         self.ptr_bytes
